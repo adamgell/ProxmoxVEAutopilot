@@ -1,0 +1,39 @@
+---
+# Execute a command inside a guest VM via the QEMU guest agent and poll
+# until it completes.
+#
+# Required variables:
+#   vm_vmid          - target VM ID
+#   _exec_command    - list of command + args, e.g. ["cmd.exe", "/c", "dir"]
+#
+# Optional overrides:
+#   _exec_timeout    - seconds to wait (default: guest_exec_timeout_seconds)
+#   _exec_poll       - poll interval (default: guest_exec_poll_interval_seconds)
+#
+# Registers:
+#   _guest_exec_result  - the exec POST response (contains .json.data.pid)
+#   _guest_exec_status  - the final exec-status response
+
+- name: "Execute command in guest VM {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/exec"
+    method: POST
+    body_format: json
+    body:
+      command: "{{ _exec_command }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _guest_exec_result
+
+- name: "Poll exec status until completion on VM {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/exec-status?pid={{ _guest_exec_result.json.data.pid }}"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _guest_exec_status
+  until: _guest_exec_status.json.data.exited | default(false) | bool
+  retries: "{{ ((_exec_timeout | default(guest_exec_timeout_seconds) | int) / (_exec_poll | default(guest_exec_poll_interval_seconds) | int)) | int }}"
+  delay: "{{ _exec_poll | default(guest_exec_poll_interval_seconds) | int }}"

@@ -1,0 +1,99 @@
+---
+# Built-in OEM hardware profiles for SMBIOS emulation.
+# Each profile defines the SMBIOS type 1 fields that Proxmox will expose
+# to the guest OS, making Windows Autopilot see the VM as real OEM hardware.
+#
+# chassis_type is logged as a warning and skipped — Proxmox 9 does not
+# support smbios2 (chassis type) configuration.
+
+oem_profiles:
+  lenovo-p520:
+    manufacturer: "Lenovo"
+    product: "ThinkStation P520"
+    family: "ThinkStation"
+    sku: "30BFS44D00"
+    chassis_type: 3
+
+  lenovo-t14:
+    manufacturer: "Lenovo"
+    product: "ThinkPad T14 Gen 4"
+    family: "ThinkPad"
+    sku: "21HES06600"
+    chassis_type: 10
+
+  lenovo-x1carbon:
+    manufacturer: "Lenovo"
+    product: "ThinkPad X1 Carbon Gen 11"
+    family: "ThinkPad"
+    sku: "21HMCTO1WW"
+    chassis_type: 10
+
+  dell-optiplex-7090:
+    manufacturer: "Dell Inc."
+    product: "OptiPlex 7090"
+    family: "OptiPlex"
+    sku: "0YNTKM"
+    chassis_type: 3
+
+  dell-latitude-5540:
+    manufacturer: "Dell Inc."
+    product: "Latitude 5540"
+    family: "Latitude"
+    sku: "0DV6GY"
+    chassis_type: 10
+
+  dell-xps-15:
+    manufacturer: "Dell Inc."
+    product: "XPS 15 9530"
+    family: "XPS"
+    sku: "0284MX"
+    chassis_type: 10
+
+  hp-elitedesk-800:
+    manufacturer: "HP"
+    product: "HP EliteDesk 800 G8 SFF"
+    family: "EliteDesk"
+    sku: "0A60h"
+    chassis_type: 3
+
+  hp-elitebook-840:
+    manufacturer: "HP"
+    product: "HP EliteBook 840 G10"
+    family: "EliteBook"
+    sku: "215E"
+    chassis_type: 10
+
+  hp-zbook-g10:
+    manufacturer: "HP"
+    product: "HP ZBook Fury 16 G10"
+    family: "ZBook"
+    sku: "215A"
+    chassis_type: 10
+
+  surface-pro-10:
+    manufacturer: "Microsoft Corporation"
+    product: "Surface Pro 10"
+    family: "Surface"
+    sku: "Surface_Pro_10"
+    chassis_type: 9
+
+  surface-laptop-6:
+    manufacturer: "Microsoft Corporation"
+    product: "Surface Laptop 6"
+    family: "Surface"
+    sku: "Surface_Laptop_6"
+    chassis_type: 10
+
+  generic-desktop:
+    manufacturer: "Proxmox"
+    product: "Virtual Desktop"
+    family: "Virtual"
+    sku: "YOURSKU"
+    chassis_type: 3
+
+  generic-laptop:
+    manufacturer: "Proxmox"
+    product: "Virtual Laptop"
+    family: "Virtual"
+    sku: "YOURSKU"
+    chassis_type: 10

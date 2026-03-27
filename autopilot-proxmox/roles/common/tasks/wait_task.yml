@@ -1,0 +1,20 @@
+---
+# Poll a Proxmox task UPID until it completes.
+# Required variables: _task_upid
+
+- name: Wait for Proxmox task to complete
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/tasks/{{ _task_upid }}/status"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _task_status
+  until: _task_status.json.data.status == "stopped"
+  retries: "{{ task_poll_retries | default(120) }}"
+  delay: "{{ task_poll_delay_seconds | default(1) }}"
+
+- name: Verify task completed successfully
+  ansible.builtin.fail:
+    msg: "Proxmox task failed: {{ _task_status.json.data.exitstatus | default('unknown') }}"
+  when: _task_status.json.data.exitstatus | default('') != "OK"

@@ -1,0 +1,8 @@
+---
+hash_guest_dir: 'C:\ProgramData\APHVTools'
+hash_guest_output_dir: 'C:\ProgramData\APHVTools\HardwareHashes'
+hash_guest_script: 'C:\ProgramData\APHVTools\CaptureHash.ps1'
+hash_guest_autopilot_info: 'C:\ProgramData\APHVTools\Get-WindowsAutopilotInfo.ps1'
+hash_output_dir: "/opt/autopilot-proxmox/hashes"
+hash_capture_timeout_seconds: 600
+vm_group_tag: null

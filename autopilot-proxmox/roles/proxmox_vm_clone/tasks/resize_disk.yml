@@ -1,0 +1,37 @@
+---
+# Resize cloned VM disk if the requested size exceeds the template disk.
+# Mirrors New-ProxmoxCloneDevice.ps1 disk resize logic.
+
+- name: Read template VM config for disk size comparison
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _template_config
+
+- name: Extract template disk size in GB
+  ansible.builtin.set_fact:
+    _template_disk_size_gb: >-
+      {{ (_template_config.json.data.scsi0 | regex_search('size=(\d+)G', '\1'))[0] | default(0) | int }}
+
+- name: Resize cloned VM disk if larger than template
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/resize"
+    method: PUT
+    body_format: form-urlencoded
+    body:
+      disk: "scsi0"
+      size: "{{ vm_disk_size_gb }}G"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  when: vm_disk_size_gb | int > _template_disk_size_gb | int
+
+- name: Warn if requested disk is smaller than template
+  ansible.builtin.debug:
+    msg: >-
+      Requested disk {{ vm_disk_size_gb }}GB is smaller than template
+      {{ _template_disk_size_gb }}GB. Keeping template disk size.
+  when: vm_disk_size_gb | int < _template_disk_size_gb | int

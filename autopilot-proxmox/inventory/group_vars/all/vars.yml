@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# Proxmox connection
+# =============================================================================
+proxmox_host: "192.168.1.100"
+proxmox_port: 8006
+proxmox_node: "pve"
+proxmox_api_base: "https://{{ proxmox_host }}:{{ proxmox_port }}/api2/json"
+proxmox_validate_certs: false
+
+# Constructed from vault secrets — used in all uri headers
+proxmox_api_auth_header: "PVEAPIToken={{ vault_proxmox_api_token_id }}={{ vault_proxmox_api_token_secret }}"
+
+# =============================================================================
+# Storage and networking
+# =============================================================================
+proxmox_storage: "local-lvm"
+proxmox_iso_storage: "local"
+proxmox_bridge: "vmbr0"
+proxmox_vlan_tag: null
+
+# =============================================================================
+# ISO paths (Proxmox storage notation)
+# =============================================================================
+proxmox_windows_iso: "local:iso/Win11_24H2.iso"
+proxmox_virtio_iso: "local:iso/virtio-win.iso"
+
+# =============================================================================
+# Template settings (for clone provisioning)
+# =============================================================================
+proxmox_template_vmid: null
+
+# =============================================================================
+# VM defaults
+# =============================================================================
+vm_cores: 2
+vm_memory_mb: 4096
+vm_disk_size_gb: 64
+vm_ostype: "win11"
+vm_count: 1
+vm_name_prefix: "autopilot"
+vm_start_after_create: true
+
+# OEM profile key (from files/oem_profiles.yml), e.g. "lenovo-t14"
+vm_oem_profile: null
+vm_custom_serial: null
+vm_group_tag: null
+
+# =============================================================================
+# Autopilot
+# =============================================================================
+autopilot_config_path: "{{ playbook_dir }}/../files/AutopilotConfigurationFile.json"
+autopilot_skip: false
+capture_hardware_hash: true
+hash_output_dir: "/opt/autopilot-proxmox/hashes"
+
+# =============================================================================
+# Timeouts
+# =============================================================================
+guest_agent_timeout_seconds: 1800
+guest_agent_poll_interval_seconds: 10
+guest_exec_timeout_seconds: 300
+guest_exec_poll_interval_seconds: 2
+hash_capture_timeout_seconds: 600
+
+# Proxmox task polling
+task_poll_retries: 120
+task_poll_delay_seconds: 1

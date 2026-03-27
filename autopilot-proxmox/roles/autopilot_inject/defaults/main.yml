@@ -1,0 +1,4 @@
+---
+autopilot_config_path: "{{ playbook_dir }}/../files/AutopilotConfigurationFile.json"
+autopilot_guest_dir: 'C:\Windows\Provisioning\Autopilot'
+autopilot_guest_file: 'C:\Windows\Provisioning\Autopilot\AutopilotConfigurationFile.json'

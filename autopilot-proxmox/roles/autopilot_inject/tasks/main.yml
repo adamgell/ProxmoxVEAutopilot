@@ -1,0 +1,30 @@
+---
+# Inject Autopilot configuration JSON into a guest VM via the QEMU guest agent.
+# Mirrors Publish-ProxmoxAutoPilotConfig.ps1.
+# Required variable: vm_vmid
+
+- name: Read Autopilot config from controller
+  ansible.builtin.slurp:
+    src: "{{ autopilot_config_path }}"
+  register: _autopilot_json
+
+- name: Create Autopilot directory in guest  # noqa: ignore-errors
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      - "mkdir"
+      - "{{ autopilot_guest_dir }}"
+    _exec_timeout: 30
+  ignore_errors: true  # mkdir may fail if directory already exists
+
+- name: Write Autopilot config to guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_file_write.yml"
+  vars:
+    _guest_file: "{{ autopilot_guest_file }}"
+    _guest_content: "{{ _autopilot_json.content | b64decode }}"
+
+- name: Autopilot config injected
+  ansible.builtin.debug:
+    msg: "Wrote AutopilotConfigurationFile.json to VM {{ vm_vmid }}"

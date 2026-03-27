@@ -1,0 +1,5 @@
+---
+vm_start_after_create: false  # template builder manages start itself
+template_agent_timeout_seconds: 3600  # long timeout for Windows unattended install
+sysprep_vm_stop_timeout_retries: 360
+sysprep_vm_stop_timeout_delay: 10

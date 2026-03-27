@@ -1,0 +1,19 @@
+---
+# Single VM provisioning via clone — included by provision_clone.yml loop.
+
+- name: "Clone VM {{ _vm_index }} from template"
+  ansible.builtin.include_role:
+    name: proxmox_vm_clone
+
+- name: "Wait for guest agent on VM {{ vm_vmid }}"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_guest_agent.yml"
+
+- name: "Inject Autopilot config into VM {{ vm_vmid }}"
+  ansible.builtin.include_role:
+    name: autopilot_inject
+  when: not (autopilot_skip | default(false) | bool)
+
+- name: "Capture hardware hash from VM {{ vm_vmid }}"
+  ansible.builtin.include_role:
+    name: hash_capture
+  when: capture_hardware_hash | default(true) | bool

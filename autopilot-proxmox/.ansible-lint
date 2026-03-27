@@ -1,0 +1,12 @@
+# ansible-lint configuration
+skip_list:
+  # Internal variables use _ prefix convention shared across roles intentionally.
+  # Role-prefixing every internal fact would hurt readability without adding safety
+  # since these are transient set_fact values, not role defaults.
+  - var-naming[no-role-prefix]
+
+exclude_paths:
+  # These are include_tasks fragments, not standalone playbooks.
+  - playbooks/_provision_iso_vm.yml
+  - playbooks/_provision_clone_vm.yml
+  - .venv/

@@ -1,0 +1,9 @@
+---
+vm_cores: 2
+vm_memory_mb: 4096
+vm_disk_size_gb: 64
+vm_start_after_create: true
+vm_oem_profile: null
+vm_custom_serial: null
+clone_config_retries: 6
+clone_config_delay: 5

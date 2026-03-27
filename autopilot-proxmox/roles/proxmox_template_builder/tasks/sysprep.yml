@@ -1,0 +1,14 @@
+---
+- name: Execute sysprep in guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      - 'C:\Windows\System32\Sysprep\sysprep.exe'
+      - "/generalize"
+      - "/oobe"
+      - "/shutdown"
+    _exec_timeout: 600
+  # sysprep triggers shutdown — the exec-status poll may lose the agent
+  ignore_errors: true  # noqa: ignore-errors

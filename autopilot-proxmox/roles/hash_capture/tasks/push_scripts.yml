@@ -1,0 +1,70 @@
+---
+# Push Get-WindowsAutopilotInfo.ps1 and CaptureHash.ps1 wrapper into the guest.
+
+- name: Read Get-WindowsAutopilotInfo.ps1 from controller
+  ansible.builtin.slurp:
+    src: "{{ playbook_dir }}/../files/Get-WindowsAutopilotInfo.ps1"
+  register: _autopilot_info_script
+
+- name: Create APHVTools directories in guest  # noqa: ignore-errors
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      - "mkdir"
+      - "{{ hash_guest_output_dir }}"
+    _exec_timeout: 30
+  ignore_errors: true  # mkdir may fail if directory already exists
+
+- name: Write Get-WindowsAutopilotInfo.ps1 to guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_file_write.yml"
+  vars:
+    _guest_file: "{{ hash_guest_autopilot_info }}"
+    _guest_content: "{{ _autopilot_info_script.content | b64decode }}"
+
+- name: Build CaptureHash.ps1 wrapper
+  ansible.builtin.set_fact:
+    _capture_script: |
+      # APHVTools Hardware Hash Capture Script
+      $ErrorActionPreference = 'Stop'
+      $outputDir = '{{ hash_guest_output_dir }}'
+
+      if (-not (Test-Path $outputDir)) {
+          New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
+      }
+
+      $serial = (Get-CimInstance -Class Win32_BIOS).SerialNumber
+      if (-not $serial -or $serial -eq 'None') {
+          $serial = (Get-CimInstance -Class Win32_ComputerSystemProduct).UUID
+      }
+      $serial = $serial -replace '[^\w\-]', '_'
+
+      $outputFile = Join-Path $outputDir "${serial}_hwid.csv"
+      $autopilotInfoScript = '{{ hash_guest_autopilot_info }}'
+      if (Test-Path $outputFile) {
+          Remove-Item -Path $outputFile -Force
+      }
+
+      {% if vm_group_tag is defined and vm_group_tag %}
+      & $autopilotInfoScript -OutputFile $outputFile -GroupTag '{{ vm_group_tag }}'
+      {% else %}
+      & $autopilotInfoScript -OutputFile $outputFile
+      {% endif %}
+
+      if (-not (Test-Path $outputFile)) {
+          throw "Expected hardware hash CSV was not created at $outputFile"
+      }
+
+      $outputFileInfo = Get-Item -Path $outputFile
+      if ($outputFileInfo.Length -le 0) {
+          throw "Hardware hash CSV was created at $outputFile but is empty"
+      }
+
+      Write-Output "HASH_CAPTURED:$outputFile"
+
+- name: Write CaptureHash.ps1 to guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_file_write.yml"
+  vars:
+    _guest_file: "{{ hash_guest_script }}"
+    _guest_content: "{{ _capture_script }}"

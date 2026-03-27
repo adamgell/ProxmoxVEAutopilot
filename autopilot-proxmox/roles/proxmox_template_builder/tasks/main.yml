@@ -1,0 +1,41 @@
+---
+# Build a Proxmox template: create VM from ISO, wait for Windows install,
+# sysprep, then convert to template.
+
+- name: Create VM from ISO (without auto-start)
+  ansible.builtin.include_role:
+    name: proxmox_vm_iso
+  vars:
+    vm_start_after_create: false
+
+- name: Start VM for Windows installation
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Wait for guest agent (Windows install completing)
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
+  vars:
+    guest_agent_timeout_seconds: "{{ template_agent_timeout_seconds }}"
+
+- name: Run sysprep
+  ansible.builtin.include_tasks: sysprep.yml
+
+- name: Wait for VM to stop after sysprep
+  ansible.builtin.include_tasks: wait_vm_stopped.yml
+
+- name: Convert VM to template
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/template"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+
+- name: Report template creation
+  ansible.builtin.debug:
+    msg: "Template created from VM {{ vm_name }} (VMID: {{ vm_vmid }}). Use this VMID as proxmox_template_vmid for clone provisioning."

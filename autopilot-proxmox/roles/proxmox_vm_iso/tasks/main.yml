@@ -1,0 +1,88 @@
+---
+# Orchestrator: create a Windows VM from ISO with UEFI/Q35/VirtIO/vTPM/SMBIOS.
+# Sets facts: vm_vmid, vm_name, _vm_identity, _smbios1_string
+
+- name: Load OEM profiles
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../files/oem_profiles.yml"
+    name: _oem_data
+
+- name: Resolve OEM profile
+  when: vm_oem_profile is defined and vm_oem_profile
+  block:
+    - name: Look up selected OEM profile
+      ansible.builtin.set_fact:
+        _oem_profile: "{{ _oem_data.oem_profiles[vm_oem_profile] }}"
+
+    - name: Warn about unsupported chassis type
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: Chassis type {{ _oem_profile.chassis_type }} for profile
+          '{{ vm_oem_profile }}' is skipped — Proxmox 9 does not support smbios2.
+      when: _oem_profile.chassis_type is defined
+
+- name: Get next available VMID
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/cluster/nextid"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _nextid_result
+
+- name: Set VM ID and name
+  ansible.builtin.set_fact:
+    vm_vmid: "{{ _nextid_result.json.data }}"
+    vm_name: "{{ vm_name_prefix }}-{{ _nextid_result.json.data }}"
+
+- name: Generate VM identity (UUID + disk serial)
+  ansible.builtin.set_fact:
+    _vm_identity: "{{ vm_vmid | generate_vm_identity }}"
+
+- name: Generate serial number
+  ansible.builtin.set_fact:
+    _vm_serial: >-
+      {{ (_oem_profile.manufacturer | default(''))
+         | generate_serial_number(custom_serial=vm_custom_serial | default(None)) }}
+
+- name: Build SMBIOS1 string
+  ansible.builtin.set_fact:
+    _smbios1_string: >-
+      {{ {
+           'manufacturer': _oem_profile.manufacturer | default(''),
+           'product': _oem_profile.product | default(''),
+           'family': _oem_profile.family | default(''),
+           'serial': _vm_serial,
+           'sku': _oem_profile.sku | default(''),
+           'uuid': _vm_identity.uuid
+         } | proxmox_smbios1 }}
+  when: _oem_profile is defined or _vm_identity.uuid is defined
+
+- name: Set SMBIOS1 to UUID-only when no OEM profile
+  ansible.builtin.set_fact:
+    _smbios1_string: "uuid={{ _vm_identity.uuid }}"
+  when: _oem_profile is not defined and _vm_identity.uuid is defined and _smbios1_string is not defined
+
+- name: Create VM from ISO
+  ansible.builtin.include_tasks: create_vm.yml
+
+- name: Wait for creation task
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_task.yml"
+  vars:
+    _task_upid: "{{ _create_result.json.data }}"
+
+- name: Start VM
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  when: vm_start_after_create | default(true) | bool
+
+- name: Report created VM
+  ansible.builtin.debug:
+    msg: >-
+      Created VM '{{ vm_name }}' (VMID: {{ vm_vmid }},
+      UUID: {{ _vm_identity.uuid }},
+      Disk Serial: {{ _vm_identity.disk_serial }})

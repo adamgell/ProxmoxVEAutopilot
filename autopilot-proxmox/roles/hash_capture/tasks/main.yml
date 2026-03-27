@@ -1,0 +1,13 @@
+---
+# Capture hardware hash from a guest VM for Windows Autopilot.
+# Mirrors Publish-ProxmoxHashCaptureScript.ps1 + Get-ProxmoxVMHardwareHash.ps1.
+# Required variable: vm_vmid
+
+- name: Push capture scripts to guest
+  ansible.builtin.include_tasks: push_scripts.yml
+
+- name: Execute hash capture
+  ansible.builtin.include_tasks: execute_capture.yml
+
+- name: Retrieve CSV from guest
+  ansible.builtin.include_tasks: retrieve_csv.yml

@@ -1,0 +1,40 @@
+---
+# Update the cloned VM configuration with APHVTools settings.
+# Retries on lock contention (mirrors PowerShell maxConfigAttempts=6, 5s delay).
+
+- name: Build config update body
+  ansible.builtin.set_fact:
+    _config_body:
+      name: "{{ vm_name }}"
+      cores: "{{ vm_cores }}"
+      memory: "{{ vm_memory_mb }}"
+      cpu: "host"
+      balloon: "0"
+      agent: "enabled=1,type=virtio"
+      scsi0: "{{ _current_scsi0 | proxmox_disk_serial(_vm_identity.disk_serial) }}"
+      net0: "virtio,bridge={{ proxmox_bridge }},firewall=0{{ ',tag=' + (proxmox_vlan_tag | string) if proxmox_vlan_tag else '' }}"
+
+- name: Add SMBIOS1 to config
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'smbios1': _smbios1_string}) }}"
+  when: _smbios1_string is defined and _smbios1_string
+
+- name: Add VirtIO ISO to config
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
+  when: proxmox_virtio_iso is defined and proxmox_virtio_iso
+
+- name: Update cloned VM configuration with lock-contention retry
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+    method: PUT
+    body_format: form-urlencoded
+    body: "{{ _config_body }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  register: _config_result
+  retries: "{{ clone_config_retries | default(6) }}"
+  delay: "{{ clone_config_delay | default(5) }}"
+  until: _config_result.status == 200

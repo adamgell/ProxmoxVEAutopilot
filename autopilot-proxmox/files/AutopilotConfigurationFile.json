@@ -1,0 +1,10 @@
+{
+  "Comment_File": "Placeholder — replace with your tenant's Autopilot profile JSON or fetch via Get-AutopilotPolicy.ps1 before running playbooks.",
+  "CloudAssignedTenantId": "",
+  "CloudAssignedDomainJoinMethod": 0,
+  "CloudAssignedOobeConfig": 0,
+  "CloudAssignedLanguage": "",
+  "CloudAssignedTenantDomain": "",
+  "Version": 2049,
+  "ZtdCorrelationId": ""
+}

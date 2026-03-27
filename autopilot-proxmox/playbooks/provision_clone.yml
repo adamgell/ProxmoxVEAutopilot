@@ -1,0 +1,26 @@
+---
+# Provision Windows VMs by cloning a template with Autopilot injection and hash capture.
+#
+# Usage:
+#   ansible-playbook playbooks/provision_clone.yml --ask-vault-pass \
+#     -e proxmox_template_vmid=9000 -e vm_oem_profile=dell-latitude-5540
+#   ansible-playbook playbooks/provision_clone.yml -e vm_count=5
+
+- name: Provision Windows VMs from template clone
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    - name: Validate template VMID is set
+      ansible.builtin.assert:
+        that:
+          - proxmox_template_vmid is defined
+          - proxmox_template_vmid
+        fail_msg: "proxmox_template_vmid must be set. Use -e proxmox_template_vmid=<vmid> or set it in vars.yml."
+
+  tasks:
+    - name: Provision each VM
+      ansible.builtin.include_tasks: _provision_clone_vm.yml
+      loop: "{{ range(1, (vm_count | int) + 1) | list }}"
+      loop_control:
+        loop_var: _vm_index

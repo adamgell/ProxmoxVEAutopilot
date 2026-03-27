@@ -1,0 +1,12 @@
+---
+- name: Wait for VM to reach stopped state after sysprep
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/current"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _vm_status
+  until: _vm_status.json.data.status == "stopped"
+  retries: "{{ sysprep_vm_stop_timeout_retries }}"
+  delay: "{{ sysprep_vm_stop_timeout_delay }}"

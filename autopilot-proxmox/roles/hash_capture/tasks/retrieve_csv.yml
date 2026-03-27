@@ -1,0 +1,36 @@
+---
+# Read the hardware hash CSV back from the guest and save to the controller.
+
+- name: Read CSV from guest via guest-exec
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "powershell.exe"
+      - "-ExecutionPolicy"
+      - "Bypass"
+      - "-Command"
+      - "Get-Content -Path '{{ _captured_csv_path }}' -Raw"
+    _exec_timeout: 60
+
+- name: Validate CSV content was retrieved
+  ansible.builtin.assert:
+    that:
+      - _guest_exec_status.json.data.exitcode == 0
+      - _guest_exec_status.json.data['out-data'] | default('') | length > 0
+    fail_msg: "Failed to read hardware hash CSV from VM {{ vm_vmid }}"
+
+- name: Ensure hash output directory exists on controller
+  ansible.builtin.file:
+    path: "{{ hash_output_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Save hardware hash CSV to controller
+  ansible.builtin.copy:
+    content: "{{ _guest_exec_status.json.data['out-data'] }}"
+    dest: "{{ hash_output_dir }}/{{ vm_name }}_hwid.csv"
+    mode: "0644"
+
+- name: Report hash capture result
+  ansible.builtin.debug:
+    msg: "Hardware hash saved to {{ hash_output_dir }}/{{ vm_name }}_hwid.csv"

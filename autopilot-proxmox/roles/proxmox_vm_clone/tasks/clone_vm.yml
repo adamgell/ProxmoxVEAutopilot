@@ -1,0 +1,15 @@
+---
+- name: "Clone template to new VM {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/clone"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      newid: "{{ vm_vmid }}"
+      name: "{{ vm_name }}"
+      full: "1"
+      storage: "{{ proxmox_storage }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _clone_result

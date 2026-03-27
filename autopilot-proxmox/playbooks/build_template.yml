@@ -1,0 +1,14 @@
+---
+# Build a Proxmox template from a Windows ISO.
+# The resulting template can be used with provision_clone.yml.
+#
+# Usage:
+#   ansible-playbook playbooks/build_template.yml --ask-vault-pass
+#   ansible-playbook playbooks/build_template.yml -e vm_oem_profile=generic-desktop
+
+- name: Build Windows template from ISO
+  hosts: localhost
+  gather_facts: false
+
+  roles:
+    - role: proxmox_template_builder

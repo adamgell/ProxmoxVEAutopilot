@@ -1,0 +1,29 @@
+---
+# Execute the hash capture script in the guest and wait for completion.
+
+- name: Run CaptureHash.ps1 in guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "powershell.exe"
+      - "-ExecutionPolicy"
+      - "Bypass"
+      - "-Command"
+      - "& '{{ hash_guest_script }}'"
+    _exec_timeout: "{{ hash_capture_timeout_seconds }}"
+
+- name: Validate hash capture succeeded
+  ansible.builtin.assert:
+    that:
+      - _guest_exec_status.json.data.exitcode == 0
+      - "'HASH_CAPTURED:' in (_guest_exec_status.json.data['out-data'] | default(''))"
+    fail_msg: >-
+      Hash capture failed on VM {{ vm_vmid }}.
+      Exit code: {{ _guest_exec_status.json.data.exitcode | default('unknown') }}.
+      Stderr: {{ _guest_exec_status.json.data['err-data'] | default('none') }}
+
+- name: Extract captured CSV path
+  ansible.builtin.set_fact:
+    _captured_csv_path: >-
+      {{ (_guest_exec_status.json.data['out-data']
+          | regex_search('HASH_CAPTURED:(.+)', '\1'))[0] | trim }}

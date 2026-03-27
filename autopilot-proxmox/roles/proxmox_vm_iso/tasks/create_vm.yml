@@ -1,0 +1,56 @@
+---
+# POST to Proxmox API to create a UEFI/Q35/VirtIO Windows VM from ISO.
+# Mirrors New-ProxmoxDevice.ps1 configuration exactly.
+
+- name: Build network config string
+  ansible.builtin.set_fact:
+    _net_config: >-
+      virtio,bridge={{ proxmox_bridge }},firewall=0{{ ',tag=' + (proxmox_vlan_tag | string) if proxmox_vlan_tag else '' }}
+
+- name: Build OS disk config string
+  ansible.builtin.set_fact:
+    _os_disk_config: >-
+      {{ proxmox_storage }}:{{ vm_disk_size_gb }},iothread=1,ssd=1,discard=on,serial={{ _vm_identity.disk_serial }}
+
+- name: Build VM creation body
+  ansible.builtin.set_fact:
+    _create_body:
+      vmid: "{{ vm_vmid }}"
+      name: "{{ vm_name }}"
+      bios: "ovmf"
+      machine: "q35"
+      ostype: "{{ vm_ostype }}"
+      cpu: "host"
+      cores: "{{ vm_cores }}"
+      memory: "{{ vm_memory_mb }}"
+      balloon: "0"
+      agent: "enabled=1,type=virtio"
+      tablet: "1"
+      scsihw: "virtio-scsi-single"
+      efidisk0: "{{ proxmox_storage }}:0,efitype=4m,pre-enrolled-keys=1"
+      tpmstate0: "{{ proxmox_storage }}:1,version=v2.0"
+      scsi0: "{{ _os_disk_config }}"
+      net0: "{{ _net_config }}"
+      ide2: "{{ proxmox_windows_iso }},media=cdrom"
+      boot: "order=ide2;scsi0"
+
+- name: Add VirtIO drivers ISO
+  ansible.builtin.set_fact:
+    _create_body: "{{ _create_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
+  when: proxmox_virtio_iso is defined and proxmox_virtio_iso
+
+- name: Add SMBIOS1 string
+  ansible.builtin.set_fact:
+    _create_body: "{{ _create_body | combine({'smbios1': _smbios1_string}) }}"
+  when: _smbios1_string is defined and _smbios1_string
+
+- name: "Create VM on Proxmox node {{ proxmox_node }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu"
+    method: POST
+    body_format: form-urlencoded
+    body: "{{ _create_body }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _create_result

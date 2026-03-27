@@ -1,0 +1,18 @@
+---
+# Write a file into a guest VM via the QEMU guest agent.
+# Required variables:
+#   vm_vmid        - target VM ID
+#   _guest_file    - full path inside the guest
+#   _guest_content - file content to write
+
+- name: "Write file to guest VM {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/file-write"
+    method: POST
+    body_format: json
+    body:
+      file: "{{ _guest_file }}"
+      content: "{{ _guest_content }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"

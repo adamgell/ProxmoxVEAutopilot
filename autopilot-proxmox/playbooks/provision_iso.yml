@@ -1,0 +1,17 @@
+---
+# Provision Windows VMs from ISO with Autopilot injection and hash capture.
+#
+# Usage:
+#   ansible-playbook playbooks/provision_iso.yml --ask-vault-pass
+#   ansible-playbook playbooks/provision_iso.yml -e vm_count=3 -e vm_oem_profile=lenovo-t14
+
+- name: Provision Windows VMs from ISO
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Provision each VM
+      ansible.builtin.include_tasks: _provision_iso_vm.yml
+      loop: "{{ range(1, (vm_count | int) + 1) | list }}"
+      loop_control:
+        loop_var: _vm_index

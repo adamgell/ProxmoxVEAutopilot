@@ -1,0 +1,39 @@
+---
+# Upload hardware hash CSVs to Windows Autopilot via PowerShell.
+# Requires pwsh (PowerShell Core) on the controller.
+#
+# Usage:
+#   ansible-playbook playbooks/upload_hashes.yml --ask-vault-pass
+
+- name: Upload hardware hashes to Intune
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Check for hash files
+      ansible.builtin.find:
+        paths: "{{ hash_output_dir }}"
+        patterns: "*_hwid.csv"
+      register: _hash_files
+
+    - name: Fail if no hash files found
+      ansible.builtin.fail:
+        msg: "No hardware hash CSV files found in {{ hash_output_dir }}"
+      when: _hash_files.matched == 0
+
+    - name: Upload hashes via pwsh Import-VMHashToAutopilot
+      ansible.builtin.command:
+        cmd: >-
+          pwsh -Command "
+            $env:ENTRA_APP_ID = '{{ vault_entra_app_id }}';
+            $env:ENTRA_TENANT_ID = '{{ vault_entra_tenant_id }}';
+            $env:ENTRA_APP_SECRET = '{{ vault_entra_app_secret }}';
+            Import-Module '{{ playbook_dir }}/../Old_Legacy_Powershell_Code/Public/Import-VMHashToAutopilot.ps1';
+            Import-VMHashToAutopilot -CsvPath '{{ hash_output_dir }}'
+          "
+      register: _upload_result
+      changed_when: "'imported' in _upload_result.stdout | lower"
+
+    - name: Show upload results
+      ansible.builtin.debug:
+        msg: "{{ _upload_result.stdout_lines }}"
