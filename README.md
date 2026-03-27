@@ -98,7 +98,3 @@ pytest tests/ -v                              # 22 unit tests for filter plugin
 ansible-playbook --syntax-check playbooks/*.yml  # YAML syntax validation
 ansible-lint playbooks/ roles/                # Lint (production profile)
 ```
-
-## Legacy PowerShell
-
-The `Old_Legacy_Powershell_Code/` directory contains the original APHVTools PowerShell module that this project was converted from. It is kept for reference. The `Get-WindowsAutopilotInfo.ps1` script in the root is Microsoft's official hardware hash capture tool, which is bundled into guest VMs during hash capture.
