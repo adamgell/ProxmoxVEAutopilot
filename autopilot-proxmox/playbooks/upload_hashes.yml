@@ -1,11 +1,12 @@
 ---
 # Upload hardware hash CSVs to Windows Autopilot via PowerShell.
-# Requires pwsh (PowerShell Core) and the WindowsAutopilotIntune module on the controller.
+# Requires pwsh (PowerShell Core) and modules on the controller.
 #
 # Usage:
 #   ansible-playbook playbooks/upload_hashes.yml --ask-vault-pass
 #
 # Prerequisites:
+#   pwsh -Command "Install-Module -Name Microsoft.Graph.Authentication -Force"
 #   pwsh -Command "Install-Module -Name WindowsAutopilotIntune -MinimumVersion 5.4.0 -Force"
 
 - name: Upload hardware hashes to Intune
@@ -24,22 +25,19 @@
         msg: "No hardware hash CSV files found in {{ hash_output_dir }}"
       when: _hash_files.matched == 0
 
-    - name: Upload each hash CSV to Autopilot
-      ansible.builtin.command:
-        cmd: >-
-          pwsh -Command "
-            Import-Module WindowsAutopilotIntune;
-            Connect-MgGraph -ClientId '{{ vault_entra_app_id }}'
-              -TenantId '{{ vault_entra_tenant_id }}'
-              -ClientSecret (ConvertTo-SecureString '{{ vault_entra_app_secret }}' -AsPlainText -Force);
-            Import-AutopilotCSV -csvFile '{{ item.path }}'
-          "
-      loop: "{{ _hash_files.files }}"
-      loop_control:
-        label: "{{ item.path | basename }}"
+    - name: Upload all hashes to Autopilot
+      ansible.builtin.shell: >-
+        pwsh -NonInteractive -File '{{ playbook_dir }}/../scripts/upload_hashes.ps1'
+      environment:
+        ENTRA_APP_ID: "{{ vault_entra_app_id }}"
+        ENTRA_TENANT_ID: "{{ vault_entra_tenant_id }}"
+        ENTRA_APP_SECRET: "{{ vault_entra_app_secret }}"
+        HASH_DIR: "{{ hash_output_dir }}"
+      async: 600
+      poll: 10
       register: _upload_result
-      changed_when: "'imported' in (_upload_result.stdout | default('') | lower)"
+      changed_when: true
 
     - name: Show upload results
       ansible.builtin.debug:
-        msg: "Uploaded {{ _hash_files.matched }} hash file(s) to Autopilot"
+        msg: "{{ _upload_result.stdout_lines }}"

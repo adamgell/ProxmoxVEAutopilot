@@ -51,7 +51,7 @@ vm_group_tag: null
 # Autopilot
 # =============================================================================
 autopilot_config_path: "{{ playbook_dir }}/../files/AutopilotConfigurationFile.json"
-autopilot_skip: false
+autopilot_skip: true
 capture_hardware_hash: true
 hash_output_dir: "{{ playbook_dir }}/../output/hashes"
 
