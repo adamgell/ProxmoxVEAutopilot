@@ -1,0 +1,15 @@
+services:
+  autopilot:
+    build: .
+    container_name: autopilot
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml:ro
+      - autopilot-data:/app/output
+      - autopilot-jobs:/app/jobs
+    restart: unless-stopped
+
+volumes:
+  autopilot-data:
+  autopilot-jobs:
