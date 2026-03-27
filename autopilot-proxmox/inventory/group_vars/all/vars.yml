@@ -24,11 +24,12 @@ proxmox_vlan_tag: null
 # =============================================================================
 proxmox_windows_iso: "isos:iso/en-us_windows_11_business_editions_version_25h2_updated_jan_2026_x64_dvd_09c1e011.iso"
 proxmox_virtio_iso: "isos:iso/virtio-win-0.1.285.iso"
+proxmox_answer_iso: "isos:iso/autounattend.iso"
 
 # =============================================================================
 # Template settings (for clone provisioning)
 # =============================================================================
-proxmox_template_vmid: null
+proxmox_template_vmid: 105
 
 # =============================================================================
 # VM defaults
@@ -52,7 +53,7 @@ vm_group_tag: null
 autopilot_config_path: "{{ playbook_dir }}/../files/AutopilotConfigurationFile.json"
 autopilot_skip: false
 capture_hardware_hash: true
-hash_output_dir: "/opt/autopilot-proxmox/hashes"
+hash_output_dir: "{{ playbook_dir }}/../output/hashes"
 
 # =============================================================================
 # Timeouts

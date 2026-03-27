@@ -3,6 +3,9 @@
 # Mirrors Publish-ProxmoxAutoPilotConfig.ps1.
 # Required variable: vm_vmid
 
+- name: Wait for guest agent before Autopilot injection
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
+
 - name: Read Autopilot config from controller
   ansible.builtin.slurp:
     src: "{{ autopilot_config_path }}"

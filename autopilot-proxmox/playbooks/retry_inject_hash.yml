@@ -1,0 +1,18 @@
+---
+# One-off: retry autopilot inject + hash capture on an existing VM.
+# Usage: ansible-playbook playbooks/retry_inject_hash.yml -e vm_vmid=106 -e vm_name=autopilot-106
+
+- name: Retry Autopilot inject and hash capture
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Inject Autopilot config
+      ansible.builtin.include_role:
+        name: autopilot_inject
+      when: not (autopilot_skip | default(false) | bool)
+
+    - name: Capture hardware hash
+      ansible.builtin.include_role:
+        name: hash_capture
+      when: capture_hardware_hash | default(true) | bool

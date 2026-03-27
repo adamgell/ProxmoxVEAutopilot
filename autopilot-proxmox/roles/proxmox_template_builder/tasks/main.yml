@@ -16,6 +16,24 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
 
+- name: Wait for Windows bootloader prompt
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Send keypresses to boot from CD
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/monitor"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      command: "sendkey spc"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  loop: [1, 2, 3]
+  loop_control:
+    pause: 2
+
 - name: Wait for guest agent (Windows install completing)
   ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
   vars:

@@ -39,6 +39,11 @@
     _create_body: "{{ _create_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
   when: proxmox_virtio_iso is defined and proxmox_virtio_iso | default('') | length > 0
 
+- name: Add answer ISO for unattended install
+  ansible.builtin.set_fact:
+    _create_body: "{{ _create_body | combine({'sata0': proxmox_answer_iso + ',media=cdrom'}) }}"
+  when: proxmox_answer_iso is defined and proxmox_answer_iso | default('') | length > 0
+
 - name: Add SMBIOS1 string
   ansible.builtin.set_fact:
     _create_body: "{{ _create_body | combine({'smbios1': _smbios1_string}) }}"

@@ -15,4 +15,5 @@
       content: "{{ _guest_content }}"
     headers:
       Authorization: "{{ proxmox_api_auth_header }}"
+      Content-Type: "application/json; charset=utf-8"
     validate_certs: "{{ proxmox_validate_certs }}"
