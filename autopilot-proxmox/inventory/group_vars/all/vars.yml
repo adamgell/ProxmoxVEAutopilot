@@ -2,9 +2,9 @@
 # =============================================================================
 # Proxmox connection
 # =============================================================================
-proxmox_host: "192.168.1.100"
+proxmox_host: "192.168.2.200"
 proxmox_port: 8006
-proxmox_node: "pve"
+proxmox_node: "pve2"
 proxmox_api_base: "https://{{ proxmox_host }}:{{ proxmox_port }}/api2/json"
 proxmox_validate_certs: false
 
@@ -14,16 +14,16 @@ proxmox_api_auth_header: "PVEAPIToken={{ vault_proxmox_api_token_id }}={{ vault_
 # =============================================================================
 # Storage and networking
 # =============================================================================
-proxmox_storage: "local-lvm"
-proxmox_iso_storage: "local"
+proxmox_storage: "ssdpool"
+proxmox_iso_storage: "isos"
 proxmox_bridge: "vmbr0"
 proxmox_vlan_tag: null
 
 # =============================================================================
 # ISO paths (Proxmox storage notation)
 # =============================================================================
-proxmox_windows_iso: "local:iso/Win11_24H2.iso"
-proxmox_virtio_iso: "local:iso/virtio-win.iso"
+proxmox_windows_iso: "isos:iso/en-us_windows_11_business_editions_version_25h2_updated_jan_2026_x64_dvd_09c1e011.iso"
+proxmox_virtio_iso: "isos:iso/virtio-win-0.1.285.iso"
 
 # =============================================================================
 # Template settings (for clone provisioning)
@@ -42,7 +42,7 @@ vm_name_prefix: "autopilot"
 vm_start_after_create: true
 
 # OEM profile key (from files/oem_profiles.yml), e.g. "lenovo-t14"
-vm_oem_profile: null
+vm_oem_profile: "generic-desktop"
 vm_custom_serial: null
 vm_group_tag: null
 

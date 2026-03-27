@@ -8,7 +8,7 @@
     name: _oem_data
 
 - name: Resolve OEM profile
-  when: vm_oem_profile is defined and vm_oem_profile
+  when: vm_oem_profile is defined and vm_oem_profile | default('') | length > 0
   block:
     - name: Look up selected OEM profile
       ansible.builtin.set_fact:

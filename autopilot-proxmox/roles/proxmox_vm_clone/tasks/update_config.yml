@@ -17,12 +17,12 @@
 - name: Add SMBIOS1 to config
   ansible.builtin.set_fact:
     _config_body: "{{ _config_body | combine({'smbios1': _smbios1_string}) }}"
-  when: _smbios1_string is defined and _smbios1_string
+  when: _smbios1_string is defined and _smbios1_string | default('') | length > 0
 
 - name: Add VirtIO ISO to config
   ansible.builtin.set_fact:
     _config_body: "{{ _config_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
-  when: proxmox_virtio_iso is defined and proxmox_virtio_iso
+  when: proxmox_virtio_iso is defined and proxmox_virtio_iso | default('') | length > 0
 
 - name: Update cloned VM configuration with lock-contention retry
   ansible.builtin.uri:

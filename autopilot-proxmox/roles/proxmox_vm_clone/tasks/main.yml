@@ -8,7 +8,7 @@
     name: _oem_data
 
 - name: Resolve OEM profile
-  when: vm_oem_profile is defined and vm_oem_profile
+  when: vm_oem_profile is defined and vm_oem_profile | default('') | length > 0
   block:
     - name: Look up selected OEM profile
       ansible.builtin.set_fact:
@@ -94,7 +94,7 @@
 
 - name: Resize disk if needed
   ansible.builtin.include_tasks: resize_disk.yml
-  when: vm_disk_size_gb is defined and vm_disk_size_gb
+  when: vm_disk_size_gb is defined and vm_disk_size_gb | int > 0
 
 - name: Start VM
   ansible.builtin.uri:

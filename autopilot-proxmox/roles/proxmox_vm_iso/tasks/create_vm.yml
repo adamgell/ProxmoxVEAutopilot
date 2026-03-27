@@ -37,12 +37,12 @@
 - name: Add VirtIO drivers ISO
   ansible.builtin.set_fact:
     _create_body: "{{ _create_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
-  when: proxmox_virtio_iso is defined and proxmox_virtio_iso
+  when: proxmox_virtio_iso is defined and proxmox_virtio_iso | default('') | length > 0
 
 - name: Add SMBIOS1 string
   ansible.builtin.set_fact:
     _create_body: "{{ _create_body | combine({'smbios1': _smbios1_string}) }}"
-  when: _smbios1_string is defined and _smbios1_string
+  when: _smbios1_string is defined and _smbios1_string | default('') | length > 0
 
 - name: "Create VM on Proxmox node {{ proxmox_node }}"
   ansible.builtin.uri:
