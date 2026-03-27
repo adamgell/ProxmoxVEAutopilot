@@ -1,0 +1,6 @@
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+jinja2==3.1.*
+websockets==15.*
+pyyaml==6.*
+python-multipart==0.0.*

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Hash Files - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Captured Hardware Hashes</h2>
+{% if hash_files %}
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><th>Filename</th><th>Size</th><th>Modified</th><th>Download</th></tr>
+{% for f in hash_files %}
+<tr>
+  <td>{{ f.name }}</td>
+  <td>{{ f.size }}</td>
+  <td>{{ f.modified }}</td>
+  <td><a href="/api/hashes/{{ f.name }}">Download</a></td>
+</tr>
+{% endfor %}
+</table>
+<br>
+<p><a href="/upload">Upload these to Intune</a></p>
+{% else %}
+<p><i>No hash files yet. <a href="/provision">Provision some VMs</a> to capture hashes.</i></p>
+{% endif %}
+{% endblock %}

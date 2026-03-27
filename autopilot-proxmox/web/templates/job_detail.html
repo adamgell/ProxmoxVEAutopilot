@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id }} - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Job: {{ job.id }}</h2>
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><td><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
+<tr><td><b>Status</b></td><td>{% if job.status == 'running' %}<b>RUNNING</b>{% elif job.status == 'complete' %}OK{% else %}<font color="red">FAILED (exit {{ job.exit_code }})</font>{% endif %}</td></tr>
+<tr><td><b>Started</b></td><td>{{ job.started[:19] }}</td></tr>
+<tr><td><b>Args</b></td><td>{{ job.args }}</td></tr>
+</table>
+<h3>Output</h3>
+<div style="background-color: black; color: #00ff00; padding: 10px; font-family: monospace; font-size: 13px; white-space: pre-wrap; overflow-y: scroll; max-height: 600px;" id="output">{{ log_content }}</div>
+{% if job.status == 'running' %}
+<script>
+var output = document.getElementById('output');
+var ws = new WebSocket('ws://' + window.location.host + '/api/jobs/{{ job.id }}/stream');
+ws.onmessage = function(event) {
+  output.textContent += event.data;
+  output.scrollTop = output.scrollHeight;
+};
+ws.onclose = function() {
+  window.location.reload();
+};
+</script>
+{% endif %}
+{% endblock %}

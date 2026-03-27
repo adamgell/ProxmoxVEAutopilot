@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Home - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Status</h2>
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><td><b>Running Jobs</b></td><td>{{ running_count }}</td></tr>
+<tr><td><b>Hash Files</b></td><td>{{ hash_count }}</td></tr>
+<tr><td><b>Total Jobs</b></td><td>{{ total_jobs }}</td></tr>
+</table>
+<h2>Actions</h2>
+<ul>
+<li><a href="/provision">Provision VMs from template</a></li>
+<li><a href="/template">Build a new template from ISO</a></li>
+<li><a href="/upload">Upload hardware hashes to Intune</a></li>
+<li><a href="/hashes">Browse captured hash files</a></li>
+<li><a href="/jobs">View job history</a></li>
+</ul>
+{% endblock %}

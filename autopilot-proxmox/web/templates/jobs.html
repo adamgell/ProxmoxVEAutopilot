@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Jobs - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Job History</h2>
+{% if jobs %}
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><th>ID</th><th>Playbook</th><th>Status</th><th>Started</th><th>Duration</th><th>Args</th></tr>
+{% for job in jobs %}
+<tr>
+  <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
+  <td>{{ job.playbook }}</td>
+  <td>{% if job.status == 'running' %}<b>RUNNING</b>{% elif job.status == 'complete' %}OK{% else %}<font color="red">FAILED</font>{% endif %}</td>
+  <td>{{ job.started[:19] }}</td>
+  <td>{{ job.duration or '' }}</td>
+  <td><font size="2">{{ job.args }}</font></td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<p><i>No jobs yet.</i></p>
+{% endif %}
+{% endblock %}

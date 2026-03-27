@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Provision VMs - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Provision VMs from Template</h2>
+<form method="POST" action="/api/jobs/provision">
+<table border="0" cellpadding="3">
+<tr>
+  <td><b>OEM Profile:</b></td>
+  <td><select name="profile">
+    {% for key, profile in profiles.items() %}
+    <option value="{{ key }}">{{ key }} - {{ profile.manufacturer }} {{ profile.product }}</option>
+    {% endfor %}
+  </select></td>
+</tr>
+<tr>
+  <td><b>VM Count:</b></td>
+  <td><input type="number" name="count" value="1" min="1" max="50"></td>
+</tr>
+<tr>
+  <td><b>Group Tag:</b></td>
+  <td><input type="text" name="group_tag" value="" size="30"> <font size="2">(optional)</font></td>
+</tr>
+<tr>
+  <td></td>
+  <td><input type="submit" value="Provision VMs"></td>
+</tr>
+</table>
+</form>
+{% endblock %}
