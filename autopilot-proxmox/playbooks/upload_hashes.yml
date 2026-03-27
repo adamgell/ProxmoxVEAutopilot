@@ -26,8 +26,8 @@
       when: _hash_files.matched == 0
 
     - name: Upload all hashes to Autopilot
-      ansible.builtin.shell: >-
-        pwsh -NonInteractive -File '{{ playbook_dir }}/../scripts/upload_hashes.ps1'
+      ansible.builtin.command:
+        cmd: "pwsh -NonInteractive -File {{ playbook_dir }}/../scripts/upload_hashes.ps1"
       environment:
         ENTRA_APP_ID: "{{ vault_entra_app_id }}"
         ENTRA_TENANT_ID: "{{ vault_entra_tenant_id }}"
