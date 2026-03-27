@@ -2,7 +2,7 @@
 
 Ansible project for provisioning Windows VMs on Proxmox with OEM-accurate SMBIOS fields, Windows Autopilot configuration injection, and hardware hash capture for Intune registration.
 
-Converted from the [APHVTools](../Old_Legacy_Powershell_Code/) PowerShell module.
+Converted from the APHVTools PowerShell module.
 
 ## Prerequisites
 
