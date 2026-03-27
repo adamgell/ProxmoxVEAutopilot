@@ -1,0 +1,17 @@
+---
+# Copy this file to vault.yml and fill in your credentials:
+#   cp vault.yml.example vault.yml
+#
+# Then encrypt it:
+#   ansible-vault encrypt inventory/group_vars/all/vault.yml
+#
+# vault.yml is gitignored and will never be committed.
+
+# Proxmox API token (from: pveum user token add autopilot@pve ansible --privsep=0)
+vault_proxmox_api_token_id: "autopilot@pve!ansible"
+vault_proxmox_api_token_secret: "YOUR-TOKEN-SECRET-HERE"
+
+# Entra ID / Azure AD app registration (for hash upload via pwsh)
+vault_entra_app_id: ""
+vault_entra_tenant_id: ""
+vault_entra_app_secret: ""

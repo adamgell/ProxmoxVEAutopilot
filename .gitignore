@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 *.retry
 .pytest_cache/
+
+# Secrets — never commit the real vault
+autopilot-proxmox/inventory/group_vars/all/vault.yml
