@@ -7,6 +7,9 @@
   gather_facts: false
 
   tasks:
+    - name: Wait for guest agent
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_guest_agent.yml"
+
     - name: Inject Autopilot config
       ansible.builtin.include_role:
         name: autopilot_inject

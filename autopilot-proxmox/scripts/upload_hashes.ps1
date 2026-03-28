@@ -73,3 +73,5 @@ foreach ($job in $jobs) {
 
 Write-Host "`n--- Upload Summary ---" -ForegroundColor Cyan
 Write-Host "Total: $($csvFiles.Count) | Success: $successCount | Failed: $failCount"
+
+if ($failCount -gt 0) { exit 1 }

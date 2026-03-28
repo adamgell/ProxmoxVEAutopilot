@@ -154,31 +154,45 @@ def _fetch_settings_options():
     return options
 
 
+def _format_yaml_value(value):
+    """Format a Python value as a safe YAML scalar."""
+    if value is None or value == "null" or value == "":
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    # Use yaml.dump for safe string escaping
+    return yaml.dump(value, default_flow_style=True).strip()
+
+
 def _save_vars(updates):
     """Update vars.yml by line-level replacement to preserve comments."""
+    if not VARS_PATH.exists():
+        VARS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        VARS_PATH.write_text("---\n")
+
     lines = VARS_PATH.read_text().splitlines()
+    matched_keys = set()
     new_lines = []
     for line in lines:
-        matched = False
+        replaced = False
         for key, value in updates.items():
             pattern = rf'^(\s*{re.escape(key)}\s*:)\s*.*$'
             m = re.match(pattern, line)
             if m:
-                # Format value appropriately
-                if value is None or value == "null" or value == "":
-                    formatted = "null"
-                elif isinstance(value, bool):
-                    formatted = "true" if value else "false"
-                elif isinstance(value, int):
-                    formatted = str(value)
-                else:
-                    # Quote strings that contain special chars
-                    formatted = f'"{value}"'
-                new_lines.append(f"{m.group(1)} {formatted}")
-                matched = True
+                new_lines.append(f"{m.group(1)} {_format_yaml_value(value)}")
+                matched_keys.add(key)
+                replaced = True
                 break
-        if not matched:
+        if not replaced:
             new_lines.append(line)
+
+    # Append keys not already in the file
+    for key, value in updates.items():
+        if key not in matched_keys:
+            new_lines.append(f"{key}: {_format_yaml_value(value)}")
+
     VARS_PATH.write_text("\n".join(new_lines) + "\n")
 
 app = FastAPI(title="Proxmox VE Autopilot")
@@ -311,21 +325,15 @@ def _graph_api(path, method="GET", json_body=None):
     if not token:
         return None
     headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://graph.microsoft.com/beta{path}"
     if method == "GET":
-        resp = requests.get(
-            f"https://graph.microsoft.com/beta{path}",
-            headers=headers, timeout=15,
-        )
+        resp = requests.get(url, headers=headers, timeout=15)
     elif method == "DELETE":
-        resp = requests.delete(
-            f"https://graph.microsoft.com/beta{path}",
-            headers=headers, timeout=15,
-        )
+        resp = requests.delete(url, headers=headers, timeout=15)
+        resp.raise_for_status()
         return {"status": resp.status_code}
     elif method == "POST":
-        resp = requests.post(
-            f"https://graph.microsoft.com/beta{path}",
-            headers=headers, json=json_body, timeout=15,
+        resp = requests.post(url, headers=headers, json=json_body, timeout=15,
         )
     resp.raise_for_status()
     return resp.json()
@@ -360,9 +368,11 @@ def get_autopilot_devices():
 
 def load_oem_profiles():
     profiles_path = FILES_DIR / "oem_profiles.yml"
+    if not profiles_path.exists():
+        return {}
     with open(profiles_path) as f:
         data = yaml.safe_load(f)
-    return data.get("oem_profiles", {})
+    return (data or {}).get("oem_profiles", {})
 
 
 def _serial_to_oem(serial):

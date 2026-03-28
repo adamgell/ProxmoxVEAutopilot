@@ -20,7 +20,8 @@
 <script>
 var output = document.getElementById('output');
 var gotData = false;
-var ws = new WebSocket('ws://' + window.location.host + '/api/jobs/{{ job.id }}/stream');
+var wsScheme = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+var ws = new WebSocket(wsScheme + window.location.host + '/api/jobs/{{ job.id }}/stream');
 ws.onmessage = function(event) {
   gotData = true;
   output.textContent += event.data;

@@ -1,18 +1,17 @@
-import asyncio
 import json
 import os
 import subprocess
 import threading
-import time
 from datetime import datetime, timezone
 
 
 class JobManager:
-    """Manages Ansible playbook runs as subprocesses."""
+    """Manages Ansible playbook runs as subprocesses. Thread-safe."""
 
     def __init__(self, jobs_dir="jobs"):
         self.jobs_dir = jobs_dir
         os.makedirs(jobs_dir, exist_ok=True)
+        self._lock = threading.Lock()
         self._active = {}
         self._index = self._load_index()
 
@@ -47,8 +46,6 @@ class JobManager:
             "exit_code": None,
             "args": args or {},
         }
-        self._index.append(entry)
-        self._save_index()
 
         log_file = open(log_path, "w")
         proc = subprocess.Popen(
@@ -58,11 +55,13 @@ class JobManager:
             text=True,
         )
 
-        self._active[job_id] = {
-            "process": proc,
-            "log_file": log_file,
-            "subscribers": [],
-        }
+        with self._lock:
+            self._index.append(entry)
+            self._save_index()
+            self._active[job_id] = {
+                "process": proc,
+                "log_file": log_file,
+            }
 
         thread = threading.Thread(
             target=self._wait_for_completion,
@@ -78,25 +77,26 @@ class JobManager:
         log_file.close()
         now = datetime.now(timezone.utc).isoformat()
 
-        for entry in self._index:
-            if entry["id"] == job_id:
-                entry["status"] = "complete" if proc.returncode == 0 else "failed"
-                entry["ended"] = now
-                entry["exit_code"] = proc.returncode
-                break
-        self._save_index()
-
-        if job_id in self._active:
-            del self._active[job_id]
+        with self._lock:
+            for entry in self._index:
+                if entry["id"] == job_id:
+                    entry["status"] = "complete" if proc.returncode == 0 else "failed"
+                    entry["ended"] = now
+                    entry["exit_code"] = proc.returncode
+                    break
+            self._save_index()
+            self._active.pop(job_id, None)
 
     def get_job(self, job_id):
-        for entry in self._index:
-            if entry["id"] == job_id:
-                return entry
+        with self._lock:
+            for entry in self._index:
+                if entry["id"] == job_id:
+                    return dict(entry)
         return None
 
     def list_jobs(self):
-        return list(reversed(self._index))
+        with self._lock:
+            return list(reversed(self._index))
 
     def get_log(self, job_id):
         log_path = os.path.join(self.jobs_dir, f"{job_id}.log")
@@ -106,11 +106,13 @@ class JobManager:
         return ""
 
     def is_running(self, job_id):
-        return job_id in self._active
+        with self._lock:
+            return job_id in self._active
 
     def kill(self, job_id):
-        if job_id not in self._active:
-            return False
-        proc = self._active[job_id]["process"]
+        with self._lock:
+            if job_id not in self._active:
+                return False
+            proc = self._active[job_id]["process"]
         proc.kill()
         return True

@@ -3,9 +3,6 @@
 # Mirrors Publish-ProxmoxHashCaptureScript.ps1 + Get-ProxmoxVMHardwareHash.ps1.
 # Required variable: vm_vmid
 
-- name: Wait for guest agent before hash capture
-  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
-
 - name: Push capture scripts to guest
   ansible.builtin.include_tasks: push_scripts.yml
 
