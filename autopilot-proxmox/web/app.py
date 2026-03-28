@@ -476,7 +476,7 @@ async def delete_autopilot_device(device_id: str = Form(...)):
         _graph_api(f"/deviceManagement/windowsAutopilotDeviceIdentities/{device_id}", method="DELETE")
     except Exception:
         pass
-    return RedirectResponse("/autopilot", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
 
 
 @app.post("/api/autopilot/sync")
@@ -485,7 +485,7 @@ async def sync_autopilot():
         _graph_api("/deviceManagement/windowsAutopilotSettings/sync", method="POST")
     except Exception:
         pass
-    return RedirectResponse("/autopilot", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
 
 
 @app.post("/api/hashes/delete")
