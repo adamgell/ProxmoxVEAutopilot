@@ -275,22 +275,15 @@ async def job_detail_page(request: Request, job_id: str):
 
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request):
-    return templates.TemplateResponse("vms.html", {
-        "request": request,
-        "vms": get_autopilot_vms(),
-    })
-
-
-@app.get("/autopilot", response_class=HTMLResponse)
-async def autopilot_page(request: Request):
-    devices, error = get_autopilot_devices()
+    devices, ap_error = get_autopilot_devices()
     hash_serials = {f["serial"] for f in get_hash_files()}
     for d in devices:
         d["has_local_hash"] = d["serial"] in hash_serials
-    return templates.TemplateResponse("autopilot.html", {
+    return templates.TemplateResponse("vms.html", {
         "request": request,
+        "vms": get_autopilot_vms(),
         "devices": devices,
-        "error": error,
+        "ap_error": ap_error,
     })
 
 

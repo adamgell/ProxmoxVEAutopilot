@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% block title %}VMs - Proxmox VE Autopilot{% endblock %}
+{% block title %}Devices - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Autopilot VMs</h2>
+
+<h2>Proxmox VMs</h2>
 {% if vms %}
 <form method="POST" action="/api/jobs/bulk-capture">
 <table border="1" cellpadding="5" cellspacing="0">
@@ -30,4 +31,45 @@
 {% else %}
 <p><i>No autopilot VMs found. <a href="/provision">Provision some VMs</a> first.</i></p>
 {% endif %}
+
+<hr>
+
+<h2>Autopilot Devices (Intune)</h2>
+{% if ap_error %}
+<p><font color="red"><b>Error:</b> {{ ap_error }}</font></p>
+{% endif %}
+<form method="POST" action="/api/autopilot/sync" style="display:inline;">
+<input type="submit" value="Sync Autopilot">
+</form>
+<font size="2"> (triggers Intune to re-evaluate device assignments)</font>
+<br><br>
+{% if devices %}
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><th>Serial</th><th>Display Name</th><th>Group Tag</th><th>Profile Status</th><th>Enrollment</th><th>Manufacturer</th><th>Model</th><th>Last Contact</th><th>Local Hash</th><th>Actions</th></tr>
+{% for d in devices %}
+<tr>
+  <td>{{ d.serial }}</td>
+  <td>{{ d.display_name }}</td>
+  <td>{{ d.group_tag }}</td>
+  <td>{% if d.profile_ok %}<font color="green"><b>{{ d.profile_status }}</b></font>{% elif d.profile_status == 'notAssigned' %}<font color="red">{{ d.profile_status }}</font>{% else %}{{ d.profile_status }}{% endif %}</td>
+  <td>{{ d.enrollment_state }}</td>
+  <td>{{ d.manufacturer }}</td>
+  <td>{{ d.model }}</td>
+  <td>{{ d.last_contact }}</td>
+  <td>{% if d.has_local_hash %}<font color="green">Yes</font>{% else %}-{% endif %}</td>
+  <td>
+    <form method="POST" action="/api/autopilot/delete" style="display:inline;" onsubmit="return confirm('Delete {{ d.serial }} from Autopilot?');">
+      <input type="hidden" name="device_id" value="{{ d.id }}">
+      <input type="submit" value="Delete">
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</table>
+<br>
+<p><b>{{ devices | length }}</b> device(s) registered in Autopilot</p>
+{% else %}
+<p><i>No Autopilot devices found.</i></p>
+{% endif %}
+
 {% endblock %}
