@@ -29,14 +29,30 @@ def load_oem_profiles():
     return data.get("oem_profiles", {})
 
 
+def _serial_to_oem(serial):
+    prefix = serial.split("-")[0] if "-" in serial else ""
+    return {"PF": "Lenovo", "SVC": "Dell", "CZC": "HP", "MSF": "Microsoft", "LAB": "Generic"}.get(prefix, "")
+
+
 def get_hash_files():
     if not HASH_DIR.exists():
         return []
     files = []
-    for f in sorted(HASH_DIR.glob("*_hwid.csv")):
+    for f in sorted(HASH_DIR.glob("*.csv")):
         stat = f.stat()
+        serial = ""
+        try:
+            lines = f.read_text().strip().splitlines()
+            if len(lines) >= 2:
+                serial = lines[1].split(",")[0]
+        except Exception:
+            pass
+        vm_name = f.stem.replace("_hwid", "")
         files.append({
             "name": f.name,
+            "vm_name": vm_name,
+            "serial": serial,
+            "oem": _serial_to_oem(serial),
             "size": f"{stat.st_size:,} bytes",
             "modified": datetime.fromtimestamp(
                 stat.st_mtime, tz=timezone.utc
@@ -191,6 +207,15 @@ async def api_get_job(job_id: str):
         return {"error": "not found"}
     job["log"] = job_manager.get_log(job_id)
     return job
+
+
+@app.post("/api/hashes/delete")
+async def delete_hashes(files: list[str] = Form(...)):
+    for filename in files:
+        file_path = HASH_DIR / filename
+        if file_path.exists() and file_path.suffix == ".csv":
+            file_path.unlink()
+    return RedirectResponse("/hashes", status_code=303)
 
 
 @app.get("/api/hashes/{filename}")

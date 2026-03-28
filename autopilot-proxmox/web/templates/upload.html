@@ -5,10 +5,12 @@
 {% if hash_files %}
 <p>Found <b>{{ hash_files|length }}</b> hash file(s) ready to upload:</p>
 <table border="1" cellpadding="5" cellspacing="0">
-<tr><th>Filename</th><th>Size</th><th>Modified</th></tr>
+<tr><th>VM</th><th>Serial</th><th>OEM</th><th>Size</th><th>Modified</th></tr>
 {% for f in hash_files %}
 <tr>
-  <td><a href="/api/hashes/{{ f.name }}">{{ f.name }}</a></td>
+  <td>{{ f.vm_name }}</td>
+  <td>{{ f.serial }}</td>
+  <td>{{ f.oem }}</td>
   <td>{{ f.size }}</td>
   <td>{{ f.modified }}</td>
 </tr>
