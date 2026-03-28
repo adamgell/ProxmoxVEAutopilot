@@ -52,6 +52,42 @@ def _proxmox_api(path):
     return resp.json().get("data", [])
 
 
+def _decode_smbios_serial(smbios1):
+    """Extract and decode the serial from a Proxmox smbios1 config string."""
+    import base64 as b64mod
+    if not smbios1:
+        return ""
+    is_base64 = "base64=1" in smbios1
+    for part in smbios1.split(","):
+        if part.startswith("serial="):
+            val = part[7:]
+            if is_base64:
+                try:
+                    return b64mod.b64decode(val).decode("utf-8")
+                except Exception:
+                    return val
+            return val
+    return ""
+
+
+def _decode_smbios_field(smbios1, field):
+    """Extract and decode any field from a Proxmox smbios1 config string."""
+    import base64 as b64mod
+    if not smbios1:
+        return ""
+    is_base64 = "base64=1" in smbios1
+    for part in smbios1.split(","):
+        if part.startswith(f"{field}="):
+            val = part[len(field) + 1:]
+            if is_base64 and field != "uuid":
+                try:
+                    return b64mod.b64decode(val).decode("utf-8")
+                except Exception:
+                    return val
+            return val
+    return ""
+
+
 def get_autopilot_vms():
     cfg = _load_proxmox_config()
     node = cfg.get("proxmox_node", "pve")
@@ -65,10 +101,24 @@ def get_autopilot_vms():
             continue
         name = vm.get("name", "")
         if "autopilot" in name.lower():
+            # Fetch VM config for SMBIOS info
+            serial = ""
+            oem = ""
+            try:
+                config = _proxmox_api(f"/nodes/{node}/qemu/{vm['vmid']}/config")
+                smbios1 = config.get("smbios1", "")
+                serial = _decode_smbios_serial(smbios1)
+                manufacturer = _decode_smbios_field(smbios1, "manufacturer")
+                product = _decode_smbios_field(smbios1, "product")
+                oem = f"{manufacturer} {product}".strip()
+            except Exception:
+                pass
             result.append({
                 "vmid": vm["vmid"],
                 "name": name,
                 "status": vm.get("status", "unknown"),
+                "serial": serial,
+                "oem": oem,
                 "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
                 "cpus": vm.get("cpus", vm.get("maxcpu", "")),
             })
