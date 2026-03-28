@@ -14,6 +14,7 @@
   <td>{{ vm.mem_mb }} MB</td>
   <td>
     {% if vm.status == 'running' %}
+    <a href="/api/vms/{{ vm.vmid }}/console" target="_blank">Console</a> |
     <form method="POST" action="/api/jobs/capture" style="display:inline;">
       <input type="hidden" name="vmid" value="{{ vm.vmid }}">
       <input type="hidden" name="vm_name" value="{{ vm.name }}">

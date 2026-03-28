@@ -239,6 +239,17 @@ async def start_template(profile: str = Form(...)):
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
+@app.get("/api/vms/{vmid}/console")
+async def vm_console(vmid: int):
+    """Redirect to Proxmox noVNC console for this VM."""
+    cfg = _load_proxmox_config()
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    node = cfg.get("proxmox_node", "pve")
+    novnc_url = f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
+    return RedirectResponse(novnc_url)
+
+
 @app.post("/api/jobs/capture")
 async def start_capture(
     vmid: int = Form(...),
