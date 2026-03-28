@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}VMs - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Autopilot VMs</h2>
+{% if vms %}
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><th>VMID</th><th>Name</th><th>Status</th><th>CPUs</th><th>Memory</th><th>Actions</th></tr>
+{% for vm in vms %}
+<tr>
+  <td>{{ vm.vmid }}</td>
+  <td>{{ vm.name }}</td>
+  <td>{% if vm.status == 'running' %}<font color="green"><b>{{ vm.status }}</b></font>{% else %}{{ vm.status }}{% endif %}</td>
+  <td>{{ vm.cpus }}</td>
+  <td>{{ vm.mem_mb }} MB</td>
+  <td>
+    {% if vm.status == 'running' %}
+    <form method="POST" action="/api/jobs/capture" style="display:inline;">
+      <input type="hidden" name="vmid" value="{{ vm.vmid }}">
+      <input type="hidden" name="vm_name" value="{{ vm.name }}">
+      <input type="text" name="group_tag" value="" size="12" placeholder="group tag">
+      <input type="submit" value="Capture Hash">
+    </form>
+    {% else %}
+    <font color="gray"><i>VM not running</i></font>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<p><i>No autopilot VMs found. <a href="/provision">Provision some VMs</a> first.</i></p>
+{% endif %}
+{% endblock %}

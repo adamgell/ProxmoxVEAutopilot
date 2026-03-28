@@ -1,8 +1,10 @@
 import asyncio
 import os
+import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
 import yaml
 from fastapi import FastAPI, Form, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
@@ -10,6 +12,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from web.jobs import JobManager
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -20,6 +24,55 @@ FILES_DIR = BASE_DIR / "files"
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
+
+
+def _load_proxmox_config():
+    vars_path = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
+    vault_path = BASE_DIR / "inventory" / "group_vars" / "all" / "vault.yml"
+    config = {}
+    for p in [vars_path, vault_path]:
+        if p.exists():
+            with open(p) as f:
+                data = yaml.safe_load(f)
+                if data:
+                    config.update(data)
+    return config
+
+
+def _proxmox_api(path):
+    cfg = _load_proxmox_config()
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    token_id = cfg.get("vault_proxmox_api_token_id", "")
+    token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+    url = f"https://{host}:{port}/api2/json{path}"
+    headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
+    resp = requests.get(url, headers=headers, verify=False, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("data", [])
+
+
+def get_autopilot_vms():
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        vms = _proxmox_api(f"/nodes/{node}/qemu")
+    except Exception:
+        return []
+    result = []
+    for vm in vms:
+        if vm.get("template"):
+            continue
+        name = vm.get("name", "")
+        if "autopilot" in name.lower():
+            result.append({
+                "vmid": vm["vmid"],
+                "name": name,
+                "status": vm.get("status", "unknown"),
+                "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
+                "cpus": vm.get("cpus", vm.get("maxcpu", "")),
+            })
+    return sorted(result, key=lambda v: v["vmid"])
 
 
 def load_oem_profiles():
@@ -147,6 +200,14 @@ async def job_detail_page(request: Request, job_id: str):
     })
 
 
+@app.get("/vms", response_class=HTMLResponse)
+async def vms_page(request: Request):
+    return templates.TemplateResponse("vms.html", {
+        "request": request,
+        "vms": get_autopilot_vms(),
+    })
+
+
 # --- API Endpoints ---
 
 @app.post("/api/jobs/provision")
@@ -175,6 +236,26 @@ async def start_template(profile: str = Form(...)):
     ]
     args = {"profile": profile}
     job = job_manager.start("build_template", cmd, args=args)
+    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
+@app.post("/api/jobs/capture")
+async def start_capture(
+    vmid: int = Form(...),
+    vm_name: str = Form(""),
+    group_tag: str = Form(""),
+):
+    name = vm_name or f"autopilot-{vmid}"
+    cmd = [
+        "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
+        "-e", f"vm_vmid={vmid}",
+        "-e", f"vm_name={name}",
+        "-e", "autopilot_skip=true",
+    ]
+    if group_tag:
+        cmd += ["-e", f"vm_group_tag={group_tag}"]
+    args = {"vmid": vmid, "vm_name": name, "group_tag": group_tag}
+    job = job_manager.start("hash_capture", cmd, args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
