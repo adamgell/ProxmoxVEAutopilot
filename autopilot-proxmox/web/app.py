@@ -16,8 +16,24 @@ from web.jobs import JobManager
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import re
+import shlex
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _sanitize_input(value):
+    """Reject input containing shell-dangerous characters."""
+    if not re.match(r'^[\w\-\.]*$', str(value)):
+        raise ValueError(f"Invalid input: {value!r} — only alphanumeric, hyphens, underscores, dots allowed")
+    return str(value)
+
+
+def _safe_path(base_dir, filename):
+    """Resolve a filename and verify it stays inside base_dir. Raises ValueError on traversal."""
+    resolved = (base_dir / filename).resolve()
+    if not str(resolved).startswith(str(base_dir.resolve())):
+        raise ValueError(f"Path traversal blocked: {filename}")
+    return resolved
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 HASH_DIR = BASE_DIR / "output" / "hashes"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
@@ -607,8 +623,11 @@ async def start_provision(
     count: int = Form(1),
     group_tag: str = Form(""),
 ):
+    profile = _sanitize_input(profile)
+    if group_tag:
+        group_tag = _sanitize_input(group_tag)
+
     if count <= 1:
-        # Single VM — run directly
         cmd = [
             "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
             "-e", f"vm_oem_profile={profile}",
@@ -620,45 +639,39 @@ async def start_provision(
         job = job_manager.start("provision_clone", cmd, args=args)
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
-    # Multiple VMs — launch in parallel via bash
+    # Multiple VMs — run sequentially to avoid VMID race condition
     import tempfile
-    playbook = str(PLAYBOOK_DIR / "provision_clone.yml")
-    script_lines = ["#!/bin/bash", ""]
-    script_lines.append(f"echo 'Provisioning {count} VMs in parallel ({profile})'")
-    script_lines.append("PIDS=()")
+    playbook = shlex.quote(str(PLAYBOOK_DIR / "provision_clone.yml"))
+    safe_profile = shlex.quote(profile)
+    safe_tag = shlex.quote(group_tag) if group_tag else ""
+
+    script_lines = ["#!/bin/bash", "set -e", ""]
+    script_lines.append(f"echo 'Provisioning {count} VMs sequentially ({profile})'")
 
     for i in range(count):
-        extra = f"-e vm_oem_profile={profile} -e vm_count=1"
-        if group_tag:
-            extra += f" -e vm_group_tag={group_tag}"
-        script_lines.append(f"echo '=== Starting VM {i+1}/{count} ==='")
-        script_lines.append(f"ansible-playbook {playbook} {extra} &")
-        script_lines.append("PIDS+=($!)")
-        # Small stagger to avoid VMID race condition
-        script_lines.append("sleep 3")
+        script_lines.append(f"echo '=== VM {i+1}/{count} ==='")
+        cmd_line = f"ansible-playbook {playbook} -e vm_oem_profile={safe_profile} -e vm_count=1"
+        if safe_tag:
+            cmd_line += f" -e vm_group_tag={safe_tag}"
+        script_lines.append(cmd_line)
 
-    script_lines.append("")
-    script_lines.append("echo ''")
-    script_lines.append(f"echo '=== All {count} VMs launched, waiting for completion ==='")
-    script_lines.append("FAIL=0")
-    script_lines.append("for pid in \"${PIDS[@]}\"; do")
-    script_lines.append("  wait $pid || FAIL=$((FAIL+1))")
-    script_lines.append("done")
-    script_lines.append(f"echo '=== Done: {count} VMs, '$FAIL' failed ==='")
-    script_lines.append("[ $FAIL -eq 0 ] || exit 1")
+    script_lines.append(f"echo '=== Done: {count} VMs provisioned ==='")
 
     script_content = "\n".join(script_lines)
-    script_path = Path(tempfile.mktemp(suffix=".sh", dir=str(BASE_DIR / "jobs")))
+    fd, script_file = tempfile.mkstemp(suffix=".sh", dir=str(BASE_DIR / "jobs"))
+    os.close(fd)
+    script_path = Path(script_file)
     script_path.write_text(script_content)
     script_path.chmod(0o755)
 
-    args = {"profile": profile, "count": count, "group_tag": group_tag, "parallel": True}
-    job = job_manager.start("provision_parallel", ["bash", str(script_path)], args=args)
+    args = {"profile": profile, "count": count, "group_tag": group_tag}
+    job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
 @app.post("/api/jobs/template")
 async def start_template(profile: str = Form(...)):
+    profile = _sanitize_input(profile)
     cmd = [
         "ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml"),
         "-e", f"vm_oem_profile={profile}",
@@ -685,31 +698,36 @@ async def start_capture_and_upload(
     group_tag: str = Form(""),
 ):
     """Capture hashes for selected VMs then upload all to Intune."""
+    if group_tag:
+        group_tag = _sanitize_input(group_tag)
+
     vm_list = []
     for entry in missing_vmids:
         vmid, name = entry.split(":", 1)
+        _sanitize_input(vmid)
+        _sanitize_input(name)
         vm_list.append({"vmid": vmid, "name": name})
+
+    playbook = shlex.quote(str(PLAYBOOK_DIR / "retry_inject_hash.yml"))
+    upload_playbook = shlex.quote(str(PLAYBOOK_DIR / "upload_hashes.yml"))
+    safe_tag = shlex.quote(group_tag) if group_tag else ""
 
     script_lines = ["#!/bin/bash", "set -e"]
     for vm in vm_list:
-        cmd_parts = [
-            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
-            "-e", f"vm_vmid={vm['vmid']}",
-            "-e", f"vm_name={vm['name']}",
-            "-e", "autopilot_skip=true",
-        ]
-        if group_tag:
-            cmd_parts += ["-e", f"vm_group_tag={group_tag}"]
         script_lines.append(f"echo '=== Capturing hash for {vm['name']} (VMID {vm['vmid']}) ==='")
-        script_lines.append(" ".join(f"'{p}'" if " " in p else p for p in cmd_parts))
+        cmd = f"ansible-playbook {playbook} -e vm_vmid={shlex.quote(vm['vmid'])} -e vm_name={shlex.quote(vm['name'])} -e autopilot_skip=true"
+        if safe_tag:
+            cmd += f" -e vm_group_tag={safe_tag}"
+        script_lines.append(cmd)
 
-    # After all captures, upload to Intune
     script_lines.append("echo '=== Uploading all hashes to Intune ==='")
-    script_lines.append(f"ansible-playbook {PLAYBOOK_DIR / 'upload_hashes.yml'}")
+    script_lines.append(f"ansible-playbook {upload_playbook}")
 
     script_content = "\n".join(script_lines)
     import tempfile
-    script_path = Path(tempfile.mktemp(suffix=".sh", dir=str(BASE_DIR / "jobs")))
+    fd, script_file = tempfile.mkstemp(suffix=".sh", dir=str(BASE_DIR / "jobs"))
+    os.close(fd)
+    script_path = Path(script_file)
     script_path.write_text(script_content)
     script_path.chmod(0o755)
 
@@ -724,32 +742,32 @@ async def start_bulk_capture(
     group_tag: str = Form(""),
 ):
     """Capture hashes for multiple VMs sequentially in one job."""
-    # vmids come as "vmid:name" strings
-    extra_vars = []
+    if group_tag:
+        group_tag = _sanitize_input(group_tag)
+
     vm_list = []
     for entry in vmids:
         vmid, name = entry.split(":", 1)
+        _sanitize_input(vmid)
+        _sanitize_input(name)
         vm_list.append({"vmid": vmid, "name": name})
 
-    # Build a single ansible command that loops through all VMs
-    # Using a shell script approach since ansible-playbook takes one vmid at a time
+    playbook = shlex.quote(str(PLAYBOOK_DIR / "retry_inject_hash.yml"))
+    safe_tag = shlex.quote(group_tag) if group_tag else ""
+
     script_lines = ["#!/bin/bash", "set -e"]
     for vm in vm_list:
-        cmd_parts = [
-            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
-            "-e", f"vm_vmid={vm['vmid']}",
-            "-e", f"vm_name={vm['name']}",
-            "-e", "autopilot_skip=true",
-        ]
-        if group_tag:
-            cmd_parts += ["-e", f"vm_group_tag={group_tag}"]
         script_lines.append(f"echo '=== Capturing hash for {vm['name']} (VMID {vm['vmid']}) ==='")
-        script_lines.append(" ".join(f"'{p}'" if " " in p else p for p in cmd_parts))
-    script_content = "\n".join(script_lines)
+        cmd = f"ansible-playbook {playbook} -e vm_vmid={shlex.quote(vm['vmid'])} -e vm_name={shlex.quote(vm['name'])} -e autopilot_skip=true"
+        if safe_tag:
+            cmd += f" -e vm_group_tag={safe_tag}"
+        script_lines.append(cmd)
 
-    # Write temp script and execute it
+    script_content = "\n".join(script_lines)
     import tempfile
-    script_path = Path(tempfile.mktemp(suffix=".sh", dir=str(BASE_DIR / "jobs")))
+    fd, script_file = tempfile.mkstemp(suffix=".sh", dir=str(BASE_DIR / "jobs"))
+    os.close(fd)
+    script_path = Path(script_file)
     script_path.write_text(script_content)
     script_path.chmod(0o755)
 
@@ -764,7 +782,9 @@ async def start_capture(
     vm_name: str = Form(""),
     group_tag: str = Form(""),
 ):
-    name = vm_name or f"autopilot-{vmid}"
+    name = _sanitize_input(vm_name) if vm_name else f"autopilot-{vmid}"
+    if group_tag:
+        group_tag = _sanitize_input(group_tag)
     cmd = [
         "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
         "-e", f"vm_vmid={vmid}",
@@ -830,7 +850,10 @@ async def sync_autopilot():
 @app.post("/api/hashes/delete")
 async def delete_hashes(files: list[str] = Form(...)):
     for filename in files:
-        file_path = HASH_DIR / filename
+        try:
+            file_path = _safe_path(HASH_DIR, filename)
+        except ValueError:
+            continue
         if file_path.exists() and file_path.suffix == ".csv":
             file_path.unlink()
     return RedirectResponse("/hashes", status_code=303)
@@ -838,7 +861,10 @@ async def delete_hashes(files: list[str] = Form(...)):
 
 @app.get("/api/hashes/{filename}")
 async def download_hash(filename: str):
-    file_path = HASH_DIR / filename
+    try:
+        file_path = _safe_path(HASH_DIR, filename)
+    except ValueError:
+        return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
     if not file_path.exists() or not file_path.name.endswith(".csv"):
         return HTMLResponse("<h1>File not found</h1>", status_code=404)
     return FileResponse(file_path, filename=filename)
