@@ -8,6 +8,15 @@
 - name: "Wait for guest agent on VM {{ vm_vmid }}"
   ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_guest_agent.yml"
 
+- name: "Wait for Windows desktop to be ready on VM {{ vm_vmid }}"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "powershell.exe"
+      - "-Command"
+      - "while (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 5 }; Start-Sleep -Seconds 30"
+    _exec_timeout: 600
+
 - name: "Inject Autopilot config into VM {{ vm_vmid }}"
   ansible.builtin.include_role:
     name: autopilot_inject
