@@ -6,7 +6,7 @@
 {% if vms %}
 <form method="POST" action="/api/jobs/bulk-capture">
 <table border="1" cellpadding="5" cellspacing="0">
-<tr><th><input type="checkbox" onclick="var c=document.getElementsByName('vmids');for(var i=0;i<c.length;i++){if(!c[i].disabled)c[i].checked=this.checked;}"></th><th>VMID</th><th>Name</th><th>Serial</th><th>OEM Profile</th><th>Status</th><th>CPUs</th><th>Memory</th><th>Console</th></tr>
+<tr><th><input type="checkbox" onclick="var c=document.getElementsByName('vmids');for(var i=0;i<c.length;i++){if(!c[i].disabled)c[i].checked=this.checked;}"></th><th>VMID</th><th>Name</th><th>Serial</th><th>OEM Profile</th><th>Status</th><th>Autopilot</th><th>Hash</th><th>Console</th></tr>
 {% for vm in vms %}
 <tr>
   <td>{% if vm.status == 'running' %}<input type="checkbox" name="vmids" value="{{ vm.vmid }}:{{ vm.name }}">{% else %}<input type="checkbox" disabled>{% endif %}</td>
@@ -15,8 +15,8 @@
   <td>{{ vm.serial }}</td>
   <td><font size="2">{{ vm.oem }}</font></td>
   <td>{% if vm.status == 'running' %}<font color="green"><b>{{ vm.status }}</b></font>{% else %}{{ vm.status }}{% endif %}</td>
-  <td>{{ vm.cpus }}</td>
-  <td>{{ vm.mem_mb }} MB</td>
+  <td>{% if vm.in_autopilot %}<font color="green">Registered</font>{% else %}<font color="red">Missing</font>{% endif %}</td>
+  <td>{% if vm.has_hash %}<font color="green">Yes</font>{% else %}-{% endif %}</td>
   <td>{% if vm.status == 'running' %}<a href="/api/vms/{{ vm.vmid }}/console" target="_blank">Open</a>{% else %}-{% endif %}</td>
 </tr>
 {% endfor %}
@@ -32,6 +32,35 @@
 </form>
 {% else %}
 <p><i>No autopilot VMs found. <a href="/provision">Provision some VMs</a> first.</i></p>
+{% endif %}
+
+{% if missing_vms %}
+<hr>
+<h2>Not in Autopilot</h2>
+<p><b>{{ missing_vms | length }}</b> VM(s) with no Autopilot registration. Select and capture+upload to register them.</p>
+<form method="POST" action="/api/jobs/capture-and-upload">
+<table border="1" cellpadding="5" cellspacing="0">
+<tr><th><input type="checkbox" onclick="var c=document.getElementsByName('missing_vmids');for(var i=0;i<c.length;i++){if(!c[i].disabled)c[i].checked=this.checked;}"></th><th>VMID</th><th>Name</th><th>Serial</th><th>OEM Profile</th><th>Status</th></tr>
+{% for vm in missing_vms %}
+<tr>
+  <td>{% if vm.status == 'running' %}<input type="checkbox" name="missing_vmids" value="{{ vm.vmid }}:{{ vm.name }}">{% else %}<input type="checkbox" disabled>{% endif %}</td>
+  <td>{{ vm.vmid }}</td>
+  <td>{{ vm.name }}</td>
+  <td>{{ vm.serial }}</td>
+  <td><font size="2">{{ vm.oem }}</font></td>
+  <td>{% if vm.status == 'running' %}<font color="green"><b>{{ vm.status }}</b></font>{% else %}{{ vm.status }}{% endif %}</td>
+</tr>
+{% endfor %}
+</table>
+<br>
+<table border="0" cellpadding="3">
+<tr>
+  <td><b>Group Tag:</b></td>
+  <td><input type="text" name="group_tag" value="" size="20" placeholder="optional"></td>
+  <td><input type="submit" value="Capture Hash & Upload to Intune"></td>
+</tr>
+</table>
+</form>
 {% endif %}
 
 <hr>
@@ -71,7 +100,7 @@
 <br>
 <p><b>{{ devices | length }}</b> device(s) registered in Autopilot</p>
 {% else %}
-<p><i>No Autopilot devices found.</i></p>
+<p><i>No matching Autopilot devices found.</i></p>
 {% endif %}
 
 {% endblock %}

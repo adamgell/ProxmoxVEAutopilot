@@ -329,14 +329,26 @@ async def vms_page(request: Request):
     vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
     devices, ap_error = get_autopilot_devices()
     hash_serials = {f["serial"] for f in get_hash_files()}
+    ap_serials = {d["serial"] for d in devices}
+
     # Only show Autopilot devices that match a Proxmox VM serial
-    devices = [d for d in devices if d["serial"] in vm_serials]
-    for d in devices:
+    matched_devices = [d for d in devices if d["serial"] in vm_serials]
+    for d in matched_devices:
         d["has_local_hash"] = d["serial"] in hash_serials
+
+    # Tag VMs with their Autopilot status
+    for vm in vms:
+        vm["in_autopilot"] = vm.get("serial", "") in ap_serials
+        vm["has_hash"] = vm.get("serial", "") in hash_serials
+
+    # VMs not yet in Autopilot (missing)
+    missing_vms = [vm for vm in vms if not vm["in_autopilot"] and vm.get("serial")]
+
     return templates.TemplateResponse("vms.html", {
         "request": request,
         "vms": vms,
-        "devices": devices,
+        "devices": matched_devices,
+        "missing_vms": missing_vms,
         "ap_error": ap_error,
     })
 
@@ -381,6 +393,45 @@ async def vm_console(vmid: int):
     node = cfg.get("proxmox_node", "pve")
     novnc_url = f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
     return RedirectResponse(novnc_url)
+
+
+@app.post("/api/jobs/capture-and-upload")
+async def start_capture_and_upload(
+    missing_vmids: list[str] = Form(...),
+    group_tag: str = Form(""),
+):
+    """Capture hashes for selected VMs then upload all to Intune."""
+    vm_list = []
+    for entry in missing_vmids:
+        vmid, name = entry.split(":", 1)
+        vm_list.append({"vmid": vmid, "name": name})
+
+    script_lines = ["#!/bin/bash", "set -e"]
+    for vm in vm_list:
+        cmd_parts = [
+            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
+            "-e", f"vm_vmid={vm['vmid']}",
+            "-e", f"vm_name={vm['name']}",
+            "-e", "autopilot_skip=true",
+        ]
+        if group_tag:
+            cmd_parts += ["-e", f"vm_group_tag={group_tag}"]
+        script_lines.append(f"echo '=== Capturing hash for {vm['name']} (VMID {vm['vmid']}) ==='")
+        script_lines.append(" ".join(f"'{p}'" if " " in p else p for p in cmd_parts))
+
+    # After all captures, upload to Intune
+    script_lines.append("echo '=== Uploading all hashes to Intune ==='")
+    script_lines.append(f"ansible-playbook {PLAYBOOK_DIR / 'upload_hashes.yml'}")
+
+    script_content = "\n".join(script_lines)
+    import tempfile
+    script_path = Path(tempfile.mktemp(suffix=".sh", dir=str(BASE_DIR / "jobs")))
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)
+
+    args = {"vms": [v["name"] for v in vm_list], "group_tag": group_tag, "upload": True}
+    job = job_manager.start("capture_and_upload", ["bash", str(script_path)], args=args)
+    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
 @app.post("/api/jobs/bulk-capture")
