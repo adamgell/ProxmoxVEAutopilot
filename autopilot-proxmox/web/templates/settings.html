@@ -19,11 +19,14 @@
     {% elif f.type == 'bool' %}
       <input type="checkbox" name="{{ f.key }}" {% if f.value %}checked{% endif %}>
     {% elif f.options %}
-      <select name="{{ f.key }}">
+      <select name="{{ f.key }}" id="field_{{ f.key }}">
         {% for opt in f.options %}
         <option value="{{ opt }}" {% if (f.value | string) == (opt | string) %}selected{% endif %}>{{ f.labels.get(opt, opt) if f.labels else opt }}</option>
         {% endfor %}
       </select>
+      {% if f.key == 'proxmox_node' %}
+      <small id="node_loading" style="color:#999; display:none;"> loading...</small>
+      {% endif %}
     {% elif f.type == 'number' %}
       <input type="number" name="{{ f.key }}" value="{{ f.value if f.value is not none else '' }}">
     {% else %}
@@ -37,4 +40,57 @@
 <br>
 <input type="submit" value="Save Settings">
 </form>
+
+<script>
+function updateSelect(id, options, currentVal) {
+  var sel = document.getElementById(id);
+  if (!sel) return;
+  sel.innerHTML = '';
+  options.forEach(function(opt) {
+    var label = typeof opt === 'object' ? opt.label : opt;
+    var value = typeof opt === 'object' ? opt.value : opt;
+    var o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    if (String(value) === String(currentVal)) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+var nodeSelect = document.getElementById('field_proxmox_node');
+if (nodeSelect) {
+  nodeSelect.addEventListener('change', function() {
+    var node = this.value;
+    var loading = document.getElementById('node_loading');
+    if (loading) loading.style.display = 'inline';
+
+    fetch('/api/settings/node-options/' + node)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (loading) loading.style.display = 'none';
+
+        // Storage
+        updateSelect('field_proxmox_storage', data.disk_storage || [], '');
+        updateSelect('field_proxmox_iso_storage', data.iso_storage || [], '');
+
+        // Bridge
+        updateSelect('field_proxmox_bridge', data.bridges || [], '');
+
+        // ISOs
+        updateSelect('field_proxmox_windows_iso', data.isos || [], '');
+        updateSelect('field_proxmox_virtio_iso', data.isos || [], '');
+        updateSelect('field_proxmox_answer_iso', data.isos || [], '');
+
+        // Templates
+        var tmplOpts = (data.templates || []).map(function(t) {
+          return {value: t.vmid, label: t.vmid + ' (' + t.name + ')'};
+        });
+        updateSelect('field_proxmox_template_vmid', tmplOpts, '');
+      })
+      .catch(function() {
+        if (loading) loading.style.display = 'none';
+      });
+  });
+}
+</script>
 {% endblock %}

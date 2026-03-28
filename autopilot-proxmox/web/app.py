@@ -495,6 +495,50 @@ async def settings_page(request: Request, saved: str = ""):
     })
 
 
+@app.get("/api/settings/node-options/{node}")
+async def node_options(node: str):
+    """Return available storage, bridges, ISOs, templates for a given node."""
+    result = {}
+    try:
+        # Storage
+        storages = _proxmox_api("/storage")
+        result["disk_storage"] = sorted([s["storage"] for s in storages if "images" in s.get("content", "")])
+        result["iso_storage"] = sorted([s["storage"] for s in storages if "iso" in s.get("content", "")])
+
+        # Bridges
+        try:
+            networks = _proxmox_api(f"/nodes/{node}/network")
+            result["bridges"] = sorted([n["iface"] for n in networks if n.get("type") in ("bridge", "OVSBridge")])
+        except Exception:
+            result["bridges"] = []
+
+        # ISOs — scan all iso storages
+        iso_list = []
+        for iso_store in result["iso_storage"]:
+            try:
+                content = _proxmox_api(f"/nodes/{node}/storage/{iso_store}/content")
+                iso_list.extend([i["volid"] for i in content if i.get("format") == "iso"])
+            except Exception:
+                pass
+        result["isos"] = sorted(set(iso_list))
+
+        # Templates
+        try:
+            vms = _proxmox_api(f"/nodes/{node}/qemu")
+            result["templates"] = [
+                {"vmid": v["vmid"], "name": v.get("name", "")}
+                for v in sorted(vms, key=lambda x: x["vmid"])
+                if v.get("template")
+            ]
+        except Exception:
+            result["templates"] = []
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 @app.post("/api/settings")
 async def save_settings(request: Request):
     form = await request.form()
