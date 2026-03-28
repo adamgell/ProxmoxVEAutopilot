@@ -1,5 +1,16 @@
 ---
-- name: Execute sysprep in guest
+- name: Read OOBE unattend file from controller
+  ansible.builtin.slurp:
+    src: "{{ playbook_dir }}/../files/unattend_oobe.xml"
+  register: _oobe_unattend
+
+- name: Write OOBE unattend to guest for post-sysprep
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_file_write.yml"
+  vars:
+    _guest_file: 'C:\Windows\System32\Sysprep\unattend.xml'
+    _guest_content: "{{ _oobe_unattend.content | b64decode }}"
+
+- name: Execute sysprep with unattend file
   ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
   vars:
     _exec_command:
@@ -9,6 +20,7 @@
       - "/generalize"
       - "/oobe"
       - "/shutdown"
+      - '/unattend:C:\Windows\System32\Sysprep\unattend.xml'
     _exec_timeout: 600
   # sysprep triggers shutdown — the exec-status poll may lose the agent
   ignore_errors: true  # noqa: ignore-errors
