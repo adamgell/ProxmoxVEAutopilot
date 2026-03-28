@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # Upload hardware hash CSVs to Windows Autopilot via Microsoft Graph.
-# Called by playbooks/upload_hashes.yml with env vars for credentials.
+# Uploads all CSVs in parallel using PowerShell jobs.
 
 $ErrorActionPreference = 'Stop'
 
@@ -17,40 +17,59 @@ if (-not $hashDir -or -not (Test-Path $hashDir)) {
     throw "Hash directory '$hashDir' not found."
 }
 
-Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-Import-Module WindowsAutopilotIntune -ErrorAction Stop
-
-Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
-$secret = ConvertTo-SecureString $appSecret -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential($appId, $secret)
-Connect-MgGraph -TenantId $tenantId -ClientSecretCredential $credential -NoWelcome
-Write-Host "Connected as app $appId in tenant $tenantId"
-
 $csvFiles = Get-ChildItem -Path $hashDir -Filter "*_hwid.csv"
 if ($csvFiles.Count -eq 0) {
     Write-Host "No CSV files found in $hashDir"
     exit 0
 }
 
-Write-Host "Found $($csvFiles.Count) hash file(s) to upload"
+Write-Host "Found $($csvFiles.Count) hash file(s) to upload in parallel"
+
+# Launch a background job per CSV
+$jobs = @()
+foreach ($csv in $csvFiles) {
+    Write-Host "Starting upload: $($csv.Name)"
+    $job = Start-Job -ScriptBlock {
+        param($csvPath, $appId, $tenantId, $appSecret)
+        $ErrorActionPreference = 'Stop'
+        Import-Module Microsoft.Graph.Authentication
+        Import-Module WindowsAutopilotIntune
+        $secret = ConvertTo-SecureString $appSecret -AsPlainText -Force
+        $credential = New-Object System.Management.Automation.PSCredential($appId, $secret)
+        Connect-MgGraph -TenantId $tenantId -ClientSecretCredential $credential -NoWelcome
+        $result = Import-AutopilotCSV -csvFile $csvPath
+        Disconnect-MgGraph | Out-Null
+        return @{
+            File = (Split-Path $csvPath -Leaf)
+            Success = $true
+            Result = ($result | Out-String)
+        }
+    } -ArgumentList $csv.FullName, $appId, $tenantId, $appSecret
+    $jobs += $job
+}
+
+Write-Host "`nWaiting for $($jobs.Count) upload(s) to complete..."
+
+# Wait and collect results
 $successCount = 0
 $failCount = 0
 
-foreach ($csv in $csvFiles) {
-    Write-Host "`nUploading: $($csv.Name)" -ForegroundColor Yellow
-    try {
-        $result = Import-AutopilotCSV -csvFile $csv.FullName
-        Write-Host "  Imported successfully" -ForegroundColor Green
-        if ($result) { $result | Format-List }
+foreach ($job in $jobs) {
+    $result = Receive-Job -Job $job -Wait -ErrorAction SilentlyContinue
+    $err = $job.ChildJobs[0].Error
+
+    if ($job.State -eq 'Completed' -and $result.Success) {
+        Write-Host "OK: $($result.File)" -ForegroundColor Green
+        if ($result.Result.Trim()) { Write-Host "  $($result.Result.Trim())" }
         $successCount++
-    }
-    catch {
-        Write-Host "  FAILED: $_" -ForegroundColor Red
+    } else {
+        $fileName = if ($result.File) { $result.File } else { "unknown" }
+        $errMsg = if ($err) { $err[0].ToString() } else { $job.State }
+        Write-Host "FAILED: $fileName - $errMsg" -ForegroundColor Red
         $failCount++
     }
+    Remove-Job -Job $job
 }
 
 Write-Host "`n--- Upload Summary ---" -ForegroundColor Cyan
 Write-Host "Total: $($csvFiles.Count) | Success: $successCount | Failed: $failCount"
-
-Disconnect-MgGraph | Out-Null
