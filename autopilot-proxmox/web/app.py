@@ -81,6 +81,63 @@ def _load_vars():
     return {}
 
 
+def _fetch_settings_options():
+    """Query Proxmox API to populate dropdown options for settings fields."""
+    options = {}
+    try:
+        # Nodes
+        nodes = _proxmox_api("/nodes")
+        options["proxmox_node"] = sorted([n["node"] for n in nodes])
+
+        cfg = _load_proxmox_config()
+        node = cfg.get("proxmox_node", options["proxmox_node"][0] if options.get("proxmox_node") else "pve")
+
+        # Storage — split by content type
+        storages = _proxmox_api("/storage")
+        disk_storages = sorted([s["storage"] for s in storages if "images" in s.get("content", "")])
+        iso_storages = sorted([s["storage"] for s in storages if "iso" in s.get("content", "")])
+        options["proxmox_storage"] = disk_storages
+        options["proxmox_iso_storage"] = iso_storages
+
+        # Bridges
+        try:
+            networks = _proxmox_api(f"/nodes/{node}/network")
+            options["proxmox_bridge"] = sorted([n["iface"] for n in networks if n.get("type") in ("bridge", "OVSBridge")])
+        except Exception:
+            options["proxmox_bridge"] = ["vmbr0"]
+
+        # ISOs
+        for iso_store in iso_storages:
+            try:
+                isos = _proxmox_api(f"/nodes/{node}/storage/{iso_store}/content")
+                iso_list = sorted([i["volid"] for i in isos if i.get("format") == "iso"])
+                if iso_list:
+                    options["proxmox_windows_iso"] = iso_list
+                    options["proxmox_virtio_iso"] = iso_list
+                    options["proxmox_answer_iso"] = iso_list
+                break
+            except Exception:
+                pass
+
+        # Templates (VMs marked as template)
+        try:
+            vms = _proxmox_api(f"/nodes/{node}/qemu")
+            templates_list = [{"vmid": v["vmid"], "name": v.get("name", "")} for v in vms if v.get("template")]
+            options["proxmox_template_vmid"] = [f"{t['vmid']}" for t in sorted(templates_list, key=lambda x: x["vmid"])]
+            options["proxmox_template_vmid_labels"] = {str(t["vmid"]): f"{t['vmid']} ({t['name']})" for t in templates_list}
+        except Exception:
+            pass
+
+        # OEM profiles
+        profiles = load_oem_profiles()
+        options["vm_oem_profile"] = list(profiles.keys())
+
+    except Exception:
+        pass  # If Proxmox is unreachable, fields stay as text inputs
+
+    return options
+
+
 def _save_vars(updates):
     """Update vars.yml by line-level replacement to preserve comments."""
     lines = VARS_PATH.read_text().splitlines()
@@ -413,15 +470,23 @@ async def job_detail_page(request: Request, job_id: str):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, saved: str = ""):
     current = _load_vars()
-    # Build schema with current values and readonly flag
+    options = _fetch_settings_options()
+    # Build schema with current values, readonly flag, and dropdown options
     sections = []
     for group in SETTINGS_SCHEMA:
         fields = []
         for f in group["fields"]:
             val = current.get(f["key"], "")
-            # Jinja2 template values are read-only
             is_template = isinstance(val, str) and "{{" in str(val)
-            fields.append({**f, "value": val, "readonly": is_template})
+            field_options = options.get(f["key"], [])
+            labels = options.get(f"{f['key']}_labels", {})
+            fields.append({
+                **f,
+                "value": val,
+                "readonly": is_template,
+                "options": field_options,
+                "labels": labels,
+            })
         sections.append({"section": group["section"], "fields": fields})
     return templates.TemplateResponse("settings.html", {
         "request": request,

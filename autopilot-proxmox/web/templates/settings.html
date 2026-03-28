@@ -18,6 +18,12 @@
       <small style="color:#999;">(computed)</small>
     {% elif f.type == 'bool' %}
       <input type="checkbox" name="{{ f.key }}" {% if f.value %}checked{% endif %}>
+    {% elif f.options %}
+      <select name="{{ f.key }}">
+        {% for opt in f.options %}
+        <option value="{{ opt }}" {% if (f.value | string) == (opt | string) %}selected{% endif %}>{{ f.labels.get(opt, opt) if f.labels else opt }}</option>
+        {% endfor %}
+      </select>
     {% elif f.type == 'number' %}
       <input type="number" name="{{ f.key }}" value="{{ f.value if f.value is not none else '' }}">
     {% else %}
