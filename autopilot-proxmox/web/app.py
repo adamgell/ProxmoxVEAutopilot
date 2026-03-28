@@ -325,13 +325,17 @@ async def job_detail_page(request: Request, job_id: str):
 
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request):
+    vms = get_autopilot_vms()
+    vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
     devices, ap_error = get_autopilot_devices()
     hash_serials = {f["serial"] for f in get_hash_files()}
+    # Only show Autopilot devices that match a Proxmox VM serial
+    devices = [d for d in devices if d["serial"] in vm_serials]
     for d in devices:
         d["has_local_hash"] = d["serial"] in hash_serials
     return templates.TemplateResponse("vms.html", {
         "request": request,
-        "vms": get_autopilot_vms(),
+        "vms": vms,
         "devices": devices,
         "ap_error": ap_error,
     })
