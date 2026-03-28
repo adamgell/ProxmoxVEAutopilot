@@ -250,6 +250,46 @@ async def vm_console(vmid: int):
     return RedirectResponse(novnc_url)
 
 
+@app.post("/api/jobs/bulk-capture")
+async def start_bulk_capture(
+    vmids: list[str] = Form(...),
+    group_tag: str = Form(""),
+):
+    """Capture hashes for multiple VMs sequentially in one job."""
+    # vmids come as "vmid:name" strings
+    extra_vars = []
+    vm_list = []
+    for entry in vmids:
+        vmid, name = entry.split(":", 1)
+        vm_list.append({"vmid": vmid, "name": name})
+
+    # Build a single ansible command that loops through all VMs
+    # Using a shell script approach since ansible-playbook takes one vmid at a time
+    script_lines = ["#!/bin/bash", "set -e"]
+    for vm in vm_list:
+        cmd_parts = [
+            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
+            "-e", f"vm_vmid={vm['vmid']}",
+            "-e", f"vm_name={vm['name']}",
+            "-e", "autopilot_skip=true",
+        ]
+        if group_tag:
+            cmd_parts += ["-e", f"vm_group_tag={group_tag}"]
+        script_lines.append(f"echo '=== Capturing hash for {vm['name']} (VMID {vm['vmid']}) ==='")
+        script_lines.append(" ".join(f"'{p}'" if " " in p else p for p in cmd_parts))
+    script_content = "\n".join(script_lines)
+
+    # Write temp script and execute it
+    import tempfile
+    script_path = Path(tempfile.mktemp(suffix=".sh", dir=str(BASE_DIR / "jobs")))
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)
+
+    args = {"vms": [v["name"] for v in vm_list], "group_tag": group_tag}
+    job = job_manager.start("bulk_hash_capture", ["bash", str(script_path)], args=args)
+    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
 @app.post("/api/jobs/capture")
 async def start_capture(
     vmid: int = Form(...),
