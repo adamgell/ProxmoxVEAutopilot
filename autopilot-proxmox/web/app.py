@@ -75,6 +75,82 @@ def get_autopilot_vms():
     return sorted(result, key=lambda v: v["vmid"])
 
 
+def _graph_token():
+    cfg = _load_proxmox_config()
+    tenant = cfg.get("vault_entra_tenant_id", "")
+    app_id = cfg.get("vault_entra_app_id", "")
+    secret = cfg.get("vault_entra_app_secret", "")
+    if not all([tenant, app_id, secret]):
+        return None
+    resp = requests.post(
+        f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": app_id,
+            "client_secret": secret,
+            "scope": "https://graph.microsoft.com/.default",
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+def _graph_api(path, method="GET", json_body=None):
+    token = _graph_token()
+    if not token:
+        return None
+    headers = {"Authorization": f"Bearer {token}"}
+    if method == "GET":
+        resp = requests.get(
+            f"https://graph.microsoft.com/beta{path}",
+            headers=headers, timeout=15,
+        )
+    elif method == "DELETE":
+        resp = requests.delete(
+            f"https://graph.microsoft.com/beta{path}",
+            headers=headers, timeout=15,
+        )
+        return {"status": resp.status_code}
+    elif method == "POST":
+        resp = requests.post(
+            f"https://graph.microsoft.com/beta{path}",
+            headers=headers, json=json_body, timeout=15,
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_autopilot_devices():
+    try:
+        data = _graph_api(
+            "/deviceManagement/windowsAutopilotDeviceIdentities"
+            "?$select=id,serialNumber,groupTag,deploymentProfileAssignmentStatus,"
+            "enrollmentState,lastContactedDateTime,model,manufacturer,displayName"
+            "&$orderby=serialNumber"
+        )
+    except Exception as e:
+        return [], str(e)
+    if not data:
+        return [], "No Entra credentials configured"
+    devices = []
+    for d in data.get("value", []):
+        profile_status = d.get("deploymentProfileAssignmentStatus", "unknown")
+        devices.append({
+            "id": d.get("id", ""),
+            "serial": d.get("serialNumber", ""),
+            "group_tag": d.get("groupTag", ""),
+            "profile_status": profile_status,
+            "profile_ok": profile_status in ("assigned", "assignedUnkownSyncState"),
+            "enrollment_state": d.get("enrollmentState", "unknown"),
+            "last_contact": (d.get("lastContactedDateTime") or "")[:19],
+            "manufacturer": d.get("manufacturer", ""),
+            "model": d.get("model", ""),
+            "display_name": d.get("displayName", ""),
+        })
+    return devices, None
+
+
 def load_oem_profiles():
     profiles_path = FILES_DIR / "oem_profiles.yml"
     with open(profiles_path) as f:
@@ -205,6 +281,19 @@ async def vms_page(request: Request):
     return templates.TemplateResponse("vms.html", {
         "request": request,
         "vms": get_autopilot_vms(),
+    })
+
+
+@app.get("/autopilot", response_class=HTMLResponse)
+async def autopilot_page(request: Request):
+    devices, error = get_autopilot_devices()
+    hash_serials = {f["serial"] for f in get_hash_files()}
+    for d in devices:
+        d["has_local_hash"] = d["serial"] in hash_serials
+    return templates.TemplateResponse("autopilot.html", {
+        "request": request,
+        "devices": devices,
+        "error": error,
     })
 
 
@@ -339,6 +428,24 @@ async def api_get_job(job_id: str):
         return {"error": "not found"}
     job["log"] = job_manager.get_log(job_id)
     return job
+
+
+@app.post("/api/autopilot/delete")
+async def delete_autopilot_device(device_id: str = Form(...)):
+    try:
+        _graph_api(f"/deviceManagement/windowsAutopilotDeviceIdentities/{device_id}", method="DELETE")
+    except Exception:
+        pass
+    return RedirectResponse("/autopilot", status_code=303)
+
+
+@app.post("/api/autopilot/sync")
+async def sync_autopilot():
+    try:
+        _graph_api("/deviceManagement/windowsAutopilotSettings/sync", method="POST")
+    except Exception:
+        pass
+    return RedirectResponse("/autopilot", status_code=303)
 
 
 @app.post("/api/hashes/delete")
