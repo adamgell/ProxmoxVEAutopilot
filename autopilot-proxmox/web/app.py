@@ -15,11 +15,98 @@ from web.jobs import JobManager
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+import re
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 HASH_DIR = BASE_DIR / "output" / "hashes"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
+VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
+
+SETTINGS_SCHEMA = [
+    {"section": "Proxmox Connection", "fields": [
+        {"key": "proxmox_host", "label": "Host", "type": "text"},
+        {"key": "proxmox_port", "label": "Port", "type": "number"},
+        {"key": "proxmox_node", "label": "Node", "type": "text"},
+        {"key": "proxmox_validate_certs", "label": "Validate Certs", "type": "bool"},
+    ]},
+    {"section": "Storage & Networking", "fields": [
+        {"key": "proxmox_storage", "label": "VM Storage", "type": "text"},
+        {"key": "proxmox_iso_storage", "label": "ISO Storage", "type": "text"},
+        {"key": "proxmox_bridge", "label": "Network Bridge", "type": "text"},
+        {"key": "proxmox_vlan_tag", "label": "VLAN Tag", "type": "text"},
+    ]},
+    {"section": "ISO Paths", "fields": [
+        {"key": "proxmox_windows_iso", "label": "Windows ISO", "type": "text"},
+        {"key": "proxmox_virtio_iso", "label": "VirtIO ISO", "type": "text"},
+        {"key": "proxmox_answer_iso", "label": "Answer ISO", "type": "text"},
+    ]},
+    {"section": "Template", "fields": [
+        {"key": "proxmox_template_vmid", "label": "Template VMID", "type": "number"},
+    ]},
+    {"section": "VM Defaults", "fields": [
+        {"key": "vm_cores", "label": "CPU Cores", "type": "number"},
+        {"key": "vm_memory_mb", "label": "Memory (MB)", "type": "number"},
+        {"key": "vm_disk_size_gb", "label": "Disk Size (GB)", "type": "number"},
+        {"key": "vm_ostype", "label": "OS Type", "type": "text"},
+        {"key": "vm_count", "label": "Default VM Count", "type": "number"},
+        {"key": "vm_name_prefix", "label": "Name Prefix", "type": "text"},
+        {"key": "vm_start_after_create", "label": "Start After Create", "type": "bool"},
+        {"key": "vm_oem_profile", "label": "Default OEM Profile", "type": "text"},
+        {"key": "vm_group_tag", "label": "Default Group Tag", "type": "text"},
+    ]},
+    {"section": "Autopilot", "fields": [
+        {"key": "autopilot_skip", "label": "Skip Autopilot Inject", "type": "bool"},
+        {"key": "capture_hardware_hash", "label": "Capture Hash", "type": "bool"},
+    ]},
+    {"section": "Timeouts", "fields": [
+        {"key": "guest_agent_timeout_seconds", "label": "Guest Agent Timeout (s)", "type": "number"},
+        {"key": "guest_agent_poll_interval_seconds", "label": "Guest Agent Poll (s)", "type": "number"},
+        {"key": "guest_exec_timeout_seconds", "label": "Guest Exec Timeout (s)", "type": "number"},
+        {"key": "guest_exec_poll_interval_seconds", "label": "Guest Exec Poll (s)", "type": "number"},
+        {"key": "hash_capture_timeout_seconds", "label": "Hash Capture Timeout (s)", "type": "number"},
+        {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number"},
+        {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number"},
+    ]},
+]
+
+
+def _load_vars():
+    """Load vars.yml values only (not vault)."""
+    if VARS_PATH.exists():
+        with open(VARS_PATH) as f:
+            data = yaml.safe_load(f)
+        return data or {}
+    return {}
+
+
+def _save_vars(updates):
+    """Update vars.yml by line-level replacement to preserve comments."""
+    lines = VARS_PATH.read_text().splitlines()
+    new_lines = []
+    for line in lines:
+        matched = False
+        for key, value in updates.items():
+            pattern = rf'^(\s*{re.escape(key)}\s*:)\s*.*$'
+            m = re.match(pattern, line)
+            if m:
+                # Format value appropriately
+                if value is None or value == "null" or value == "":
+                    formatted = "null"
+                elif isinstance(value, bool):
+                    formatted = "true" if value else "false"
+                elif isinstance(value, int):
+                    formatted = str(value)
+                else:
+                    # Quote strings that contain special chars
+                    formatted = f'"{value}"'
+                new_lines.append(f"{m.group(1)} {formatted}")
+                matched = True
+                break
+        if not matched:
+            new_lines.append(line)
+    VARS_PATH.write_text("\n".join(new_lines) + "\n")
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -321,6 +408,56 @@ async def job_detail_page(request: Request, job_id: str):
         "job": job,
         "log_content": job_manager.get_log(job_id),
     })
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, saved: str = ""):
+    current = _load_vars()
+    # Build schema with current values and readonly flag
+    sections = []
+    for group in SETTINGS_SCHEMA:
+        fields = []
+        for f in group["fields"]:
+            val = current.get(f["key"], "")
+            # Jinja2 template values are read-only
+            is_template = isinstance(val, str) and "{{" in str(val)
+            fields.append({**f, "value": val, "readonly": is_template})
+        sections.append({"section": group["section"], "fields": fields})
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "sections": sections,
+        "saved": saved == "1",
+    })
+
+
+@app.post("/api/settings")
+async def save_settings(request: Request):
+    form = await request.form()
+    current = _load_vars()
+    updates = {}
+    for group in SETTINGS_SCHEMA:
+        for f in group["fields"]:
+            key = f["key"]
+            # Skip Jinja2 template values
+            cur_val = current.get(key, "")
+            if isinstance(cur_val, str) and "{{" in str(cur_val):
+                continue
+            if f["type"] == "bool":
+                updates[key] = key in form
+            elif f["type"] == "number":
+                raw = form.get(key, "")
+                if raw == "" or raw == "null":
+                    updates[key] = None
+                else:
+                    try:
+                        updates[key] = int(raw)
+                    except ValueError:
+                        updates[key] = raw
+            else:
+                val = form.get(key, "")
+                updates[key] = val if val != "null" and val != "" else None
+    _save_vars(updates)
+    return RedirectResponse("/settings?saved=1", status_code=303)
 
 
 @app.get("/vms", response_class=HTMLResponse)
