@@ -14,6 +14,20 @@ class JobManager:
         self._lock = threading.Lock()
         self._active = {}
         self._index = self._load_index()
+        self._cleanup_orphans()
+
+    def _cleanup_orphans(self):
+        """Mark any jobs stuck as 'running' from a previous crash as failed."""
+        now = datetime.now(timezone.utc).isoformat()
+        changed = False
+        for entry in self._index:
+            if entry["status"] == "running":
+                entry["status"] = "failed"
+                entry["ended"] = now
+                entry["exit_code"] = -1
+                changed = True
+        if changed:
+            self._save_index()
 
     def _load_index(self):
         path = os.path.join(self.jobs_dir, "index.json")
