@@ -19,13 +19,17 @@
 {% if job.status == 'running' %}
 <script>
 var output = document.getElementById('output');
+var gotData = false;
 var ws = new WebSocket('ws://' + window.location.host + '/api/jobs/{{ job.id }}/stream');
 ws.onmessage = function(event) {
+  gotData = true;
   output.textContent += event.data;
   output.scrollTop = output.scrollHeight;
 };
 ws.onclose = function() {
-  window.location.reload();
+  if (gotData) {
+    setTimeout(function() { window.location.reload(); }, 1000);
+  }
 };
 </script>
 {% endif %}
