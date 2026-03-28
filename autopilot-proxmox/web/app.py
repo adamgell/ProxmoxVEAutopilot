@@ -125,9 +125,6 @@ def get_autopilot_devices():
     try:
         data = _graph_api(
             "/deviceManagement/windowsAutopilotDeviceIdentities"
-            "?$select=id,serialNumber,groupTag,deploymentProfileAssignmentStatus,"
-            "enrollmentState,lastContactedDateTime,model,manufacturer,displayName"
-            "&$orderby=serialNumber"
         )
     except Exception as e:
         return [], str(e)
