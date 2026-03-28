@@ -176,6 +176,14 @@ async def api_list_jobs():
     return job_manager.list_jobs()
 
 
+@app.post("/api/jobs/{job_id}/kill")
+async def kill_job(job_id: str):
+    killed = job_manager.kill(job_id)
+    if not killed:
+        return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
 @app.get("/api/jobs/{job_id}")
 async def api_get_job(job_id: str):
     job = job_manager.get_job(job_id)

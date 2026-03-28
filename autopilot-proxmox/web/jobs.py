@@ -107,3 +107,10 @@ class JobManager:
 
     def is_running(self, job_id):
         return job_id in self._active
+
+    def kill(self, job_id):
+        if job_id not in self._active:
+            return False
+        proc = self._active[job_id]["process"]
+        proc.kill()
+        return True
