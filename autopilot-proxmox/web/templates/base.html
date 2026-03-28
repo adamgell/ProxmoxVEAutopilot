@@ -2,16 +2,146 @@
 <html>
 <head>
 <title>{% block title %}Proxmox VE Autopilot{% endblock %}</title>
+<style>
+body {
+  font-family: Verdana, Tahoma, Arial, sans-serif;
+  font-size: 11px;
+  background: #e8e8e8;
+  color: #333;
+  margin: 0;
+  padding: 0;
+}
+#header {
+  background: #336699;
+  color: white;
+  padding: 8px 15px;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  border-bottom: 3px solid #264d73;
+}
+#nav {
+  background: #f0f0f0;
+  padding: 5px 15px;
+  border-bottom: 1px solid #ccc;
+  font-size: 11px;
+}
+#nav a {
+  color: #336699;
+  text-decoration: none;
+  padding: 2px 8px;
+}
+#nav a:hover {
+  color: #fff;
+  background: #336699;
+  text-decoration: none;
+}
+#content {
+  padding: 10px 15px;
+}
+h2 {
+  color: #336699;
+  font-size: 14px;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 3px;
+  margin-top: 15px;
+}
+h3 {
+  color: #336699;
+  font-size: 12px;
+}
+table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+th {
+  background: #336699;
+  color: white;
+  padding: 4px 8px;
+  text-align: left;
+  font-weight: bold;
+}
+td {
+  padding: 3px 8px;
+  border: 1px solid #ccc;
+}
+tr:nth-child(even) {
+  background: #f5f5f5;
+}
+tr:hover {
+  background: #dde8f0;
+}
+input[type="submit"] {
+  background: #336699;
+  color: white;
+  border: 1px solid #264d73;
+  padding: 3px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: Verdana, Tahoma, Arial, sans-serif;
+}
+input[type="submit"]:hover {
+  background: #264d73;
+}
+input[type="text"], input[type="number"], select {
+  border: 1px solid #999;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-family: Verdana, Tahoma, Arial, sans-serif;
+}
+a {
+  color: #336699;
+}
+a:visited {
+  color: #666699;
+}
+#footer {
+  background: #f0f0f0;
+  border-top: 1px solid #ccc;
+  padding: 5px 15px;
+  font-size: 10px;
+  color: #999;
+  margin-top: 20px;
+}
+.status-green { color: #006600; font-weight: bold; }
+.status-red { color: #cc0000; font-weight: bold; }
+.emergency-btn {
+  background: #cc0000 !important;
+  border-color: #990000 !important;
+  font-weight: bold;
+  font-size: 13px !important;
+  padding: 4px 16px !important;
+}
+.emergency-btn:hover {
+  background: #990000 !important;
+}
+.terminal {
+  background: #1a1a1a;
+  color: #00cc00;
+  padding: 10px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-y: scroll;
+  max-height: 600px;
+  border: 1px solid #333;
+}
+</style>
 </head>
-<body bgcolor="#c0c0c0" text="#000000" link="#0000ff" vlink="#800080">
-<center><h1>Proxmox VE Autopilot</h1></center>
-<hr>
-<table width="100%"><tr>
-<td><a href="/">Home</a> | <a href="/provision">Provision VMs</a> | <a href="/vms">Devices</a> | <a href="/template">Build Template</a> | <a href="/upload">Upload Hashes</a> | <a href="/hashes">Hash Files</a> | <a href="/jobs">Jobs</a></td>
-</tr></table>
-<hr>
+<body>
+<div id="header">Proxmox VE Autopilot</div>
+<div id="nav">
+<a href="/">Home</a> |
+<a href="/provision">Provision VMs</a> |
+<a href="/vms">Devices</a> |
+<a href="/template">Build Template</a> |
+<a href="/upload">Upload Hashes</a> |
+<a href="/hashes">Hash Files</a> |
+<a href="/jobs">Jobs</a>
+</div>
+<div id="content">
 {% block content %}{% endblock %}
-<hr>
-<font size="2"><i>Proxmox VE Autopilot - Est. 2026</i></font>
+</div>
+<div id="footer">Proxmox VE Autopilot &copy; 2026</div>
 </body>
 </html>

@@ -3,16 +3,16 @@
 {% block content %}
 <h2>Job History</h2>
 {% if jobs %}
-<table border="1" cellpadding="5" cellspacing="0">
+<table>
 <tr><th>ID</th><th>Playbook</th><th>Status</th><th>Started</th><th>Duration</th><th>Args</th></tr>
 {% for job in jobs %}
 <tr>
   <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
   <td>{{ job.playbook }}</td>
-  <td>{% if job.status == 'running' %}<b>RUNNING</b>{% elif job.status == 'complete' %}OK{% else %}<font color="red">FAILED</font>{% endif %}</td>
+  <td>{% if job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED</span>{% endif %}</td>
   <td>{{ job.started[:19] }}</td>
   <td>{{ job.duration or '' }}</td>
-  <td><font size="2">{{ job.args }}</font></td>
+  <td>{{ job.args }}</td>
 </tr>
 {% endfor %}
 </table>

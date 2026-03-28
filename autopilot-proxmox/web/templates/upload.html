@@ -4,7 +4,7 @@
 <h2>Upload Hardware Hashes to Intune</h2>
 {% if hash_files %}
 <p>Found <b>{{ hash_files|length }}</b> hash file(s) ready to upload:</p>
-<table border="1" cellpadding="5" cellspacing="0">
+<table>
 <tr><th>VM</th><th>Serial</th><th>OEM</th><th>Size</th><th>Modified</th></tr>
 {% for f in hash_files %}
 <tr>

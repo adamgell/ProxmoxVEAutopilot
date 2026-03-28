@@ -4,7 +4,7 @@
 <h2>Captured Hardware Hashes</h2>
 {% if hash_files %}
 <form method="POST" action="/api/hashes/delete">
-<table border="1" cellpadding="5" cellspacing="0">
+<table>
 <tr><th><input type="checkbox" onclick="var c=document.getElementsByName('files');for(var i=0;i<c.length;i++)c[i].checked=this.checked;"></th><th>VM</th><th>Serial</th><th>OEM</th><th>Size</th><th>Modified</th><th>Download</th></tr>
 {% for f in hash_files %}
 <tr>
