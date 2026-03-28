@@ -361,15 +361,53 @@ async def start_provision(
     count: int = Form(1),
     group_tag: str = Form(""),
 ):
-    cmd = [
-        "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
-        "-e", f"vm_oem_profile={profile}",
-        "-e", f"vm_count={count}",
-    ]
-    if group_tag:
-        cmd += ["-e", f"vm_group_tag={group_tag}"]
-    args = {"profile": profile, "count": count, "group_tag": group_tag}
-    job = job_manager.start("provision_clone", cmd, args=args)
+    if count <= 1:
+        # Single VM — run directly
+        cmd = [
+            "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
+            "-e", f"vm_oem_profile={profile}",
+            "-e", "vm_count=1",
+        ]
+        if group_tag:
+            cmd += ["-e", f"vm_group_tag={group_tag}"]
+        args = {"profile": profile, "count": 1, "group_tag": group_tag}
+        job = job_manager.start("provision_clone", cmd, args=args)
+        return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+    # Multiple VMs — launch in parallel via bash
+    import tempfile
+    playbook = str(PLAYBOOK_DIR / "provision_clone.yml")
+    script_lines = ["#!/bin/bash", ""]
+    script_lines.append(f"echo 'Provisioning {count} VMs in parallel ({profile})'")
+    script_lines.append("PIDS=()")
+
+    for i in range(count):
+        extra = f"-e vm_oem_profile={profile} -e vm_count=1"
+        if group_tag:
+            extra += f" -e vm_group_tag={group_tag}"
+        script_lines.append(f"echo '=== Starting VM {i+1}/{count} ==='")
+        script_lines.append(f"ansible-playbook {playbook} {extra} &")
+        script_lines.append("PIDS+=($!)")
+        # Small stagger to avoid VMID race condition
+        script_lines.append("sleep 3")
+
+    script_lines.append("")
+    script_lines.append("echo ''")
+    script_lines.append(f"echo '=== All {count} VMs launched, waiting for completion ==='")
+    script_lines.append("FAIL=0")
+    script_lines.append("for pid in \"${PIDS[@]}\"; do")
+    script_lines.append("  wait $pid || FAIL=$((FAIL+1))")
+    script_lines.append("done")
+    script_lines.append(f"echo '=== Done: {count} VMs, '$FAIL' failed ==='")
+    script_lines.append("[ $FAIL -eq 0 ] || exit 1")
+
+    script_content = "\n".join(script_lines)
+    script_path = Path(tempfile.mktemp(suffix=".sh", dir=str(BASE_DIR / "jobs")))
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)
+
+    args = {"profile": profile, "count": count, "group_tag": group_tag, "parallel": True}
+    job = job_manager.start("provision_parallel", ["bash", str(script_path)], args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
