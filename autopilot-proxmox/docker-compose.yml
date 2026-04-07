@@ -2,8 +2,7 @@ services:
   autopilot:
     image: ghcr.io/adamgell/proxmox-autopilot:latest
     container_name: autopilot
-    ports:
-      - "5000:5000"
+    network_mode: host
     volumes:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml:ro
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml:ro
