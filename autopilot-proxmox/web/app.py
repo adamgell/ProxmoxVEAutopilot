@@ -270,33 +270,43 @@ def get_autopilot_vms():
         vms = _proxmox_api(f"/nodes/{node}/qemu")
     except Exception:
         return []
+
+    # Filter to autopilot VMs first, then batch-fetch configs
+    autopilot_vms = [
+        vm for vm in vms
+        if not vm.get("template") and "autopilot" in vm.get("name", "").lower()
+    ]
+
+    # Fetch all configs in parallel using threads
+    from concurrent.futures import ThreadPoolExecutor
+    configs = {}
+    def fetch_config(vmid):
+        try:
+            return vmid, _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config")
+        except Exception:
+            return vmid, {}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for vmid, config in pool.map(lambda vm: fetch_config(vm["vmid"]), autopilot_vms):
+            configs[vmid] = config
+
     result = []
-    for vm in vms:
-        if vm.get("template"):
-            continue
-        name = vm.get("name", "")
-        if "autopilot" in name.lower():
-            # Fetch VM config for SMBIOS info
-            serial = ""
-            oem = ""
-            try:
-                config = _proxmox_api(f"/nodes/{node}/qemu/{vm['vmid']}/config")
-                smbios1 = config.get("smbios1", "")
-                serial = _decode_smbios_serial(smbios1)
-                manufacturer = _decode_smbios_field(smbios1, "manufacturer")
-                product = _decode_smbios_field(smbios1, "product")
-                oem = f"{manufacturer} {product}".strip()
-            except Exception:
-                pass
-            result.append({
-                "vmid": vm["vmid"],
-                "name": name,
-                "status": vm.get("status", "unknown"),
-                "serial": serial,
-                "oem": oem,
-                "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
-                "cpus": vm.get("cpus", vm.get("maxcpu", "")),
-            })
+    for vm in autopilot_vms:
+        config = configs.get(vm["vmid"], {})
+        smbios1 = config.get("smbios1", "")
+        serial = _decode_smbios_serial(smbios1) if smbios1 else ""
+        manufacturer = _decode_smbios_field(smbios1, "manufacturer") if smbios1 else ""
+        product = _decode_smbios_field(smbios1, "product") if smbios1 else ""
+        oem = f"{manufacturer} {product}".strip()
+        result.append({
+            "vmid": vm["vmid"],
+            "name": vm.get("name", ""),
+            "status": vm.get("status", "unknown"),
+            "serial": serial,
+            "oem": oem,
+            "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
+            "cpus": vm.get("cpus", vm.get("maxcpu", "")),
+        })
     return sorted(result, key=lambda v: v["vmid"])
 
 
@@ -309,6 +319,7 @@ def _graph_token():
         return None
     resp = requests.post(
         f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+        timeout=10,
         data={
             "grant_type": "client_credentials",
             "client_id": app_id,
