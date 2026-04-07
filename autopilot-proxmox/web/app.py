@@ -319,7 +319,6 @@ def _graph_token():
         return None
     resp = requests.post(
         f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-        timeout=10,
         data={
             "grant_type": "client_credentials",
             "client_id": app_id,
