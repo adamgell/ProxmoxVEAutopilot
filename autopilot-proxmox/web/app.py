@@ -632,11 +632,14 @@ async def vms_page(request: Request):
 async def start_provision(
     profile: str = Form(...),
     count: int = Form(1),
+    serial_prefix: str = Form(""),
     group_tag: str = Form(""),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
         group_tag = _sanitize_input(group_tag)
+    if serial_prefix:
+        serial_prefix = _sanitize_input(serial_prefix)
 
     if count <= 1:
         cmd = [
@@ -644,9 +647,11 @@ async def start_provision(
             "-e", f"vm_oem_profile={profile}",
             "-e", "vm_count=1",
         ]
+        if serial_prefix:
+            cmd += ["-e", f"vm_serial_prefix={serial_prefix}"]
         if group_tag:
             cmd += ["-e", f"vm_group_tag={group_tag}"]
-        args = {"profile": profile, "count": 1, "group_tag": group_tag}
+        args = {"profile": profile, "count": 1, "serial_prefix": serial_prefix, "group_tag": group_tag}
         job = job_manager.start("provision_clone", cmd, args=args)
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
@@ -654,6 +659,7 @@ async def start_provision(
     import tempfile
     playbook = shlex.quote(str(PLAYBOOK_DIR / "provision_clone.yml"))
     safe_profile = shlex.quote(profile)
+    safe_prefix = shlex.quote(serial_prefix) if serial_prefix else ""
     safe_tag = shlex.quote(group_tag) if group_tag else ""
 
     script_lines = ["#!/bin/bash", "set -e", ""]
@@ -662,6 +668,8 @@ async def start_provision(
     for i in range(count):
         script_lines.append(f"echo '=== VM {i+1}/{count} ==='")
         cmd_line = f"ansible-playbook {playbook} -e vm_oem_profile={safe_profile} -e vm_count=1"
+        if safe_prefix:
+            cmd_line += f" -e vm_serial_prefix={safe_prefix}"
         if safe_tag:
             cmd_line += f" -e vm_group_tag={safe_tag}"
         script_lines.append(cmd_line)
@@ -675,7 +683,7 @@ async def start_provision(
     script_path.write_text(script_content)
     script_path.chmod(0o755)
 
-    args = {"profile": profile, "count": count, "group_tag": group_tag}
+    args = {"profile": profile, "count": count, "serial_prefix": serial_prefix, "group_tag": group_tag}
     job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
