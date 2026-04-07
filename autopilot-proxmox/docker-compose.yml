@@ -6,6 +6,7 @@ services:
       - "5000:5000"
     volumes:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml:ro
+      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml:ro
       - autopilot-data:/app/output
       - autopilot-jobs:/app/jobs
     security_opt:
