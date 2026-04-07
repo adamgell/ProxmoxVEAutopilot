@@ -6,3 +6,4 @@ output/
 jobs/
 .git/
 docs/
+inventory/group_vars/all/vault.yml
