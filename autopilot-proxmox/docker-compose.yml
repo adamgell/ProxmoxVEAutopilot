@@ -1,6 +1,6 @@
 services:
   autopilot:
-    build: .
+    image: ghcr.io/adamgell/proxmox-autopilot:latest
     container_name: autopilot
     ports:
       - "5000:5000"
