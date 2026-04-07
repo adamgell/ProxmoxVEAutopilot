@@ -12,6 +12,9 @@
   ansible.builtin.pause:
     seconds: 60
 
+- name: "Re-wait for guest agent after TPM pause on VM {{ vm_vmid }}"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_guest_agent.yml"
+
 - name: "Inject Autopilot config into VM {{ vm_vmid }}"
   ansible.builtin.include_role:
     name: autopilot_inject
