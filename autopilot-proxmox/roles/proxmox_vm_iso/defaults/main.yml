@@ -9,3 +9,4 @@ vm_ostype: "win11"
 vm_start_after_create: true
 vm_oem_profile: null
 vm_custom_serial: null
+vm_serial_prefix: null

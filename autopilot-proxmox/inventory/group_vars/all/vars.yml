@@ -45,6 +45,7 @@ vm_start_after_create: true
 # OEM profile key (from files/oem_profiles.yml), e.g. "lenovo-t14"
 vm_oem_profile: "generic-desktop"
 vm_custom_serial: null
+vm_serial_prefix: null
 vm_group_tag: null
 
 # =============================================================================

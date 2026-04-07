@@ -43,7 +43,8 @@
   ansible.builtin.set_fact:
     _vm_serial: >-
       {{ (_oem_profile.manufacturer | default(''))
-         | generate_serial_number(custom_serial=vm_custom_serial | default(None)) }}
+         | generate_serial_number(custom_serial=vm_custom_serial | default(None),
+                                  prefix=vm_serial_prefix | default(None)) }}
 
 - name: Build SMBIOS1 string
   ansible.builtin.set_fact:

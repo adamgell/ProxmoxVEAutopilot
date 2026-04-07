@@ -110,6 +110,21 @@ class TestGenerateSerialNumber:
         result = filters.generate_serial_number("Lenovo", custom_serial="MY-CUSTOM-123")
         assert result == "MY-CUSTOM-123"
 
+    def test_custom_prefix_overrides_manufacturer(self, filters):
+        result = filters.generate_serial_number("Lenovo", prefix="ACME")
+        assert result.startswith("ACME-")
+        hex_part = result.split("-", 1)[1]
+        assert len(hex_part) == 8
+        assert re.match(r"^[0-9A-F]+$", hex_part)
+
+    def test_custom_prefix_with_empty_manufacturer(self, filters):
+        result = filters.generate_serial_number("", prefix="TEST")
+        assert result.startswith("TEST-")
+
+    def test_custom_serial_takes_priority_over_prefix(self, filters):
+        result = filters.generate_serial_number("Lenovo", custom_serial="EXACT-123", prefix="ACME")
+        assert result == "EXACT-123"
+
     def test_randomness(self, filters):
         results = {filters.generate_serial_number("Lenovo") for _ in range(10)}
         assert len(results) > 1  # should not all be the same

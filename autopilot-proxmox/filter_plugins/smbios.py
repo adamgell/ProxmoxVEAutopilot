@@ -85,10 +85,13 @@ class FilterModule:
         return ",".join(parts)
 
     @staticmethod
-    def generate_serial_number(manufacturer, custom_serial=None):
-        """Generate a manufacturer-prefixed serial number.
+    def generate_serial_number(manufacturer, custom_serial=None, prefix=None):
+        """Generate a prefixed serial number.
 
-        Prefix mapping:
+        If custom_serial is provided, returns it verbatim.
+        If prefix is provided, uses it instead of the manufacturer mapping.
+
+        Default prefix mapping (when prefix is not set):
           Lenovo      -> PF
           Dell*       -> SVC
           HP          -> CZC
@@ -100,6 +103,9 @@ class FilterModule:
 
         random_bytes = os.urandom(4)
         hex_str = random_bytes.hex().upper()
+
+        if prefix:
+            return f"{prefix}-{hex_str}"
 
         manufacturer = manufacturer or ""
         if manufacturer.startswith("Lenovo"):
