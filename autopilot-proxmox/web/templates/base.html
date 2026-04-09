@@ -151,6 +151,13 @@ a:visited {
   gap: 3px;
   align-items: center;
 }
+.badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
+.badge-green { background:#d4edda; color:#155724; }
+.badge-gray { background:#e2e3e5; color:#383d41; }
+.action-btn-upload { background:#336699; color:white; border:1px solid #264d73; padding:3px 12px; font-size:11px; cursor:pointer; font-family:Verdana,Tahoma,Arial,sans-serif; }
+.action-btn-upload:hover { background:#264d73; }
+.action-btn-delete { background:#cc0000; color:white; border:1px solid #990000; padding:3px 12px; font-size:11px; cursor:pointer; font-family:Verdana,Tahoma,Arial,sans-serif; }
+.action-btn-delete:hover { background:#990000; }
 </style>
 </head>
 <body>
@@ -160,9 +167,7 @@ a:visited {
 <a href="/provision">Provision VMs</a> |
 <a href="/vms">Devices</a> |
 <a href="/template">Build Template</a> |
-<a href="/upload">Upload to Intune</a> |
-<a href="/hashes">Hash Files</a> |
-<a href="/hashes/upload">Import Hashes</a> |
+<a href="/hashes">Hashes</a> |
 <a href="/jobs">Jobs</a> |
 <a href="/settings">Settings</a>
 </div>

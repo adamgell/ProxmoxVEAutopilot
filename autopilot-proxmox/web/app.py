@@ -543,27 +543,16 @@ async def template_page(request: Request):
     })
 
 
-@app.get("/upload", response_class=HTMLResponse)
-async def upload_page(request: Request):
-    return templates.TemplateResponse("upload.html", {
-        "request": request,
-        "hash_files": get_hash_files(),
-    })
-
-
 @app.get("/hashes", response_class=HTMLResponse)
-async def hashes_page(request: Request):
+async def hashes_page(request: Request, uploaded: str = "", error: str = ""):
+    hash_files = get_hash_files()
+    devices, _ = get_autopilot_devices()
+    ap_serials = {d["serial"] for d in devices}
+    for f in hash_files:
+        f["in_intune"] = f["serial"] in ap_serials
     return templates.TemplateResponse("hashes.html", {
         "request": request,
-        "hash_files": get_hash_files(),
-    })
-
-
-@app.get("/hashes/upload", response_class=HTMLResponse)
-async def upload_hashes_page(request: Request, uploaded: str = "", error: str = ""):
-    return templates.TemplateResponse("upload_hashes.html", {
-        "request": request,
-        "hash_files": get_hash_files(),
+        "hash_files": hash_files,
         "uploaded": uploaded,
         "error": error,
     })
@@ -1072,12 +1061,32 @@ async def start_capture(
 
 
 @app.post("/api/jobs/upload")
-async def start_upload():
-    cmd = [
-        "ansible-playbook", str(PLAYBOOK_DIR / "upload_hashes.yml"),
-    ]
-    job = job_manager.start("upload_hashes", cmd)
-    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+async def start_upload(
+    files: list[str] = Form(...),
+    group_tags: list[str] = Form(...),
+):
+    """Upload selected hash files to Intune with per-file group tags."""
+    upload_playbook = shlex.quote(str(PLAYBOOK_DIR / "upload_hashes.yml"))
+
+    for filename, tag in zip(files, group_tags):
+        try:
+            file_path = _safe_path(HASH_DIR, filename)
+        except ValueError:
+            continue
+        if not file_path.exists():
+            continue
+
+        cmd = [
+            "ansible-playbook", str(PLAYBOOK_DIR / "upload_hashes.yml"),
+        ]
+        if tag:
+            tag = _sanitize_input(tag)
+            cmd += ["-e", f"vm_group_tag={tag}"]
+        cmd += ["-e", f"hash_file={shlex.quote(str(file_path))}"]
+
+        job_manager.start("upload_hash", cmd, args={"file": filename, "group_tag": tag})
+
+    return RedirectResponse("/hashes?uploaded=1", status_code=303)
 
 
 @app.get("/api/jobs")
@@ -1161,8 +1170,8 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
         dest.write_bytes(content)
         saved += 1
     if saved == 0:
-        return RedirectResponse("/hashes/upload?error=No+valid+CSV+files+found", status_code=303)
-    return RedirectResponse(f"/hashes/upload?uploaded={saved}", status_code=303)
+        return RedirectResponse("/hashes?error=No+valid+CSV+files+found", status_code=303)
+    return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
 
 
 @app.websocket("/api/jobs/{job_id}/stream")
