@@ -5,13 +5,12 @@ services:
     network_mode: host
     volumes:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml:ro
-      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml:ro
-      - autopilot-data:/app/output
+      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
+      - ./output:/app/output
       - autopilot-jobs:/app/jobs
     security_opt:
       - apparmor=unconfined
     restart: unless-stopped
 
 volumes:
-  autopilot-data:
   autopilot-jobs:

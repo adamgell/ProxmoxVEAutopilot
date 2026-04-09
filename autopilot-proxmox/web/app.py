@@ -6,7 +6,7 @@ from pathlib import Path
 
 import requests
 import yaml
-from fastapi import FastAPI, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -71,6 +71,7 @@ SETTINGS_SCHEMA = [
         {"key": "vm_start_after_create", "label": "Start After Create", "type": "bool"},
         {"key": "vm_oem_profile", "label": "Default OEM Profile", "type": "text"},
         {"key": "vm_serial_prefix", "label": "Serial Prefix", "type": "text"},
+        {"key": "vm_custom_serial", "label": "Default Serial", "type": "text"},
         {"key": "vm_group_tag", "label": "Default Group Tag", "type": "text"},
     ]},
     {"section": "Autopilot", "fields": [
@@ -163,8 +164,15 @@ def _format_yaml_value(value):
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
-    # Use yaml.dump for safe string escaping
-    return yaml.dump(value, default_flow_style=True).strip()
+    s = str(value)
+    # Quote strings that contain YAML-special characters or look like non-string types
+    needs_quotes = (
+        not s
+        or s[0] in ("'", '"', '{', '[', '&', '*', '!', '|', '>', '%', '@', '`')
+        or ':' in s or '#' in s or ',' in s
+        or s.lower() in ('true', 'false', 'yes', 'no', 'null', 'on', 'off')
+    )
+    return f'"{s}"' if needs_quotes else s
 
 
 def _save_vars(updates):
@@ -478,6 +486,16 @@ async def hashes_page(request: Request):
     return templates.TemplateResponse("hashes.html", {
         "request": request,
         "hash_files": get_hash_files(),
+    })
+
+
+@app.get("/hashes/upload", response_class=HTMLResponse)
+async def upload_hashes_page(request: Request, uploaded: str = "", error: str = ""):
+    return templates.TemplateResponse("upload_hashes.html", {
+        "request": request,
+        "hash_files": get_hash_files(),
+        "uploaded": uploaded,
+        "error": error,
     })
 
 
@@ -897,6 +915,28 @@ async def download_hash(filename: str):
     if not file_path.exists() or not file_path.name.endswith(".csv"):
         return HTMLResponse("<h1>File not found</h1>", status_code=404)
     return FileResponse(file_path, filename=filename)
+
+
+@app.post("/api/hashes/upload")
+async def upload_hash_files(files: list[UploadFile] = File(...)):
+    HASH_DIR.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    for upload in files:
+        if not upload.filename or not upload.filename.endswith(".csv"):
+            continue
+        safe_name = re.sub(r'[^\w\-.]', '_', upload.filename)
+        dest = HASH_DIR / safe_name
+        content = await upload.read()
+        # Basic CSV sanity check: must have at least a header and one data row
+        text = content.decode("utf-8-sig", errors="replace")
+        lines = text.strip().splitlines()
+        if len(lines) < 2:
+            continue
+        dest.write_bytes(content)
+        saved += 1
+    if saved == 0:
+        return RedirectResponse("/hashes/upload?error=No+valid+CSV+files+found", status_code=303)
+    return RedirectResponse(f"/hashes/upload?uploaded={saved}", status_code=303)
 
 
 @app.websocket("/api/jobs/{job_id}/stream")
