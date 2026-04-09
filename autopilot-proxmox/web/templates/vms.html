@@ -6,7 +6,7 @@
 {% if vms %}
 <form method="POST" action="/api/jobs/bulk-capture">
 <table>
-<tr><th><input type="checkbox" onclick="var c=document.getElementsByName('vmids');for(var i=0;i<c.length;i++){if(!c[i].disabled)c[i].checked=this.checked;}"></th><th>VMID</th><th>Name</th><th>Serial</th><th>OEM Profile</th><th>Status</th><th>Autopilot</th><th>Hash</th><th>Console</th></tr>
+<tr><th><input type="checkbox" onclick="var c=document.getElementsByName('vmids');for(var i=0;i<c.length;i++){if(!c[i].disabled)c[i].checked=this.checked;}"></th><th>VMID</th><th>Name</th><th>Serial</th><th>OEM Profile</th><th>Status</th><th>Autopilot</th><th>Hash</th><th>Actions</th></tr>
 {% for vm in vms %}
 <tr>
   <td>{% if vm.status == 'running' %}<input type="checkbox" name="vmids" value="{{ vm.vmid }}:{{ vm.name }}">{% else %}<input type="checkbox" disabled>{% endif %}</td>
@@ -17,7 +17,16 @@
   <td>{% if vm.status == 'running' %}<span class="status-green">{{ vm.status }}</span>{% else %}{{ vm.status }}{% endif %}</td>
   <td>{% if vm.in_autopilot %}<span class="status-green">Registered</span>{% else %}<span class="status-red">Missing</span>{% endif %}</td>
   <td>{% if vm.has_hash %}<span class="status-green">Yes</span>{% else %}-{% endif %}</td>
-  <td>{% if vm.status == 'running' %}<a href="/api/vms/{{ vm.vmid }}/console" target="_blank">Open</a>{% else %}-{% endif %}</td>
+  <td>
+    {% if vm.status == 'running' %}
+    <form method="POST" action="/api/jobs/capture" style="display:inline;">
+      <input type="hidden" name="vmid" value="{{ vm.vmid }}">
+      <input type="hidden" name="vm_name" value="{{ vm.name }}">
+      <input type="submit" value="Capture Hash">
+    </form>
+    <a href="/api/vms/{{ vm.vmid }}/console" target="_blank">Console</a>
+    {% else %}-{% endif %}
+  </td>
 </tr>
 {% endfor %}
 </table>
