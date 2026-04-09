@@ -235,8 +235,8 @@ def _proxmox_api(path):
     return resp.json().get("data", [])
 
 
-def _proxmox_api_post(path):
-    """POST to Proxmox API (for VM power actions)."""
+def _proxmox_api_post(path, data=None):
+    """POST to Proxmox API (for VM power actions and guest-exec)."""
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
@@ -244,7 +244,7 @@ def _proxmox_api_post(path):
     token_secret = cfg.get("vault_proxmox_api_token_secret", "")
     url = f"https://{host}:{port}/api2/json{path}"
     headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
-    resp = requests.post(url, headers=headers, verify=False, timeout=10)
+    resp = requests.post(url, headers=headers, data=data, verify=False, timeout=10)
     resp.raise_for_status()
     return resp.json().get("data", {})
 
@@ -853,6 +853,33 @@ async def vm_delete(vmid: int):
     except Exception as e:
         return RedirectResponse(f"/vms?error=Delete failed: {e}", status_code=303)
     return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/vms/{vmid}/rename")
+async def vm_rename(vmid: int):
+    """Rename the Windows computer inside the VM to match its SMBIOS serial."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        # Get the serial from the VM config
+        config = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config")
+        smbios1 = config.get("smbios1", "") if isinstance(config, dict) else ""
+        serial = _decode_smbios_serial(smbios1)
+        if not serial:
+            return RedirectResponse(f"/vms?error=VM {vmid} has no serial number configured", status_code=303)
+        # Windows hostnames max 15 chars, no special chars
+        hostname = re.sub(r'[^A-Za-z0-9\-]', '', serial)[:15]
+        if not hostname:
+            return RedirectResponse(f"/vms?error=Serial '{serial}' produces invalid hostname", status_code=303)
+        # Execute rename via guest agent
+        ps_cmd = f"Rename-Computer -NewName '{hostname}' -Force"
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/agent/exec", data={
+            "command": "powershell.exe",
+            "input-data": ps_cmd,
+        })
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Rename failed: {e}", status_code=303)
+    return RedirectResponse(f"/vms?error=Renamed VM {vmid} to {hostname} — restart required to apply", status_code=303)
 
 
 @app.post("/api/jobs/capture-and-upload")

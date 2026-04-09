@@ -40,6 +40,9 @@
       <button class="action-btn" type="button" title="Capture Hash" onclick="postAction('/api/jobs/capture',{vmid:'{{ vm.vmid }}',vm_name:'{{ vm.name }}'});">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
+      <button class="action-btn" type="button" title="Rename to Serial" onclick="if(confirm('Rename computer in VM {{ vm.vmid }} to its serial number? Requires restart to apply.'))postAction('/api/vms/{{ vm.vmid }}/rename');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+      </button>
       <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       </a>
