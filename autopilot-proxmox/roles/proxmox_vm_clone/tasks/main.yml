@@ -46,6 +46,11 @@
          | generate_serial_number(custom_serial=vm_custom_serial | default(None),
                                   prefix=vm_serial_prefix | default(None)) }}
 
+- name: Update VM name to serial
+  ansible.builtin.set_fact:
+    vm_name: "{{ _vm_serial | regex_replace('[^A-Za-z0-9\\-]', '') }}"
+  when: _vm_serial is defined and _vm_serial | length > 0
+
 - name: Build SMBIOS1 string
   ansible.builtin.set_fact:
     _smbios1_string: >-

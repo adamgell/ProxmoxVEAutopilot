@@ -5,7 +5,7 @@
 - name: Build config update body
   ansible.builtin.set_fact:
     _config_body:
-      name: "{{ vm_name }}"
+      name: "{{ _vm_serial | default(vm_name) | regex_replace('[^A-Za-z0-9\\-]', '') }}"
       cores: "{{ vm_cores }}"
       memory: "{{ vm_memory_mb }}"
       cpu: "host"
