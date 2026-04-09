@@ -235,6 +235,34 @@ def _proxmox_api(path):
     return resp.json().get("data", [])
 
 
+def _proxmox_api_post(path):
+    """POST to Proxmox API (for VM power actions)."""
+    cfg = _load_proxmox_config()
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    token_id = cfg.get("vault_proxmox_api_token_id", "")
+    token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+    url = f"https://{host}:{port}/api2/json{path}"
+    headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
+    resp = requests.post(url, headers=headers, verify=False, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("data", {})
+
+
+def _proxmox_api_delete(path):
+    """DELETE to Proxmox API (for VM removal)."""
+    cfg = _load_proxmox_config()
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    token_id = cfg.get("vault_proxmox_api_token_id", "")
+    token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+    url = f"https://{host}:{port}/api2/json{path}"
+    headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
+    resp = requests.delete(url, headers=headers, verify=False, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("data", {})
+
+
 def _decode_smbios_serial(smbios1):
     """Extract and decode the serial from a Proxmox smbios1 config string."""
     import base64 as b64mod
@@ -644,7 +672,7 @@ async def save_settings(request: Request):
 
 
 @app.get("/vms", response_class=HTMLResponse)
-async def vms_page(request: Request):
+async def vms_page(request: Request, error: str = ""):
     vms = get_autopilot_vms()
     vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
     devices, ap_error = get_autopilot_devices()
@@ -676,6 +704,7 @@ async def vms_page(request: Request):
         "devices": matched_devices,
         "missing_vms": missing_vms,
         "ap_error": ap_error,
+        "error": error,
     })
 
 
@@ -762,6 +791,68 @@ async def vm_console(vmid: int):
     node = cfg.get("proxmox_node", "pve")
     novnc_url = f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
     return RedirectResponse(novnc_url)
+
+
+@app.post("/api/vms/{vmid}/start")
+async def vm_start(vmid: int):
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Start failed: {e}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/vms/{vmid}/shutdown")
+async def vm_shutdown(vmid: int):
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/shutdown")
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Shutdown failed: {e}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/vms/{vmid}/stop")
+async def vm_stop(vmid: int):
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Force stop failed: {e}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/vms/{vmid}/reset")
+async def vm_reset(vmid: int):
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/reset")
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Reset failed: {e}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/vms/{vmid}/delete")
+async def vm_delete(vmid: int):
+    import time
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        # Stop VM first if running
+        try:
+            _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
+            time.sleep(3)
+        except Exception:
+            pass  # Already stopped or doesn't matter
+        _proxmox_api_delete(f"/nodes/{node}/qemu/{vmid}")
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Delete failed: {e}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
 
 
 @app.post("/api/jobs/capture-and-upload")

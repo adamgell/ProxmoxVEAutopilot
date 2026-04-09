@@ -2,6 +2,10 @@
 {% block title %}Devices - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 
+{% if error %}
+<p style="background:#f8d7da;border:1px solid #f5c6cb;padding:8px;color:#721c24;">{{ error }}</p>
+{% endif %}
+
 <h2>Proxmox VMs</h2>
 {% if vms %}
 <form method="POST" action="/api/jobs/bulk-capture">
@@ -19,14 +23,53 @@
   <td>{% if vm.in_autopilot %}<span class="status-green">Registered</span>{% else %}<span class="status-red">Missing</span>{% endif %}</td>
   <td>{% if vm.has_hash %}<span class="status-green">Yes</span>{% else %}-{% endif %}</td>
   <td>
+    <div class="actions-cell">
     {% if vm.status == 'running' %}
-    <form method="POST" action="/api/jobs/capture" style="display:inline;">
-      <input type="hidden" name="vmid" value="{{ vm.vmid }}">
-      <input type="hidden" name="vm_name" value="{{ vm.name }}">
-      <input type="submit" value="Capture Hash">
-    </form>
-    <a href="/api/vms/{{ vm.vmid }}/console" target="_blank">Console</a>
-    {% else %}-{% endif %}
+      <!-- Power actions -->
+      <form method="POST" action="/api/vms/{{ vm.vmid }}/shutdown" style="display:inline;" onsubmit="return confirm('Shutdown VM {{ vm.vmid }}?');">
+        <button class="action-btn" type="submit" title="Shutdown">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc8800" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/></svg>
+        </button>
+      </form>
+      <form method="POST" action="/api/vms/{{ vm.vmid }}/stop" style="display:inline;" onsubmit="return confirm('Force stop VM {{ vm.vmid }}? This is like pulling the power plug.');">
+        <button class="action-btn danger" type="submit" title="Force Stop">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="#cc0000"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        </button>
+      </form>
+      <form method="POST" action="/api/vms/{{ vm.vmid }}/reset" style="display:inline;">
+        <button class="action-btn" type="submit" title="Reset">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        </button>
+      </form>
+      <span style="color:#ccc;margin:0 2px;">|</span>
+      <!-- Tool actions -->
+      <form method="POST" action="/api/jobs/capture" style="display:inline;">
+        <input type="hidden" name="vmid" value="{{ vm.vmid }}">
+        <input type="hidden" name="vm_name" value="{{ vm.name }}">
+        <button class="action-btn" type="submit" title="Capture Hash">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+        </button>
+      </form>
+      <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </a>
+      <span style="color:#ccc;margin:0 2px;">|</span>
+    {% else %}
+      <!-- Stopped: Start -->
+      <form method="POST" action="/api/vms/{{ vm.vmid }}/start" style="display:inline;">
+        <button class="action-btn" type="submit" title="Start">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="#006600"><polygon points="5,3 19,12 5,21"/></svg>
+        </button>
+      </form>
+      <span style="color:#ccc;margin:0 2px;">|</span>
+    {% endif %}
+      <!-- Delete (always shown) -->
+      <form method="POST" action="/api/vms/{{ vm.vmid }}/delete" style="display:inline;" onsubmit="return confirm('Delete VM {{ vm.vmid }}? This cannot be undone.');">
+        <button class="action-btn danger" type="submit" title="Delete VM">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc0000" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </form>
+    </div>
   </td>
 </tr>
 {% endfor %}

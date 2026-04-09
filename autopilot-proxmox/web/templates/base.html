@@ -126,6 +126,31 @@ a:visited {
   max-height: 600px;
   border: 1px solid #333;
 }
+.action-btn {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 3px 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+.action-btn:hover {
+  background: #dde8f0;
+  border-color: #336699;
+}
+.action-btn.danger:hover {
+  background: #f8d7da;
+  border-color: #cc0000;
+}
+.actions-cell {
+  white-space: nowrap;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
 </style>
 </head>
 <body>
