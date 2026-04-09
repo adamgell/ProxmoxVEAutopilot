@@ -321,10 +321,10 @@ def get_autopilot_vms():
     except Exception:
         return []
 
-    # Filter to autopilot VMs first, then batch-fetch configs
+    # Filter to VMs tagged "autopilot", then batch-fetch configs
     autopilot_vms = [
         vm for vm in vms
-        if not vm.get("template") and "autopilot" in vm.get("name", "").lower()
+        if not vm.get("template") and "autopilot" in (vm.get("tags", "") or "").split(";")
     ]
 
     # Fetch all configs in parallel using threads
