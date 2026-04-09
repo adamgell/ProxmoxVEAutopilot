@@ -917,7 +917,7 @@ async def vm_typetext(vmid: int, text: str = Form(...)):
         if not key:
             continue
         try:
-            _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
+            _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
         except Exception as e:
             errors.append(f"{ch}: {e}")
             break
@@ -933,7 +933,7 @@ async def vm_sendkey(vmid: int, key: str = Form(...)):
     cfg = _load_proxmox_config()
     node = cfg.get("proxmox_node", "pve")
     try:
-        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
+        _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
     except Exception as e:
         return RedirectResponse(f"/vms?error=Sendkey failed: {e}", status_code=303)
     return RedirectResponse("/vms", status_code=303)
