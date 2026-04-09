@@ -298,6 +298,24 @@ def get_autopilot_vms():
         for vmid, config in pool.map(lambda vm: fetch_config(vm["vmid"]), autopilot_vms):
             configs[vmid] = config
 
+    # Fetch guest agent hostnames for running VMs
+    running_vmids = [vm["vmid"] for vm in autopilot_vms if vm.get("status") == "running"]
+    hostnames = {}
+    def fetch_hostname(vmid):
+        try:
+            data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/get-host-name")
+            # API returns {"result": {"host-name": "..."}} or {"host-name": "..."}
+            if isinstance(data, dict):
+                return vmid, data.get("result", data).get("host-name", "")
+            return vmid, ""
+        except Exception:
+            return vmid, ""
+
+    if running_vmids:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            for vmid, hostname in pool.map(fetch_hostname, running_vmids):
+                hostnames[vmid] = hostname
+
     result = []
     for vm in autopilot_vms:
         config = configs.get(vm["vmid"], {})
@@ -312,6 +330,7 @@ def get_autopilot_vms():
             "status": vm.get("status", "unknown"),
             "serial": serial,
             "oem": oem,
+            "hostname": hostnames.get(vm["vmid"], ""),
             "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
             "cpus": vm.get("cpus", vm.get("maxcpu", "")),
         })
@@ -633,9 +652,15 @@ async def vms_page(request: Request):
     ap_serials = {d["serial"] for d in devices}
 
     # Only show Autopilot devices that match a Proxmox VM serial
+    serial_to_vm = {vm["serial"]: vm for vm in vms if vm.get("serial")}
     matched_devices = [d for d in devices if d["serial"] in vm_serials]
     for d in matched_devices:
         d["has_local_hash"] = d["serial"] in hash_serials
+        # Use guest agent hostname as fallback for empty Intune display name
+        if not d["display_name"]:
+            vm = serial_to_vm.get(d["serial"])
+            if vm and vm.get("hostname"):
+                d["display_name"] = vm["hostname"]
 
     # Tag VMs with their Autopilot status
     for vm in vms:
