@@ -249,6 +249,20 @@ def _proxmox_api_post(path, data=None):
     return resp.json().get("data", {})
 
 
+def _proxmox_api_put(path, data=None):
+    """PUT to Proxmox API (for VM config changes)."""
+    cfg = _load_proxmox_config()
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    token_id = cfg.get("vault_proxmox_api_token_id", "")
+    token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+    url = f"https://{host}:{port}/api2/json{path}"
+    headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
+    resp = requests.put(url, headers=headers, data=data, verify=False, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("data", {})
+
+
 def _proxmox_api_delete(path):
     """DELETE to Proxmox API (for VM removal)."""
     cfg = _load_proxmox_config()
@@ -880,6 +894,9 @@ async def vm_rename(vmid: int):
         hostname = re.sub(r'[^A-Za-z0-9\-]', '', serial)[:15]
         if not hostname:
             return RedirectResponse(f"/vms?error=Serial '{serial}' produces invalid hostname", status_code=303)
+        # Update Proxmox VM name to include the serial
+        pve_name = re.sub(r'[^A-Za-z0-9\-]', '', serial)
+        _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/config", data={"name": pve_name})
         # Execute rename via guest agent
         ps_cmd = f"Rename-Computer -NewName '{hostname}' -Force"
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/agent/exec", data={
