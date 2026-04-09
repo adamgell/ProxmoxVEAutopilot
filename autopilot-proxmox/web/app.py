@@ -860,7 +860,7 @@ async def start_capture_and_upload(
     missing_vmids: list[str] = Form(...),
     group_tag: str = Form(""),
 ):
-    """Capture hashes for selected VMs then upload all to Intune."""
+    """Capture hashes for selected VMs in parallel, then upload all to Intune."""
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
@@ -871,32 +871,42 @@ async def start_capture_and_upload(
         _sanitize_input(name)
         vm_list.append({"vmid": vmid, "name": name})
 
-    playbook = shlex.quote(str(PLAYBOOK_DIR / "retry_inject_hash.yml"))
-    upload_playbook = shlex.quote(str(PLAYBOOK_DIR / "upload_hashes.yml"))
-    safe_tag = shlex.quote(group_tag) if group_tag else ""
-
-    script_lines = ["#!/bin/bash", "set -e"]
+    # Launch parallel capture jobs (one per VM)
     for vm in vm_list:
-        script_lines.append(f"echo '=== Capturing hash for {vm['name']} (VMID {vm['vmid']}) ==='")
-        cmd = f"ansible-playbook {playbook} -e vm_vmid={shlex.quote(vm['vmid'])} -e vm_name={shlex.quote(vm['name'])} -e autopilot_skip=true"
-        if safe_tag:
-            cmd += f" -e vm_group_tag={safe_tag}"
-        script_lines.append(cmd)
+        cmd = [
+            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
+            "-e", f"vm_vmid={vm['vmid']}",
+            "-e", f"vm_name={vm['name']}",
+            "-e", "autopilot_skip=true",
+        ]
+        if group_tag:
+            cmd += ["-e", f"vm_group_tag={group_tag}"]
+        job_manager.start("hash_capture", cmd, args={"vmid": vm["vmid"], "vm_name": vm["name"], "group_tag": group_tag})
 
-    script_lines.append("echo '=== Uploading all hashes to Intune ==='")
-    script_lines.append(f"ansible-playbook {upload_playbook}")
-
-    script_content = "\n".join(script_lines)
+    # Launch upload job that waits for captures to finish
     import tempfile
+    script_lines = [
+        "#!/bin/bash",
+        f"echo 'Waiting for {len(vm_list)} capture job(s) to finish...'",
+        "while true; do",
+        "  RUNNING=$(ps aux | grep '[a]nsible-playbook.*retry_inject_hash' | wc -l)",
+        "  [ \"$RUNNING\" -eq 0 ] && break",
+        "  echo \"  $RUNNING capture(s) still running...\"",
+        "  sleep 5",
+        "done",
+        "echo '=== All captures done, uploading hashes to Intune ==='",
+        f"ansible-playbook {shlex.quote(str(PLAYBOOK_DIR / 'upload_hashes.yml'))}",
+    ]
     fd, script_file = tempfile.mkstemp(suffix=".sh", dir=str(BASE_DIR / "jobs"))
     os.close(fd)
     script_path = Path(script_file)
-    script_path.write_text(script_content)
+    script_path.write_text("\n".join(script_lines))
     script_path.chmod(0o755)
 
-    args = {"vms": [v["name"] for v in vm_list], "group_tag": group_tag, "upload": True}
-    job = job_manager.start("capture_and_upload", ["bash", str(script_path)], args=args)
-    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+    job_manager.start("upload_after_capture", ["bash", str(script_path)],
+                      args={"vms": [v["name"] for v in vm_list], "group_tag": group_tag, "upload": True})
+
+    return RedirectResponse("/jobs", status_code=303)
 
 
 @app.post("/api/jobs/bulk-capture")
@@ -904,39 +914,25 @@ async def start_bulk_capture(
     vmids: list[str] = Form(...),
     group_tag: str = Form(""),
 ):
-    """Capture hashes for multiple VMs sequentially in one job."""
+    """Capture hashes for multiple VMs in parallel (one job per VM)."""
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
-    vm_list = []
     for entry in vmids:
         vmid, name = entry.split(":", 1)
         _sanitize_input(vmid)
         _sanitize_input(name)
-        vm_list.append({"vmid": vmid, "name": name})
+        cmd = [
+            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
+            "-e", f"vm_vmid={vmid}",
+            "-e", f"vm_name={name}",
+            "-e", "autopilot_skip=true",
+        ]
+        if group_tag:
+            cmd += ["-e", f"vm_group_tag={group_tag}"]
+        job_manager.start("hash_capture", cmd, args={"vmid": vmid, "vm_name": name, "group_tag": group_tag})
 
-    playbook = shlex.quote(str(PLAYBOOK_DIR / "retry_inject_hash.yml"))
-    safe_tag = shlex.quote(group_tag) if group_tag else ""
-
-    script_lines = ["#!/bin/bash", "set -e"]
-    for vm in vm_list:
-        script_lines.append(f"echo '=== Capturing hash for {vm['name']} (VMID {vm['vmid']}) ==='")
-        cmd = f"ansible-playbook {playbook} -e vm_vmid={shlex.quote(vm['vmid'])} -e vm_name={shlex.quote(vm['name'])} -e autopilot_skip=true"
-        if safe_tag:
-            cmd += f" -e vm_group_tag={safe_tag}"
-        script_lines.append(cmd)
-
-    script_content = "\n".join(script_lines)
-    import tempfile
-    fd, script_file = tempfile.mkstemp(suffix=".sh", dir=str(BASE_DIR / "jobs"))
-    os.close(fd)
-    script_path = Path(script_file)
-    script_path.write_text(script_content)
-    script_path.chmod(0o755)
-
-    args = {"vms": [v["name"] for v in vm_list], "group_tag": group_tag}
-    job = job_manager.start("bulk_hash_capture", ["bash", str(script_path)], args=args)
-    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+    return RedirectResponse("/jobs", status_code=303)
 
 
 @app.post("/api/jobs/capture")
