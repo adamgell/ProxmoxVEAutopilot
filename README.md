@@ -2,6 +2,8 @@
 
 A web-based tool for provisioning Windows VMs on Proxmox with OEM-accurate SMBIOS fields and hardware hash capture for Windows Autopilot / Intune registration.
 
+![Devices Page](docs/screenshots/devices.png)
+
 ## What It Does
 
 Proxmox VE Autopilot creates Windows VMs that appear as real OEM hardware to Windows Autopilot. Each VM gets manufacturer-specific SMBIOS fields (Lenovo, Dell, HP, Microsoft Surface, or generic), a unique serial number, and a hardware identity. The hardware hash is captured and uploaded to Intune — all from a browser, without touching a physical machine.
@@ -85,6 +87,12 @@ Open the **Settings** page and configure:
 - **VM Defaults**: CPU, memory, disk size, OEM profile, group tag
 
 ## Web UI
+
+| | |
+|---|---|
+| ![Home](docs/screenshots/home.png) | ![Provision](docs/screenshots/provision.png) |
+| ![Devices](docs/screenshots/devices.png) | ![Jobs](docs/screenshots/jobs.png) |
+| ![Settings](docs/screenshots/settings.png) | ![Hashes](docs/screenshots/hashes.png) |
 
 ### Pages
 
