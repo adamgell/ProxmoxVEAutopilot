@@ -807,25 +807,13 @@ async def start_template(profile: str = Form(...)):
 
 @app.get("/api/vms/{vmid}/console")
 async def vm_console(vmid: int):
-    """Open Proxmox noVNC console with a VNC proxy ticket."""
+    """Redirect to Proxmox noVNC console (requires active Proxmox login)."""
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
     node = cfg.get("proxmox_node", "pve")
-    try:
-        # Get a VNC proxy ticket
-        data = _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/vncproxy", data={
-            "websocket": 1,
-        })
-        ticket = data.get("ticket", "")
-        vnc_port = data.get("port", "")
-        novnc_url = (
-            f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
-            f"&port={vnc_port}&vncticket={requests.utils.quote(ticket)}"
-        )
-        return RedirectResponse(novnc_url)
-    except Exception as e:
-        return HTMLResponse(f"<h1>Console error</h1><p>{e}</p>", status_code=500)
+    novnc_url = f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
+    return RedirectResponse(novnc_url)
 
 
 @app.post("/api/vms/{vmid}/start")
