@@ -878,6 +878,67 @@ async def vm_delete(vmid: int):
     return RedirectResponse("/vms", status_code=303)
 
 
+# Scancode mapping for typing text via QMP sendkey
+_CHAR_TO_KEYS = {}
+for c in 'abcdefghijklmnopqrstuvwxyz':
+    _CHAR_TO_KEYS[c] = c
+    _CHAR_TO_KEYS[c.upper()] = f"shift-{c}"
+for i, c in enumerate('0123456789'):
+    _CHAR_TO_KEYS[c] = c
+_SHIFT_SYMBOLS = {
+    '!': '1', '@': '2', '#': '3', '$': '4', '%': '5',
+    '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+    '_': 'minus', '+': 'equal', '{': 'bracket_left',
+    '}': 'bracket_right', '|': 'backslash', ':': 'semicolon',
+    '"': 'apostrophe', '<': 'comma', '>': 'dot', '?': 'slash',
+    '~': 'grave_accent',
+}
+for sym, base in _SHIFT_SYMBOLS.items():
+    _CHAR_TO_KEYS[sym] = f"shift-{base}"
+_PLAIN_SYMBOLS = {
+    '-': 'minus', '=': 'equal', '[': 'bracket_left',
+    ']': 'bracket_right', '\\': 'backslash', ';': 'semicolon',
+    "'": 'apostrophe', ',': 'comma', '.': 'dot', '/': 'slash',
+    '`': 'grave_accent', ' ': 'spc', '\t': 'tab',
+}
+for sym, key in _PLAIN_SYMBOLS.items():
+    _CHAR_TO_KEYS[sym] = key
+
+
+@app.post("/api/vms/{vmid}/typetext")
+async def vm_typetext(vmid: int, text: str = Form(...)):
+    """Type a string into a VM via QMP sendkey (works without guest agent)."""
+    import time
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    errors = []
+    for ch in text:
+        key = _CHAR_TO_KEYS.get(ch)
+        if not key:
+            continue
+        try:
+            _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
+        except Exception as e:
+            errors.append(f"{ch}: {e}")
+            break
+        time.sleep(0.05)
+    if errors:
+        return RedirectResponse(f"/vms?error=Type failed: {errors[0]}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/vms/{vmid}/sendkey")
+async def vm_sendkey(vmid: int, key: str = Form(...)):
+    """Send a single key combo to a VM (e.g. ctrl-alt-del, ret, tab)."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
+    except Exception as e:
+        return RedirectResponse(f"/vms?error=Sendkey failed: {e}", status_code=303)
+    return RedirectResponse("/vms", status_code=303)
+
+
 @app.post("/api/vms/{vmid}/rename")
 async def vm_rename(vmid: int):
     """Rename the Windows computer inside the VM to match its SMBIOS serial."""

@@ -46,6 +46,15 @@
       <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       </a>
+      <button class="action-btn" type="button" title="Type Text" onclick="typeText('{{ vm.vmid }}');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
+      </button>
+      <button class="action-btn" type="button" title="Send Ctrl+Alt+Del" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ctrl-alt-delete'});">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc8800" stroke-width="2" stroke-linecap="round"><rect x="1" y="5" width="22" height="14" rx="2"/><text x="12" y="14" text-anchor="middle" font-size="7" font-family="Verdana" fill="#cc8800" stroke="none">CAD</text></svg>
+      </button>
+      <button class="action-btn" type="button" title="Send Enter" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ret'});">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,10 4,15 9,20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
       <span style="color:#ccc;margin:0 2px;">|</span>
     {% else %}
       <!-- Stopped: Start -->
@@ -133,6 +142,10 @@
 {% endif %}
 
 <script>
+function typeText(vmid) {
+  var text = prompt('Text to type into VM ' + vmid + ':');
+  if (text) postAction('/api/vms/' + vmid + '/typetext', {text: text});
+}
 function postAction(url, fields) {
   var f = document.createElement('form');
   f.method = 'POST';
