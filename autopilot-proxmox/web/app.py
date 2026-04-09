@@ -414,15 +414,24 @@ def get_autopilot_devices():
         return [], str(e)
     if not data:
         return [], "No Entra credentials configured"
+    _profile_labels = {
+        "assigned": "Assigned",
+        "assignedUnkownSyncState": "Assigned",
+        "notAssigned": "Not Assigned",
+        "assignedInSync": "Assigned (Synced)",
+        "assignedOutOfSync": "Assigned (Out of Sync)",
+        "pending": "Pending",
+        "unknown": "Unknown",
+    }
     devices = []
     for d in data.get("value", []):
-        profile_status = d.get("deploymentProfileAssignmentStatus", "unknown")
+        profile_status_raw = d.get("deploymentProfileAssignmentStatus", "unknown")
         devices.append({
             "id": d.get("id", ""),
             "serial": d.get("serialNumber", ""),
             "group_tag": d.get("groupTag", ""),
-            "profile_status": profile_status,
-            "profile_ok": profile_status in ("assigned", "assignedUnkownSyncState"),
+            "profile_status": _profile_labels.get(profile_status_raw, profile_status_raw),
+            "profile_ok": profile_status_raw in ("assigned", "assignedUnkownSyncState", "assignedInSync"),
             "enrollment_state": d.get("enrollmentState", "unknown"),
             "last_contact": (d.get("lastContactedDateTime") or "")[:19],
             "manufacturer": d.get("manufacturer", ""),
