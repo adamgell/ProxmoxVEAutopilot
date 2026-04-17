@@ -549,9 +549,36 @@ async def home(request: Request):
 
 @app.get("/provision", response_class=HTMLResponse)
 async def provision_page(request: Request):
+    cfg = _load_vars()
+    # Best-effort: look up template disk size so the UI can show the minimum.
+    template_disk = None
+    try:
+        tpl_vmid = cfg.get("proxmox_template_vmid")
+        node = cfg.get("proxmox_node", "pve")
+        if tpl_vmid:
+            tpl_cfg = _proxmox_api(f"/nodes/{node}/qemu/{tpl_vmid}/config")
+            scsi0 = tpl_cfg.get("scsi0", "")
+            import re as _re
+            m = _re.search(r"size=(\d+)G", scsi0)
+            if m:
+                template_disk = int(m.group(1))
+    except Exception:
+        pass
+    defaults = {
+        "cores":        cfg.get("vm_cores", 2),
+        "memory_mb":    cfg.get("vm_memory_mb", 4096),
+        "disk_size_gb": cfg.get("vm_disk_size_gb", 64),
+        "count":        cfg.get("vm_count", 1),
+        "serial_prefix": cfg.get("vm_serial_prefix", ""),
+        "group_tag":    cfg.get("vm_group_tag", ""),
+        "oem_profile":  cfg.get("vm_oem_profile", ""),
+        "template_vmid": cfg.get("proxmox_template_vmid", ""),
+    }
     return templates.TemplateResponse("provision.html", {
         "request": request,
         "profiles": load_oem_profiles(),
+        "defaults": defaults,
+        "template_disk_gb": template_disk,
     })
 
 
@@ -748,6 +775,9 @@ async def start_provision(
     count: int = Form(1),
     serial_prefix: str = Form(""),
     group_tag: str = Form(""),
+    cores: int = Form(0),
+    memory_mb: int = Form(0),
+    disk_size_gb: int = Form(0),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
@@ -755,17 +785,30 @@ async def start_provision(
     if serial_prefix:
         serial_prefix = _sanitize_input(serial_prefix)
 
+    # Build the common -e overrides shared between single and multi paths.
+    # Zero means "don't override, let vars.yml defaults apply" — lets the
+    # form omit a field without forcing it to a specific value.
+    def _overrides(cmd_tokens: list[str] | None = None) -> list[str]:
+        tokens = cmd_tokens if cmd_tokens is not None else []
+        if cores > 0:        tokens += ["-e", f"vm_cores={cores}"]
+        if memory_mb > 0:    tokens += ["-e", f"vm_memory_mb={memory_mb}"]
+        if disk_size_gb > 0: tokens += ["-e", f"vm_disk_size_gb={disk_size_gb}"]
+        if serial_prefix:    tokens += ["-e", f"vm_serial_prefix={serial_prefix}"]
+        if group_tag:        tokens += ["-e", f"vm_group_tag={group_tag}"]
+        return tokens
+
+    args = {
+        "profile": profile, "count": count,
+        "serial_prefix": serial_prefix, "group_tag": group_tag,
+        "cores": cores, "memory_mb": memory_mb, "disk_size_gb": disk_size_gb,
+    }
+
     if count <= 1:
         cmd = [
             "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
             "-e", f"vm_oem_profile={profile}",
             "-e", "vm_count=1",
-        ]
-        if serial_prefix:
-            cmd += ["-e", f"vm_serial_prefix={serial_prefix}"]
-        if group_tag:
-            cmd += ["-e", f"vm_group_tag={group_tag}"]
-        args = {"profile": profile, "count": 1, "serial_prefix": serial_prefix, "group_tag": group_tag}
+        ] + _overrides()
         job = job_manager.start("provision_clone", cmd, args=args)
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
@@ -773,8 +816,8 @@ async def start_provision(
     import tempfile
     playbook = shlex.quote(str(PLAYBOOK_DIR / "provision_clone.yml"))
     safe_profile = shlex.quote(profile)
-    safe_prefix = shlex.quote(serial_prefix) if serial_prefix else ""
-    safe_tag = shlex.quote(group_tag) if group_tag else ""
+
+    extra_tokens = " ".join(shlex.quote(t) for t in _overrides())
 
     script_lines = ["#!/bin/bash", "set -e", ""]
     script_lines.append(f"echo 'Provisioning {count} VMs sequentially ({profile})'")
@@ -782,10 +825,8 @@ async def start_provision(
     for i in range(count):
         script_lines.append(f"echo '=== VM {i+1}/{count} ==='")
         cmd_line = f"ansible-playbook {playbook} -e vm_oem_profile={safe_profile} -e vm_count=1"
-        if safe_prefix:
-            cmd_line += f" -e vm_serial_prefix={safe_prefix}"
-        if safe_tag:
-            cmd_line += f" -e vm_group_tag={safe_tag}"
+        if extra_tokens:
+            cmd_line += f" {extra_tokens}"
         script_lines.append(cmd_line)
 
     script_lines.append(f"echo '=== Done: {count} VMs provisioned ==='")
@@ -797,7 +838,6 @@ async def start_provision(
     script_path.write_text(script_content)
     script_path.chmod(0o755)
 
-    args = {"profile": profile, "count": count, "serial_prefix": serial_prefix, "group_tag": group_tag}
     job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
