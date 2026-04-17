@@ -11,3 +11,6 @@ output/
 
 # docs (allow screenshots for README)
 docs/superpowers/
+
+# Session artifacts from Claude Code superpowers tooling
+.superpowers/
