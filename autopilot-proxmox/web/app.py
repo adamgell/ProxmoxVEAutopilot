@@ -1202,10 +1202,12 @@ _GRAPH_DELETE_PATHS = {
     "entra":     "/devices/{id}",
 }
 # Deletion order matters for managed devices:
+#   0. Proxmox VM first — stops the device agent before we start removing
+#      cloud records, so it can't re-check-in and recreate Entra/Intune state
 #   1. Intune retire/delete tears down the MDM channel
 #   2. Autopilot deviceIdentity removes the deployment record
 #   3. Entra directory object goes last (Intune sync can recreate it otherwise)
-_CLOUD_DELETE_ORDER = {"intune": 0, "autopilot": 1, "entra": 2}
+_CLOUD_DELETE_ORDER = {"pve": 0, "intune": 1, "autopilot": 2, "entra": 3}
 # Verification budget (seconds) per source. Autopilot DELETE is 202-Accepted
 # and async — Microsoft's background workflow can take anywhere from a few
 # minutes to well over an hour to propagate. Intune and Entra are typically
@@ -1264,10 +1266,113 @@ def _graph_delete_raw(path):
     return resp.status_code, err
 
 
+def _find_pve_vm_by_serial(serial: str) -> dict | None:
+    """Return the Proxmox VM whose name matches `serial` and carries the
+    'autopilot' tag. Returns None if no match — refusing to touch VMs that
+    weren't provisioned by us guards against name collisions."""
+    if not serial:
+        return None
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        vms = _proxmox_api(f"/nodes/{node}/qemu")
+    except Exception:
+        return None
+    for vm in vms:
+        if vm.get("template"):
+            continue
+        if vm.get("name") != serial:
+            continue
+        tags = (vm.get("tags") or "").split(";")
+        if "autopilot" not in tags:
+            continue
+        return {"vmid": vm["vmid"], "name": vm.get("name", ""), "status": vm.get("status", "")}
+    return None
+
+
+async def _delete_pve_item(item: dict) -> None:
+    """Stop (if running) + delete a Proxmox VM. Sets state to verifying on
+    success; the verify step confirms the VM is gone from the node listing."""
+    import asyncio
+    item["state"] = "deleting"
+    item["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    vmid = item["object_id"]
+    try:
+        # Best-effort stop — ignore failures (VM may already be stopped).
+        try:
+            await asyncio.to_thread(
+                _proxmox_api_post, f"/nodes/{node}/qemu/{vmid}/status/stop"
+            )
+            await asyncio.sleep(3)
+        except Exception:
+            pass
+        await asyncio.to_thread(_proxmox_api_delete, f"/nodes/{node}/qemu/{vmid}")
+        item["state"] = "verifying"
+        item["message"] = "delete submitted, verifying…"
+    except Exception as e:
+        item["state"] = "error"
+        item["message"] = f"Proxmox delete failed: {str(e)[:400]}"
+        devices_db.record_deletion(
+            DEVICES_DB, source="pve", object_id=str(vmid),
+            serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+            status="error", message=item["message"],
+        )
+
+
+async def _verify_pve_item(item: dict) -> None:
+    """Poll the node's VM list until the VMID is gone."""
+    import asyncio
+    try:
+        target_vmid = int(item["object_id"])
+    except (TypeError, ValueError):
+        item["state"] = "error"
+        item["message"] = f"invalid VMID {item.get('object_id')!r}"
+        return
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    deadline = asyncio.get_event_loop().time() + 180  # 3 minutes
+    delay = 2.0
+    attempts = 0
+    while True:
+        await asyncio.sleep(delay)
+        attempts += 1
+        try:
+            vms = await asyncio.to_thread(_proxmox_api, f"/nodes/{node}/qemu")
+            still_there = any(v.get("vmid") == target_vmid for v in vms)
+        except Exception:
+            still_there = False  # API error — assume gone; next sync will clarify
+        elapsed = int(180 - (deadline - asyncio.get_event_loop().time()))
+        item["message"] = f"verifying… attempt {attempts}, {elapsed}s elapsed"
+        if not still_there:
+            item["state"] = "deleted"
+            item["message"] = f"VM removed, verified after {attempts} attempt(s)"
+            devices_db.record_deletion(
+                DEVICES_DB, source="pve", object_id=str(target_vmid),
+                serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+                status="ok",
+            )
+            break
+        if asyncio.get_event_loop().time() >= deadline:
+            item["state"] = "unverified"
+            item["message"] = f"VM still present in node listing after {attempts} attempt(s)"
+            devices_db.record_deletion(
+                DEVICES_DB, source="pve", object_id=str(target_vmid),
+                serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+                status="ok", message=item["message"],
+            )
+            break
+        delay = min(delay * 1.5, 15.0)
+    item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 async def _delete_item(item: dict) -> None:
     """Fire the Graph DELETE and transition the item to verifying/deleted/error.
     Does not verify — call _verify_item afterwards if state is 'verifying'."""
     import asyncio
+    if item["source"] == "pve":
+        return await _delete_pve_item(item)
     item["state"] = "deleting"
     item["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     path_tmpl = _GRAPH_DELETE_PATHS.get(item["source"])
@@ -1309,6 +1414,8 @@ async def _verify_item(item: dict) -> None:
     """Poll Graph until the object 404s (verified deleted) or we exhaust the
     per-source budget. Only called when _delete_item left state='verifying'."""
     import asyncio
+    if item["source"] == "pve":
+        return await _verify_pve_item(item)
     path = _GRAPH_DELETE_PATHS[item["source"]].format(id=item["object_id"])
     budget = _VERIFY_MAX_SECONDS.get(item["source"], 180)
     deadline = asyncio.get_event_loop().time() + budget
@@ -1365,14 +1472,14 @@ async def _run_cloud_delete(job_id: str):
     job["state"] = "running"
 
     # Bucket items by source, preserving input order within each bucket.
-    by_source: dict[str, list[dict]] = {"intune": [], "autopilot": [], "entra": []}
+    by_source: dict[str, list[dict]] = {"pve": [], "intune": [], "autopilot": [], "entra": []}
     for item in job["items"]:
         if item["source"] in by_source:
             by_source[item["source"]].append(item)
 
     verify_tasks: list[asyncio.Task] = []
     try:
-        for source_name in ("intune", "autopilot", "entra"):
+        for source_name in ("pve", "intune", "autopilot", "entra"):
             phase = by_source[source_name]
             if not phase:
                 continue
@@ -1429,8 +1536,17 @@ async def cloud_sync():
 
 
 @app.post("/api/cloud/delete")
-async def cloud_delete(targets: list[str] = Form(default=[])):
-    """Start a background deletion job. Returns {job_id}; poll /api/cloud/delete/{job_id}."""
+async def cloud_delete(
+    targets: list[str] = Form(default=[]),
+    pve_serials: list[str] = Form(default=[]),
+):
+    """Start a background deletion job. Returns {job_id}; poll /api/cloud/delete/{job_id}.
+
+    `pve_serials` is an optional list of device serials — for each one, we
+    look up the matching Proxmox VM (by name and 'autopilot' tag) and
+    prepend a 'pve' deletion item so the VM is stopped and destroyed before
+    cloud records are torn down.
+    """
     import asyncio, uuid
 
     # Parse targets, dedupe, sort by required Intune → Autopilot → Entra order.
@@ -1440,8 +1556,8 @@ async def cloud_delete(targets: list[str] = Form(default=[])):
         if ":" not in raw:
             continue
         source, object_id = raw.split(":", 1)
-        if source not in _CLOUD_DELETE_ORDER or not object_id:
-            continue
+        if source not in _CLOUD_DELETE_ORDER or not object_id or source == "pve":
+            continue  # 'pve' targets only come in via pve_serials lookup
         key = (source, object_id)
         if key in seen:
             continue
@@ -1452,6 +1568,27 @@ async def cloud_delete(targets: list[str] = Form(default=[])):
             "state": "pending",
             "message": "",
         })
+
+    # Look up Proxmox VMs for each unique serial (silently skip serials with
+    # no autopilot-tagged match — real/physical devices don't have a VM).
+    unique_serials = sorted({s for s in pve_serials if s})
+    for serial in unique_serials:
+        vm = _find_pve_vm_by_serial(serial)
+        if not vm:
+            continue
+        key = ("pve", str(vm["vmid"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed.append({
+            "source": "pve",
+            "object_id": str(vm["vmid"]),
+            "serial": serial,
+            "display_name": f"VM {vm['vmid']} ({vm['name']})",
+            "state": "pending",
+            "message": "",
+        })
+
     parsed.sort(key=lambda x: _CLOUD_DELETE_ORDER[x["source"]])
 
     job_id = uuid.uuid4().hex[:12]
@@ -1462,7 +1599,7 @@ async def cloud_delete(targets: list[str] = Form(default=[])):
         "items": parsed,
     }
     asyncio.create_task(_run_cloud_delete(job_id))
-    return {"job_id": job_id, "count": len(parsed)}
+    return {"job_id": job_id, "count": len(parsed), "items": parsed}
 
 
 @app.get("/api/cloud/delete/{job_id}")

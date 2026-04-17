@@ -112,7 +112,11 @@
 <div style="display:flex;gap:8px;align-items:center;">
   <button type="button" onclick="nukeSelected();" class="action-btn-delete">Nuke Selected</button>
   <span id="selcount" style="color:#999;font-size:10px;">0 selected</span>
-  <span style="color:#999;font-size:10px;margin-left:auto;">Deletion order: Intune → Autopilot → Entra</span>
+  <label style="color:#666;font-size:10px;margin-left:15px;">
+    <input type="checkbox" id="includePve" checked>
+    Also delete matching Proxmox VMs (by serial, autopilot tag required)
+  </label>
+  <span style="color:#999;font-size:10px;margin-left:auto;">Order: Proxmox → Intune → Autopilot → Entra</span>
 </div>
 </form>
 
@@ -161,7 +165,7 @@
 {% endif %}
 
 <script>
-var SOURCE_ORDER = {intune: 0, autopilot: 1, entra: 2};
+var SOURCE_ORDER = {pve: 0, intune: 1, autopilot: 2, entra: 3};
 var pollTimer = null;
 var startedAt = null;
 
@@ -212,27 +216,39 @@ function previewDeletionPlan() {
 function nukeSelected() {
   var items = previewDeletionPlan();
   if (!items) { alert('Select at least one record.'); return; }
+  var includePve = document.getElementById('includePve').checked;
+  var uniqueSerials = {};
+  items.forEach(function(i) { if (i.serial) uniqueSerials[i.serial] = true; });
+  var serialList = Object.keys(uniqueSerials);
+
   var byType = {intune: 0, autopilot: 0, entra: 0};
   items.forEach(function(i) { byType[i.source]++; });
-  var msg = 'Delete ' + items.length + ' object(s) from Microsoft Graph?\n\n' +
-            'Order: Intune (' + byType.intune + ') → Autopilot (' + byType.autopilot + ') → Entra (' + byType.entra + ')\n\n' +
+  var msg = 'Delete ' + items.length + ' cloud object(s)?\n\n' +
+            'Order: ' +
+            (includePve ? 'Proxmox (up to ' + serialList.length + ') → ' : '') +
+            'Intune (' + byType.intune + ') → Autopilot (' + byType.autopilot + ') → Entra (' + byType.entra + ')\n\n' +
+            (includePve ? 'Matching Proxmox VMs (autopilot-tagged, name = serial) will be stopped and destroyed.\n\n' : '') +
             'This cannot be undone.';
   if (!confirm(msg)) return;
 
-  // Build and submit form via fetch so we get a JSON job_id back.
   var fd = new FormData();
   items.forEach(function(i) { fd.append('targets', i.source + ':' + i.object_id); });
+  if (includePve) {
+    serialList.forEach(function(s) { fd.append('pve_serials', s); });
+  }
 
-  // Pre-render rows so the UI reflects the ordered plan immediately.
-  renderInitialRows(items);
   document.getElementById('progressPanel').style.display = 'block';
   document.getElementById('progressPanel').scrollIntoView({behavior:'smooth'});
   startedAt = Date.now();
+  document.getElementById('progressSummary').textContent = ' — starting…';
 
   fetch('/api/cloud/delete', {method: 'POST', body: fd})
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (!data.job_id) throw new Error('no job_id returned');
+      // Render rows from server response so PVE items the backend resolved
+      // from serials show up correctly.
+      renderInitialRowsFromJob(data.items);
       pollJob(data.job_id);
     })
     .catch(function(err) {
@@ -241,7 +257,7 @@ function nukeSelected() {
     });
 }
 
-function renderInitialRows(items) {
+function renderInitialRowsFromJob(items) {
   var tbody = document.getElementById('progressRows');
   tbody.innerHTML = '';
   items.forEach(function(item, idx) {
@@ -251,7 +267,7 @@ function renderInitialRows(items) {
       '<td>' + (idx + 1) + '</td>' +
       '<td>' + item.source + '</td>' +
       '<td>' + (item.serial || '—') + '</td>' +
-      '<td>' + (item.name || '—') + '</td>' +
+      '<td>' + (item.display_name || '—') + '</td>' +
       '<td style="font-family:monospace;font-size:10px;">' + item.object_id + '</td>' +
       '<td><span class="state state-pending">pending</span></td>' +
       '<td class="message" style="color:#666;"></td>';
