@@ -1242,6 +1242,28 @@ def _graph_get_raw(path):
         return resp.status_code, None
 
 
+def _graph_delete_raw(path):
+    """DELETE returning (status_code, error_text). Does not raise so the
+    caller can distinguish between 'already gone' (404), 'delete pending
+    from a prior request' (400 on Autopilot), and real failures."""
+    token = _graph_token()
+    if not token:
+        return 0, "no credentials configured"
+    resp = requests.delete(
+        f"https://graph.microsoft.com/beta{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
+    err = ""
+    if resp.status_code >= 400 and resp.content:
+        try:
+            j = resp.json()
+            err = j.get("error", {}).get("message", "") or resp.text[:300]
+        except ValueError:
+            err = resp.text[:300]
+    return resp.status_code, err
+
+
 async def _run_cloud_delete(job_id: str):
     """Execute a cloud-delete job: delete → verify each item, update job state."""
     import asyncio
@@ -1257,12 +1279,31 @@ async def _run_cloud_delete(job_id: str):
                 item["message"] = f"unknown source {item['source']}"
                 continue
             path = path_tmpl.format(id=item["object_id"])
-            try:
-                await asyncio.to_thread(_graph_api, path, "DELETE")
+            status, err_text = await asyncio.to_thread(_graph_delete_raw, path)
+
+            if status == 404:
+                # Already gone — idempotent success, skip verification.
+                item["state"] = "deleted"
+                item["message"] = "already gone (404)"
+                item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                devices_db.record_deletion(
+                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
+                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+                    status="ok", message="already gone",
+                )
+                continue
+            elif 200 <= status < 300:
                 item["state"] = "verifying"
-            except Exception as e:
+                item["message"] = f"DELETE returned {status}, verifying…"
+            elif status == 400:
+                # Common when a prior async DELETE is still pending on the
+                # same object — Graph rejects the duplicate. Proceed to
+                # verification; the object should disappear on its own.
+                item["state"] = "verifying"
+                item["message"] = f"DELETE returned 400 (likely pending from prior request: {err_text[:120]}); verifying…"
+            else:
                 item["state"] = "error"
-                item["message"] = str(e)[:500]
+                item["message"] = f"HTTP {status}: {err_text[:400]}"
                 devices_db.record_deletion(
                     DEVICES_DB, source=item["source"], object_id=item["object_id"],
                     serial=item.get("serial", ""), display_name=item.get("display_name", ""),
