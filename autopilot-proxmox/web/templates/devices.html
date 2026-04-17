@@ -60,7 +60,9 @@
   {% for e in g.entra %}{% set _ = group_rows.append(('entra', e)) %}{% endfor %}
   {% for source, row in group_rows %}
   <tr class="data-row"{% if loop.first %} style="border-top:2px solid #bbb;"{% endif %}>
-    <td><input type="checkbox" name="targets" value="{{ source }}:{{ row.id }}" onchange="updateCount();"></td>
+    <td><input type="checkbox" name="targets" value="{{ source }}:{{ row.id }}"
+              data-serial="{{ g.serial }}" data-name="{{ row.display_name or row.device_name or '' }}"
+              onchange="updateCount();"></td>
     <td style="font-weight:bold;{% if not loop.first %}color:#aaa;font-weight:normal;{% endif %}">{{ g.serial }}</td>
     <td>
       {% if source == 'autopilot' %}<span class="badge" style="background:#cce5ff;color:#004085;">Autopilot</span>
@@ -89,7 +91,9 @@
 <tr class="section-row"><td colspan="7" style="background:#f0f0f0;font-weight:bold;padding:4px 8px;">Unmatched Entra objects (no serial / no Intune linkage)</td></tr>
 {% for row in unmatched %}
 <tr class="data-row">
-  <td><input type="checkbox" name="targets" value="entra:{{ row.id }}" onchange="updateCount();"></td>
+  <td><input type="checkbox" name="targets" value="entra:{{ row.id }}"
+              data-serial="" data-name="{{ row.display_name or '' }}"
+              onchange="updateCount();"></td>
   <td style="color:#999;">—</td>
   <td><span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span></td>
   <td>{{ id_cell('entra', row) }}</td>
@@ -104,8 +108,24 @@
 <div style="display:flex;gap:8px;align-items:center;">
   <button type="button" onclick="nukeSelected();" class="action-btn-delete">Nuke Selected</button>
   <span id="selcount" style="color:#999;font-size:10px;">0 selected</span>
+  <span style="color:#999;font-size:10px;margin-left:auto;">Deletion order: Intune → Autopilot → Entra</span>
 </div>
 </form>
+
+<div id="progressPanel" style="display:none;margin-top:20px;border:2px solid #336699;background:#fff;padding:12px;">
+  <h3 style="margin-top:0;">Deletion progress <span id="progressSummary" style="font-weight:normal;color:#666;font-size:11px;"></span></h3>
+  <div style="background:#eee;height:14px;border:1px solid #ccc;margin-bottom:10px;">
+    <div id="progressBar" style="background:#336699;height:100%;width:0%;transition:width 200ms;"></div>
+  </div>
+  <table style="width:100%;">
+    <tr><th>#</th><th>Source</th><th>Serial</th><th>Name</th><th>Object ID</th><th>State</th><th>Message</th></tr>
+    <tbody id="progressRows"></tbody>
+  </table>
+  <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+    <button type="button" id="progressClose" onclick="closeProgress();" style="display:none;">Close &amp; refresh</button>
+    <span id="progressElapsed" style="color:#999;font-size:10px;"></span>
+  </div>
+</div>
 {% else %}
 <p style="margin-top:15px;"><i>No devices in local inventory. Click <b>Sync from Microsoft Graph</b> to populate.</i></p>
 {% endif %}
@@ -133,6 +153,10 @@
 {% endif %}
 
 <script>
+var SOURCE_ORDER = {intune: 0, autopilot: 1, entra: 2};
+var pollTimer = null;
+var startedAt = null;
+
 function toggleAll(master) {
   var rows = document.querySelectorAll('tr.data-row');
   for (var i = 0; i < rows.length; i++) {
@@ -146,12 +170,6 @@ function updateCount() {
   var c = document.querySelectorAll('input[name="targets"]:checked');
   document.getElementById('selcount').textContent = c.length + ' selected';
 }
-function nukeSelected() {
-  var c = document.querySelectorAll('input[name="targets"]:checked');
-  if (c.length === 0) { alert('Select at least one record.'); return; }
-  if (!confirm('Permanently delete ' + c.length + ' object(s) from Microsoft Graph? This cannot be undone.')) return;
-  document.getElementById('nukeForm').submit();
-}
 function applyFilter() {
   var q = document.getElementById('filter').value.trim().toLowerCase();
   var rows = document.querySelectorAll('tr.data-row');
@@ -164,6 +182,124 @@ function applyFilter() {
   }
   document.getElementById('visiblecount').textContent =
     q ? visible + ' / ' + rows.length + ' rows' : '';
+}
+
+function previewDeletionPlan() {
+  var checked = document.querySelectorAll('input[name="targets"]:checked');
+  if (checked.length === 0) return null;
+  var items = [];
+  checked.forEach(function(cb) {
+    var parts = cb.value.split(':');
+    items.push({
+      source: parts[0],
+      object_id: parts.slice(1).join(':'),
+      serial: cb.getAttribute('data-serial') || '',
+      name: cb.getAttribute('data-name') || '',
+    });
+  });
+  items.sort(function(a, b) { return SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source]; });
+  return items;
+}
+
+function nukeSelected() {
+  var items = previewDeletionPlan();
+  if (!items) { alert('Select at least one record.'); return; }
+  var byType = {intune: 0, autopilot: 0, entra: 0};
+  items.forEach(function(i) { byType[i.source]++; });
+  var msg = 'Delete ' + items.length + ' object(s) from Microsoft Graph?\n\n' +
+            'Order: Intune (' + byType.intune + ') → Autopilot (' + byType.autopilot + ') → Entra (' + byType.entra + ')\n\n' +
+            'This cannot be undone.';
+  if (!confirm(msg)) return;
+
+  // Build and submit form via fetch so we get a JSON job_id back.
+  var fd = new FormData();
+  items.forEach(function(i) { fd.append('targets', i.source + ':' + i.object_id); });
+
+  // Pre-render rows so the UI reflects the ordered plan immediately.
+  renderInitialRows(items);
+  document.getElementById('progressPanel').style.display = 'block';
+  document.getElementById('progressPanel').scrollIntoView({behavior:'smooth'});
+  startedAt = Date.now();
+
+  fetch('/api/cloud/delete', {method: 'POST', body: fd})
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data.job_id) throw new Error('no job_id returned');
+      pollJob(data.job_id);
+    })
+    .catch(function(err) {
+      alert('Failed to start deletion job: ' + err.message);
+      document.getElementById('progressPanel').style.display = 'none';
+    });
+}
+
+function renderInitialRows(items) {
+  var tbody = document.getElementById('progressRows');
+  tbody.innerHTML = '';
+  items.forEach(function(item, idx) {
+    var tr = document.createElement('tr');
+    tr.id = 'prog-' + idx;
+    tr.innerHTML =
+      '<td>' + (idx + 1) + '</td>' +
+      '<td>' + item.source + '</td>' +
+      '<td>' + (item.serial || '—') + '</td>' +
+      '<td>' + (item.name || '—') + '</td>' +
+      '<td style="font-family:monospace;font-size:10px;">' + item.object_id + '</td>' +
+      '<td><span class="state state-pending">pending</span></td>' +
+      '<td class="message" style="color:#666;"></td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function stateBadge(state) {
+  var colors = {
+    pending:    ['#e2e3e5', '#383d41'],
+    deleting:   ['#fff3cd', '#856404'],
+    verifying:  ['#cce5ff', '#004085'],
+    deleted:    ['#d4edda', '#155724'],
+    unverified: ['#f8d7da', '#721c24'],
+    error:      ['#f8d7da', '#721c24'],
+  };
+  var c = colors[state] || colors.pending;
+  return '<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:' + c[0] + ';color:' + c[1] + ';font-weight:bold;font-size:10px;">' + state + '</span>';
+}
+
+function pollJob(jobId) {
+  fetch('/api/cloud/delete/' + jobId)
+    .then(function(r) { return r.json(); })
+    .then(function(job) {
+      if (job.error) throw new Error(job.error);
+      job.items.forEach(function(item, idx) {
+        var row = document.getElementById('prog-' + idx);
+        if (!row) return;
+        row.cells[5].innerHTML = stateBadge(item.state);
+        row.cells[6].textContent = item.message || '';
+      });
+      var s = job.summary;
+      var done = s.deleted + s.unverified + s.error;
+      var pct = s.total ? Math.round(100 * done / s.total) : 0;
+      document.getElementById('progressBar').style.width = pct + '%';
+      document.getElementById('progressSummary').textContent =
+        ' — ' + done + '/' + s.total + ' complete · ' +
+        s.deleted + ' deleted · ' + s.unverified + ' unverified · ' + s.error + ' errors';
+      var elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+      document.getElementById('progressElapsed').textContent = 'Elapsed ' + elapsed + 's';
+
+      if (job.state === 'done') {
+        document.getElementById('progressClose').style.display = 'inline-block';
+      } else {
+        pollTimer = setTimeout(function() { pollJob(jobId); }, 1000);
+      }
+    })
+    .catch(function(err) {
+      document.getElementById('progressSummary').textContent = ' — ' + err.message;
+    });
+}
+
+function closeProgress() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  // Reload page so the Sync button can be clicked fresh and deletions audit updates.
+  window.location.href = '/cloud';
 }
 </script>
 {% endblock %}

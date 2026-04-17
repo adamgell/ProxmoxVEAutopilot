@@ -1201,6 +1201,91 @@ _GRAPH_DELETE_PATHS = {
     "intune":    "/deviceManagement/managedDevices/{id}",
     "entra":     "/devices/{id}",
 }
+# Deletion order matters for managed devices:
+#   1. Intune retire/delete tears down the MDM channel
+#   2. Autopilot deviceIdentity removes the deployment record
+#   3. Entra directory object goes last (Intune sync can recreate it otherwise)
+_CLOUD_DELETE_ORDER = {"intune": 0, "autopilot": 1, "entra": 2}
+
+# In-memory job store for cloud deletion runs.
+_cloud_delete_jobs: dict[str, dict] = {}
+
+
+def _graph_get_raw(path):
+    """GET returning (status_code, json). Used for post-delete verification
+    — a 404 proves the object is really gone from Graph."""
+    token = _graph_token()
+    if not token:
+        return 0, None
+    resp = requests.get(
+        f"https://graph.microsoft.com/beta{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
+    try:
+        return resp.status_code, resp.json() if resp.content else None
+    except ValueError:
+        return resp.status_code, None
+
+
+async def _run_cloud_delete(job_id: str):
+    """Execute a cloud-delete job: delete → verify each item, update job state."""
+    import asyncio
+    job = _cloud_delete_jobs[job_id]
+    job["state"] = "running"
+    try:
+        for item in job["items"]:
+            item["state"] = "deleting"
+            item["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            path_tmpl = _GRAPH_DELETE_PATHS.get(item["source"])
+            if not path_tmpl:
+                item["state"] = "error"
+                item["message"] = f"unknown source {item['source']}"
+                continue
+            path = path_tmpl.format(id=item["object_id"])
+            try:
+                await asyncio.to_thread(_graph_api, path, "DELETE")
+                item["state"] = "verifying"
+            except Exception as e:
+                item["state"] = "error"
+                item["message"] = str(e)[:500]
+                devices_db.record_deletion(
+                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
+                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+                    status="error", message=item["message"],
+                )
+                continue
+
+            # Verify with a short retry loop — Graph deletes are eventually consistent.
+            verified = False
+            final_status = 0
+            for attempt in range(4):
+                await asyncio.sleep(1.5)
+                status, _ = await asyncio.to_thread(_graph_get_raw, path)
+                final_status = status
+                if status == 404:
+                    verified = True
+                    break
+            if verified:
+                item["state"] = "deleted"
+                item["message"] = "verified (404)"
+                devices_db.record_deletion(
+                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
+                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+                    status="ok",
+                )
+            else:
+                item["state"] = "unverified"
+                item["message"] = f"delete accepted but GET still returned {final_status}"
+                devices_db.record_deletion(
+                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
+                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+                    status="ok", message=item["message"],
+                )
+            item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    finally:
+        job["state"] = "done"
+        job["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @app.get("/cloud", response_class=HTMLResponse)
@@ -1237,32 +1322,57 @@ async def cloud_sync():
 
 @app.post("/api/cloud/delete")
 async def cloud_delete(targets: list[str] = Form(default=[])):
-    """`targets` is a list of 'source:object_id' strings. Each is deleted from
-    the matching Graph endpoint and recorded in the deletions audit log."""
-    ok = fail = 0
+    """Start a background deletion job. Returns {job_id}; poll /api/cloud/delete/{job_id}."""
+    import asyncio, uuid
+
+    # Parse targets, dedupe, sort by required Intune → Autopilot → Entra order.
+    parsed: list[dict] = []
+    seen: set[tuple[str, str]] = set()
     for raw in targets:
         if ":" not in raw:
             continue
         source, object_id = raw.split(":", 1)
-        tmpl = _GRAPH_DELETE_PATHS.get(source)
-        if not tmpl or not object_id:
+        if source not in _CLOUD_DELETE_ORDER or not object_id:
             continue
-        path = tmpl.format(id=object_id)
-        try:
-            _graph_api(path, method="DELETE")
-            devices_db.record_deletion(
-                DEVICES_DB, source=source, object_id=object_id, status="ok"
-            )
-            ok += 1
-        except Exception as e:
-            devices_db.record_deletion(
-                DEVICES_DB, source=source, object_id=object_id,
-                status="error", message=str(e)[:500],
-            )
-            fail += 1
-    return RedirectResponse(
-        f"/cloud?deleted={ok}&failed={fail}", status_code=303,
-    )
+        key = (source, object_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed.append({
+            "source": source,
+            "object_id": object_id,
+            "state": "pending",
+            "message": "",
+        })
+    parsed.sort(key=lambda x: _CLOUD_DELETE_ORDER[x["source"]])
+
+    job_id = uuid.uuid4().hex[:12]
+    _cloud_delete_jobs[job_id] = {
+        "id": job_id,
+        "state": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "items": parsed,
+    }
+    asyncio.create_task(_run_cloud_delete(job_id))
+    return {"job_id": job_id, "count": len(parsed)}
+
+
+@app.get("/api/cloud/delete/{job_id}")
+async def cloud_delete_status(job_id: str):
+    job = _cloud_delete_jobs.get(job_id)
+    if not job:
+        return {"error": "not found"}
+    items = job["items"]
+    summary = {
+        "pending":    sum(1 for i in items if i["state"] == "pending"),
+        "deleting":   sum(1 for i in items if i["state"] == "deleting"),
+        "verifying":  sum(1 for i in items if i["state"] == "verifying"),
+        "deleted":    sum(1 for i in items if i["state"] == "deleted"),
+        "unverified": sum(1 for i in items if i["state"] == "unverified"),
+        "error":      sum(1 for i in items if i["state"] == "error"),
+        "total":      len(items),
+    }
+    return {**job, "summary": summary}
 
 
 @app.websocket("/api/jobs/{job_id}/stream")
