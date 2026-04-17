@@ -1206,6 +1206,20 @@ _GRAPH_DELETE_PATHS = {
 #   2. Autopilot deviceIdentity removes the deployment record
 #   3. Entra directory object goes last (Intune sync can recreate it otherwise)
 _CLOUD_DELETE_ORDER = {"intune": 0, "autopilot": 1, "entra": 2}
+# Verification budget (seconds) per source. Autopilot DELETE is 202-Accepted
+# and async — Microsoft's background workflow can take anywhere from a few
+# minutes to well over an hour to propagate. Intune and Entra are typically
+# 204-No Content and near-immediate, but we still give a generous buffer.
+# Users can close the browser; the job keeps running in the background.
+_VERIFY_MAX_SECONDS = {
+    "autopilot": 7200,   # 2 hours
+    "intune":    600,    # 10 minutes
+    "entra":     600,    # 10 minutes
+}
+# Cap for the polling backoff. Long-running Autopilot verifications settle
+# into a steady 60s cadence so we're kind to Graph without slowing detection
+# of a delete that lands at minute 45.
+_VERIFY_BACKOFF_CAP = 60.0
 
 # In-memory job store for cloud deletion runs.
 _cloud_delete_jobs: dict[str, dict] = {}
@@ -1256,19 +1270,36 @@ async def _run_cloud_delete(job_id: str):
                 )
                 continue
 
-            # Verify with a short retry loop — Graph deletes are eventually consistent.
+            # Verify with an adaptive retry loop. Graph Autopilot deletes are
+            # 202-Accepted and async; Intune/Entra are typically 204 but still
+            # subject to eventual consistency. We poll until we see 404 or
+            # we exhaust the per-source budget.
+            budget = _VERIFY_MAX_SECONDS.get(item["source"], 180)
+            deadline = asyncio.get_event_loop().time() + budget
+            delay = 2.0
+            attempts = 0
             verified = False
             final_status = 0
-            for attempt in range(4):
-                await asyncio.sleep(1.5)
+            while True:
+                await asyncio.sleep(delay)
+                attempts += 1
+                elapsed = int(budget - (deadline - asyncio.get_event_loop().time()))
+                item["message"] = f"verifying… attempt {attempts}, {elapsed}s elapsed"
                 status, _ = await asyncio.to_thread(_graph_get_raw, path)
                 final_status = status
                 if status == 404:
                     verified = True
                     break
+                if asyncio.get_event_loop().time() >= deadline:
+                    break
+                # Back off: 2s → 4s → 8s → 16s → 32s → 60s (cap). Long waits
+                # settle into 60s cadence — enough to catch a delete that
+                # propagates 45 minutes in.
+                delay = min(delay * 2, _VERIFY_BACKOFF_CAP)
+
             if verified:
                 item["state"] = "deleted"
-                item["message"] = "verified (404)"
+                item["message"] = f"verified 404 after {attempts} attempt(s)"
                 devices_db.record_deletion(
                     DEVICES_DB, source=item["source"], object_id=item["object_id"],
                     serial=item.get("serial", ""), display_name=item.get("display_name", ""),
@@ -1276,7 +1307,10 @@ async def _run_cloud_delete(job_id: str):
                 )
             else:
                 item["state"] = "unverified"
-                item["message"] = f"delete accepted but GET still returned {final_status}"
+                item["message"] = (
+                    f"delete accepted but GET still returned {final_status} "
+                    f"after {attempts} attempt(s) over {budget}s"
+                )
                 devices_db.record_deletion(
                     DEVICES_DB, source=item["source"], object_id=item["object_id"],
                     serial=item.get("serial", ""), display_name=item.get("display_name", ""),
