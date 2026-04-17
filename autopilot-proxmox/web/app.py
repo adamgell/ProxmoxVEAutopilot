@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,25 @@ import re
 import shlex
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_version() -> dict:
+    """Read the build SHA + timestamp baked in at image build time."""
+    version_file = os.environ.get("APP_VERSION_FILE", str(BASE_DIR / "VERSION"))
+    sha = "unknown"
+    build_time = "unknown"
+    try:
+        with open(version_file) as f:
+            lines = f.read().splitlines()
+            sha = (lines[0] if lines else "unknown").strip() or "unknown"
+            build_time = (lines[1] if len(lines) > 1 else "unknown").strip() or "unknown"
+    except Exception:
+        pass
+    return {"sha": sha, "sha_short": sha[:7] if sha != "unknown" else sha, "build_time": build_time}
+
+
+_APP_VERSION = _load_version()
+_LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, "error": None}
 
 
 def _sanitize_input(value):
@@ -1232,6 +1252,59 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
     if saved == 0:
         return RedirectResponse("/hashes?error=No+valid+CSV+files+found", status_code=303)
     return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
+
+
+# --- Version / update check ------------------------------------------------
+
+_GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"
+_LATEST_VERSION_TTL = 300  # seconds — cache GitHub response for 5 min
+
+
+def _fetch_latest_main_sha():
+    """Return the SHA of origin/main from GitHub. Cached to respect rate limits."""
+    now = time.time()
+    cache = _LATEST_VERSION_CACHE
+    if cache["sha"] and (now - cache["fetched_at"]) < _LATEST_VERSION_TTL:
+        return cache
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{_GITHUB_REPO}/commits/main",
+            headers={"Accept": "application/vnd.github+json"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        sha = resp.json().get("sha", "")
+        cache.update({
+            "fetched_at": now, "sha": sha, "sha_short": sha[:7],
+            "error": None,
+        })
+    except Exception as e:
+        cache.update({"fetched_at": now, "error": str(e)[:200]})
+    return cache
+
+
+@app.get("/api/version")
+async def api_version(check: bool = False):
+    """Return running build SHA + timestamp. With ?check=1, also query GitHub
+    for origin/main HEAD and report whether an update is available."""
+    out = {
+        "running": _APP_VERSION,
+    }
+    if check:
+        latest = _fetch_latest_main_sha()
+        out["latest"] = {
+            "sha": latest.get("sha"),
+            "sha_short": latest.get("sha_short"),
+            "fetched_at": latest.get("fetched_at"),
+            "error": latest.get("error"),
+        }
+        running_sha = _APP_VERSION.get("sha", "")
+        latest_sha = latest.get("sha") or ""
+        if running_sha and latest_sha and running_sha != "unknown":
+            out["update_available"] = running_sha != latest_sha
+        else:
+            out["update_available"] = None
+    return out
 
 
 # --- Cloud device inventory (Autopilot / Intune / Entra) -------------------

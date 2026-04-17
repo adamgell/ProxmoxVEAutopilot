@@ -25,6 +25,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project
 COPY . .
 
+# Embed the build SHA and timestamp so the UI can show what's running.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+RUN printf '%s\n%s\n' "$GIT_SHA" "$BUILD_TIME" > /app/VERSION
+ENV APP_VERSION_FILE=/app/VERSION
+
 # Create runtime directories
 RUN mkdir -p /app/jobs /app/output/hashes
 

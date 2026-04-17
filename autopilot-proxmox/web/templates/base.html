@@ -175,6 +175,42 @@ a:visited {
 <div id="content">
 {% block content %}{% endblock %}
 </div>
-<div id="footer">Proxmox VE Autopilot &copy; 2026</div>
+<div id="footer">
+  Proxmox VE Autopilot &copy; 2026
+  <span style="margin-left:15px;">Build: <span id="buildSha" style="font-family:monospace;">…</span></span>
+  <span id="updateBadge" style="margin-left:8px;"></span>
+  <button type="button" onclick="checkUpdate(true);" style="margin-left:8px;font-size:10px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">Check for updates</button>
+</div>
+<script>
+(function() {
+  function renderBadge(data) {
+    var sha = data.running && data.running.sha_short ? data.running.sha_short : 'unknown';
+    var when = data.running && data.running.build_time && data.running.build_time !== 'unknown' ? data.running.build_time : '';
+    var el = document.getElementById('buildSha');
+    el.textContent = sha;
+    el.title = (data.running && data.running.sha ? data.running.sha : '') + (when ? ' — built ' + when : '');
+
+    var badge = document.getElementById('updateBadge');
+    if (data.update_available === true) {
+      badge.innerHTML = '<a href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank" style="display:inline-block;padding:1px 6px;background:#fff3cd;color:#856404;border-radius:3px;font-weight:bold;text-decoration:none;">Update available: ' + (data.latest.sha_short || '?') + '</a>';
+    } else if (data.update_available === false) {
+      badge.innerHTML = '<span style="display:inline-block;padding:1px 6px;background:#d4edda;color:#155724;border-radius:3px;">up to date</span>';
+    } else if (data.latest && data.latest.error) {
+      badge.innerHTML = '<span style="color:#999;">update check failed</span>';
+      badge.title = data.latest.error;
+    } else {
+      badge.innerHTML = '';
+    }
+  }
+  window.checkUpdate = function(withRemote) {
+    var url = withRemote ? '/api/version?check=1' : '/api/version';
+    fetch(url).then(function(r) { return r.json(); }).then(renderBadge).catch(function(){});
+  };
+  // Initial render: show the running build. Do the GitHub check after a
+  // short delay so the rest of the page loads first.
+  checkUpdate(false);
+  setTimeout(function() { checkUpdate(true); }, 1500);
+})();
+</script>
 </body>
 </html>

@@ -1,0 +1,152 @@
+<h2>Actions Column Layout</h2>
+<p class="subtitle">How should the icon buttons be arranged in the VM table?</p>
+
+<style>
+  .demo-table { border-collapse: collapse; font-size: 11px; font-family: Verdana, Tahoma, Arial, sans-serif; width: 100%; }
+  .demo-table th { background: #336699; color: white; padding: 4px 8px; text-align: left; font-weight: bold; }
+  .demo-table td { padding: 3px 8px; border: 1px solid #ccc; }
+  .demo-table tr:nth-child(even) { background: #f5f5f5; }
+  .status-green { color: #006600; font-weight: bold; }
+  .status-red { color: #cc0000; font-weight: bold; }
+  .action-btn { background: none; border: 1px solid #ccc; border-radius: 3px; padding: 3px 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; }
+  .action-btn:hover { background: #dde8f0; border-color: #336699; }
+  .action-btn.danger:hover { background: #f8d7da; border-color: #cc0000; }
+  .action-btn svg { display: block; }
+  .actions-cell { white-space: nowrap; display: flex; gap: 3px; align-items: center; }
+</style>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Flat Icon Row (Compact)</h3>
+      <p>All icons in a single tight row with tooltips on hover. Minimal space usage.</p>
+      <div style="background:#e8e8e8;padding:12px;border-radius:6px;margin-top:8px;overflow-x:auto;">
+        <table class="demo-table">
+          <tr><th>VMID</th><th>Name</th><th>Hostname</th><th>Status</th><th>Hash</th><th>Actions</th></tr>
+          <tr>
+            <td>201</td><td>autopilot-001</td><td>DESKTOP-AB12</td>
+            <td><span class="status-green">running</span></td>
+            <td><span class="status-green">Yes</span></td>
+            <td>
+              <div class="actions-cell">
+                <button class="action-btn" title="Shutdown">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc8800" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/></svg>
+                </button>
+                <button class="action-btn" title="Force Stop">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="#cc0000"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                </button>
+                <button class="action-btn" title="Reset">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+                <button class="action-btn" title="Capture Hash">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+                </button>
+                <button class="action-btn" title="Console">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </button>
+                <button class="action-btn danger" title="Delete VM">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc0000" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td>202</td><td>autopilot-002</td><td></td>
+            <td>stopped</td>
+            <td>-</td>
+            <td>
+              <div class="actions-cell">
+                <button class="action-btn" title="Start">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="#006600"><polygon points="5,3 19,12 5,21"/></svg>
+                </button>
+                <span style="color:#999;font-size:10px;margin-left:2px;">|</span>
+                <button class="action-btn danger" title="Delete VM">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc0000" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Grouped Icon Row (Separated by Purpose)</h3>
+      <p>Icons grouped with subtle separators: power actions | tools | destructive. Clearer intent at a glance.</p>
+      <div style="background:#e8e8e8;padding:12px;border-radius:6px;margin-top:8px;overflow-x:auto;">
+        <table class="demo-table">
+          <tr><th>VMID</th><th>Name</th><th>Hostname</th><th>Status</th><th>Hash</th><th>Actions</th></tr>
+          <tr>
+            <td>201</td><td>autopilot-001</td><td>DESKTOP-AB12</td>
+            <td><span class="status-green">running</span></td>
+            <td><span class="status-green">Yes</span></td>
+            <td>
+              <div class="actions-cell">
+                <!-- Power group -->
+                <button class="action-btn" title="Shutdown">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc8800" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/></svg>
+                </button>
+                <button class="action-btn" title="Force Stop">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="#cc0000"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                </button>
+                <button class="action-btn" title="Reset">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+
+                <span style="color:#ccc;margin:0 2px;">|</span>
+
+                <!-- Tools group -->
+                <button class="action-btn" title="Capture Hash">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+                </button>
+                <button class="action-btn" title="Console">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </button>
+
+                <span style="color:#ccc;margin:0 2px;">|</span>
+
+                <!-- Destructive -->
+                <button class="action-btn danger" title="Delete VM">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc0000" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td>202</td><td>autopilot-002</td><td></td>
+            <td>stopped</td>
+            <td>-</td>
+            <td>
+              <div class="actions-cell">
+                <button class="action-btn" title="Start">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="#006600"><polygon points="5,3 19,12 5,21"/></svg>
+                </button>
+
+                <span style="color:#ccc;margin:0 2px;">|</span>
+
+                <button class="action-btn danger" title="Delete VM">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc0000" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px;">
+  <h3>Behavior Notes</h3>
+  <ul style="font-size:13px;line-height:1.6;">
+    <li><strong>Running VMs</strong> show: Shutdown, Force Stop, Reset, Capture Hash, Console, Delete</li>
+    <li><strong>Stopped VMs</strong> show: Start, Delete</li>
+    <li><strong>Shutdown</strong> = ACPI graceful shutdown &nbsp; <strong>Force Stop</strong> = immediate power off</li>
+    <li><strong>Delete</strong> and <strong>Force Stop</strong> get confirmation dialogs</li>
+    <li>All icons have tooltips on hover</li>
+  </ul>
+</div>
