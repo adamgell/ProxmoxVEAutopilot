@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Cloud Devices - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+
+{% if request.query_params.get('synced') %}
+<p style="background:#d4edda;border:1px solid #c3e6cb;padding:8px;color:#155724;">Synced ({{ request.query_params.get('synced') }}).</p>
+{% endif %}
+{% if request.query_params.get('deleted') %}
+<p style="background:#d4edda;border:1px solid #c3e6cb;padding:8px;color:#155724;">Deleted {{ request.query_params.get('deleted') }} object(s). Failed: {{ request.query_params.get('failed', '0') }}.</p>
+{% endif %}
+{% if request.query_params.get('error') %}
+<p style="background:#f8d7da;border:1px solid #f5c6cb;padding:8px;color:#721c24;">{{ request.query_params.get('error') }}</p>
+{% endif %}
+
+<h2>Cloud Devices
+  <small style="color:#999;font-weight:normal;font-size:11px;">
+    (Autopilot: {{ meta.counts.autopilot }} · Intune: {{ meta.counts.intune }} · Entra: {{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %})
+  </small>
+</h2>
+
+<form method="POST" action="/api/cloud/sync" style="display:inline;">
+  <input type="submit" value="Sync from Microsoft Graph">
+</form>
+
+{% if groups or unmatched %}
+<form id="nukeForm" method="POST" action="/api/cloud/delete">
+<table style="margin-top:10px;width:100%;">
+<tr>
+  <th style="width:20px;"><input type="checkbox" id="selectAll" onchange="toggleAll(this);"></th>
+  <th>Serial</th>
+  <th>Source</th>
+  <th>Object ID</th>
+  <th>Display name</th>
+  <th>Detail</th>
+  <th>Last seen</th>
+</tr>
+{% for g in groups %}
+  {% set group_rows = [] %}
+  {% if g.autopilot %}{% set _ = group_rows.append(('autopilot', g.autopilot)) %}{% endif %}
+  {% if g.intune %}{% set _ = group_rows.append(('intune', g.intune)) %}{% endif %}
+  {% for e in g.entra %}{% set _ = group_rows.append(('entra', e)) %}{% endfor %}
+  {% for source, row in group_rows %}
+  <tr>
+    <td><input type="checkbox" name="targets" value="{{ source }}:{{ row.id }}" onchange="updateCount();"></td>
+    {% if loop.first %}<td rowspan="{{ group_rows|length }}" style="font-weight:bold;vertical-align:top;">{{ g.serial }}</td>{% endif %}
+    <td>
+      {% if source == 'autopilot' %}<span class="badge" style="background:#cce5ff;color:#004085;">Autopilot</span>
+      {% elif source == 'intune' %}<span class="badge" style="background:#d1ecf1;color:#0c5460;">Intune</span>
+      {% else %}<span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span>{% endif %}
+    </td>
+    <td style="font-family:monospace;font-size:10px;">{{ row.id }}</td>
+    <td>{{ row.display_name or row.device_name or '—' }}</td>
+    <td>
+      {% if source == 'autopilot' %}tag={{ row.group_tag or '—' }} · {{ row.profile_status or '—' }} · enroll={{ row.enrollment_state or '—' }}
+      {% elif source == 'intune' %}{{ row.os or '—' }} {{ row.os_version or '' }} · {{ row.compliance_state or '—' }} · {{ row.user_principal_name or '—' }}
+      {% else %}{{ row.operating_system or '—' }} {{ row.operating_system_version or '' }} · {{ row.trust_type or '—' }} · {% if row.account_enabled %}enabled{% else %}disabled{% endif %}
+      {% endif %}
+    </td>
+    <td>
+      {% if source == 'autopilot' %}{{ row.last_contact or '—' }}
+      {% elif source == 'intune' %}{{ row.last_sync or '—' }}
+      {% else %}{{ row.approximate_last_sign_in or '—' }}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+{% endfor %}
+
+{% if unmatched %}
+<tr><td colspan="7" style="background:#f0f0f0;font-weight:bold;padding:4px 8px;">Unmatched Entra objects (no serial / no Intune linkage)</td></tr>
+{% for row in unmatched %}
+<tr>
+  <td><input type="checkbox" name="targets" value="entra:{{ row.id }}" onchange="updateCount();"></td>
+  <td style="color:#999;">—</td>
+  <td><span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span></td>
+  <td style="font-family:monospace;font-size:10px;">{{ row.id }}</td>
+  <td>{{ row.display_name or '—' }}</td>
+  <td>{{ row.operating_system or '—' }} {{ row.operating_system_version or '' }} · {{ row.trust_type or '—' }} · {% if row.account_enabled %}enabled{% else %}disabled{% endif %}</td>
+  <td>{{ row.approximate_last_sign_in or '—' }}</td>
+</tr>
+{% endfor %}
+{% endif %}
+</table>
+<br>
+<div style="display:flex;gap:8px;align-items:center;">
+  <button type="button" onclick="nukeSelected();" class="action-btn-delete">Nuke Selected</button>
+  <span id="selcount" style="color:#999;font-size:10px;">0 selected</span>
+</div>
+</form>
+{% else %}
+<p style="margin-top:15px;"><i>No devices in local inventory. Click <b>Sync from Microsoft Graph</b> to populate.</i></p>
+{% endif %}
+
+{% if deletions %}
+<h3 style="margin-top:25px;">Recent deletions</h3>
+<table>
+<tr>
+  <th>When</th>
+  <th>Source</th>
+  <th>Object ID</th>
+  <th>Status</th>
+  <th>Message</th>
+</tr>
+{% for d in deletions %}
+<tr>
+  <td>{{ d.deleted_at }}</td>
+  <td>{{ d.source }}</td>
+  <td style="font-family:monospace;font-size:10px;">{{ d.object_id }}</td>
+  <td>{% if d.status == 'ok' %}<span class="status-green">ok</span>{% else %}<span class="status-red">error</span>{% endif %}</td>
+  <td style="color:#666;">{{ d.message or '' }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+
+<script>
+function toggleAll(master) {
+  var c = document.getElementsByName('targets');
+  for (var i = 0; i < c.length; i++) c[i].checked = master.checked;
+  updateCount();
+}
+function updateCount() {
+  var c = document.querySelectorAll('input[name="targets"]:checked');
+  document.getElementById('selcount').textContent = c.length + ' selected';
+}
+function nukeSelected() {
+  var c = document.querySelectorAll('input[name="targets"]:checked');
+  if (c.length === 0) { alert('Select at least one record.'); return; }
+  if (!confirm('Permanently delete ' + c.length + ' object(s) from Microsoft Graph? This cannot be undone.')) return;
+  document.getElementById('nukeForm').submit();
+}
+</script>
+{% endblock %}

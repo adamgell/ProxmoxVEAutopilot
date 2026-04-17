@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from web.jobs import JobManager
+from web import devices_db
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -39,6 +40,8 @@ HASH_DIR = BASE_DIR / "output" / "hashes"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
+DEVICES_DB = BASE_DIR / "output" / "devices.db"
+devices_db.init(DEVICES_DB)
 
 SETTINGS_SCHEMA = [
     {"section": "Proxmox Connection", "fields": [
@@ -417,6 +420,23 @@ def _graph_api(path, method="GET", json_body=None):
         )
     resp.raise_for_status()
     return resp.json()
+
+
+def _graph_api_all(path):
+    """GET and follow @odata.nextLink pagination. Returns merged `value` list."""
+    token = _graph_token()
+    if not token:
+        return None
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://graph.microsoft.com/beta{path}"
+    items = []
+    while url:
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+        items.extend(payload.get("value", []))
+        url = payload.get("@odata.nextLink")
+    return items
 
 
 def get_autopilot_devices():
@@ -1172,6 +1192,77 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
     if saved == 0:
         return RedirectResponse("/hashes?error=No+valid+CSV+files+found", status_code=303)
     return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
+
+
+# --- Cloud device inventory (Autopilot / Intune / Entra) -------------------
+
+_GRAPH_DELETE_PATHS = {
+    "autopilot": "/deviceManagement/windowsAutopilotDeviceIdentities/{id}",
+    "intune":    "/deviceManagement/managedDevices/{id}",
+    "entra":     "/devices/{id}",
+}
+
+
+@app.get("/cloud", response_class=HTMLResponse)
+async def cloud_page(request: Request):
+    groups, extra = devices_db.list_grouped(DEVICES_DB)
+    return templates.TemplateResponse(
+        "devices.html",
+        {
+            "request": request,
+            "groups": groups,
+            "unmatched": extra["unmatched"],
+            "meta": extra["meta"],
+            "deletions": devices_db.recent_deletions(DEVICES_DB, limit=25),
+        },
+    )
+
+
+@app.post("/api/cloud/sync")
+async def cloud_sync():
+    try:
+        ap = _graph_api_all("/deviceManagement/windowsAutopilotDeviceIdentities") or []
+        it = _graph_api_all("/deviceManagement/managedDevices") or []
+        en = _graph_api_all("/devices") or []
+    except Exception as e:
+        return RedirectResponse(f"/cloud?error={str(e)[:200]}", status_code=303)
+    devices_db.upsert_autopilot(DEVICES_DB, ap)
+    devices_db.upsert_intune(DEVICES_DB, it)
+    devices_db.upsert_entra(DEVICES_DB, en)
+    return RedirectResponse(
+        f"/cloud?synced=autopilot:{len(ap)},intune:{len(it)},entra:{len(en)}",
+        status_code=303,
+    )
+
+
+@app.post("/api/cloud/delete")
+async def cloud_delete(targets: list[str] = Form(default=[])):
+    """`targets` is a list of 'source:object_id' strings. Each is deleted from
+    the matching Graph endpoint and recorded in the deletions audit log."""
+    ok = fail = 0
+    for raw in targets:
+        if ":" not in raw:
+            continue
+        source, object_id = raw.split(":", 1)
+        tmpl = _GRAPH_DELETE_PATHS.get(source)
+        if not tmpl or not object_id:
+            continue
+        path = tmpl.format(id=object_id)
+        try:
+            _graph_api(path, method="DELETE")
+            devices_db.record_deletion(
+                DEVICES_DB, source=source, object_id=object_id, status="ok"
+            )
+            ok += 1
+        except Exception as e:
+            devices_db.record_deletion(
+                DEVICES_DB, source=source, object_id=object_id,
+                status="error", message=str(e)[:500],
+            )
+            fail += 1
+    return RedirectResponse(
+        f"/cloud?deleted={ok}&failed={fail}", status_code=303,
+    )
 
 
 @app.websocket("/api/jobs/{job_id}/stream")
