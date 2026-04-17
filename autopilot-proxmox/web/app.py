@@ -1378,6 +1378,75 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
     return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
 
 
+# --- Answer ISO rebuild ----------------------------------------------------
+
+
+@app.post("/api/answer-iso/rebuild")
+async def rebuild_answer_iso():
+    """Regenerate the Windows unattend answer ISO from files/autounattend.xml
+    and upload it to Proxmox so the next template build picks up the current
+    partition layout + config. Returns a JSON result."""
+    import subprocess
+    import tempfile as _tmp
+
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    iso_storage = cfg.get("proxmox_iso_storage") or "isos"
+
+    xml_src = FILES_DIR / "autounattend.xml"
+    if not xml_src.exists():
+        return {"ok": False, "error": f"missing {xml_src}"}
+
+    with _tmp.TemporaryDirectory() as td:
+        td_path = Path(td)
+        stage = td_path / "stage"
+        stage.mkdir()
+        # OEMDRV volume label is what lets Windows Setup auto-discover the
+        # answer file; the filename on the ISO root must stay autounattend.xml.
+        (stage / "autounattend.xml").write_bytes(xml_src.read_bytes())
+        iso_path = td_path / "autounattend.iso"
+        try:
+            subprocess.run(
+                ["genisoimage", "-quiet", "-o", str(iso_path),
+                 "-J", "-r", "-V", "OEMDRV", str(stage)],
+                check=True, capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            return {"ok": False, "error": "genisoimage not installed in container"}
+        except subprocess.CalledProcessError as e:
+            return {"ok": False, "error": f"genisoimage failed: {e.stderr[:300]}"}
+
+        # Upload to Proxmox: POST /nodes/{node}/storage/{storage}/upload with
+        # multipart form (content=iso, filename=autounattend.iso).
+        host = cfg.get("proxmox_host", "")
+        port = cfg.get("proxmox_port", 8006)
+        token_id = cfg.get("vault_proxmox_api_token_id", "")
+        token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+        url = f"https://{host}:{port}/api2/json/nodes/{node}/storage/{iso_storage}/upload"
+        try:
+            with open(iso_path, "rb") as fh:
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
+                    data={"content": "iso", "filename": "autounattend.iso"},
+                    files={"filename": ("autounattend.iso", fh, "application/octet-stream")},
+                    verify=cfg.get("proxmox_validate_certs", False),
+                    timeout=60,
+                )
+        except Exception as e:
+            return {"ok": False, "error": f"upload failed: {e}"}
+        if resp.status_code >= 400:
+            return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+
+    return {
+        "ok": True,
+        "bytes": xml_src.stat().st_size,
+        "storage": iso_storage,
+        "node": node,
+        "path": f"{iso_storage}:iso/autounattend.iso",
+    }
+
+
 # --- Version / update check ------------------------------------------------
 
 _GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"

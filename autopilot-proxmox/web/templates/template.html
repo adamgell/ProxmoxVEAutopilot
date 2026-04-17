@@ -3,6 +3,17 @@
 {% block content %}
 <h2>Build Template from ISO</h2>
 <p><b>Warning:</b> This takes 20-30 minutes. A new VM will be created from the Windows ISO, installed unattended, sysprepped, and converted to a Proxmox template.</p>
+
+<h3>Answer ISO</h3>
+<p style="color:#666;font-size:11px;">
+  The unattended-install answer ISO is a baked artifact on Proxmox storage. Rebuild it whenever
+  <code>files/autounattend.xml</code> changes (e.g. partition layout tweaks) — otherwise the next template
+  build installs using the stale copy.
+</p>
+<button type="button" onclick="rebuildAnswerIso(this);" class="action-btn-upload" style="margin-bottom:15px;">Rebuild Answer ISO</button>
+<span id="answerIsoStatus" style="color:#666;font-size:11px;margin-left:10px;"></span>
+
+<h3>Build</h3>
 <form method="POST" action="/api/jobs/template">
 <table border="0" cellpadding="3">
 <tr>
@@ -19,4 +30,29 @@
 </tr>
 </table>
 </form>
+
+<script>
+function rebuildAnswerIso(btn) {
+  var status = document.getElementById('answerIsoStatus');
+  btn.disabled = true;
+  status.textContent = 'building + uploading…';
+  status.style.color = '#999';
+  fetch('/api/answer-iso/rebuild', {method: 'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        status.textContent = 'rebuilt — ' + d.path + ' (' + d.bytes + ' bytes source)';
+        status.style.color = '#006600';
+      } else {
+        status.textContent = 'failed: ' + (d.error || 'unknown');
+        status.style.color = '#cc0000';
+      }
+    })
+    .catch(function(e){
+      status.textContent = 'error: ' + e.message;
+      status.style.color = '#cc0000';
+    })
+    .finally(function(){ btn.disabled = false; });
+}
+</script>
 {% endblock %}
