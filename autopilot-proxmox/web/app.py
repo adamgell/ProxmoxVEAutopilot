@@ -1435,8 +1435,20 @@ async def rebuild_answer_iso():
                 )
         except Exception as e:
             return {"ok": False, "error": f"upload failed: {e}"}
+        if resp.status_code == 403:
+            return {
+                "ok": False,
+                "error": (
+                    "403 Forbidden from Proxmox. The API token needs "
+                    "Datastore.AllocateTemplate on /storage/"
+                    f"{iso_storage} (role PVEDatastoreUser or similar). "
+                    "In Proxmox UI: Datacenter → Permissions → API Tokens, "
+                    "or Datacenter → Permissions → Add → API Token "
+                    "Permission."
+                ),
+            }
         if resp.status_code >= 400:
-            return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+            return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:500]}"}
 
     return {
         "ok": True,
