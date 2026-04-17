@@ -1425,11 +1425,15 @@ async def rebuild_answer_iso():
         url = f"https://{host}:{port}/api2/json/nodes/{node}/storage/{iso_storage}/upload"
         try:
             with open(iso_path, "rb") as fh:
+                # PVE's upload endpoint takes 'content' (storage content type)
+                # as a form field and 'filename' as the multipart file part.
+                # The target name on disk is derived from the multipart file
+                # tuple's filename; do NOT also pass 'filename' as a form field.
                 resp = requests.post(
                     url,
                     headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
-                    data={"content": "iso", "filename": "autounattend.iso"},
-                    files={"filename": ("autounattend.iso", fh, "application/octet-stream")},
+                    data={"content": "iso"},
+                    files={"filename": ("autounattend.iso", fh, "application/x-iso9660-image")},
                     verify=cfg.get("proxmox_validate_certs", False),
                     timeout=60,
                 )
