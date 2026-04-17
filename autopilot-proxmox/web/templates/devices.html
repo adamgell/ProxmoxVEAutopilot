@@ -21,6 +21,10 @@
 <form method="POST" action="/api/cloud/sync" style="display:inline;">
   <input type="submit" value="Sync from Microsoft Graph">
 </form>
+<input type="text" id="filter" placeholder="Search serial, name, tag, object/device/ZTDID…"
+       oninput="applyFilter();" autocomplete="off"
+       style="margin-left:10px;width:350px;padding:3px 6px;">
+<span id="visiblecount" style="color:#999;font-size:10px;margin-left:6px;"></span>
 
 {% if groups or unmatched %}
 <form id="nukeForm" method="POST" action="/api/cloud/delete">
@@ -29,26 +33,41 @@
   <th style="width:20px;"><input type="checkbox" id="selectAll" onchange="toggleAll(this);"></th>
   <th>Serial</th>
   <th>Source</th>
-  <th>Object ID</th>
+  <th>IDs</th>
   <th>Display name</th>
   <th>Detail</th>
   <th>Last seen</th>
 </tr>
+{% macro id_cell(source, row) %}
+  <div style="font-family:monospace;font-size:10px;line-height:1.5;">
+    <div><span style="color:#999;">obj </span>{{ row.id }}</div>
+    {% if source == 'autopilot' %}
+      {% if row.azure_ad_device_id %}<div><span style="color:#999;">dev </span>{{ row.azure_ad_device_id }}</div>{% endif %}
+      <div><span style="color:#999;">ztd </span>{{ row.id }}</div>
+    {% elif source == 'intune' %}
+      {% if row.azure_ad_device_id %}<div><span style="color:#999;">dev </span>{{ row.azure_ad_device_id }}</div>{% endif %}
+    {% else %}
+      {% if row.device_id %}<div><span style="color:#999;">dev </span>{{ row.device_id }}</div>{% endif %}
+      {% if row.ztdid %}<div><span style="color:#999;">ztd </span>{{ row.ztdid }}</div>{% endif %}
+    {% endif %}
+  </div>
+{% endmacro %}
+
 {% for g in groups %}
   {% set group_rows = [] %}
   {% if g.autopilot %}{% set _ = group_rows.append(('autopilot', g.autopilot)) %}{% endif %}
   {% if g.intune %}{% set _ = group_rows.append(('intune', g.intune)) %}{% endif %}
   {% for e in g.entra %}{% set _ = group_rows.append(('entra', e)) %}{% endfor %}
   {% for source, row in group_rows %}
-  <tr>
+  <tr class="data-row"{% if loop.first %} style="border-top:2px solid #bbb;"{% endif %}>
     <td><input type="checkbox" name="targets" value="{{ source }}:{{ row.id }}" onchange="updateCount();"></td>
-    {% if loop.first %}<td rowspan="{{ group_rows|length }}" style="font-weight:bold;vertical-align:top;">{{ g.serial }}</td>{% endif %}
+    <td style="font-weight:bold;{% if not loop.first %}color:#aaa;font-weight:normal;{% endif %}">{{ g.serial }}</td>
     <td>
       {% if source == 'autopilot' %}<span class="badge" style="background:#cce5ff;color:#004085;">Autopilot</span>
       {% elif source == 'intune' %}<span class="badge" style="background:#d1ecf1;color:#0c5460;">Intune</span>
       {% else %}<span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span>{% endif %}
     </td>
-    <td style="font-family:monospace;font-size:10px;">{{ row.id }}</td>
+    <td>{{ id_cell(source, row) }}</td>
     <td>{{ row.display_name or row.device_name or '—' }}</td>
     <td>
       {% if source == 'autopilot' %}tag={{ row.group_tag or '—' }} · {{ row.profile_status or '—' }} · enroll={{ row.enrollment_state or '—' }}
@@ -67,13 +86,13 @@
 {% endfor %}
 
 {% if unmatched %}
-<tr><td colspan="7" style="background:#f0f0f0;font-weight:bold;padding:4px 8px;">Unmatched Entra objects (no serial / no Intune linkage)</td></tr>
+<tr class="section-row"><td colspan="7" style="background:#f0f0f0;font-weight:bold;padding:4px 8px;">Unmatched Entra objects (no serial / no Intune linkage)</td></tr>
 {% for row in unmatched %}
-<tr>
+<tr class="data-row">
   <td><input type="checkbox" name="targets" value="entra:{{ row.id }}" onchange="updateCount();"></td>
   <td style="color:#999;">—</td>
   <td><span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span></td>
-  <td style="font-family:monospace;font-size:10px;">{{ row.id }}</td>
+  <td>{{ id_cell('entra', row) }}</td>
   <td>{{ row.display_name or '—' }}</td>
   <td>{{ row.operating_system or '—' }} {{ row.operating_system_version or '' }} · {{ row.trust_type or '—' }} · {% if row.account_enabled %}enabled{% else %}disabled{% endif %}</td>
   <td>{{ row.approximate_last_sign_in or '—' }}</td>
@@ -115,8 +134,12 @@
 
 <script>
 function toggleAll(master) {
-  var c = document.getElementsByName('targets');
-  for (var i = 0; i < c.length; i++) c[i].checked = master.checked;
+  var rows = document.querySelectorAll('tr.data-row');
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].style.display === 'none') continue;
+    var cb = rows[i].querySelector('input[name="targets"]');
+    if (cb) cb.checked = master.checked;
+  }
   updateCount();
 }
 function updateCount() {
@@ -128,6 +151,19 @@ function nukeSelected() {
   if (c.length === 0) { alert('Select at least one record.'); return; }
   if (!confirm('Permanently delete ' + c.length + ' object(s) from Microsoft Graph? This cannot be undone.')) return;
   document.getElementById('nukeForm').submit();
+}
+function applyFilter() {
+  var q = document.getElementById('filter').value.trim().toLowerCase();
+  var rows = document.querySelectorAll('tr.data-row');
+  var visible = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var text = rows[i].textContent.toLowerCase();
+    var match = !q || text.indexOf(q) !== -1;
+    rows[i].style.display = match ? '' : 'none';
+    if (match) visible++;
+  }
+  document.getElementById('visiblecount').textContent =
+    q ? visible + ' / ' + rows.length + ' rows' : '';
 }
 </script>
 {% endblock %}

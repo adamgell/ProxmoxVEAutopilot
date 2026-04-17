@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS autopilot_devices (
     model TEXT,
     display_name TEXT,
     last_contact TEXT,
+    azure_ad_device_id TEXT,
     raw_json TEXT,
     synced_at TEXT NOT NULL
 );
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS entra_devices (
     id TEXT PRIMARY KEY,
     device_id TEXT,
     serial TEXT,
+    ztdid TEXT,
     display_name TEXT,
     operating_system TEXT,
     operating_system_version TEXT,
@@ -100,12 +102,22 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 def init(db_path: Path) -> None:
     with _connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # Additive migrations for DBs created before these columns existed.
+        for stmt in (
+            "ALTER TABLE autopilot_devices ADD COLUMN azure_ad_device_id TEXT",
+            "ALTER TABLE entra_devices ADD COLUMN ztdid TEXT",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # column already present
 
 
-def _extract_serial_from_entra(raw: dict) -> str:
-    # Entra stores serial inside physicalIds as "[SerialNumber]:XYZ".
+def _extract_physical_id(raw: dict, prefix: str) -> str:
+    # Entra encodes a few bits of Autopilot/Intune linkage inside `physicalIds`
+    # as "[<tag>]:<value>" strings — e.g. [SerialNumber]:ABC, [ZTDID]:<guid>.
     for pid in raw.get("physicalIds", []) or []:
-        if isinstance(pid, str) and pid.startswith("[SerialNumber]:"):
+        if isinstance(pid, str) and pid.startswith(prefix):
             return pid.split(":", 1)[1]
     return ""
 
@@ -124,6 +136,7 @@ def upsert_autopilot(db_path: Path, devices: Iterable[dict]) -> int:
             d.get("model", ""),
             d.get("displayName", ""),
             (d.get("lastContactedDateTime") or "")[:19],
+            d.get("azureAdDeviceId", "") or d.get("azureActiveDirectoryDeviceId", ""),
             json.dumps(d),
             now,
         ))
@@ -132,8 +145,9 @@ def upsert_autopilot(db_path: Path, devices: Iterable[dict]) -> int:
         conn.executemany(
             "INSERT INTO autopilot_devices "
             "(id, serial, group_tag, profile_status, enrollment_state, "
-            " manufacturer, model, display_name, last_contact, raw_json, synced_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " manufacturer, model, display_name, last_contact, "
+            " azure_ad_device_id, raw_json, synced_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
     return len(rows)
@@ -178,7 +192,8 @@ def upsert_entra(db_path: Path, devices: Iterable[dict]) -> int:
         rows.append((
             d.get("id", ""),
             d.get("deviceId", ""),
-            _extract_serial_from_entra(d),
+            _extract_physical_id(d, "[SerialNumber]:"),
+            _extract_physical_id(d, "[ZTDID]:"),
             d.get("displayName", ""),
             d.get("operatingSystem", ""),
             d.get("operatingSystemVersion", ""),
@@ -192,10 +207,10 @@ def upsert_entra(db_path: Path, devices: Iterable[dict]) -> int:
         conn.execute("DELETE FROM entra_devices")
         conn.executemany(
             "INSERT INTO entra_devices "
-            "(id, device_id, serial, display_name, operating_system, "
+            "(id, device_id, serial, ztdid, display_name, operating_system, "
             " operating_system_version, trust_type, approximate_last_sign_in, "
             " account_enabled, raw_json, synced_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
     return len(rows)
