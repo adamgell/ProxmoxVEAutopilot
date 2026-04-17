@@ -1264,100 +1264,129 @@ def _graph_delete_raw(path):
     return resp.status_code, err
 
 
+async def _delete_item(item: dict) -> None:
+    """Fire the Graph DELETE and transition the item to verifying/deleted/error.
+    Does not verify — call _verify_item afterwards if state is 'verifying'."""
+    import asyncio
+    item["state"] = "deleting"
+    item["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    path_tmpl = _GRAPH_DELETE_PATHS.get(item["source"])
+    if not path_tmpl:
+        item["state"] = "error"
+        item["message"] = f"unknown source {item['source']}"
+        return
+    path = path_tmpl.format(id=item["object_id"])
+    status, err_text = await asyncio.to_thread(_graph_delete_raw, path)
+
+    if status == 404:
+        item["state"] = "deleted"
+        item["message"] = "already gone (404)"
+        item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        devices_db.record_deletion(
+            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+            status="ok", message="already gone",
+        )
+    elif 200 <= status < 300:
+        item["state"] = "verifying"
+        item["message"] = f"DELETE returned {status}, verifying…"
+    elif status == 400:
+        # Graph returns 400 when a prior async DELETE on the same object is
+        # still pending. Not a real failure — drop into the verify loop.
+        item["state"] = "verifying"
+        item["message"] = f"DELETE returned 400 (likely pending from prior request: {err_text[:120]}); verifying…"
+    else:
+        item["state"] = "error"
+        item["message"] = f"HTTP {status}: {err_text[:400]}"
+        devices_db.record_deletion(
+            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+            status="error", message=item["message"],
+        )
+
+
+async def _verify_item(item: dict) -> None:
+    """Poll Graph until the object 404s (verified deleted) or we exhaust the
+    per-source budget. Only called when _delete_item left state='verifying'."""
+    import asyncio
+    path = _GRAPH_DELETE_PATHS[item["source"]].format(id=item["object_id"])
+    budget = _VERIFY_MAX_SECONDS.get(item["source"], 180)
+    deadline = asyncio.get_event_loop().time() + budget
+    delay = 2.0
+    attempts = 0
+    verified = False
+    final_status = 0
+    while True:
+        await asyncio.sleep(delay)
+        attempts += 1
+        elapsed = int(budget - (deadline - asyncio.get_event_loop().time()))
+        item["message"] = f"verifying… attempt {attempts}, {elapsed}s elapsed"
+        status, _ = await asyncio.to_thread(_graph_get_raw, path)
+        final_status = status
+        if status == 404:
+            verified = True
+            break
+        if asyncio.get_event_loop().time() >= deadline:
+            break
+        delay = min(delay * 2, _VERIFY_BACKOFF_CAP)
+
+    if verified:
+        item["state"] = "deleted"
+        item["message"] = f"verified 404 after {attempts} attempt(s)"
+        devices_db.record_deletion(
+            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+            status="ok",
+        )
+    else:
+        item["state"] = "unverified"
+        item["message"] = (
+            f"delete accepted but GET still returned {final_status} "
+            f"after {attempts} attempt(s) over {budget}s"
+        )
+        devices_db.record_deletion(
+            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            serial=item.get("serial", ""), display_name=item.get("display_name", ""),
+            status="ok", message=item["message"],
+        )
+    item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 async def _run_cloud_delete(job_id: str):
-    """Execute a cloud-delete job: delete → verify each item, update job state."""
+    """Execute a cloud-delete job with per-source phasing and parallelism.
+
+    Ordering: Intune → Autopilot → Entra. Within each phase all DELETEs fire
+    in parallel; we wait only for the DELETE responses before advancing to
+    the next phase. Verification polling from an earlier phase runs as
+    background tasks alongside the next phase's DELETEs.
+    """
     import asyncio
     job = _cloud_delete_jobs[job_id]
     job["state"] = "running"
+
+    # Bucket items by source, preserving input order within each bucket.
+    by_source: dict[str, list[dict]] = {"intune": [], "autopilot": [], "entra": []}
+    for item in job["items"]:
+        if item["source"] in by_source:
+            by_source[item["source"]].append(item)
+
+    verify_tasks: list[asyncio.Task] = []
     try:
-        for item in job["items"]:
-            item["state"] = "deleting"
-            item["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            path_tmpl = _GRAPH_DELETE_PATHS.get(item["source"])
-            if not path_tmpl:
-                item["state"] = "error"
-                item["message"] = f"unknown source {item['source']}"
+        for source_name in ("intune", "autopilot", "entra"):
+            phase = by_source[source_name]
+            if not phase:
                 continue
-            path = path_tmpl.format(id=item["object_id"])
-            status, err_text = await asyncio.to_thread(_graph_delete_raw, path)
+            # Fire all DELETEs in this phase concurrently and wait for the
+            # HTTP responses. This is seconds, not minutes.
+            await asyncio.gather(*[_delete_item(item) for item in phase])
+            # Launch verification tasks without awaiting so the next phase
+            # can start while prior verifications keep polling in parallel.
+            for item in phase:
+                if item["state"] == "verifying":
+                    verify_tasks.append(asyncio.create_task(_verify_item(item)))
 
-            if status == 404:
-                # Already gone — idempotent success, skip verification.
-                item["state"] = "deleted"
-                item["message"] = "already gone (404)"
-                item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                devices_db.record_deletion(
-                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
-                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
-                    status="ok", message="already gone",
-                )
-                continue
-            elif 200 <= status < 300:
-                item["state"] = "verifying"
-                item["message"] = f"DELETE returned {status}, verifying…"
-            elif status == 400:
-                # Common when a prior async DELETE is still pending on the
-                # same object — Graph rejects the duplicate. Proceed to
-                # verification; the object should disappear on its own.
-                item["state"] = "verifying"
-                item["message"] = f"DELETE returned 400 (likely pending from prior request: {err_text[:120]}); verifying…"
-            else:
-                item["state"] = "error"
-                item["message"] = f"HTTP {status}: {err_text[:400]}"
-                devices_db.record_deletion(
-                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
-                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
-                    status="error", message=item["message"],
-                )
-                continue
-
-            # Verify with an adaptive retry loop. Graph Autopilot deletes are
-            # 202-Accepted and async; Intune/Entra are typically 204 but still
-            # subject to eventual consistency. We poll until we see 404 or
-            # we exhaust the per-source budget.
-            budget = _VERIFY_MAX_SECONDS.get(item["source"], 180)
-            deadline = asyncio.get_event_loop().time() + budget
-            delay = 2.0
-            attempts = 0
-            verified = False
-            final_status = 0
-            while True:
-                await asyncio.sleep(delay)
-                attempts += 1
-                elapsed = int(budget - (deadline - asyncio.get_event_loop().time()))
-                item["message"] = f"verifying… attempt {attempts}, {elapsed}s elapsed"
-                status, _ = await asyncio.to_thread(_graph_get_raw, path)
-                final_status = status
-                if status == 404:
-                    verified = True
-                    break
-                if asyncio.get_event_loop().time() >= deadline:
-                    break
-                # Back off: 2s → 4s → 8s → 16s → 32s → 60s (cap). Long waits
-                # settle into 60s cadence — enough to catch a delete that
-                # propagates 45 minutes in.
-                delay = min(delay * 2, _VERIFY_BACKOFF_CAP)
-
-            if verified:
-                item["state"] = "deleted"
-                item["message"] = f"verified 404 after {attempts} attempt(s)"
-                devices_db.record_deletion(
-                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
-                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
-                    status="ok",
-                )
-            else:
-                item["state"] = "unverified"
-                item["message"] = (
-                    f"delete accepted but GET still returned {final_status} "
-                    f"after {attempts} attempt(s) over {budget}s"
-                )
-                devices_db.record_deletion(
-                    DEVICES_DB, source=item["source"], object_id=item["object_id"],
-                    serial=item.get("serial", ""), display_name=item.get("display_name", ""),
-                    status="ok", message=item["message"],
-                )
-            item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if verify_tasks:
+            await asyncio.gather(*verify_tasks, return_exceptions=True)
     finally:
         job["state"] = "done"
         job["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
