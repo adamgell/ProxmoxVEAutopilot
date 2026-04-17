@@ -93,8 +93,8 @@ SETTINGS_SCHEMA = [
         {"key": "vm_name_prefix", "label": "Name Prefix", "type": "text"},
         {"key": "vm_start_after_create", "label": "Start After Create", "type": "bool"},
         {"key": "vm_oem_profile", "label": "Default OEM Profile", "type": "text"},
-        {"key": "vm_serial_prefix", "label": "Serial Prefix", "type": "text"},
-        {"key": "vm_custom_serial", "label": "Default Serial", "type": "text"},
+        {"key": "vm_serial_prefix", "label": "Serial Prefix (generated as <prefix>-HEX)", "type": "text"},
+        {"key": "vm_custom_serial", "label": "Fixed Serial (one-VM override — leave blank)", "type": "text"},
         {"key": "vm_group_tag", "label": "Default Group Tag", "type": "text"},
     ]},
     {"section": "Autopilot", "fields": [

@@ -1,12 +1,4 @@
 ---
-- name: "Debug: show name and serial values being sent"
-  ansible.builtin.debug:
-    msg:
-      - "vm_vmid={{ vm_vmid }}"
-      - "vm_name={{ vm_name | string | to_json }}"
-      - "_vm_serial={{ _vm_serial | default('UNDEFINED') | string | to_json }}"
-      - "vm_name length={{ (vm_name | string) | length }}"
-
 - name: "Clone template to new VM {{ vm_vmid }}"
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/clone"
