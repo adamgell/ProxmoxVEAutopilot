@@ -216,31 +216,59 @@ def upsert_entra(db_path: Path, devices: Iterable[dict]) -> int:
     return len(rows)
 
 
-def list_grouped(db_path: Path) -> tuple[list[dict], dict]:
+def _is_windows_intune(row: dict) -> bool:
+    return (row.get("os") or "").strip().lower().startswith("windows")
+
+
+def _is_windows_entra(row: dict) -> bool:
+    # Entra's operatingSystem spans {"Windows", "IPad", "IPhone", "MacMDM",
+    # "AndroidForWork", "AndroidEnterprise", "Unknown", ""}. Match Windows
+    # prefix; also keep Unknown records since re-enrolled/stale Windows
+    # device objects often report that.
+    os = (row.get("operating_system") or "").strip().lower()
+    return os.startswith("windows") or os == "unknown" or os == ""
+
+
+def list_grouped(db_path: Path, *, windows_only: bool = True) -> tuple[list[dict], dict]:
     """Return devices grouped by serial plus unmatched Entra records.
 
     Each group has: serial, autopilot (row or None), intune (row or None),
     entra (list — a serial can correspond to multiple Entra objects after
     re-enrollment). Unmatched is a list of Entra rows with no serial and no
     deviceId match into Intune.
+
+    `windows_only=True` drops non-Windows Intune and Entra rows at display
+    time so the Cloud UI doesn't show iOS/Android/macOS records. Autopilot
+    is always Windows-only so it isn't filtered.
     """
     with _connect(db_path) as conn:
         ap  = [dict(r) for r in conn.execute("SELECT * FROM autopilot_devices")]
         it  = [dict(r) for r in conn.execute("SELECT * FROM intune_devices")]
         en  = [dict(r) for r in conn.execute("SELECT * FROM entra_devices")]
+        total_counts = {"autopilot": len(ap), "intune": len(it), "entra": len(en)}
         meta = {
             "synced_at": max(
                 [r["synced_at"] for r in ap + it + en] or [""]
             ),
-            "counts": {"autopilot": len(ap), "intune": len(it), "entra": len(en)},
+            "counts": total_counts,
         }
 
     intune_by_azure_id = {r["azure_ad_device_id"]: r for r in it if r.get("azure_ad_device_id")}
 
-    # Backfill Entra serial via Intune's azureADDeviceId linkage.
+    # Backfill Entra serial via Intune's azureADDeviceId linkage. Do this
+    # BEFORE filtering so Windows Entra records still get their serial even
+    # when the correlating Intune record would otherwise be filtered out.
     for r in en:
         if not r.get("serial") and r.get("device_id") in intune_by_azure_id:
             r["serial"] = intune_by_azure_id[r["device_id"]]["serial"]
+
+    if windows_only:
+        it = [r for r in it if _is_windows_intune(r)]
+        en = [r for r in en if _is_windows_entra(r)]
+        meta["counts_filtered"] = {
+            "autopilot": len(ap), "intune": len(it), "entra": len(en)
+        }
+        meta["filter"] = "windows_only"
 
     serials: dict[str, dict] = {}
     def bucket(serial: str) -> dict:

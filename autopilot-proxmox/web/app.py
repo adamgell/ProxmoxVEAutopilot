@@ -1365,7 +1365,10 @@ async def _run_cloud_delete(job_id: str):
 
 @app.get("/cloud", response_class=HTMLResponse)
 async def cloud_page(request: Request):
-    groups, extra = devices_db.list_grouped(DEVICES_DB)
+    # ?all=1 disables the Windows-only filter so iOS/Android/macOS records
+    # can be inspected or deleted if needed.
+    windows_only = request.query_params.get("all") != "1"
+    groups, extra = devices_db.list_grouped(DEVICES_DB, windows_only=windows_only)
     return templates.TemplateResponse(
         "devices.html",
         {
@@ -1373,6 +1376,7 @@ async def cloud_page(request: Request):
             "groups": groups,
             "unmatched": extra["unmatched"],
             "meta": extra["meta"],
+            "windows_only": windows_only,
             "deletions": devices_db.recent_deletions(DEVICES_DB, limit=25),
         },
     )

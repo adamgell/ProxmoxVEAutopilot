@@ -14,7 +14,11 @@
 
 <h2>Cloud Devices
   <small style="color:#999;font-weight:normal;font-size:11px;">
-    (Autopilot: {{ meta.counts.autopilot }} · Intune: {{ meta.counts.intune }} · Entra: {{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %})
+    {% if windows_only and meta.counts_filtered %}
+      (showing Windows only — Autopilot: {{ meta.counts_filtered.autopilot }} · Intune: {{ meta.counts_filtered.intune }}/{{ meta.counts.intune }} · Entra: {{ meta.counts_filtered.entra }}/{{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %}) <a href="/cloud?all=1">Show all platforms</a>
+    {% else %}
+      (all platforms — Autopilot: {{ meta.counts.autopilot }} · Intune: {{ meta.counts.intune }} · Entra: {{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %}) <a href="/cloud">Windows only</a>
+    {% endif %}
   </small>
 </h2>
 
