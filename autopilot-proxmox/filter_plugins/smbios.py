@@ -105,7 +105,13 @@ class FilterModule:
         hex_str = random_bytes.hex().upper()
 
         if prefix:
-            return f"{prefix}-{hex_str}"
+            # Strip trailing hyphens so a user-supplied prefix like "Gell-"
+            # doesn't produce "Gell--HEX" — Proxmox's clone API rejects
+            # names with consecutive hyphens via its DNS-name validator.
+            clean_prefix = prefix.rstrip("-")
+            if not clean_prefix:
+                clean_prefix = "VM"
+            return f"{clean_prefix}-{hex_str}"
 
         manufacturer = manufacturer or ""
         if manufacturer.startswith("Lenovo"):
