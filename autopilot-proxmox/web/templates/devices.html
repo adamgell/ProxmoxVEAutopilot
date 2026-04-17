@@ -42,7 +42,7 @@
   <th>Detail</th>
   <th>Last seen</th>
 </tr>
-{% macro id_cell(source, row) %}
+{% macro id_cell(source, row, pve=None) %}
   <div style="font-family:monospace;font-size:10px;line-height:1.5;">
     <div><span style="color:#999;">obj </span>{{ row.id }}</div>
     {% if source == 'autopilot' %}
@@ -54,6 +54,7 @@
       {% if row.device_id %}<div><span style="color:#999;">dev </span>{{ row.device_id }}</div>{% endif %}
       {% if row.ztdid %}<div><span style="color:#999;">ztd </span>{{ row.ztdid }}</div>{% endif %}
     {% endif %}
+    {% if pve %}<div><span style="color:#999;">pve </span>{{ pve.vmid }}<span style="color:#999;"> ({{ pve.status }})</span></div>{% endif %}
   </div>
 {% endmacro %}
 
@@ -73,7 +74,7 @@
       {% elif source == 'intune' %}<span class="badge" style="background:#d1ecf1;color:#0c5460;">Intune</span>
       {% else %}<span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span>{% endif %}
     </td>
-    <td>{{ id_cell(source, row) }}</td>
+    <td>{{ id_cell(source, row, g.pve) }}</td>
     <td>{{ row.display_name or row.device_name or '—' }}</td>
     <td>
       {% if source == 'autopilot' %}tag={{ row.group_tag or '—' }} · {{ row.profile_status or '—' }} · enroll={{ row.enrollment_state or '—' }}

@@ -1266,28 +1266,41 @@ def _graph_delete_raw(path):
     return resp.status_code, err
 
 
+def _pve_autopilot_vms_by_serial() -> dict[str, dict]:
+    """Return {serial: {vmid, name, status}} for all autopilot-tagged, non-
+    template VMs on the configured node. Serial is matched against VM name
+    (lab VMs are provisioned with name == device serial). One API call."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        vms = _proxmox_api(f"/nodes/{node}/qemu")
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for vm in vms:
+        if vm.get("template"):
+            continue
+        tags = (vm.get("tags") or "").split(";")
+        if "autopilot" not in tags:
+            continue
+        name = vm.get("name", "")
+        if not name:
+            continue
+        out[name] = {
+            "vmid": vm["vmid"],
+            "name": name,
+            "status": vm.get("status", ""),
+        }
+    return out
+
+
 def _find_pve_vm_by_serial(serial: str) -> dict | None:
     """Return the Proxmox VM whose name matches `serial` and carries the
     'autopilot' tag. Returns None if no match — refusing to touch VMs that
     weren't provisioned by us guards against name collisions."""
     if not serial:
         return None
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
-    try:
-        vms = _proxmox_api(f"/nodes/{node}/qemu")
-    except Exception:
-        return None
-    for vm in vms:
-        if vm.get("template"):
-            continue
-        if vm.get("name") != serial:
-            continue
-        tags = (vm.get("tags") or "").split(";")
-        if "autopilot" not in tags:
-            continue
-        return {"vmid": vm["vmid"], "name": vm.get("name", ""), "status": vm.get("status", "")}
-    return None
+    return _pve_autopilot_vms_by_serial().get(serial)
 
 
 async def _delete_pve_item(item: dict) -> None:
@@ -1505,6 +1518,13 @@ async def cloud_page(request: Request):
     # can be inspected or deleted if needed.
     windows_only = request.query_params.get("all") != "1"
     groups, extra = devices_db.list_grouped(DEVICES_DB, windows_only=windows_only)
+
+    # One Proxmox API call to map serial → {vmid, status}. Attach to each
+    # group so the UI can show a 'pve' line alongside the other IDs.
+    pve_by_serial = _pve_autopilot_vms_by_serial()
+    for g in groups:
+        g["pve"] = pve_by_serial.get(g["serial"])
+
     return templates.TemplateResponse(
         "devices.html",
         {
