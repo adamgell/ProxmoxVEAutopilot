@@ -883,10 +883,20 @@ async def vm_console(vmid: int):
 @app.get("/vms/{vmid}/console", response_class=HTMLResponse)
 async def vm_console_page(request: Request, vmid: int):
     cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    # VM 'name' in Proxmox is the device serial for provisioned VMs (the
+    # provisioning flow renames it to the generated serial post-clone).
+    serial = ""
+    try:
+        vm_cfg = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config")
+        serial = (vm_cfg or {}).get("name", "") if isinstance(vm_cfg, dict) else ""
+    except Exception:
+        pass
     return templates.TemplateResponse("console.html", {
         "request": request,
         "vmid": vmid,
-        "node": cfg.get("proxmox_node", "pve"),
+        "node": node,
+        "serial": serial,
     })
 
 

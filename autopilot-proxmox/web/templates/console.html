@@ -2,7 +2,9 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>VM {{ vmid }} console</title>
+{# Title is VMID + device serial (VM name in Proxmox). Hyphens and any
+   other chars in the serial are preserved verbatim. #}
+<title>{{ vmid }}{% if serial %} · {{ serial }}{% endif %}</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: Verdana, Tahoma, Arial, sans-serif; }
   #topbar { background: #336699; color: #fff; padding: 6px 12px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
@@ -18,7 +20,12 @@
 </head>
 <body>
 <div id="topbar">
-  <div>VM {{ vmid }} — node {{ node }} · <a href="/vms">back to VMs</a></div>
+  <div>
+    VM {{ vmid }}
+    {% if serial %} · <b>{{ serial }}</b>{% endif %}
+    · node {{ node }}
+    · <a href="/vms">back to VMs</a>
+  </div>
   <div id="status" class="status-warn">initializing…</div>
   <div class="actions">
     <button onclick="sendCtrlAltDel();" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
