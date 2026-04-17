@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>VM {{ vmid }} console</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: Verdana, Tahoma, Arial, sans-serif; }
+  #topbar { background: #336699; color: #fff; padding: 6px 12px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
+  #topbar a { color: #fff; }
+  #topbar .actions button { background: #264d73; color: #fff; border: 1px solid #1a365d; padding: 2px 8px; font-size: 11px; cursor: pointer; margin-left: 4px; }
+  #topbar .actions button:hover { background: #1a365d; }
+  #status { font-family: monospace; font-size: 11px; }
+  #screen { width: 100vw; height: calc(100vh - 32px); background: #000; }
+  .status-ok { color: #c8e6c9; }
+  .status-warn { color: #ffecb3; }
+  .status-err { color: #ffcdd2; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div>VM {{ vmid }} — node {{ node }} · <a href="/vms">back to VMs</a></div>
+  <div id="status" class="status-warn">initializing…</div>
+  <div class="actions">
+    <button onclick="sendCtrlAltDel();" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
+    <button onclick="rfbInstance && rfbInstance.focus();" title="Give the console keyboard focus">Focus</button>
+    <button onclick="reconnect();" title="Fetch a new ticket and reconnect">Reconnect</button>
+  </div>
+</div>
+<div id="screen"></div>
+<script type="module">
+import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.6.0/lib/rfb.js';
+
+const VMID = {{ vmid }};
+const statusEl = document.getElementById('status');
+const screenEl = document.getElementById('screen');
+let rfb = null;
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+}
+
+async function connect() {
+  setStatus('requesting VNC ticket…', 'status-warn');
+  let ticket;
+  try {
+    const r = await fetch('/api/vms/' + VMID + '/vnc-init');
+    ticket = await r.json();
+  } catch (e) {
+    setStatus('init failed: ' + e.message, 'status-err');
+    return;
+  }
+  if (ticket.error || !ticket.ticket || !ticket.port) {
+    setStatus('init failed: ' + (ticket.error || 'no ticket'), 'status-err');
+    return;
+  }
+
+  const wsScheme = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+  const wsUrl = wsScheme + location.host + '/api/vms/' + VMID + '/vnc-ws' +
+                '?port=' + encodeURIComponent(ticket.port) +
+                '&vncticket=' + encodeURIComponent(ticket.ticket);
+
+  setStatus('opening console websocket…', 'status-warn');
+  if (rfb) { try { rfb.disconnect(); } catch (e) {} rfb = null; }
+  screenEl.innerHTML = '';
+
+  rfb = new RFB(screenEl, wsUrl, {
+    credentials: { password: ticket.ticket },
+    wsProtocols: ['binary'],
+  });
+  rfb.viewOnly = false;
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+
+  rfb.addEventListener('connect',      () => setStatus('connected · ' + (ticket.user || ''), 'status-ok'));
+  rfb.addEventListener('disconnect',   e => setStatus('disconnected: ' + (e.detail.reason || 'closed'), 'status-err'));
+  rfb.addEventListener('credentialsrequired', () => rfb.sendCredentials({ password: ticket.ticket }));
+  rfb.addEventListener('securityfailure',    e => setStatus('VNC auth failed: ' + (e.detail.reason || ''), 'status-err'));
+}
+
+window.sendCtrlAltDel = () => { if (rfb) rfb.sendCtrlAltDel(); };
+window.reconnect      = () => connect();
+window.rfbInstance    = null;
+
+connect().then(() => { window.rfbInstance = rfb; });
+</script>
+</body>
+</html>

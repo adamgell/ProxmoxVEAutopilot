@@ -876,13 +876,127 @@ async def start_template(profile: str = Form(...)):
 
 @app.get("/api/vms/{vmid}/console")
 async def vm_console(vmid: int):
-    """Redirect to Proxmox noVNC console (requires active Proxmox login)."""
+    """Redirect to the embedded noVNC console page."""
+    return RedirectResponse(f"/vms/{vmid}/console")
+
+
+@app.get("/vms/{vmid}/console", response_class=HTMLResponse)
+async def vm_console_page(request: Request, vmid: int):
+    cfg = _load_proxmox_config()
+    return templates.TemplateResponse("console.html", {
+        "request": request,
+        "vmid": vmid,
+        "node": cfg.get("proxmox_node", "pve"),
+    })
+
+
+@app.get("/api/vms/{vmid}/vnc-init")
+async def vm_vnc_init(vmid: int):
+    """Request a websocket-mode VNC ticket from Proxmox. Returns the
+    port + short-lived ticket the browser needs to open the VNC stream
+    (via our /api/vms/{vmid}/vnc-ws proxy)."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        # websocket=1 tells Proxmox to issue a ticket valid for the
+        # /vncwebsocket endpoint (different from the default TCP ticket).
+        data = _proxmox_api_post(
+            f"/nodes/{node}/qemu/{vmid}/vncproxy",
+            data={"websocket": "1"},
+        )
+    except Exception as e:
+        return {"error": f"vncproxy failed: {e}"}
+    return {
+        "node": node,
+        "vmid": vmid,
+        "port": data.get("port"),
+        "ticket": data.get("ticket"),
+        "user": data.get("user"),
+    }
+
+
+@app.websocket("/api/vms/{vmid}/vnc-ws")
+async def vm_vnc_websocket(websocket: WebSocket, vmid: int):
+    """Bidirectional WebSocket proxy to Proxmox's vncwebsocket endpoint.
+
+    Browsers can't send custom headers on a WebSocket handshake, so we
+    authenticate the upstream connection with the stored API token and
+    pipe frames in both directions. The inner VNC-level auth is handled
+    by noVNC using the short-lived ticket as the password."""
+    import ssl
+    import websockets as ws_lib
+    port = websocket.query_params.get("port")
+    vncticket = websocket.query_params.get("vncticket")
+    if not port or not vncticket:
+        await websocket.close(code=1008, reason="missing port or vncticket")
+        return
+
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
-    port = cfg.get("proxmox_port", 8006)
+    pve_port = cfg.get("proxmox_port", 8006)
     node = cfg.get("proxmox_node", "pve")
-    novnc_url = f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
-    return RedirectResponse(novnc_url)
+    token_id = cfg.get("vault_proxmox_api_token_id", "")
+    token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+
+    await websocket.accept(subprotocol="binary")
+
+    ssl_ctx = ssl.create_default_context()
+    if not cfg.get("proxmox_validate_certs", False):
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    from urllib.parse import quote
+    upstream_url = (
+        f"wss://{host}:{pve_port}/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket"
+        f"?port={quote(port)}&vncticket={quote(vncticket)}"
+    )
+    auth_header = [("Authorization", f"PVEAPIToken={token_id}={token_secret}")]
+
+    try:
+        async with ws_lib.connect(
+            upstream_url,
+            additional_headers=auth_header,
+            ssl=ssl_ctx,
+            subprotocols=["binary"],
+            max_size=None,
+            ping_interval=None,
+        ) as upstream:
+            async def browser_to_pve():
+                try:
+                    while True:
+                        msg = await websocket.receive()
+                        if msg["type"] == "websocket.disconnect":
+                            break
+                        if "bytes" in msg and msg["bytes"] is not None:
+                            await upstream.send(msg["bytes"])
+                        elif "text" in msg and msg["text"] is not None:
+                            await upstream.send(msg["text"])
+                except Exception:
+                    pass
+
+            async def pve_to_browser():
+                try:
+                    async for frame in upstream:
+                        if isinstance(frame, bytes):
+                            await websocket.send_bytes(frame)
+                        else:
+                            await websocket.send_text(frame)
+                except Exception:
+                    pass
+
+            await asyncio.gather(
+                browser_to_pve(), pve_to_browser(), return_exceptions=True
+            )
+    except Exception as e:
+        try:
+            await websocket.close(code=1011, reason=str(e)[:100])
+        except Exception:
+            pass
+        return
+    try:
+        await websocket.close()
+    except Exception:
+        pass
 
 
 @app.post("/api/vms/{vmid}/start")
