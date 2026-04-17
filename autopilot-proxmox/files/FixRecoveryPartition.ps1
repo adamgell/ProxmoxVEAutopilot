@@ -30,15 +30,26 @@ try {
     if (-not $recovery) { Write-Host "No recovery partition on disk 0; skipping."; return }
     if (-not $windows)  { throw "Cannot locate Windows (C:) partition on disk 0." }
 
+    # Only act when recovery is actually the LAST partition on disk. The
+    # current autounattend layout places recovery BEFORE C: so future
+    # Proxmox disk expansions append free space after C: (no stranded
+    # space to reclaim). This script remains a safety net for templates
+    # built with the old 'recovery at end' layout.
+    $lastPartition = $partitions | Select-Object -Last 1
+    if ($lastPartition.PartitionNumber -ne $recovery.PartitionNumber) {
+        Write-Host "Recovery is partition #$($recovery.PartitionNumber); last partition is #$($lastPartition.PartitionNumber) (C: can expand freely). No action."
+        return
+    }
+
     $recoveryEnd = [int64]$recovery.Offset + [int64]$recovery.Size
     $tail        = [int64]$disk.Size - $recoveryEnd
 
     if ($tail -lt $TOLERANCE_BYTES) {
-        Write-Host "Recovery already at end of disk (tail=$tail bytes); nothing to do."
+        Write-Host "Recovery already at end of disk with no unallocated tail ($tail bytes); nothing to do."
         return
     }
 
-    Write-Host "Recovery is not at end of disk. tail=$tail bytes. Rebuilding."
+    Write-Host "Recovery is last partition with $tail bytes unallocated after it. Rebuilding at end."
 
     # Preserve the existing recovery size so we don't shrink it.
     $recoverySize = [int64]$recovery.Size
