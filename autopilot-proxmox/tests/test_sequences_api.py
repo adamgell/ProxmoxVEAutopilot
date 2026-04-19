@@ -14,6 +14,10 @@ def app_env():
         tmp = Path(tmp)
         secrets = tmp / "secrets"
         db = tmp / "sequences.db"
+        # Reset the process-wide cipher cache so this test's patched
+        # CREDENTIAL_KEY is actually used.
+        import web.app as _wa
+        _wa._CIPHER = None
         with patch("web.app.SECRETS_DIR", secrets), \
              patch("web.app.SEQUENCES_DB", db), \
              patch("web.app.CREDENTIAL_KEY", secrets / "credential_key"), \
@@ -168,6 +172,40 @@ def test_only_one_default_via_api(app_env):
     assert got_b["is_default"] is True
 
 
+def test_record_vms_only_for_success_and_anchored_regex(app_env, tmp_path):
+    """The VMID scraper must only write vm_provisioning rows for successful
+    jobs (no partial-failure VMIDs) and must only match the success debug
+    line (not the failure-diagnostic line in proxmox_vm_clone/main.yml)."""
+    from web import sequences_db
+    from web.app import _record_vms_for_sequence, SEQUENCES_DB, job_manager
+
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="rec-test", description="",
+    )
+
+    # Build a fake log that contains BOTH a failure-diagnostic line and a
+    # success line. The scraper must only pick up the success VMID (102).
+    log_dir = Path(job_manager.jobs_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "job-xyz.log"
+    log_path.write_text(
+        "TASK [proxmox_vm_clone : Fail if cloned VM has no scsi0 disk] ****\n"
+        "fatal: [localhost]: FAILED! => Cloned VM 'foo' (VMID: 999) has no scsi0 disk.\n"
+        "TASK [proxmox_vm_clone : Report cloned VM] ****\n"
+        "ok: [localhost] => (Cloned VM 'bar' (VMID: 102) from template 9000. ...)\n"
+    )
+
+    # Failing job → no rows written
+    _record_vms_for_sequence({"id": "job-xyz", "status": "failed"}, seq_id)
+    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 102) is None
+    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 999) is None
+
+    # Successful job → only the success-line VMID (102) is recorded.
+    _record_vms_for_sequence({"id": "job-xyz", "status": "complete"}, seq_id)
+    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 102) == seq_id
+    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 999) is None
+
+
 def test_startup_seeds_defaults(tmp_path):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile
@@ -179,6 +217,10 @@ def test_startup_seeds_defaults(tmp_path):
         tmp = Path(tmp)
         secrets = tmp / "secrets"
         db = tmp / "sequences.db"
+        # Reset the process-wide cipher cache so this test's patched
+        # CREDENTIAL_KEY is actually used.
+        import web.app as _wa
+        _wa._CIPHER = None
         with patch("web.app.SECRETS_DIR", secrets), \
              patch("web.app.SEQUENCES_DB", db), \
              patch("web.app.CREDENTIAL_KEY", secrets / "credential_key"), \
@@ -194,3 +236,52 @@ def test_startup_seeds_defaults(tmp_path):
     assert "Entra Join (default)" in names
     assert "AD Domain Join — Local Admin" in names
     assert "Hybrid Autopilot (stub)" in names
+
+
+def test_provision_with_sequence_passes_compiled_vars(app_env):
+    """POST /api/jobs/provision with sequence_id=<seq> must put
+    autopilot_enabled=true and the compiled vm_oem_profile into the
+    ansible-playbook command's -e args."""
+    from web import sequences_db, crypto
+    from web.app import SEQUENCES_DB, CREDENTIAL_KEY, job_manager
+    cipher = crypto.Cipher(CREDENTIAL_KEY)
+    # Seed a local_admin credential + a sequence that uses OEM + entra.
+    sequences_db.create_credential(
+        SEQUENCES_DB, cipher, name="la", type="local_admin",
+        payload={"username": "Administrator", "password": "x"},
+    )
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="test-entra", description="",
+        is_default=True, produces_autopilot_hash=True,
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14"}, "enabled": True},
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+
+    # Capture the command JobManager.start is called with.
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd)
+        captured["args"] = args or {}
+        return {"id": "fake-job"}
+    job_manager.start.side_effect = fake_start
+    job_manager.set_arg = lambda *a, **k: None
+    job_manager.add_on_complete = lambda *a, **k: None
+
+    r = app_env.post("/api/jobs/provision", data={
+        "profile": "",
+        "count": "1",
+        "cores": "2",
+        "memory_mb": "4096",
+        "disk_size_gb": "64",
+        "serial_prefix": "",
+        "group_tag": "",
+        "sequence_id": str(seq_id),
+    }, follow_redirects=False)
+    assert r.status_code == 303
+
+    cmd = captured["cmd"]
+    assert "autopilot_enabled=true" in cmd
+    assert "vm_oem_profile=lenovo-t14" in cmd

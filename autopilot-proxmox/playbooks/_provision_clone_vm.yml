@@ -18,7 +18,10 @@
 - name: "Inject Autopilot config into VM {{ vm_vmid }}"
   ansible.builtin.include_role:
     name: autopilot_inject
-  when: not (autopilot_skip | default(false) | bool)
+  when: >-
+    (autopilot_enabled is defined and (autopilot_enabled | bool))
+    or
+    (autopilot_enabled is not defined and not (autopilot_skip | default(false) | bool))
 
 - name: "Capture hardware hash from VM {{ vm_vmid }}"
   ansible.builtin.include_role:

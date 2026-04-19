@@ -228,8 +228,6 @@ def create_sequence(db_path, *, name: str, description: str,
                     steps: Optional[list[dict]] = None) -> int:
     now = _now()
     with _connect(db_path) as conn:
-        if is_default:
-            conn.execute("UPDATE task_sequences SET is_default = 0")
         cur = conn.execute(
             "INSERT INTO task_sequences "
             "(name, description, is_default, produces_autopilot_hash, "
@@ -237,10 +235,20 @@ def create_sequence(db_path, *, name: str, description: str,
             (name, description, int(is_default), int(produces_autopilot_hash),
              target_os, now, now),
         )
-        seq_id = cur.lastrowid
+        new_id = cur.lastrowid
+        # Demote any other defaults AFTER the insert succeeds so a failed
+        # insert (e.g., UNIQUE constraint) can't leave the DB with zero
+        # defaults.
+        if is_default:
+            conn.execute(
+                "UPDATE task_sequences SET is_default = 0 WHERE id != ?",
+                (new_id,),
+            )
+    # Optional steps insertion — same-connection transaction already committed,
+    # so set_sequence_steps opens its own connection.
     if steps is not None:
-        set_sequence_steps(db_path, seq_id, steps)
-    return seq_id
+        set_sequence_steps(db_path, new_id, steps)
+    return new_id
 
 
 def update_sequence(db_path, seq_id: int, *,
@@ -267,11 +275,17 @@ def update_sequence(db_path, seq_id: int, *,
     updates.append("updated_at = ?"); args.append(now)
     args.append(seq_id)
     with _connect(db_path) as conn:
-        if is_default:
-            conn.execute("UPDATE task_sequences SET is_default = 0")
         conn.execute(
             f"UPDATE task_sequences SET {', '.join(updates)} WHERE id = ?", args
         )
+        # Demote other defaults AFTER the targeted update succeeds — if the
+        # above UPDATE raised (e.g., UNIQUE name conflict), we'd otherwise
+        # leave the DB with zero defaults.
+        if is_default:
+            conn.execute(
+                "UPDATE task_sequences SET is_default = 0 WHERE id != ?",
+                (seq_id,),
+            )
 
 
 def get_sequence(db_path, seq_id: int) -> Optional[dict]:
@@ -416,11 +430,14 @@ _SEED_SEQUENCES = [
         "produces_autopilot_hash": True,
         "steps": [
             {"step_type": "set_oem_hardware",
-             "params": {"oem_profile": ""},   # inherits vars.yml default
+             "params": {"oem_profile": ""},
              "enabled": True},
             {"step_type": "local_admin",
              "params": {"credential_name": "default-local-admin"},
-             "enabled": True},
+             # Disabled until Phase B.2 wires the unattend ISO mechanism
+             # that actually consumes the local-admin output. The local-admin
+             # credentials today come from the template's baked unattend.
+             "enabled": False},
             {"step_type": "autopilot_entra", "params": {}, "enabled": True},
         ],
     },
@@ -434,12 +451,12 @@ _SEED_SEQUENCES = [
              "params": {"oem_profile": ""}, "enabled": True},
             {"step_type": "local_admin",
              "params": {"credential_name": "default-local-admin"},
-             "enabled": True},
+             "enabled": False},
             {"step_type": "join_ad_domain",
              "params": {"credential_id": 0, "ou_path": ""},
-             "enabled": True},
+             "enabled": False},
             {"step_type": "rename_computer",
-             "params": {"pattern": "{serial}"}, "enabled": True},
+             "params": {"pattern": "{serial}"}, "enabled": False},
         ],
     },
     {
