@@ -1132,6 +1132,85 @@ async def vm_sendkey(vmid: int, key: str = Form(...)):
     return RedirectResponse("/vms", status_code=303)
 
 
+# ---- JSON endpoints for the embedded console page (no redirects) ----
+
+@app.get("/api/vms/{vmid}/status-json")
+async def vm_status_json(vmid: int):
+    """Current VM status as JSON, for the console page to poll."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/status/current")
+    except Exception as e:
+        return {"error": str(e)}
+    if not isinstance(data, dict):
+        return {"error": "unexpected response"}
+    return {
+        "status": data.get("status"),
+        "qmpstatus": data.get("qmpstatus"),
+        "uptime": data.get("uptime", 0),
+        "cpu": data.get("cpu", 0),
+        "mem": data.get("mem", 0),
+        "maxmem": data.get("maxmem", 0),
+    }
+
+
+_POWER_ACTIONS = {"start", "stop", "shutdown", "reboot", "reset", "suspend", "resume"}
+
+
+@app.post("/api/vms/{vmid}/action/{action}")
+async def vm_action_json(vmid: int, action: str):
+    """Power action via Proxmox status endpoint. Returns JSON (no redirect)."""
+    if action not in _POWER_ACTIONS:
+        return {"error": f"invalid action: {action}"}
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/{action}")
+    except Exception as e:
+        return {"error": str(e)}
+    return {"ok": True, "action": action}
+
+
+@app.post("/api/vms/{vmid}/type")
+async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form("")):
+    """Type text via QMP sendkey. Returns JSON."""
+    import time
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    skipped = []
+    keys = []
+    for ch in text:
+        k = _CHAR_TO_KEYS.get(ch)
+        if k is None:
+            skipped.append(ch)
+        else:
+            keys.append(k)
+    if press_enter:
+        keys.append("ret")
+    sent = 0
+    for key in keys:
+        try:
+            _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
+            sent += 1
+        except Exception as e:
+            return {"ok": False, "sent": sent, "error": str(e)}
+        time.sleep(0.05)
+    return {"ok": True, "sent": sent, "skipped": skipped}
+
+
+@app.post("/api/vms/{vmid}/key")
+async def vm_key_json(vmid: int, key: str = Form(...)):
+    """Single QEMU keyname (e.g. 'ctrl-alt-delete'). Returns JSON."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
+    except Exception as e:
+        return {"error": str(e)}
+    return {"ok": True, "key": key}
+
+
 @app.post("/api/vms/{vmid}/rename")
 async def vm_rename(vmid: int):
     """Rename the Windows computer inside the VM to match its SMBIOS serial."""
