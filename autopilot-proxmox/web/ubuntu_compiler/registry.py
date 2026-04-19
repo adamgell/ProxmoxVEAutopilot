@@ -46,4 +46,4 @@ def _load_all_steps() -> None:
     Called from the package __init__. Empty for now — each subsequent task
     adds one import line as it lands.
     """
-    pass
+    from .steps import install_ubuntu_core  # noqa: F401
