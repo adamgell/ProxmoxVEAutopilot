@@ -1,0 +1,41 @@
+---
+# Wait for the cloned Ubuntu VM to finish cloud-init first boot, then detach
+# the per-VM seed ISO (cloud-init has already consumed it).
+#
+# Required vars: target_vmid
+
+- name: Wait for guest agent on the cloned VM
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/agent/ping"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _agent_ping
+  until: _agent_ping.status == 200
+  retries: 60
+  delay: 10
+  failed_when: false
+
+- name: Wait for cloud-init to finish (cloud-init status --wait)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/agent/exec"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: json
+    body:
+      command: ["/usr/bin/cloud-init", "status", "--wait"]
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _ci_exec
+
+- name: Detach per-VM seed ISO (cloud-init already consumed it)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/config"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      delete: "ide3"
+    validate_certs: "{{ proxmox_validate_certs }}"
