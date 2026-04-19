@@ -2418,3 +2418,31 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
                 status_code=303)
         raise
     return RedirectResponse("/sequences", status_code=303)
+
+
+def _load_oem_profiles_dict() -> dict:
+    path = FILES_DIR / "oem_profiles.yml"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return data.get("oem_profiles", {})
+
+
+@app.get("/sequences/new", response_class=HTMLResponse)
+def page_sequence_new(request: Request):
+    return templates.TemplateResponse("sequence_edit.html", {
+        "request": request, "seq": None,
+        "oem_profiles": _load_oem_profiles_dict(),
+    })
+
+
+@app.get("/sequences/{seq_id}/edit", response_class=HTMLResponse)
+def page_sequence_edit(request: Request, seq_id: int):
+    seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if seq is None:
+        raise HTTPException(404, "sequence not found")
+    return templates.TemplateResponse("sequence_edit.html", {
+        "request": request, "seq": seq,
+        "oem_profiles": _load_oem_profiles_dict(),
+    })
