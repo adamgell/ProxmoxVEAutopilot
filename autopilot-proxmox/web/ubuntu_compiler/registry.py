@@ -47,3 +47,4 @@ def _load_all_steps() -> None:
     adds one import line as it lands.
     """
     from .steps import install_ubuntu_core  # noqa: F401
+    from .steps import create_ubuntu_user  # noqa: F401
