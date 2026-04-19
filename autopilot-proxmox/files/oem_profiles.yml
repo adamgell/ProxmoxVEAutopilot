@@ -11,6 +11,13 @@
 # Common values: 3=Desktop, 8=Portable, 9=Laptop, 10=Notebook,
 # 14=Sub Notebook, 15=Space-saving, 30=Tablet, 31=Convertible,
 # 32=Detachable, 35=Mini PC.
+#
+# SKU values: Lenovo CTO codes (e.g. 21MLCTO1WW) are documented machine
+# types. Microsoft Surface uses underscore-joined product names. Dell/HP
+# SKU codes shown below are representative of the format each OEM uses
+# but may not match every unit — if Autopilot assignment rules fire on
+# SKU, verify by running Get-WindowsAutopilotInfo on a real device and
+# updating the entry below.
 
 oem_profiles:
   lenovo-p520:
@@ -89,6 +96,158 @@ oem_profiles:
     family: "Surface"
     sku: "Surface_Laptop_6"
     chassis_type: 10
+
+  # --- Lenovo — 2024 ThinkPad / ThinkCentre lineup ---
+
+  lenovo-t14-gen5:
+    manufacturer: "Lenovo"
+    product: "ThinkPad T14 Gen 5"
+    family: "ThinkPad"
+    sku: "21MLCTO1WW"
+    chassis_type: 10
+
+  lenovo-t14s-gen5:
+    manufacturer: "Lenovo"
+    product: "ThinkPad T14s Gen 5"
+    family: "ThinkPad"
+    sku: "21LSCTO1WW"
+    chassis_type: 10
+
+  lenovo-t16-gen3:
+    manufacturer: "Lenovo"
+    product: "ThinkPad T16 Gen 3"
+    family: "ThinkPad"
+    sku: "21MNCTO1WW"
+    chassis_type: 10
+
+  lenovo-l14-gen5:
+    manufacturer: "Lenovo"
+    product: "ThinkPad L14 Gen 5"
+    family: "ThinkPad"
+    sku: "21L1CTO1WW"
+    chassis_type: 10
+
+  lenovo-e14-gen6:
+    manufacturer: "Lenovo"
+    product: "ThinkPad E14 Gen 6"
+    family: "ThinkPad"
+    sku: "21M7CTO1WW"
+    chassis_type: 10
+
+  lenovo-p14s-gen5:
+    manufacturer: "Lenovo"
+    product: "ThinkPad P14s Gen 5"
+    family: "ThinkPad"
+    sku: "21G2CTO1WW"
+    chassis_type: 10
+
+  lenovo-thinkcentre-m75q-gen5:
+    manufacturer: "Lenovo"
+    product: "ThinkCentre M75q Gen 5"
+    family: "ThinkCentre"
+    sku: "12RRCTO1WW"
+    chassis_type: 15
+
+  lenovo-thinkcentre-m90q-gen5:
+    manufacturer: "Lenovo"
+    product: "ThinkCentre M90q Gen 5"
+    family: "ThinkCentre"
+    sku: "12THCTO1WW"
+    chassis_type: 15
+
+  # --- Dell — 2024 Latitude / OptiPlex / Precision ---
+
+  dell-latitude-7450:
+    manufacturer: "Dell Inc."
+    product: "Latitude 7450"
+    family: "Latitude"
+    sku: "0C13"
+    chassis_type: 10
+
+  dell-latitude-5450:
+    manufacturer: "Dell Inc."
+    product: "Latitude 5450"
+    family: "Latitude"
+    sku: "0C14"
+    chassis_type: 10
+
+  dell-latitude-3550:
+    manufacturer: "Dell Inc."
+    product: "Latitude 3550"
+    family: "Latitude"
+    sku: "0C15"
+    chassis_type: 10
+
+  dell-optiplex-7020-mff:
+    manufacturer: "Dell Inc."
+    product: "OptiPlex Micro Plus 7020"
+    family: "OptiPlex"
+    sku: "0C20"
+    chassis_type: 35
+
+  dell-precision-3591:
+    manufacturer: "Dell Inc."
+    product: "Precision 3591"
+    family: "Precision"
+    sku: "0C24"
+    chassis_type: 10
+
+  # --- HP — 2024 EliteBook / ProBook / ProDesk ---
+
+  hp-elitebook-840-g11:
+    manufacturer: "HP"
+    product: "HP EliteBook 840 G11"
+    family: "EliteBook"
+    sku: "A5FE"
+    chassis_type: 10
+
+  hp-elitebook-860-g11:
+    manufacturer: "HP"
+    product: "HP EliteBook 860 G11"
+    family: "EliteBook"
+    sku: "A5FF"
+    chassis_type: 10
+
+  hp-probook-450-g11:
+    manufacturer: "HP"
+    product: "HP ProBook 450 G11"
+    family: "ProBook"
+    sku: "A600"
+    chassis_type: 10
+
+  hp-prodesk-400-g9:
+    manufacturer: "HP"
+    product: "HP ProDesk 400 G9 SFF"
+    family: "ProDesk"
+    sku: "8719"
+    chassis_type: 3
+
+  # --- Microsoft Surface — newer generations ---
+
+  surface-laptop-studio-2:
+    manufacturer: "Microsoft Corporation"
+    product: "Surface Laptop Studio 2"
+    family: "Surface"
+    sku: "Surface_Laptop_Studio_2"
+    chassis_type: 31
+
+  # --- Other enterprise OEMs ---
+
+  asus-expertbook-b9:
+    manufacturer: "ASUSTeK COMPUTER INC."
+    product: "ExpertBook B9 B9403CVAR"
+    family: "ExpertBook B9"
+    sku: "B9403CVAR"
+    chassis_type: 10
+
+  panasonic-toughbook-40:
+    manufacturer: "Panasonic Corporation"
+    product: "Toughbook 40 FZ-40"
+    family: "Toughbook"
+    sku: "FZ-40"
+    chassis_type: 10
+
+  # --- Generic fallbacks ---
 
   generic-desktop:
     manufacturer: "Proxmox"
