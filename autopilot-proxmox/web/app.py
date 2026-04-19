@@ -2266,3 +2266,13 @@ def api_sequences_delete(seq_id: int):
             "vmids": e.vmids,
         })
     return {"ok": True}
+
+
+@app.get("/credentials", response_class=HTMLResponse)
+def page_credentials(request: Request, error: str = ""):
+    creds = sequences_db.list_credentials(SEQUENCES_DB)
+    return templates.TemplateResponse("credentials.html", {
+        "request": request,
+        "credentials": creds,
+        "error": error,
+    })
