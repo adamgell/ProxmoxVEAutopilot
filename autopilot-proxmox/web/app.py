@@ -250,6 +250,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
 
 from web import sequences_db, crypto as _crypto
+from web import sequence_compiler
 
 
 @app.on_event("startup")
@@ -867,17 +868,67 @@ async def start_provision(
         "cores": cores, "memory_mb": memory_mb, "disk_size_gb": disk_size_gb,
     }
 
+    # Resolve sequence → Ansible vars (spec §12 precedence).
+    resolved_vars: dict = {}
+    if sequence_id:
+        seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        if seq is None:
+            raise HTTPException(404, f"sequence {sequence_id} not found")
+        try:
+            compiled = sequence_compiler.compile(seq)
+        except sequence_compiler.CompilerError as e:
+            raise HTTPException(400, f"sequence compile failed: {e}")
+        # UI form fields the operator may have filled in as overrides.
+        form_overrides = {
+            "vm_oem_profile": profile,  # provision form's 'profile' field
+        }
+        resolved_vars = sequence_compiler.resolve_provision_vars(
+            compiled,
+            form_overrides=form_overrides,
+            vars_yml=_load_vars(),
+        )
+
     if count <= 1:
         cmd = [
             "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
             "-e", f"vm_oem_profile={profile}",
             "-e", "vm_count=1",
         ] + _overrides()
+        for key, value in resolved_vars.items():
+            pair = f"{key}={value}"
+            # Skip if any existing -e arg already sets this key= to a
+            # non-empty value (empty profile arg is superseded by sequence).
+            already = any(
+                isinstance(a, str)
+                and a.startswith(f"{key}=")
+                and a[len(f"{key}="):].strip() != ""
+                for a in cmd
+            )
+            if not already:
+                # Remove any existing empty-value arg for this key first.
+                cmd = [
+                    a for a in cmd
+                    if not (isinstance(a, str) and a == f"{key}=")
+                ]
+                cmd.extend(["-e", pair])
         job = job_manager.start("provision_clone", cmd, args=args)
-        # Phase A: record the selection only. The job itself still uses the
-        # hardcoded provisioning flow — compiler wiring lands in Phase B.
         if sequence_id:
             job_manager.set_arg(job["id"], "sequence_id", sequence_id)
+            sid = int(sequence_id)
+            def _record_vms(job_dict, sid=sid):
+                import re as _re
+                log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
+                if not log_path.exists():
+                    return
+                text = log_path.read_text(errors="replace")
+                for m in _re.finditer(r"VMID: (\d+)", text):
+                    try:
+                        sequences_db.record_vm_provisioning(
+                            SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sid,
+                        )
+                    except Exception:
+                        pass
+            job_manager.add_on_complete(job["id"], _record_vms)
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
     # Multiple VMs — run sequentially to avoid VMID race condition
@@ -886,6 +937,22 @@ async def start_provision(
     safe_profile = shlex.quote(profile)
 
     extra_tokens = " ".join(shlex.quote(t) for t in _overrides())
+
+    # Append resolved sequence vars to the per-invocation extra tokens,
+    # but don't duplicate any key that _overrides() or the profile arg
+    # already set.
+    existing_keys = set()
+    existing_keys.add("vm_oem_profile")
+    for t in _overrides():
+        if "=" in t and not t.startswith("-"):
+            existing_keys.add(t.split("=", 1)[0])
+    seq_tokens = []
+    for key, value in resolved_vars.items():
+        if key not in existing_keys:
+            seq_tokens += ["-e", f"{key}={value}"]
+    if seq_tokens:
+        seq_extra = " ".join(shlex.quote(t) for t in seq_tokens)
+        extra_tokens = (extra_tokens + " " + seq_extra).strip()
 
     script_lines = ["#!/bin/bash", "set -e", ""]
     script_lines.append(f"echo 'Provisioning {count} VMs sequentially ({profile})'")
@@ -907,10 +974,23 @@ async def start_provision(
     script_path.chmod(0o755)
 
     job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
-    # Phase A: record the selection only. The job itself still uses the
-    # hardcoded provisioning flow — compiler wiring lands in Phase B.
     if sequence_id:
         job_manager.set_arg(job["id"], "sequence_id", sequence_id)
+        sid = int(sequence_id)
+        def _record_vms(job_dict, sid=sid):
+            import re as _re
+            log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
+            if not log_path.exists():
+                return
+            text = log_path.read_text(errors="replace")
+            for m in _re.finditer(r"VMID: (\d+)", text):
+                try:
+                    sequences_db.record_vm_provisioning(
+                        SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sid,
+                    )
+                except Exception:
+                    pass
+        job_manager.add_on_complete(job["id"], _record_vms)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
