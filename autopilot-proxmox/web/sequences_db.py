@@ -183,3 +183,180 @@ def _sequences_referencing_credential(conn: sqlite3.Connection, cred_id: int) ->
         (cred_id,),
     ).fetchall()
     return sorted(r["sequence_id"] for r in rows)
+
+
+def _row_to_sequence(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "is_default": bool(row["is_default"]),
+        "produces_autopilot_hash": bool(row["produces_autopilot_hash"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _row_to_step(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "sequence_id": row["sequence_id"],
+        "order_index": row["order_index"],
+        "step_type": row["step_type"],
+        "params": json.loads(row["params_json"]) if row["params_json"] else {},
+        "enabled": bool(row["enabled"]),
+    }
+
+
+def create_sequence(db_path, *, name: str, description: str,
+                    is_default: bool = False,
+                    produces_autopilot_hash: bool = False) -> int:
+    now = _now()
+    with _connect(db_path) as conn:
+        if is_default:
+            conn.execute("UPDATE task_sequences SET is_default = 0")
+        cur = conn.execute(
+            "INSERT INTO task_sequences "
+            "(name, description, is_default, produces_autopilot_hash, "
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (name, description, int(is_default), int(produces_autopilot_hash),
+             now, now),
+        )
+        return cur.lastrowid
+
+
+def update_sequence(db_path, seq_id: int, *,
+                    name: Optional[str] = None,
+                    description: Optional[str] = None,
+                    is_default: Optional[bool] = None,
+                    produces_autopilot_hash: Optional[bool] = None) -> None:
+    now = _now()
+    updates, args = [], []
+    if name is not None:
+        updates.append("name = ?"); args.append(name)
+    if description is not None:
+        updates.append("description = ?"); args.append(description)
+    if produces_autopilot_hash is not None:
+        updates.append("produces_autopilot_hash = ?")
+        args.append(int(produces_autopilot_hash))
+    if is_default is not None:
+        updates.append("is_default = ?"); args.append(int(is_default))
+    if not updates:
+        return
+    updates.append("updated_at = ?"); args.append(now)
+    args.append(seq_id)
+    with _connect(db_path) as conn:
+        if is_default:
+            conn.execute("UPDATE task_sequences SET is_default = 0")
+        conn.execute(
+            f"UPDATE task_sequences SET {', '.join(updates)} WHERE id = ?", args
+        )
+
+
+def get_sequence(db_path, seq_id: int) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM task_sequences WHERE id = ?", (seq_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        seq = _row_to_sequence(row)
+        step_rows = conn.execute(
+            "SELECT * FROM task_sequence_steps WHERE sequence_id = ? "
+            "ORDER BY order_index ASC",
+            (seq_id,),
+        ).fetchall()
+        seq["steps"] = [_row_to_step(r) for r in step_rows]
+        return seq
+
+
+def list_sequences(db_path) -> list[dict]:
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT s.*, "
+            "  (SELECT COUNT(*) FROM task_sequence_steps "
+            "   WHERE sequence_id = s.id) AS step_count "
+            "FROM task_sequences s ORDER BY s.name ASC"
+        ).fetchall()
+    return [{**_row_to_sequence(r), "step_count": r["step_count"]} for r in rows]
+
+
+def set_sequence_steps(db_path, seq_id: int, steps: list[dict]) -> None:
+    """Replace the full step list for a sequence atomically.
+
+    Each step dict: {step_type, params, enabled}. order_index is assigned
+    from list position.
+    """
+    with _connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM task_sequence_steps WHERE sequence_id = ?", (seq_id,)
+        )
+        for idx, step in enumerate(steps):
+            conn.execute(
+                "INSERT INTO task_sequence_steps "
+                "(sequence_id, order_index, step_type, params_json, enabled) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (seq_id, idx, step["step_type"],
+                 json.dumps(step.get("params", {}), separators=(",", ":")),
+                 int(step.get("enabled", True))),
+            )
+        conn.execute(
+            "UPDATE task_sequences SET updated_at = ? WHERE id = ?",
+            (_now(), seq_id),
+        )
+
+
+def delete_sequence(db_path, seq_id: int) -> None:
+    """Delete a sequence. Raises SequenceInUse if referenced by vm_provisioning."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT vmid FROM vm_provisioning WHERE sequence_id = ?", (seq_id,)
+        ).fetchall()
+        if rows:
+            raise SequenceInUse(seq_id, [r["vmid"] for r in rows])
+        conn.execute("DELETE FROM task_sequences WHERE id = ?", (seq_id,))
+
+
+def duplicate_sequence(db_path, seq_id: int, *, new_name: str) -> int:
+    seq = get_sequence(db_path, seq_id)
+    if seq is None:
+        raise ValueError(f"sequence {seq_id} not found")
+    new_id = create_sequence(
+        db_path, name=new_name, description=seq["description"],
+        is_default=False,
+        produces_autopilot_hash=seq["produces_autopilot_hash"],
+    )
+    set_sequence_steps(db_path, new_id, [
+        {"step_type": s["step_type"], "params": s["params"], "enabled": s["enabled"]}
+        for s in seq["steps"]
+    ])
+    return new_id
+
+
+def get_default_sequence_id(db_path) -> Optional[int]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM task_sequences WHERE is_default = 1 LIMIT 1"
+        ).fetchone()
+    return row["id"] if row else None
+
+
+def record_vm_provisioning(db_path, *, vmid: int, sequence_id: int) -> None:
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO vm_provisioning (vmid, sequence_id, provisioned_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(vmid) DO UPDATE SET "
+            "  sequence_id = excluded.sequence_id, "
+            "  provisioned_at = excluded.provisioned_at",
+            (vmid, sequence_id, now),
+        )
+
+
+def get_vm_sequence_id(db_path, vmid: int) -> Optional[int]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT sequence_id FROM vm_provisioning WHERE vmid = ?", (vmid,)
+        ).fetchone()
+    return row["sequence_id"] if row else None

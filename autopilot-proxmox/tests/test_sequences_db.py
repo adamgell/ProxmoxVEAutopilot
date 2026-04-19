@@ -112,3 +112,145 @@ def test_delete_credential_succeeds_when_unreferenced(db_path, key_path):
     )
     sequences_db.delete_credential(db_path, cred_id)
     assert sequences_db.list_credentials(db_path) == []
+
+
+def test_delete_credential_blocked_if_referenced(db_path, key_path):
+    from web import crypto, sequences_db
+    sequences_db.init(db_path)
+    cipher = crypto.Cipher(key_path)
+    cred_id = sequences_db.create_credential(
+        db_path, cipher, name="a", type="domain_join",
+        payload={"username": "x", "password": "y", "domain_fqdn": "z"},
+    )
+    seq_id = sequences_db.create_sequence(db_path, name="S", description="")
+    sequences_db.set_sequence_steps(db_path, seq_id, [
+        {"step_type": "join_ad_domain",
+         "params": {"credential_id": cred_id, "ou_path": "OU=X"},
+         "enabled": True},
+    ])
+    with pytest.raises(sequences_db.CredentialInUse) as exc:
+        sequences_db.delete_credential(db_path, cred_id)
+    assert seq_id in exc.value.sequence_ids
+
+
+def test_create_sequence(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="Entra Join", description="default flow",
+        is_default=True, produces_autopilot_hash=True,
+    )
+    assert seq_id > 0
+    seq = sequences_db.get_sequence(db_path, seq_id)
+    assert seq["name"] == "Entra Join"
+    assert seq["is_default"] is True
+    assert seq["produces_autopilot_hash"] is True
+    assert seq["steps"] == []
+
+
+def test_only_one_default_sequence(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    a = sequences_db.create_sequence(db_path, name="A", description="",
+                                     is_default=True)
+    b = sequences_db.create_sequence(db_path, name="B", description="",
+                                     is_default=True)
+    seq_a = sequences_db.get_sequence(db_path, a)
+    seq_b = sequences_db.get_sequence(db_path, b)
+    assert seq_a["is_default"] is False
+    assert seq_b["is_default"] is True
+
+
+def test_set_sequence_steps_replaces(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(db_path, name="S", description="")
+    sequences_db.set_sequence_steps(db_path, seq_id, [
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "dell-latitude-5540"}, "enabled": True},
+        {"step_type": "local_admin",
+         "params": {"credential_id": 1}, "enabled": True},
+    ])
+    seq = sequences_db.get_sequence(db_path, seq_id)
+    assert [s["step_type"] for s in seq["steps"]] == [
+        "set_oem_hardware", "local_admin"]
+    assert seq["steps"][0]["order_index"] == 0
+    assert seq["steps"][1]["order_index"] == 1
+
+    sequences_db.set_sequence_steps(db_path, seq_id, [
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+    seq = sequences_db.get_sequence(db_path, seq_id)
+    assert [s["step_type"] for s in seq["steps"]] == ["autopilot_entra"]
+
+
+def test_list_sequences_summary(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    sequences_db.create_sequence(db_path, name="A", description="")
+    sequences_db.create_sequence(db_path, name="B", description="")
+    out = sequences_db.list_sequences(db_path)
+    assert [s["name"] for s in out] == ["A", "B"]
+    assert "steps" not in out[0]
+    assert "step_count" in out[0]
+
+
+def test_delete_sequence_cascade_steps(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(db_path, name="S", description="")
+    sequences_db.set_sequence_steps(db_path, seq_id, [
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+    sequences_db.delete_sequence(db_path, seq_id)
+    import sqlite3
+    with sqlite3.connect(db_path) as c:
+        n = c.execute("SELECT COUNT(*) FROM task_sequence_steps").fetchone()[0]
+    assert n == 0
+
+
+def test_delete_sequence_blocked_if_referenced_by_vm(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(db_path, name="S", description="")
+    sequences_db.record_vm_provisioning(db_path, vmid=101, sequence_id=seq_id)
+    with pytest.raises(sequences_db.SequenceInUse) as exc:
+        sequences_db.delete_sequence(db_path, seq_id)
+    assert 101 in exc.value.vmids
+
+
+def test_duplicate_sequence_copies_steps(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(db_path, name="S", description="")
+    sequences_db.set_sequence_steps(db_path, seq_id, [
+        {"step_type": "set_oem_hardware", "params": {"oem_profile": "x"},
+         "enabled": True},
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+    new_id = sequences_db.duplicate_sequence(db_path, seq_id, new_name="S (copy)")
+    new_seq = sequences_db.get_sequence(db_path, new_id)
+    assert new_seq["name"] == "S (copy)"
+    assert [s["step_type"] for s in new_seq["steps"]] == [
+        "set_oem_hardware", "autopilot_entra"]
+    assert new_seq["is_default"] is False
+
+
+def test_record_vm_provisioning_upsert(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(db_path, name="S", description="")
+    sequences_db.record_vm_provisioning(db_path, vmid=101, sequence_id=seq_id)
+    sequences_db.record_vm_provisioning(db_path, vmid=101, sequence_id=seq_id)
+    assert sequences_db.get_vm_sequence_id(db_path, 101) == seq_id
+
+
+def test_get_default_sequence(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    a = sequences_db.create_sequence(db_path, name="A", description="")
+    b = sequences_db.create_sequence(db_path, name="B", description="",
+                                     is_default=True)
+    assert sequences_db.get_default_sequence_id(db_path) == b
+    sequences_db.update_sequence(db_path, b, is_default=False)
+    assert sequences_db.get_default_sequence_id(db_path) is None
