@@ -20,6 +20,14 @@
     _config_body: "{{ _config_body | combine({'smbios1': _smbios1_string}) }}"
   when: _smbios1_string is defined and _smbios1_string | default('') | length > 0
 
+# Preserve any existing `args:` the cloned template already carries
+# (e.g., CPU flags, machine-type tweaks). Unconditionally overwriting
+# would silently drop those.
+- name: Add args (SMBIOS type 3 file passthrough) to config
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'args': ((_clone_config.json.data.args | default('')) ~ ' ' ~ _smbios_args) | trim}) }}"
+  when: _smbios_args is defined and _smbios_args | length > 0
+
 - name: Add VirtIO ISO to config
   ansible.builtin.set_fact:
     _config_body: "{{ _config_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"

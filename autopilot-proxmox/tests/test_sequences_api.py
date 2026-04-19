@@ -206,6 +206,53 @@ def test_record_vms_only_for_success_and_anchored_regex(app_env, tmp_path):
     assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 999) is None
 
 
+def test_provision_passes_chassis_type_override_to_ansible(app_env):
+    """POST /api/jobs/provision with chassis_type_override must put
+    -e chassis_type_override=N into the ansible command AND call the
+    snippet uploader for that chassis type."""
+    from web import sequences_db, crypto
+    from web.app import SEQUENCES_DB, CREDENTIAL_KEY, job_manager
+    cipher = crypto.Cipher(CREDENTIAL_KEY)
+
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="test-chassis", description="",
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd)
+        return {"id": "fake-job"}
+    job_manager.start.side_effect = fake_start
+    job_manager.set_arg = lambda *a, **k: None
+    job_manager.add_on_complete = lambda *a, **k: None
+
+    from unittest.mock import patch
+    # Pin the Proxmox config so the test is independent of whatever
+    # vars.yml happens to live on the developer's machine.
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+    }), patch("web.proxmox_snippets.ensure_chassis_type_binary") as mock_ensure:
+        mock_ensure.return_value = "/var/lib/vz/snippets/fake.bin"
+        r = app_env.post("/api/jobs/provision", data={
+            "profile": "",
+            "count": "1",
+            "cores": "2",
+            "memory_mb": "4096",
+            "disk_size_gb": "64",
+            "serial_prefix": "",
+            "group_tag": "",
+            "sequence_id": str(seq_id),
+            "chassis_type_override": "31",
+        }, follow_redirects=False)
+    assert r.status_code == 303
+    cmd = captured["cmd"]
+    assert "chassis_type_override=31" in cmd
+    mock_ensure.assert_called_with(node="pve", storage="local", chassis_type=31)
+
+
 def test_startup_seeds_defaults(tmp_path):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile

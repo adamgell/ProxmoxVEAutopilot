@@ -176,3 +176,81 @@ def test_precedence_empty_sequence_preserves_legacy_varsyml():
         compiled, form_overrides={}, vars_yml={},
     )
     assert "autopilot_enabled" not in resolved
+
+
+def test_set_oem_hardware_emits_chassis_type_override_when_set():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14", "chassis_type": 10}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.ansible_vars["chassis_type_override"] == "10"
+
+
+def test_set_oem_hardware_omits_chassis_type_when_missing():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware", "params": {"oem_profile": "lenovo-t14"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert "chassis_type_override" not in result.ansible_vars
+
+
+def test_set_oem_hardware_ignores_zero_chassis_type():
+    """0 means 'inherit from profile', not 'override with 0'."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14", "chassis_type": 0}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert "chassis_type_override" not in result.ansible_vars
+
+
+def test_precedence_chassis_type_form_wins_over_sequence_over_varsyml():
+    """Spec §12: vars.yml < sequence step < provision-form field.
+    When all three disagree on chassis_type_override, form wins."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14", "chassis_type": 10}},
+    ])
+    compiled = sequence_compiler.compile(seq)
+    # Sanity: the sequence contributed 10
+    assert compiled.ansible_vars["chassis_type_override"] == "10"
+
+    resolved = sequence_compiler.resolve_provision_vars(
+        compiled,
+        form_overrides={"chassis_type_override": "31"},
+        vars_yml={"chassis_type_override": "3"},
+    )
+    # Form value beats sequence beats vars.yml.
+    assert resolved["chassis_type_override"] == "31"
+
+
+def test_precedence_chassis_type_sequence_wins_when_form_blank():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14", "chassis_type": 10}},
+    ])
+    compiled = sequence_compiler.compile(seq)
+    resolved = sequence_compiler.resolve_provision_vars(
+        compiled,
+        form_overrides={},  # form blank → inherit from sequence
+        vars_yml={"chassis_type_override": "3"},
+    )
+    assert resolved["chassis_type_override"] == "10"
+
+
+def test_precedence_chassis_type_varsyml_wins_when_sequence_and_form_blank():
+    from web import sequence_compiler
+    seq = _make_sequence([])   # no chassis from sequence
+    compiled = sequence_compiler.compile(seq)
+    resolved = sequence_compiler.resolve_provision_vars(
+        compiled,
+        form_overrides={},
+        vars_yml={"chassis_type_override": "3"},
+    )
+    assert resolved["chassis_type_override"] == "3"

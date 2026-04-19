@@ -14,12 +14,32 @@
       ansible.builtin.set_fact:
         _oem_profile: "{{ _oem_data.oem_profiles[vm_oem_profile] }}"
 
-    - name: Warn about unsupported chassis type
-      ansible.builtin.debug:
-        msg: >-
-          WARNING: Chassis type {{ _oem_profile.chassis_type }} skipped —
-          Proxmox 9 does not support smbios2.
-      when: _oem_profile.chassis_type is defined
+# Resolve effective chassis type in two steps so we never reference
+# _oem_profile.chassis_type when _oem_profile is undefined (which
+# triggers AnsibleUndefinedVariable). The form override runs second
+# so it wins when both sources supply a value.
+- name: Resolve effective chassis type (from OEM profile)
+  ansible.builtin.set_fact:
+    _effective_chassis_type: "{{ _oem_profile.chassis_type }}"
+  when:
+    - _oem_profile is defined
+    - _oem_profile.chassis_type is defined
+    - (_oem_profile.chassis_type | int) > 0
+
+- name: Resolve effective chassis type (form override wins)
+  ansible.builtin.set_fact:
+    _effective_chassis_type: "{{ chassis_type_override }}"
+  when:
+    - chassis_type_override is defined
+    - (chassis_type_override | int) > 0
+
+- name: Build QEMU -smbios file= args for chassis type
+  ansible.builtin.set_fact:
+    _smbios_args: >-
+      -smbios file=/var/lib/vz/snippets/autopilot-chassis-type-{{ _effective_chassis_type }}.bin
+  when:
+    - _effective_chassis_type is defined
+    - (_effective_chassis_type | int) > 0
 
 - name: Get next available VMID
   ansible.builtin.uri:

@@ -3,8 +3,14 @@
 # Each profile defines the SMBIOS type 1 fields that Proxmox will expose
 # to the guest OS, making Windows Autopilot see the VM as real OEM hardware.
 #
-# chassis_type is logged as a warning and skipped — Proxmox 9 does not
-# support smbios2 (chassis type) configuration.
+# chassis_type is honored via SMBIOS Type 3 file passthrough: the web
+# layer generates a minimal Type 3 binary per unique chassis_type,
+# uploads it to the Proxmox 'local' snippets storage, and adds a
+# `-smbios file=...` entry to the VM's `args:` line. This is what
+# WMI Win32_SystemEnclosure.ChassisTypes reports inside the guest.
+# Common values: 3=Desktop, 8=Portable, 9=Laptop, 10=Notebook,
+# 14=Sub Notebook, 15=Space-saving, 30=Tablet, 31=Convertible,
+# 32=Detachable, 35=Mini PC.
 
 oem_profiles:
   lenovo-p520:

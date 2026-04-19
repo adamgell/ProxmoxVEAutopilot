@@ -45,6 +45,15 @@ def _handle_set_oem_hardware(params: dict, out: CompiledSequence) -> None:
     profile = (params.get("oem_profile") or "").strip()
     if profile:
         out.ansible_vars["vm_oem_profile"] = profile
+    # Optional chassis-type override. 0 / None / missing all mean "inherit
+    # from the profile"; only positive integers emit the Ansible var.
+    ct = params.get("chassis_type")
+    try:
+        ct_int = int(ct) if ct is not None else 0
+    except (TypeError, ValueError):
+        ct_int = 0
+    if ct_int > 0:
+        out.ansible_vars["chassis_type_override"] = str(ct_int)
 
 
 def _handle_autopilot_entra(params: dict, out: CompiledSequence) -> None:
@@ -89,7 +98,7 @@ def resolve_provision_vars(
     """Merge three layers per spec §12: vars.yml < sequence < form."""
     merged: dict = {}
     # vars.yml (lowest) — only provisioning-relevant keys
-    for key in ("vm_oem_profile",):
+    for key in ("vm_oem_profile", "chassis_type_override"):
         if vars_yml.get(key):
             merged[key] = vars_yml[key]
     # sequence-compiled vars

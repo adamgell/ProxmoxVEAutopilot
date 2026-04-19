@@ -30,6 +30,24 @@
   <small style="color:#999;">default: {{ defaults.oem_profile or '—' }}</small></td>
 </tr>
 <tr>
+  <td><b>Chassis Type override:</b></td>
+  <td><select name="chassis_type_override">
+    <option value="0">(use profile default)</option>
+    <option value="3">3 — Desktop</option>
+    <option value="8">8 — Portable</option>
+    <option value="9">9 — Laptop</option>
+    <option value="10">10 — Notebook</option>
+    <option value="14">14 — Sub Notebook</option>
+    <option value="15">15 — Space-saving (tiny/mini)</option>
+    <option value="30">30 — Tablet</option>
+    <option value="31">31 — Convertible</option>
+    <option value="32">32 — Detachable</option>
+    <option value="35">35 — Mini PC</option>
+  </select>
+  <small style="color:#999;">Overrides the OEM profile's chassis_type. Applied to the guest via SMBIOS Type 3; reports through WMI Win32_SystemEnclosure.</small>
+  </td>
+</tr>
+<tr>
   <td><b>VM Count:</b></td>
   <td><input type="number" name="count" value="{{ defaults.count }}" min="1" max="50"> <small style="color:#999;">default: {{ defaults.count }}</small></td>
 </tr>
