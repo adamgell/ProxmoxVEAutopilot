@@ -23,8 +23,19 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import re
 import shlex
+from urllib.parse import quote_plus
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _redirect_with_error(path: str, error: str) -> RedirectResponse:
+    """303-redirect to ``path`` with ``error`` safely percent-encoded.
+
+    Use whenever rendering an exception message or user-supplied text into
+    a redirect URL — raw f-string interpolation truncates at the first space
+    or '#' and lets '&' smuggle extra params.
+    """
+    return RedirectResponse(f"{path}?error={quote_plus(str(error))}", status_code=303)
 
 
 def _load_version() -> dict:
@@ -1057,7 +1068,7 @@ async def vm_start(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Start failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Start failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1068,7 +1079,7 @@ async def vm_shutdown(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/shutdown")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Shutdown failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Shutdown failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1079,7 +1090,7 @@ async def vm_stop(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Force stop failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Force stop failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1090,7 +1101,7 @@ async def vm_reset(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/reset")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Reset failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Reset failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1108,7 +1119,7 @@ async def vm_delete(vmid: int):
             pass  # Already stopped or doesn't matter
         _proxmox_api_delete(f"/nodes/{node}/qemu/{vmid}")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Delete failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Delete failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1157,7 +1168,7 @@ async def vm_typetext(vmid: int, text: str = Form(...)):
             break
         time.sleep(0.05)
     if errors:
-        return RedirectResponse(f"/vms?error=Type failed: {errors[0]}", status_code=303)
+        return _redirect_with_error("/vms", f"Type failed: {errors[0]}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1169,7 +1180,7 @@ async def vm_sendkey(vmid: int, key: str = Form(...)):
     try:
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Sendkey failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Sendkey failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1263,11 +1274,11 @@ async def vm_rename(vmid: int):
         smbios1 = config.get("smbios1", "") if isinstance(config, dict) else ""
         serial = _decode_smbios_serial(smbios1)
         if not serial:
-            return RedirectResponse(f"/vms?error=VM {vmid} has no serial number configured", status_code=303)
+            return _redirect_with_error("/vms", f"VM {vmid} has no serial number configured")
         # Windows hostnames max 15 chars, no special chars
         hostname = re.sub(r'[^A-Za-z0-9\-]', '', serial)[:15]
         if not hostname:
-            return RedirectResponse(f"/vms?error=Serial '{serial}' produces invalid hostname", status_code=303)
+            return _redirect_with_error("/vms", f"Serial '{serial}' produces invalid hostname")
         # Update Proxmox VM name to include the serial
         pve_name = re.sub(r'[^A-Za-z0-9\-]', '', serial)
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/config", data={"name": pve_name})
@@ -1278,8 +1289,8 @@ async def vm_rename(vmid: int):
             "input-data": ps_cmd,
         })
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Rename failed: {e}", status_code=303)
-    return RedirectResponse(f"/vms?error=Renamed VM {vmid} to {hostname} — restart required to apply", status_code=303)
+        return _redirect_with_error("/vms", f"Rename failed: {e}")
+    return _redirect_with_error("/vms", f"Renamed VM {vmid} to {hostname} — restart required to apply")
 
 
 @app.post("/api/jobs/capture-and-upload")
@@ -1494,7 +1505,7 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
         dest.write_bytes(content)
         saved += 1
     if saved == 0:
-        return RedirectResponse("/hashes?error=No+valid+CSV+files+found", status_code=303)
+        return _redirect_with_error("/hashes", "No valid CSV files found")
     return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
 
 
@@ -1987,7 +1998,7 @@ async def cloud_sync():
         it = _graph_api_all("/deviceManagement/managedDevices") or []
         en = _graph_api_all("/devices") or []
     except Exception as e:
-        return RedirectResponse(f"/cloud?error={str(e)[:200]}", status_code=303)
+        return _redirect_with_error("/cloud", str(e)[:200])
     devices_db.upsert_autopilot(DEVICES_DB, ap)
     devices_db.upsert_intune(DEVICES_DB, it)
     devices_db.upsert_entra(DEVICES_DB, en)
@@ -2319,9 +2330,9 @@ async def submit_credential_new(request: Request):
         )
     except sqlite3.IntegrityError as e:
         msg = "name already exists" if "UNIQUE" in str(e) else str(e)
-        return RedirectResponse(f"/credentials/new?error={msg}", status_code=303)
+        return _redirect_with_error("/credentials/new", msg)
     except ValueError as e:
-        return RedirectResponse(f"/credentials/new?error={e}", status_code=303)
+        return _redirect_with_error("/credentials/new", str(e))
     return RedirectResponse("/credentials", status_code=303)
 
 
@@ -2349,11 +2360,9 @@ async def submit_credential_edit(request: Request, cred_id: int):
         )
     except sqlite3.IntegrityError as e:
         msg = "name already exists" if "UNIQUE" in str(e) else str(e)
-        return RedirectResponse(f"/credentials/{cred_id}/edit?error={msg}",
-                                status_code=303)
+        return _redirect_with_error(f"/credentials/{cred_id}/edit", msg)
     except ValueError as e:
-        return RedirectResponse(f"/credentials/{cred_id}/edit?error={e}",
-                                status_code=303)
+        return _redirect_with_error(f"/credentials/{cred_id}/edit", str(e))
     return RedirectResponse("/credentials", status_code=303)
 
 
@@ -2363,7 +2372,7 @@ def submit_credential_delete(cred_id: int):
         sequences_db.delete_credential(SEQUENCES_DB, cred_id)
     except sequences_db.CredentialInUse as e:
         msg = f"in use by sequence(s) {e.sequence_ids}"
-        return RedirectResponse(f"/credentials?error={msg}", status_code=303)
+        return _redirect_with_error("/credentials", msg)
     return RedirectResponse("/credentials", status_code=303)
 
 
@@ -2422,7 +2431,7 @@ def submit_sequence_delete(seq_id: int):
         sequences_db.delete_sequence(SEQUENCES_DB, seq_id)
     except sequences_db.SequenceInUse as e:
         msg = f"in use by VMs {e.vmids}"
-        return RedirectResponse(f"/sequences?error={msg}", status_code=303)
+        return _redirect_with_error("/sequences", msg)
     return RedirectResponse("/sequences", status_code=303)
 
 
@@ -2434,9 +2443,8 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
         sequences_db.duplicate_sequence(SEQUENCES_DB, seq_id, new_name=new_name)
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
-            return RedirectResponse(
-                f"/sequences?error=name '{new_name}' already exists",
-                status_code=303)
+            return _redirect_with_error(
+                "/sequences", f"name '{new_name}' already exists")
         raise
     return RedirectResponse("/sequences", status_code=303)
 

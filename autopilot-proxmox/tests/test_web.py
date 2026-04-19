@@ -67,3 +67,22 @@ def test_job_detail_not_found(client):
     job_manager.get_job.return_value = None
     response = client.get("/jobs/fake-id")
     assert response.status_code == 404
+
+
+def test_redirect_with_error_encodes_special_chars():
+    """Error messages with spaces, '&', '#', '?' must round-trip through
+    the URL without truncation or param smuggling."""
+    from web.app import _redirect_with_error
+    r = _redirect_with_error("/vms", "Rename failed: name 'x & y' needs # escaping?")
+    assert r.status_code == 303
+    loc = r.headers["location"]
+    assert loc.startswith("/vms?error=")
+    # Reserved chars must be encoded
+    assert "+" in loc  # space -> '+'
+    assert "%26" in loc  # '&'
+    assert "%23" in loc  # '#'
+    assert "%3F" in loc  # '?'
+    # And the full message survives a decode
+    from urllib.parse import parse_qs, urlparse
+    qs = parse_qs(urlparse(loc).query)
+    assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
