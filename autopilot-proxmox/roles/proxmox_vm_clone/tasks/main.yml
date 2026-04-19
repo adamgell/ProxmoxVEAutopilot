@@ -14,12 +14,19 @@
       ansible.builtin.set_fact:
         _oem_profile: "{{ _oem_data.oem_profiles[vm_oem_profile] }}"
 
-    - name: Warn about unsupported chassis type
-      ansible.builtin.debug:
-        msg: >-
-          WARNING: Chassis type {{ _oem_profile.chassis_type }} skipped —
-          Proxmox 9 does not support smbios2.
-      when: _oem_profile.chassis_type is defined
+- name: Resolve effective chassis type
+  ansible.builtin.set_fact:
+    _effective_chassis_type: >-
+      {{ chassis_type_override | default(_oem_profile.chassis_type | default(None), true) }}
+  when: _oem_profile is defined or chassis_type_override is defined
+
+- name: Build QEMU -smbios file= args for chassis type
+  ansible.builtin.set_fact:
+    _smbios_args: >-
+      -smbios file=/var/lib/vz/snippets/autopilot-chassis-type-{{ _effective_chassis_type }}.bin
+  when: _effective_chassis_type is defined
+        and _effective_chassis_type | string | length > 0
+        and (_effective_chassis_type | int) > 0
 
 - name: Get next available VMID
   ansible.builtin.uri:
