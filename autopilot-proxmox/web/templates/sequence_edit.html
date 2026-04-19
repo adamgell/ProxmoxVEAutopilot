@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}{% if seq %}Edit{% else %}New{% endif %} Sequence{% endblock %}
+{% block content %}
+<h2>{% if seq %}Edit sequence: {{ seq.name }}{% else %}New task sequence{% endif %}</h2>
+
+<form id="seq-form">
+<table border="0" cellpadding="3">
+<tr><td><b>Name:</b></td>
+    <td><input type="text" id="name" value="{{ seq.name if seq else '' }}" required></td></tr>
+<tr><td><b>Description:</b></td>
+    <td><input type="text" id="description" size="60"
+               value="{{ seq.description if seq else '' }}"></td></tr>
+<tr><td><b>Default?</b></td>
+    <td><label><input type="checkbox" id="is_default"
+        {% if seq and seq.is_default %}checked{% endif %}> Mark as the default sequence</label></td></tr>
+<tr><td><b>Autopilot hash?</b></td>
+    <td><label><input type="checkbox" id="produces_autopilot_hash"
+        {% if seq and seq.produces_autopilot_hash %}checked{% endif %}> VMs provisioned with this sequence produce an Autopilot hash</label></td></tr>
+</table>
+</form>
+
+<h3>Steps</h3>
+<div id="steps"></div>
+
+<div style="margin-top:10px;">
+  <select id="add-type">
+    <option value="set_oem_hardware">set_oem_hardware</option>
+    <option value="local_admin">local_admin</option>
+    <option value="autopilot_entra">autopilot_entra</option>
+    <option value="autopilot_hybrid">autopilot_hybrid (stub)</option>
+    <option value="join_ad_domain">join_ad_domain</option>
+    <option value="rename_computer">rename_computer</option>
+    <option value="run_script">run_script</option>
+    <option value="install_module">install_module</option>
+    <option value="wait_guest_agent">wait_guest_agent</option>
+  </select>
+  <button type="button" onclick="addStep()">+ Add step</button>
+</div>
+
+<div style="margin-top:12px;">
+  <button type="button" onclick="save()">Save</button>
+  <a href="/sequences" style="margin-left:8px;">Cancel</a>
+  <span id="flash" style="margin-left:10px;"></span>
+</div>
+
+<script>
+const SEQ_ID = {{ seq.id if seq else 'null' }};
+const SEED = {{ (seq.steps if seq else [])|tojson }};
+let creds = [];
+let oemProfiles = {{ oem_profiles|tojson }};
+let stepsState = SEED.map(s => ({...s, params: {...s.params}}));
+
+async function loadCreds() {
+  const r = await fetch('/api/credentials');
+  creds = await r.json();
+}
+
+function flash(msg, isErr) {
+  const el = document.getElementById('flash');
+  el.textContent = msg;
+  el.style.color = isErr ? '#c00' : '#060';
+  setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+function render() {
+  const host = document.getElementById('steps');
+  host.innerHTML = '';
+  stepsState.forEach((s, i) => {
+    const card = document.createElement('div');
+    card.style.cssText = 'border:1px solid #ccc;padding:6px;margin:4px 0;background:#fafafa;';
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div><b>${i+1}. ${escHtml(s.step_type)}</b>
+          <small style="color:#666;margin-left:8px;">${summary(s)}</small></div>
+        <div>
+          <button type="button" onclick="move(${i},-1)" ${i===0?'disabled':''}>↑</button>
+          <button type="button" onclick="move(${i},1)" ${i===stepsState.length-1?'disabled':''}>↓</button>
+          <label style="margin-left:8px;font-size:11px;">
+            <input type="checkbox" ${s.enabled?'checked':''} onchange="toggleEnabled(${i},this.checked)"> enabled
+          </label>
+          <button type="button" onclick="remove(${i})" style="margin-left:8px;">✕</button>
+        </div>
+      </div>
+      <div style="padding:4px 0;">${paramsForm(s, i)}</div>
+    `;
+    host.appendChild(card);
+  });
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function summary(s) {
+  const p = s.params || {};
+  switch (s.step_type) {
+    case 'set_oem_hardware': return p.oem_profile || '(no profile set)';
+    case 'local_admin': {
+      const cred = creds.find(c => c.id === p.credential_id);
+      return cred ? `creds: ${cred.name}` : '(credential not set)';
+    }
+    case 'join_ad_domain': {
+      const cred = creds.find(c => c.id === p.credential_id);
+      return (cred ? `creds: ${cred.name}` : '(credential not set)') +
+             (p.ou_path ? ` · ${p.ou_path}` : '');
+    }
+    case 'rename_computer': return p.pattern || '(pattern not set)';
+    case 'run_script': return p.name || '(script name not set)';
+    case 'install_module': return p.module || '(module not set)';
+    default: return '';
+  }
+}
+
+function paramsForm(s, i) {
+  const p = s.params || {};
+  const onI = (key) => `onchange="setParam(${i},'${key}',this.value)"`;
+  switch (s.step_type) {
+    case 'set_oem_hardware':
+      return `<label>OEM profile:
+        <select ${onI('oem_profile')}>
+          <option value="">(use vars.yml default)</option>
+          ${Object.keys(oemProfiles).map(k =>
+            `<option value="${k}" ${p.oem_profile===k?'selected':''}>${k} — ${escHtml(oemProfiles[k].manufacturer)} ${escHtml(oemProfiles[k].product)}</option>`).join('')}
+        </select></label>`;
+    case 'local_admin':
+    case 'join_ad_domain': {
+      const wantType = s.step_type === 'local_admin' ? 'local_admin' : 'domain_join';
+      const opts = creds.filter(c => c.type === wantType)
+        .map(c => `<option value="${c.id}" ${p.credential_id===c.id?'selected':''}>${escHtml(c.name)}</option>`).join('');
+      const extra = s.step_type === 'join_ad_domain'
+        ? `<br><label>OU path: <input type="text" value="${escHtml(p.ou_path||'')}" size="60"
+                                       oninput="setParam(${i},'ou_path',this.value)"></label>`
+        : '';
+      return `<label>Credential:
+        <select onchange="setParam(${i},'credential_id',+this.value)">
+          <option value="0">(none)</option>${opts}
+        </select></label> <a href="/credentials/new" target="_blank">+ new</a>${extra}`;
+    }
+    case 'rename_computer':
+      return `<label>Pattern: <input type="text" value="${escHtml(p.pattern||'{serial}')}"
+                                      oninput="setParam(${i},'pattern',this.value)"> (tokens: {serial}, {vmid}, {group_tag})</label>`;
+    case 'run_script': {
+      const reboot = p.causes_reboot ? 'checked' : '';
+      return `<label>Name: <input type="text" value="${escHtml(p.name||'')}" oninput="setParam(${i},'name',this.value)"></label>
+              <br><label>Script:<br><textarea rows="4" cols="80" oninput="setParam(${i},'script',this.value)">${escHtml(p.script||'')}</textarea></label>
+              <br><label><input type="checkbox" ${reboot} onchange="setParam(${i},'causes_reboot',this.checked)"> causes reboot</label>`;
+    }
+    case 'install_module':
+      return `<label>Module: <input type="text" value="${escHtml(p.module||'')}" oninput="setParam(${i},'module',this.value)"></label>`;
+    case 'autopilot_entra':
+    case 'autopilot_hybrid':
+    case 'wait_guest_agent':
+    default:
+      return `<small style="color:#666;">(no parameters)</small>`;
+  }
+}
+
+function setParam(i, k, v) { stepsState[i].params[k] = v; render(); }
+function toggleEnabled(i, v) { stepsState[i].enabled = v; }
+function move(i, d) {
+  const j = i + d; if (j < 0 || j >= stepsState.length) return;
+  [stepsState[i], stepsState[j]] = [stepsState[j], stepsState[i]]; render();
+}
+function remove(i) { stepsState.splice(i,1); render(); }
+function addStep() {
+  const t = document.getElementById('add-type').value;
+  stepsState.push({ step_type: t, params: {}, enabled: true });
+  render();
+}
+
+async function save() {
+  const body = {
+    name: document.getElementById('name').value.trim(),
+    description: document.getElementById('description').value.trim(),
+    is_default: document.getElementById('is_default').checked,
+    produces_autopilot_hash: document.getElementById('produces_autopilot_hash').checked,
+    steps: stepsState.map(s => ({
+      step_type: s.step_type, params: s.params, enabled: s.enabled,
+    })),
+  };
+  if (!body.name) { flash('Name is required', true); return; }
+  const url = SEQ_ID ? `/api/sequences/${SEQ_ID}` : '/api/sequences';
+  const method = SEQ_ID ? 'PUT' : 'POST';
+  const r = await fetch(url, {
+    method, headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (r.ok) { location.href = '/sequences'; return; }
+  let detail = r.statusText;
+  try { detail = (await r.json()).detail || detail; } catch {}
+  flash('Save failed: ' + detail, true);
+}
+
+loadCreds().then(render);
+</script>
+{% endblock %}

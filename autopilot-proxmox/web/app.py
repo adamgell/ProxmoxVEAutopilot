@@ -1,16 +1,20 @@
 import asyncio
+import base64
 import os
+import sqlite3
 import time
 import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import requests
 import yaml
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from web.jobs import JobManager
 from web import devices_db
@@ -19,8 +23,19 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import re
 import shlex
+from urllib.parse import quote_plus
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _redirect_with_error(path: str, error: str) -> RedirectResponse:
+    """303-redirect to ``path`` with ``error`` safely percent-encoded.
+
+    Use whenever rendering an exception message or user-supplied text into
+    a redirect URL — raw f-string interpolation truncates at the first space
+    or '#' and lets '&' smuggle extra params.
+    """
+    return RedirectResponse(f"{path}?error={quote_plus(str(error))}", status_code=303)
 
 
 def _load_version() -> dict:
@@ -60,6 +75,9 @@ HASH_DIR = BASE_DIR / "output" / "hashes"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
+SECRETS_DIR = BASE_DIR / "secrets"
+SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
+CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
 DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
 
@@ -230,6 +248,31 @@ def _save_vars(updates):
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
+
+from web import sequences_db, crypto as _crypto
+from web import sequence_compiler
+
+
+@app.on_event("startup")
+def _init_sequences_db() -> None:
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    sequences_db.init(SEQUENCES_DB)
+    sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
+
+
+_CIPHER: Optional[_crypto.Cipher] = None
+
+
+def _cipher() -> _crypto.Cipher:
+    """Return the process-wide Cipher, constructing it lazily.
+
+    The key file is read on first access. Tests that monkeypatch
+    CREDENTIAL_KEY must also reset the cache: ``web.app._CIPHER = None``.
+    """
+    global _CIPHER
+    if _CIPHER is None:
+        _CIPHER = _crypto.Cipher(CREDENTIAL_KEY)
+    return _CIPHER
 
 
 def _load_proxmox_config():
@@ -599,6 +642,7 @@ async def provision_page(request: Request):
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
+        "sequences": sequences_db.list_sequences(SEQUENCES_DB),
     })
 
 
@@ -789,6 +833,62 @@ async def vms_page(request: Request, error: str = ""):
 
 # --- API Endpoints ---
 
+def _keys_in_extra_args(tokens: list) -> set[str]:
+    """Return the set of Ansible variable keys already carried as -e pairs.
+
+    Accepts the list-form of an ansible-playbook argv where each -e flag
+    is followed by a single ``key=value`` element.
+    """
+    keys: set[str] = set()
+    for t in tokens:
+        if isinstance(t, str) and "=" in t and not t.startswith("-"):
+            keys.add(t.split("=", 1)[0])
+    return keys
+
+
+# Only scrape VMIDs from the success-path debug line emitted by the
+# proxmox_vm_clone role's final "Report cloned VM" task. The failure
+# diagnostic line in the same role also mentions "VMID: N" but the role
+# has already raised by then, so anchoring on the success pattern prevents
+# writing vm_provisioning rows for clones that never completed.
+_VMID_SUCCESS_RE = re.compile(
+    r"Cloned VM\s+'[^']*'\s+\(VMID:\s+(\d+)\)\s+from template"
+)
+
+
+def _record_vms_for_sequence(job_dict: dict, sequence_id: int) -> None:
+    """Callback body used by `_register_sequence_callbacks`.
+
+    Runs in the job-runner thread. Only records VMIDs for successful jobs
+    — a failed job whose log happens to mention a partially-allocated
+    VMID must NOT be recorded as provisioned by this sequence.
+    """
+    if job_dict.get("status") not in ("complete", "success"):
+        return
+    log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
+    if not log_path.exists():
+        return
+    text = log_path.read_text(errors="replace")
+    for m in _VMID_SUCCESS_RE.finditer(text):
+        try:
+            sequences_db.record_vm_provisioning(
+                SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sequence_id,
+            )
+        except Exception:
+            # Can't raise from a worker-thread callback — would poison job
+            # status. DAL constraint violations are effectively "no row
+            # written" which is the outcome we want on error anyway.
+            pass
+
+
+def _register_sequence_callbacks(job_id: str, sequence_id: int) -> None:
+    """Persist sequence_id on the job and register the vm_provisioning scraper."""
+    job_manager.set_arg(job_id, "sequence_id", sequence_id)
+    job_manager.add_on_complete(
+        job_id, lambda job_dict, sid=sequence_id: _record_vms_for_sequence(job_dict, sid)
+    )
+
+
 @app.post("/api/jobs/provision")
 async def start_provision(
     profile: str = Form(...),
@@ -798,6 +898,7 @@ async def start_provision(
     cores: int = Form(0),
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
+    sequence_id: int = Form(None),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
@@ -823,13 +924,42 @@ async def start_provision(
         "cores": cores, "memory_mb": memory_mb, "disk_size_gb": disk_size_gb,
     }
 
+    # Resolve sequence → Ansible vars (spec §12 precedence).
+    resolved_vars: dict = {}
+    if sequence_id:
+        seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        if seq is None:
+            raise HTTPException(404, f"sequence {sequence_id} not found")
+        try:
+            compiled = sequence_compiler.compile(seq)
+        except sequence_compiler.CompilerError as e:
+            raise HTTPException(400, f"sequence compile failed: {e}")
+        # UI form fields the operator may have filled in as overrides.
+        form_overrides = {
+            "vm_oem_profile": profile,  # provision form's 'profile' field
+        }
+        resolved_vars = sequence_compiler.resolve_provision_vars(
+            compiled,
+            form_overrides=form_overrides,
+            vars_yml=_load_vars(),
+        )
+
     if count <= 1:
-        cmd = [
-            "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
-            "-e", f"vm_oem_profile={profile}",
-            "-e", "vm_count=1",
-        ] + _overrides()
+        cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]
+        # Only emit the form profile if the operator actually set one; a
+        # blank form lets the sequence (or vars.yml) supply vm_oem_profile.
+        if profile:
+            cmd += ["-e", f"vm_oem_profile={profile}"]
+        cmd += ["-e", "vm_count=1"] + _overrides()
+        # Collect keys already present in cmd so sequence-compiled vars don't
+        # stomp them (form/_overrides() win per spec §12).
+        existing_keys = _keys_in_extra_args(cmd)
+        for key, value in resolved_vars.items():
+            if key not in existing_keys:
+                cmd.extend(["-e", f"{key}={value}"])
         job = job_manager.start("provision_clone", cmd, args=args)
+        if sequence_id:
+            _register_sequence_callbacks(job["id"], int(sequence_id))
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
     # Multiple VMs — run sequentially to avoid VMID race condition
@@ -839,12 +969,32 @@ async def start_provision(
 
     extra_tokens = " ".join(shlex.quote(t) for t in _overrides())
 
+    # Append resolved sequence vars without duplicating keys already carried
+    # by the form profile or _overrides(). Only lock out vm_oem_profile when
+    # the form actually supplied one — otherwise the sequence is free to set it.
+    existing_keys = set()
+    if profile:
+        existing_keys.add("vm_oem_profile")
+    for t in _overrides():
+        if "=" in t and not t.startswith("-"):
+            existing_keys.add(t.split("=", 1)[0])
+    seq_tokens = []
+    for key, value in resolved_vars.items():
+        if key not in existing_keys:
+            seq_tokens += ["-e", f"{key}={value}"]
+    if seq_tokens:
+        seq_extra = " ".join(shlex.quote(t) for t in seq_tokens)
+        extra_tokens = (extra_tokens + " " + seq_extra).strip()
+
     script_lines = ["#!/bin/bash", "set -e", ""]
     script_lines.append(f"echo 'Provisioning {count} VMs sequentially ({profile})'")
 
     for i in range(count):
         script_lines.append(f"echo '=== VM {i+1}/{count} ==='")
-        cmd_line = f"ansible-playbook {playbook} -e vm_oem_profile={safe_profile} -e vm_count=1"
+        cmd_line = f"ansible-playbook {playbook}"
+        if profile:
+            cmd_line += f" -e vm_oem_profile={safe_profile}"
+        cmd_line += " -e vm_count=1"
         if extra_tokens:
             cmd_line += f" {extra_tokens}"
         script_lines.append(cmd_line)
@@ -859,6 +1009,8 @@ async def start_provision(
     script_path.chmod(0o755)
 
     job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
+    if sequence_id:
+        _register_sequence_callbacks(job["id"], int(sequence_id))
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
@@ -1016,7 +1168,7 @@ async def vm_start(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Start failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Start failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1027,7 +1179,7 @@ async def vm_shutdown(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/shutdown")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Shutdown failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Shutdown failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1038,7 +1190,7 @@ async def vm_stop(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Force stop failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Force stop failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1049,7 +1201,7 @@ async def vm_reset(vmid: int):
     try:
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/reset")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Reset failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Reset failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1067,7 +1219,7 @@ async def vm_delete(vmid: int):
             pass  # Already stopped or doesn't matter
         _proxmox_api_delete(f"/nodes/{node}/qemu/{vmid}")
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Delete failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Delete failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1116,7 +1268,7 @@ async def vm_typetext(vmid: int, text: str = Form(...)):
             break
         time.sleep(0.05)
     if errors:
-        return RedirectResponse(f"/vms?error=Type failed: {errors[0]}", status_code=303)
+        return _redirect_with_error("/vms", f"Type failed: {errors[0]}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1128,7 +1280,7 @@ async def vm_sendkey(vmid: int, key: str = Form(...)):
     try:
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Sendkey failed: {e}", status_code=303)
+        return _redirect_with_error("/vms", f"Sendkey failed: {e}")
     return RedirectResponse("/vms", status_code=303)
 
 
@@ -1222,11 +1374,11 @@ async def vm_rename(vmid: int):
         smbios1 = config.get("smbios1", "") if isinstance(config, dict) else ""
         serial = _decode_smbios_serial(smbios1)
         if not serial:
-            return RedirectResponse(f"/vms?error=VM {vmid} has no serial number configured", status_code=303)
+            return _redirect_with_error("/vms", f"VM {vmid} has no serial number configured")
         # Windows hostnames max 15 chars, no special chars
         hostname = re.sub(r'[^A-Za-z0-9\-]', '', serial)[:15]
         if not hostname:
-            return RedirectResponse(f"/vms?error=Serial '{serial}' produces invalid hostname", status_code=303)
+            return _redirect_with_error("/vms", f"Serial '{serial}' produces invalid hostname")
         # Update Proxmox VM name to include the serial
         pve_name = re.sub(r'[^A-Za-z0-9\-]', '', serial)
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/config", data={"name": pve_name})
@@ -1237,8 +1389,8 @@ async def vm_rename(vmid: int):
             "input-data": ps_cmd,
         })
     except Exception as e:
-        return RedirectResponse(f"/vms?error=Rename failed: {e}", status_code=303)
-    return RedirectResponse(f"/vms?error=Renamed VM {vmid} to {hostname} — restart required to apply", status_code=303)
+        return _redirect_with_error("/vms", f"Rename failed: {e}")
+    return _redirect_with_error("/vms", f"Renamed VM {vmid} to {hostname} — restart required to apply")
 
 
 @app.post("/api/jobs/capture-and-upload")
@@ -1453,7 +1605,7 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
         dest.write_bytes(content)
         saved += 1
     if saved == 0:
-        return RedirectResponse("/hashes?error=No+valid+CSV+files+found", status_code=303)
+        return _redirect_with_error("/hashes", "No valid CSV files found")
     return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
 
 
@@ -1946,7 +2098,7 @@ async def cloud_sync():
         it = _graph_api_all("/deviceManagement/managedDevices") or []
         en = _graph_api_all("/devices") or []
     except Exception as e:
-        return RedirectResponse(f"/cloud?error={str(e)[:200]}", status_code=303)
+        return _redirect_with_error("/cloud", str(e)[:200])
     devices_db.upsert_autopilot(DEVICES_DB, ap)
     devices_db.upsert_intune(DEVICES_DB, it)
     devices_db.upsert_entra(DEVICES_DB, en)
@@ -2067,3 +2219,350 @@ async def job_stream(websocket: WebSocket, job_id: str):
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
         pass
+
+
+class _CredentialCreate(BaseModel):
+    name: str
+    type: str
+    payload: dict
+
+
+class _CredentialUpdate(BaseModel):
+    name: Optional[str] = None
+    payload: Optional[dict] = None
+
+
+@app.get("/api/credentials")
+def api_credentials_list(type: Optional[str] = None):
+    return sequences_db.list_credentials(SEQUENCES_DB, type=type)
+
+
+@app.get("/api/credentials/{cred_id}")
+def api_credentials_get(cred_id: int):
+    cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if cred is None:
+        raise HTTPException(404, "credential not found")
+    return cred
+
+
+@app.post("/api/credentials", status_code=201)
+def api_credentials_create(body: _CredentialCreate):
+    if body.type not in {"domain_join", "local_admin", "odj_blob"}:
+        raise HTTPException(400, f"unknown credential type: {body.type}")
+    try:
+        cid = sequences_db.create_credential(
+            SEQUENCES_DB, _cipher(),
+            name=body.name, type=body.type, payload=body.payload,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"credential name already exists: {body.name}")
+        raise
+    return {"id": cid}
+
+
+@app.patch("/api/credentials/{cred_id}")
+def api_credentials_update(cred_id: int, body: _CredentialUpdate):
+    existing = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if existing is None:
+        raise HTTPException(404, "credential not found")
+    try:
+        sequences_db.update_credential(
+            SEQUENCES_DB, _cipher(), cred_id,
+            name=body.name, payload=body.payload,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"credential name already exists: {body.name}")
+        raise
+    return {"ok": True}
+
+
+@app.delete("/api/credentials/{cred_id}")
+def api_credentials_delete(cred_id: int):
+    try:
+        sequences_db.delete_credential(SEQUENCES_DB, cred_id)
+    except sequences_db.CredentialInUse as e:
+        return JSONResponse(status_code=409, content={
+            "error": "credential is in use",
+            "sequence_ids": e.sequence_ids,
+        })
+    return {"ok": True}
+
+
+class _StepIn(BaseModel):
+    step_type: str
+    params: dict = {}
+    enabled: bool = True
+
+
+class _SequenceCreate(BaseModel):
+    name: str
+    description: str = ""
+    is_default: bool = False
+    produces_autopilot_hash: bool = False
+    steps: list[_StepIn] = []
+
+
+class _SequenceUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_default: Optional[bool] = None
+    produces_autopilot_hash: Optional[bool] = None
+    steps: Optional[list[_StepIn]] = None
+
+
+class _DuplicateReq(BaseModel):
+    new_name: str
+
+
+@app.get("/api/sequences")
+def api_sequences_list():
+    return sequences_db.list_sequences(SEQUENCES_DB)
+
+
+@app.get("/api/sequences/{seq_id}")
+def api_sequences_get(seq_id: int):
+    seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if seq is None:
+        raise HTTPException(404, "sequence not found")
+    return seq
+
+
+@app.post("/api/sequences", status_code=201)
+def api_sequences_create(body: _SequenceCreate):
+    try:
+        sid = sequences_db.create_sequence(
+            SEQUENCES_DB,
+            name=body.name, description=body.description,
+            is_default=body.is_default,
+            produces_autopilot_hash=body.produces_autopilot_hash,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"sequence name already exists: {body.name}")
+        raise
+    sequences_db.set_sequence_steps(
+        SEQUENCES_DB, sid,
+        [s.model_dump() for s in body.steps],
+    )
+    return {"id": sid}
+
+
+@app.put("/api/sequences/{seq_id}")
+def api_sequences_update(seq_id: int, body: _SequenceUpdate):
+    existing = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if existing is None:
+        raise HTTPException(404, "sequence not found")
+    try:
+        sequences_db.update_sequence(
+            SEQUENCES_DB, seq_id,
+            name=body.name, description=body.description,
+            is_default=body.is_default,
+            produces_autopilot_hash=body.produces_autopilot_hash,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"sequence name already exists: {body.name}")
+        raise
+    if body.steps is not None:
+        sequences_db.set_sequence_steps(
+            SEQUENCES_DB, seq_id,
+            [s.model_dump() for s in body.steps],
+        )
+    return {"ok": True}
+
+
+@app.post("/api/sequences/{seq_id}/duplicate", status_code=201)
+def api_sequences_duplicate(seq_id: int, body: _DuplicateReq):
+    existing = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if existing is None:
+        raise HTTPException(404, "sequence not found")
+    try:
+        new_id = sequences_db.duplicate_sequence(
+            SEQUENCES_DB, seq_id, new_name=body.new_name,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"sequence name already exists: {body.new_name}")
+        raise
+    return {"id": new_id}
+
+
+@app.delete("/api/sequences/{seq_id}")
+def api_sequences_delete(seq_id: int):
+    try:
+        sequences_db.delete_sequence(SEQUENCES_DB, seq_id)
+    except sequences_db.SequenceInUse as e:
+        raise HTTPException(409, detail={
+            "error": "sequence is referenced by provisioned VMs",
+            "vmids": e.vmids,
+        })
+    return {"ok": True}
+
+
+@app.get("/credentials", response_class=HTMLResponse)
+def page_credentials(request: Request, error: str = ""):
+    creds = sequences_db.list_credentials(SEQUENCES_DB)
+    return templates.TemplateResponse("credentials.html", {
+        "request": request,
+        "credentials": creds,
+        "error": error,
+    })
+
+
+@app.get("/credentials/new", response_class=HTMLResponse)
+def page_credential_new(request: Request, error: str = ""):
+    return templates.TemplateResponse("credential_edit.html", {
+        "request": request, "cred": None, "error": error,
+    })
+
+
+@app.post("/credentials/new")
+async def submit_credential_new(request: Request):
+    form = await request.form()
+    cred_type = form.get("type", "")
+    try:
+        payload = await _payload_from_form(cred_type, form)
+        sequences_db.create_credential(
+            SEQUENCES_DB, _cipher(),
+            name=form["name"], type=cred_type, payload=payload,
+        )
+    except sqlite3.IntegrityError as e:
+        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+        return _redirect_with_error("/credentials/new", msg)
+    except ValueError as e:
+        return _redirect_with_error("/credentials/new", str(e))
+    return RedirectResponse("/credentials", status_code=303)
+
+
+@app.get("/credentials/{cred_id}/edit", response_class=HTMLResponse)
+def page_credential_edit(request: Request, cred_id: int, error: str = ""):
+    cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if cred is None:
+        raise HTTPException(404, "credential not found")
+    return templates.TemplateResponse("credential_edit.html", {
+        "request": request, "cred": cred, "error": error,
+    })
+
+
+@app.post("/credentials/{cred_id}/edit")
+async def submit_credential_edit(request: Request, cred_id: int):
+    cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if cred is None:
+        raise HTTPException(404, "credential not found")
+    form = await request.form()
+    try:
+        new_payload = await _payload_from_form(cred["type"], form, existing=cred["payload"])
+        sequences_db.update_credential(
+            SEQUENCES_DB, _cipher(), cred_id,
+            name=form["name"], payload=new_payload,
+        )
+    except sqlite3.IntegrityError as e:
+        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+        return _redirect_with_error(f"/credentials/{cred_id}/edit", msg)
+    except ValueError as e:
+        return _redirect_with_error(f"/credentials/{cred_id}/edit", str(e))
+    return RedirectResponse("/credentials", status_code=303)
+
+
+@app.post("/credentials/{cred_id}/delete")
+def submit_credential_delete(cred_id: int):
+    try:
+        sequences_db.delete_credential(SEQUENCES_DB, cred_id)
+    except sequences_db.CredentialInUse as e:
+        msg = f"in use by sequence(s) {e.sequence_ids}"
+        return _redirect_with_error("/credentials", msg)
+    return RedirectResponse("/credentials", status_code=303)
+
+
+async def _payload_from_form(cred_type: str, form, existing: Optional[dict] = None) -> dict:
+    """Build a payload dict from the per-type HTML form fields."""
+    if cred_type == "domain_join":
+        pw = form.get("password", "")
+        payload = {
+            "domain_fqdn": form.get("domain_fqdn", "").strip(),
+            "username": form.get("username", "").strip(),
+            "password": pw if pw else (existing or {}).get("password", ""),
+            "ou_hint": form.get("ou_hint", "").strip(),
+        }
+        if not payload["password"]:
+            raise ValueError("password is required")
+        return payload
+    if cred_type == "local_admin":
+        pw = form.get("la_password", "")
+        payload = {
+            "username": form.get("la_username", "").strip(),
+            "password": pw if pw else (existing or {}).get("password", ""),
+        }
+        if not payload["password"]:
+            raise ValueError("password is required")
+        return payload
+    if cred_type == "odj_blob":
+        upload = form.get("odj_file")
+        if upload and hasattr(upload, "read"):
+            blob = await upload.read()
+            return {
+                "blob_b64": base64.b64encode(blob).decode("ascii"),
+                "generated_at": _now_iso(),
+            }
+        if existing:
+            return existing
+        raise ValueError("ODJ blob file is required")
+    raise ValueError(f"unknown credential type: {cred_type}")
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@app.get("/sequences", response_class=HTMLResponse)
+def page_sequences(request: Request, error: str = ""):
+    seqs = sequences_db.list_sequences(SEQUENCES_DB)
+    return templates.TemplateResponse("sequences.html", {
+        "request": request, "sequences": seqs, "error": error,
+    })
+
+
+@app.post("/sequences/{seq_id}/delete")
+def submit_sequence_delete(seq_id: int):
+    try:
+        sequences_db.delete_sequence(SEQUENCES_DB, seq_id)
+    except sequences_db.SequenceInUse as e:
+        msg = f"in use by VMs {e.vmids}"
+        return _redirect_with_error("/sequences", msg)
+    return RedirectResponse("/sequences", status_code=303)
+
+
+@app.post("/sequences/{seq_id}/duplicate")
+async def submit_sequence_duplicate(request: Request, seq_id: int):
+    form = await request.form()
+    new_name = form.get("new_name", "").strip() or "Copy"
+    try:
+        sequences_db.duplicate_sequence(SEQUENCES_DB, seq_id, new_name=new_name)
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            return _redirect_with_error(
+                "/sequences", f"name '{new_name}' already exists")
+        raise
+    return RedirectResponse("/sequences", status_code=303)
+
+
+@app.get("/sequences/new", response_class=HTMLResponse)
+def page_sequence_new(request: Request):
+    return templates.TemplateResponse("sequence_edit.html", {
+        "request": request, "seq": None,
+        "oem_profiles": load_oem_profiles(),
+    })
+
+
+@app.get("/sequences/{seq_id}/edit", response_class=HTMLResponse)
+def page_sequence_edit(request: Request, seq_id: int):
+    seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if seq is None:
+        raise HTTPException(404, "sequence not found")
+    return templates.TemplateResponse("sequence_edit.html", {
+        "request": request, "seq": seq,
+        "oem_profiles": load_oem_profiles(),
+    })

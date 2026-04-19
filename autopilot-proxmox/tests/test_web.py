@@ -6,6 +6,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from web import sequences_db
+
 
 @pytest.fixture
 def tmp_dirs():
@@ -17,12 +19,16 @@ def tmp_dirs():
 @pytest.fixture
 def client(tmp_dirs):
     jobs_dir, hash_dir = tmp_dirs
-    with patch("web.app.HASH_DIR", Path(hash_dir)):
-        with patch("web.app.job_manager") as mock_manager:
-            from web.app import app
-            mock_manager.list_jobs.return_value = []
-            mock_manager.jobs_dir = jobs_dir
-            yield TestClient(app)
+    with tempfile.TemporaryDirectory() as seq_dir:
+        seq_db = Path(seq_dir) / "sequences.db"
+        sequences_db.init(seq_db)
+        with patch("web.app.HASH_DIR", Path(hash_dir)):
+            with patch("web.app.SEQUENCES_DB", seq_db):
+                with patch("web.app.job_manager") as mock_manager:
+                    from web.app import app
+                    mock_manager.list_jobs.return_value = []
+                    mock_manager.jobs_dir = jobs_dir
+                    yield TestClient(app)
 
 
 def test_home_page_renders(client):
@@ -61,3 +67,22 @@ def test_job_detail_not_found(client):
     job_manager.get_job.return_value = None
     response = client.get("/jobs/fake-id")
     assert response.status_code == 404
+
+
+def test_redirect_with_error_encodes_special_chars():
+    """Error messages with spaces, '&', '#', '?' must round-trip through
+    the URL without truncation or param smuggling."""
+    from web.app import _redirect_with_error
+    r = _redirect_with_error("/vms", "Rename failed: name 'x & y' needs # escaping?")
+    assert r.status_code == 303
+    loc = r.headers["location"]
+    assert loc.startswith("/vms?error=")
+    # Reserved chars must be encoded
+    assert "+" in loc  # space -> '+'
+    assert "%26" in loc  # '&'
+    assert "%23" in loc  # '#'
+    assert "%3F" in loc  # '?'
+    # And the full message survives a decode
+    from urllib.parse import parse_qs, urlparse
+    qs = parse_qs(urlparse(loc).query)
+    assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
