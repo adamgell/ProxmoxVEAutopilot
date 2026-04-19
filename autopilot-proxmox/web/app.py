@@ -11,7 +11,7 @@ import requests
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -2150,8 +2150,119 @@ def api_credentials_delete(cred_id: int):
     try:
         sequences_db.delete_credential(SEQUENCES_DB, cred_id)
     except sequences_db.CredentialInUse as e:
-        raise HTTPException(409, detail={
+        return JSONResponse(status_code=409, content={
             "error": "credential is in use",
             "sequence_ids": e.sequence_ids,
+        })
+    return {"ok": True}
+
+
+class _StepIn(BaseModel):
+    step_type: str
+    params: dict = {}
+    enabled: bool = True
+
+
+class _SequenceCreate(BaseModel):
+    name: str
+    description: str = ""
+    is_default: bool = False
+    produces_autopilot_hash: bool = False
+    steps: list[_StepIn] = []
+
+
+class _SequenceUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_default: Optional[bool] = None
+    produces_autopilot_hash: Optional[bool] = None
+    steps: Optional[list[_StepIn]] = None
+
+
+class _DuplicateReq(BaseModel):
+    new_name: str
+
+
+@app.get("/api/sequences")
+def api_sequences_list():
+    return sequences_db.list_sequences(SEQUENCES_DB)
+
+
+@app.get("/api/sequences/{seq_id}")
+def api_sequences_get(seq_id: int):
+    seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if seq is None:
+        raise HTTPException(404, "sequence not found")
+    return seq
+
+
+@app.post("/api/sequences", status_code=201)
+def api_sequences_create(body: _SequenceCreate):
+    try:
+        sid = sequences_db.create_sequence(
+            SEQUENCES_DB,
+            name=body.name, description=body.description,
+            is_default=body.is_default,
+            produces_autopilot_hash=body.produces_autopilot_hash,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"sequence name already exists: {body.name}")
+        raise
+    sequences_db.set_sequence_steps(
+        SEQUENCES_DB, sid,
+        [s.model_dump() for s in body.steps],
+    )
+    return {"id": sid}
+
+
+@app.put("/api/sequences/{seq_id}")
+def api_sequences_update(seq_id: int, body: _SequenceUpdate):
+    existing = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if existing is None:
+        raise HTTPException(404, "sequence not found")
+    try:
+        sequences_db.update_sequence(
+            SEQUENCES_DB, seq_id,
+            name=body.name, description=body.description,
+            is_default=body.is_default,
+            produces_autopilot_hash=body.produces_autopilot_hash,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"sequence name already exists: {body.name}")
+        raise
+    if body.steps is not None:
+        sequences_db.set_sequence_steps(
+            SEQUENCES_DB, seq_id,
+            [s.model_dump() for s in body.steps],
+        )
+    return {"ok": True}
+
+
+@app.post("/api/sequences/{seq_id}/duplicate", status_code=201)
+def api_sequences_duplicate(seq_id: int, body: _DuplicateReq):
+    existing = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
+    if existing is None:
+        raise HTTPException(404, "sequence not found")
+    try:
+        new_id = sequences_db.duplicate_sequence(
+            SEQUENCES_DB, seq_id, new_name=body.new_name,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"sequence name already exists: {body.new_name}")
+        raise
+    return {"id": new_id}
+
+
+@app.delete("/api/sequences/{seq_id}")
+def api_sequences_delete(seq_id: int):
+    try:
+        sequences_db.delete_sequence(SEQUENCES_DB, seq_id)
+    except sequences_db.SequenceInUse as e:
+        raise HTTPException(409, detail={
+            "error": "sequence is referenced by provisioned VMs",
+            "vmids": e.vmids,
         })
     return {"ok": True}
