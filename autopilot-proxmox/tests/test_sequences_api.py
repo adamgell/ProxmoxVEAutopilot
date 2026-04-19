@@ -202,3 +202,52 @@ def test_startup_seeds_defaults(tmp_path):
     assert "Entra Join (default)" in names
     assert "AD Domain Join — Local Admin" in names
     assert "Hybrid Autopilot (stub)" in names
+
+
+def test_provision_with_sequence_passes_compiled_vars(app_env):
+    """POST /api/jobs/provision with sequence_id=<seq> must put
+    autopilot_enabled=true and the compiled vm_oem_profile into the
+    ansible-playbook command's -e args."""
+    from web import sequences_db, crypto
+    from web.app import SEQUENCES_DB, CREDENTIAL_KEY, job_manager
+    cipher = crypto.Cipher(CREDENTIAL_KEY)
+    # Seed a local_admin credential + a sequence that uses OEM + entra.
+    sequences_db.create_credential(
+        SEQUENCES_DB, cipher, name="la", type="local_admin",
+        payload={"username": "Administrator", "password": "x"},
+    )
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="test-entra", description="",
+        is_default=True, produces_autopilot_hash=True,
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14"}, "enabled": True},
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+
+    # Capture the command JobManager.start is called with.
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd)
+        captured["args"] = args or {}
+        return {"id": "fake-job"}
+    job_manager.start.side_effect = fake_start
+    job_manager.set_arg = lambda *a, **k: None
+    job_manager.add_on_complete = lambda *a, **k: None
+
+    r = app_env.post("/api/jobs/provision", data={
+        "profile": "",
+        "count": "1",
+        "cores": "2",
+        "memory_mb": "4096",
+        "disk_size_gb": "64",
+        "serial_prefix": "",
+        "group_tag": "",
+        "sequence_id": str(seq_id),
+    }, follow_redirects=False)
+    assert r.status_code == 303
+
+    cmd = captured["cmd"]
+    assert "autopilot_enabled=true" in cmd
+    assert "vm_oem_profile=lenovo-t14" in cmd
