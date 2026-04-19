@@ -1,0 +1,159 @@
+---
+# Ubuntu template build. Runs when target_os=ubuntu.
+#
+# Extra vars expected:
+#   ubuntu_template_sequence_id   (informational — the sequence id that produced ubuntu-seed.iso)
+#
+# Regular vars (from vars.yml):
+#   proxmox_template_vmid, proxmox_api_base, proxmox_api_auth_header, proxmox_node,
+#   proxmox_storage, proxmox_bridge, proxmox_iso_storage, proxmox_validate_certs,
+#   ubuntu_iso, ubuntu_seed_iso, vm_cores, vm_memory_mb, vm_disk_size_gb
+#
+# Pre-flight: ubuntu-seed.iso must already exist on Proxmox (operator clicked
+# Rebuild Ubuntu Seed ISO in the UI first). The handler doesn't verify this
+# here — Proxmox will error at VM-create time if the path is missing.
+
+- name: Check whether the template VMID already exists
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    return_content: yes
+    status_code: [200, 500]  # 500 if VMID doesn't exist
+  register: vm_status_pre
+  failed_when: false
+
+- name: Fail if template VMID already exists
+  ansible.builtin.fail:
+    msg: >-
+      VMID {{ proxmox_template_vmid }} already exists. Delete it first or pick
+      a different proxmox_template_vmid in Settings.
+  when: vm_status_pre.status == 200
+
+- name: Create Ubuntu install VM
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      vmid: "{{ proxmox_template_vmid }}"
+      name: "ubuntu-template-{{ proxmox_template_vmid }}"
+      ostype: "l26"
+      cores: "{{ vm_cores }}"
+      memory: "{{ vm_memory_mb }}"
+      net0: "virtio,bridge={{ proxmox_bridge }}"
+      scsihw: "virtio-scsi-single"
+      scsi0: "{{ proxmox_storage }}:{{ vm_disk_size_gb }},discard=on,ssd=1"
+      ide2: "{{ ubuntu_iso }},media=cdrom"
+      ide3: "{{ ubuntu_seed_iso }},media=cdrom"
+      boot: "order=ide2;scsi0"
+      agent: "enabled=1"
+    status_code: [200]
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Start install VM
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Wait for autoinstall to finish (VM self-powers-off on completion)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    return_content: yes
+  register: vm_status
+  until: vm_status.json.data.status == "stopped"
+  retries: 180        # 30 minutes at 10s intervals
+  delay: 10
+
+- name: Detach autoinstall seed ISO
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      delete: "ide3"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Start VM again for cloud-init clean
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Wait for guest agent (agent was installed during autoinstall)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/ping"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: agent_ping
+  until: agent_ping.status == 200
+  retries: 60
+  delay: 10
+  failed_when: false
+
+- name: Sysprep analogue — cloud-init clean then shutdown
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: json
+    body:
+      command:
+        - "/bin/bash"
+        - "-c"
+        - "cloud-init clean --logs --seed && rm -rf /var/lib/cloud/instances/* && shutdown -h now"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Wait for power-off after cloud-init clean
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    return_content: yes
+  register: vm_status2
+  until: vm_status2.json.data.status == "stopped"
+  retries: 30
+  delay: 5
+
+- name: Detach Ubuntu install ISO
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      delete: "ide2"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Convert VM to template
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/template"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Report Ubuntu template creation
+  ansible.builtin.debug:
+    msg: "Ubuntu template created (VMID: {{ proxmox_template_vmid }}). Use this VMID as proxmox_template_vmid for clone provisioning."

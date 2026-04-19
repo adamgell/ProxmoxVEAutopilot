@@ -1,14 +1,24 @@
 ---
-# Build a Proxmox template from a Windows ISO.
+# Build a Proxmox template from an installer ISO.
+# Branches on target_os: 'windows' (default) uses the proxmox_template_builder role;
+# 'ubuntu' runs the autoinstall + cloud-init-clean flow in _build_ubuntu_template.yml.
 # The resulting template can be used with provision_clone.yml.
 #
 # Usage:
 #   ansible-playbook playbooks/build_template.yml --ask-vault-pass
 #   ansible-playbook playbooks/build_template.yml -e vm_oem_profile=generic-desktop
+#   ansible-playbook playbooks/build_template.yml -e target_os=ubuntu
 
-- name: Build Windows template from ISO
+- name: Build template from ISO
   hosts: localhost
   gather_facts: false
 
-  roles:
-    - role: proxmox_template_builder
+  tasks:
+    - name: Build Ubuntu template (autoinstall + cloud-init clean)
+      ansible.builtin.include_tasks: _build_ubuntu_template.yml
+      when: target_os | default('windows') == 'ubuntu'
+
+    - name: Build Windows template (proxmox_template_builder role)
+      ansible.builtin.include_role:
+        name: proxmox_template_builder
+      when: target_os | default('windows') == 'windows'
