@@ -84,3 +84,82 @@ def test_delete_credential_blocked(app_env):
     r = app_env.delete(f"/api/credentials/{cid}")
     assert r.status_code == 409
     assert sid in r.json()["sequence_ids"]
+
+
+def test_sequences_list_empty(app_env):
+    assert app_env.get("/api/sequences").json() == []
+
+
+def test_create_sequence_with_steps(app_env):
+    r = app_env.post("/api/sequences", json={
+        "name": "Entra", "description": "d", "is_default": True,
+        "produces_autopilot_hash": True,
+        "steps": [
+            {"step_type": "set_oem_hardware",
+             "params": {"oem_profile": "dell-latitude-5540"}, "enabled": True},
+            {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+        ],
+    })
+    assert r.status_code == 201
+    sid = r.json()["id"]
+    got = app_env.get(f"/api/sequences/{sid}").json()
+    assert got["name"] == "Entra"
+    assert got["is_default"] is True
+    assert [s["step_type"] for s in got["steps"]] == [
+        "set_oem_hardware", "autopilot_entra"]
+
+
+def test_update_sequence_replaces_steps(app_env):
+    sid = app_env.post("/api/sequences", json={
+        "name": "S", "description": "",
+        "steps": [
+            {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+        ],
+    }).json()["id"]
+    r = app_env.put(f"/api/sequences/{sid}", json={
+        "name": "S", "description": "updated",
+        "steps": [
+            {"step_type": "local_admin",
+             "params": {"credential_id": 99}, "enabled": True},
+        ],
+    })
+    assert r.status_code == 200
+    got = app_env.get(f"/api/sequences/{sid}").json()
+    assert got["description"] == "updated"
+    assert [s["step_type"] for s in got["steps"]] == ["local_admin"]
+
+
+def test_duplicate_sequence(app_env):
+    sid = app_env.post("/api/sequences", json={
+        "name": "Original", "description": "",
+        "steps": [
+            {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+        ],
+    }).json()["id"]
+    r = app_env.post(f"/api/sequences/{sid}/duplicate",
+                     json={"new_name": "Original (copy)"})
+    assert r.status_code == 201
+    new_id = r.json()["id"]
+    assert app_env.get(f"/api/sequences/{new_id}").json()["name"] == \
+        "Original (copy)"
+
+
+def test_delete_sequence(app_env):
+    sid = app_env.post("/api/sequences", json={
+        "name": "S", "description": "", "steps": [],
+    }).json()["id"]
+    assert app_env.delete(f"/api/sequences/{sid}").status_code == 200
+    assert app_env.get(f"/api/sequences/{sid}").status_code == 404
+
+
+def test_only_one_default_via_api(app_env):
+    a = app_env.post("/api/sequences", json={
+        "name": "A", "description": "", "is_default": True, "steps": [],
+    }).json()["id"]
+    b = app_env.post("/api/sequences", json={
+        "name": "B", "description": "", "is_default": True, "steps": [],
+    }).json()["id"]
+    got_a = app_env.get(f"/api/sequences/{a}").json()
+    got_b = app_env.get(f"/api/sequences/{b}").json()
+    assert got_a["is_default"] is False
+    assert got_b["is_default"] is True
