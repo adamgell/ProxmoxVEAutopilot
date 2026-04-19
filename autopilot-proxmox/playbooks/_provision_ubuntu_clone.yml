@@ -1,0 +1,44 @@
+---
+# Single-VM Ubuntu clone flow — included by provision_clone.yml loop.
+#
+# Vars in scope (from provision_clone.yml / vars.yml):
+#   proxmox_template_vmid, vm_name_prefix, sequence_id (required for Ubuntu),
+#   proxmox_api_base, proxmox_api_auth_header, proxmox_node, proxmox_validate_certs,
+#   web_base_url (optional, default http://127.0.0.1:5000)
+#
+# This file mirrors the Windows _provision_clone_vm.yml per-VM shape:
+# it resolves next VMID / names, then invokes the proxmox_vm_clone_linux role.
+
+- name: "Get next available VMID (Ubuntu VM {{ _vm_index }})"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/cluster/nextid"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _ubuntu_nextid
+
+- name: "Set Ubuntu VM facts (index {{ _vm_index }})"
+  ansible.builtin.set_fact:
+    target_vmid: "{{ _ubuntu_nextid.json.data }}"
+    source_vmid: "{{ proxmox_template_vmid }}"
+    vm_name: "{{ vm_name_prefix }}-{{ _ubuntu_nextid.json.data }}"
+    vm_hostname: "{{ vm_hostname | default(vm_name_prefix ~ '-' ~ _ubuntu_nextid.json.data) }}"
+    smbios_string: "{{ smbios_string | default('') }}"
+
+- name: "Clone + seed + wait for cloud-init (Ubuntu VM {{ target_vmid }})"
+  ansible.builtin.include_role:
+    name: proxmox_vm_clone_linux
+
+- name: "Record vm_provisioning (vmid {{ target_vmid }} -> sequence_id {{ sequence_id | default('none') }})"
+  ansible.builtin.uri:
+    url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/vm-provisioning"
+    method: POST
+    body_format: json
+    body:
+      vmid: "{{ target_vmid | int }}"
+      sequence_id: "{{ sequence_id | int }}"
+    status_code: [200, 201]
+  # Not fatal if the endpoint doesn't exist yet — just log and continue.
+  failed_when: false
+  when: sequence_id is defined
