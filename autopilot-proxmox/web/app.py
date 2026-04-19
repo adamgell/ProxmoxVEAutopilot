@@ -935,6 +935,10 @@ async def start_provision(
     if _prof and _prof.get("chassis_type"):
         _chassis_types_to_stage.add(int(_prof["chassis_type"]))
 
+    # Fail-fast on upload errors: if the binary doesn't land on the
+    # Proxmox host, Ansible will still emit `args: -smbios file=<missing>`
+    # and QEMU will fail to start the VM with a confusing "cannot open"
+    # error. Much better to surface the real cause as a 502 here.
     from web import proxmox_snippets
     for _ct in _chassis_types_to_stage:
         try:
@@ -942,8 +946,10 @@ async def start_provision(
                 node=_node, storage=_snippets_storage, chassis_type=_ct,
             )
         except Exception as _e:
-            print(f"[warn] chassis-type binary upload failed for {_ct}: {_e}",
-                  flush=True)
+            raise HTTPException(
+                status_code=502,
+                detail=f"chassis-type binary upload failed for type {_ct}: {_e}",
+            ) from _e
 
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
