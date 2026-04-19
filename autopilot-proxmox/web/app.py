@@ -419,6 +419,9 @@ def get_autopilot_vms():
             "hostname": hostnames.get(vm["vmid"], ""),
             "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
             "cpus": vm.get("cpus", vm.get("maxcpu", "")),
+            # Proxmox tags string (semicolon-separated) — used by the UI to
+            # render enrollment-status chips (enroll-intune-*, enroll-mde-*).
+            "tags": vm.get("tags", "") or "",
         })
     return sorted(result, key=lambda v: v["vmid"])
 
@@ -795,10 +798,20 @@ async def vms_page(request: Request, error: str = ""):
             if vm and vm.get("hostname"):
                 d["display_name"] = vm["hostname"]
 
-    # Tag VMs with their Autopilot status
+    # Tag VMs with their Autopilot status, plus the target_os + sequence
+    # name of the sequence that provisioned them (if any). The UI uses
+    # target_os to conditionally show the Check Enrollment action for
+    # Ubuntu VMs and disable Capture Hash for them (no Autopilot hash on
+    # Linux).
     for vm in vms:
         vm["in_autopilot"] = vm.get("serial", "") in ap_serials
         vm["has_hash"] = vm.get("serial", "") in hash_serials
+        prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
+        seq = None
+        if prov and prov.get("sequence_id"):
+            seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
+        vm["target_os"] = (seq or {}).get("target_os") or "windows"
+        vm["sequence_name"] = (seq or {}).get("name")
 
     # VMs not yet in Autopilot (missing)
     missing_vms = [vm for vm in vms if not vm["in_autopilot"] and vm.get("serial")]

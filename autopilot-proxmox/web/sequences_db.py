@@ -383,6 +383,28 @@ def get_vm_sequence_id(db_path, vmid: int) -> Optional[int]:
     return row["sequence_id"] if row else None
 
 
+def get_vm_provisioning(db_path, *, vmid: int) -> Optional[dict]:
+    """Return the vm_provisioning row for vmid, or None.
+
+    Shape: {vmid, sequence_id, provisioned_at}. Used by the Devices page
+    to look up the target_os of the sequence that provisioned a VM so the
+    UI can show the right actions (e.g. Check Enrollment for Ubuntu VMs).
+    """
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT vmid, sequence_id, provisioned_at "
+            "FROM vm_provisioning WHERE vmid = ?",
+            (vmid,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "vmid": row["vmid"],
+        "sequence_id": row["sequence_id"],
+        "provisioned_at": row["provisioned_at"],
+    }
+
+
 # Seed data is defined here rather than a separate file so version-controlled
 # changes to seeded sequences are obvious in the diff.
 
