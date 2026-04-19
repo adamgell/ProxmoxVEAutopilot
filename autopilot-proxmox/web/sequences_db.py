@@ -360,3 +360,102 @@ def get_vm_sequence_id(db_path, vmid: int) -> Optional[int]:
             "SELECT sequence_id FROM vm_provisioning WHERE vmid = ?", (vmid,)
         ).fetchone()
     return row["sequence_id"] if row else None
+
+
+# Seed data is defined here rather than a separate file so version-controlled
+# changes to seeded sequences are obvious in the diff.
+
+_SEED_SEQUENCES = [
+    {
+        "name": "Entra Join (default)",
+        "description": "Entra-joined via Windows Autopilot. Matches the pre-sequence hardcoded flow.",
+        "is_default": True,
+        "produces_autopilot_hash": True,
+        "steps": [
+            {"step_type": "set_oem_hardware",
+             "params": {"oem_profile": ""},   # inherits vars.yml default
+             "enabled": True},
+            {"step_type": "local_admin",
+             "params": {"credential_name": "default-local-admin"},
+             "enabled": True},
+            {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+        ],
+    },
+    {
+        "name": "AD Domain Join — Local Admin",
+        "description": "Local admin created at OOBE, computer joined to AD during specialize pass.",
+        "is_default": False,
+        "produces_autopilot_hash": False,
+        "steps": [
+            {"step_type": "set_oem_hardware",
+             "params": {"oem_profile": ""}, "enabled": True},
+            {"step_type": "local_admin",
+             "params": {"credential_name": "default-local-admin"},
+             "enabled": True},
+            {"step_type": "join_ad_domain",
+             "params": {"credential_id": 0, "ou_path": ""},
+             "enabled": True},
+            {"step_type": "rename_computer",
+             "params": {"pattern": "{serial}"}, "enabled": True},
+        ],
+    },
+    {
+        "name": "Hybrid Autopilot (stub)",
+        "description": "NOT IMPLEMENTED in v1 — scaffolded for future work.",
+        "is_default": False,
+        "produces_autopilot_hash": True,
+        "steps": [
+            {"step_type": "autopilot_hybrid", "params": {}, "enabled": True},
+        ],
+    },
+]
+
+
+_SEED_LOCAL_ADMIN_PAYLOAD = {
+    "username": "Administrator",
+    # The hardcoded password from files/unattend_oobe.xml, preserved so the
+    # default sequence reproduces today's byte-identical output.
+    "password": "Nsta1200!!",
+}
+
+
+def seed_defaults(db_path, cipher) -> None:
+    """Insert the default credential and three starter sequences if absent.
+
+    Idempotent: rows keyed on name are skipped if already present.
+    Resolves credential_name references to actual credential IDs.
+    """
+    # 1. Credential first — other seeds reference it by name.
+    if not any(c["name"] == "default-local-admin"
+               for c in list_credentials(db_path, type="local_admin")):
+        create_credential(
+            db_path, cipher,
+            name="default-local-admin", type="local_admin",
+            payload=_SEED_LOCAL_ADMIN_PAYLOAD,
+        )
+    la_id = next(c["id"] for c in list_credentials(db_path, type="local_admin")
+                 if c["name"] == "default-local-admin")
+
+    # 2. Sequences.
+    existing_names = {s["name"] for s in list_sequences(db_path)}
+    for seq in _SEED_SEQUENCES:
+        if seq["name"] in existing_names:
+            continue
+        sid = create_sequence(
+            db_path,
+            name=seq["name"], description=seq["description"],
+            is_default=seq["is_default"],
+            produces_autopilot_hash=seq["produces_autopilot_hash"],
+        )
+        # Resolve credential_name → credential_id
+        resolved_steps = []
+        for step in seq["steps"]:
+            params = dict(step["params"])
+            if params.pop("credential_name", None) == "default-local-admin":
+                params["credential_id"] = la_id
+            resolved_steps.append({
+                "step_type": step["step_type"],
+                "params": params,
+                "enabled": step["enabled"],
+            })
+        set_sequence_steps(db_path, sid, resolved_steps)

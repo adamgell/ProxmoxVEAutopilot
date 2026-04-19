@@ -254,3 +254,46 @@ def test_get_default_sequence(db_path):
     assert sequences_db.get_default_sequence_id(db_path) == b
     sequences_db.update_sequence(db_path, b, is_default=False)
     assert sequences_db.get_default_sequence_id(db_path) is None
+
+
+def test_seed_defaults_inserts_three_on_empty(db_path, key_path):
+    from web import crypto, sequences_db
+    sequences_db.init(db_path)
+    cipher = crypto.Cipher(key_path)
+    sequences_db.seed_defaults(db_path, cipher)
+    names = [s["name"] for s in sequences_db.list_sequences(db_path)]
+    assert "Entra Join (default)" in names
+    assert "AD Domain Join — Local Admin" in names
+    assert "Hybrid Autopilot (stub)" in names
+
+
+def test_seed_defaults_idempotent(db_path, key_path):
+    from web import crypto, sequences_db
+    sequences_db.init(db_path)
+    cipher = crypto.Cipher(key_path)
+    sequences_db.seed_defaults(db_path, cipher)
+    sequences_db.seed_defaults(db_path, cipher)  # second call no-op
+    assert len(sequences_db.list_sequences(db_path)) == 3
+
+
+def test_seed_creates_default_credential(db_path, key_path):
+    from web import crypto, sequences_db
+    sequences_db.init(db_path)
+    cipher = crypto.Cipher(key_path)
+    sequences_db.seed_defaults(db_path, cipher)
+    creds = sequences_db.list_credentials(db_path, type="local_admin")
+    assert any(c["name"] == "default-local-admin" for c in creds)
+
+
+def test_seed_entra_sequence_is_default_and_produces_hash(db_path, key_path):
+    from web import crypto, sequences_db
+    sequences_db.init(db_path)
+    cipher = crypto.Cipher(key_path)
+    sequences_db.seed_defaults(db_path, cipher)
+    for s in sequences_db.list_sequences(db_path):
+        if s["name"] == "Entra Join (default)":
+            assert s["is_default"] is True
+            assert s["produces_autopilot_hash"] is True
+            break
+    else:
+        pytest.fail("Entra Join (default) not found")
