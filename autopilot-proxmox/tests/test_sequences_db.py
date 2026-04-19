@@ -273,7 +273,8 @@ def test_seed_defaults_idempotent(db_path, key_path):
     cipher = crypto.Cipher(key_path)
     sequences_db.seed_defaults(db_path, cipher)
     sequences_db.seed_defaults(db_path, cipher)  # second call no-op
-    assert len(sequences_db.list_sequences(db_path)) == 3
+    # 3 Windows seeds + 2 Ubuntu seeds (LinuxESP + Plain).
+    assert len(sequences_db.list_sequences(db_path)) == 5
 
 
 def test_seed_creates_default_credential(db_path, key_path):

@@ -441,10 +441,11 @@ _SEED_LOCAL_ADMIN_PAYLOAD = {
 
 
 def seed_defaults(db_path, cipher) -> None:
-    """Insert the default credential and three starter sequences if absent.
+    """Insert the default credential and starter sequences if absent.
 
     Idempotent: rows keyed on name are skipped if already present.
     Resolves credential_name references to actual credential IDs.
+    Seeds Windows sequences plus Ubuntu LinuxESP and Ubuntu Plain.
     """
     # 1. Credential first — other seeds reference it by name.
     if not any(c["name"] == "default-local-admin"
@@ -457,7 +458,7 @@ def seed_defaults(db_path, cipher) -> None:
     la_id = next(c["id"] for c in list_credentials(db_path, type="local_admin")
                  if c["name"] == "default-local-admin")
 
-    # 2. Sequences.
+    # 2. Windows sequences.
     existing_names = {s["name"] for s in list_sequences(db_path)}
     for seq in _SEED_SEQUENCES:
         if seq["name"] in existing_names:
@@ -480,3 +481,70 @@ def seed_defaults(db_path, cipher) -> None:
                 "enabled": step["enabled"],
             })
         set_sequence_steps(db_path, sid, resolved_steps)
+
+    # 3. Ubuntu sequences. Use `la_id` as the default local admin credential
+    #    reference; the MDE onboarding credential is left as 0 so the operator
+    #    must wire up a real credential before provisioning.
+    default_admin_id = la_id
+    existing_names = {s["name"] for s in list_sequences(db_path)}
+
+    ubuntu_linuxesp_steps = [
+        {"step_type": "install_ubuntu_core",
+         "params": {"locale": "en_US.UTF-8", "timezone": "UTC",
+                    "keyboard_layout": "us", "storage_layout": "lvm"},
+         "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        {"step_type": "install_apt_packages",
+         "params": {"packages": ["curl", "git", "wget", "gpg"]},
+         "enabled": True},
+        {"step_type": "install_snap_packages",
+         "params": {"snaps": [
+             {"name": "code", "classic": True},
+             {"name": "postman"},
+             {"name": "powershell", "classic": True},
+         ]},
+         "enabled": True},
+        {"step_type": "install_intune_portal", "params": {}, "enabled": True},
+        {"step_type": "install_edge", "params": {}, "enabled": True},
+        {"step_type": "install_mde_linux",
+         "params": {"mde_onboarding_credential_id": 0},  # user must fill in
+         "enabled": True},
+        {"step_type": "remove_apt_packages",
+         "params": {"packages": ["libreoffice-common", "libreoffice*",
+                                 "remmina*", "transmission*"]},
+         "enabled": True},
+    ]
+
+    ubuntu_plain_steps = [
+        {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+    ]
+
+    if "Ubuntu Intune + MDE (LinuxESP)" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu Intune + MDE (LinuxESP)",
+            description=("Ubuntu 24.04 with Intune Portal, Edge, and MDE "
+                         "(from adamgell/LinuxESP). Set an mde_onboarding "
+                         "credential before first use."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_linuxesp_steps,
+        )
+
+    if "Ubuntu Plain" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu Plain",
+            description=("Minimal Ubuntu 24.04 — no Intune, no MDE. Good "
+                         "starting point for a custom sequence."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_plain_steps,
+        )
