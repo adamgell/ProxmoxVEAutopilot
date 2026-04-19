@@ -314,3 +314,17 @@ def test_seed_entra_sequence_is_default_and_produces_hash(db_path, key_path):
             break
     else:
         pytest.fail("Entra Join (default) not found")
+
+
+def test_seed_default_sequence_b1_compiles_cleanly(db_path, key_path):
+    """After B.1, the seeded default sequence must compile without error
+    using only the B.1 step-type handlers. Any step not yet implemented
+    must be marked enabled=False in the seed."""
+    from web import crypto, sequences_db, sequence_compiler
+    sequences_db.init(db_path)
+    cipher = crypto.Cipher(key_path)
+    sequences_db.seed_defaults(db_path, cipher)
+    default_id = sequences_db.get_default_sequence_id(db_path)
+    seq = sequences_db.get_sequence(db_path, default_id)
+    compiled = sequence_compiler.compile(seq)  # must not raise
+    assert compiled.autopilot_enabled is True

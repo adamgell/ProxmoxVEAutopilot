@@ -386,11 +386,14 @@ _SEED_SEQUENCES = [
         "produces_autopilot_hash": True,
         "steps": [
             {"step_type": "set_oem_hardware",
-             "params": {"oem_profile": ""},   # inherits vars.yml default
+             "params": {"oem_profile": ""},
              "enabled": True},
             {"step_type": "local_admin",
              "params": {"credential_name": "default-local-admin"},
-             "enabled": True},
+             # Disabled until Phase B.2 wires the unattend ISO mechanism
+             # that actually consumes the local-admin output. The local-admin
+             # credentials today come from the template's baked unattend.
+             "enabled": False},
             {"step_type": "autopilot_entra", "params": {}, "enabled": True},
         ],
     },
@@ -404,12 +407,12 @@ _SEED_SEQUENCES = [
              "params": {"oem_profile": ""}, "enabled": True},
             {"step_type": "local_admin",
              "params": {"credential_name": "default-local-admin"},
-             "enabled": True},
+             "enabled": False},
             {"step_type": "join_ad_domain",
              "params": {"credential_id": 0, "ou_path": ""},
-             "enabled": True},
+             "enabled": False},
             {"step_type": "rename_computer",
-             "params": {"pattern": "{serial}"}, "enabled": True},
+             "params": {"pattern": "{serial}"}, "enabled": False},
         ],
     },
     {
