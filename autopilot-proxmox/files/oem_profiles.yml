@@ -102,56 +102,56 @@ oem_profiles:
   lenovo-t14-gen5:
     manufacturer: "Lenovo"
     product: "ThinkPad T14 Gen 5"
-    family: "ThinkPad T14 Gen 5"
+    family: "ThinkPad"
     sku: "21MLCTO1WW"
     chassis_type: 10
 
   lenovo-t14s-gen5:
     manufacturer: "Lenovo"
     product: "ThinkPad T14s Gen 5"
-    family: "ThinkPad T14s Gen 5"
+    family: "ThinkPad"
     sku: "21LSCTO1WW"
     chassis_type: 10
 
   lenovo-t16-gen3:
     manufacturer: "Lenovo"
     product: "ThinkPad T16 Gen 3"
-    family: "ThinkPad T16 Gen 3"
+    family: "ThinkPad"
     sku: "21MNCTO1WW"
     chassis_type: 10
 
   lenovo-l14-gen5:
     manufacturer: "Lenovo"
     product: "ThinkPad L14 Gen 5"
-    family: "ThinkPad L14 Gen 5"
+    family: "ThinkPad"
     sku: "21L1CTO1WW"
     chassis_type: 10
 
   lenovo-e14-gen6:
     manufacturer: "Lenovo"
     product: "ThinkPad E14 Gen 6"
-    family: "ThinkPad E14 Gen 6"
+    family: "ThinkPad"
     sku: "21M7CTO1WW"
     chassis_type: 10
 
   lenovo-p14s-gen5:
     manufacturer: "Lenovo"
     product: "ThinkPad P14s Gen 5"
-    family: "ThinkPad P14s Gen 5"
+    family: "ThinkPad"
     sku: "21G2CTO1WW"
     chassis_type: 10
 
   lenovo-thinkcentre-m75q-gen5:
     manufacturer: "Lenovo"
     product: "ThinkCentre M75q Gen 5"
-    family: "ThinkCentre M75q Gen 5"
+    family: "ThinkCentre"
     sku: "12RRCTO1WW"
     chassis_type: 15
 
   lenovo-thinkcentre-m90q-gen5:
     manufacturer: "Lenovo"
     product: "ThinkCentre M90q Gen 5"
-    family: "ThinkCentre M90q Gen 5"
+    family: "ThinkCentre"
     sku: "12THCTO1WW"
     chassis_type: 15
 
