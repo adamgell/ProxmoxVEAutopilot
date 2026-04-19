@@ -1,7 +1,7 @@
 """create_ubuntu_user: emit a sudo-enabled user into autoinstall user-data."""
 from __future__ import annotations
 
-import crypt
+from passlib.hash import sha512_crypt
 
 from ..registry import register
 from ..types import StepOutput, UbuntuCompileError
@@ -26,8 +26,10 @@ def compile_create_ubuntu_user(params, credentials) -> StepOutput:
             "create_ubuntu_user: credential missing username or password"
         )
 
-    salt = crypt.mksalt(crypt.METHOD_SHA512)
-    hashed = crypt.crypt(password, salt)
+    # sha512_crypt produces a self-salting $6$... hash accepted by cloud-init /
+    # Ubuntu autoinstall user-data. `passlib` is pure-Python so it works on
+    # Python 3.13+ where the stdlib `crypt` module has been removed.
+    hashed = sha512_crypt.hash(password)
 
     return StepOutput(
         autoinstall_body={

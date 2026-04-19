@@ -1,7 +1,7 @@
 """create_ubuntu_user step compiler."""
 from __future__ import annotations
 
-import crypt
+from passlib.hash import sha512_crypt
 
 import pytest
 
@@ -26,9 +26,8 @@ def test_emits_users_block_with_hashed_password() -> None:
     assert "sudo" in u["groups"]
     # SHA-512 passwd hash starts with $6$
     assert u["passwd"].startswith("$6$")
-    # Verify the hash matches the plaintext by re-hashing with the same salt.
-    salt = "$".join(u["passwd"].split("$")[:3])
-    assert crypt.crypt("s3cret!", salt) == u["passwd"]
+    # Verify the hash matches the plaintext.
+    assert sha512_crypt.verify("s3cret!", u["passwd"])
 
 
 def test_missing_credential_raises() -> None:

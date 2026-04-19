@@ -23,6 +23,11 @@ def app_env():
         tmp = Path(tmp)
         secrets = tmp / "secrets"
         db = tmp / "sequences.db"
+        # Reset the process-wide cipher cache so this test's patched
+        # CREDENTIAL_KEY is actually used (prevents cross-test contamination
+        # when a previous test left a stale Fernet in web.app._CIPHER).
+        import web.app as _wa
+        _wa._CIPHER = None
         with patch("web.app.SECRETS_DIR", secrets), \
              patch("web.app.SEQUENCES_DB", db), \
              patch("web.app.CREDENTIAL_KEY", secrets / "credential_key"), \
