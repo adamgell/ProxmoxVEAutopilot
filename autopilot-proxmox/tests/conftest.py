@@ -1,10 +1,13 @@
-"""Shared pytest fixtures for the autopilot-proxmox test suite.
+"""Shared pytest config + fixtures for the autopilot-proxmox test suite.
 
-These are opt-in helpers for new tests. Existing tests keep their own setup
-blocks unchanged so they continue to pass as-is.
+Config
+------
+Registers the ``integration`` marker (live-box tests) and a
+``--run-integration`` CLI flag that gates their execution. Default pytest
+runs skip integration tests so they never hit the box unintentionally.
 
-Fixtures exposed
-----------------
+Fixtures (opt-in helpers for new tests)
+---------------------------------------
 - ``tmp_secrets_dir``: an isolated writable secrets dir pre-seeded with a
   fresh Fernet credential_key file.
 - ``test_db``: a freshly initialised sequences.db (no default seeds).
@@ -18,6 +21,9 @@ The web fixtures ``monkeypatch`` ``web.app.SEQUENCES_DB``,
 ``web.app.SECRETS_DIR``, and ``web.app.CREDENTIAL_KEY`` so the real on-disk
 paths are never touched, and reset the process-wide cipher cache
 (``web.app._CIPHER``) so the isolated credential key is actually used.
+
+Existing tests keep their own setup blocks unchanged so they continue to pass
+as-is.
 """
 from __future__ import annotations
 
@@ -26,6 +32,36 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 
+
+# --- Integration-test gating --------------------------------------------------
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run tests marked @pytest.mark.integration against a live autopilot host.",
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "integration: test that hits a live autopilot web UI "
+        "(see tests/integration/, skipped unless --run-integration is passed).",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-integration"):
+        return
+    skip = pytest.mark.skip(reason="need --run-integration to run")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip)
+
+
+# --- Fixtures -----------------------------------------------------------------
 
 @pytest.fixture
 def tmp_secrets_dir(tmp_path: Path) -> Path:

@@ -288,7 +288,7 @@ def _load_proxmox_config():
     return config
 
 
-def _proxmox_api(path):
+def _proxmox_api(path, method="GET", data=None, files=None):
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
@@ -296,7 +296,11 @@ def _proxmox_api(path):
     token_secret = cfg.get("vault_proxmox_api_token_secret", "")
     url = f"https://{host}:{port}/api2/json{path}"
     headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
-    resp = requests.get(url, headers=headers, verify=False, timeout=10)
+    resp = requests.request(
+        method, url, headers=headers, data=data, files=files,
+        verify=False,
+        timeout=30 if files else 10,
+    )
     resp.raise_for_status()
     return resp.json().get("data", [])
 
@@ -917,6 +921,7 @@ async def start_provision(
     disk_size_gb: int = Form(0),
     sequence_id: int = Form(None),
     hostname_pattern: str = Form("autopilot-{serial}"),
+    chassis_type_override: int = Form(0),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
@@ -926,6 +931,46 @@ async def start_provision(
     # hostname_pattern contains literal { } tokens — don't _sanitize_input
     # (which strips special chars); just trim and fall back to the default.
     hostname_pattern = (hostname_pattern or "").strip() or "autopilot-{serial}"
+
+    # Stage the chassis-type SMBIOS binary(ies) on the Proxmox host for
+    # every possible source of the effective chassis type. The compiler
+    # + precedence layer picks the final value; we optimistically upload
+    # for whichever type any source could request so Ansible finds the
+    # file when it emits args: -smbios file=... on the VM config.
+    cfg = _load_proxmox_config()
+    _node = cfg.get("proxmox_node", "pve")
+    _snippets_storage = cfg.get("proxmox_snippets_storage", "local")
+    _chassis_types_to_stage: set[int] = set()
+    if chassis_type_override and int(chassis_type_override) > 0:
+        _chassis_types_to_stage.add(int(chassis_type_override))
+    if sequence_id:
+        _seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        if _seq is not None:
+            for _step in _seq["steps"]:
+                if _step["step_type"] == "set_oem_hardware" and _step.get("enabled"):
+                    _ct = _step["params"].get("chassis_type")
+                    if _ct and int(_ct) > 0:
+                        _chassis_types_to_stage.add(int(_ct))
+    _profiles = load_oem_profiles()
+    _prof = _profiles.get(profile) if profile else None
+    if _prof and _prof.get("chassis_type"):
+        _chassis_types_to_stage.add(int(_prof["chassis_type"]))
+
+    # Fail-fast on upload errors: if the binary doesn't land on the
+    # Proxmox host, Ansible will still emit `args: -smbios file=<missing>`
+    # and QEMU will fail to start the VM with a confusing "cannot open"
+    # error. Much better to surface the real cause as a 502 here.
+    from web import proxmox_snippets
+    for _ct in _chassis_types_to_stage:
+        try:
+            proxmox_snippets.ensure_chassis_type_binary(
+                node=_node, storage=_snippets_storage, chassis_type=_ct,
+            )
+        except Exception as _e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"chassis-type binary upload failed for type {_ct}: {_e}",
+            ) from _e
 
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
@@ -938,6 +983,8 @@ async def start_provision(
         if serial_prefix:    tokens += ["-e", f"vm_serial_prefix={serial_prefix}"]
         if group_tag:        tokens += ["-e", f"vm_group_tag={group_tag}"]
         if hostname_pattern: tokens += ["-e", f"hostname_pattern={hostname_pattern}"]
+        if chassis_type_override and int(chassis_type_override) > 0:
+            tokens += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
         return tokens
 
     args = {
@@ -974,6 +1021,8 @@ async def start_provision(
         if profile:
             cmd += ["-e", f"vm_oem_profile={profile}"]
         cmd += ["-e", "vm_count=1"] + _overrides()
+        if chassis_type_override and int(chassis_type_override) > 0:
+            cmd += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
         # Collect keys already present in cmd so sequence-compiled vars don't
         # stomp them (form/_overrides() win per spec §12).
         existing_keys = _keys_in_extra_args(cmd)
