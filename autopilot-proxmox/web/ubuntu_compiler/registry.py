@@ -50,3 +50,4 @@ def _load_all_steps() -> None:
     from .steps import create_ubuntu_user  # noqa: F401
     from .steps import package_lists  # noqa: F401
     from .steps import ms_repos  # noqa: F401
+    from .steps import install_mde_linux  # noqa: F401
