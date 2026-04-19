@@ -130,3 +130,14 @@ class JobManager:
             proc = self._active[job_id]["process"]
         proc.kill()
         return True
+
+    def set_arg(self, job_id: str, key: str, value) -> None:
+        """Attach arbitrary key/value metadata to a job (used by Phase B)."""
+        with self._lock:
+            for entry in self._index:
+                if entry["id"] == job_id:
+                    args = entry.get("args") or {}
+                    args[key] = value
+                    entry["args"] = args
+                    break
+            self._save_index()

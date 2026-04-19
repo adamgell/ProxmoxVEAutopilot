@@ -12,6 +12,15 @@
 <form method="POST" action="/api/jobs/provision">
 <table border="0" cellpadding="3">
 <tr>
+  <td><b>Task Sequence:</b></td>
+  <td><select name="sequence_id">
+    {% for s in sequences %}
+    <option value="{{ s.id }}"{% if s.is_default %} selected{% endif %}>{{ s.name }}{% if s.is_default %} (default){% endif %}</option>
+    {% endfor %}
+  </select>
+  <small style="color:#999;">Phase A: selection is recorded but still uses the hardcoded flow. Phase B wires the compiler.</small></td>
+</tr>
+<tr>
   <td><b>OEM Profile:</b></td>
   <td><select name="profile">
     {% for key, profile in profiles.items() %}

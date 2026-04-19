@@ -6,6 +6,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from web import sequences_db
+
 
 @pytest.fixture
 def tmp_dirs():
@@ -17,12 +19,16 @@ def tmp_dirs():
 @pytest.fixture
 def client(tmp_dirs):
     jobs_dir, hash_dir = tmp_dirs
-    with patch("web.app.HASH_DIR", Path(hash_dir)):
-        with patch("web.app.job_manager") as mock_manager:
-            from web.app import app
-            mock_manager.list_jobs.return_value = []
-            mock_manager.jobs_dir = jobs_dir
-            yield TestClient(app)
+    with tempfile.TemporaryDirectory() as seq_dir:
+        seq_db = Path(seq_dir) / "sequences.db"
+        sequences_db.init(seq_db)
+        with patch("web.app.HASH_DIR", Path(hash_dir)):
+            with patch("web.app.SEQUENCES_DB", seq_db):
+                with patch("web.app.job_manager") as mock_manager:
+                    from web.app import app
+                    mock_manager.list_jobs.return_value = []
+                    mock_manager.jobs_dir = jobs_dir
+                    yield TestClient(app)
 
 
 def test_home_page_renders(client):

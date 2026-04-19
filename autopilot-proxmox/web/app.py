@@ -620,6 +620,7 @@ async def provision_page(request: Request):
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
+        "sequences": sequences_db.list_sequences(SEQUENCES_DB),
     })
 
 
@@ -819,6 +820,7 @@ async def start_provision(
     cores: int = Form(0),
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
+    sequence_id: int = Form(None),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
@@ -851,6 +853,10 @@ async def start_provision(
             "-e", "vm_count=1",
         ] + _overrides()
         job = job_manager.start("provision_clone", cmd, args=args)
+        # Phase A: record the selection only. The job itself still uses the
+        # hardcoded provisioning flow — compiler wiring lands in Phase B.
+        if sequence_id:
+            job_manager.set_arg(job["id"], "sequence_id", sequence_id)
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
     # Multiple VMs — run sequentially to avoid VMID race condition
@@ -880,6 +886,10 @@ async def start_provision(
     script_path.chmod(0o755)
 
     job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
+    # Phase A: record the selection only. The job itself still uses the
+    # hardcoded provisioning flow — compiler wiring lands in Phase B.
+    if sequence_id:
+        job_manager.set_arg(job["id"], "sequence_id", sequence_id)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
