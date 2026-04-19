@@ -23,8 +23,15 @@
     target_vmid: "{{ _ubuntu_nextid.json.data }}"
     source_vmid: "{{ proxmox_template_vmid }}"
     vm_name: "{{ vm_name_prefix }}-{{ _ubuntu_nextid.json.data }}"
-    vm_hostname: "{{ vm_hostname | default(vm_name_prefix ~ '-' ~ _ubuntu_nextid.json.data) }}"
     smbios_string: "{{ smbios_string | default('') }}"
+
+- name: "Expand hostname pattern for Ubuntu VM {{ target_vmid }}"
+  ansible.builtin.set_fact:
+    vm_hostname: >-
+      {{ (hostname_pattern | default('autopilot-{serial}')
+           | replace('{serial}', (vm_serial | default(target_vmid | string)))
+           | replace('{vmid}', target_vmid | string)
+           | replace('{index}', _vm_index | string)) | trim }}
 
 - name: "Clone + seed + wait for cloud-init (Ubuntu VM {{ target_vmid }})"
   ansible.builtin.include_role:

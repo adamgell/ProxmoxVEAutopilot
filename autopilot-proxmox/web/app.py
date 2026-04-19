@@ -614,6 +614,7 @@ async def provision_page(request: Request):
         "group_tag":    cfg.get("vm_group_tag", ""),
         "oem_profile":  cfg.get("vm_oem_profile", ""),
         "template_vmid": cfg.get("proxmox_template_vmid", ""),
+        "hostname_pattern": cfg.get("vm_hostname_pattern", "autopilot-{serial}"),
     }
     return templates.TemplateResponse("provision.html", {
         "request": request,
@@ -824,12 +825,16 @@ async def start_provision(
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
     sequence_id: int = Form(None),
+    hostname_pattern: str = Form("autopilot-{serial}"),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
         group_tag = _sanitize_input(group_tag)
     if serial_prefix:
         serial_prefix = _sanitize_input(serial_prefix)
+    # hostname_pattern contains literal { } tokens — don't _sanitize_input
+    # (which strips special chars); just trim and fall back to the default.
+    hostname_pattern = (hostname_pattern or "").strip() or "autopilot-{serial}"
 
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
@@ -841,12 +846,14 @@ async def start_provision(
         if disk_size_gb > 0: tokens += ["-e", f"vm_disk_size_gb={disk_size_gb}"]
         if serial_prefix:    tokens += ["-e", f"vm_serial_prefix={serial_prefix}"]
         if group_tag:        tokens += ["-e", f"vm_group_tag={group_tag}"]
+        if hostname_pattern: tokens += ["-e", f"hostname_pattern={hostname_pattern}"]
         return tokens
 
     args = {
         "profile": profile, "count": count,
         "serial_prefix": serial_prefix, "group_tag": group_tag,
         "cores": cores, "memory_mb": memory_mb, "disk_size_gb": disk_size_gb,
+        "hostname_pattern": hostname_pattern,
     }
 
     if count <= 1:

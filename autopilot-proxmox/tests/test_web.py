@@ -44,6 +44,14 @@ def test_provision_page_renders(client):
     assert "lenovo-t14" in response.text
 
 
+def test_provision_form_includes_hostname_pattern(client):
+    response = client.get("/provision")
+    assert response.status_code == 200
+    assert 'name="hostname_pattern"' in response.text
+    # Default pattern should be pre-filled
+    assert "autopilot-{serial}" in response.text
+
+
 def test_template_page_renders(client):
     response = client.get("/template")
     assert response.status_code == 200

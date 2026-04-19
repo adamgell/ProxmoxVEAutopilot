@@ -34,6 +34,15 @@
   <td><input type="number" name="count" value="{{ defaults.count }}" min="1" max="50"> <small style="color:#999;">default: {{ defaults.count }}</small></td>
 </tr>
 <tr>
+  <td><b>Hostname Pattern:</b></td>
+  <td><input type="text" name="hostname_pattern" value="{{ defaults.hostname_pattern | default('autopilot-{serial}') }}" size="30" placeholder="autopilot-{serial}">
+    <small style="color:#999;">
+      Tokens: <code>{serial}</code>, <code>{vmid}</code>, <code>{index}</code>.
+      Windows: used for computer-name during specialize pass.
+      Ubuntu: applied via cloud-init on first boot.
+    </small></td>
+</tr>
+<tr>
   <td><b>CPU Cores:</b></td>
   <td><input type="number" name="cores" value="{{ defaults.cores }}" min="1" max="64"> <small style="color:#999;">default: {{ defaults.cores }}</small></td>
 </tr>
