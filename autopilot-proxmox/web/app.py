@@ -1718,6 +1718,117 @@ async def rebuild_ubuntu_seed_iso(sequence_id: int):
     }
 
 
+@app.post("/api/ubuntu/per-vm-seed")
+async def build_per_vm_seed(vmid: int, sequence_id: int, hostname: str):
+    """Build the per-clone NoCloud seed ISO for a specific VMID.
+
+    Unlike /api/ubuntu/rebuild-seed-iso (which emits the template seed ISO
+    carrying the full autoinstall body), this endpoint emits a minimal
+    cloud-init (hostname + firstboot runcmd) keyed to the target VM. Called
+    by the Ansible provisioning role for each cloned VM.
+    """
+    seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
+    if seq is None:
+        return JSONResponse(
+            {"ok": False, "error": f"sequence {sequence_id} not found"},
+            status_code=404,
+        )
+    if seq.get("target_os") != "ubuntu":
+        return JSONResponse(
+            {"ok": False,
+             "error": f"sequence target_os is {seq.get('target_os')!r}, not ubuntu"},
+            status_code=400,
+        )
+
+    import tempfile as _tmp
+
+    from web.ubuntu_compiler import compile_sequence, UbuntuCompileError
+    from web.ubuntu_seed_iso import build_seed_iso
+
+    cipher = _cipher()
+    credentials: dict[int, dict] = {}
+    for cid in _referenced_credential_ids(seq["steps"]):
+        row = sequences_db.get_credential(SEQUENCES_DB, cipher, cid)
+        if row is None:
+            continue
+        credentials[cid] = row.get("payload") or {}
+
+    try:
+        _u, _m, firstboot_user_data, firstboot_meta_data = compile_sequence(
+            steps=seq["steps"],
+            credentials=credentials,
+            instance_id=f"vm-{vmid}",
+            hostname=hostname,
+        )
+    except UbuntuCompileError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    cfg = _load_proxmox_config()
+    iso_storage = cfg.get("proxmox_iso_storage") or "isos"
+    node = cfg.get("proxmox_node", "pve")
+    iso_name = f"ubuntu-per-vm-{vmid}.iso"
+
+    with _tmp.TemporaryDirectory() as td:
+        iso_path = Path(td) / iso_name
+        try:
+            build_seed_iso(
+                user_data=firstboot_user_data,
+                meta_data=firstboot_meta_data,
+                out_path=iso_path,
+            )
+        except RuntimeError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        host = cfg.get("proxmox_host", "")
+        port = cfg.get("proxmox_port", 8006)
+        token_id = cfg.get("vault_proxmox_api_token_id", "")
+        token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+        url = (
+            f"https://{host}:{port}/api2/json/nodes/{node}"
+            f"/storage/{iso_storage}/upload"
+        )
+        try:
+            with open(iso_path, "rb") as fh:
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
+                    data={"content": "iso"},
+                    files={"filename": (iso_name, fh, "application/x-iso9660-image")},
+                    verify=cfg.get("proxmox_validate_certs", False),
+                    timeout=60,
+                )
+        except Exception as e:
+            return JSONResponse(
+                {"ok": False, "error": f"upload failed: {e}"}, status_code=500,
+            )
+        if resp.status_code == 403:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        "403 Forbidden from Proxmox. The API token needs "
+                        "Datastore.AllocateTemplate on /storage/"
+                        f"{iso_storage} (role PVEDatastoreUser or similar)."
+                    ),
+                },
+                status_code=403,
+            )
+        if resp.status_code >= 400:
+            return JSONResponse(
+                {"ok": False,
+                 "error": f"HTTP {resp.status_code}: {resp.text[:500]}"},
+                status_code=502,
+            )
+
+    return {
+        "ok": True,
+        "iso": f"{iso_storage}:iso/{iso_name}",
+        "storage": iso_storage,
+        "node": node,
+        "vmid": vmid,
+    }
+
+
 # --- Version / update check ------------------------------------------------
 
 _GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"
