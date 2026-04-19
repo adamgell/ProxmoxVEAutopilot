@@ -176,3 +176,33 @@ def test_precedence_empty_sequence_preserves_legacy_varsyml():
         compiled, form_overrides={}, vars_yml={},
     )
     assert "autopilot_enabled" not in resolved
+
+
+def test_set_oem_hardware_emits_chassis_type_override_when_set():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14", "chassis_type": 10}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.ansible_vars["chassis_type_override"] == "10"
+
+
+def test_set_oem_hardware_omits_chassis_type_when_missing():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware", "params": {"oem_profile": "lenovo-t14"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert "chassis_type_override" not in result.ansible_vars
+
+
+def test_set_oem_hardware_ignores_zero_chassis_type():
+    """0 means 'inherit from profile', not 'override with 0'."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "set_oem_hardware",
+         "params": {"oem_profile": "lenovo-t14", "chassis_type": 0}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert "chassis_type_override" not in result.ansible_vars
