@@ -7,4 +7,5 @@ jobs/
 .git/
 docs/
 inventory/group_vars/all/vault.yml
+# Credentials encryption key (not for git)
 secrets/

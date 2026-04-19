@@ -32,7 +32,7 @@ RUN printf '%s\n%s\n' "$GIT_SHA" "$BUILD_TIME" > /app/VERSION
 ENV APP_VERSION_FILE=/app/VERSION
 
 # Create runtime directories
-RUN mkdir -p /app/jobs /app/output/hashes
+RUN mkdir -p /app/jobs /app/output/hashes /app/secrets
 
 EXPOSE 5000
 

@@ -8,6 +8,7 @@ services:
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
       - ./output:/app/output
       - autopilot-jobs:/app/jobs
+      - ./secrets:/app/secrets
     security_opt:
       - apparmor=unconfined
     restart: unless-stopped
