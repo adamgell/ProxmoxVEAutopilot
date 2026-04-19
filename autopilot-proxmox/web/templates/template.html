@@ -2,6 +2,13 @@
 {% block title %}Build Template - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 <h2>Build Template from ISO</h2>
+
+<div class="target-os-toggle" style="margin-bottom:10px;">
+  <button type="button" id="os-windows-btn" class="toggle active" data-os="windows">Windows</button>
+  <button type="button" id="os-ubuntu-btn" class="toggle" data-os="ubuntu">Ubuntu</button>
+</div>
+
+<div id="panel-windows" class="panel">
 <p><b>Warning:</b> This takes 20-30 minutes. A new VM will be created from the Windows ISO, installed unattended, sysprepped, and converted to a Proxmox template.</p>
 
 <h3>Answer ISO</h3>
@@ -30,8 +37,50 @@
 </tr>
 </table>
 </form>
+</div>
+
+<div id="panel-ubuntu" class="panel" style="display:none">
+<p><b>Ubuntu Autoinstall Seed ISO</b> — Cloud-init NoCloud seed ISO for subiquity autoinstall. Rebuild after editing the sequence.</p>
+
+<h3>Seed ISO / Template Build</h3>
+{% if ubuntu_sequences %}
+<table border="0" cellpadding="3">
+<tr>
+  <td><b>Sequence:</b></td>
+  <td>
+    <select id="ubuntu-template-sequence">
+      {% for s in ubuntu_sequences %}
+        <option value="{{ s.id }}">{{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </td>
+</tr>
+<tr>
+  <td></td>
+  <td>
+    <button type="button" class="action-btn-upload" onclick="rebuildUbuntuSeedIso(this);">Rebuild Ubuntu Seed ISO</button>
+    <button type="button" class="action-btn-upload" onclick="buildUbuntuTemplate(this);" style="margin-left:4px;">Build Ubuntu Template</button>
+    <span id="ubuntuSeedIsoStatus" style="color:#666;font-size:11px;margin-left:10px;"></span>
+  </td>
+</tr>
+</table>
+{% else %}
+<p style="color:#cc0000;">No Ubuntu sequences defined. Create one on the <a href="/sequences">Sequences</a> page first.</p>
+{% endif %}
+</div>
 
 <script>
+// target_os toggle
+document.querySelectorAll('.target-os-toggle .toggle').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.target-os-toggle .toggle').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    var os = btn.dataset.os;
+    document.getElementById('panel-windows').style.display = os === 'windows' ? 'block' : 'none';
+    document.getElementById('panel-ubuntu').style.display  = os === 'ubuntu'  ? 'block' : 'none';
+  });
+});
+
 function rebuildAnswerIso(btn) {
   var status = document.getElementById('answerIsoStatus');
   btn.disabled = true;
@@ -54,5 +103,82 @@ function rebuildAnswerIso(btn) {
     })
     .finally(function(){ btn.disabled = false; });
 }
+
+function rebuildUbuntuSeedIso(btn) {
+  var sel = document.getElementById('ubuntu-template-sequence');
+  if (!sel) return;
+  var sid = sel.value;
+  var status = document.getElementById('ubuntuSeedIsoStatus');
+  btn.disabled = true;
+  var orig = btn.textContent;
+  btn.textContent = 'Rebuilding…';
+  status.textContent = 'building + uploading…';
+  status.style.color = '#999';
+  fetch('/api/ubuntu/rebuild-seed-iso?sequence_id=' + encodeURIComponent(sid), {method: 'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        status.textContent = 'rebuilt — ' + (d.iso || '');
+        status.style.color = '#006600';
+      } else {
+        status.textContent = 'failed: ' + (d.error || 'unknown');
+        status.style.color = '#cc0000';
+      }
+    })
+    .catch(function(e){
+      status.textContent = 'error: ' + e.message;
+      status.style.color = '#cc0000';
+    })
+    .finally(function(){ btn.disabled = false; btn.textContent = orig; });
+}
+
+function buildUbuntuTemplate(btn) {
+  var sel = document.getElementById('ubuntu-template-sequence');
+  if (!sel) return;
+  var sid = sel.value;
+  var status = document.getElementById('ubuntuSeedIsoStatus');
+  btn.disabled = true;
+  var orig = btn.textContent;
+  btn.textContent = 'Starting…';
+  fetch('/api/ubuntu/build-template?sequence_id=' + encodeURIComponent(sid), {method: 'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok && d.job_id) {
+        window.location.href = '/jobs/' + d.job_id;
+      } else {
+        status.textContent = 'failed: ' + (d.error || 'unknown');
+        status.style.color = '#cc0000';
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    })
+    .catch(function(e){
+      status.textContent = 'error: ' + e.message;
+      status.style.color = '#cc0000';
+      btn.disabled = false;
+      btn.textContent = orig;
+    });
+}
 </script>
+
+<style>
+.target-os-toggle .toggle {
+  padding: 4px 14px;
+  margin-right: 4px;
+  border: 1px solid #999;
+  background: #e8e8e8;
+  cursor: pointer;
+  font-family: Verdana, Tahoma, Arial, sans-serif;
+  font-size: 11px;
+}
+.target-os-toggle .toggle.active {
+  background: #336699;
+  color: white;
+  border-color: #264d73;
+}
+#os-ubuntu-btn.active {
+  background: #e95420;
+  border-color: #c44117;
+}
+</style>
 {% endblock %}

@@ -626,9 +626,12 @@ async def provision_page(request: Request):
 
 @app.get("/template", response_class=HTMLResponse)
 async def template_page(request: Request):
+    all_seqs = sequences_db.list_sequences(SEQUENCES_DB)
+    ubuntu_sequences = [s for s in all_seqs if s.get("target_os") == "ubuntu"]
     return templates.TemplateResponse("template.html", {
         "request": request,
         "profiles": load_oem_profiles(),
+        "ubuntu_sequences": ubuntu_sequences,
     })
 
 
@@ -903,6 +906,27 @@ async def start_template(profile: str = Form(...)):
     args = {"profile": profile}
     job = job_manager.start("build_template", cmd, args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
+@app.post("/api/ubuntu/build-template")
+async def build_ubuntu_template(sequence_id: int):
+    """Kick off the Ubuntu template build playbook for the given sequence.
+    Returns a JSON payload with the launched job id; the UI redirects to
+    /jobs/{job_id} client-side."""
+    seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
+    if seq is None or seq.get("target_os") != "ubuntu":
+        return JSONResponse(
+            {"ok": False, "error": "Ubuntu sequence not found"},
+            status_code=404,
+        )
+    cmd = [
+        "ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml"),
+        "-e", "target_os=ubuntu",
+        "-e", f"ubuntu_template_sequence_id={sequence_id}",
+    ]
+    args = {"target_os": "ubuntu", "sequence_id": sequence_id}
+    job = job_manager.start("build_template_ubuntu", cmd, args=args)
+    return {"ok": True, "job_id": job["id"]}
 
 
 @app.get("/api/vms/{vmid}/console")

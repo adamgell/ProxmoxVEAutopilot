@@ -148,3 +148,62 @@ def test_rebuild_seed_iso_400_on_windows_sequence(tmp_path, monkeypatch):
     resp = client.post(f"/api/ubuntu/rebuild-seed-iso?sequence_id={windows['id']}")
     assert resp.status_code == 400
     assert resp.json()["ok"] is False
+
+
+# -----------------------------------------------------------------------------
+# Build Template page Ubuntu panel + /api/ubuntu/build-template (Task 18)
+# -----------------------------------------------------------------------------
+
+
+def test_template_page_renders_ubuntu_panel(tmp_path, monkeypatch):
+    client = _setup_client(tmp_path, monkeypatch)
+    resp = client.get("/template")
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    assert 'id="panel-ubuntu"' in body
+    assert 'Rebuild Ubuntu Seed ISO' in body
+    # The Ubuntu Plain default sequence should populate the dropdown.
+    assert 'Ubuntu Plain' in body
+
+
+def test_build_ubuntu_template_returns_job_id(tmp_path, monkeypatch):
+    from web import app as web_app, sequences_db
+    client = _setup_client(tmp_path, monkeypatch)
+    seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
+    ubuntu_plain = next(s for s in seqs if s["name"] == "Ubuntu Plain")
+
+    fake_job = {"id": "job-abc"}
+    with patch.object(web_app.job_manager, "start",
+                      return_value=fake_job) as mock_start:
+        resp = client.post(
+            f"/api/ubuntu/build-template?sequence_id={ubuntu_plain['id']}"
+        )
+
+    assert resp.status_code == 200, resp.text
+    j = resp.json()
+    assert j["ok"] is True
+    assert j["job_id"] == "job-abc"
+    # Confirm the playbook + extra-vars the handler passed through
+    args, kwargs = mock_start.call_args
+    assert args[0] == "build_template_ubuntu"
+    cmd = args[1]
+    assert any("build_template.yml" in c for c in cmd)
+    assert "target_os=ubuntu" in cmd
+    assert f"ubuntu_template_sequence_id={ubuntu_plain['id']}" in cmd
+
+
+def test_build_ubuntu_template_404_on_missing_or_windows(tmp_path, monkeypatch):
+    from web import app as web_app, sequences_db
+    client = _setup_client(tmp_path, monkeypatch)
+
+    # Missing id
+    resp = client.post("/api/ubuntu/build-template?sequence_id=9999")
+    assert resp.status_code == 404
+    assert resp.json()["ok"] is False
+
+    # Windows sequence id — must also 404 (not an Ubuntu target).
+    seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
+    windows = next(s for s in seqs if s["target_os"] == "windows")
+    resp = client.post(f"/api/ubuntu/build-template?sequence_id={windows['id']}")
+    assert resp.status_code == 404
+    assert resp.json()["ok"] is False
