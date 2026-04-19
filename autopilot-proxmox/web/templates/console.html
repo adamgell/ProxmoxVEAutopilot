@@ -16,6 +16,32 @@
   .status-ok { color: #c8e6c9; }
   .status-warn { color: #ffecb3; }
   .status-err { color: #ffcdd2; }
+
+  /* Collapsible controls panel below the topbar */
+  #panel { background: #222; border-bottom: 1px solid #000; padding: 4px 12px; font-size: 11px; display: none; }
+  #panel.open { display: block; }
+  body.panel-open #screen { height: calc(100vh - 32px - var(--panel-h, 88px)); }
+  #panel .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 3px 0; }
+  #panel .row + .row { border-top: 1px solid #333; }
+  #panel .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid #444; }
+  #panel .group:last-child { border-right: none; }
+  #panel button { background: #336699; color: #fff; border: 1px solid #264d73; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  #panel button:hover { background: #264d73; }
+  #panel button.danger { background: #992222; border-color: #661111; }
+  #panel button.danger:hover { background: #661111; }
+  #panel input[type="text"], #panel input[type="password"] {
+    background: #111; color: #ddd; border: 1px solid #555; padding: 2px 4px; font-size: 11px;
+  }
+  #panel .badge { padding: 1px 6px; font-weight: bold; border: 1px solid #444; }
+  #panel .badge.running { background: #1b4d1b; color: #c8e6c9; }
+  #panel .badge.stopped { background: #4d1b1b; color: #ffcdd2; }
+  #panel .badge.other   { background: #4d4d1b; color: #ffecb3; }
+  #panel #flash { color: #c8e6c9; }
+  #panel #flash.err { color: #ffcdd2; }
+  #presets-table { border-collapse: collapse; margin-top: 2px; }
+  #presets-table td { padding: 1px 6px; border: none; color: #ddd; vertical-align: middle; }
+  #presets-table code { background: #111; padding: 1px 4px; border: 1px solid #333; }
+  #topbar .actions .toggle-btn { background: #1a365d; }
 </style>
 </head>
 <body>
@@ -28,9 +54,51 @@
   </div>
   <div id="status" class="status-warn">initializing…</div>
   <div class="actions">
+    <button class="toggle-btn" onclick="togglePanel();" title="Toggle controls panel">Controls</button>
     <button onclick="sendCtrlAltDel();" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
     <button onclick="rfbInstance && rfbInstance.focus();" title="Give the console keyboard focus">Focus</button>
     <button onclick="reconnect();" title="Fetch a new ticket and reconnect">Reconnect</button>
+  </div>
+</div>
+<div id="panel">
+  <div class="row">
+    <div class="group">
+      VM status: <span id="vm-badge" class="badge other">?</span>
+      <span id="vm-uptime" style="color:#888;"></span>
+    </div>
+    <div class="group">
+      <button onclick="doAction('start')">Start</button>
+      <button onclick="doAction('shutdown')">Shutdown</button>
+      <button onclick="doAction('reboot')">Reboot</button>
+      <button class="danger" onclick="if(confirm('Hard stop VM {{ vmid }}?'))doAction('stop')">Stop</button>
+      <button class="danger" onclick="if(confirm('Reset VM {{ vmid }}?'))doAction('reset')">Reset</button>
+    </div>
+    <div class="group">
+      <button onclick="sendKey('tab')">Tab</button>
+      <button onclick="sendKey('ret')">Enter</button>
+      <button onclick="sendKey('esc')">Esc</button>
+    </div>
+    <span id="flash"></span>
+  </div>
+  <div class="row">
+    <div class="group" style="flex:1;">
+      <b>Type text:</b>
+      <input type="text" id="quick-text" placeholder="text to type into VM" style="width:320px;" onkeydown="if(event.key==='Enter'){event.preventDefault();typeText(this.value, document.getElementById('quick-enter').checked);}">
+      <label><input type="checkbox" id="quick-enter"> press Enter after</label>
+      <button onclick="typeText(document.getElementById('quick-text').value, document.getElementById('quick-enter').checked)">Send</button>
+      <button onclick="document.getElementById('quick-text').value=''">Clear</button>
+    </div>
+  </div>
+  <div class="row" style="flex-direction:column; align-items:stretch;">
+    <div><b>Saved presets</b> <small style="color:#888;">— stored in this browser's localStorage only</small></div>
+    <table id="presets-table"><tbody id="presets-body"></tbody></table>
+    <div class="group" style="border:none;">
+      <input type="text" id="new-label" placeholder="label" style="width:160px;">
+      <input type="text" id="new-value" placeholder="value to type">
+      <label><input type="checkbox" id="new-enter"> Enter after</label>
+      <label><input type="checkbox" id="new-masked"> mask</label>
+      <button onclick="addPreset()">Save preset</button>
+    </div>
   </div>
 </div>
 <div id="screen"></div>
@@ -90,6 +158,158 @@ window.reconnect      = () => connect();
 window.rfbInstance    = null;
 
 connect().then(() => { window.rfbInstance = rfb; });
+
+// --- Controls panel: power, type-text, presets ---
+const PANEL_KEY = 'pveautopilot_console_panel_open_v1';
+const PRESETS_KEY = 'pveautopilot_console_presets_v1';
+const flashEl = document.getElementById('flash');
+let flashTimer = 0;
+
+function flash(msg, isErr) {
+  flashEl.textContent = msg;
+  flashEl.className = isErr ? 'err' : '';
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { flashEl.textContent = ''; }, 4000);
+}
+
+function togglePanel() {
+  const panel = document.getElementById('panel');
+  const open = !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  document.body.classList.toggle('panel-open', open);
+  // Set --panel-h so #screen shrinks precisely
+  requestAnimationFrame(() => {
+    document.documentElement.style.setProperty('--panel-h', panel.offsetHeight + 'px');
+  });
+  localStorage.setItem(PANEL_KEY, open ? '1' : '0');
+}
+window.togglePanel = togglePanel;
+
+async function doAction(action) {
+  flash(action + '…');
+  try {
+    const r = await fetch(`/api/vms/${VMID}/action/${action}`, { method: 'POST' });
+    const j = await r.json();
+    if (j.error) flash('Error: ' + j.error, true);
+    else flash(action + ' sent');
+  } catch (e) { flash('Error: ' + e.message, true); }
+  setTimeout(refreshStatus, 800);
+}
+window.doAction = doAction;
+
+async function sendKey(key) {
+  const fd = new FormData(); fd.append('key', key);
+  try {
+    const r = await fetch(`/api/vms/${VMID}/key`, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.error) flash('Error: ' + j.error, true);
+    else flash('Sent ' + key);
+  } catch (e) { flash('Error: ' + e.message, true); }
+}
+window.sendKey = sendKey;
+
+async function typeText(text, pressEnter) {
+  if (!text) return;
+  flash('Typing…');
+  const fd = new FormData();
+  fd.append('text', text);
+  if (pressEnter) fd.append('press_enter', '1');
+  try {
+    const r = await fetch(`/api/vms/${VMID}/type`, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.ok) {
+      let msg = `Typed ${j.sent} keys`;
+      if (j.skipped && j.skipped.length) msg += ` (skipped: ${j.skipped.join('')})`;
+      flash(msg);
+    } else {
+      flash('Error: ' + (j.error || 'unknown'), true);
+    }
+  } catch (e) { flash('Error: ' + e.message, true); }
+}
+window.typeText = typeText;
+
+function fmtUptime(sec) {
+  if (!sec) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `up ${h}h ${m}m`;
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch(`/api/vms/${VMID}/status-json`);
+    const j = await r.json();
+    const b = document.getElementById('vm-badge');
+    if (j.error) {
+      b.textContent = 'error'; b.className = 'badge stopped';
+      document.getElementById('vm-uptime').textContent = '';
+      return;
+    }
+    b.textContent = j.status || '?';
+    b.className = 'badge ' + (j.status === 'running' ? 'running' : j.status === 'stopped' ? 'stopped' : 'other');
+    document.getElementById('vm-uptime').textContent = fmtUptime(j.uptime);
+  } catch (e) { /* ignore transient errors */ }
+}
+
+// --- Presets (localStorage) ---
+function loadPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); }
+  catch { return []; }
+}
+function savePresets(list) { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function renderPresets() {
+  const body = document.getElementById('presets-body');
+  body.innerHTML = '';
+  loadPresets().forEach((p, i) => {
+    const displayVal = p.masked ? '•'.repeat(Math.min(p.value.length, 20)) : p.value;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(p.label)}</td>
+      <td><code>${escapeHtml(displayVal)}</code></td>
+      <td>${p.enter ? '↵' : ''}</td>
+      <td>
+        <button data-i="${i}" data-a="type">Type</button>
+        <button data-i="${i}" data-a="mask">${p.masked ? 'Show' : 'Mask'}</button>
+        <button data-i="${i}" data-a="del" class="danger">Delete</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('button').forEach(btn => {
+    btn.onclick = () => {
+      const list = loadPresets();
+      const i = +btn.dataset.i;
+      const a = btn.dataset.a;
+      if (a === 'type') { typeText(list[i].value, list[i].enter); return; }
+      if (a === 'mask') { list[i].masked = !list[i].masked; savePresets(list); renderPresets(); return; }
+      if (a === 'del')  { list.splice(i, 1); savePresets(list); renderPresets(); return; }
+    };
+  });
+}
+function addPreset() {
+  const label = document.getElementById('new-label').value.trim();
+  const value = document.getElementById('new-value').value;
+  const enter = document.getElementById('new-enter').checked;
+  const masked = document.getElementById('new-masked').checked;
+  if (!label || !value) { flash('Label and value required', true); return; }
+  const list = loadPresets();
+  list.push({ label, value, enter, masked });
+  savePresets(list);
+  document.getElementById('new-label').value = '';
+  document.getElementById('new-value').value = '';
+  document.getElementById('new-enter').checked = false;
+  document.getElementById('new-masked').checked = false;
+  renderPresets();
+}
+window.addPreset = addPreset;
+
+// Init panel + status polling
+if (localStorage.getItem(PANEL_KEY) === '1') togglePanel();
+renderPresets();
+refreshStatus();
+setInterval(refreshStatus, 5000);
 </script>
 </body>
 </html>
