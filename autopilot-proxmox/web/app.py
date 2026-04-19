@@ -2749,6 +2749,87 @@ def _load_oem_profiles_dict() -> dict:
     return data.get("oem_profiles", {})
 
 
+@app.post("/api/vm-provisioning")
+async def record_vm_provisioning_route(request: Request):
+    """Record vmid -> sequence_id mapping. Called by the provisioning playbook."""
+    data = await request.json()
+    vmid = int(data.get("vmid", 0))
+    sequence_id = int(data.get("sequence_id", 0))
+    if vmid == 0 or sequence_id == 0:
+        return JSONResponse({"ok": False, "error": "vmid and sequence_id required"}, status_code=400)
+    sequences_db.record_vm_provisioning(SEQUENCES_DB, vmid=vmid, sequence_id=sequence_id)
+    return {"ok": True}
+
+
+@app.post("/api/ubuntu/check-enrollment/{vmid}")
+async def check_ubuntu_enrollment(vmid: int):
+    """Guest-exec intune-portal + mdatp checks on the Ubuntu VM, parse,
+    persist status as Proxmox tags, return the parsed status."""
+    from web.ubuntu_enrollment import parse_enrollment_output, tags_for, merge_tags
+
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    base = cfg.get("proxmox_api_base") or f"https://{cfg.get('proxmox_host')}:{cfg.get('proxmox_port',8006)}/api2/json"
+    auth = f"PVEAPIToken={cfg.get('vault_proxmox_api_token_id')}={cfg.get('vault_proxmox_api_token_secret')}"
+    verify = cfg.get("proxmox_validate_certs", False)
+
+    def exec_cmd(cmd: list) -> tuple:
+        """Synchronous guest-exec + poll for completion; return (rc, stdout)."""
+        try:
+            r = requests.post(
+                f"{base}/nodes/{node}/qemu/{vmid}/agent/exec",
+                headers={"Authorization": auth},
+                json={"command": cmd},
+                verify=verify, timeout=30,
+            )
+            r.raise_for_status()
+            pid = r.json()["data"]["pid"]
+            # Poll exec-status
+            for _ in range(30):
+                s = requests.get(
+                    f"{base}/nodes/{node}/qemu/{vmid}/agent/exec-status",
+                    headers={"Authorization": auth},
+                    params={"pid": pid},
+                    verify=verify, timeout=10,
+                )
+                d = s.json().get("data", {})
+                if d.get("exited"):
+                    return int(d.get("exitcode", 0)), d.get("out-data", "") or ""
+                time.sleep(1)
+        except Exception:
+            pass
+        return 127, ""
+
+    intune_rc, intune_out = exec_cmd(["/bin/sh", "-c", "intune-portal --version 2>/dev/null || echo MISSING; exit $?"])
+    mdatp_rc, mdatp_out = exec_cmd(["/bin/sh", "-c", "mdatp health 2>/dev/null || echo MISSING; exit $?"])
+
+    status = parse_enrollment_output(
+        intune_stdout=intune_out, intune_rc=intune_rc,
+        mdatp_stdout=mdatp_out, mdatp_rc=mdatp_rc,
+    )
+    new_tags = tags_for(status)
+
+    # Fetch current tags, merge, persist
+    try:
+        cfg_resp = requests.get(
+            f"{base}/nodes/{node}/qemu/{vmid}/config",
+            headers={"Authorization": auth}, verify=verify, timeout=10,
+        )
+        existing = (cfg_resp.json().get("data", {}).get("tags") or "").split(";")
+        existing = [t for t in existing if t]
+        merged = merge_tags(existing, new_tags)
+        requests.post(
+            f"{base}/nodes/{node}/qemu/{vmid}/config",
+            headers={"Authorization": auth},
+            data={"tags": ";".join(merged)},
+            verify=verify, timeout=10,
+        )
+    except Exception:
+        pass  # tag persistence is best-effort
+
+    return {"ok": True, "status": status, "tags": new_tags}
+
+
 @app.get("/sequences/new", response_class=HTMLResponse)
 def page_sequence_new(request: Request):
     return templates.TemplateResponse("sequence_edit.html", {
