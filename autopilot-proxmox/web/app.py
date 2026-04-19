@@ -833,6 +833,62 @@ async def vms_page(request: Request, error: str = ""):
 
 # --- API Endpoints ---
 
+def _keys_in_extra_args(tokens: list) -> set[str]:
+    """Return the set of Ansible variable keys already carried as -e pairs.
+
+    Accepts the list-form of an ansible-playbook argv where each -e flag
+    is followed by a single ``key=value`` element.
+    """
+    keys: set[str] = set()
+    for t in tokens:
+        if isinstance(t, str) and "=" in t and not t.startswith("-"):
+            keys.add(t.split("=", 1)[0])
+    return keys
+
+
+# Only scrape VMIDs from the success-path debug line emitted by the
+# proxmox_vm_clone role's final "Report cloned VM" task. The failure
+# diagnostic line in the same role also mentions "VMID: N" but the role
+# has already raised by then, so anchoring on the success pattern prevents
+# writing vm_provisioning rows for clones that never completed.
+_VMID_SUCCESS_RE = re.compile(
+    r"Cloned VM\s+'[^']*'\s+\(VMID:\s+(\d+)\)\s+from template"
+)
+
+
+def _record_vms_for_sequence(job_dict: dict, sequence_id: int) -> None:
+    """Callback body used by `_register_sequence_callbacks`.
+
+    Runs in the job-runner thread. Only records VMIDs for successful jobs
+    — a failed job whose log happens to mention a partially-allocated
+    VMID must NOT be recorded as provisioned by this sequence.
+    """
+    if job_dict.get("status") not in ("complete", "success"):
+        return
+    log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
+    if not log_path.exists():
+        return
+    text = log_path.read_text(errors="replace")
+    for m in _VMID_SUCCESS_RE.finditer(text):
+        try:
+            sequences_db.record_vm_provisioning(
+                SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sequence_id,
+            )
+        except Exception:
+            # Can't raise from a worker-thread callback — would poison job
+            # status. DAL constraint violations are effectively "no row
+            # written" which is the outcome we want on error anyway.
+            pass
+
+
+def _register_sequence_callbacks(job_id: str, sequence_id: int) -> None:
+    """Persist sequence_id on the job and register the vm_provisioning scraper."""
+    job_manager.set_arg(job_id, "sequence_id", sequence_id)
+    job_manager.add_on_complete(
+        job_id, lambda job_dict, sid=sequence_id: _record_vms_for_sequence(job_dict, sid)
+    )
+
+
 @app.post("/api/jobs/provision")
 async def start_provision(
     profile: str = Form(...),
@@ -889,46 +945,21 @@ async def start_provision(
         )
 
     if count <= 1:
-        cmd = [
-            "ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml"),
-            "-e", f"vm_oem_profile={profile}",
-            "-e", "vm_count=1",
-        ] + _overrides()
+        cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]
+        # Only emit the form profile if the operator actually set one; a
+        # blank form lets the sequence (or vars.yml) supply vm_oem_profile.
+        if profile:
+            cmd += ["-e", f"vm_oem_profile={profile}"]
+        cmd += ["-e", "vm_count=1"] + _overrides()
+        # Collect keys already present in cmd so sequence-compiled vars don't
+        # stomp them (form/_overrides() win per spec §12).
+        existing_keys = _keys_in_extra_args(cmd)
         for key, value in resolved_vars.items():
-            pair = f"{key}={value}"
-            # Skip if any existing -e arg already sets this key= to a
-            # non-empty value (empty profile arg is superseded by sequence).
-            already = any(
-                isinstance(a, str)
-                and a.startswith(f"{key}=")
-                and a[len(f"{key}="):].strip() != ""
-                for a in cmd
-            )
-            if not already:
-                # Remove any existing empty-value arg for this key first.
-                cmd = [
-                    a for a in cmd
-                    if not (isinstance(a, str) and a == f"{key}=")
-                ]
-                cmd.extend(["-e", pair])
+            if key not in existing_keys:
+                cmd.extend(["-e", f"{key}={value}"])
         job = job_manager.start("provision_clone", cmd, args=args)
         if sequence_id:
-            job_manager.set_arg(job["id"], "sequence_id", sequence_id)
-            sid = int(sequence_id)
-            def _record_vms(job_dict, sid=sid):
-                import re as _re
-                log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
-                if not log_path.exists():
-                    return
-                text = log_path.read_text(errors="replace")
-                for m in _re.finditer(r"VMID: (\d+)", text):
-                    try:
-                        sequences_db.record_vm_provisioning(
-                            SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sid,
-                        )
-                    except Exception:
-                        pass
-            job_manager.add_on_complete(job["id"], _record_vms)
+            _register_sequence_callbacks(job["id"], int(sequence_id))
         return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
     # Multiple VMs — run sequentially to avoid VMID race condition
@@ -938,11 +969,12 @@ async def start_provision(
 
     extra_tokens = " ".join(shlex.quote(t) for t in _overrides())
 
-    # Append resolved sequence vars to the per-invocation extra tokens,
-    # but don't duplicate any key that _overrides() or the profile arg
-    # already set.
+    # Append resolved sequence vars without duplicating keys already carried
+    # by the form profile or _overrides(). Only lock out vm_oem_profile when
+    # the form actually supplied one — otherwise the sequence is free to set it.
     existing_keys = set()
-    existing_keys.add("vm_oem_profile")
+    if profile:
+        existing_keys.add("vm_oem_profile")
     for t in _overrides():
         if "=" in t and not t.startswith("-"):
             existing_keys.add(t.split("=", 1)[0])
@@ -959,7 +991,10 @@ async def start_provision(
 
     for i in range(count):
         script_lines.append(f"echo '=== VM {i+1}/{count} ==='")
-        cmd_line = f"ansible-playbook {playbook} -e vm_oem_profile={safe_profile} -e vm_count=1"
+        cmd_line = f"ansible-playbook {playbook}"
+        if profile:
+            cmd_line += f" -e vm_oem_profile={safe_profile}"
+        cmd_line += " -e vm_count=1"
         if extra_tokens:
             cmd_line += f" {extra_tokens}"
         script_lines.append(cmd_line)
@@ -975,22 +1010,7 @@ async def start_provision(
 
     job = job_manager.start("provision_clone", ["bash", str(script_path)], args=args)
     if sequence_id:
-        job_manager.set_arg(job["id"], "sequence_id", sequence_id)
-        sid = int(sequence_id)
-        def _record_vms(job_dict, sid=sid):
-            import re as _re
-            log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
-            if not log_path.exists():
-                return
-            text = log_path.read_text(errors="replace")
-            for m in _re.finditer(r"VMID: (\d+)", text):
-                try:
-                    sequences_db.record_vm_provisioning(
-                        SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sid,
-                    )
-                except Exception:
-                    pass
-        job_manager.add_on_complete(job["id"], _record_vms)
+        _register_sequence_callbacks(job["id"], int(sequence_id))
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
