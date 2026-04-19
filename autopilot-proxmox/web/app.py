@@ -60,6 +60,9 @@ HASH_DIR = BASE_DIR / "output" / "hashes"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
+SECRETS_DIR = BASE_DIR / "secrets"
+SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
+CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
 DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
 
@@ -230,6 +233,19 @@ def _save_vars(updates):
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
+
+from web import sequences_db, crypto as _crypto
+
+
+@app.on_event("startup")
+def _init_sequences_db() -> None:
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    sequences_db.init(SEQUENCES_DB)
+
+
+def _cipher() -> _crypto.Cipher:
+    """Lazy accessor so tests can monkeypatch CREDENTIAL_KEY before first call."""
+    return _crypto.Cipher(CREDENTIAL_KEY)
 
 
 def _load_proxmox_config():
