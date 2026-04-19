@@ -1,165 +1,232 @@
-{% extends "base.html" %}
-{% block title %}Console - {{ vm_name }} ({{ vmid }}){% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{# Title is VMID + device serial (VM name in Proxmox). Hyphens and any
+   other chars in the serial are preserved verbatim. #}
+<title>{{ vmid }}{% if serial %} · {{ serial }}{% endif %}</title>
 <style>
-  #console-toolbar {
-    background: #f5f5f5;
-    border: 1px solid #ccc;
-    padding: 6px 10px;
-    margin-bottom: 6px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
+  html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: Verdana, Tahoma, Arial, sans-serif; }
+  #topbar { background: #336699; color: #fff; padding: 6px 12px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
+  #topbar a { color: #fff; }
+  #topbar .actions button { background: #264d73; color: #fff; border: 1px solid #1a365d; padding: 2px 8px; font-size: 11px; cursor: pointer; margin-left: 4px; }
+  #topbar .actions button:hover { background: #1a365d; }
+  #status { font-family: monospace; font-size: 11px; }
+  #screen { width: 100vw; height: calc(100vh - 32px); background: #000; }
+  .status-ok { color: #c8e6c9; }
+  .status-warn { color: #ffecb3; }
+  .status-err { color: #ffcdd2; }
+
+  /* Collapsible controls panel below the topbar */
+  #panel { background: #222; border-bottom: 1px solid #000; padding: 4px 12px; font-size: 11px; display: none; }
+  #panel.open { display: block; }
+  body.panel-open #screen { height: calc(100vh - 32px - var(--panel-h, 88px)); }
+  #panel .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 3px 0; }
+  #panel .row + .row { border-top: 1px solid #333; }
+  #panel .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid #444; }
+  #panel .group:last-child { border-right: none; }
+  #panel button { background: #336699; color: #fff; border: 1px solid #264d73; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  #panel button:hover { background: #264d73; }
+  #panel button.danger { background: #992222; border-color: #661111; }
+  #panel button.danger:hover { background: #661111; }
+  #panel input[type="text"], #panel input[type="password"] {
+    background: #111; color: #ddd; border: 1px solid #555; padding: 2px 4px; font-size: 11px;
   }
-  #console-toolbar .group {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-    padding-right: 10px;
-    border-right: 1px solid #ccc;
-  }
-  #console-toolbar .group:last-child { border-right: none; }
-  #console-toolbar button {
-    background: #336699;
-    color: white;
-    border: 1px solid #264d73;
-    padding: 3px 10px;
-    font-size: 11px;
-    cursor: pointer;
-    font-family: Verdana, Tahoma, Arial, sans-serif;
-  }
-  #console-toolbar button:hover { background: #264d73; }
-  #console-toolbar button.danger { background: #cc0000; border-color: #990000; }
-  #console-toolbar button.danger:hover { background: #990000; }
-  #console-toolbar input[type="text"], #console-toolbar input[type="password"] {
-    border: 1px solid #999;
-    padding: 2px 4px;
-    font-size: 11px;
-    width: 220px;
-  }
-  #console-iframe {
-    width: 100%;
-    height: calc(100vh - 220px);
-    min-height: 500px;
-    border: 1px solid #336699;
-    background: #000;
-  }
-  #snippets-table { margin-top: 4px; font-size: 11px; }
-  #snippets-table td { padding: 2px 4px; border: none; }
-  #snippets-table input[type="text"] { width: 280px; }
-  #status-badge { padding: 2px 8px; font-weight: bold; }
-  #flash { color: #006600; font-weight: bold; margin-left: 8px; }
-  #flash.err { color: #cc0000; }
+  #panel .badge { padding: 1px 6px; font-weight: bold; border: 1px solid #444; }
+  #panel .badge.running { background: #1b4d1b; color: #c8e6c9; }
+  #panel .badge.stopped { background: #4d1b1b; color: #ffcdd2; }
+  #panel .badge.other   { background: #4d4d1b; color: #ffecb3; }
+  #panel #flash { color: #c8e6c9; }
+  #panel #flash.err { color: #ffcdd2; }
+  #presets-table { border-collapse: collapse; margin-top: 2px; }
+  #presets-table td { padding: 1px 6px; border: none; color: #ddd; vertical-align: middle; }
+  #presets-table code { background: #111; padding: 1px 4px; border: 1px solid #333; }
+  #topbar .actions .toggle-btn { background: #1a365d; }
 </style>
-
-<h2 style="margin-top:0;">Console: {{ vm_name }} <small style="color:#666;">(VMID {{ vmid }})</small></h2>
-
-<div id="console-toolbar">
-  <div class="group">
-    <span>Status:</span>
-    <span id="status-badge" class="status-green">?</span>
-    <span id="uptime" style="color:#666;"></span>
-  </div>
-
-  <div class="group">
-    <button onclick="power('start')">Start</button>
-    <button onclick="power('shutdown')">Shutdown</button>
-    <button onclick="power('reboot')">Reboot</button>
-    <button class="danger" onclick="if(confirm('Hard stop {{ vm_name }}?'))power('stop')">Stop</button>
-    <button class="danger" onclick="if(confirm('Reset {{ vm_name }}?'))power('reset')">Reset</button>
-  </div>
-
-  <div class="group">
-    <button onclick="sendKey('ctrl-alt-delete')">Ctrl-Alt-Del</button>
-    <button onclick="sendKey('tab')">Tab</button>
-    <button onclick="sendKey('ret')">Enter</button>
-    <button onclick="sendKey('esc')">Esc</button>
-  </div>
-
-  <div class="group">
-    <a href="{{ novnc_url }}" target="_blank">Open raw noVNC &#8599;</a>
-  </div>
-
-  <span id="flash"></span>
-</div>
-
-<div id="console-toolbar">
-  <div class="group" style="flex:1;">
-    <b>Type text:</b>
-    <input type="text" id="quick-text" placeholder="text to type into VM" onkeydown="if(event.key==='Enter'){event.preventDefault();sendText(document.getElementById('quick-text').value, document.getElementById('quick-enter').checked);}">
-    <label><input type="checkbox" id="quick-enter"> press Enter</label>
-    <button onclick="sendText(document.getElementById('quick-text').value, document.getElementById('quick-enter').checked)">Send</button>
-    <button onclick="document.getElementById('quick-text').value=''">Clear</button>
-  </div>
-</div>
-
-<div id="console-toolbar" style="flex-direction:column; align-items:stretch;">
-  <div><b>Presets</b> <small style="color:#666;">(saved in this browser only — safe for local use)</small></div>
-  <table id="snippets-table">
-    <tr>
-      <td>Label</td>
-      <td>Value</td>
-      <td>Enter?</td>
-      <td>Action</td>
-    </tr>
-    <tbody id="snippets-body"></tbody>
-  </table>
+</head>
+<body>
+<div id="topbar">
   <div>
-    <input type="text" id="new-label" placeholder="label (e.g. Admin email)" style="width:180px;">
-    <input type="text" id="new-value" placeholder="value to type">
-    <label><input type="checkbox" id="new-enter"> Enter after</label>
-    <button onclick="addSnippet()">Save preset</button>
+    VM {{ vmid }}
+    {% if serial %} · <b>{{ serial }}</b>{% endif %}
+    · node {{ node }}
+    · <a href="/vms">back to VMs</a>
+  </div>
+  <div id="status" class="status-warn">initializing…</div>
+  <div class="actions">
+    <button class="toggle-btn" onclick="togglePanel();" title="Toggle controls panel">Controls</button>
+    <button onclick="sendCtrlAltDel();" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
+    <button onclick="rfbInstance && rfbInstance.focus();" title="Give the console keyboard focus">Focus</button>
+    <button onclick="reconnect();" title="Fetch a new ticket and reconnect">Reconnect</button>
   </div>
 </div>
+<div id="panel">
+  <div class="row">
+    <div class="group">
+      VM status: <span id="vm-badge" class="badge other">?</span>
+      <span id="vm-uptime" style="color:#888;"></span>
+    </div>
+    <div class="group">
+      <button onclick="doAction('start')">Start</button>
+      <button onclick="doAction('shutdown')">Shutdown</button>
+      <button onclick="doAction('reboot')">Reboot</button>
+      <button class="danger" onclick="if(confirm('Hard stop VM {{ vmid }}?'))doAction('stop')">Stop</button>
+      <button class="danger" onclick="if(confirm('Reset VM {{ vmid }}?'))doAction('reset')">Reset</button>
+    </div>
+    <div class="group">
+      <button onclick="sendKey('tab')">Tab</button>
+      <button onclick="sendKey('ret')">Enter</button>
+      <button onclick="sendKey('esc')">Esc</button>
+    </div>
+    <span id="flash"></span>
+  </div>
+  <div class="row">
+    <div class="group" style="flex:1;">
+      <b>Type text:</b>
+      <input type="text" id="quick-text" placeholder="text to type into VM" style="width:320px;" onkeydown="if(event.key==='Enter'){event.preventDefault();typeText(this.value, document.getElementById('quick-enter').checked);}">
+      <label><input type="checkbox" id="quick-enter"> press Enter after</label>
+      <button onclick="typeText(document.getElementById('quick-text').value, document.getElementById('quick-enter').checked)">Send</button>
+      <button onclick="document.getElementById('quick-text').value=''">Clear</button>
+    </div>
+  </div>
+  <div class="row" style="flex-direction:column; align-items:stretch;">
+    <div><b>Saved presets</b> <small style="color:#888;">— stored in this browser's localStorage only</small></div>
+    <table id="presets-table"><tbody id="presets-body"></tbody></table>
+    <div class="group" style="border:none;">
+      <input type="text" id="new-label" placeholder="label" style="width:160px;">
+      <input type="text" id="new-value" placeholder="value to type">
+      <label><input type="checkbox" id="new-enter"> Enter after</label>
+      <label><input type="checkbox" id="new-masked"> mask</label>
+      <button onclick="addPreset()">Save preset</button>
+    </div>
+  </div>
+</div>
+<div id="screen"></div>
+<script type="module">
+import RFB from 'https://cdn.jsdelivr.net/gh/novnc/noVNC@v1.5.0/core/rfb.js';
 
-<iframe id="console-iframe" src="{{ novnc_url }}"></iframe>
-
-<script>
 const VMID = {{ vmid }};
-const SNIPPETS_KEY = "pveautopilot_console_snippets_v1";
+const statusEl = document.getElementById('status');
+const screenEl = document.getElementById('screen');
+let rfb = null;
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+}
+
+async function connect() {
+  setStatus('requesting VNC ticket…', 'status-warn');
+  let ticket;
+  try {
+    const r = await fetch('/api/vms/' + VMID + '/vnc-init');
+    ticket = await r.json();
+  } catch (e) {
+    setStatus('init failed: ' + e.message, 'status-err');
+    return;
+  }
+  if (ticket.error || !ticket.ticket || !ticket.port) {
+    setStatus('init failed: ' + (ticket.error || 'no ticket'), 'status-err');
+    return;
+  }
+
+  const wsScheme = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+  const wsUrl = wsScheme + location.host + '/api/vms/' + VMID + '/vnc-ws' +
+                '?port=' + encodeURIComponent(ticket.port) +
+                '&vncticket=' + encodeURIComponent(ticket.ticket);
+
+  setStatus('opening console websocket…', 'status-warn');
+  if (rfb) { try { rfb.disconnect(); } catch (e) {} rfb = null; }
+  screenEl.innerHTML = '';
+
+  rfb = new RFB(screenEl, wsUrl, {
+    credentials: { password: ticket.ticket },
+    wsProtocols: ['binary'],
+  });
+  rfb.viewOnly = false;
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+
+  rfb.addEventListener('connect',      () => setStatus('connected · ' + (ticket.user || ''), 'status-ok'));
+  rfb.addEventListener('disconnect',   e => setStatus('disconnected: ' + (e.detail.reason || 'closed'), 'status-err'));
+  rfb.addEventListener('credentialsrequired', () => rfb.sendCredentials({ password: ticket.ticket }));
+  rfb.addEventListener('securityfailure',    e => setStatus('VNC auth failed: ' + (e.detail.reason || ''), 'status-err'));
+}
+
+window.sendCtrlAltDel = () => { if (rfb) rfb.sendCtrlAltDel(); };
+window.reconnect      = () => connect();
+window.rfbInstance    = null;
+
+connect().then(() => { window.rfbInstance = rfb; });
+
+// --- Controls panel: power, type-text, presets ---
+const PANEL_KEY = 'pveautopilot_console_panel_open_v1';
+const PRESETS_KEY = 'pveautopilot_console_presets_v1';
+const flashEl = document.getElementById('flash');
+let flashTimer = 0;
 
 function flash(msg, isErr) {
-  const el = document.getElementById('flash');
-  el.textContent = msg;
-  el.className = isErr ? 'err' : '';
-  clearTimeout(flash._t);
-  flash._t = setTimeout(() => { el.textContent = ''; }, 4000);
+  flashEl.textContent = msg;
+  flashEl.className = isErr ? 'err' : '';
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { flashEl.textContent = ''; }, 4000);
 }
 
-async function power(action) {
-  const r = await fetch(`/api/vms/${VMID}/power/${action}`, {method: 'POST'});
-  const j = await r.json();
-  if (j.error) flash('Error: ' + j.error, true);
-  else flash(action + ' sent');
+function togglePanel() {
+  const panel = document.getElementById('panel');
+  const open = !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  document.body.classList.toggle('panel-open', open);
+  // Set --panel-h so #screen shrinks precisely
+  requestAnimationFrame(() => {
+    document.documentElement.style.setProperty('--panel-h', panel.offsetHeight + 'px');
+  });
+  localStorage.setItem(PANEL_KEY, open ? '1' : '0');
+}
+window.togglePanel = togglePanel;
+
+async function doAction(action) {
+  flash(action + '…');
+  try {
+    const r = await fetch(`/api/vms/${VMID}/action/${action}`, { method: 'POST' });
+    const j = await r.json();
+    if (j.error) flash('Error: ' + j.error, true);
+    else flash(action + ' sent');
+  } catch (e) { flash('Error: ' + e.message, true); }
   setTimeout(refreshStatus, 800);
 }
+window.doAction = doAction;
 
 async function sendKey(key) {
-  const fd = new FormData();
-  fd.append('key', key);
-  const r = await fetch(`/api/vms/${VMID}/sendkey`, {method: 'POST', body: fd});
-  const j = await r.json();
-  if (j.error) flash('Error: ' + j.error, true);
-  else flash('Sent ' + key);
+  const fd = new FormData(); fd.append('key', key);
+  try {
+    const r = await fetch(`/api/vms/${VMID}/key`, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.error) flash('Error: ' + j.error, true);
+    else flash('Sent ' + key);
+  } catch (e) { flash('Error: ' + e.message, true); }
 }
+window.sendKey = sendKey;
 
-async function sendText(text, pressEnter) {
+async function typeText(text, pressEnter) {
   if (!text) return;
+  flash('Typing…');
   const fd = new FormData();
   fd.append('text', text);
   if (pressEnter) fd.append('press_enter', '1');
-  flash('Typing...');
-  const r = await fetch(`/api/vms/${VMID}/sendtext`, {method: 'POST', body: fd});
-  const j = await r.json();
-  if (j.ok) {
-    let msg = `Typed ${j.sent} keys`;
-    if (j.skipped && j.skipped.length) msg += ` (skipped: ${j.skipped.join('')})`;
-    flash(msg);
-  } else {
-    flash('Error: ' + (j.error || 'unknown'), true);
-  }
+  try {
+    const r = await fetch(`/api/vms/${VMID}/type`, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.ok) {
+      let msg = `Typed ${j.sent} keys`;
+      if (j.skipped && j.skipped.length) msg += ` (skipped: ${j.skipped.join('')})`;
+      flash(msg);
+    } else {
+      flash('Error: ' + (j.error || 'unknown'), true);
+    }
+  } catch (e) { flash('Error: ' + e.message, true); }
 }
+window.typeText = typeText;
 
 function fmtUptime(sec) {
   if (!sec) return '';
@@ -170,81 +237,79 @@ function fmtUptime(sec) {
 
 async function refreshStatus() {
   try {
-    const r = await fetch(`/api/vms/${VMID}/status`);
+    const r = await fetch(`/api/vms/${VMID}/status-json`);
     const j = await r.json();
-    const badge = document.getElementById('status-badge');
+    const b = document.getElementById('vm-badge');
     if (j.error) {
-      badge.textContent = 'error';
-      badge.className = 'status-red';
-    } else {
-      badge.textContent = j.status || '?';
-      badge.className = j.status === 'running' ? 'status-green' : 'status-red';
-      document.getElementById('uptime').textContent = fmtUptime(j.uptime);
+      b.textContent = 'error'; b.className = 'badge stopped';
+      document.getElementById('vm-uptime').textContent = '';
+      return;
     }
-  } catch (e) { /* ignore */ }
+    b.textContent = j.status || '?';
+    b.className = 'badge ' + (j.status === 'running' ? 'running' : j.status === 'stopped' ? 'stopped' : 'other');
+    document.getElementById('vm-uptime').textContent = fmtUptime(j.uptime);
+  } catch (e) { /* ignore transient errors */ }
 }
 
-// --- snippet presets (localStorage) ---
-function loadSnippets() {
-  try { return JSON.parse(localStorage.getItem(SNIPPETS_KEY) || '[]'); }
+// --- Presets (localStorage) ---
+function loadPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); }
   catch { return []; }
 }
-function saveSnippets(list) {
-  localStorage.setItem(SNIPPETS_KEY, JSON.stringify(list));
-}
-function renderSnippets() {
-  const body = document.getElementById('snippets-body');
-  const list = loadSnippets();
-  body.innerHTML = '';
-  list.forEach((s, i) => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escapeHtml(s.label)}</td>
-      <td><code>${escapeHtml(s.masked ? '•'.repeat(s.value.length) : s.value)}</code></td>
-      <td>${s.enter ? 'yes' : ''}</td>
-      <td>
-        <button data-i="${i}" class="use-btn">Type</button>
-        <button data-i="${i}" class="mask-btn">${s.masked ? 'Show' : 'Mask'}</button>
-        <button data-i="${i}" class="del-btn">Delete</button>
-      </td>`;
-    body.appendChild(tr);
-  });
-  body.querySelectorAll('.use-btn').forEach(b => b.onclick = () => {
-    const s = loadSnippets()[b.dataset.i];
-    sendText(s.value, s.enter);
-  });
-  body.querySelectorAll('.mask-btn').forEach(b => b.onclick = () => {
-    const list = loadSnippets();
-    list[b.dataset.i].masked = !list[b.dataset.i].masked;
-    saveSnippets(list);
-    renderSnippets();
-  });
-  body.querySelectorAll('.del-btn').forEach(b => b.onclick = () => {
-    const list = loadSnippets();
-    list.splice(b.dataset.i, 1);
-    saveSnippets(list);
-    renderSnippets();
-  });
-}
-function addSnippet() {
-  const label = document.getElementById('new-label').value.trim();
-  const value = document.getElementById('new-value').value;
-  const enter = document.getElementById('new-enter').checked;
-  if (!label || !value) { flash('Label and value required', true); return; }
-  const list = loadSnippets();
-  list.push({ label, value, enter, masked: false });
-  saveSnippets(list);
-  document.getElementById('new-label').value = '';
-  document.getElementById('new-value').value = '';
-  document.getElementById('new-enter').checked = false;
-  renderSnippets();
-}
+function savePresets(list) { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+function renderPresets() {
+  const body = document.getElementById('presets-body');
+  body.innerHTML = '';
+  loadPresets().forEach((p, i) => {
+    const displayVal = p.masked ? '•'.repeat(Math.min(p.value.length, 20)) : p.value;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(p.label)}</td>
+      <td><code>${escapeHtml(displayVal)}</code></td>
+      <td>${p.enter ? '↵' : ''}</td>
+      <td>
+        <button data-i="${i}" data-a="type">Type</button>
+        <button data-i="${i}" data-a="mask">${p.masked ? 'Show' : 'Mask'}</button>
+        <button data-i="${i}" data-a="del" class="danger">Delete</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('button').forEach(btn => {
+    btn.onclick = () => {
+      const list = loadPresets();
+      const i = +btn.dataset.i;
+      const a = btn.dataset.a;
+      if (a === 'type') { typeText(list[i].value, list[i].enter); return; }
+      if (a === 'mask') { list[i].masked = !list[i].masked; savePresets(list); renderPresets(); return; }
+      if (a === 'del')  { list.splice(i, 1); savePresets(list); renderPresets(); return; }
+    };
+  });
+}
+function addPreset() {
+  const label = document.getElementById('new-label').value.trim();
+  const value = document.getElementById('new-value').value;
+  const enter = document.getElementById('new-enter').checked;
+  const masked = document.getElementById('new-masked').checked;
+  if (!label || !value) { flash('Label and value required', true); return; }
+  const list = loadPresets();
+  list.push({ label, value, enter, masked });
+  savePresets(list);
+  document.getElementById('new-label').value = '';
+  document.getElementById('new-value').value = '';
+  document.getElementById('new-enter').checked = false;
+  document.getElementById('new-masked').checked = false;
+  renderPresets();
+}
+window.addPreset = addPreset;
 
-renderSnippets();
+// Init panel + status polling
+if (localStorage.getItem(PANEL_KEY) === '1') togglePanel();
+renderPresets();
 refreshStatus();
 setInterval(refreshStatus, 5000);
 </script>
-{% endblock %}
+</body>
+</html>

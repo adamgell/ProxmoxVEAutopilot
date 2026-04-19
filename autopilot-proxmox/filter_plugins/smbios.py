@@ -98,14 +98,26 @@ class FilterModule:
           Microsoft*  -> MSF
           default     -> LAB
         """
-        if custom_serial:
+        # If custom_serial looks like a prefix (ends in '-') treat it as a
+        # prefix instead of returning it verbatim. Otherwise every VM would
+        # get the same invalid name — and Proxmox rejects names ending in
+        # a hyphen as invalid DNS names anyway.
+        if custom_serial and not custom_serial.endswith("-"):
             return custom_serial
+        if custom_serial and not prefix:
+            prefix = custom_serial
 
         random_bytes = os.urandom(4)
         hex_str = random_bytes.hex().upper()
 
         if prefix:
-            return f"{prefix}-{hex_str}"
+            # Strip trailing hyphens so a user-supplied prefix like "Gell-"
+            # doesn't produce "Gell--HEX" — Proxmox's clone API rejects
+            # names with consecutive hyphens via its DNS-name validator.
+            clean_prefix = prefix.rstrip("-")
+            if not clean_prefix:
+                clean_prefix = "VM"
+            return f"{clean_prefix}-{hex_str}"
 
         manufacturer = manufacturer or ""
         if manufacturer.startswith("Lenovo"):

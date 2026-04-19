@@ -9,5 +9,8 @@ __pycache__/
 autopilot-proxmox/inventory/group_vars/all/vault.yml
 output/
 
-# docs
-docs/
+# docs (allow screenshots for README)
+docs/superpowers/
+
+# Session artifacts from Claude Code superpowers tooling
+.superpowers/

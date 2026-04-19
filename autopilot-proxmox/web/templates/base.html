@@ -126,6 +126,72 @@ a:visited {
   max-height: 600px;
   border: 1px solid #333;
 }
+.action-btn {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 3px 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  position: relative;
+}
+.action-btn:hover {
+  background: #dde8f0;
+  border-color: #336699;
+}
+.action-btn.danger:hover {
+  background: #f8d7da;
+  border-color: #cc0000;
+}
+
+/* Instant CSS tooltip using the title attribute. Browsers still render
+ * their native title tooltip after ~1s, but the CSS one appears right
+ * away so users don't have to hover-and-wait. */
+.action-btn[title]:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: Verdana, Tahoma, Arial, sans-serif;
+  font-weight: normal;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.action-btn[title]:hover::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: #333;
+  pointer-events: none;
+  z-index: 100;
+}
+.actions-cell {
+  white-space: nowrap;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
+.badge-green { background:#d4edda; color:#155724; }
+.badge-gray { background:#e2e3e5; color:#383d41; }
+.action-btn-upload { background:#336699; color:white; border:1px solid #264d73; padding:3px 12px; font-size:11px; cursor:pointer; font-family:Verdana,Tahoma,Arial,sans-serif; }
+.action-btn-upload:hover { background:#264d73; }
+.action-btn-delete { background:#cc0000; color:white; border:1px solid #990000; padding:3px 12px; font-size:11px; cursor:pointer; font-family:Verdana,Tahoma,Arial,sans-serif; }
+.action-btn-delete:hover { background:#990000; }
 </style>
 </head>
 <body>
@@ -135,14 +201,50 @@ a:visited {
 <a href="/provision">Provision VMs</a> |
 <a href="/vms">Devices</a> |
 <a href="/template">Build Template</a> |
-<a href="/upload">Upload Hashes</a> |
-<a href="/hashes">Hash Files</a> |
+<a href="/hashes">Hashes</a> |
+<a href="/cloud">Cloud</a> |
 <a href="/jobs">Jobs</a> |
 <a href="/settings">Settings</a>
 </div>
 <div id="content">
 {% block content %}{% endblock %}
 </div>
-<div id="footer">Proxmox VE Autopilot &copy; 2026</div>
+<div id="footer">
+  Proxmox VE Autopilot &copy; 2026
+  <span style="margin-left:15px;">Build: <span id="buildSha" style="font-family:monospace;">…</span></span>
+  <span id="updateBadge" style="margin-left:8px;"></span>
+  <button type="button" onclick="checkUpdate(true);" style="margin-left:8px;font-size:10px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">Check for updates</button>
+</div>
+<script>
+(function() {
+  function renderBadge(data) {
+    var sha = data.running && data.running.sha_short ? data.running.sha_short : 'unknown';
+    var when = data.running && data.running.build_time && data.running.build_time !== 'unknown' ? data.running.build_time : '';
+    var el = document.getElementById('buildSha');
+    el.textContent = sha;
+    el.title = (data.running && data.running.sha ? data.running.sha : '') + (when ? ' — built ' + when : '');
+
+    var badge = document.getElementById('updateBadge');
+    if (data.update_available === true) {
+      badge.innerHTML = '<a href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank" style="display:inline-block;padding:1px 6px;background:#fff3cd;color:#856404;border-radius:3px;font-weight:bold;text-decoration:none;">Update available: ' + (data.latest.sha_short || '?') + '</a>';
+    } else if (data.update_available === false) {
+      badge.innerHTML = '<span style="display:inline-block;padding:1px 6px;background:#d4edda;color:#155724;border-radius:3px;">up to date</span>';
+    } else if (data.latest && data.latest.error) {
+      badge.innerHTML = '<span style="color:#999;">update check failed</span>';
+      badge.title = data.latest.error;
+    } else {
+      badge.innerHTML = '';
+    }
+  }
+  window.checkUpdate = function(withRemote) {
+    var url = withRemote ? '/api/version?check=1' : '/api/version';
+    fetch(url).then(function(r) { return r.json(); }).then(renderBadge).catch(function(){});
+  };
+  // Initial render: show the running build. Do the GitHub check after a
+  // short delay so the rest of the page loads first.
+  checkUpdate(false);
+  setTimeout(function() { checkUpdate(true); }, 1500);
+})();
+</script>
 </body>
 </html>

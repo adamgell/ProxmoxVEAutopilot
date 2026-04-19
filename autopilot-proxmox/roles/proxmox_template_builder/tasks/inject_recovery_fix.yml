@@ -1,0 +1,43 @@
+---
+# Drop FixRecoveryPartition.ps1 + SetupComplete.cmd into the guest's
+# C:\Windows\Setup\Scripts\ directory. Windows runs SetupComplete.cmd as
+# SYSTEM at the end of OOBE (before the first user sign-in) — on cloned VMs
+# this fires after any Proxmox disk expansion, so the recovery partition is
+# rebuilt at the end of the disk before Autopilot ESP completes.
+
+- name: Read FixRecoveryPartition.ps1 from controller
+  ansible.builtin.slurp:
+    src: "{{ playbook_dir }}/../files/FixRecoveryPartition.ps1"
+  register: _recovery_ps1
+
+- name: Read SetupComplete.cmd from controller
+  ansible.builtin.slurp:
+    src: "{{ playbook_dir }}/../files/SetupComplete.cmd"
+  register: _setup_complete_cmd
+
+- name: Ensure C:\Windows\Setup\Scripts exists in guest  # noqa: ignore-errors
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      - "mkdir"
+      - 'C:\Windows\Setup\Scripts'
+    _exec_timeout: 30
+  ignore_errors: true  # mkdir fails if directory already exists
+
+- name: Write FixRecoveryPartition.ps1 to guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_file_write.yml"
+  vars:
+    _guest_file: 'C:\Windows\Setup\Scripts\FixRecoveryPartition.ps1'
+    _guest_content: "{{ _recovery_ps1.content | b64decode }}"
+
+- name: Write SetupComplete.cmd to guest
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_file_write.yml"
+  vars:
+    _guest_file: 'C:\Windows\Setup\Scripts\SetupComplete.cmd'
+    _guest_content: "{{ _setup_complete_cmd.content | b64decode }}"
+
+- name: Recovery-fix scripts injected
+  ansible.builtin.debug:
+    msg: "Injected FixRecoveryPartition.ps1 and SetupComplete.cmd into template {{ vm_vmid }}"

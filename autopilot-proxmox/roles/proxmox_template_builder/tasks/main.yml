@@ -39,6 +39,9 @@
   vars:
     guest_agent_timeout_seconds: "{{ template_agent_timeout_seconds }}"
 
+- name: Inject recovery-partition fix scripts
+  ansible.builtin.include_tasks: inject_recovery_fix.yml
+
 - name: Run sysprep
   ansible.builtin.include_tasks: sysprep.yml
 

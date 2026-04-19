@@ -5,7 +5,7 @@
 - name: Build config update body
   ansible.builtin.set_fact:
     _config_body:
-      name: "{{ vm_name }}"
+      name: "{{ _vm_serial | default(vm_name) | regex_replace('[^A-Za-z0-9\\-]', '') }}"
       cores: "{{ vm_cores }}"
       memory: "{{ vm_memory_mb }}"
       cpu: "host"
@@ -13,6 +13,7 @@
       agent: "enabled=1,type=virtio"
       scsi0: "{{ _current_scsi0 | proxmox_disk_serial(_vm_identity.disk_serial) }}"
       net0: "virtio,bridge={{ proxmox_bridge }},firewall=0{{ ',tag=' + (proxmox_vlan_tag | string) if proxmox_vlan_tag else '' }}"
+      tags: "autopilot"
 
 - name: Add SMBIOS1 to config
   ansible.builtin.set_fact:

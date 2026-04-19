@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 # Install system deps + PowerShell in one layer to reduce image size
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg apt-transport-https genisoimage \
+    curl gnupg apt-transport-https genisoimage procps \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
        | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-debian-bookworm-prod bookworm main" \
@@ -24,6 +24,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project
 COPY . .
+
+# Embed the build SHA and timestamp so the UI can show what's running.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+RUN printf '%s\n%s\n' "$GIT_SHA" "$BUILD_TIME" > /app/VERSION
+ENV APP_VERSION_FILE=/app/VERSION
 
 # Create runtime directories
 RUN mkdir -p /app/jobs /app/output/hashes

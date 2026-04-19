@@ -6,7 +6,7 @@
     body_format: form-urlencoded
     body:
       newid: "{{ vm_vmid }}"
-      name: "{{ vm_name }}"
+      name: "{{ vm_name | trim }}"
       full: "1"
       storage: "{{ proxmox_storage }}"
     headers:
