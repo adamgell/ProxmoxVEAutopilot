@@ -57,3 +57,94 @@ def test_build_seed_iso_accepts_optional_network_config(tmp_path: Path) -> None:
     # but we can confirm genisoimage was called with a real directory path.
     # Just assert the call happened without error.
     assert mock_run.called
+
+
+# -----------------------------------------------------------------------------
+# /api/ubuntu/rebuild-seed-iso endpoint tests (Task 17)
+# -----------------------------------------------------------------------------
+
+
+def _setup_client(tmp_path, monkeypatch, *, seed=True):
+    """Install an Ubuntu sequence + seed defaults into a fresh DB, return TestClient."""
+    from web import app as web_app, sequences_db
+    from cryptography.fernet import Fernet
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    cred_key = secrets_dir / "credential_key"
+    cred_key.write_bytes(Fernet.generate_key())
+
+    monkeypatch.setattr(web_app, "SECRETS_DIR", secrets_dir)
+    monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "s.db")
+    monkeypatch.setattr(web_app, "CREDENTIAL_KEY", cred_key)
+
+    sequences_db.init(web_app.SEQUENCES_DB)
+    if seed:
+        sequences_db.seed_defaults(web_app.SEQUENCES_DB, web_app._cipher())
+    from fastapi.testclient import TestClient
+    return TestClient(web_app.app)
+
+
+def test_rebuild_seed_iso_compiles_and_uploads(tmp_path, monkeypatch):
+    # Stub stdlib `crypt` (removed in Py3.13) so web.ubuntu_compiler can import
+    # create_ubuntu_user. This test does not exercise password hashing.
+    import sys
+    import types as _types
+    if "crypt" not in sys.modules:
+        stub = _types.ModuleType("crypt")
+        stub.METHOD_SHA512 = "sha512"
+        stub.mksalt = lambda method=None: "$6$stub$"
+        stub.crypt = lambda password, salt: f"{salt}stub-hash"
+        sys.modules["crypt"] = stub
+
+    from web import sequences_db, app as web_app
+    client = _setup_client(tmp_path, monkeypatch)
+    # Find the Ubuntu Plain sequence id
+    seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
+    ubuntu_plain = next(s for s in seqs if s["name"] == "Ubuntu Plain")
+
+    # Minimal Proxmox config so the upload URL can be built
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "proxmox_host": "pve.test", "proxmox_port": 8006, "proxmox_node": "pve",
+        "proxmox_iso_storage": "isos",
+        "vault_proxmox_api_token_id": "autopilot@pve!test",
+        "vault_proxmox_api_token_secret": "s3cret",
+        "proxmox_validate_certs": False,
+    })
+
+    # genisoimage is not installed in CI, so fake the seed-ISO builder and
+    # have it write a stub file where the endpoint will look for the ISO.
+    def fake_build(*, user_data, meta_data, out_path, network_config=None):
+        Path(out_path).write_bytes(b"stub-iso")
+        return Path(out_path)
+
+    with patch("web.ubuntu_seed_iso.build_seed_iso", side_effect=fake_build), \
+         patch("web.app.requests.post") as mock_upload:
+        mock_upload.return_value = MagicMock(status_code=200, ok=True,
+                                             text='{"data":null}')
+        resp = client.post(
+            f"/api/ubuntu/rebuild-seed-iso?sequence_id={ubuntu_plain['id']}"
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["iso"].endswith("ubuntu-seed.iso")
+
+
+def test_rebuild_seed_iso_404_on_missing_sequence(tmp_path, monkeypatch):
+    client = _setup_client(tmp_path, monkeypatch, seed=False)
+    resp = client.post("/api/ubuntu/rebuild-seed-iso?sequence_id=9999")
+    assert resp.status_code == 404
+    assert resp.json()["ok"] is False
+
+
+def test_rebuild_seed_iso_400_on_windows_sequence(tmp_path, monkeypatch):
+    from web import sequences_db, app as web_app
+    client = _setup_client(tmp_path, monkeypatch)
+    seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
+    # The Entra Join default is a Windows sequence
+    windows = next(s for s in seqs if s["target_os"] == "windows")
+    resp = client.post(f"/api/ubuntu/rebuild-seed-iso?sequence_id={windows['id']}")
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
