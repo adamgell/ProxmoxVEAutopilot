@@ -27,7 +27,6 @@ This spec introduces **Task Sequences** — a named, ordered list of typed steps
 - Per-VM override of a sequence's step params for one run (duplicate the sequence for now).
 - Sequence export/import as YAML/JSON.
 - Localization beyond `en-US`.
-- "Test connection" button on AD credentials.
 
 ## 4. Core concept
 
@@ -121,7 +120,7 @@ Columns: Name · Description · # Steps · Default? · Produces hash? · Last us
 
 - List columns: Name · Type · Created · Updated · Actions (Edit / Delete).
 - New / Edit form is type-specific:
-  - `domain_join`: Domain FQDN, Username, Password (new or "unchanged"), OU path hint (stored as a *suggestion*; actual OU lives on the step).
+  - `domain_join`: Domain FQDN, Username, Password (new or "unchanged"), OU path hint (stored as a *suggestion*; actual OU lives on the step). **"Test connection" button** — see §8.6.
   - `local_admin`: Username, Password.
   - `odj_blob`: Upload `.bin` file; form shows file size + upload timestamp after save (blob internals are opaque / not parsed).
 - Delete protected if referenced by any step's `params_json` → returns 409 with list of referencing sequences.
@@ -138,7 +137,41 @@ Existing "OEM Profile" dropdown stays. Behavior change: per §12, the provision-
 
 Add `Sequences` and `Credentials` links alongside existing entries.
 
-### 8.6 Devices page — compatibility
+### 8.6 "Test connection" — `domain_join` credentials
+
+A button on both the *new* and *edit* `domain_join` forms. On click, the browser POSTs to `/api/credentials/test-domain-join` with either:
+
+- an unsaved form payload (when used on *new* before first save), or
+- a `credential_id` (when used on *edit* — the stored password is decrypted server-side).
+
+The test runs in the web container (which is on the LAN via `network_mode: host`) and performs:
+
+1. **DNS SRV lookup** for `_ldap._tcp.<domain_fqdn>` → list of DC hostnames.
+2. **Connect** to the first responsive DC, preferring LDAPS (636) then LDAP+StartTLS (389). Certificate validation is controlled by a new settings flag `ad_validate_certs` (default `false` for lab use; on for production).
+3. **Bind** using the supplied username + password. Username may be `user@domain.fqdn` or `DOMAIN\user`; both are accepted.
+4. **Read `rootDSE`** to confirm the server is a healthy directory service; record `defaultNamingContext` and `dnsHostName`.
+5. **If** an OU path was supplied in the form, perform a scoped LDAP search for the OU DN to confirm it exists and is visible to the test account.
+
+The response JSON reports stages that succeeded/failed with elapsed time per stage:
+
+```json
+{
+  "ok": true,
+  "dns": { "ok": true, "servers": ["dc01.example.local", ...], "elapsed_ms": 12 },
+  "connect": { "ok": true, "server": "dc01.example.local", "tls": "ldaps", "elapsed_ms": 48 },
+  "bind": { "ok": true, "elapsed_ms": 61 },
+  "rootdse": { "ok": true, "defaultNamingContext": "DC=example,DC=local", "dnsHostName": "dc01.example.local" },
+  "ou": { "ok": true, "dn": "OU=Workstations,DC=example,DC=local", "elapsed_ms": 37 }
+}
+```
+
+The UI renders this as a stage-by-stage checklist (each stage green/red with its elapsed_ms). Errors show the server's error text (e.g. `invalidCredentials`, `noSuchObject`) but **never echo the submitted password**.
+
+**Implementation:** new dependency `ldap3` (pure-Python, BSD). Request timeout: 8 seconds per stage, 30 seconds total. Test calls run with `no_log`-equivalent at the HTTP layer — the password on the submitted form is not written to access logs. DNS SRV lookup uses `dnspython` (already a transitive dep of `ldap3` in recent versions; explicit pin to be confirmed at implementation time).
+
+**Scope cap:** the test proves *bind works and OU is visible*. It does **not** prove the account has "join computer to domain" rights on the OU — the only reliable check for that is an actual `Add-Computer` attempt, which is out of scope for a "test connection" button. The UI tooltip states this limitation explicitly.
+
+### 8.7 Devices page — compatibility
 
 For VMs that were provisioned with a sequence where `produces_autopilot_hash=false`:
 
@@ -246,7 +279,8 @@ Rough order, each a shippable slice:
 8. Reboot-aware waiter (`wait_reboot_cycle.yml`).
 9. Devices-page capture-action conditional disable.
 10. `autopilot_hybrid` stub affordance.
-11. Tests throughout.
+11. "Test connection" for `domain_join` credentials (§8.7).
+12. Tests throughout.
 
 ## 17. Open items flagged during brainstorming (decided, recorded here)
 
