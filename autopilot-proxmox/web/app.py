@@ -214,7 +214,7 @@ def _load_proxmox_config():
     return config
 
 
-def _proxmox_api(path):
+def _proxmox_api(path, method="GET", data=None):
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
@@ -222,7 +222,7 @@ def _proxmox_api(path):
     token_secret = cfg.get("vault_proxmox_api_token_secret", "")
     url = f"https://{host}:{port}/api2/json{path}"
     headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
-    resp = requests.get(url, headers=headers, verify=False, timeout=10)
+    resp = requests.request(method, url, headers=headers, data=data, verify=False, timeout=10)
     resp.raise_for_status()
     return resp.json().get("data", [])
 
@@ -711,14 +711,133 @@ async def start_template(profile: str = Form(...)):
 
 
 @app.get("/api/vms/{vmid}/console")
-async def vm_console(vmid: int):
-    """Redirect to Proxmox noVNC console for this VM."""
+async def vm_console(request: Request, vmid: int):
+    """Wrapper page: Proxmox noVNC in an iframe + our toolbar."""
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
     node = cfg.get("proxmox_node", "pve")
     novnc_url = f"https://{host}:{port}/?console=kvm&novnc=1&vmid={vmid}&node={node}"
-    return RedirectResponse(novnc_url)
+    try:
+        vm_cfg = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config")
+        vm_name = vm_cfg.get("name", f"VM {vmid}") if isinstance(vm_cfg, dict) else f"VM {vmid}"
+    except Exception:
+        vm_name = f"VM {vmid}"
+    return templates.TemplateResponse("console.html", {
+        "request": request,
+        "vmid": vmid,
+        "vm_name": vm_name,
+        "novnc_url": novnc_url,
+    })
+
+
+@app.get("/api/vms/{vmid}/status")
+async def vm_status(vmid: int):
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/status/current")
+    except Exception as e:
+        return {"error": str(e)}
+    if isinstance(data, dict):
+        return {
+            "status": data.get("status"),
+            "uptime": data.get("uptime", 0),
+            "cpu": data.get("cpu", 0),
+            "mem": data.get("mem", 0),
+            "maxmem": data.get("maxmem", 0),
+            "qmpstatus": data.get("qmpstatus"),
+        }
+    return {"error": "unexpected response"}
+
+
+@app.post("/api/vms/{vmid}/power/{action}")
+async def vm_power(vmid: int, action: str):
+    if action not in {"start", "stop", "shutdown", "reboot", "reset", "suspend", "resume"}:
+        return {"error": "invalid action"}
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api(f"/nodes/{node}/qemu/{vmid}/status/{action}", method="POST")
+        return {"ok": True, "action": action}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Map of ASCII chars to QEMU keynames (US keyboard layout).
+_QEMU_SHIFT_MAP = {
+    "!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+    "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+    "_": "minus", "+": "equal",
+    "{": "bracket_left", "}": "bracket_right",
+    "|": "backslash",
+    ":": "semicolon", '"': "apostrophe",
+    "<": "comma", ">": "dot", "?": "slash",
+    "~": "grave_accent",
+}
+_QEMU_PLAIN_MAP = {
+    " ": "spc", "-": "minus", "=": "equal",
+    "[": "bracket_left", "]": "bracket_right",
+    "\\": "backslash", ";": "semicolon", "'": "apostrophe",
+    ",": "comma", ".": "dot", "/": "slash", "`": "grave_accent",
+    "\n": "ret", "\r": "ret", "\t": "tab",
+}
+
+
+def _char_to_qemu_key(ch):
+    if ch.isalpha() and ch.isascii():
+        return f"shift-{ch.lower()}" if ch.isupper() else ch.lower()
+    if ch.isdigit():
+        return ch
+    if ch in _QEMU_SHIFT_MAP:
+        return f"shift-{_QEMU_SHIFT_MAP[ch]}"
+    return _QEMU_PLAIN_MAP.get(ch)
+
+
+@app.post("/api/vms/{vmid}/sendtext")
+async def vm_sendtext(vmid: int, text: str = Form(""), press_enter: str = Form("")):
+    """Type text into the VM one char at a time via QEMU sendkey."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    keys = []
+    skipped = []
+    for ch in text:
+        k = _char_to_qemu_key(ch)
+        if k is None:
+            skipped.append(ch)
+        else:
+            keys.append(k)
+    if press_enter:
+        keys.append("ret")
+    sent = 0
+    for key in keys:
+        try:
+            _proxmox_api(
+                f"/nodes/{node}/qemu/{vmid}/sendkey",
+                method="PUT",
+                data={"key": key},
+            )
+            sent += 1
+        except Exception as e:
+            return {"ok": False, "sent": sent, "error": str(e)}
+        await asyncio.sleep(0.03)
+    return {"ok": True, "sent": sent, "skipped": skipped}
+
+
+@app.post("/api/vms/{vmid}/sendkey")
+async def vm_sendkey(vmid: int, key: str = Form(...)):
+    """Send a single QEMU keyname (e.g. 'ctrl-alt-delete', 'f2', 'tab')."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        _proxmox_api(
+            f"/nodes/{node}/qemu/{vmid}/sendkey",
+            method="PUT",
+            data={"key": key},
+        )
+        return {"ok": True, "key": key}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/api/jobs/capture-and-upload")

@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Console - {{ vm_name }} ({{ vmid }}){% endblock %}
+{% block content %}
+<style>
+  #console-toolbar {
+    background: #f5f5f5;
+    border: 1px solid #ccc;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  #console-toolbar .group {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding-right: 10px;
+    border-right: 1px solid #ccc;
+  }
+  #console-toolbar .group:last-child { border-right: none; }
+  #console-toolbar button {
+    background: #336699;
+    color: white;
+    border: 1px solid #264d73;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: Verdana, Tahoma, Arial, sans-serif;
+  }
+  #console-toolbar button:hover { background: #264d73; }
+  #console-toolbar button.danger { background: #cc0000; border-color: #990000; }
+  #console-toolbar button.danger:hover { background: #990000; }
+  #console-toolbar input[type="text"], #console-toolbar input[type="password"] {
+    border: 1px solid #999;
+    padding: 2px 4px;
+    font-size: 11px;
+    width: 220px;
+  }
+  #console-iframe {
+    width: 100%;
+    height: calc(100vh - 220px);
+    min-height: 500px;
+    border: 1px solid #336699;
+    background: #000;
+  }
+  #snippets-table { margin-top: 4px; font-size: 11px; }
+  #snippets-table td { padding: 2px 4px; border: none; }
+  #snippets-table input[type="text"] { width: 280px; }
+  #status-badge { padding: 2px 8px; font-weight: bold; }
+  #flash { color: #006600; font-weight: bold; margin-left: 8px; }
+  #flash.err { color: #cc0000; }
+</style>
+
+<h2 style="margin-top:0;">Console: {{ vm_name }} <small style="color:#666;">(VMID {{ vmid }})</small></h2>
+
+<div id="console-toolbar">
+  <div class="group">
+    <span>Status:</span>
+    <span id="status-badge" class="status-green">?</span>
+    <span id="uptime" style="color:#666;"></span>
+  </div>
+
+  <div class="group">
+    <button onclick="power('start')">Start</button>
+    <button onclick="power('shutdown')">Shutdown</button>
+    <button onclick="power('reboot')">Reboot</button>
+    <button class="danger" onclick="if(confirm('Hard stop {{ vm_name }}?'))power('stop')">Stop</button>
+    <button class="danger" onclick="if(confirm('Reset {{ vm_name }}?'))power('reset')">Reset</button>
+  </div>
+
+  <div class="group">
+    <button onclick="sendKey('ctrl-alt-delete')">Ctrl-Alt-Del</button>
+    <button onclick="sendKey('tab')">Tab</button>
+    <button onclick="sendKey('ret')">Enter</button>
+    <button onclick="sendKey('esc')">Esc</button>
+  </div>
+
+  <div class="group">
+    <a href="{{ novnc_url }}" target="_blank">Open raw noVNC &#8599;</a>
+  </div>
+
+  <span id="flash"></span>
+</div>
+
+<div id="console-toolbar">
+  <div class="group" style="flex:1;">
+    <b>Type text:</b>
+    <input type="text" id="quick-text" placeholder="text to type into VM" onkeydown="if(event.key==='Enter'){event.preventDefault();sendText(document.getElementById('quick-text').value, document.getElementById('quick-enter').checked);}">
+    <label><input type="checkbox" id="quick-enter"> press Enter</label>
+    <button onclick="sendText(document.getElementById('quick-text').value, document.getElementById('quick-enter').checked)">Send</button>
+    <button onclick="document.getElementById('quick-text').value=''">Clear</button>
+  </div>
+</div>
+
+<div id="console-toolbar" style="flex-direction:column; align-items:stretch;">
+  <div><b>Presets</b> <small style="color:#666;">(saved in this browser only — safe for local use)</small></div>
+  <table id="snippets-table">
+    <tr>
+      <td>Label</td>
+      <td>Value</td>
+      <td>Enter?</td>
+      <td>Action</td>
+    </tr>
+    <tbody id="snippets-body"></tbody>
+  </table>
+  <div>
+    <input type="text" id="new-label" placeholder="label (e.g. Admin email)" style="width:180px;">
+    <input type="text" id="new-value" placeholder="value to type">
+    <label><input type="checkbox" id="new-enter"> Enter after</label>
+    <button onclick="addSnippet()">Save preset</button>
+  </div>
+</div>
+
+<iframe id="console-iframe" src="{{ novnc_url }}"></iframe>
+
+<script>
+const VMID = {{ vmid }};
+const SNIPPETS_KEY = "pveautopilot_console_snippets_v1";
+
+function flash(msg, isErr) {
+  const el = document.getElementById('flash');
+  el.textContent = msg;
+  el.className = isErr ? 'err' : '';
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+async function power(action) {
+  const r = await fetch(`/api/vms/${VMID}/power/${action}`, {method: 'POST'});
+  const j = await r.json();
+  if (j.error) flash('Error: ' + j.error, true);
+  else flash(action + ' sent');
+  setTimeout(refreshStatus, 800);
+}
+
+async function sendKey(key) {
+  const fd = new FormData();
+  fd.append('key', key);
+  const r = await fetch(`/api/vms/${VMID}/sendkey`, {method: 'POST', body: fd});
+  const j = await r.json();
+  if (j.error) flash('Error: ' + j.error, true);
+  else flash('Sent ' + key);
+}
+
+async function sendText(text, pressEnter) {
+  if (!text) return;
+  const fd = new FormData();
+  fd.append('text', text);
+  if (pressEnter) fd.append('press_enter', '1');
+  flash('Typing...');
+  const r = await fetch(`/api/vms/${VMID}/sendtext`, {method: 'POST', body: fd});
+  const j = await r.json();
+  if (j.ok) {
+    let msg = `Typed ${j.sent} keys`;
+    if (j.skipped && j.skipped.length) msg += ` (skipped: ${j.skipped.join('')})`;
+    flash(msg);
+  } else {
+    flash('Error: ' + (j.error || 'unknown'), true);
+  }
+}
+
+function fmtUptime(sec) {
+  if (!sec) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `up ${h}h ${m}m`;
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch(`/api/vms/${VMID}/status`);
+    const j = await r.json();
+    const badge = document.getElementById('status-badge');
+    if (j.error) {
+      badge.textContent = 'error';
+      badge.className = 'status-red';
+    } else {
+      badge.textContent = j.status || '?';
+      badge.className = j.status === 'running' ? 'status-green' : 'status-red';
+      document.getElementById('uptime').textContent = fmtUptime(j.uptime);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// --- snippet presets (localStorage) ---
+function loadSnippets() {
+  try { return JSON.parse(localStorage.getItem(SNIPPETS_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveSnippets(list) {
+  localStorage.setItem(SNIPPETS_KEY, JSON.stringify(list));
+}
+function renderSnippets() {
+  const body = document.getElementById('snippets-body');
+  const list = loadSnippets();
+  body.innerHTML = '';
+  list.forEach((s, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(s.label)}</td>
+      <td><code>${escapeHtml(s.masked ? '•'.repeat(s.value.length) : s.value)}</code></td>
+      <td>${s.enter ? 'yes' : ''}</td>
+      <td>
+        <button data-i="${i}" class="use-btn">Type</button>
+        <button data-i="${i}" class="mask-btn">${s.masked ? 'Show' : 'Mask'}</button>
+        <button data-i="${i}" class="del-btn">Delete</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('.use-btn').forEach(b => b.onclick = () => {
+    const s = loadSnippets()[b.dataset.i];
+    sendText(s.value, s.enter);
+  });
+  body.querySelectorAll('.mask-btn').forEach(b => b.onclick = () => {
+    const list = loadSnippets();
+    list[b.dataset.i].masked = !list[b.dataset.i].masked;
+    saveSnippets(list);
+    renderSnippets();
+  });
+  body.querySelectorAll('.del-btn').forEach(b => b.onclick = () => {
+    const list = loadSnippets();
+    list.splice(b.dataset.i, 1);
+    saveSnippets(list);
+    renderSnippets();
+  });
+}
+function addSnippet() {
+  const label = document.getElementById('new-label').value.trim();
+  const value = document.getElementById('new-value').value;
+  const enter = document.getElementById('new-enter').checked;
+  if (!label || !value) { flash('Label and value required', true); return; }
+  const list = loadSnippets();
+  list.push({ label, value, enter, masked: false });
+  saveSnippets(list);
+  document.getElementById('new-label').value = '';
+  document.getElementById('new-value').value = '';
+  document.getElementById('new-enter').checked = false;
+  renderSnippets();
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+renderSnippets();
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+{% endblock %}
