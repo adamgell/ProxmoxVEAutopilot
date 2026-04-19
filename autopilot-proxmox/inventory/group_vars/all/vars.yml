@@ -68,3 +68,17 @@ hash_capture_timeout_seconds: 600
 # Proxmox task polling
 task_poll_retries: 120
 task_poll_delay_seconds: 1
+
+# =============================================================================
+# Ubuntu (task sequences target_os=ubuntu)
+# =============================================================================
+ubuntu_release: "noble"                     # 24.04 codename (subiquity --release)
+ubuntu_locale: "en_US.UTF-8"
+ubuntu_timezone: "UTC"
+ubuntu_keyboard_layout: "us"
+ubuntu_storage_layout: "lvm"
+ubuntu_iso: "isos:iso/ubuntu-24.04-live-server-amd64.iso"
+ubuntu_seed_iso: "isos:iso/ubuntu-seed.iso"
+# Per-clone cloud-init seed ISO filename pattern (the Ubuntu branch of the
+# clone playbook writes a per-VM ISO here, named with the VMID).
+ubuntu_per_vm_seed_pattern: "isos:iso/ubuntu-per-vm-{{ vmid }}.iso"
