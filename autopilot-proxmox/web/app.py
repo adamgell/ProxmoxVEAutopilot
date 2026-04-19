@@ -903,12 +903,47 @@ async def start_provision(
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
     sequence_id: int = Form(None),
+    chassis_type_override: int = Form(0),
 ):
     profile = _sanitize_input(profile)
     if group_tag:
         group_tag = _sanitize_input(group_tag)
     if serial_prefix:
         serial_prefix = _sanitize_input(serial_prefix)
+
+    # Stage the chassis-type SMBIOS binary(ies) on the Proxmox host for
+    # every possible source of the effective chassis type. The compiler
+    # + precedence layer picks the final value; we optimistically upload
+    # for whichever type any source could request so Ansible finds the
+    # file when it emits args: -smbios file=... on the VM config.
+    cfg = _load_proxmox_config()
+    _node = cfg.get("proxmox_node", "pve")
+    _snippets_storage = cfg.get("proxmox_snippets_storage", "local")
+    _chassis_types_to_stage: set[int] = set()
+    if chassis_type_override and int(chassis_type_override) > 0:
+        _chassis_types_to_stage.add(int(chassis_type_override))
+    if sequence_id:
+        _seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        if _seq is not None:
+            for _step in _seq["steps"]:
+                if _step["step_type"] == "set_oem_hardware" and _step.get("enabled"):
+                    _ct = _step["params"].get("chassis_type")
+                    if _ct and int(_ct) > 0:
+                        _chassis_types_to_stage.add(int(_ct))
+    _profiles = load_oem_profiles()
+    _prof = _profiles.get(profile) if profile else None
+    if _prof and _prof.get("chassis_type"):
+        _chassis_types_to_stage.add(int(_prof["chassis_type"]))
+
+    from web import proxmox_snippets
+    for _ct in _chassis_types_to_stage:
+        try:
+            proxmox_snippets.ensure_chassis_type_binary(
+                node=_node, storage=_snippets_storage, chassis_type=_ct,
+            )
+        except Exception as _e:
+            print(f"[warn] chassis-type binary upload failed for {_ct}: {_e}",
+                  flush=True)
 
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
@@ -920,6 +955,8 @@ async def start_provision(
         if disk_size_gb > 0: tokens += ["-e", f"vm_disk_size_gb={disk_size_gb}"]
         if serial_prefix:    tokens += ["-e", f"vm_serial_prefix={serial_prefix}"]
         if group_tag:        tokens += ["-e", f"vm_group_tag={group_tag}"]
+        if chassis_type_override and int(chassis_type_override) > 0:
+            tokens += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
         return tokens
 
     args = {
@@ -955,6 +992,8 @@ async def start_provision(
         if profile:
             cmd += ["-e", f"vm_oem_profile={profile}"]
         cmd += ["-e", "vm_count=1"] + _overrides()
+        if chassis_type_override and int(chassis_type_override) > 0:
+            cmd += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
         # Collect keys already present in cmd so sequence-compiled vars don't
         # stomp them (form/_overrides() win per spec §12).
         existing_keys = _keys_in_extra_args(cmd)
