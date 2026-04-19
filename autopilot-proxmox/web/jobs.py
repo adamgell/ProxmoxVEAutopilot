@@ -14,6 +14,7 @@ class JobManager:
         self._lock = threading.Lock()
         self._active = {}
         self._index = self._load_index()
+        self._on_complete: dict[str, list] = {}
         self._cleanup_orphans()
 
     def _cleanup_orphans(self):
@@ -86,20 +87,44 @@ class JobManager:
 
         return entry
 
+    def add_on_complete(self, job_id: str, callback) -> None:
+        """Register a callback(job_dict) to run when the job finishes.
+
+        Callbacks run in the job-runner thread. Exceptions are logged and
+        swallowed — a bad callback must not poison job status.
+        """
+        with self._lock:
+            self._on_complete.setdefault(job_id, []).append(callback)
+
     def _wait_for_completion(self, job_id, proc, log_file):
         proc.wait()
         log_file.close()
         now = datetime.now(timezone.utc).isoformat()
 
         with self._lock:
+            job = None
             for entry in self._index:
                 if entry["id"] == job_id:
                     entry["status"] = "complete" if proc.returncode == 0 else "failed"
                     entry["ended"] = now
                     entry["exit_code"] = proc.returncode
+                    job = dict(entry)
                     break
             self._save_index()
             self._active.pop(job_id, None)
+            callbacks = self._on_complete.pop(job_id, [])
+
+        if job is not None:
+            for cb in callbacks:
+                try:
+                    cb(job)
+                except Exception as e:
+                    try:
+                        log_path = os.path.join(self.jobs_dir, f"{job_id}.log")
+                        with open(log_path, "a") as f:
+                            f.write(f"[on_complete] callback error: {e}\n")
+                    except Exception:
+                        pass
 
     def get_job(self, job_id):
         with self._lock:
