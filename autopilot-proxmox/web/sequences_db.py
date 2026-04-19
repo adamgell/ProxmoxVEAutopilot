@@ -213,8 +213,6 @@ def create_sequence(db_path, *, name: str, description: str,
                     produces_autopilot_hash: bool = False) -> int:
     now = _now()
     with _connect(db_path) as conn:
-        if is_default:
-            conn.execute("UPDATE task_sequences SET is_default = 0")
         cur = conn.execute(
             "INSERT INTO task_sequences "
             "(name, description, is_default, produces_autopilot_hash, "
@@ -222,7 +220,16 @@ def create_sequence(db_path, *, name: str, description: str,
             (name, description, int(is_default), int(produces_autopilot_hash),
              now, now),
         )
-        return cur.lastrowid
+        new_id = cur.lastrowid
+        # Demote any other defaults AFTER the insert succeeds so a failed
+        # insert (e.g., UNIQUE constraint) can't leave the DB with zero
+        # defaults.
+        if is_default:
+            conn.execute(
+                "UPDATE task_sequences SET is_default = 0 WHERE id != ?",
+                (new_id,),
+            )
+        return new_id
 
 
 def update_sequence(db_path, seq_id: int, *,
@@ -246,11 +253,17 @@ def update_sequence(db_path, seq_id: int, *,
     updates.append("updated_at = ?"); args.append(now)
     args.append(seq_id)
     with _connect(db_path) as conn:
-        if is_default:
-            conn.execute("UPDATE task_sequences SET is_default = 0")
         conn.execute(
             f"UPDATE task_sequences SET {', '.join(updates)} WHERE id = ?", args
         )
+        # Demote other defaults AFTER the targeted update succeeds — if the
+        # above UPDATE raised (e.g., UNIQUE name conflict), we'd otherwise
+        # leave the DB with zero defaults.
+        if is_default:
+            conn.execute(
+                "UPDATE task_sequences SET is_default = 0 WHERE id != ?",
+                (seq_id,),
+            )
 
 
 def get_sequence(db_path, seq_id: int) -> Optional[dict]:

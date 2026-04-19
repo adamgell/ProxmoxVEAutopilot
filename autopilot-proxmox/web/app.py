@@ -248,9 +248,19 @@ def _init_sequences_db() -> None:
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
 
 
+_CIPHER: Optional[_crypto.Cipher] = None
+
+
 def _cipher() -> _crypto.Cipher:
-    """Lazy accessor so tests can monkeypatch CREDENTIAL_KEY before first call."""
-    return _crypto.Cipher(CREDENTIAL_KEY)
+    """Return the process-wide Cipher, constructing it lazily.
+
+    The key file is read on first access. Tests that monkeypatch
+    CREDENTIAL_KEY must also reset the cache: ``web.app._CIPHER = None``.
+    """
+    global _CIPHER
+    if _CIPHER is None:
+        _CIPHER = _crypto.Cipher(CREDENTIAL_KEY)
+    return _CIPHER
 
 
 def _load_proxmox_config():
@@ -2431,20 +2441,11 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
     return RedirectResponse("/sequences", status_code=303)
 
 
-def _load_oem_profiles_dict() -> dict:
-    path = FILES_DIR / "oem_profiles.yml"
-    if not path.exists():
-        return {}
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-    return data.get("oem_profiles", {})
-
-
 @app.get("/sequences/new", response_class=HTMLResponse)
 def page_sequence_new(request: Request):
     return templates.TemplateResponse("sequence_edit.html", {
         "request": request, "seq": None,
-        "oem_profiles": _load_oem_profiles_dict(),
+        "oem_profiles": load_oem_profiles(),
     })
 
 
@@ -2455,5 +2456,5 @@ def page_sequence_edit(request: Request, seq_id: int):
         raise HTTPException(404, "sequence not found")
     return templates.TemplateResponse("sequence_edit.html", {
         "request": request, "seq": seq,
-        "oem_profiles": _load_oem_profiles_dict(),
+        "oem_profiles": load_oem_profiles(),
     })

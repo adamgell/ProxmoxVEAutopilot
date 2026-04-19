@@ -256,6 +256,23 @@ def test_get_default_sequence(db_path):
     assert sequences_db.get_default_sequence_id(db_path) is None
 
 
+def test_update_default_preserved_on_unique_conflict(db_path):
+    """If update_sequence(is_default=True) fails due to a UNIQUE name
+    collision, the existing default must still be the default afterward
+    — otherwise the DB ends up with zero defaults."""
+    import sqlite3
+    from web import sequences_db
+    sequences_db.init(db_path)
+    a = sequences_db.create_sequence(db_path, name="A", description="",
+                                     is_default=True)
+    b = sequences_db.create_sequence(db_path, name="B", description="")
+    with pytest.raises(sqlite3.IntegrityError):
+        # Renaming B to "A" violates UNIQUE(name); the is_default=True
+        # request must not demote A's default status if this fails.
+        sequences_db.update_sequence(db_path, b, name="A", is_default=True)
+    assert sequences_db.get_default_sequence_id(db_path) == a
+
+
 def test_seed_defaults_inserts_three_on_empty(db_path, key_path):
     from web import crypto, sequences_db
     sequences_db.init(db_path)
