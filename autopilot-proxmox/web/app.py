@@ -2385,3 +2385,36 @@ async def _payload_from_form(cred_type: str, form, existing: Optional[dict] = No
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@app.get("/sequences", response_class=HTMLResponse)
+def page_sequences(request: Request, error: str = ""):
+    seqs = sequences_db.list_sequences(SEQUENCES_DB)
+    return templates.TemplateResponse("sequences.html", {
+        "request": request, "sequences": seqs, "error": error,
+    })
+
+
+@app.post("/sequences/{seq_id}/delete")
+def submit_sequence_delete(seq_id: int):
+    try:
+        sequences_db.delete_sequence(SEQUENCES_DB, seq_id)
+    except sequences_db.SequenceInUse as e:
+        msg = f"in use by VMs {e.vmids}"
+        return RedirectResponse(f"/sequences?error={msg}", status_code=303)
+    return RedirectResponse("/sequences", status_code=303)
+
+
+@app.post("/sequences/{seq_id}/duplicate")
+async def submit_sequence_duplicate(request: Request, seq_id: int):
+    form = await request.form()
+    new_name = form.get("new_name", "").strip() or "Copy"
+    try:
+        sequences_db.duplicate_sequence(SEQUENCES_DB, seq_id, new_name=new_name)
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            return RedirectResponse(
+                f"/sequences?error=name '{new_name}' already exists",
+                status_code=303)
+        raise
+    return RedirectResponse("/sequences", status_code=303)

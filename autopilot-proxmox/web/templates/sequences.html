@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Task Sequences - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+<h2>Task Sequences
+  <small style="color:#999;font-weight:normal;font-size:11px;">
+    · <a href="/sequences/new">+ New sequence</a>
+  </small>
+</h2>
+<p style="color:#666;font-size:11px;">
+  A task sequence is an ordered list of steps that together provision a
+  VM — OEM hardware, OOBE account, domain join, scripts. Exactly one
+  sequence is marked as <b>default</b> and used when the provision page
+  doesn't specify one.
+</p>
+
+{% if not sequences %}
+<p><i>No sequences yet. <a href="/sequences/new">Create one</a>.</i></p>
+{% else %}
+<table>
+<tr><th>Name</th><th>Description</th><th>Steps</th><th>Default?</th>
+    <th>Autopilot hash?</th><th>Updated</th><th>Actions</th></tr>
+{% for s in sequences %}
+<tr>
+  <td>{{ s.name }}</td>
+  <td>{{ s.description }}</td>
+  <td>{{ s.step_count }}</td>
+  <td>{% if s.is_default %}<span class="status-green">default</span>{% else %}—{% endif %}</td>
+  <td>{% if s.produces_autopilot_hash %}yes{% else %}—{% endif %}</td>
+  <td>{{ s.updated_at }}</td>
+  <td>
+    <a href="/sequences/{{ s.id }}/edit">Edit</a> ·
+    <form method="POST" action="/sequences/{{ s.id }}/duplicate"
+          style="display:inline;">
+      <input type="hidden" name="new_name" value="{{ s.name }} (copy)">
+      <input type="submit" value="Duplicate" style="padding:1px 6px;">
+    </form> ·
+    <form method="POST" action="/sequences/{{ s.id }}/delete"
+          style="display:inline;"
+          onsubmit="return confirm('Delete sequence {{ s.name }}?');">
+      <input type="submit" value="Delete" style="padding:1px 6px;">
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+
+{% if error %}
+<p><span class="status-red">Error:</span> {{ error }}</p>
+{% endif %}
+{% endblock %}
