@@ -1,16 +1,19 @@
 import asyncio
 import os
+import sqlite3
 import time
 import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import requests
 import yaml
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from web.jobs import JobManager
 from web import devices_db
@@ -2083,3 +2086,72 @@ async def job_stream(websocket: WebSocket, job_id: str):
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
         pass
+
+
+class _CredentialCreate(BaseModel):
+    name: str
+    type: str
+    payload: dict
+
+
+class _CredentialUpdate(BaseModel):
+    name: Optional[str] = None
+    payload: Optional[dict] = None
+
+
+@app.get("/api/credentials")
+def api_credentials_list(type: Optional[str] = None):
+    return sequences_db.list_credentials(SEQUENCES_DB, type=type)
+
+
+@app.get("/api/credentials/{cred_id}")
+def api_credentials_get(cred_id: int):
+    cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if cred is None:
+        raise HTTPException(404, "credential not found")
+    return cred
+
+
+@app.post("/api/credentials", status_code=201)
+def api_credentials_create(body: _CredentialCreate):
+    if body.type not in {"domain_join", "local_admin", "odj_blob"}:
+        raise HTTPException(400, f"unknown credential type: {body.type}")
+    try:
+        cid = sequences_db.create_credential(
+            SEQUENCES_DB, _cipher(),
+            name=body.name, type=body.type, payload=body.payload,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"credential name already exists: {body.name}")
+        raise
+    return {"id": cid}
+
+
+@app.patch("/api/credentials/{cred_id}")
+def api_credentials_update(cred_id: int, body: _CredentialUpdate):
+    existing = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if existing is None:
+        raise HTTPException(404, "credential not found")
+    try:
+        sequences_db.update_credential(
+            SEQUENCES_DB, _cipher(), cred_id,
+            name=body.name, payload=body.payload,
+        )
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(409, f"credential name already exists: {body.name}")
+        raise
+    return {"ok": True}
+
+
+@app.delete("/api/credentials/{cred_id}")
+def api_credentials_delete(cred_id: int):
+    try:
+        sequences_db.delete_credential(SEQUENCES_DB, cred_id)
+    except sequences_db.CredentialInUse as e:
+        raise HTTPException(409, detail={
+            "error": "credential is in use",
+            "sequence_ids": e.sequence_ids,
+        })
+    return {"ok": True}
