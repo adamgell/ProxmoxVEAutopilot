@@ -86,6 +86,8 @@ Open the **Settings** page and configure:
 - **ISO Paths**: Windows ISO, VirtIO ISO, answer ISO
 - **VM Defaults**: CPU, memory, disk size, OEM profile, group tag
 
+**Ubuntu path:** On Build Template, toggle **Ubuntu** → pick a sequence → **Rebuild Ubuntu Seed ISO** → **Build Ubuntu Template** (~25 min). Then Provision just like the Windows flow — cloud-init sets the hostname on first boot. See [docs/SETUP.md#ubuntu-path](docs/SETUP.md#ubuntu-path).
+
 ## Web UI
 
 | | |
@@ -102,6 +104,7 @@ Open the **Settings** page and configure:
 | **Provision VMs** | Clone VMs from the template with a selected OEM profile, count, and group tag |
 | **Devices** | View all Proxmox autopilot VMs and Intune Autopilot devices with inline actions |
 | **Build Template** | Create a Windows template from ISO (one-time setup) |
+| **Sequences** | Create and edit named task sequences for Windows (Entra Join, AD Domain Join) and Ubuntu (Intune + MDE via LinuxESP, Plain) in one place |
 | **Upload to Intune** | Upload captured hash files to Microsoft Intune |
 | **Hash Files** | Browse, download, and delete captured hardware hash CSVs |
 | **Import Hashes** | Upload hash CSV files from your local machine |
@@ -154,6 +157,7 @@ Each profile sets SMBIOS type 1 fields and generates a manufacturer-appropriate 
 | **Proxmox VE** | 9.x with API token |
 | **Windows ISO** | Stock Windows 11 Enterprise (unmodified) |
 | **VirtIO ISO** | `virtio-win.iso` (latest from Fedora/Red Hat) |
+| **Ubuntu ISO** | Ubuntu 24.04 live-server ISO uploaded to Proxmox ISO storage (optional — only needed for Ubuntu sequences) |
 | **Docker host** | Any machine with Docker Compose |
 
 ## Docker Compose
