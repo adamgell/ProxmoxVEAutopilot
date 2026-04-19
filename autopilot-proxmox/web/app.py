@@ -2125,17 +2125,41 @@ def api_credentials_get(cred_id: int):
 
 
 @app.post("/api/credentials", status_code=201)
-def api_credentials_create(body: _CredentialCreate):
-    if body.type not in {"domain_join", "local_admin", "odj_blob"}:
-        raise HTTPException(400, f"unknown credential type: {body.type}")
+async def api_credentials_create(request: Request):
+    """Create a credential.
+
+    Accepts either JSON ``{name, type, payload}`` (existing types) or
+    multipart/form-data with a file field (``mde_onboarding`` uploads the
+    onboarding .py script directly). For multipart the file is base64-encoded
+    and wrapped in the canonical payload shape before encryption.
+    """
+    ctype = (request.headers.get("content-type") or "").lower()
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        name = form.get("name", "")
+        cred_type = form.get("type", "")
+        if not name or not cred_type:
+            raise HTTPException(400, "name and type are required")
+        try:
+            payload = await _payload_from_form(cred_type, form)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    else:
+        body = _CredentialCreate.model_validate(await request.json())
+        name = body.name
+        cred_type = body.type
+        payload = body.payload
+
+    if cred_type not in {"domain_join", "local_admin", "odj_blob", "mde_onboarding"}:
+        raise HTTPException(400, f"unknown credential type: {cred_type}")
     try:
         cid = sequences_db.create_credential(
             SEQUENCES_DB, _cipher(),
-            name=body.name, type=body.type, payload=body.payload,
+            name=name, type=cred_type, payload=payload,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
-            raise HTTPException(409, f"credential name already exists: {body.name}")
+            raise HTTPException(409, f"credential name already exists: {name}")
         raise
     return {"id": cid}
 
@@ -2390,6 +2414,24 @@ async def _payload_from_form(cred_type: str, form, existing: Optional[dict] = No
         if existing:
             return existing
         raise ValueError("ODJ blob file is required")
+    if cred_type == "mde_onboarding":
+        upload = form.get("onboarding_file")
+        if upload and hasattr(upload, "read"):
+            raw = await upload.read()
+            if not raw:
+                # Empty file upload — treat as "no file" on edit, error on create.
+                if existing:
+                    return existing
+                raise ValueError("onboarding_file required")
+            filename = getattr(upload, "filename", None) or "onboarding.py"
+            return {
+                "filename": filename,
+                "script_b64": base64.b64encode(raw).decode("ascii"),
+                "uploaded_at": _now_iso(),
+            }
+        if existing:
+            return existing
+        raise ValueError("onboarding_file required")
     raise ValueError(f"unknown credential type: {cred_type}")
 
 
