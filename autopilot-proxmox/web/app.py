@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import os
 import sqlite3
 import time
@@ -2276,3 +2277,111 @@ def page_credentials(request: Request, error: str = ""):
         "credentials": creds,
         "error": error,
     })
+
+
+@app.get("/credentials/new", response_class=HTMLResponse)
+def page_credential_new(request: Request, error: str = ""):
+    return templates.TemplateResponse("credential_edit.html", {
+        "request": request, "cred": None, "error": error,
+    })
+
+
+@app.post("/credentials/new")
+async def submit_credential_new(request: Request):
+    form = await request.form()
+    cred_type = form.get("type", "")
+    try:
+        payload = await _payload_from_form(cred_type, form)
+        sequences_db.create_credential(
+            SEQUENCES_DB, _cipher(),
+            name=form["name"], type=cred_type, payload=payload,
+        )
+    except sqlite3.IntegrityError as e:
+        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+        return RedirectResponse(f"/credentials/new?error={msg}", status_code=303)
+    except ValueError as e:
+        return RedirectResponse(f"/credentials/new?error={e}", status_code=303)
+    return RedirectResponse("/credentials", status_code=303)
+
+
+@app.get("/credentials/{cred_id}/edit", response_class=HTMLResponse)
+def page_credential_edit(request: Request, cred_id: int, error: str = ""):
+    cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if cred is None:
+        raise HTTPException(404, "credential not found")
+    return templates.TemplateResponse("credential_edit.html", {
+        "request": request, "cred": cred, "error": error,
+    })
+
+
+@app.post("/credentials/{cred_id}/edit")
+async def submit_credential_edit(request: Request, cred_id: int):
+    cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if cred is None:
+        raise HTTPException(404, "credential not found")
+    form = await request.form()
+    try:
+        new_payload = await _payload_from_form(cred["type"], form, existing=cred["payload"])
+        sequences_db.update_credential(
+            SEQUENCES_DB, _cipher(), cred_id,
+            name=form["name"], payload=new_payload,
+        )
+    except sqlite3.IntegrityError as e:
+        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+        return RedirectResponse(f"/credentials/{cred_id}/edit?error={msg}",
+                                status_code=303)
+    except ValueError as e:
+        return RedirectResponse(f"/credentials/{cred_id}/edit?error={e}",
+                                status_code=303)
+    return RedirectResponse("/credentials", status_code=303)
+
+
+@app.post("/credentials/{cred_id}/delete")
+def submit_credential_delete(cred_id: int):
+    try:
+        sequences_db.delete_credential(SEQUENCES_DB, cred_id)
+    except sequences_db.CredentialInUse as e:
+        msg = f"in use by sequence(s) {e.sequence_ids}"
+        return RedirectResponse(f"/credentials?error={msg}", status_code=303)
+    return RedirectResponse("/credentials", status_code=303)
+
+
+async def _payload_from_form(cred_type: str, form, existing: Optional[dict] = None) -> dict:
+    """Build a payload dict from the per-type HTML form fields."""
+    if cred_type == "domain_join":
+        pw = form.get("password", "")
+        payload = {
+            "domain_fqdn": form.get("domain_fqdn", "").strip(),
+            "username": form.get("username", "").strip(),
+            "password": pw if pw else (existing or {}).get("password", ""),
+            "ou_hint": form.get("ou_hint", "").strip(),
+        }
+        if not payload["password"]:
+            raise ValueError("password is required")
+        return payload
+    if cred_type == "local_admin":
+        pw = form.get("la_password", "")
+        payload = {
+            "username": form.get("la_username", "").strip(),
+            "password": pw if pw else (existing or {}).get("password", ""),
+        }
+        if not payload["password"]:
+            raise ValueError("password is required")
+        return payload
+    if cred_type == "odj_blob":
+        upload = form.get("odj_file")
+        if upload and hasattr(upload, "read"):
+            blob = await upload.read()
+            return {
+                "blob_b64": base64.b64encode(blob).decode("ascii"),
+                "generated_at": _now_iso(),
+            }
+        if existing:
+            return existing
+        raise ValueError("ODJ blob file is required")
+    raise ValueError(f"unknown credential type: {cred_type}")
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
