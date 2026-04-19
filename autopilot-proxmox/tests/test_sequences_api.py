@@ -21,8 +21,11 @@ def app_env():
              patch("web.app.job_manager") as jm:
             jm.list_jobs.return_value = []
             jm.jobs_dir = str(tmp / "jobs")
-            from web.app import app, _init_sequences_db
-            _init_sequences_db()
+            from web.app import app
+            # Init DB without seeds so "empty" tests remain valid.
+            from web import sequences_db as _sdb
+            secrets.mkdir(parents=True, exist_ok=True)
+            _sdb.init(db)
             yield TestClient(app)
 
 
@@ -163,3 +166,31 @@ def test_only_one_default_via_api(app_env):
     got_b = app_env.get(f"/api/sequences/{b}").json()
     assert got_a["is_default"] is False
     assert got_b["is_default"] is True
+
+
+def test_startup_seeds_defaults(tmp_path):
+    """When the app starts on an empty DB, the three seed sequences appear."""
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        secrets = tmp / "secrets"
+        db = tmp / "sequences.db"
+        with patch("web.app.SECRETS_DIR", secrets), \
+             patch("web.app.SEQUENCES_DB", db), \
+             patch("web.app.CREDENTIAL_KEY", secrets / "credential_key"), \
+             patch("web.app.HASH_DIR", tmp / "hashes"), \
+             patch("web.app.job_manager") as jm:
+            jm.list_jobs.return_value = []
+            jm.jobs_dir = str(tmp / "jobs")
+            # Importing triggers @on_event("startup"); TestClient replays it.
+            from web.app import app
+            with TestClient(app) as c:
+                got = c.get("/api/sequences").json()
+    names = [s["name"] for s in got]
+    assert "Entra Join (default)" in names
+    assert "AD Domain Join — Local Admin" in names
+    assert "Hybrid Autopilot (stub)" in names

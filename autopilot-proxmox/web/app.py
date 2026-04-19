@@ -245,6 +245,7 @@ from web import sequences_db, crypto as _crypto
 def _init_sequences_db() -> None:
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     sequences_db.init(SEQUENCES_DB)
+    sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
 
 
 def _cipher() -> _crypto.Cipher:
