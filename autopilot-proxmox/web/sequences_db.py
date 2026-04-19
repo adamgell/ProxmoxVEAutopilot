@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS task_sequences (
     description TEXT NOT NULL DEFAULT '',
     is_default INTEGER NOT NULL DEFAULT 0,
     produces_autopilot_hash INTEGER NOT NULL DEFAULT 0,
+    target_os TEXT NOT NULL DEFAULT 'windows',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -71,6 +72,17 @@ def init(db_path: Path) -> None:
     """Create tables if they don't exist. Safe to call repeatedly."""
     with _connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # --- Migration: add target_os to task_sequences if missing (pre-existing DBs)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(task_sequences)")}
+        if "target_os" not in cols:
+            conn.execute(
+                "ALTER TABLE task_sequences "
+                "ADD COLUMN target_os TEXT NOT NULL DEFAULT 'windows'"
+            )
+            conn.execute(
+                "UPDATE task_sequences SET target_os='windows' "
+                "WHERE target_os IS NULL OR target_os=''"
+            )
 
 
 class CredentialInUse(Exception):
@@ -192,6 +204,7 @@ def _row_to_sequence(row: sqlite3.Row) -> dict:
         "description": row["description"],
         "is_default": bool(row["is_default"]),
         "produces_autopilot_hash": bool(row["produces_autopilot_hash"]),
+        "target_os": row["target_os"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -210,7 +223,9 @@ def _row_to_step(row: sqlite3.Row) -> dict:
 
 def create_sequence(db_path, *, name: str, description: str,
                     is_default: bool = False,
-                    produces_autopilot_hash: bool = False) -> int:
+                    produces_autopilot_hash: bool = False,
+                    target_os: str = "windows",
+                    steps: Optional[list[dict]] = None) -> int:
     now = _now()
     with _connect(db_path) as conn:
         if is_default:
@@ -218,18 +233,22 @@ def create_sequence(db_path, *, name: str, description: str,
         cur = conn.execute(
             "INSERT INTO task_sequences "
             "(name, description, is_default, produces_autopilot_hash, "
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            " target_os, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name, description, int(is_default), int(produces_autopilot_hash),
-             now, now),
+             target_os, now, now),
         )
-        return cur.lastrowid
+        seq_id = cur.lastrowid
+    if steps is not None:
+        set_sequence_steps(db_path, seq_id, steps)
+    return seq_id
 
 
 def update_sequence(db_path, seq_id: int, *,
                     name: Optional[str] = None,
                     description: Optional[str] = None,
                     is_default: Optional[bool] = None,
-                    produces_autopilot_hash: Optional[bool] = None) -> None:
+                    produces_autopilot_hash: Optional[bool] = None,
+                    target_os: Optional[str] = None) -> None:
     now = _now()
     updates, args = [], []
     if name is not None:
@@ -241,6 +260,8 @@ def update_sequence(db_path, seq_id: int, *,
         args.append(int(produces_autopilot_hash))
     if is_default is not None:
         updates.append("is_default = ?"); args.append(int(is_default))
+    if target_os is not None:
+        updates.append("target_os = ?"); args.append(target_os)
     if not updates:
         return
     updates.append("updated_at = ?"); args.append(now)
