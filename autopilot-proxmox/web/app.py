@@ -2202,6 +2202,7 @@ class _StepIn(BaseModel):
 class _SequenceCreate(BaseModel):
     name: str
     description: str = ""
+    target_os: str = "windows"
     is_default: bool = False
     produces_autopilot_hash: bool = False
     steps: list[_StepIn] = []
@@ -2210,6 +2211,7 @@ class _SequenceCreate(BaseModel):
 class _SequenceUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    target_os: Optional[str] = None
     is_default: Optional[bool] = None
     produces_autopilot_hash: Optional[bool] = None
     steps: Optional[list[_StepIn]] = None
@@ -2240,6 +2242,7 @@ def api_sequences_create(body: _SequenceCreate):
             name=body.name, description=body.description,
             is_default=body.is_default,
             produces_autopilot_hash=body.produces_autopilot_hash,
+            target_os=body.target_os,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
@@ -2263,6 +2266,7 @@ def api_sequences_update(seq_id: int, body: _SequenceUpdate):
             name=body.name, description=body.description,
             is_default=body.is_default,
             produces_autopilot_hash=body.produces_autopilot_hash,
+            target_os=body.target_os,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):

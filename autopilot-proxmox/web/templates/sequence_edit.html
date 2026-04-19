@@ -7,6 +7,11 @@
 <table border="0" cellpadding="3">
 <tr><td><b>Name:</b></td>
     <td><input type="text" id="name" value="{{ seq.name if seq else '' }}" required></td></tr>
+<tr><td><b>Target OS:</b></td>
+    <td><select name="target_os" id="target_os">
+      <option value="windows" {% if not seq or seq.target_os == "windows" %}selected{% endif %}>Windows</option>
+      <option value="ubuntu" {% if seq and seq.target_os == "ubuntu" %}selected{% endif %}>Ubuntu</option>
+    </select></td></tr>
 <tr><td><b>Description:</b></td>
     <td><input type="text" id="description" size="60"
                value="{{ seq.description if seq else '' }}"></td></tr>
@@ -24,15 +29,25 @@
 
 <div style="margin-top:10px;">
   <select id="add-type">
-    <option value="set_oem_hardware">set_oem_hardware</option>
-    <option value="local_admin">local_admin</option>
-    <option value="autopilot_entra">autopilot_entra</option>
-    <option value="autopilot_hybrid">autopilot_hybrid (stub)</option>
-    <option value="join_ad_domain">join_ad_domain</option>
-    <option value="rename_computer">rename_computer</option>
-    <option value="run_script">run_script</option>
-    <option value="install_module">install_module</option>
-    <option value="wait_guest_agent">wait_guest_agent</option>
+    <option value="set_oem_hardware" data-os="both">set_oem_hardware</option>
+    <option value="local_admin" data-os="windows">local_admin</option>
+    <option value="autopilot_entra" data-os="windows">autopilot_entra</option>
+    <option value="autopilot_hybrid" data-os="windows">autopilot_hybrid (stub)</option>
+    <option value="join_ad_domain" data-os="windows">join_ad_domain</option>
+    <option value="rename_computer" data-os="windows">rename_computer</option>
+    <option value="run_script" data-os="windows">run_script</option>
+    <option value="install_module" data-os="windows">install_module</option>
+    <option value="wait_guest_agent" data-os="both">wait_guest_agent</option>
+    <option value="install_ubuntu_core" data-os="ubuntu">Install Ubuntu core (locale/tz/storage)</option>
+    <option value="create_ubuntu_user" data-os="ubuntu">Create Ubuntu user</option>
+    <option value="install_apt_packages" data-os="ubuntu">Install apt packages</option>
+    <option value="install_snap_packages" data-os="ubuntu">Install snap packages</option>
+    <option value="remove_apt_packages" data-os="ubuntu">Remove apt packages</option>
+    <option value="install_intune_portal" data-os="ubuntu">Install Intune Portal</option>
+    <option value="install_edge" data-os="ubuntu">Install Microsoft Edge</option>
+    <option value="install_mde_linux" data-os="ubuntu">Install MDE Linux</option>
+    <option value="run_late_command" data-os="ubuntu">Run shell in install (late-command)</option>
+    <option value="run_firstboot_script" data-os="ubuntu">Run script on first boot (Ubuntu)</option>
   </select>
   <button type="button" onclick="addStep()">+ Add step</button>
 </div>
@@ -172,6 +187,7 @@ async function save() {
   const body = {
     name: document.getElementById('name').value.trim(),
     description: document.getElementById('description').value.trim(),
+    target_os: document.getElementById('target_os').value,
     is_default: document.getElementById('is_default').checked,
     produces_autopilot_hash: document.getElementById('produces_autopilot_hash').checked,
     steps: stepsState.map(s => ({
@@ -192,5 +208,25 @@ async function save() {
 }
 
 loadCreds().then(render);
+
+// --- Filter the Add-step dropdown by target_os ----------------------------
+(function() {
+  const targetOs = document.getElementById("target_os");
+  const stepSel  = document.getElementById("add-type");
+  if (!targetOs || !stepSel) return;
+  function filter() {
+    const os = targetOs.value;
+    for (const opt of stepSel.options) {
+      const dos = opt.dataset.os;
+      opt.hidden = !(dos === "both" || dos === os);
+    }
+    if (stepSel.selectedOptions[0] && stepSel.selectedOptions[0].hidden) {
+      const vis = Array.from(stepSel.options).find(o => !o.hidden);
+      if (vis) stepSel.value = vis.value;
+    }
+  }
+  targetOs.addEventListener("change", filter);
+  filter();
+})();
 </script>
 {% endblock %}

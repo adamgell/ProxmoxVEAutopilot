@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Task Sequences - Proxmox VE Autopilot{% endblock %}
 {% block content %}
+<style>
+.os-badge { padding: 2px 6px; border-radius: 3px; font-size: 0.8em; color: white; }
+.os-windows { background: #0078d4; }
+.os-ubuntu  { background: #e95420; }
+</style>
 <h2>Task Sequences
   <small style="color:#999;font-weight:normal;font-size:11px;">
     · <a href="/sequences/new">+ New sequence</a>
@@ -17,11 +22,12 @@
 <p><i>No sequences yet. <a href="/sequences/new">Create one</a>.</i></p>
 {% else %}
 <table>
-<tr><th>Name</th><th>Description</th><th>Steps</th><th>Default?</th>
+<tr><th>Name</th><th>Target OS</th><th>Description</th><th>Steps</th><th>Default?</th>
     <th>Autopilot hash?</th><th>Updated</th><th>Actions</th></tr>
 {% for s in sequences %}
 <tr>
   <td>{{ s.name }}</td>
+  <td><span class="os-badge os-{{ s.target_os or 'windows' }}">{{ s.target_os or 'windows' }}</span></td>
   <td>{{ s.description }}</td>
   <td>{{ s.step_count }}</td>
   <td>{% if s.is_default %}<span class="status-green">default</span>{% else %}—{% endif %}</td>
