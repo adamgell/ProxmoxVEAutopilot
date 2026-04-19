@@ -288,7 +288,7 @@ def _load_proxmox_config():
     return config
 
 
-def _proxmox_api(path):
+def _proxmox_api(path, method="GET", data=None, files=None):
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
@@ -296,7 +296,11 @@ def _proxmox_api(path):
     token_secret = cfg.get("vault_proxmox_api_token_secret", "")
     url = f"https://{host}:{port}/api2/json{path}"
     headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
-    resp = requests.get(url, headers=headers, verify=False, timeout=10)
+    resp = requests.request(
+        method, url, headers=headers, data=data, files=files,
+        verify=False,
+        timeout=30 if files else 10,
+    )
     resp.raise_for_status()
     return resp.json().get("data", [])
 
