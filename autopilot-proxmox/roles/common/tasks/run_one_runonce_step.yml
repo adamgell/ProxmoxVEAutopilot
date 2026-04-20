@@ -1,0 +1,20 @@
+---
+# Orchestrate a single RunOnce step: tokenize, exec, optionally wait for reboot.
+# Caller supplies `item` (one entry from the runonce_scripts manifest).
+
+- name: "Substitute serial/vmid in {{ item.step_type }} script"
+  ansible.builtin.shell: >-
+    sed -i
+    -e 's/{{ '{{' }}serial{{ '}}' }}/{{ _vm_serial | regex_replace("/", "\\/") }}/g'
+    -e 's/{{ '{{' }}vmid{{ '}}' }}/{{ vm_vmid }}/g'
+    {{ item.path | quote }}
+
+- name: "Execute {{ item.step_type }} on VM {{ vm_vmid }}"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/guest_run_ps_script.yml"
+  vars:
+    _ps_script_path: "{{ item.path }}"
+    _ps_step_name: "{{ item.step_type }}"
+
+- name: "Wait for reboot after {{ item.step_type }}"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_reboot_cycle.yml"
+  when: item.causes_reboot | bool
