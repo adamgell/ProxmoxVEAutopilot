@@ -1,0 +1,64 @@
+---
+# Push a PowerShell script from the controller to the guest, execute it,
+# and collect the output. Designed for sequence RunOnce steps.
+#
+# Caller provides:
+#   vm_vmid          — Proxmox VMID
+#   _ps_script_path  — controller-local path to the .ps1 file
+#   _ps_step_name    — short identifier used in task titles / logs
+#
+# The script is written to the guest at C:\Windows\Temp\autopilot-<name>.ps1
+# and deleted after execution (best-effort; failures to delete are non-fatal).
+
+- name: "Read PS script from controller — {{ _ps_step_name }}"
+  ansible.builtin.slurp:
+    src: "{{ _ps_script_path }}"
+  register: _ps_script_b64
+  no_log: true
+
+- name: "Write PS script to guest — {{ _ps_step_name }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/file-write"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      file: 'C:\Windows\Temp\autopilot-{{ _ps_step_name }}.ps1'
+      content: "{{ _ps_script_b64.content }}"
+      encode: "0"  # content is already base64 from slurp
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  no_log: true
+
+- name: "Execute PS script in guest — {{ _ps_step_name }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/exec"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      command: 'powershell.exe -ExecutionPolicy Bypass -NoProfile -File C:\Windows\Temp\autopilot-{{ _ps_step_name }}.ps1'
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  register: _ps_exec_result
+
+- name: "Report executed — {{ _ps_step_name }}"
+  ansible.builtin.debug:
+    msg: "Executed RunOnce step {{ _ps_step_name }} on VM {{ vm_vmid }} (pid: {{ _ps_exec_result.json.data.pid | default('unknown') }})"
+
+# Best-effort cleanup of the script file in the guest. If the step triggered
+# a reboot, the file may already be gone — ignore failures.
+- name: "Delete PS script from guest — {{ _ps_step_name }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/exec"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      command: 'cmd.exe /c del /Q C:\Windows\Temp\autopilot-{{ _ps_step_name }}.ps1'
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  failed_when: false
