@@ -99,6 +99,12 @@
   #   apt install -y libguestfs-tools
   # (this role's README / SETUP.md will document that prereq).
   ansible.builtin.shell:
+    # virt-customize fails OS detection on a sysprep-ed Windows disk
+    # ("no operating systems were found"). Use guestfish directly on
+    # /dev/sda4 (the Windows partition) — lower-level, doesn't care
+    # that the OS is generalized. guestfish's inline syntax separates
+    # commands with ' : ', which keeps everything on one shell line
+    # and avoids heredoc quoting games across ssh/YAML boundaries.
     cmd: >-
       sshpass -e ssh -o StrictHostKeyChecking=no
         -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
@@ -106,12 +112,13 @@
         'set -eu;
          DISK="$(pvesm path {{ _scsi0_volid }})";
          if [ -z "$DISK" ]; then echo "no disk path" >&2; exit 1; fi;
-         virt-customize -a "$DISK"
-           --delete /Windows/Panther/unattend.xml
-           --delete /Windows/Panther/unattend-original.xml
-           --delete /Windows/Panther/UnattendGC/unattend.xml
-           --delete /Windows/System32/Sysprep/unattend.xml
-           --no-network >/dev/null;
+         guestfish --rw -a "$DISK" --
+           run :
+           mount /dev/sda4 / :
+           rm-f /Windows/Panther/unattend.xml :
+           rm-f /Windows/Panther/unattend-original.xml :
+           rm-f /Windows/Panther/UnattendGC/unattend.xml :
+           rm-f /Windows/System32/Sysprep/unattend.xml ;
          remaining=$(virt-ls -a "$DISK" -m /dev/sda4 /Windows/Panther/ 2>/dev/null | grep -cE "^unattend(-original)?\.xml$" || true);
          echo "remaining_unattend_count=$remaining";
          test "$remaining" -eq 0'
