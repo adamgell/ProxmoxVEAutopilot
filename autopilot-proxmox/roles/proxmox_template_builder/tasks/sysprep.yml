@@ -1,22 +1,14 @@
 ---
-# Clones inherit the template's C:\Windows\Panther\unattend.xml, which
-# Windows consults BEFORE scanning OEMDRV-labeled CDs. If we leave it in
-# place, every clone re-applies the template-build answer file instead
-# of whatever per-VM autounattend.xml we staged on sata0 (domain join,
-# rename_computer, etc. never run). Nuke Panther's answer-file copies
-# before sysprep so the clone's answer-file search falls through to the
-# CD on first boot.
-- name: Delete stale Panther answer files so clones consult the CD
-  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
-  vars:
-    _exec_command:
-      - "cmd.exe"
-      - "/c"
-      # Suppress stderr — any of these may legitimately be missing.
-      - 'del /f /q "C:\Windows\Panther\unattend.xml" "C:\Windows\Panther\unattend-original.xml" "C:\Windows\System32\Sysprep\unattend.xml" 2>nul & exit /b 0'
-    _exec_timeout: 60
+# Windows Setup's answer-file search puts C:\Windows\Panther\unattend.xml
+# above CD-ROM OEMDRV scanning, and sysprep /generalize *rewrites* that
+# file — any delete that runs before sysprep is undone by sysprep itself.
+#
+# The fix: run sysprep with /quit (not /shutdown) so it finishes but
+# leaves the VM running, delete Panther after generalize is done, then
+# stop the VM via API. Clones created from the resulting template have
+# no Panther copy and have to consult the CD on first boot.
 
-- name: Execute sysprep in guest
+- name: Execute sysprep /generalize /oobe /quit
   ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
   vars:
     _exec_command:
@@ -25,7 +17,45 @@
       - 'C:\Windows\System32\Sysprep\sysprep.exe'
       - "/generalize"
       - "/oobe"
-      - "/shutdown"
+      - "/quit"
     _exec_timeout: 600
-  # sysprep triggers shutdown — the exec-status poll may lose the agent
-  ignore_errors: true  # noqa: ignore-errors
+
+- name: Delete Panther answer files (post-generalize) so clones consult the CD
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      # 2>nul swallows any "not found" errors (defensive — sysprep may
+      # or may not have recreated one of these depending on the install
+      # path). exit /b 0 ensures the exec-status poll sees success.
+      - 'del /f /q "C:\Windows\Panther\unattend.xml" "C:\Windows\Panther\unattend-original.xml" "C:\Windows\Panther\UnattendGC\unattend.xml" "C:\Windows\System32\Sysprep\unattend.xml" 2>nul & exit /b 0'
+    _exec_timeout: 60
+
+- name: Confirm Panther unattend.xml is gone (guard against silent re-creation)
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      # Returns 0 if file is absent (dir errors), 1 if present.
+      - 'if exist "C:\Windows\Panther\unattend.xml" (echo PANTHER-STILL-PRESENT & exit /b 1) else (echo PANTHER-CLEAN & exit /b 0)'
+    _exec_timeout: 30
+
+- name: Fail the build if Panther was repopulated
+  ansible.builtin.fail:
+    msg: >-
+      Sysprep ran, Panther was deleted, but C:\Windows\Panther\unattend.xml
+      re-appeared before shutdown. This breaks the per-VM answer-ISO flow
+      on clones. Investigate via the guest console: sysprep logs are at
+      C:\Windows\System32\Sysprep\Panther\setupact.log.
+  when: '"PANTHER-STILL-PRESENT" in (_guest_exec_status.json.data["out-data"] | default(""))'
+
+- name: Shut down the VM now that Panther is clean
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/shutdown"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
