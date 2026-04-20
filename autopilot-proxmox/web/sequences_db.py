@@ -632,8 +632,10 @@ def seed_defaults(db_path, cipher) -> None:
                  "fi\n"
                  "# Explicitly allow HTTPS pass-through to any host — safer\n"
                  "# than tunnelenable alone and survives future reconfigures.\n"
+                 "# Unquoted — apt-cacher-ng treats the value as a regex; "
+                 "quotes become literal regex characters and break matching.\n"
                  "grep -q '^PassThroughPattern' /etc/apt-cacher-ng/acng.conf || "
-                 "echo 'PassThroughPattern: \".*\"' >> /etc/apt-cacher-ng/acng.conf\n"
+                 "echo 'PassThroughPattern: .*' >> /etc/apt-cacher-ng/acng.conf\n"
                  "systemctl enable --now apt-cacher-ng\n"
                  "systemctl restart apt-cacher-ng"
              ),
