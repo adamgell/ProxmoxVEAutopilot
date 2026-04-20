@@ -22,11 +22,17 @@ def compile_install_ubuntu_core(params, credentials) -> StepOutput:
             "updates": "security",
             "shutdown": "poweroff",
             "ssh": {"install-server": False},
-            # qemu-guest-agent is required by Proxmox's agent/exec API. The
-            # playbook's sysprep step (cloud-init clean via guest-exec) and
-            # every per-clone status check rely on it, so install it as part
-            # of the baseline. Users can add more packages via
-            # install_apt_packages steps — the assembler concatenates.
+            # qemu-guest-agent is required by Proxmox's agent/exec API.
             "packages": ["qemu-guest-agent"],
         },
+        # Belt-and-suspenders: even if subiquity's `packages:` processing
+        # skipped the install (sometimes happens when the install environment
+        # has sporadic connectivity), install + enable the agent explicitly
+        # in the target before reboot. Curtin in-target runs during the
+        # install, so apt has network and can fetch from the main archive.
+        late_commands=[
+            "curtin in-target --target=/target -- apt-get update",
+            "curtin in-target --target=/target -- apt-get install -y qemu-guest-agent",
+            "curtin in-target --target=/target -- systemctl enable qemu-guest-agent",
+        ],
     )

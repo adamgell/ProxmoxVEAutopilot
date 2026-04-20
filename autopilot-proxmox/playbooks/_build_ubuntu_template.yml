@@ -129,7 +129,10 @@
   retries: 180        # 30 minutes at 10s intervals
   delay: 10
 
-- name: Detach autoinstall seed ISO
+- name: Detach both ISOs and set boot order to disk (install is complete)
+  # Detach ide3 (seed) AND ide2 (Ubuntu install ISO) so the next boot comes
+  # from the installed system on scsi0. Without this the VM re-enters subiquity
+  # on the next start instead of booting the finished OS.
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
     method: POST
@@ -137,7 +140,8 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     body_format: form-urlencoded
     body:
-      delete: "ide3"
+      delete: "ide2,ide3"
+      boot: "order=scsi0"
     validate_certs: "{{ proxmox_validate_certs }}"
 
 - name: Start VM again for cloud-init clean
@@ -187,17 +191,6 @@
   until: vm_status2.json.data.status == "stopped"
   retries: 30
   delay: 5
-
-- name: Detach Ubuntu install ISO
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
-    method: POST
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    body_format: form-urlencoded
-    body:
-      delete: "ide2"
-    validate_certs: "{{ proxmox_validate_certs }}"
 
 - name: Convert VM to template
   ansible.builtin.uri:

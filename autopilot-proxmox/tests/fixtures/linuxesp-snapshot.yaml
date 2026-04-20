@@ -25,6 +25,11 @@ autoinstall:
     - name: powershell
       classic: true
   late-commands:
+    # install_ubuntu_core baseline — qemu-guest-agent for Proxmox agent API.
+    - curtin in-target --target=/target -- apt-get update
+    - curtin in-target --target=/target -- apt-get install -y qemu-guest-agent
+    - curtin in-target --target=/target -- systemctl enable qemu-guest-agent
+    # Microsoft repo + Intune Portal
     - curtin in-target --target=/target -- mkdir -p /tmp/microsoft
     - "curtin in-target --target=/target -- sh -c 'cd /tmp/microsoft && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg'"
     - curtin in-target --target=/target -- install -o root -g root -m 644 /tmp/microsoft/microsoft.gpg /usr/share/keyrings/microsoft.gpg

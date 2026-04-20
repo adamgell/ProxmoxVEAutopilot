@@ -38,7 +38,12 @@ def test_keyboard_layout_override() -> None:
     assert out.autoinstall_body["keyboard"] == {"layout": "de"}
 
 
-def test_no_late_commands_or_firstboot() -> None:
+def test_emits_qemu_guest_agent_install_late_commands() -> None:
+    """Belt-and-suspenders: explicit apt install of qemu-guest-agent in
+    late-commands so Proxmox's agent API is reachable after first boot even
+    if subiquity's packages: processing silently skipped the install."""
     out = compile_step("install_ubuntu_core", params={}, credentials={})
-    assert out.late_commands == []
+    joined = "\n".join(out.late_commands)
+    assert "apt-get install -y qemu-guest-agent" in joined
+    assert "systemctl enable qemu-guest-agent" in joined
     assert out.firstboot_runcmd == []
