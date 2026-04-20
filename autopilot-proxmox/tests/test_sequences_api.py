@@ -253,6 +253,95 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
     mock_ensure.assert_called_with(node="pve", storage="local", chassis_type=31)
 
 
+def test_provision_renders_runonce_scripts_per_job(app_env, tmp_path):
+    """POST /api/jobs/provision with a sequence that includes
+    join_ad_domain renders a per-job runonce/ dir and includes its
+    manifest in the ansible -e args."""
+    from web import sequences_db, crypto
+    from web.app import SEQUENCES_DB, CREDENTIAL_KEY, job_manager
+    cipher = crypto.Cipher(CREDENTIAL_KEY)
+
+    cred_id = sequences_db.create_credential(
+        SEQUENCES_DB, cipher, name="test-dj", type="domain_join",
+        payload={"domain_fqdn": "example.local", "username": "x",
+                 "password": "y", "ou_hint": ""},
+    )
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="test-ad", description="",
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "join_ad_domain",
+         "params": {"credential_id": cred_id, "ou_path": "OU=Test"},
+         "enabled": True},
+    ])
+
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd)
+        return {"id": "fake-job"}
+    job_manager.start.side_effect = fake_start
+    job_manager.set_arg = lambda *a, **k: None
+    job_manager.add_on_complete = lambda *a, **k: None
+    job_manager.jobs_dir = str(tmp_path / "jobs")
+
+    from unittest.mock import patch
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+    }), patch("web.proxmox_snippets.ensure_chassis_type_binary", return_value=""):
+        r = app_env.post("/api/jobs/provision", data={
+            "profile": "",
+            "count": "1",
+            "cores": "2",
+            "memory_mb": "4096",
+            "disk_size_gb": "64",
+            "serial_prefix": "",
+            "group_tag": "",
+            "sequence_id": str(seq_id),
+        }, follow_redirects=False)
+    assert r.status_code == 303
+
+    import json as _json
+    cmd = captured["cmd"]
+    runonce_arg = next(
+        (c for c in cmd if isinstance(c, str) and c.startswith("_runonce_scripts_json=")),
+        None,
+    )
+    assert runonce_arg is not None, f"no _runonce_scripts_json in cmd: {cmd}"
+    manifest = _json.loads(runonce_arg.split("=", 1)[1])
+    assert len(manifest) == 1
+    assert manifest[0]["step_type"] == "join_ad_domain"
+    assert manifest[0]["causes_reboot"] is True
+
+    from pathlib import Path
+    p = Path(manifest[0]["path"])
+    assert p.exists()
+    assert p.stat().st_mode & 0o777 == 0o600
+    content = p.read_text()
+    assert "example.local" in content
+    assert "OU=Test" in content
+    assert content.count("'y'") >= 1
+    # Branding envelope present
+    assert "ProxmoxVEAutopilot" in content
+    assert "EventId 1001" in content
+    assert r"HKLM:\SOFTWARE\ProxmoxVEAutopilot\Provisioning" in content
+    assert "Restart-Computer -Force" in content
+
+
+def test_test_domain_join_endpoint_uses_ldap3(app_env):
+    """The /api/credentials/test-domain-join endpoint calls ldap_tester."""
+    from unittest.mock import patch
+    fake_result = {"ok": True, "dns": {"ok": True, "servers": ["dc01"]},
+                   "connect": {"ok": True}, "bind": {"ok": True},
+                   "rootdse": {"ok": True}, "ou": {"ok": True}}
+    with patch("web.ldap_tester.test_domain_join", return_value=fake_result):
+        r = app_env.post("/api/credentials/test-domain-join", json={
+            "payload": {"domain_fqdn": "example.local",
+                        "username": "x", "password": "y", "ou_hint": ""}
+        })
+    assert r.status_code == 200
+    assert r.json() == fake_result
+
+
 def test_startup_seeds_defaults(tmp_path):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile

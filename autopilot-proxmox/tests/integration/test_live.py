@@ -255,6 +255,15 @@ def test_delete_seeded_credential_blocked_by_reference(session, base_url):
 # Compiler end-to-end check via the UI surface
 # ------------------------------------------------------------------
 
+def test_credential_edit_page_has_test_connection_button(session, base_url):
+    """Phase B.2a: credential create page includes a Test Connection
+    button + testDomainJoin() JS for domain_join credentials."""
+    r = session.get(base_url + "/credentials/new", timeout=10)
+    assert r.status_code == 200
+    assert "testDomainJoin()" in r.text
+    assert "Test connection" in r.text
+
+
 def test_sequence_builder_page_loads_for_seeded_default(session, base_url):
     """Editing the seeded default sequence must render the builder page
     cleanly. This exercises the code path that loads oem_profiles +
