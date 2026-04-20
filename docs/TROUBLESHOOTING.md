@@ -229,6 +229,38 @@ Status code was 500 and not [200]: HTTP Error 500: only root can set 'args' conf
 
 In newer builds, requesting a chassis override without the root token configured returns a 400 from the UI **before** the job starts, with the exact remediation commands in the error body. If you're seeing this message mid-run, you're on an older image — `docker compose pull && docker compose up -d` to get the preflight.
 
+## Domain join fails during OOBE
+
+**Symptom:** the provision job completes, the VM boots to the desktop, but the computer never appears in AD; or Windows shows "trust relationship" errors on first login; or the sequence gets stuck at **Follow guest through 1 reboot(s)**.
+
+**Diagnosis path:**
+
+1. **Check `C:\Windows\Panther\UnattendGC\setupact.log`** on the guest for lines containing `NetJoinDomain` or `DNS_ERROR`. This is the Windows-side truth.
+2. **Check the per-VM answer ISO** on the `/answer-isos` page. Click the row, note the short hash, and confirm the ISO was recent and un-pruned.
+3. **Re-run "Test connection"** on the `domain_join` credential — if it goes red on bind, the password is wrong or expired. Red on OU = the account can't see the OU (typically a delegation issue).
+
+**Common causes:**
+
+| Cause | Fix |
+|---|---|
+| VM can't resolve the domain FQDN. The template's NIC is DHCP by default; your DHCP server must hand out internal DNS. | Add internal DNS servers to your DHCP scope. Temporary fix: `ipconfig /all` inside the VM and verify the resolver points at a DC. |
+| Service account's password expired or was changed without updating the credential. | Rotate in AD, update the credential in the Credentials page. |
+| Delegated rights only cover "create", not "write servicePrincipalName" — fails after join. | Grant the full "Join a computer to the domain" wizard set on the OU. |
+| Clock skew > 5 minutes between guest and DC. | Guests default to UTC (unattend line `<TimeZone>UTC</TimeZone>`); make sure DCs also have sane time. |
+| Sequence references a credential that was deleted. | The compile preflight returns a 400 naming the missing credential id — re-point the step at a current credential. |
+
+## `rename_computer` never reboots — job hangs at "Follow guest through N reboot(s)"
+
+**Symptom:** job log shows `Follow guest through 1 reboot(s)` then stalls until `reboot_wait_timeout_seconds` (default 600s) and finally errors with "Guest never dropped the guest agent."
+
+**Cause:** the FirstLogonCommand that invokes `Rename-Computer; shutdown /r /t 5` never executed. Usually one of:
+
+- QEMU guest agent isn't installed in the template → FirstLogonCommands run, but the agent isn't there to signal the reboot. Rebuild the template (`Build Template`), ensuring the VirtIO ISO is attached.
+- The sequence's `local_admin` credential points at a user that OOBE can't create (special characters in the password that aren't escaped properly). Edit the credential and simplify the password for now.
+- Windows OOBE crashed before FirstLogonCommands. Check `C:\Windows\Panther\UnattendGC\setupact.log` — if absent, OOBE didn't finish.
+
+Workaround if you just want the VM created without rename: edit the sequence, toggle the `rename_computer` step to disabled. The job completes with a VM named `autopilot-<vmid>` instead of its serial.
+
 ## Can't find my storage or SDN zone name
 
 ```bash

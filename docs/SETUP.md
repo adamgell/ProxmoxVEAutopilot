@@ -333,6 +333,47 @@ For VMs provisioned with a sequence whose *produces Autopilot hash* is off (the 
 
 Compiled artifacts (`unattend.xml`, `SetupComplete.cmd`) contain plaintext secrets while the VM specializes — Windows reads and then strips these files from `C:\Windows\Panther\` as part of standard OOBE behavior. This is the `<UnattendedJoin>` mechanism as designed by Microsoft. Mitigation: use a delegated AD account with only "join computer to OU" rights, and keep the per-job sequence artifacts directory (`/app/jobs/<job_id>/sequence/`) in the named volume — it's scrubbed at job completion.
 
+### Provisioning a domain-joined VM (walkthrough)
+
+Concrete steps using the seeded **AD Domain Join — Local Admin** sequence.
+
+1. **Create a delegated AD account.** In ADUC, create a user (e.g. `svc_autopilot_join`) and delegate "Join a computer to the domain" on the target OU (right-click OU → Delegate Control). Set a strong password.
+2. **Credentials page → New credential → AD domain join.** Fill in:
+   - Name: `home.gell.com join` (anything memorable)
+   - Domain FQDN: `home.gell.com`
+   - Username: `home.gell.com\svc_autopilot_join` (or `svc_autopilot_join@home.gell.com`)
+   - Password: the one you set
+   - Default OU hint: `OU=Autopilot,DC=home,DC=gell,DC=com` (optional — the step can override this)
+
+   Click **Test connection**. Expect green rows for DNS, connect, bind, rootDSE, and (if you set an OU hint) OU-visible. A red row on bind = wrong credentials; a red row on OU = the account can see the domain but not the OU.
+3. **(Optional) Create a fresh `local_admin` credential** if you don't want the default `Nsta1200!!` password. The seeded sequence already points at `default-local-admin` which uses today's hardcoded credential.
+4. **Sequences page → AD Domain Join — Local Admin → Edit.** In the `join_ad_domain` step:
+   - **Credential:** pick the domain-join credential you just created.
+   - **OU path:** (optional) leave blank to use the credential's hint, or override here per-sequence. The step value wins.
+5. **Provision page.** Pick an OEM profile (e.g. `lenovo-t14`). In the **Task Sequence** dropdown pick **AD Domain Join — Local Admin**. Set Count, Cores, Memory, Disk as normal. Submit.
+6. **Jobs page.** Watch the log. You should see:
+   - `Compiler resolved sequence` — compile succeeded, credentials decrypted inline.
+   - `Clone template to new VM ...` — API clone fired.
+   - `Update cloned VM configuration` — sata0 is now pointing at the per-VM answer ISO (see `/answer-isos` for the hash).
+   - `Start VM`.
+   - `Follow guest through 1 reboot(s)` — the `rename_computer` reboot waiter engaging.
+   - `Cloned VM ... UUID=... Disk Serial=...` — done.
+7. **Verify on the domain controller:** the new computer object should appear in the OU you set. `Get-ADComputer -Identity <serial>` from any domain-joined machine.
+
+If step 6 hangs or errors, see [TROUBLESHOOTING.md — Domain join fails during OOBE](TROUBLESHOOTING.md#domain-join-fails-during-oobe).
+
+### Answer-ISO cache (`/answer-isos`)
+
+Every provisioned sequence compiles to an `autounattend.xml` whose bytes depend on the sequence + resolved credentials. The web app content-addresses these payloads on Proxmox ISO storage as `autopilot-unattend-<first-16-hex-of-sha256>.iso`. Two VMs whose compiled payloads are byte-identical (same sequence + same decrypted creds) share one ISO; changing the sequence or the credential creates a new entry.
+
+The `/answer-isos` page lists every cached ISO with:
+- Short hash (the filename fragment)
+- Volid (`isos:iso/autopilot-unattend-<hash>.iso`)
+- Compiled / last-used timestamps
+- **in use** badge when any live VM still references the volid on ide*/sata*.
+
+Select one or more **unused** entries and click **Prune selected** to delete both the cache row and the underlying ISO from storage. In-use rows are checkbox-disabled to prevent yanking an ISO out from a VM still booting. Pruned entries get rebuilt automatically the next time a sequence compiles to the same bytes — there's no harm in being aggressive with the cleanup.
+
 ## Appendix A — Unattended install internals
 
 The `autounattend.xml` answer file is mounted as a separate tiny ISO alongside the Windows ISO and VirtIO ISO. When the VM boots:
