@@ -575,27 +575,24 @@ def seed_defaults(db_path, cipher) -> None:
         {"step_type": "create_ubuntu_user",
          "params": {"local_admin_credential_id": default_admin_id},
          "enabled": True},
-        {"step_type": "install_apt_packages",
-         "params": {
-             "packages": ["apt-cacher-ng"],
-             # apt-cacher-ng prompts via debconf at install time asking
-             # whether to allow HTTP tunnels. Without a preseed the
-             # cloud-init package install hangs on the dialog and the
-             # package ends up half-configured (service User= missing etc.).
-             # Answer "no" — we want a plain caching proxy, no tunnels.
-             "debconf_selections": {
-                 "apt-cacher-ng": (
-                     "apt-cacher-ng apt-cacher-ng/tunnelenable boolean false"
-                 ),
-             },
-         },
-         "enabled": True},
-        # Belt-and-suspenders: ensure the service is enabled on first boot.
-        # The debian postinst enables it by default, but this catches the
-        # edge case where a clone was manually tweaked.
+        # Install apt-cacher-ng at FIRST BOOT on the clone. We can't rely on
+        # install_apt_packages here because that emits cloud-config.packages,
+        # which only runs during template build. When you clone from the
+        # standard Ubuntu Plain template, the per-VM NoCloud seed only
+        # carries firstboot runcmd — so the install has to live there.
+        # Debconf preseed + noninteractive frontend prevents the install
+        # from hanging on the "Allow HTTP tunnels?" modal.
         {"step_type": "run_firstboot_script",
          "params": {
              "command": (
+                 "set -e\n"
+                 "if ! dpkg -s apt-cacher-ng >/dev/null 2>&1; then\n"
+                 "  echo 'apt-cacher-ng apt-cacher-ng/tunnelenable boolean false' "
+                 "| debconf-set-selections\n"
+                 "  export DEBIAN_FRONTEND=noninteractive\n"
+                 "  apt-get update\n"
+                 "  apt-get install -y apt-cacher-ng\n"
+                 "fi\n"
                  "systemctl enable --now apt-cacher-ng"
              ),
          },
