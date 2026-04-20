@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 import sqlite3
 import time
@@ -1011,6 +1012,36 @@ async def start_provision(
             form_overrides=form_overrides,
             vars_yml=_load_vars(),
         )
+
+        # Render RunOnce step scripts (join_ad_domain, rename_computer, etc.)
+        # Each gets its own .ps1 in a per-job runonce/ dir with 0600 perms.
+        # The renderer wraps each core action with the branding envelope
+        # (header + Event Log + Registry stamp).
+        if compiled.runonce_steps:
+            runonce_dir = Path(job_manager.jobs_dir) / "pending" / f"seq-{sequence_id}" / "runonce"
+            def _creds_resolver(cid: int, _cipher=_cipher, _db=SEQUENCES_DB):
+                c = sequences_db.get_credential(_db, _cipher(), cid)
+                return c["payload"] if c else None
+            from web import runonce_renderer
+            try:
+                runonce_infos = runonce_renderer.write_step_scripts(
+                    steps=compiled.runonce_steps,
+                    dest_dir=runonce_dir,
+                    creds_resolver=_creds_resolver,
+                    vm_context={
+                        "serial": "",     # filled by Ansible per-VM (TBD below)
+                        "vmid": "",       # same
+                        "group_tag": group_tag,
+                        "sequence_id": int(sequence_id),
+                        "sequence_name": seq["name"],
+                    },
+                    brand=_load_brand_context(),
+                )
+            except runonce_renderer.RenderError as e:
+                raise HTTPException(400, f"runonce render failed: {e}")
+            resolved_vars["_runonce_scripts_json"] = json.dumps(runonce_infos)
+        else:
+            runonce_infos = []
 
     if count <= 1:
         cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]

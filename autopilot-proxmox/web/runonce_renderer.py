@@ -29,6 +29,15 @@ def _ps_escape(value) -> str:
 
 
 def _expand_pattern_tokens(pattern: str, vm_context: dict) -> str:
+    """Expand {serial}/{vmid}/{group_tag} tokens in a pattern string.
+
+    NOTE: In the provision flow, serial and vmid aren't known at Python
+    render time — they're generated inside Ansible. The web layer passes
+    empty strings for those keys, and the Ansible role does a second
+    pass replacing the empty strings with the actual values before
+    writing the .ps1 to the guest. {group_tag} expands here because the
+    web layer knows it up front.
+    """
     defaults = {"serial": "", "vmid": "", "group_tag": ""}
     return pattern.format_map({**defaults, **vm_context})
 
