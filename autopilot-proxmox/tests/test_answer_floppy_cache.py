@@ -32,15 +32,19 @@ def test_floppy_path_format():
 
 
 def test_qemu_args_token_shape():
-    """The token must be attachable via QEMU's -drive if=floppy and
-    pointed at the .img path verbatim. Windows sees it as removable R/W."""
+    """The token must be attachable via QEMU's -drive if=floppy. The
+    comma-separated option string MUST be single-quoted, because PVE's
+    split_args parser otherwise treats commas as option boundaries and
+    silently drops everything after the first comma."""
     from web import answer_floppy_cache
     out = answer_floppy_cache.qemu_args_token(
         "/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img",
     )
-    assert out.startswith("-drive if=floppy")
-    assert "format=raw" in out
-    assert out.endswith("file=/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img")
+    assert out.startswith("-drive '")
+    assert out.endswith("'")
+    assert "if=floppy" in out and "format=raw" in out
+    assert ("file=/var/lib/vz/snippets/"
+            "autopilot-unattend-deadbeefdeadbeef.img") in out
 
 
 def test_ensure_floppy_builds_on_cache_miss(db_path):

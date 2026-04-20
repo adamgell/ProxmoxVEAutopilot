@@ -53,9 +53,12 @@ def floppy_path(short: str) -> str:
 
 def qemu_args_token(path: str) -> str:
     """Return the QEMU args fragment that attaches ``path`` as virtual
-    floppy A:. Windows sees it as removable R/W, position 4 in the
-    answer-file search order."""
-    return f"-drive if=floppy,format=raw,file={path}"
+    floppy A:. PVE's args parser uses ``split_args`` which respects
+    single quotes, so we wrap the comma-containing value in quotes to
+    prevent the parser from splitting on the internal commas. Without
+    this, Proxmox stores only the ``-drive`` token and silently drops
+    the rest."""
+    return f"-drive 'if=floppy,format=raw,file={path}'"
 
 
 def _now() -> str:

@@ -56,11 +56,14 @@
 # routinely ignored when sysprep's online specialize is running.
 - name: Compute the merged args string
   ansible.builtin.set_fact:
+    # Commas inside a -drive/-smbios value must be inside single quotes
+    # — PVE's split_args treats commas as option separators otherwise
+    # and stores only the `-drive` token, dropping the rest silently.
     _args_tokens: >-
       {{ ([
            (_clone_config.json.data.args | default('') | trim),
            (_smbios_args | default('') | trim),
-           ('-drive if=floppy,format=raw,file=' ~ _answer_floppy_path
+           ("-drive 'if=floppy,format=raw,file=" ~ _answer_floppy_path ~ "'"
               if (_answer_floppy_path | default('') | length > 0) else '')
          ] | reject('equalto', '') | list) }}
 

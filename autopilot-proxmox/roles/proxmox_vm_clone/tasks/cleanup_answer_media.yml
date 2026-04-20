@@ -44,17 +44,14 @@
   block:
     - name: Compute args string without the floppy token
       ansible.builtin.set_fact:
-        # Split the existing args into whitespace-separated tokens, drop
-        # any that mention the per-VM floppy path, rejoin. Keeps the
-        # chassis -smbios token (and anything else) untouched.
-        _cleaned_args_tokens: >-
-          {{ (_cleanup_config.json.data.args | default('')).split()
-             | reject('search', 'autopilot-unattend-[0-9a-f]+\.img')
-             | list }}
-
-    - name: Assemble cleaned args value
-      ansible.builtin.set_fact:
-        _cleaned_args: "{{ _cleaned_args_tokens | join(' ') | trim }}"
+        # Remove the whole `-drive '...autopilot-unattend-<hex>.img'`
+        # substring. Whitespace-tokenizing the args string splits the
+        # quoted drive value into separate words — simple token-filter
+        # would leave an orphan `-drive` behind.
+        _cleaned_args: >-
+          {{ (_cleanup_config.json.data.args | default(''))
+             | regex_replace(" *-drive +'[^']*autopilot-unattend-[0-9a-f]+\\.img[^']*'", '')
+             | trim }}
 
     - name: "PUT cleaned args (keeping chassis) on VM {{ vm_vmid }}"
       ansible.builtin.uri:
