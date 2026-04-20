@@ -11,16 +11,14 @@ proxmox_validate_certs: false
 # Constructed from vault secrets — used in all uri headers
 proxmox_api_auth_header: "PVEAPIToken={{ vault_proxmox_api_token_id }}={{ vault_proxmox_api_token_secret }}"
 
-# Optional root@pam API token header. ONLY used for VM config fields that
-# Proxmox hardcodes to require root (see PVE::API2::Qemu check_vm_modify_config_perm:
-# args, lock, etc.). The chassis-type override feature is the only caller today.
-# Falls back to the scoped header when the root secrets aren't set, so nothing
-# changes for users that don't use chassis overrides.
-proxmox_root_api_auth_header: >-
-  {{ 'PVEAPIToken=' ~ vault_proxmox_root_api_token_id ~ '=' ~ vault_proxmox_root_api_token_secret
-     if (vault_proxmox_root_api_token_id | default('') | length > 0
-         and vault_proxmox_root_api_token_secret | default('') | length > 0)
-     else proxmox_api_auth_header }}
+# Ticket + CSRF headers for root@pam authentication. Proxmox's VM config
+# endpoint rejects API tokens (even root@pam!<name> with privsep=0) for
+# the 'args' field -- the check is a literal string match against the
+# authuser 'root@pam', which token names never satisfy. The web backend
+# POSTs /access/ticket just-in-time per provision that requires args,
+# and passes the resulting ticket + CSRF via -e _proxmox_root_ticket /
+# _proxmox_root_csrf_token. Ansible composes Cookie + header from those
+# for the single PUT that sets args.
 
 # =============================================================================
 # Storage and networking

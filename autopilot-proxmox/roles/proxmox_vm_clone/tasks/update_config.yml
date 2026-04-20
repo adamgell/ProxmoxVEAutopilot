@@ -51,11 +51,13 @@
   until: _config_result.status == 200
 
 # 'args' is hardcoded to root@pam in PVE::API2::Qemu::check_vm_modify_config_perm
-# (it's passed straight to QEMU and can expose host resources). We do this
-# update as a separate PUT with a root@pam API token. The web handler has
-# already preflighted that the token is configured, so an auth failure here
-# is genuinely wrong credentials rather than a missing-config case.
-- name: Apply SMBIOS args via root@pam token (required for chassis-type override)
+# — literal string match against the authuser, so API tokens (even
+# root@pam!<name> with privsep=0) never pass. The only way is a short-lived
+# ticket obtained via /access/ticket with password auth. The web handler
+# preflights that _proxmox_root_ticket/_proxmox_root_csrf_token are set;
+# an auth failure here means the ticket expired mid-run (unlikely in <2h)
+# or the password rotated out-of-band.
+- name: Apply SMBIOS args via root@pam ticket (required for chassis-type override)
   when: _smbios_args is defined and _smbios_args | length > 0
   block:
     - name: Build merged args string (preserve any existing args on the clone)
@@ -63,7 +65,7 @@
         _merged_args: >-
           {{ ((_clone_config.json.data.args | default('')) ~ ' ' ~ _smbios_args) | trim }}
 
-    - name: Update args field via root token
+    - name: Update args field via root@pam ticket
       ansible.builtin.uri:
         url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
         method: PUT
@@ -71,10 +73,12 @@
         body:
           args: "{{ _merged_args }}"
         headers:
-          Authorization: "{{ proxmox_root_api_auth_header }}"
+          Cookie: "PVEAuthCookie={{ _proxmox_root_ticket }}"
+          CSRFPreventionToken: "{{ _proxmox_root_csrf_token }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
       register: _args_result
       retries: "{{ clone_config_retries | default(6) }}"
       delay: "{{ clone_config_delay | default(5) }}"
       until: _args_result.status == 200
+      no_log: true

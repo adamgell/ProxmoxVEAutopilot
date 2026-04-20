@@ -333,6 +333,38 @@ def _proxmox_api_put(path, data=None):
     return resp.json().get("data", {})
 
 
+def _proxmox_root_ticket_fetch(cfg: dict) -> tuple[str, str]:
+    """Exchange root@pam username/password for a (ticket, CSRF) pair.
+
+    Proxmox tickets are good for ~2 hours by default — enough for a
+    single provision job. The password is read fresh from the loaded
+    config each call, so rotating in vault.yml + restarting the
+    container is sufficient; no caching here.
+    """
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    username = cfg.get("vault_proxmox_root_username") or "root@pam"
+    password = cfg.get("vault_proxmox_root_password") or ""
+    if not password:
+        raise ValueError("vault_proxmox_root_password is empty")
+    url = f"https://{host}:{port}/api2/json/access/ticket"
+    resp = requests.post(
+        url,
+        data={"username": username, "password": password},
+        verify=cfg.get("proxmox_validate_certs", False),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data") or {}
+    ticket = data.get("ticket")
+    csrf = data.get("CSRFPreventionToken")
+    if not (ticket and csrf):
+        raise RuntimeError(
+            f"/access/ticket response missing ticket or CSRF token: {data!r}"
+        )
+    return ticket, csrf
+
+
 def _proxmox_api_delete(path):
     """DELETE to Proxmox API (for VM removal)."""
     cfg = _load_proxmox_config()
@@ -954,30 +986,45 @@ async def start_provision(
             ) from _e
 
     # Proxmox hardcodes 'args' as root-only (PVE::API2::Qemu
-    # check_vm_modify_config_perm). If we plan to set -smbios file= via
-    # args, the Ansible task that does the args PUT needs a root@pam
-    # token. Fail early with a clear remediation rather than letting
-    # Ansible retry six times against a 500 on every VM.
+    # check_vm_modify_config_perm: literal eq match against 'root@pam').
+    # API tokens — even root@pam!<name> with privsep=0 — never pass that
+    # check because their authuser carries the token suffix. The only
+    # way to PUT args is a /access/ticket response, which requires a
+    # password. Preflight the password is set, then fetch the ticket.
+    _proxmox_root_ticket: Optional[str] = None
+    _proxmox_root_csrf_token: Optional[str] = None
     if _chassis_types_to_stage:
-        _root_id = cfg.get("vault_proxmox_root_api_token_id", "")
-        _root_sec = cfg.get("vault_proxmox_root_api_token_secret", "")
-        if not _root_id or not _root_sec:
+        _root_pw = cfg.get("vault_proxmox_root_password", "")
+        if not _root_pw:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "Chassis-type override requires setting QEMU 'args', "
-                    "which Proxmox restricts to root@pam. Configure a "
-                    "root@pam API token in vault.yml "
-                    "(vault_proxmox_root_api_token_id / "
-                    "vault_proxmox_root_api_token_secret) and restart the "
-                    "container. Create it on the Proxmox host with:\n"
-                    "    pveum user token add root@pam autopilot-args "
-                    "--privsep=0 --comment 'Autopilot args field only'\n"
-                    "See docs/SETUP.md for details. To provision without "
-                    "a chassis override, pick an OEM profile whose "
-                    "chassis_type is null and leave the override blank."
+                    "which Proxmox restricts to root@pam password auth "
+                    "(API tokens are rejected by PVE's literal eq check "
+                    "against 'root@pam'). Set vault_proxmox_root_password "
+                    "in vault.yml and restart the container. The password "
+                    "is used for a just-in-time /access/ticket call per "
+                    "provision; the ticket lives 2h and is passed to "
+                    "Ansible only for the single PUT that writes 'args'.\n"
+                    "See docs/SETUP.md §5b for details. To provision "
+                    "without a chassis override, pick an OEM profile "
+                    "whose chassis_type is null and leave the override "
+                    "blank."
                 ),
             )
+        try:
+            _proxmox_root_ticket, _proxmox_root_csrf_token = \
+                _proxmox_root_ticket_fetch(cfg)
+        except Exception as _e:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Could not obtain a root@pam ticket from Proxmox: "
+                    f"{_e}. Check vault_proxmox_root_username "
+                    f"(default 'root@pam') and vault_proxmox_root_password."
+                ),
+            ) from _e
 
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
@@ -1051,14 +1098,19 @@ async def start_provision(
             ) from e
         _causes_reboot_count = compiled.causes_reboot_count
 
-    # Sequence-driven extras: per-VM answer ISO + reboot-cycle count.
-    # Both are harmless no-ops in the Ansible role when absent, so we
-    # only emit them when a sequence actually contributed them.
+    # Sequence-driven extras: per-VM answer ISO + reboot-cycle count +
+    # root ticket for the args PUT. All harmless when absent so we only
+    # emit them when the provision actually needs them.
     _seq_extras: list[str] = []
     if _answer_iso_volid:
         _seq_extras += ["-e", f"_answer_iso_volid={_answer_iso_volid}"]
     if _causes_reboot_count > 0:
         _seq_extras += ["-e", f"_causes_reboot_count={_causes_reboot_count}"]
+    if _proxmox_root_ticket and _proxmox_root_csrf_token:
+        _seq_extras += [
+            "-e", f"_proxmox_root_ticket={_proxmox_root_ticket}",
+            "-e", f"_proxmox_root_csrf_token={_proxmox_root_csrf_token}",
+        ]
 
     if count <= 1:
         cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]

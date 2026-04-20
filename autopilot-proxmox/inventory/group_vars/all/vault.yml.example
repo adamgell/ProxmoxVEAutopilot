@@ -11,16 +11,19 @@
 vault_proxmox_api_token_id: "autopilot@pve!ansible"
 vault_proxmox_api_token_secret: "YOUR-TOKEN-SECRET-HERE"
 
-# Optional: root@pam API token, used ONLY for VM config fields Proxmox
+# Optional: root@pam PASSWORD, used ONLY for VM config fields Proxmox
 # hardcodes to require root (currently just 'args' -- needed when an OEM
 # profile or sequence step sets a chassis_type override). Leave blank
 # unless you use chassis-type overrides; see docs/SETUP.md.
 #
-# Create it on the Proxmox host with:
-#   pveum user token add root@pam autopilot-args --privsep=0 \
-#       --comment "Autopilot args field only"
-vault_proxmox_root_api_token_id: ""
-vault_proxmox_root_api_token_secret: ""
+# NOTE: API tokens (even root@pam!<name> with privsep=0) CANNOT set
+# 'args' -- Proxmox's check is a literal string match against 'root@pam'
+# that token names never satisfy. The only way is a short-lived ticket
+# obtained via POST /access/ticket with password authentication. The web
+# backend fetches the ticket just-in-time per provision and passes it to
+# Ansible; the password itself never leaves the container's vault.
+vault_proxmox_root_username: "root@pam"
+vault_proxmox_root_password: ""
 
 # Entra ID / Azure AD app registration (for hash upload via pwsh)
 vault_entra_app_id: ""
