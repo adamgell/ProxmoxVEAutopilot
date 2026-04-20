@@ -2520,6 +2520,92 @@ def api_sequences_delete(seq_id: int):
     return {"ok": True}
 
 
+def _referenced_iso_volids() -> set[str]:
+    """Return every answer-ISO volid currently referenced by a VM config
+    on any autopilot-tagged VM. Non-fatal on API errors (treats those as
+    'no references found' so pruning doesn't get permanently blocked by
+    a flaky cluster query)."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        vms = _proxmox_api(f"/nodes/{node}/qemu") or []
+    except Exception:
+        return set()
+    refs: set[str] = set()
+    for vm in vms:
+        vmid = vm.get("vmid")
+        if vmid is None:
+            continue
+        try:
+            conf = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
+        except Exception:
+            continue
+        # Any ide*/sata* pointing at an autopilot-unattend-*.iso counts.
+        for key, value in conf.items():
+            if not isinstance(value, str):
+                continue
+            if "autopilot-unattend-" in value and ".iso" in value:
+                # Value shape: "isos:iso/autopilot-unattend-<h>.iso,media=cdrom"
+                # Strip the trailing options to get just the volid.
+                volid = value.split(",", 1)[0].strip()
+                refs.add(volid)
+    return refs
+
+
+@app.get("/answer-isos", response_class=HTMLResponse)
+def page_answer_isos(request: Request, error: str = ""):
+    from web import answer_iso_cache
+    rows = answer_iso_cache.list_cache(
+        SEQUENCES_DB, in_use_volids=_referenced_iso_volids(),
+    )
+    return templates.TemplateResponse("answer_isos.html", {
+        "request": request, "rows": rows, "error": error,
+    })
+
+
+@app.post("/answer-isos/prune")
+async def submit_answer_isos_prune(request: Request):
+    form = await request.form()
+    hashes = form.getlist("hash") if hasattr(form, "getlist") else [form.get("hash")]
+    hashes = [h for h in hashes if h]
+    if not hashes:
+        return RedirectResponse("/answer-isos", status_code=303)
+
+    from web import answer_iso_cache
+    cfg = _load_proxmox_config()
+    try:
+        answer_iso_cache.prune(
+            db_path=SEQUENCES_DB, hashes_to_delete=hashes,
+            proxmox_config=cfg, proxmox_api_delete=_proxmox_api_delete,
+        )
+    except Exception as e:
+        return _redirect_with_error("/answer-isos", str(e))
+    return RedirectResponse("/answer-isos", status_code=303)
+
+
+@app.get("/api/answer-isos")
+def api_answer_isos_list():
+    from web import answer_iso_cache
+    return answer_iso_cache.list_cache(
+        SEQUENCES_DB, in_use_volids=_referenced_iso_volids(),
+    )
+
+
+@app.post("/api/answer-isos/prune")
+async def api_answer_isos_prune(request: Request):
+    body = await request.json()
+    hashes = body.get("hashes") or []
+    if not isinstance(hashes, list):
+        raise HTTPException(400, "body.hashes must be a list")
+    from web import answer_iso_cache
+    cfg = _load_proxmox_config()
+    removed = answer_iso_cache.prune(
+        db_path=SEQUENCES_DB, hashes_to_delete=hashes,
+        proxmox_config=cfg, proxmox_api_delete=_proxmox_api_delete,
+    )
+    return {"removed": removed}
+
+
 @app.get("/credentials", response_class=HTMLResponse)
 def page_credentials(request: Request, error: str = ""):
     creds = sequences_db.list_credentials(SEQUENCES_DB)
