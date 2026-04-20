@@ -9,6 +9,7 @@ packages:
   - git
   - wget
   - gpg
+  - ubuntu-desktop
 snap:
   commands:
     - snap install code --classic
@@ -16,6 +17,7 @@ snap:
     - snap install powershell --classic
 runcmd:
   - systemctl enable --now qemu-guest-agent || true
+  - systemctl set-default graphical.target
   - mkdir -p /tmp/microsoft
   - "bash -c 'cd /tmp/microsoft && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg'"
   - install -o root -g root -m 644 /tmp/microsoft/microsoft.gpg /usr/share/keyrings/microsoft.gpg

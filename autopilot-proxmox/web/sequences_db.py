@@ -538,6 +538,9 @@ def seed_defaults(db_path, cipher) -> None:
         {"step_type": "install_apt_packages",
          "params": {"packages": ["curl", "git", "wget", "gpg"]},
          "enabled": True},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
+         "enabled": True},
         {"step_type": "install_snap_packages",
          "params": {"snaps": [
              {"name": "code", "classic": True},

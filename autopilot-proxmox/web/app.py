@@ -1835,9 +1835,22 @@ async def rebuild_ubuntu_seed_iso(sequence_id: int):
             continue
         credentials[cid] = row.get("payload") or {}
 
+    # Inject global Ubuntu-build overrides from vars.yml into step params.
+    # Currently: ubuntu_apt_proxy — if the operator has a LAN apt-cacher,
+    # every build uses it without the user having to edit each sequence.
+    _vars = _load_vars() or {}
+    _apt_proxy = (_vars.get("ubuntu_apt_proxy") or "").strip()
+    steps = [dict(s) for s in seq["steps"]]  # shallow copy so we don't mutate DB snapshot
+    if _apt_proxy:
+        for s in steps:
+            if s.get("step_type") == "install_ubuntu_core":
+                params = dict(s.get("params") or {})
+                params.setdefault("apt_proxy", _apt_proxy)
+                s["params"] = params
+
     try:
         user_data, meta_data, _fb_user, _fb_meta = compile_sequence(
-            steps=seq["steps"],
+            steps=steps,
             credentials=credentials,
             instance_id=f"seq-{sequence_id}",
             hostname="ubuntu-template",

@@ -77,6 +77,11 @@ ubuntu_locale: "en_US.UTF-8"
 ubuntu_timezone: "UTC"
 ubuntu_keyboard_layout: "us"                # accepted but ignored by compiler
 ubuntu_storage_layout: "lvm"                # accepted but ignored by compiler
+# Optional apt-cache proxy for Ubuntu template builds. If set, cloud-init
+# routes all apt traffic through this URL — dramatically speeds up repeated
+# template builds once the cache is warm. Set up apt-cacher-ng on your LAN
+# and point this at e.g. "http://apt-cache.lan:3142". Leave blank for direct.
+ubuntu_apt_proxy: ""
 # Cloud image we boot directly (replaces the legacy live-server ISO path).
 # Upload this to Proxmox ISO storage first — e.g. via Proxmox's
 # "Storage -> isos -> Download from URL" using:

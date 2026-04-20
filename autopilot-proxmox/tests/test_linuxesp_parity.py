@@ -20,6 +20,8 @@ def test_seeded_linuxesp_sequence_matches_snapshot() -> None:
                     "keyboard_layout": "us", "storage_layout": "lvm"}},
         {"step_type": "install_apt_packages",
          "params": {"packages": ["curl", "git", "wget", "gpg"]}},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"}},
         {"step_type": "install_snap_packages",
          "params": {"snaps": [
              {"name": "code", "classic": True},
