@@ -200,11 +200,14 @@ def ensure_floppy(*, db_path: Path, unattend_bytes: bytes,
     target = floppy_path(short)
 
     row = _lookup(db_path, full_hash)
-    if row is not None and row["volid"] == target:
-        if _remote_file_exists(ssh, target):
+    if row is not None:
+        if row["volid"] == target and _remote_file_exists(ssh, target):
             _touch(db_path, full_hash)
             return target
-        # Row points at a file that's gone — clear and rebuild.
+        # Row is stale — either the on-host file is gone, or the volid
+        # points at a legacy ISO path (old cache format). Either way,
+        # drop the row so the INSERT below doesn't hit the UNIQUE
+        # constraint on short_hash.
         _delete_row(db_path, full_hash)
 
     cmd = _build_remote_script(unattend_bytes, target)
