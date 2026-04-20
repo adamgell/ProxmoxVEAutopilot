@@ -90,21 +90,19 @@
     _smbios_file_path: "/var/lib/vz/snippets/autopilot-smbios-vm-{{ vm_vmid }}.bin"
   when: _use_per_vm_smbios_file | default(false) | bool
 
+# Decode base64 on the controller, pipe over SSH, write on the
+# Proxmox host. sshpass + the same root password used for the
+# /access/ticket flow. Use `argv:` so we control quoting exactly —
+# a `>-` folded scalar here mangled newlines (bash saw each `-o`
+# on its own line) and a `|` literal tripped /bin/sh multi-line
+# parsing. Single argv entry side-steps both.
 - name: Stage per-VM SMBIOS file on the Proxmox host
-  ansible.builtin.shell:
-    # Decode base64 on the controller, pipe over SSH, write on the
-    # Proxmox host. sshpass + the same root password used for the
-    # /access/ticket flow.
-    cmd: >-
-      printf '%s' {{ _smbios_file_b64 | quote }}
-      | base64 -d
-      | sshpass -e ssh -o StrictHostKeyChecking=no
-        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
-        root@{{ proxmox_host }}
-        'umask 022;
-         mkdir -p /var/lib/vz/snippets;
-         cat > {{ _smbios_file_path | quote }};
-         test -s {{ _smbios_file_path | quote }} && echo OK_SMBIOS_WRITTEN'
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - >-
+        printf '%s' {{ _smbios_file_b64 | quote }} | base64 -d | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@{{ proxmox_host }} {{ ('umask 022; mkdir -p /var/lib/vz/snippets; cat > ' ~ _smbios_file_path ~ '; test -s ' ~ _smbios_file_path ~ ' && echo OK_SMBIOS_WRITTEN') | quote }}
   environment:
     SSHPASS: "{{ vault_proxmox_root_password }}"
   delegate_to: localhost
