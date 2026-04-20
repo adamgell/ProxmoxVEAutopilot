@@ -63,6 +63,59 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
 
+- name: Wait for install VM to actually be running (avoid race where we poll before the start task flips status)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    return_content: yes
+  register: vm_running
+  until: vm_running.json.data.status == "running"
+  retries: 30
+  delay: 2
+
+# Ubuntu 24.04 live-server asks "Continue with autoinstall? (yes|no)" unless
+# the kernel cmdline has `autoinstall`. Proxmox doesn't let us set kernel
+# cmdline on an ISO boot, so instead we send y-e-s-<Enter> via the VGA
+# console. We send two bursts at 45s and 90s after start — sending before the
+# prompt is harmless (GRUB ignores these keys), but sending after the prompt
+# times out would leave subiquity stuck. Two bursts cover boot-time variance.
+- name: Wait for subiquity to reach the autoinstall-confirmation prompt (first burst window)
+  ansible.builtin.pause:
+    seconds: 45
+
+- name: Send 'yes' + Enter to subiquity (burst 1)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/sendkey"
+    method: PUT
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      key: "{{ item }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  loop: ["y", "e", "s", "ret"]
+
+- name: Wait 45s and send again (in case first burst landed before the prompt)
+  ansible.builtin.pause:
+    seconds: 45
+
+- name: Send 'yes' + Enter to subiquity (burst 2)
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/sendkey"
+    method: PUT
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      key: "{{ item }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  loop: ["y", "e", "s", "ret"]
+
 - name: Wait for autoinstall to finish (VM self-powers-off on completion)
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"

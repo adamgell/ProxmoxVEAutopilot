@@ -38,7 +38,8 @@ def test_ubuntu_core_plus_packages_merges() -> None:
     ai = doc["autoinstall"]
     assert ai["locale"] == "en_US.UTF-8"
     assert ai["timezone"] == "UTC"
-    assert ai["packages"] == ["curl", "git", "wget"]  # concatenated in order
+    # install_ubuntu_core baselines qemu-guest-agent; later steps append.
+    assert ai["packages"] == ["qemu-guest-agent", "curl", "git", "wget"]
 
 
 def test_late_commands_concatenate() -> None:
@@ -80,4 +81,6 @@ def test_disabled_steps_are_skipped() -> None:
     u, _, _, _ = compile_sequence(steps=steps, credentials={}, instance_id="i-1",
                                   hostname="h")
     doc = _parse(u)
-    assert "packages" not in doc["autoinstall"] or doc["autoinstall"]["packages"] == []
+    # The disabled install_apt_packages step's "curl" must not appear.
+    # install_ubuntu_core still contributes qemu-guest-agent as baseline.
+    assert doc["autoinstall"]["packages"] == ["qemu-guest-agent"]

@@ -13,6 +13,7 @@ autoinstall:
   updates: security
   shutdown: poweroff
   packages:
+    - qemu-guest-agent
     - curl
     - git
     - wget

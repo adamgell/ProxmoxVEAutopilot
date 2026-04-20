@@ -22,5 +22,11 @@ def compile_install_ubuntu_core(params, credentials) -> StepOutput:
             "updates": "security",
             "shutdown": "poweroff",
             "ssh": {"install-server": False},
+            # qemu-guest-agent is required by Proxmox's agent/exec API. The
+            # playbook's sysprep step (cloud-init clean via guest-exec) and
+            # every per-clone status check rely on it, so install it as part
+            # of the baseline. Users can add more packages via
+            # install_apt_packages steps — the assembler concatenates.
+            "packages": ["qemu-guest-agent"],
         },
     )
