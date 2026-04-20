@@ -150,17 +150,15 @@
   register: cloudinit_wait_start
 
 - name: Poll cloud-init exec-status until it has exited
-  # Big installs (ubuntu-desktop is ~1.5GB) can take 10+ minutes. Retry
-  # up to 240 * 5s = 20 minutes with `failed_when: false` so we capture
-  # the final state instead of erroring mid-poll.
+  # Big installs (ubuntu-desktop is ~1.5GB) can take 10+ minutes. Retry up
+  # to 240 * 5s = 20 minutes. pid MUST be passed as a URL query param;
+  # Proxmox's GET agent/exec-status rejects form/body on GET with
+  # "Unexpected content for method 'GET'".
   ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec-status"
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec-status?pid={{ cloudinit_wait_start.json.data.pid }}"
     method: GET
     headers:
       Authorization: "{{ proxmox_api_auth_header }}"
-    body_format: form-urlencoded
-    body:
-      pid: "{{ cloudinit_wait_start.json.data.pid }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     return_content: yes
   register: cloudinit_wait_status
