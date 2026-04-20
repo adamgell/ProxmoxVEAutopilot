@@ -32,10 +32,19 @@ def compile_install_desktop_environment(params, credentials) -> StepOutput:
             f"Pick one of: {sorted(_ALLOWED)}"
         )
 
-    # Install the metapackage via cloud-init's `packages:` and force the
-    # graphical systemd target so the VM boots to the GUI login on first
-    # boot instead of the server's multi-user.target.
+    # Install the desktop metapackage via `runcmd`, NOT cloud-init's
+    # `packages:` list. Installing ubuntu-desktop (~1.5GB) through the
+    # packages: module is unreliable — we've observed cloud-init marking
+    # itself "done" even when apt/dpkg has only downloaded the debs but
+    # failed to unpack/install them, leaving the template without a GUI.
+    # runcmd runs sequentially and blocks on completion, which is what we
+    # want for a big metapackage install.
+    #
+    # Set `graphical.target` so the installed system boots to GUI.
     return StepOutput(
-        cloud_config={"packages": [flavor]},
-        runcmd=["systemctl set-default graphical.target"],
+        runcmd=[
+            "export DEBIAN_FRONTEND=noninteractive",
+            f"apt-get install -y {flavor}",
+            "systemctl set-default graphical.target",
+        ],
     )

@@ -9,7 +9,6 @@ packages:
   - git
   - wget
   - gpg
-  - ubuntu-desktop
 snap:
   commands:
     - snap install code --classic
@@ -17,6 +16,8 @@ snap:
     - snap install powershell --classic
 runcmd:
   - systemctl enable --now qemu-guest-agent || true
+  - export DEBIAN_FRONTEND=noninteractive
+  - apt-get install -y ubuntu-desktop
   - systemctl set-default graphical.target
   - mkdir -p /tmp/microsoft
   - "bash -c 'cd /tmp/microsoft && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg'"
