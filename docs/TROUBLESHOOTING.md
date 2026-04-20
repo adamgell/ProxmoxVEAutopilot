@@ -156,6 +156,31 @@ The test proves *bind + OU visibility*. It does **not** prove the account has "j
 
 **Fix:** Either edit the referencing sequence/step to stop pointing at the credential, or delete the VMs first. Then retry the delete.
 
+## Provision fails with "chassis-type binary ... is not present"
+
+**Symptom:** Provisioning a VM returns a 400 with a message like:
+
+```
+autopilot-chassis-type-35.bin is not present on Proxmox node 'pve2'
+(storage 'local', content type 'snippets'). Seed it by running
+scripts/seed_chassis_binaries.py on the Proxmox host...
+```
+
+**Cause:** The OEM profile (or a sequence step, or the override field) asks QEMU to present a specific SMBIOS chassis type via `-smbios file=/var/lib/vz/snippets/autopilot-chassis-type-N.bin`, but that file isn't on the target Proxmox node. Proxmox's storage `/upload` API only accepts `iso`, `vztmpl`, and `import` content types, so the autopilot container can't drop `snippets` files over the API — an operator has to seed them on each node.
+
+**Fix:** On each Proxmox node that runs autopilot workloads:
+
+```bash
+# copy the seed script onto the node (from a machine that has the repo)
+scp autopilot-proxmox/scripts/seed_chassis_binaries.py root@<node>:/tmp/
+ssh root@<node> 'python3 /tmp/seed_chassis_binaries.py'
+
+# ensure 'snippets' is listed as an allowed content type on local storage
+ssh root@<node> 'pvesm set local --content backup,iso,import,vztmpl,snippets'
+```
+
+Running `seed_chassis_binaries.py` with no arguments writes a common set (desktop, laptop, mini-PC, convertible, tablet, all-in-one). Pass specific integers to seed others, e.g. `python3 seed_chassis_binaries.py 35 36`.
+
 ## Can't find my storage or SDN zone name
 
 ```bash

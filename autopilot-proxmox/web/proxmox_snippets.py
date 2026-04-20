@@ -1,20 +1,25 @@
-"""Upload per-chassis SMBIOS binaries to a Proxmox node's snippet storage.
+"""Verify per-chassis SMBIOS binaries are present on a Proxmox node.
 
 QEMU's ``-smbios file=`` option requires the binary to live on the
 Proxmox host's local filesystem (not inside the autopilot container).
 Proxmox exposes a filesystem-backed 'snippets' content type on the
 ``local`` storage, typically rooted at ``/var/lib/vz/snippets/``.
 
-Upload is idempotent: before POSTing, we list the storage's ``content``
-endpoint for a volid matching the expected filename and skip the upload
-if it's already present.
+Proxmox's storage upload API only accepts ``iso``, ``vztmpl``, and
+``import`` content types — ``snippets`` is rejected server-side. We
+therefore require an operator to pre-seed these binaries on each
+Proxmox node (see ``scripts/seed_chassis_binaries.py``) and only
+verify their presence here.
 """
 from __future__ import annotations
 
-from web.smbios_builder import build_type3_chassis
 from web.app import _proxmox_api
 
 _LOCAL_STORAGE_ROOT = "/var/lib/vz"
+
+
+class ChassisBinaryMissing(RuntimeError):
+    """Raised when an expected chassis-type SMBIOS binary isn't on the node."""
 
 
 def _binary_filename(chassis_type: int) -> str:
@@ -31,35 +36,38 @@ def _host_path_for(storage: str, chassis_type: int) -> str:
     return f"{_LOCAL_STORAGE_ROOT}/snippets/{_binary_filename(chassis_type)}"
 
 
-def ensure_chassis_type_binary(*, node: str, storage: str,
-                               chassis_type: int) -> str:
-    """Guarantee the chassis-type binary is present on the given storage.
+def _seed_hint(node: str, storage: str, chassis_type: int) -> str:
+    filename = _binary_filename(chassis_type)
+    return (
+        f"{filename} is not present on Proxmox node {node!r} "
+        f"(storage {storage!r}, content type 'snippets'). Seed it by "
+        f"running scripts/seed_chassis_binaries.py on the Proxmox host, "
+        f"e.g.:\n"
+        f"    ssh root@<node> 'python3 - {chassis_type}' "
+        f"< autopilot-proxmox/scripts/seed_chassis_binaries.py\n"
+        f"and ensure 'snippets' is enabled on the storage:\n"
+        f"    pvesm set {storage} --content backup,iso,import,vztmpl,snippets"
+    )
 
-    If the content listing shows the volid already, no upload happens.
-    Otherwise the binary is generated in-memory and POSTed via the
-    Proxmox storage upload endpoint.
+
+def require_chassis_type_binary(*, node: str, storage: str,
+                                chassis_type: int) -> str:
+    """Verify the chassis-type binary is present on the given storage.
 
     Returns the on-host path to pass to QEMU ``-smbios file=``.
+    Raises :class:`ChassisBinaryMissing` with a remediation hint if the
+    storage doesn't list the expected volid. Raises :class:`ValueError`
+    for invalid inputs.
     """
     if not isinstance(chassis_type, int) or chassis_type < 1 or chassis_type > 255:
         raise ValueError(f"chassis_type must be 1..255, got {chassis_type!r}")
 
     filename = _binary_filename(chassis_type)
     target_path = _host_path_for(storage, chassis_type)
-
-    try:
-        content = _proxmox_api(f"/nodes/{node}/storage/{storage}/content")
-    except Exception:
-        content = []
     expected_volid = f"{storage}:snippets/{filename}"
-    if any(entry.get("volid") == expected_volid for entry in content or []):
+
+    content = _proxmox_api(f"/nodes/{node}/storage/{storage}/content") or []
+    if any(entry.get("volid") == expected_volid for entry in content):
         return target_path
 
-    blob = build_type3_chassis(chassis_type=chassis_type)
-    _proxmox_api(
-        f"/nodes/{node}/storage/{storage}/upload",
-        method="POST",
-        data={"content": "snippets", "filename": filename},
-        files={"filename": (filename, blob, "application/octet-stream")},
-    )
-    return target_path
+    raise ChassisBinaryMissing(_seed_hint(node, storage, chassis_type))
