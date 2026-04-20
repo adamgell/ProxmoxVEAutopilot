@@ -309,8 +309,45 @@ def test_seeded_ad_domain_sequence_end_to_end():
     assert "oobe_user_accounts" in result.unattend_blocks
     assert "oobe_auto_logon" in result.unattend_blocks
     assert "specialize_identification" in result.unattend_blocks
+    # rename_computer adds one FirstLogon; the auto-logon finalizer adds
+    # a second that reboots into the login screen.
+    assert len(result.first_logon_commands) == 2
+    assert result.causes_reboot_count == 2
+    # Finalizer is always last and uses shutdown /r.
+    final = result.first_logon_commands[-1]
+    assert "logon screen" in final["description"].lower()
+    assert "shutdown" in final["command"].lower()
+
+
+def test_autologon_finalizer_appends_reboot_to_login_screen():
+    """A sequence whose only mutation is a local_admin with autologon
+    ends at the login screen — the compiler adds one FirstLogonCommand
+    that does `shutdown /r` after all others."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "local_admin", "params": {"credential_id": 1}},
+    ])
+    result = sequence_compiler.compile(seq, resolve_credential=_resolver({
+        1: {"username": "Administrator", "password": "x"},
+    }))
     assert len(result.first_logon_commands) == 1
     assert result.causes_reboot_count == 1
+    assert "logon screen" in result.first_logon_commands[0]["description"].lower()
+
+
+def test_no_finalizer_when_autologon_disabled():
+    """If autologon is explicitly off, FirstLogonCommands don't run,
+    so appending a reboot-to-login finalizer would wait forever. Skip it."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "local_admin",
+         "params": {"credential_id": 1, "autologon": False}},
+    ])
+    result = sequence_compiler.compile(seq, resolve_credential=_resolver({
+        1: {"username": "Administrator", "password": "x"},
+    }))
+    assert result.first_logon_commands == []
+    assert result.causes_reboot_count == 0
 
 
 def test_resolver_not_called_for_stepless_or_credless_steps():

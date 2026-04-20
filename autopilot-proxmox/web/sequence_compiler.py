@@ -312,6 +312,14 @@ def compile(sequence: dict,
     ``resolve_credential`` callable is threaded through so handlers that
     need decrypted secrets can fetch them lazily. Handlers that don't use
     credentials ignore the argument.
+
+    When auto-logon is enabled (local_admin with autologon=True — the
+    default), a final FirstLogonCommand is appended that reboots once
+    all other commands have run. This consumes the auto-logon (which
+    used LogonCount=1) and lands the guest at the Windows login screen
+    instead of an auto-logged-in Administrator desktop. The
+    reboot-cycle count is bumped so the post-provision waiter follows
+    the guest through.
     """
     out = CompiledSequence()
     for step in sequence.get("steps", []):
@@ -321,7 +329,26 @@ def compile(sequence: dict,
         if handler is None:
             raise UnknownStepType(step["step_type"])
         handler(step.get("params", {}), out, resolve_credential)
+    _append_final_reboot_if_autologon(out)
     return out
+
+
+def _append_final_reboot_if_autologon(out: CompiledSequence) -> None:
+    """Finalize the FirstLogonCommands with a reboot that lands the
+    guest at the Windows logon screen. Only meaningful when auto-logon
+    was configured — without it, FirstLogonCommands don't run at all.
+    """
+    if "oobe_auto_logon" not in out.unattend_blocks:
+        return
+    out.first_logon_commands.append({
+        "command": (
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
+            '"shutdown.exe /r /t 10 /c '
+            "'Provisioning complete — rebooting to login screen'\""
+        ),
+        "description": "Reboot to Windows logon screen",
+    })
+    out.causes_reboot_count += 1
 
 
 def resolve_provision_vars(
