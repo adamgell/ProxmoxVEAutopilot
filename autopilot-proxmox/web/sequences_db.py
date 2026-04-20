@@ -576,6 +576,21 @@ def seed_defaults(db_path, cipher) -> None:
     # `ubuntu_apt_proxy` is set in vars.yml to http://<this-vm-ip>:3142, every
     # future Ubuntu template build pulls debs through the cache. First cache
     # hit fills it; subsequent builds finish dramatically faster.
+    # Workstation flavor of the LinuxESP sequence without MDE. Useful for
+    # validating the Intune + Edge half without needing an onboarding script
+    # uploaded to the Credentials page first.
+    ubuntu_intune_edge_steps = [
+        {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
+         "enabled": True},
+        {"step_type": "install_intune_portal", "params": {}, "enabled": True},
+        {"step_type": "install_edge", "params": {}, "enabled": True},
+    ]
+
     ubuntu_apt_cache_steps = [
         {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
         {"step_type": "create_ubuntu_user",
@@ -628,6 +643,20 @@ def seed_defaults(db_path, cipher) -> None:
             produces_autopilot_hash=False,
             target_os="ubuntu",
             steps=ubuntu_plain_steps,
+        )
+
+    if "Ubuntu Intune + Edge (no MDE)" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu Intune + Edge (no MDE)",
+            description=("Ubuntu 24.04 workstation with Intune Portal and "
+                         "Microsoft Edge, minus the MDE step. Good for "
+                         "validating the Microsoft stack without an "
+                         "mde_onboarding credential uploaded."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_intune_edge_steps,
         )
 
     if "Ubuntu apt-cache server" not in existing_names:
