@@ -59,3 +59,69 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     status_code: [200]
+
+- name: Wait for template VM to stop (before offline disk edit)
+  ansible.builtin.include_tasks: wait_vm_stopped.yml
+
+# Windows finalizes shutdown by replaying cached sysprep state, and one
+# of its last acts is to rewrite C:\Windows\Panther\unattend.xml from
+# that cache — wiping out the in-guest delete we did moments earlier.
+# The file is still marked "already-processed for specialize" so Windows
+# Setup on every clone short-circuits the answer-file search before
+# scanning OEMDRV on sata0. Fix it the only reliable way: nuke the file
+# on the template disk offline, via libguestfs on the Proxmox host.
+- name: Resolve template VM's scsi0 on-host path for offline edit
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _tpl_config
+
+- name: Extract scsi0 volid
+  ansible.builtin.set_fact:
+    _scsi0_volid: "{{ (_tpl_config.json.data.scsi0 | default('')).split(',')[0] }}"
+
+- name: Fail if scsi0 volid unresolved
+  ansible.builtin.fail:
+    msg: "Could not read scsi0 volid from VM {{ vm_vmid }} config."
+  when: not _scsi0_volid
+
+- name: Remove Panther answer files from the template disk offline via libguestfs
+  # SSH as root to the Proxmox host using the password that's already
+  # in vault.yml for the /access/ticket flow. sshpass handles the
+  # password; StrictHostKeyChecking=no accepts first-contact host keys
+  # (the container lives inside the same LAN and the host identity is
+  # pinned by IP via vars.yml's proxmox_host).
+  #
+  # libguestfs-tools must be installed on the Proxmox host:
+  #   apt install -y libguestfs-tools
+  # (this role's README / SETUP.md will document that prereq).
+  ansible.builtin.shell:
+    cmd: >-
+      sshpass -e ssh -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+        root@{{ proxmox_host }}
+        'set -eu;
+         DISK="$(pvesm path {{ _scsi0_volid }})";
+         if [ -z "$DISK" ]; then echo "no disk path" >&2; exit 1; fi;
+         for f in
+             /Windows/Panther/unattend.xml
+             /Windows/Panther/unattend-original.xml
+             /Windows/Panther/UnattendGC/unattend.xml
+             /Windows/System32/Sysprep/unattend.xml; do
+           virt-rm -a "$DISK" -m /dev/sda4 "$f" 2>/dev/null || true;
+         done;
+         remaining=$(virt-ls -a "$DISK" -m /dev/sda4 /Windows/Panther/ 2>/dev/null | grep -cE "^unattend(-original)?\.xml$" || true);
+         echo "remaining_unattend_count=$remaining";
+         test "$remaining" -eq 0'
+  environment:
+    SSHPASS: "{{ vault_proxmox_root_password }}"
+  delegate_to: localhost
+  register: _offline_rm
+  changed_when: true
+  # no_log hides the SSHPASS env; the script itself prints only a
+  # count, no secrets, so the registered stdout is safe to show on
+  # failure.
+  no_log: false
