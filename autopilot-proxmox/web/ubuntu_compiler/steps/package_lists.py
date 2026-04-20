@@ -12,7 +12,17 @@ from ..types import StepOutput
 @register("install_apt_packages")
 def compile_install_apt_packages(params, credentials) -> StepOutput:
     packages = list(params.get("packages", []))
-    return StepOutput(cloud_config={"packages": packages})
+    cloud_config: dict = {"packages": packages}
+    # Optional: preseed debconf answers BEFORE packages install.
+    # Cloud-init's debconf_selections: module runs before the packages
+    # module, which is exactly the ordering we need for packages that
+    # otherwise prompt interactively on install (apt-cacher-ng's
+    # tunnelenable, postfix mailer_type, wireshark dumpcap-setuid, etc.).
+    # Shape: {"<anchor>": "<pkg> <key> <type> <value>\\n<pkg2> ..."}
+    debconf = params.get("debconf_selections")
+    if debconf:
+        cloud_config["debconf_selections"] = dict(debconf)
+    return StepOutput(cloud_config=cloud_config)
 
 
 @register("install_snap_packages")

@@ -576,16 +576,26 @@ def seed_defaults(db_path, cipher) -> None:
          "params": {"local_admin_credential_id": default_admin_id},
          "enabled": True},
         {"step_type": "install_apt_packages",
-         "params": {"packages": ["apt-cacher-ng"]},
+         "params": {
+             "packages": ["apt-cacher-ng"],
+             # apt-cacher-ng prompts via debconf at install time asking
+             # whether to allow HTTP tunnels. Without a preseed the
+             # cloud-init package install hangs on the dialog and the
+             # package ends up half-configured (service User= missing etc.).
+             # Answer "no" — we want a plain caching proxy, no tunnels.
+             "debconf_selections": {
+                 "apt-cacher-ng": (
+                     "apt-cacher-ng apt-cacher-ng/tunnelenable boolean false"
+                 ),
+             },
+         },
          "enabled": True},
-        # apt-cacher-ng's debian package enables the service by default, but
-        # the firstboot idempotency here means a clone that somehow booted
-        # without the package (manual tweaks etc.) still self-heals.
+        # Belt-and-suspenders: ensure the service is enabled on first boot.
+        # The debian postinst enables it by default, but this catches the
+        # edge case where a clone was manually tweaked.
         {"step_type": "run_firstboot_script",
          "params": {
              "command": (
-                 "dpkg -s apt-cacher-ng >/dev/null 2>&1 || "
-                 "(apt-get update && apt-get install -y apt-cacher-ng); "
                  "systemctl enable --now apt-cacher-ng"
              ),
          },

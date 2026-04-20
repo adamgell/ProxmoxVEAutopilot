@@ -20,6 +20,25 @@ def test_install_apt_packages_empty_list_emits_empty() -> None:
     assert out.cloud_config["packages"] == []
 
 
+def test_install_apt_packages_forwards_debconf_selections() -> None:
+    """Debconf preseeds must land in cloud-config so cloud-init applies
+    them BEFORE the package install (runcmd is too late)."""
+    out = compile_step(
+        "install_apt_packages",
+        params={
+            "packages": ["apt-cacher-ng"],
+            "debconf_selections": {
+                "apt-cacher-ng": "apt-cacher-ng apt-cacher-ng/tunnelenable boolean false",
+            },
+        },
+        credentials={},
+    )
+    assert out.cloud_config["packages"] == ["apt-cacher-ng"]
+    assert out.cloud_config["debconf_selections"] == {
+        "apt-cacher-ng": "apt-cacher-ng apt-cacher-ng/tunnelenable boolean false",
+    }
+
+
 def test_install_snap_packages_emits_snap_commands() -> None:
     out = compile_step(
         "install_snap_packages",

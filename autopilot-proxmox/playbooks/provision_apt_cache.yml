@@ -106,7 +106,10 @@
             status_code: [200, 201]
           failed_when: false
 
-    - name: Read apt-cache IPv4 via guest agent
+    - name: Read apt-cache IPv4 via guest agent — retry until non-loopback IP appears
+      # qemu-guest-agent populates lo first; ens18/eth0 get a DHCP lease a few
+      # seconds after cloud-init brings networking up. Retry until a real IP
+      # shows so we don't report 127.0.0.1.
       ansible.builtin.uri:
         url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ apt_cache_vmid }}/agent/network-get-interfaces"
         method: GET
@@ -115,19 +118,24 @@
         validate_certs: "{{ proxmox_validate_certs }}"
         return_content: yes
       register: _netif
+      until: >-
+        (_netif.json.data.result
+          | map(attribute='ip-addresses') | select('iterable') | list | sum(start=[])
+          | selectattr('ip-address-type', 'equalto', 'ipv4')
+          | map(attribute='ip-address') | list
+          | difference(['127.0.0.1'])
+          | length) > 0
+      retries: 30
+      delay: 4
 
     - name: Pick the first non-loopback IPv4
       ansible.builtin.set_fact:
         apt_cache_ip: >-
           {{ (_netif.json.data.result
-                | map(attribute='ip-addresses')
-                | select('iterable')
-                | list
-                | sum(start=[])
+                | map(attribute='ip-addresses') | select('iterable') | list | sum(start=[])
                 | selectattr('ip-address-type', 'equalto', 'ipv4')
-                | rejectattr('ip-address', 'match', '^127\\.')
-                | map(attribute='ip-address')
-                | list
+                | map(attribute='ip-address') | list
+                | difference(['127.0.0.1'])
                 | first) }}
 
     - name: Report the proxy URL to paste into vars.yml
