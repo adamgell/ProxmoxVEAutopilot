@@ -82,7 +82,7 @@ ubuntu_storage_layout: "lvm"                # accepted but ignored by compiler
 # "Storage -> isos -> Download from URL" using:
 #   https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
 # (NOTE: the suffix must be .img on disk; Proxmox treats it as a qcow2.)
-ubuntu_cloud_image: "isos:iso/ubuntu-24.04-server-cloudimg-amd64.img"
+ubuntu_cloud_image: "local:import/ubuntu-24.04-server-cloudimg-amd64.qcow2"
 ubuntu_seed_iso: "isos:iso/ubuntu-seed.iso"
 # Per-clone cloud-init seed ISO filename pattern (the Ubuntu branch of the
 # clone playbook writes a per-VM ISO here, named with the VMID).
