@@ -82,11 +82,35 @@ DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
 
 SETTINGS_SCHEMA = [
+    # source defaults to "vars" for every field. Sections or individual
+    # fields can set source="vault" to read/write inventory/group_vars/
+    # all/vault.yml instead. Secret fields (type="secret") are rendered
+    # as masked inputs, never echo their value to the browser, and
+    # preserve the current value when the form submits blank.
     {"section": "Proxmox Connection", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
         {"key": "proxmox_port", "label": "Port", "type": "number"},
         {"key": "proxmox_node", "label": "Node", "type": "text"},
         {"key": "proxmox_validate_certs", "label": "Validate Certs", "type": "bool"},
+    ]},
+    {"section": "Credentials (vault.yml)", "source": "vault", "fields": [
+        {"key": "vault_proxmox_api_token_id",
+         "label": "Proxmox API Token ID", "type": "text",
+         "help": "e.g. autopilot@pve!ansible"},
+        {"key": "vault_proxmox_api_token_secret",
+         "label": "Proxmox API Token Secret", "type": "secret"},
+        {"key": "vault_proxmox_root_username",
+         "label": "Proxmox Root Username", "type": "text",
+         "help": "Default: root@pam. Used only for the args PUT on VMs that need a chassis override."},
+        {"key": "vault_proxmox_root_password",
+         "label": "Proxmox Root Password", "type": "secret",
+         "help": "Required for chassis-type overrides. Fetched just-in-time as a /access/ticket per provision; never leaves the container."},
+        {"key": "vault_entra_app_id",
+         "label": "Entra App (client) ID", "type": "text"},
+        {"key": "vault_entra_tenant_id",
+         "label": "Entra Tenant ID", "type": "text"},
+        {"key": "vault_entra_app_secret",
+         "label": "Entra App Secret", "type": "secret"},
     ]},
     {"section": "Storage & Networking", "fields": [
         {"key": "proxmox_storage", "label": "VM Storage", "type": "text"},
@@ -138,6 +162,26 @@ def _load_vars():
             data = yaml.safe_load(f)
         return data or {}
     return {}
+
+
+VAULT_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vault.yml"
+
+
+def _load_vault():
+    """Load vault.yml values only. Caller is responsible for never
+    forwarding raw values to the browser — use _vault_presence() to
+    report which keys are set without echoing them."""
+    if VAULT_PATH.exists():
+        with open(VAULT_PATH) as f:
+            data = yaml.safe_load(f)
+        return data or {}
+    return {}
+
+
+def _vault_presence() -> dict[str, bool]:
+    """Return {key: True} for every vault key whose value is non-empty.
+    Safe to render in HTML — carries no secret material."""
+    return {k: bool(v) for k, v in _load_vault().items()}
 
 
 def _fetch_settings_options():
@@ -216,15 +260,17 @@ def _format_yaml_value(value):
     return f'"{s}"' if needs_quotes else s
 
 
-def _save_vars(updates):
-    """Update vars.yml by line-level replacement to preserve comments."""
-    if not VARS_PATH.exists():
-        VARS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        VARS_PATH.write_text("---\n")
+def _save_yaml_file(path: Path, updates: dict) -> None:
+    """Update a YAML file by line-level replacement, preserving comments
+    and any lines for keys outside the update set. Missing keys are
+    appended. Used for both vars.yml and vault.yml."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("---\n")
 
-    lines = VARS_PATH.read_text().splitlines()
-    matched_keys = set()
-    new_lines = []
+    lines = path.read_text().splitlines()
+    matched_keys: set = set()
+    new_lines: list = []
     for line in lines:
         replaced = False
         for key, value in updates.items():
@@ -238,12 +284,22 @@ def _save_vars(updates):
         if not replaced:
             new_lines.append(line)
 
-    # Append keys not already in the file
     for key, value in updates.items():
         if key not in matched_keys:
             new_lines.append(f"{key}: {_format_yaml_value(value)}")
 
-    VARS_PATH.write_text("\n".join(new_lines) + "\n")
+    path.write_text("\n".join(new_lines) + "\n")
+
+
+def _save_vars(updates):
+    """Update vars.yml. Wrapper for backward compat with callers."""
+    _save_yaml_file(VARS_PATH, updates)
+
+
+def _save_vault(updates):
+    """Update vault.yml. Caller must already have stripped out empty
+    secret values that mean 'keep current'."""
+    _save_yaml_file(VAULT_PATH, updates)
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -730,25 +786,43 @@ async def job_detail_page(request: Request, job_id: str):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, saved: str = ""):
-    current = _load_vars()
+    current_vars = _load_vars()
+    vault_present = _vault_presence()
     options = _fetch_settings_options()
-    # Build schema with current values, readonly flag, and dropdown options
     sections = []
     for group in SETTINGS_SCHEMA:
+        source = group.get("source", "vars")
         fields = []
         for f in group["fields"]:
-            val = current.get(f["key"], "")
+            key = f["key"]
+            if source == "vault":
+                # Secret-safe: never surface the actual value. The UI
+                # only learns whether each key has something set.
+                fields.append({
+                    **f,
+                    "source": "vault",
+                    "value": "",
+                    "is_set": vault_present.get(key, False),
+                    "readonly": False,
+                    "options": [],
+                    "labels": {},
+                })
+                continue
+            val = current_vars.get(key, "")
             is_template = isinstance(val, str) and "{{" in str(val)
-            field_options = options.get(f["key"], [])
-            labels = options.get(f"{f['key']}_labels", {})
+            field_options = options.get(key, [])
+            labels = options.get(f"{key}_labels", {})
             fields.append({
                 **f,
+                "source": "vars",
                 "value": val,
+                "is_set": bool(val),
                 "readonly": is_template,
                 "options": field_options,
                 "labels": labels,
             })
-        sections.append({"section": group["section"], "fields": fields})
+        sections.append({"section": group["section"], "fields": fields,
+                         "source": source})
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "sections": sections,
@@ -803,30 +877,48 @@ async def node_options(node: str):
 @app.post("/api/settings")
 async def save_settings(request: Request):
     form = await request.form()
-    current = _load_vars()
-    updates = {}
+    current_vars = _load_vars()
+    vars_updates: dict = {}
+    vault_updates: dict = {}
     for group in SETTINGS_SCHEMA:
+        source = group.get("source", "vars")
         for f in group["fields"]:
             key = f["key"]
-            # Skip Jinja2 template values
-            cur_val = current.get(key, "")
+            ftype = f["type"]
+
+            if source == "vault":
+                # Secret-safe update semantics: blank input keeps the
+                # current value. Only non-empty submissions change the
+                # file. This matches the credential edit flow operators
+                # are already used to.
+                raw = form.get(key, "")
+                if isinstance(raw, str) and raw.strip() != "":
+                    vault_updates[key] = raw
+                continue
+
+            # Skip Jinja2 template values — they're computed in vars.yml.
+            cur_val = current_vars.get(key, "")
             if isinstance(cur_val, str) and "{{" in str(cur_val):
                 continue
-            if f["type"] == "bool":
-                updates[key] = key in form
-            elif f["type"] == "number":
+            if ftype == "bool":
+                vars_updates[key] = key in form
+            elif ftype == "number":
                 raw = form.get(key, "")
                 if raw == "" or raw == "null":
-                    updates[key] = None
+                    vars_updates[key] = None
                 else:
                     try:
-                        updates[key] = int(raw)
+                        vars_updates[key] = int(raw)
                     except ValueError:
-                        updates[key] = raw
+                        vars_updates[key] = raw
             else:
                 val = form.get(key, "")
-                updates[key] = val if val != "null" and val != "" else None
-    _save_vars(updates)
+                vars_updates[key] = val if val not in ("null", "") else None
+
+    if vars_updates:
+        _save_vars(vars_updates)
+    if vault_updates:
+        _save_vault(vault_updates)
     return RedirectResponse("/settings?saved=1", status_code=303)
 
 
