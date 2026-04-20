@@ -2360,6 +2360,36 @@ def api_credentials_delete(cred_id: int):
     return {"ok": True}
 
 
+class _TestDomainJoinReq(BaseModel):
+    # Either supply an ID for a saved credential OR an inline payload.
+    credential_id: Optional[int] = None
+    payload: Optional[dict] = None
+
+
+@app.post("/api/credentials/test-domain-join")
+def api_test_domain_join(body: _TestDomainJoinReq):
+    # Resolve the payload: prefer credential_id if set.
+    payload: Optional[dict] = body.payload
+    if body.credential_id:
+        cred = sequences_db.get_credential(
+            SEQUENCES_DB, _cipher(), body.credential_id)
+        if cred is None:
+            raise HTTPException(404, "credential not found")
+        if cred["type"] != "domain_join":
+            raise HTTPException(400,
+                f"credential {body.credential_id} is type {cred['type']!r}, "
+                f"not 'domain_join'")
+        payload = cred["payload"]
+    if not payload:
+        raise HTTPException(400, "payload or credential_id is required")
+
+    cfg = _load_proxmox_config()
+    validate_certs = bool(cfg.get("ad_validate_certs", False))
+
+    from web import ldap_tester
+    return ldap_tester.test_domain_join(payload, validate_certs=validate_certs)
+
+
 class _StepIn(BaseModel):
     step_type: str
     params: dict = {}
