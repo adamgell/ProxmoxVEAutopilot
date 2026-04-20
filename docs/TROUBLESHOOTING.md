@@ -229,6 +229,19 @@ Status code was 500 and not [200]: HTTP Error 500: only root can set 'args' conf
 
 In newer builds, requesting a chassis override without the root token configured returns a 400 from the UI **before** the job starts, with the exact remediation commands in the error body. If you're seeing this message mid-run, you're on an older image — `docker compose pull && docker compose up -d` to get the preflight.
 
+## Clone lands at Windows "Select a region" / ignores the answer file
+
+**Symptom:** a cloned VM boots past specialize into interactive OOBE (region, keyboard, account). The per-VM answer ISO on `sata0` was correctly built (check `/answer-isos`), labelled `OEMDRV`, and contains the expected `autounattend.xml`, yet Windows Setup doesn't apply it.
+
+**Cause:** Windows Setup's answer-file search order puts `C:\Windows\Panther\unattend.xml` **above** CD-ROM OEMDRV scanning. When the template was built, Windows copied the install-time `autounattend.xml` into Panther. Clones inherit that file and Windows uses it unconditionally on every boot — the per-VM CD never gets consulted. This shows up as:
+
+- **Sequence 1 (Entra default):** works fine. The template-era Panther copy matches the compiled XML byte-for-byte.
+- **Sequence 2 (AD Domain Join):** fails. The compiled XML adds `<UnattendedJoin>` + rename FirstLogonCommand, but Windows only reads Panther's stale copy.
+
+**Fix:** rebuild the template. The fix for this was landed in `roles/proxmox_template_builder/tasks/sysprep.yml` — it deletes `Panther\unattend.xml` before invoking sysprep so clones fall through to the CD. Any template built on this or a newer image will work correctly.
+
+On the **Build Template** page, click **Build Template**. When the rebuild finishes (~20-30 min), re-try your domain-join provision. If you already have clones stuck in interactive OOBE, delete them — they can't be "fixed in place" since their disks inherited the stale Panther too.
+
 ## Domain join fails during OOBE
 
 **Symptom:** the provision job completes, the VM boots to the desktop, but the computer never appears in AD; or Windows shows "trust relationship" errors on first login; or the sequence gets stuck at **Follow guest through 1 reboot(s)**.
