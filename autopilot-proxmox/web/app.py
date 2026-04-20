@@ -953,6 +953,32 @@ async def start_provision(
                 detail=f"could not query chassis-type binary for type {_ct}: {_e}",
             ) from _e
 
+    # Proxmox hardcodes 'args' as root-only (PVE::API2::Qemu
+    # check_vm_modify_config_perm). If we plan to set -smbios file= via
+    # args, the Ansible task that does the args PUT needs a root@pam
+    # token. Fail early with a clear remediation rather than letting
+    # Ansible retry six times against a 500 on every VM.
+    if _chassis_types_to_stage:
+        _root_id = cfg.get("vault_proxmox_root_api_token_id", "")
+        _root_sec = cfg.get("vault_proxmox_root_api_token_secret", "")
+        if not _root_id or not _root_sec:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Chassis-type override requires setting QEMU 'args', "
+                    "which Proxmox restricts to root@pam. Configure a "
+                    "root@pam API token in vault.yml "
+                    "(vault_proxmox_root_api_token_id / "
+                    "vault_proxmox_root_api_token_secret) and restart the "
+                    "container. Create it on the Proxmox host with:\n"
+                    "    pveum user token add root@pam autopilot-args "
+                    "--privsep=0 --comment 'Autopilot args field only'\n"
+                    "See docs/SETUP.md for details. To provision without "
+                    "a chassis override, pick an OEM profile whose "
+                    "chassis_type is null and leave the override blank."
+                ),
+            )
+
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
     # form omit a field without forcing it to a specific value.

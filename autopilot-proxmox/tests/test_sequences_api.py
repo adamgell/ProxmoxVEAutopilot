@@ -231,11 +231,15 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
 
     from unittest.mock import patch
     # Pin the Proxmox config so the test is independent of whatever
-    # vars.yml happens to live on the developer's machine.
+    # vars.yml happens to live on the developer's machine. Root token
+    # is required any time a chassis override is used (args is root-only
+    # in Proxmox), so the mocked config includes it.
     with patch("web.app._load_proxmox_config", return_value={
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
-    }), patch("web.proxmox_snippets.ensure_chassis_type_binary") as mock_ensure:
-        mock_ensure.return_value = "/var/lib/vz/snippets/fake.bin"
+        "vault_proxmox_root_api_token_id": "root@pam!autopilot-args",
+        "vault_proxmox_root_api_token_secret": "fake-root-secret",
+    }), patch("web.proxmox_snippets.require_chassis_type_binary") as mock_require:
+        mock_require.return_value = "/var/lib/vz/snippets/fake.bin"
         r = app_env.post("/api/jobs/provision", data={
             "profile": "",
             "count": "1",
@@ -250,7 +254,44 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
     assert r.status_code == 303
     cmd = captured["cmd"]
     assert "chassis_type_override=31" in cmd
-    mock_ensure.assert_called_with(node="pve", storage="local", chassis_type=31)
+    mock_require.assert_called_with(node="pve", storage="local", chassis_type=31)
+
+
+def test_provision_rejects_chassis_override_without_root_token(app_env):
+    """The args config field is root-only in Proxmox. If no root token
+    is configured in vault.yml, the provision request must fail fast
+    with a 400 pointing at docs, not queue a job that will die mid-run."""
+    from web import sequences_db
+    from web.app import SEQUENCES_DB
+
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="chassis-no-root", description="",
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+    ])
+
+    from unittest.mock import patch
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+        # Intentionally no root token fields.
+    }), patch("web.proxmox_snippets.require_chassis_type_binary",
+              return_value="/var/lib/vz/snippets/fake.bin"):
+        r = app_env.post("/api/jobs/provision", data={
+            "profile": "",
+            "count": "1",
+            "cores": "2",
+            "memory_mb": "4096",
+            "disk_size_gb": "64",
+            "serial_prefix": "",
+            "group_tag": "",
+            "sequence_id": str(seq_id),
+            "chassis_type_override": "31",
+        }, follow_redirects=False)
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "root@pam" in detail
+    assert "vault_proxmox_root_api_token" in detail
 
 
 def test_startup_seeds_defaults(tmp_path):

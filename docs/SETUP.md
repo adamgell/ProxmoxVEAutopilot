@@ -183,13 +183,16 @@ Expect 20-30 minutes. Watch **Jobs** for live logs.
 
 If it hangs on "waiting for boot" see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#template-build-hangs-at-waiting-for-boot).
 
-## 5b. Seed chassis-type SMBIOS binaries (optional)
+## 5b. Enable chassis-type overrides (optional)
 
 Skip this section if none of your OEM profiles or sequences set a **chassis type** override. You can tell by checking `autopilot-proxmox/files/oem_profiles.yml` — if every profile you use has `chassis_type: null`, you're good.
 
-If you do use chassis-type overrides (e.g. `chassis_type: 10` for a laptop, `31` for a convertible, `35` for a mini-PC), QEMU needs a small SMBIOS Type 3 binary for each requested type, placed on every Proxmox node that might host the VM. Proxmox's upload API only accepts `iso`/`vztmpl`/`import` content types — it rejects `snippets` — so these files have to be seeded directly on the host.
+If you do use chassis-type overrides (e.g. `chassis_type: 10` for a laptop, `31` for a convertible, `35` for a mini-PC), QEMU needs two things the Proxmox API can't normally give us:
 
-Run this **once per Proxmox node** in your cluster:
+1. A small SMBIOS Type 3 binary for each chassis type, on `/var/lib/vz/snippets/` on every node that might host the VM.
+2. A root@pam API token, because Proxmox hardcodes the VM `args:` config field to root (`args` is passed straight to QEMU and can expose host resources, so Proxmox denies it to any non-root token regardless of role).
+
+### Seed the chassis binaries on each Proxmox node
 
 ```bash
 # From a machine that has the repo checked out:
@@ -202,7 +205,40 @@ ssh root@<node> 'pvesm set local --content backup,iso,import,vztmpl,snippets'
 
 The script writes binaries for a common set of chassis types (desktop, laptop, mini-PC, convertible, tablet, all-in-one, …) into `/var/lib/vz/snippets/`. Pass explicit types (`python3 /tmp/seed_chassis_binaries.py 3 10 31`) to seed only specific ones.
 
-If you later add a new Proxmox node, repeat the commands there. If provisioning returns a `chassis-type binary ... is not present` error, the message tells you exactly which of **(a)** storage config, **(b)** token privilege, or **(c)** missing file is the cause.
+### Create a root@pam API token scoped to the `args` PUT
+
+On the Proxmox host:
+
+```bash
+pveum user token add root@pam autopilot-args --privsep=0 \
+    --comment "Autopilot args field only"
+```
+
+Proxmox prints the secret **once**. Add both halves to `inventory/group_vars/all/vault.yml`:
+
+```yaml
+vault_proxmox_root_api_token_id: "root@pam!autopilot-args"
+vault_proxmox_root_api_token_secret: "<the-secret-you-just-got>"
+```
+
+Then restart the container (`docker compose up -d`). If you request a provision with a chassis override and haven't configured this token, the UI returns a 400 telling you exactly what's missing; the job never starts.
+
+> **Blast radius.** `root@pam` tokens bypass Proxmox's role-based perm model entirely — a leaked secret is equivalent to root on the cluster. Autopilot uses this token only for the one PUT that writes `args` on a freshly cloned VM. Rotate the token if the vault is ever exposed:
+> ```bash
+> pveum user token remove root@pam autopilot-args
+> pveum user token add root@pam autopilot-args --privsep=0
+> ```
+
+### Verify from the Docker host
+
+```bash
+curl -k https://<PROXMOX_IP>:8006/api2/json/version \
+  -H "Authorization: PVEAPIToken=root@pam!autopilot-args=<SECRET>"
+```
+
+A 200 means the token works. 401 means the secret is wrong.
+
+If you later add a new Proxmox node, repeat the seeding there. If provisioning returns a `chassis-type binary ... is not present` error, the message tells you exactly which of **(a)** storage config, **(b)** token privilege, or **(c)** missing file is the cause.
 
 ## 6. Provision devices and capture hashes
 

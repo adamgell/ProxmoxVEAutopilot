@@ -215,6 +215,20 @@ ssh root@<node> 'python3 /tmp/seed_chassis_binaries.py'
 
 With no arguments, the script writes a common set (desktop, laptop, mini-PC, convertible, tablet, all-in-one). Pass specific integers to seed others, e.g. `python3 /tmp/seed_chassis_binaries.py 35 36`. Repeat on every node in your cluster that might host an autopilot VM.
 
+## Provision fails with "only root can set 'args' config"
+
+**Symptom:** the `provision_clone` job fails mid-run with:
+
+```
+Status code was 500 and not [200]: HTTP Error 500: only root can set 'args' config
+```
+
+**Cause:** Proxmox hardcodes the VM `args:` config field to `root@pam` in `PVE::API2::Qemu::check_vm_modify_config_perm`. The chassis-type override feature uses `args:` to pass `-smbios file=<path>` to QEMU, so it needs a `root@pam` API token for that one PUT. Your scoped `autopilot@pve!ansible` token can't cover it regardless of role.
+
+**Fix:** create a `root@pam` API token, add it to `vault.yml`, and restart the container. Full steps in [SETUP.md §5b](SETUP.md#5b-enable-chassis-type-overrides-optional).
+
+In newer builds, requesting a chassis override without the root token configured returns a 400 from the UI **before** the job starts, with the exact remediation commands in the error body. If you're seeing this message mid-run, you're on an older image — `docker compose pull && docker compose up -d` to get the preflight.
+
 ## Can't find my storage or SDN zone name
 
 ```bash
