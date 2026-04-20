@@ -429,6 +429,39 @@ def test_proxmox_root_ticket_fetch_refuses_empty_password():
     assert "vault_proxmox_root_password" in str(exc.value)
 
 
+def test_proxmox_root_ticket_fetch_appends_pam_realm_to_bare_username(monkeypatch):
+    """Operators who type 'root' into the settings field should not get a
+    silent 401 from /access/ticket — Proxmox requires <user>@<realm>.
+    The helper compensates by defaulting to @pam when no realm is given."""
+    from web import app as _app
+
+    captured = {}
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data": {"ticket": "T", "CSRFPreventionToken": "C"}}
+    def fake_post(url, data=None, verify=None, timeout=None):
+        captured["data"] = data
+        return _Resp()
+    monkeypatch.setattr(_app.requests, "post", fake_post)
+
+    _app._proxmox_root_ticket_fetch({
+        "proxmox_host": "h", "proxmox_port": 8006,
+        "vault_proxmox_root_username": "root",   # bare, no realm
+        "vault_proxmox_root_password": "pw",
+    })
+    assert captured["data"]["username"] == "root@pam"
+
+    # Already-qualified usernames pass through unchanged.
+    _app._proxmox_root_ticket_fetch({
+        "proxmox_host": "h", "proxmox_port": 8006,
+        "vault_proxmox_root_username": "someone@pve",
+        "vault_proxmox_root_password": "pw",
+    })
+    assert captured["data"]["username"] == "someone@pve"
+
+
 def test_startup_seeds_defaults(tmp_path):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile

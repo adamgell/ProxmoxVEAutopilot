@@ -399,7 +399,12 @@ def _proxmox_root_ticket_fetch(cfg: dict) -> tuple[str, str]:
     """
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
-    username = cfg.get("vault_proxmox_root_username") or "root@pam"
+    username = (cfg.get("vault_proxmox_root_username") or "root@pam").strip()
+    # Proxmox /access/ticket demands <user>@<realm>. A bare 'root' gets
+    # a 401 that looks like a wrong-password error; tolerate it by
+    # defaulting to the @pam realm.
+    if "@" not in username:
+        username = f"{username}@pam"
     password = cfg.get("vault_proxmox_root_password") or ""
     if not password:
         raise ValueError("vault_proxmox_root_password is empty")
