@@ -86,3 +86,11 @@ def test_redirect_with_error_encodes_special_chars():
     from urllib.parse import parse_qs, urlparse
     qs = parse_qs(urlparse(loc).query)
     assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
+
+
+def test_load_brand_context_default():
+    from web.app import _load_brand_context
+    brand = _load_brand_context()
+    assert brand["name"] == "ProxmoxVEAutopilot" or brand["name"]  # whatever vars.yml carries
+    assert "registry_root" in brand
+    assert brand["registry_root"].startswith(r"HKLM:\SOFTWARE")

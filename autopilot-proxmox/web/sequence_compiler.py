@@ -36,9 +36,35 @@ class CompiledSequence:
     """The resolved form of a sequence."""
     ansible_vars: dict = field(default_factory=dict)
     autopilot_enabled: bool = False
+    # RunOnce steps executed via guest-agent exec after OOBE. Each entry:
+    #   step_type: str
+    #   ps_template: str (Jinja-style {{ cred.X }} / {{ params.X }} / {{ vm.X }})
+    #   credential_id: int | None
+    #   params: dict
+    #   causes_reboot: bool
+    runonce_steps: list = field(default_factory=list)
 
 
 StepHandler = Callable[[dict, CompiledSequence], None]
+
+
+# Core PS template constants — just the action. The renderer wraps each
+# in a branding envelope (header + Event Log + Registry stamp + reboot).
+# Jinja-style double-brace tokens resolved by runonce_renderer, not here.
+
+_JOIN_AD_DOMAIN_PS = r"""$secure = ConvertTo-SecureString '{{ cred.password | ps_escape }}' -AsPlainText -Force
+$creds  = New-Object System.Management.Automation.PSCredential(
+    '{{ cred.username | ps_escape }}', $secure)
+$ouArg = @{}
+if ('{{ params.ou_path | ps_escape }}' -ne '') {
+    $ouArg['OUPath'] = '{{ params.ou_path | ps_escape }}'
+}
+Add-Computer -DomainName '{{ cred.domain_fqdn | ps_escape }}' `
+             -Credential $creds @ouArg -Force
+"""
+
+_RENAME_COMPUTER_PS = r"""Rename-Computer -NewName '{{ params.pattern | ps_escape }}' -Force
+"""
 
 
 def _handle_set_oem_hardware(params: dict, out: CompiledSequence) -> None:
@@ -65,10 +91,38 @@ def _handle_hybrid_stub(params: dict, out: CompiledSequence) -> None:
     raise StepNotImplemented("autopilot_hybrid")
 
 
+def _handle_join_ad_domain(params: dict, out: CompiledSequence) -> None:
+    cred_id = params.get("credential_id")
+    # We do NOT raise on missing/zero credential_id — the seed ships with
+    # credential_id=0 as a placeholder so operators can discover the
+    # sequence and edit it. The RunOnce renderer reports a clear error
+    # at provision time if the credential still hasn't been set.
+    out.runonce_steps.append({
+        "step_type": "join_ad_domain",
+        "ps_template": _JOIN_AD_DOMAIN_PS,
+        "credential_id": int(cred_id) if cred_id else 0,
+        "params": {"ou_path": params.get("ou_path", "") or ""},
+        "causes_reboot": True,
+    })
+
+
+def _handle_rename_computer(params: dict, out: CompiledSequence) -> None:
+    pattern = params.get("pattern", "{serial}") or "{serial}"
+    out.runonce_steps.append({
+        "step_type": "rename_computer",
+        "ps_template": _RENAME_COMPUTER_PS,
+        "credential_id": None,
+        "params": {"pattern": pattern},
+        "causes_reboot": True,
+    })
+
+
 _STEP_HANDLERS: dict[str, StepHandler] = {
     "set_oem_hardware": _handle_set_oem_hardware,
     "autopilot_entra": _handle_autopilot_entra,
     "autopilot_hybrid": _handle_hybrid_stub,
+    "join_ad_domain": _handle_join_ad_domain,
+    "rename_computer": _handle_rename_computer,
 }
 
 

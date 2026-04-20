@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 import sqlite3
 import time
@@ -127,6 +128,9 @@ SETTINGS_SCHEMA = [
         {"key": "hash_capture_timeout_seconds", "label": "Hash Capture Timeout (s)", "type": "number"},
         {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number"},
         {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number"},
+    ]},
+    {"section": "Branding", "fields": [
+        {"key": "brand_name", "label": "Brand Name", "type": "text"},
     ]},
 ]
 
@@ -286,6 +290,24 @@ def _load_proxmox_config():
                 if data:
                     config.update(data)
     return config
+
+
+def _load_brand_context() -> dict:
+    """Return the brand dict threaded to the runonce_renderer.
+
+    Default brand is 'ProxmoxVEAutopilot'. White-label customers set
+    their own via the Branding section of /settings.
+    """
+    cfg = _load_vars()
+    name = (cfg.get("brand_name") or "").strip() or "ProxmoxVEAutopilot"
+    # Windows registry keys can't contain colons or backslashes inside a
+    # component. Sanitize by keeping alphanumerics, hyphens, underscores.
+    safe = "".join(c for c in name if c.isalnum() or c in "-_") or "Brand"
+    return {
+        "name": name,
+        "event_source": safe,
+        "registry_root": fr"HKLM:\SOFTWARE\{safe}",
+    }
 
 
 def _proxmox_api(path, method="GET", data=None, files=None):
@@ -990,6 +1012,36 @@ async def start_provision(
             form_overrides=form_overrides,
             vars_yml=_load_vars(),
         )
+
+        # Render RunOnce step scripts (join_ad_domain, rename_computer, etc.)
+        # Each gets its own .ps1 in a per-job runonce/ dir with 0600 perms.
+        # The renderer wraps each core action with the branding envelope
+        # (header + Event Log + Registry stamp).
+        if compiled.runonce_steps:
+            runonce_dir = Path(job_manager.jobs_dir) / "pending" / f"seq-{sequence_id}" / "runonce"
+            def _creds_resolver(cid: int, _cipher=_cipher, _db=SEQUENCES_DB):
+                c = sequences_db.get_credential(_db, _cipher(), cid)
+                return c["payload"] if c else None
+            from web import runonce_renderer
+            try:
+                runonce_infos = runonce_renderer.write_step_scripts(
+                    steps=compiled.runonce_steps,
+                    dest_dir=runonce_dir,
+                    creds_resolver=_creds_resolver,
+                    vm_context={
+                        "serial": "",     # filled by Ansible per-VM (TBD below)
+                        "vmid": "",       # same
+                        "group_tag": group_tag,
+                        "sequence_id": int(sequence_id),
+                        "sequence_name": seq["name"],
+                    },
+                    brand=_load_brand_context(),
+                )
+            except runonce_renderer.RenderError as e:
+                raise HTTPException(400, f"runonce render failed: {e}")
+            resolved_vars["_runonce_scripts_json"] = json.dumps(runonce_infos)
+        else:
+            runonce_infos = []
 
     if count <= 1:
         cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]
@@ -2337,6 +2389,36 @@ def api_credentials_delete(cred_id: int):
             "sequence_ids": e.sequence_ids,
         })
     return {"ok": True}
+
+
+class _TestDomainJoinReq(BaseModel):
+    # Either supply an ID for a saved credential OR an inline payload.
+    credential_id: Optional[int] = None
+    payload: Optional[dict] = None
+
+
+@app.post("/api/credentials/test-domain-join")
+def api_test_domain_join(body: _TestDomainJoinReq):
+    # Resolve the payload: prefer credential_id if set.
+    payload: Optional[dict] = body.payload
+    if body.credential_id:
+        cred = sequences_db.get_credential(
+            SEQUENCES_DB, _cipher(), body.credential_id)
+        if cred is None:
+            raise HTTPException(404, "credential not found")
+        if cred["type"] != "domain_join":
+            raise HTTPException(400,
+                f"credential {body.credential_id} is type {cred['type']!r}, "
+                f"not 'domain_join'")
+        payload = cred["payload"]
+    if not payload:
+        raise HTTPException(400, "payload or credential_id is required")
+
+    cfg = _load_proxmox_config()
+    validate_certs = bool(cfg.get("ad_validate_certs", False))
+
+    from web import ldap_tester
+    return ldap_tester.test_domain_join(payload, validate_certs=validate_certs)
 
 
 class _StepIn(BaseModel):

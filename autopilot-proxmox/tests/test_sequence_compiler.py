@@ -254,3 +254,85 @@ def test_precedence_chassis_type_varsyml_wins_when_sequence_and_form_blank():
         vars_yml={"chassis_type_override": "3"},
     )
     assert resolved["chassis_type_override"] == "3"
+
+
+def test_compiled_sequence_has_runonce_steps_field():
+    from web import sequence_compiler
+    seq = _make_sequence([])
+    result = sequence_compiler.compile(seq)
+    assert result.runonce_steps == []
+
+
+def test_join_ad_domain_emits_runonce_step():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "join_ad_domain",
+         "params": {"credential_id": 42, "ou_path": "OU=Workstations,DC=example,DC=local"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert len(result.runonce_steps) == 1
+    step = result.runonce_steps[0]
+    assert step["step_type"] == "join_ad_domain"
+    assert step["credential_id"] == 42
+    assert step["params"]["ou_path"] == "OU=Workstations,DC=example,DC=local"
+    assert step["causes_reboot"] is True
+    # Template contains the placeholders the renderer will substitute
+    assert "{{ cred.domain_fqdn | ps_escape }}" in step["ps_template"]
+    assert "{{ cred.username | ps_escape }}" in step["ps_template"]
+    assert "{{ cred.password | ps_escape }}" in step["ps_template"]
+    assert "{{ params.ou_path | ps_escape }}" in step["ps_template"]
+    # Core template calls Add-Computer without -Restart (renderer wraps
+    # the reboot). causes_reboot=True is how the playbook learns to wait.
+    assert "Add-Computer" in step["ps_template"]
+    assert "-Restart" not in step["ps_template"]
+
+
+def test_rename_computer_emits_runonce_step():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "rename_computer", "params": {"pattern": "{serial}"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert len(result.runonce_steps) == 1
+    step = result.runonce_steps[0]
+    assert step["step_type"] == "rename_computer"
+    assert step["credential_id"] is None
+    assert step["params"]["pattern"] == "{serial}"
+    assert step["causes_reboot"] is True
+    assert "Rename-Computer" in step["ps_template"]
+    # Core template has no -Restart — renderer handles reboot.
+    assert "-Restart" not in step["ps_template"]
+    # The pattern will be expanded by the renderer using vm_context
+    assert "{{ params.pattern | ps_escape }}" in step["ps_template"]
+
+
+def test_runonce_steps_preserve_order():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "join_ad_domain", "params": {"credential_id": 1, "ou_path": ""}},
+        {"step_type": "rename_computer", "params": {"pattern": "{serial}"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert [s["step_type"] for s in result.runonce_steps] == [
+        "join_ad_domain", "rename_computer"]
+
+
+def test_disabled_runonce_step_is_skipped():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "join_ad_domain",
+         "params": {"credential_id": 1, "ou_path": ""}, "enabled": False},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.runonce_steps == []
+
+
+def test_join_ad_domain_allows_empty_ou_path():
+    """Empty OU path means 'default computers container'. Not an error."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "join_ad_domain",
+         "params": {"credential_id": 1, "ou_path": ""}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert len(result.runonce_steps) == 1

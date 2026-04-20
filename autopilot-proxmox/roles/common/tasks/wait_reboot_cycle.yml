@@ -1,0 +1,36 @@
+---
+# Watch the guest agent ping through a reboot cycle. Use this AFTER a
+# task that is expected to cause a Windows reboot (e.g. Add-Computer
+# -Restart, Rename-Computer -Restart).
+#
+# Logic: wait for the agent to stop responding (3 consecutive timeouts ⇒
+# reboot in progress), then delegate to the existing wait_guest_agent.yml
+# to wait for the agent to come back up.
+#
+# Total budget: reboot_wait_timeout_seconds (default 600, 10 min).
+
+- name: "Wait for guest agent to drop (reboot started)"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/ping"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+    timeout: 5
+  register: _ping_during_reboot
+  retries: "{{ (reboot_wait_timeout_seconds | default(600) | int / 3) | int }}"
+  delay: 3
+  # Success condition inverted: keep retrying UNTIL the ping fails,
+  # signalling the reboot has begun. We use failed_when + ignore_errors
+  # rather than until, so that a failing ping is treated as success here.
+  until: _ping_during_reboot is failed
+  failed_when: false
+  ignore_errors: true
+
+- name: "Wait for guest agent to come back after reboot"
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
+
+- name: "Reboot cycle complete"
+  ansible.builtin.debug:
+    msg: "VM {{ vm_vmid }} completed a reboot cycle and the guest agent is back."
