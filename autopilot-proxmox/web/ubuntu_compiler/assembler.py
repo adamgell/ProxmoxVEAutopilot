@@ -1,4 +1,9 @@
-"""Sequence assembler: merge StepOutputs into autoinstall + per-clone cloud-init."""
+"""Sequence assembler: merge StepOutputs into cloud-init user-data + per-clone cloud-init.
+
+We target plain cloud-init on an Ubuntu cloud image. The compiled output is a
+top-level `#cloud-config` document (no `autoinstall:` wrapper) — cloud-init
+applies it on first boot of the cloned/booted VM.
+"""
 from __future__ import annotations
 
 import io
@@ -14,35 +19,39 @@ _yaml = YAML()
 _yaml.default_flow_style = False
 _yaml.indent(mapping=2, sequence=4, offset=2)
 
-_BASE_PATH = Path(__file__).resolve().parents[2] / "files" / "ubuntu_autoinstall_base.yaml"
+_BASE_PATH = Path(__file__).resolve().parents[2] / "files" / "ubuntu_cloudinit_base.yaml"
 
 
 def _load_base() -> dict[str, Any]:
     # Load as a plain dict via a fresh YAML instance (typ=safe) so we don't
-    # carry ruamel's round-trip tokens into the merged output.
+    # carry ruamel's round-trip tokens into the merged output. Base file may
+    # be empty (just the `#cloud-config` header), in which case we start with {}.
     safe = YAML(typ="safe")
     with _BASE_PATH.open("r", encoding="utf-8") as fh:
         return safe.load(fh) or {}
 
 
-def _merge_into(ai_root: dict[str, Any], contribution: dict[str, Any]) -> None:
-    """Shallow-merge `contribution` into `ai_root`. Lists concatenate; dicts
-    shallow-merge at the first level; scalars overwrite."""
-    LIST_KEYS = {"packages", "snaps", "late-commands"}
-    DICT_KEYS = {"keyboard", "storage", "ssh", "user-data"}
+def _merge_into(cc: dict[str, Any], contribution: dict[str, Any]) -> None:
+    """Shallow-merge `contribution` into the top-level cloud-config dict `cc`.
+
+    - LIST_KEYS concatenate (step order preserved).
+    - `snap` is a dict whose `commands` list concatenates.
+    - Everything else: scalars overwrite.
+    """
+    LIST_KEYS = {"packages", "runcmd", "users"}
     for k, v in contribution.items():
         if k in LIST_KEYS:
-            ai_root.setdefault(k, []).extend(v)
-        elif k in DICT_KEYS and isinstance(v, dict):
-            existing = ai_root.setdefault(k, {})
+            cc.setdefault(k, []).extend(v)
+        elif k == "snap" and isinstance(v, dict):
+            existing = cc.setdefault("snap", {})
+            if "commands" in v:
+                existing.setdefault("commands", []).extend(v["commands"])
+            # Forward any other snap-module keys literally.
             for kk, vv in v.items():
-                # Nested list concat inside user-data (e.g. "users")
-                if kk == "users" and isinstance(vv, list):
-                    existing.setdefault("users", []).extend(vv)
-                else:
+                if kk != "commands":
                     existing[kk] = vv
         else:
-            ai_root[k] = v
+            cc[k] = v
 
 
 def _dump(doc: dict[str, Any], *, cloud_config_header: bool) -> str:
@@ -67,9 +76,9 @@ def compile_sequence(
     steps are skipped. `credentials` is {id: decrypted_payload_dict}.
     """
     base = _load_base()
-    autoinstall: dict[str, Any] = dict(base.get("autoinstall", {}))
+    cc: dict[str, Any] = dict(base)
     # Append-order lists start empty.
-    autoinstall.setdefault("late-commands", [])
+    cc.setdefault("runcmd", [])
 
     firstboot_runcmd: list[str] = []
 
@@ -79,25 +88,23 @@ def compile_sequence(
         out: StepOutput = compile_step(
             step["step_type"], step.get("params", {}), credentials
         )
-        if out.autoinstall_body:
-            _merge_into(autoinstall, out.autoinstall_body)
-        if out.late_commands:
-            autoinstall["late-commands"].extend(out.late_commands)
+        if out.cloud_config:
+            _merge_into(cc, out.cloud_config)
+        if out.runcmd:
+            cc["runcmd"].extend(out.runcmd)
         if out.firstboot_runcmd:
             firstboot_runcmd.extend(out.firstboot_runcmd)
 
-    # Drop empty late-commands (keeps the compiled file tidy).
-    if not autoinstall.get("late-commands"):
-        autoinstall.pop("late-commands", None)
+    # Drop empty runcmd (keeps the compiled file tidy).
+    if not cc.get("runcmd"):
+        cc.pop("runcmd", None)
 
-    user_data = _dump({"autoinstall": autoinstall}, cloud_config_header=True)
+    user_data = _dump(cc, cloud_config_header=True)
     meta_data = _dump({"instance-id": instance_id}, cloud_config_header=False)
 
-    # Layer 2 of the qemu-guest-agent defense: every per-clone cloud-init
-    # runs an idempotent install of qemu-guest-agent on first boot. If the
-    # template somehow missed it (late-commands failed, template was built
-    # with an older revision, someone manually removed it), the clone catches
-    # up. `dpkg -s` is cheap when the package is already installed.
+    # Per-clone cloud-init: every clone runs an idempotent install of
+    # qemu-guest-agent on first boot. The cloud-image template should already
+    # have it, but this is cheap insurance (dpkg -s is a no-op if installed).
     firstboot: dict[str, Any] = {"hostname": hostname}
     agent_runcmd = [
         "dpkg -s qemu-guest-agent >/dev/null 2>&1 || "

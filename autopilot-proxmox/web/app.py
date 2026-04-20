@@ -1913,9 +1913,9 @@ async def build_per_vm_seed(vmid: int, sequence_id: int, hostname: str):
     """Build the per-clone NoCloud seed ISO for a specific VMID.
 
     Unlike /api/ubuntu/rebuild-seed-iso (which emits the template seed ISO
-    carrying the full autoinstall body), this endpoint emits a minimal
-    cloud-init (hostname + firstboot runcmd) keyed to the target VM. Called
-    by the Ansible provisioning role for each cloned VM.
+    carrying the full cloud-init user-data body), this endpoint emits a
+    minimal cloud-init (hostname + firstboot runcmd) keyed to the target VM.
+    Called by the Ansible provisioning role for each cloned VM.
     """
     seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
     if seq is None:

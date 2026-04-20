@@ -36,10 +36,12 @@ def test_emits_mdatp_install_plus_onboarding() -> None:
         params={"mde_onboarding_credential_id": 7},
         credentials=creds,
     )
-    joined = "\n".join(out.late_commands)
+    joined = "\n".join(out.runcmd)
     assert "apt-get install -y mdatp" in joined
     assert "/tmp/mde/onboard.py" in joined
     # Onboarding payload is embedded as base64
     assert creds[7]["script_b64"] in joined
     # Cleanup line deletes /tmp/mde
-    assert any("rm -rf /tmp/mde" in line for line in out.late_commands)
+    assert any("rm -rf /tmp/mde" in line for line in out.runcmd)
+    # No curtin wrapping — these commands run on the booted cloud image.
+    assert all("curtin" not in line for line in out.runcmd)

@@ -1,4 +1,4 @@
-"""Build NoCloud seed ISOs (cidata-labelled) for Ubuntu autoinstall + cloud-init."""
+"""Build NoCloud seed ISOs (cidata-labelled) for Ubuntu cloud-init."""
 from __future__ import annotations
 
 import subprocess

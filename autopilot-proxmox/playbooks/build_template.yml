@@ -1,7 +1,8 @@
 ---
-# Build a Proxmox template from an installer ISO.
-# Branches on target_os: 'windows' (default) uses the proxmox_template_builder role;
-# 'ubuntu' runs the autoinstall + cloud-init-clean flow in _build_ubuntu_template.yml.
+# Build a Proxmox template.
+# Branches on target_os: 'windows' (default) uses the proxmox_template_builder role
+# (Windows install from ISO); 'ubuntu' builds from an Ubuntu cloud image +
+# cloud-init NoCloud seed in _build_ubuntu_template.yml.
 # The resulting template can be used with provision_clone.yml.
 #
 # Usage:
@@ -14,7 +15,7 @@
   gather_facts: false
 
   tasks:
-    - name: Build Ubuntu template (autoinstall + cloud-init clean)
+    - name: Build Ubuntu template (cloud image + cloud-init)
       ansible.builtin.include_tasks: _build_ubuntu_template.yml
       when: target_os | default('windows') == 'ubuntu'
 

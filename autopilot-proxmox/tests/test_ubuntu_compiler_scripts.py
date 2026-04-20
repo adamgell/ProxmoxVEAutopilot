@@ -4,15 +4,15 @@ from __future__ import annotations
 from web.ubuntu_compiler import compile_step
 
 
-def test_run_late_command_appends_to_late_commands() -> None:
+def test_run_late_command_appends_to_runcmd() -> None:
     out = compile_step(
         "run_late_command",
         params={"command": "echo hello > /tmp/greet"},
         credentials={},
     )
-    assert out.late_commands == [
-        "curtin in-target --target=/target -- sh -c 'echo hello > /tmp/greet'"
-    ]
+    # No curtin wrapping — plain sh -c so the shell redirect works on the
+    # booted cloud image. The step-type name is historical.
+    assert out.runcmd == ["sh -c 'echo hello > /tmp/greet'"]
     assert out.firstboot_runcmd == []
 
 
@@ -23,7 +23,7 @@ def test_run_firstboot_script_appends_to_firstboot_runcmd() -> None:
         credentials={},
     )
     assert out.firstboot_runcmd == ["hostnamectl set-hostname $(hostname)"]
-    assert out.late_commands == []
+    assert out.runcmd == []
 
 
 def test_run_firstboot_script_multiline_command() -> None:

@@ -1,4 +1,4 @@
-"""Assembler: merge steps → autoinstall user-data + meta-data."""
+"""Assembler: merge steps → cloud-init user-data + meta-data."""
 from __future__ import annotations
 
 from ruamel.yaml import YAML
@@ -13,14 +13,14 @@ def _parse(s: str) -> dict:
     return _yaml.load(s)
 
 
-def test_empty_sequence_still_produces_valid_autoinstall() -> None:
+def test_empty_sequence_still_produces_valid_cloud_config() -> None:
     u, m, fu, fm = compile_sequence(steps=[], credentials={}, instance_id="test-1",
                                     hostname="autopilot-abc")
-    doc = _parse(u)
-    # Must start with #cloud-config and contain autoinstall root
+    # Must start with #cloud-config and parse to an (empty-ish) dict.
     assert u.lstrip().startswith("#cloud-config")
-    assert "autoinstall" in doc
-    assert doc["autoinstall"].get("version") == 1
+    doc = _parse(u) or {}
+    # There is no autoinstall wrapper any more.
+    assert "autoinstall" not in doc
     # meta-data carries instance-id
     mdoc = _parse(m)
     assert mdoc["instance-id"] == "test-1"
@@ -35,14 +35,14 @@ def test_ubuntu_core_plus_packages_merges() -> None:
     u, _, _, _ = compile_sequence(steps=steps, credentials={}, instance_id="i-1",
                                   hostname="h")
     doc = _parse(u)
-    ai = doc["autoinstall"]
-    assert ai["locale"] == "en_US.UTF-8"
-    assert ai["timezone"] == "UTC"
+    # Top-level keys, no autoinstall wrapper.
+    assert doc["locale"] == "en_US.UTF-8"
+    assert doc["timezone"] == "UTC"
     # install_ubuntu_core baselines qemu-guest-agent; later steps append.
-    assert ai["packages"] == ["qemu-guest-agent", "curl", "git", "wget"]
+    assert doc["packages"] == ["qemu-guest-agent", "curl", "git", "wget"]
 
 
-def test_late_commands_concatenate() -> None:
+def test_runcmd_concatenates_across_steps() -> None:
     steps = [
         {"step_type": "install_ubuntu_core", "params": {}},
         {"step_type": "install_intune_portal", "params": {}},
@@ -51,13 +51,29 @@ def test_late_commands_concatenate() -> None:
     u, _, _, _ = compile_sequence(steps=steps, credentials={}, instance_id="i-1",
                                   hostname="h")
     doc = _parse(u)
-    lc = doc["autoinstall"]["late-commands"]
-    assert any("intune-portal" in line for line in lc)
-    assert any("microsoft-edge-stable" in line for line in lc)
-    # Intune comes before Edge because steps preserve order
-    intune_idx = next(i for i, line in enumerate(lc) if "intune-portal" in line)
-    edge_idx = next(i for i, line in enumerate(lc) if "microsoft-edge-stable" in line)
+    rc = doc["runcmd"]
+    assert any("intune-portal" in line for line in rc)
+    assert any("microsoft-edge-stable" in line for line in rc)
+    # Intune comes before Edge because steps preserve order.
+    intune_idx = next(i for i, line in enumerate(rc) if "intune-portal" in line)
+    edge_idx = next(i for i, line in enumerate(rc) if "microsoft-edge-stable" in line)
     assert intune_idx < edge_idx
+
+
+def test_snap_commands_concatenate_across_steps() -> None:
+    steps = [
+        {"step_type": "install_snap_packages",
+         "params": {"snaps": [{"name": "code", "classic": True}]}},
+        {"step_type": "install_snap_packages",
+         "params": {"snaps": [{"name": "postman"}]}},
+    ]
+    u, _, _, _ = compile_sequence(steps=steps, credentials={}, instance_id="i-1",
+                                  hostname="h")
+    doc = _parse(u)
+    assert doc["snap"]["commands"] == [
+        "snap install code --classic",
+        "snap install postman",
+    ]
 
 
 def test_firstboot_cloud_init_includes_hostname_and_runcmd() -> None:
@@ -71,6 +87,9 @@ def test_firstboot_cloud_init_includes_hostname_and_runcmd() -> None:
     # Per-clone cloud-init sets hostname and runs runcmd on first boot.
     assert doc["hostname"] == "autopilot-xyz"
     assert "touch /tmp/ok" in doc["runcmd"]
+    # Per-clone cloud-init also runs the qemu-guest-agent safety install.
+    joined = "\n".join(doc["runcmd"])
+    assert "qemu-guest-agent" in joined
 
 
 def test_disabled_steps_are_skipped() -> None:
@@ -83,4 +102,4 @@ def test_disabled_steps_are_skipped() -> None:
     doc = _parse(u)
     # The disabled install_apt_packages step's "curl" must not appear.
     # install_ubuntu_core still contributes qemu-guest-agent as baseline.
-    assert doc["autoinstall"]["packages"] == ["qemu-guest-agent"]
+    assert doc["packages"] == ["qemu-guest-agent"]

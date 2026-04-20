@@ -17,7 +17,8 @@ def test_emits_users_block_with_hashed_password() -> None:
         params={"local_admin_credential_id": 42},
         credentials=creds,
     )
-    users = out.autoinstall_body["user-data"]["users"]
+    # Top-level `users:` — no autoinstall user-data wrapper.
+    users = out.cloud_config["users"]
     assert isinstance(users, list) and len(users) == 1
     u = users[0]
     assert u["name"] == "acgell"

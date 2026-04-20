@@ -1,5 +1,5 @@
-"""LinuxESP parity: the seeded sequence compiles to a document that matches
-the upstream snapshot (modulo MDE, which we add on top)."""
+"""LinuxESP parity: the seeded sequence compiles to a cloud-init document
+that matches the snapshot exactly."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +12,7 @@ from web.ubuntu_compiler import compile_sequence
 _FIXTURE = Path(__file__).parent / "fixtures" / "linuxesp-snapshot.yaml"
 
 
-def test_seeded_linuxesp_sequence_matches_upstream() -> None:
+def test_seeded_linuxesp_sequence_matches_snapshot() -> None:
     # Match the seeded sequence shape exactly (see seed_defaults, Task 14).
     steps = [
         {"step_type": "install_ubuntu_core",
@@ -40,12 +40,10 @@ def test_seeded_linuxesp_sequence_matches_upstream() -> None:
     with _FIXTURE.open("r", encoding="utf-8") as fh:
         expected = YAML(typ="safe").load(fh)
 
-    # Top-level equality on autoinstall keys we guarantee.
-    for key in ("version", "ssh", "storage", "keyboard", "locale",
-                "timezone", "updates", "shutdown", "packages", "snaps"):
-        assert actual["autoinstall"].get(key) == expected["autoinstall"].get(key), (
-            f"drift in autoinstall.{key}"
-        )
+    # Top-level cloud-config keys we guarantee (no autoinstall wrapper).
+    for key in ("locale", "timezone", "package_update", "package_upgrade",
+                "packages", "snap"):
+        assert actual.get(key) == expected.get(key), f"drift in {key}"
 
-    # late-commands: the list must match exactly (order-sensitive).
-    assert actual["autoinstall"]["late-commands"] == expected["autoinstall"]["late-commands"]
+    # runcmd must match exactly (order-sensitive).
+    assert actual["runcmd"] == expected["runcmd"]

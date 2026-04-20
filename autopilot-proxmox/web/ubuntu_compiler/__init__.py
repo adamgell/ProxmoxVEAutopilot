@@ -1,4 +1,4 @@
-"""Ubuntu sequence compiler: sequence → autoinstall.yaml + per-clone cloud-init."""
+"""Ubuntu sequence compiler: sequence → cloud-init user-data + per-clone cloud-init."""
 from .registry import _load_all_steps, compile_step, is_ubuntu_step, registered_step_types
 from .types import StepOutput, UbuntuCompileError
 

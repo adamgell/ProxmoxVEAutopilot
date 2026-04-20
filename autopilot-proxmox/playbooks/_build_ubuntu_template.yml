@@ -1,5 +1,9 @@
 ---
-# Ubuntu template build. Runs when target_os=ubuntu.
+# Ubuntu template build from an Ubuntu cloud image + cloud-init NoCloud seed.
+#
+# This replaces the older subiquity autoinstall flow. The cloud image boots
+# directly (no installer), cloud-init applies our config on first boot, and
+# the VM is converted to a template after cloud-init finishes.
 #
 # Extra vars expected:
 #   ubuntu_template_sequence_id   (informational — the sequence id that produced ubuntu-seed.iso)
@@ -7,11 +11,14 @@
 # Regular vars (from vars.yml):
 #   proxmox_template_vmid, proxmox_api_base, proxmox_api_auth_header, proxmox_node,
 #   proxmox_storage, proxmox_bridge, proxmox_iso_storage, proxmox_validate_certs,
-#   ubuntu_iso, ubuntu_seed_iso, vm_cores, vm_memory_mb, vm_disk_size_gb
+#   ubuntu_cloud_image, ubuntu_seed_iso, vm_cores, vm_memory_mb, vm_disk_size_gb
 #
-# Pre-flight: ubuntu-seed.iso must already exist on Proxmox (operator clicked
-# Rebuild Ubuntu Seed ISO in the UI first). The handler doesn't verify this
-# here — Proxmox will error at VM-create time if the path is missing.
+# Pre-flight:
+#   - The Ubuntu cloud image must already be uploaded to Proxmox at the path
+#     ubuntu_cloud_image (Proxmox's Download-from-URL feature works; see
+#     vars.yml for the upstream URL).
+#   - ubuntu-seed.iso must exist on Proxmox (operator clicks "Rebuild Ubuntu
+#     Seed ISO" in the UI before pressing "Build Ubuntu Template").
 
 - name: Check whether the template VMID already exists
   ansible.builtin.uri:
@@ -32,7 +39,10 @@
       a different proxmox_template_vmid in Settings.
   when: vm_status_pre.status == 200
 
-- name: Create Ubuntu install VM
+- name: Create VM with cloud-image disk (import-from) and NoCloud seed attached
+  # Proxmox 8+ `import-from=` on a disk spec imports a qcow2 at VM-create
+  # time. The resulting scsi0 disk is thin-provisioned on {{ proxmox_storage }},
+  # starting from the qcow2's virtual size; we resize below.
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu"
     method: POST
@@ -47,15 +57,29 @@
       memory: "{{ vm_memory_mb }}"
       net0: "virtio,bridge={{ proxmox_bridge }}"
       scsihw: "virtio-scsi-single"
-      scsi0: "{{ proxmox_storage }}:{{ vm_disk_size_gb }},discard=on,ssd=1"
-      ide2: "{{ ubuntu_iso }},media=cdrom"
+      scsi0: "{{ proxmox_storage }}:0,import-from={{ ubuntu_cloud_image }},discard=on,ssd=1"
       ide3: "{{ ubuntu_seed_iso }},media=cdrom"
-      boot: "order=ide2;scsi0"
+      boot: "order=scsi0"
       agent: "enabled=1"
+      serial0: "socket"
     status_code: [200]
     validate_certs: "{{ proxmox_validate_certs }}"
 
-- name: Start install VM
+- name: Resize disk to requested size
+  # Cloud image ships as ~3.5G; grow to {{ vm_disk_size_gb }}G so cloud-init's
+  # growpart/resizefs modules can claim the full requested size on first boot.
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/resize"
+    method: PUT
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      disk: "scsi0"
+      size: "{{ vm_disk_size_gb }}G"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Start VM (cloud-init runs on first boot)
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/start"
     method: POST
@@ -63,7 +87,7 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
 
-- name: Wait for install VM to actually be running (avoid race where we poll before the start task flips status)
+- name: Wait for VM to actually be running (avoid race with the start task)
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"
     method: GET
@@ -76,87 +100,10 @@
   retries: 30
   delay: 2
 
-# Ubuntu 24.04 live-server asks "Continue with autoinstall? (yes|no)" unless
-# the kernel cmdline has `autoinstall`. Proxmox doesn't let us set kernel
-# cmdline on an ISO boot, so instead we send y-e-s-<Enter> via the VGA
-# console. We send two bursts at 45s and 90s after start — sending before the
-# prompt is harmless (GRUB ignores these keys), but sending after the prompt
-# times out would leave subiquity stuck. Two bursts cover boot-time variance.
-- name: Wait for subiquity to reach the autoinstall-confirmation prompt (first burst window)
-  ansible.builtin.pause:
-    seconds: 45
-
-- name: Send 'yes' + Enter to subiquity (burst 1)
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/sendkey"
-    method: PUT
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    body_format: form-urlencoded
-    body:
-      key: "{{ item }}"
-    validate_certs: "{{ proxmox_validate_certs }}"
-    status_code: [200]
-  loop: ["y", "e", "s", "ret"]
-
-- name: Wait 45s and send again (in case first burst landed before the prompt)
-  ansible.builtin.pause:
-    seconds: 45
-
-- name: Send 'yes' + Enter to subiquity (burst 2)
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/sendkey"
-    method: PUT
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    body_format: form-urlencoded
-    body:
-      key: "{{ item }}"
-    validate_certs: "{{ proxmox_validate_certs }}"
-    status_code: [200]
-  loop: ["y", "e", "s", "ret"]
-
-- name: Wait for autoinstall to finish (VM self-powers-off on completion)
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/current"
-    method: GET
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    validate_certs: "{{ proxmox_validate_certs }}"
-    return_content: yes
-  register: vm_status
-  until: vm_status.json.data.status == "stopped"
-  retries: 180        # 30 minutes at 10s intervals
-  delay: 10
-
-- name: Detach both ISOs and set boot order to disk (install is complete)
-  # Detach ide3 (seed) AND ide2 (Ubuntu install ISO) so the next boot comes
-  # from the installed system on scsi0. Without this the VM re-enters subiquity
-  # on the next start instead of booting the finished OS.
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
-    method: POST
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    body_format: form-urlencoded
-    body:
-      delete: "ide2,ide3"
-      boot: "order=scsi0"
-    validate_certs: "{{ proxmox_validate_certs }}"
-
-- name: Start VM again for cloud-init clean
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/status/start"
-    method: POST
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    validate_certs: "{{ proxmox_validate_certs }}"
-
-- name: Wait for guest agent (agent was installed during autoinstall)
-  # Layer 3 of qemu-guest-agent defense: fail loudly instead of hanging
-  # forever + swallowing errors. If the agent isn't up after 10 minutes of
-  # retries, the template build can't complete the cloud-init clean step,
-  # so we surface a clear, actionable error.
+- name: Wait for guest agent (cloud-init finishes installing qemu-guest-agent)
+  # The cloud image either ships qemu-guest-agent already installed (in which
+  # case install_ubuntu_core's runcmd enables it) or cloud-init's `packages:`
+  # installs it. Either way it should be up within a couple of minutes.
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/ping"
     method: POST
@@ -173,21 +120,36 @@
 - name: Fail loudly if the guest agent never came up
   ansible.builtin.fail:
     msg: |
-      qemu-guest-agent did not start in the installed Ubuntu template after
+      qemu-guest-agent did not start in the cloud-image template after
       10 minutes. Common causes:
-        * Autoinstall skipped the `packages:` install silently (subiquity
-          sometimes does this on a cold-cache install environment).
-        * The late-commands `apt-get install qemu-guest-agent` failed (no
-          network in the install target? check /var/log/curtin/ in the VM).
-        * systemd didn't enable the qemu-guest-agent.service.
+        * cloud-init's `packages:` install failed (no network? bad apt mirror?).
+        * The cloud image is minimal and qemu-guest-agent isn't reachable.
       The template was NOT converted — VMID {{ proxmox_template_vmid }} is
-      still a regular VM. Log into the console (user Administrator), run
-      `sudo apt install -y qemu-guest-agent && sudo systemctl enable --now
-      qemu-guest-agent`, then re-run this playbook (it will skip the
-      already-installed VM and proceed from here).
+      still a regular VM. Check the VM's serial console
+      (serial0 attached) and /var/log/cloud-init-output.log. Destroy the
+      VM and retry after diagnosing.
   when: agent_ping.status != 200
 
-- name: Sysprep analogue — cloud-init clean then shutdown
+- name: Wait for cloud-init to finish applying the seed
+  # `cloud-init status --wait` blocks until cloud-init is in "done" or "error"
+  # state. Running via guest-exec avoids flaky ansible_connection=qemu setups.
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: json
+    body:
+      command:
+        - "/usr/bin/cloud-init"
+        - "status"
+        - "--wait"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Sysprep — cloud-init clean + machine-id reset + shutdown
+  # Reset cloud-init so clones re-run it against their own NoCloud seed.
+  # Also wipe /etc/machine-id so each clone gets a fresh one (otherwise all
+  # clones share the template's machine-id, which breaks DHCP + systemd).
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec"
     method: POST
@@ -198,7 +160,13 @@
       command:
         - "/bin/bash"
         - "-c"
-        - "cloud-init clean --logs --seed && rm -rf /var/lib/cloud/instances/* && shutdown -h now"
+        - >-
+          cloud-init clean --logs --seed &&
+          rm -rf /var/lib/cloud/instances/* &&
+          truncate -s 0 /etc/machine-id &&
+          rm -f /var/lib/dbus/machine-id &&
+          ln -s /etc/machine-id /var/lib/dbus/machine-id &&
+          shutdown -h now
     validate_certs: "{{ proxmox_validate_certs }}"
 
 - name: Wait for power-off after cloud-init clean
@@ -209,10 +177,23 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     return_content: yes
-  register: vm_status2
-  until: vm_status2.json.data.status == "stopped"
+  register: vm_stopped
+  until: vm_stopped.json.data.status == "stopped"
   retries: 30
   delay: 5
+
+- name: Detach the NoCloud seed ISO
+  # The template must NOT carry the template-build seed into clones — each
+  # clone gets its own per-VM ISO attached at clone time.
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/config"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      delete: "ide3"
+    validate_certs: "{{ proxmox_validate_certs }}"
 
 - name: Convert VM to template
   ansible.builtin.uri:

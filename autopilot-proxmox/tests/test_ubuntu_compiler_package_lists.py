@@ -12,15 +12,15 @@ def test_install_apt_packages_emits_packages_list() -> None:
         params={"packages": ["curl", "git", "wget"]},
         credentials={},
     )
-    assert out.autoinstall_body["packages"] == ["curl", "git", "wget"]
+    assert out.cloud_config["packages"] == ["curl", "git", "wget"]
 
 
 def test_install_apt_packages_empty_list_emits_empty() -> None:
     out = compile_step("install_apt_packages", params={"packages": []}, credentials={})
-    assert out.autoinstall_body["packages"] == []
+    assert out.cloud_config["packages"] == []
 
 
-def test_install_snap_packages_emits_snap_dicts() -> None:
+def test_install_snap_packages_emits_snap_commands() -> None:
     out = compile_step(
         "install_snap_packages",
         params={"snaps": [
@@ -29,35 +29,45 @@ def test_install_snap_packages_emits_snap_dicts() -> None:
         ]},
         credentials={},
     )
-    snaps = out.autoinstall_body["snaps"]
-    assert {"name": "code", "classic": True} in snaps
-    assert {"name": "postman"} in snaps
+    commands = out.cloud_config["snap"]["commands"]
+    assert "snap install code --classic" in commands
+    assert "snap install postman" in commands
 
 
-def test_install_snap_defaults_classic_to_false_if_absent() -> None:
+def test_install_snap_without_classic_emits_plain_install() -> None:
     out = compile_step(
         "install_snap_packages",
         params={"snaps": [{"name": "postman"}]},
         credentials={},
     )
-    # We pass through as-given; absence of classic means Snap treats as strict.
-    assert out.autoinstall_body["snaps"] == [{"name": "postman"}]
+    assert out.cloud_config["snap"]["commands"] == ["snap install postman"]
 
 
-def test_remove_apt_packages_emits_late_command_purges() -> None:
+def test_install_snap_empty_list_emits_nothing() -> None:
+    out = compile_step(
+        "install_snap_packages",
+        params={"snaps": []},
+        credentials={},
+    )
+    # Empty list => no snap block at all; nothing to merge.
+    assert out.cloud_config == {}
+
+
+def test_remove_apt_packages_emits_runcmd_purges() -> None:
     out = compile_step(
         "remove_apt_packages",
         params={"packages": ["libreoffice-common", "transmission-*"]},
         credentials={},
     )
-    lc = out.late_commands
-    # One curtin in-target line per package, plus a final autoremove + clean.
-    assert any("apt-get purge -y libreoffice-common" in line for line in lc)
-    assert any("apt-get purge -y transmission-*" in line for line in lc)
-    assert any("apt-get autoremove -y" in line for line in lc)
-    assert any("apt-get clean" in line for line in lc)
+    rc = out.runcmd
+    assert any("apt-get purge -y libreoffice-common" in line for line in rc)
+    assert any("apt-get purge -y transmission-*" in line for line in rc)
+    assert any("apt-get autoremove -y" in line for line in rc)
+    assert any("apt-get clean" in line for line in rc)
+    # No curtin wrapping — cloud-init runs commands directly as root.
+    assert all("curtin" not in line for line in rc)
 
 
 def test_remove_apt_packages_empty_list_emits_nothing() -> None:
     out = compile_step("remove_apt_packages", params={"packages": []}, credentials={})
-    assert out.late_commands == []
+    assert out.runcmd == []

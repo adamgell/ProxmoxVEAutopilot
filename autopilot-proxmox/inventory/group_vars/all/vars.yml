@@ -72,12 +72,17 @@ task_poll_delay_seconds: 1
 # =============================================================================
 # Ubuntu (task sequences target_os=ubuntu)
 # =============================================================================
-ubuntu_release: "noble"                     # 24.04 codename (subiquity --release)
+ubuntu_release: "noble"                     # 24.04 codename
 ubuntu_locale: "en_US.UTF-8"
 ubuntu_timezone: "UTC"
-ubuntu_keyboard_layout: "us"
-ubuntu_storage_layout: "lvm"
-ubuntu_iso: "isos:iso/ubuntu-24.04-live-server-amd64.iso"
+ubuntu_keyboard_layout: "us"                # accepted but ignored by compiler
+ubuntu_storage_layout: "lvm"                # accepted but ignored by compiler
+# Cloud image we boot directly (replaces the legacy live-server ISO path).
+# Upload this to Proxmox ISO storage first — e.g. via Proxmox's
+# "Storage -> isos -> Download from URL" using:
+#   https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+# (NOTE: the suffix must be .img on disk; Proxmox treats it as a qcow2.)
+ubuntu_cloud_image: "isos:iso/ubuntu-24.04-server-cloudimg-amd64.img"
 ubuntu_seed_iso: "isos:iso/ubuntu-seed.iso"
 # Per-clone cloud-init seed ISO filename pattern (the Ubuntu branch of the
 # clone playbook writes a per-VM ISO here, named with the VMID).

@@ -1,10 +1,13 @@
-"""install_mde_linux: install mdatp apt package and run onboarding script."""
+"""install_mde_linux: install mdatp apt package and run onboarding script.
+
+Runs on the booted cloud image via cloud-init runcmd. Expects the Microsoft
+prod apt repo to have been set up earlier in the sequence (either by
+install_intune_portal or a run_late_command step that configures it).
+"""
 from __future__ import annotations
 
 from ..registry import register
 from ..types import StepOutput, UbuntuCompileError
-
-_CURTIN = "curtin in-target --target=/target --"
 
 
 @register("install_mde_linux")
@@ -26,15 +29,15 @@ def compile_install_mde_linux(params, credentials) -> StepOutput:
         )
 
     cmds = [
-        # mdatp comes from the Microsoft production apt repo the intune step set up.
-        # If install_mde_linux is used without install_intune_portal, the user must
-        # add a run_late_command step that sets up the MS repo first.
-        f"{_CURTIN} apt-get install -y mdatp",
-        f"{_CURTIN} mkdir -p /tmp/mde",
+        # mdatp comes from the Microsoft production apt repo set up by the
+        # intune step. If install_mde_linux is used standalone, the user must
+        # add a run_late_command step that configures the MS repo first.
+        "apt-get install -y mdatp",
+        "mkdir -p /tmp/mde",
         # Embed the onboarding script as base64 to preserve exact bytes.
-        f"{_CURTIN} bash -c 'echo \"{script_b64}\" | base64 -d > /tmp/mde/onboard.py'",
-        f"{_CURTIN} chmod +x /tmp/mde/onboard.py",
-        f"{_CURTIN} python3 /tmp/mde/onboard.py",
-        f"{_CURTIN} rm -rf /tmp/mde",
+        f"bash -c 'echo \"{script_b64}\" | base64 -d > /tmp/mde/onboard.py'",
+        "chmod +x /tmp/mde/onboard.py",
+        "python3 /tmp/mde/onboard.py",
+        "rm -rf /tmp/mde",
     ]
-    return StepOutput(late_commands=cmds)
+    return StepOutput(runcmd=cmds)

@@ -1,4 +1,4 @@
-"""create_ubuntu_user: emit a sudo-enabled user into autoinstall user-data."""
+"""create_ubuntu_user: emit a sudo-enabled user at the top level of cloud-config."""
 from __future__ import annotations
 
 from passlib.hash import sha512_crypt
@@ -26,23 +26,26 @@ def compile_create_ubuntu_user(params, credentials) -> StepOutput:
             "create_ubuntu_user: credential missing username or password"
         )
 
-    # sha512_crypt produces a self-salting $6$... hash accepted by cloud-init /
-    # Ubuntu autoinstall user-data. `passlib` is pure-Python so it works on
-    # Python 3.13+ where the stdlib `crypt` module has been removed.
+    # sha512_crypt produces a self-salting $6$... hash accepted by cloud-init.
+    # passlib is pure-Python so it works on Python 3.13+ where the stdlib
+    # `crypt` module has been removed.
     hashed = sha512_crypt.hash(password)
 
+    # Top-level `users:` on a cloud image replaces the default `ubuntu` user.
+    # For a managed workstation template we want our admin to BE the primary
+    # user, so we omit `"default"` from the list. If someone needs to keep
+    # the default ubuntu user alongside, prepend "default" to this list.
     return StepOutput(
-        autoinstall_body={
-            "user-data": {
-                "users": [
-                    {
-                        "name": username,
-                        "passwd": hashed,
-                        "groups": ["sudo"],
-                        "shell": "/bin/bash",
-                        "lock_passwd": False,
-                    }
-                ]
-            }
+        cloud_config={
+            "users": [
+                {
+                    "name": username,
+                    "passwd": hashed,
+                    "groups": ["sudo"],
+                    "shell": "/bin/bash",
+                    "lock_passwd": False,
+                    "sudo": "ALL=(ALL) NOPASSWD:ALL",
+                }
+            ]
         }
     )
