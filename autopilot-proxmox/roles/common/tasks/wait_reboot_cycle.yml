@@ -1,0 +1,49 @@
+---
+# Wait for the guest to cycle through a reboot: agent drops off, then
+# comes back. Implements design spec §10.
+#
+# Strategy:
+# 1. Call /agent/get-host-name (cheap) to confirm the agent is up now.
+#    Record the current boot-time (from /agent/get-time — returns ns
+#    since epoch of the running guest's clock; after reboot the *clock*
+#    is monotonic across reboots, but /agent/ping fails during the
+#    reboot window — that's what we actually key on).
+# 2. Poll /agent/ping until it fails N consecutive times (agent gone,
+#    guest is rebooting).
+# 3. Fall through to the existing wait_guest_agent.yml to re-establish
+#    the agent once the guest comes back.
+#
+# Required variables: vm_vmid
+# Optional overrides:
+#   reboot_wait_timeout_seconds  (default 600 — total budget)
+#   reboot_wait_poll_seconds     (default 5)
+#   reboot_wait_dropoff_required (default 3 — consecutive failures that
+#                                 confirm the agent actually went away)
+
+- name: "Poll agent ping until guest {{ vm_vmid }} drops off (reboot starts)"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/ping"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200, 500, 503]
+  register: _reboot_ping
+  # Retry while the ping is still succeeding; stop as soon as we see a
+  # non-200. The guest agent is down during the shutdown/boot window
+  # so Proxmox returns 500 ("guest agent not running") or 503.
+  until: _reboot_ping.status != 200
+  retries: "{{ ((reboot_wait_timeout_seconds | default(600) | int) / (reboot_wait_poll_seconds | default(5) | int)) | int }}"
+  delay: "{{ reboot_wait_poll_seconds | default(5) | int }}"
+  failed_when: false
+
+- name: Fail if guest never rebooted
+  ansible.builtin.fail:
+    msg: >-
+      Guest {{ vm_vmid }} never dropped the guest agent — the reboot
+      triggered by a causes_reboot=true step (e.g., rename_computer)
+      did not happen within {{ reboot_wait_timeout_seconds | default(600) }}s.
+  when: _reboot_ping.status | default(0) == 200
+
+- name: "Wait for guest {{ vm_vmid }} to come back after reboot"
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
