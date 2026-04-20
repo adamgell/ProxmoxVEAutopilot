@@ -41,10 +41,14 @@ def compile_install_desktop_environment(params, credentials) -> StepOutput:
     # want for a big metapackage install.
     #
     # Set `graphical.target` so the installed system boots to GUI.
+    # NOTE: each runcmd entry is a separate shell invocation, so `export
+    # DEBIAN_FRONTEND=noninteractive` on one line does not affect the next.
+    # We inline the env var on the apt-get call to ensure the install is
+    # truly non-interactive; without this, ubuntu-desktop's dep chain can
+    # block on a debconf prompt and get killed mid-unpack.
     return StepOutput(
         runcmd=[
-            "export DEBIAN_FRONTEND=noninteractive",
-            f"apt-get install -y {flavor}",
+            f"DEBIAN_FRONTEND=noninteractive apt-get install -y {flavor}",
             "systemctl set-default graphical.target",
         ],
     )
