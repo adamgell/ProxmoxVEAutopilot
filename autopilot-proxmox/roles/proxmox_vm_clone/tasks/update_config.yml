@@ -25,6 +25,16 @@
     _config_body: "{{ _config_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
   when: proxmox_virtio_iso is defined and proxmox_virtio_iso | default('') | length > 0
 
+# When the web backend compiled the sequence into a per-VM answer ISO,
+# the template's baked-in sata0 (pointing at the static autounattend.iso)
+# gets replaced with the hash-addressed ISO so this VM picks up its own
+# unattend. When _answer_iso_volid is absent the clone keeps the
+# template's sata0 untouched — preserves the pre-B.2 code path exactly.
+- name: Swap in per-VM answer ISO on sata0
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'sata0': _answer_iso_volid + ',media=cdrom'}) }}"
+  when: _answer_iso_volid is defined and _answer_iso_volid | default('') | length > 0
+
 - name: Update cloned VM configuration with lock-contention retry
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"

@@ -238,7 +238,10 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
         "vault_proxmox_root_api_token_id": "root@pam!autopilot-args",
         "vault_proxmox_root_api_token_secret": "fake-root-secret",
-    }), patch("web.proxmox_snippets.require_chassis_type_binary") as mock_require:
+    }), patch("web.proxmox_snippets.require_chassis_type_binary") as mock_require, \
+         patch("web.answer_iso_cache.ensure_iso",
+               return_value="isos:iso/autopilot-unattend-deadbeefdeadbeef.iso") \
+                    as mock_ensure_iso:
         mock_require.return_value = "/var/lib/vz/snippets/fake.bin"
         r = app_env.post("/api/jobs/provision", data={
             "profile": "",
@@ -255,6 +258,9 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
     cmd = captured["cmd"]
     assert "chassis_type_override=31" in cmd
     mock_require.assert_called_with(node="pve", storage="local", chassis_type=31)
+    # Sequence compile → unattend ISO was built & wired into the ansible cmd.
+    mock_ensure_iso.assert_called_once()
+    assert "_answer_iso_volid=isos:iso/autopilot-unattend-deadbeefdeadbeef.iso" in cmd
 
 
 def test_provision_rejects_chassis_override_without_root_token(app_env):
@@ -276,7 +282,9 @@ def test_provision_rejects_chassis_override_without_root_token(app_env):
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
         # Intentionally no root token fields.
     }), patch("web.proxmox_snippets.require_chassis_type_binary",
-              return_value="/var/lib/vz/snippets/fake.bin"):
+              return_value="/var/lib/vz/snippets/fake.bin"), \
+         patch("web.answer_iso_cache.ensure_iso",
+               return_value="isos:iso/unused.iso"):
         r = app_env.post("/api/jobs/provision", data={
             "profile": "",
             "count": "1",
@@ -292,6 +300,76 @@ def test_provision_rejects_chassis_override_without_root_token(app_env):
     detail = r.json()["detail"]
     assert "root@pam" in detail
     assert "vault_proxmox_root_api_token" in detail
+
+
+def test_provision_with_rename_computer_passes_reboot_count(app_env):
+    """A sequence containing rename_computer compiles causes_reboot_count=1;
+    that value must flow through to ansible as -e _causes_reboot_count=1
+    so the role's wait_reboot_cycle loop runs once."""
+    from web import sequences_db
+    from web.app import SEQUENCES_DB, job_manager
+
+    seq_id = sequences_db.create_sequence(
+        SEQUENCES_DB, name="rename-only", description="",
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "rename_computer", "params": {}, "enabled": True},
+    ])
+
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd)
+        return {"id": "fake-job"}
+    job_manager.start.side_effect = fake_start
+    job_manager.set_arg = lambda *a, **k: None
+    job_manager.add_on_complete = lambda *a, **k: None
+
+    from unittest.mock import patch
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+    }), patch("web.answer_iso_cache.ensure_iso",
+              return_value="isos:iso/autopilot-unattend-cafebabecafebabe.iso"):
+        r = app_env.post("/api/jobs/provision", data={
+            "profile": "", "count": "1", "cores": "0", "memory_mb": "0",
+            "disk_size_gb": "0", "serial_prefix": "", "group_tag": "",
+            "sequence_id": str(seq_id),
+        }, follow_redirects=False)
+    assert r.status_code == 303
+    cmd = captured["cmd"]
+    assert "_causes_reboot_count=1" in cmd
+    assert "_answer_iso_volid=isos:iso/autopilot-unattend-cafebabecafebabe.iso" in cmd
+
+
+def test_provision_without_sequence_skips_iso_compile(app_env):
+    """A raw provision with no sequence_id must NOT invoke the ISO cache
+    (backward-compatible path — the template's static sata0 stands)."""
+    from web.app import job_manager
+
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd)
+        return {"id": "fake-job"}
+    job_manager.start.side_effect = fake_start
+    job_manager.set_arg = lambda *a, **k: None
+    job_manager.add_on_complete = lambda *a, **k: None
+
+    from unittest.mock import patch
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+    }), patch("web.answer_iso_cache.ensure_iso") as mock_ensure:
+        # Empty profile avoids the chassis-type preflight (an OEM profile
+        # with chassis_type set would try to verify the binary). The
+        # point of this test is the "no sequence_id" branch.
+        r = app_env.post("/api/jobs/provision", data={
+            "profile": "", "count": "1", "cores": "0",
+            "memory_mb": "0", "disk_size_gb": "0",
+            "serial_prefix": "", "group_tag": "",
+        }, follow_redirects=False)
+    assert r.status_code == 303
+    assert mock_ensure.call_count == 0
+    cmd = captured["cmd"]
+    assert not any(t.startswith("_answer_iso_volid=") for t in cmd)
+    assert not any(t.startswith("_causes_reboot_count=") for t in cmd)
 
 
 def test_startup_seeds_defaults(tmp_path):

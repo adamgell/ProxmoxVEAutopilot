@@ -1001,12 +1001,23 @@ async def start_provision(
 
     # Resolve sequence → Ansible vars (spec §12 precedence).
     resolved_vars: dict = {}
+    _answer_iso_volid: Optional[str] = None
+    _causes_reboot_count = 0
     if sequence_id:
         seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
         if seq is None:
             raise HTTPException(404, f"sequence {sequence_id} not found")
+
+        # Resolver: lazy-decrypts credentials as compile visits steps
+        # that reference them. Plaintext never lands on resolved_vars.
+        def _resolve_cred(cid: int):
+            rec = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cid)
+            return rec["payload"] if rec else None
+
         try:
-            compiled = sequence_compiler.compile(seq)
+            compiled = sequence_compiler.compile(
+                seq, resolve_credential=_resolve_cred,
+            )
         except sequence_compiler.CompilerError as e:
             raise HTTPException(400, f"sequence compile failed: {e}")
         # UI form fields the operator may have filled in as overrides.
@@ -1019,6 +1030,36 @@ async def start_provision(
             vars_yml=_load_vars(),
         )
 
+        # Compile to a per-VM unattend and cache the ISO. Any sequence
+        # that touches unattend blocks or adds first_logon_commands will
+        # produce a distinct hash; sequences whose only effects are
+        # ansible_vars compile to bytes identical to the static
+        # autounattend.iso (the Entra-default regression pin).
+        from web import unattend_renderer, answer_iso_cache
+        _unattend_xml = unattend_renderer.render_unattend(compiled)
+        try:
+            _answer_iso_volid = answer_iso_cache.ensure_iso(
+                db_path=SEQUENCES_DB,
+                unattend_bytes=_unattend_xml.encode("utf-8"),
+                proxmox_config=cfg,
+                proxmox_api_get=_proxmox_api,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"answer-ISO build/upload failed: {e}",
+            ) from e
+        _causes_reboot_count = compiled.causes_reboot_count
+
+    # Sequence-driven extras: per-VM answer ISO + reboot-cycle count.
+    # Both are harmless no-ops in the Ansible role when absent, so we
+    # only emit them when a sequence actually contributed them.
+    _seq_extras: list[str] = []
+    if _answer_iso_volid:
+        _seq_extras += ["-e", f"_answer_iso_volid={_answer_iso_volid}"]
+    if _causes_reboot_count > 0:
+        _seq_extras += ["-e", f"_causes_reboot_count={_causes_reboot_count}"]
+
     if count <= 1:
         cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]
         # Only emit the form profile if the operator actually set one; a
@@ -1028,6 +1069,7 @@ async def start_provision(
         cmd += ["-e", "vm_count=1"] + _overrides()
         if chassis_type_override and int(chassis_type_override) > 0:
             cmd += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
+        cmd += _seq_extras
         # Collect keys already present in cmd so sequence-compiled vars don't
         # stomp them (form/_overrides() win per spec §12).
         existing_keys = _keys_in_extra_args(cmd)
@@ -1044,7 +1086,7 @@ async def start_provision(
     playbook = shlex.quote(str(PLAYBOOK_DIR / "provision_clone.yml"))
     safe_profile = shlex.quote(profile)
 
-    extra_tokens = " ".join(shlex.quote(t) for t in _overrides())
+    extra_tokens = " ".join(shlex.quote(t) for t in _overrides() + _seq_extras)
 
     # Append resolved sequence vars without duplicating keys already carried
     # by the form profile or _overrides(). Only lock out vm_oem_profile when
