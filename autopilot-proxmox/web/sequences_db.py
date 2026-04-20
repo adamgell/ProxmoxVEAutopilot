@@ -566,6 +566,32 @@ def seed_defaults(db_path, cipher) -> None:
          "enabled": True},
     ]
 
+    # LAN apt cache: a small, always-on VM running apt-cacher-ng. When
+    # `ubuntu_apt_proxy` is set in vars.yml to http://<this-vm-ip>:3142, every
+    # future Ubuntu template build pulls debs through the cache. First cache
+    # hit fills it; subsequent builds finish dramatically faster.
+    ubuntu_apt_cache_steps = [
+        {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        {"step_type": "install_apt_packages",
+         "params": {"packages": ["apt-cacher-ng"]},
+         "enabled": True},
+        # apt-cacher-ng's debian package enables the service by default, but
+        # the firstboot idempotency here means a clone that somehow booted
+        # without the package (manual tweaks etc.) still self-heals.
+        {"step_type": "run_firstboot_script",
+         "params": {
+             "command": (
+                 "dpkg -s apt-cacher-ng >/dev/null 2>&1 || "
+                 "(apt-get update && apt-get install -y apt-cacher-ng); "
+                 "systemctl enable --now apt-cacher-ng"
+             ),
+         },
+         "enabled": True},
+    ]
+
     if "Ubuntu Intune + MDE (LinuxESP)" not in existing_names:
         create_sequence(
             db_path,
@@ -589,4 +615,19 @@ def seed_defaults(db_path, cipher) -> None:
             produces_autopilot_hash=False,
             target_os="ubuntu",
             steps=ubuntu_plain_steps,
+        )
+
+    if "Ubuntu apt-cache server" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu apt-cache server",
+            description=("LAN-local apt-cacher-ng on Ubuntu 24.04. Provision "
+                         "one VM from this sequence, then point "
+                         "`ubuntu_apt_proxy` in vars.yml at "
+                         "http://<vm-ip>:3142 to accelerate every future "
+                         "Ubuntu template build."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_apt_cache_steps,
         )
