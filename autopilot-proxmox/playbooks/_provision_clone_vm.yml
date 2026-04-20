@@ -23,6 +23,20 @@
     or
     (autopilot_enabled is not defined and not (autopilot_skip | default(false) | bool))
 
+- name: "Iterate RunOnce steps for VM {{ vm_vmid }}"
+  when: _runonce_scripts_json is defined and _runonce_scripts_json | length > 0
+  block:
+    - name: "Parse runonce_scripts manifest"
+      ansible.builtin.set_fact:
+        _runonce_scripts: "{{ _runonce_scripts_json | from_json }}"
+
+    - name: "Run each RunOnce step in order"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/run_one_runonce_step.yml"
+      loop: "{{ _runonce_scripts }}"
+      loop_control:
+        loop_var: item
+        label: "{{ item.step_type }}"
+
 - name: "Capture hardware hash from VM {{ vm_vmid }}"
   ansible.builtin.include_role:
     name: hash_capture
