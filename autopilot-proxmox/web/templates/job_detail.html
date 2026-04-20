@@ -3,11 +3,50 @@
 {% block content %}
 <h2>Job: {{ job.id }}</h2>
 <table>
-<tr><td><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
+<tr><td style="width:120px;"><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
 <tr><td><b>Status</b></td><td>{% if job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED (exit {{ job.exit_code }})</span>{% endif %}</td></tr>
 <tr><td><b>Started</b></td><td>{{ job.started[:19] }}</td></tr>
+</table>
+
+{% if plan %}
+<h3>{{ plan.title }}</h3>
+
+{% if plan.summary %}
+<p style="max-width:820px; color:#555;">{{ plan.summary }}</p>
+{% endif %}
+
+{% if plan.metadata %}
+<table style="margin-top:8px;">
+{% for label, value in plan.metadata %}
+<tr><td style="width:220px;"><b>{{ label }}</b></td><td>{{ value }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
+{% if plan.steps %}
+<p style="margin-top:12px;"><b>What this job does:</b></p>
+<ol style="margin-top:4px;">
+{% for s in plan.steps %}
+  <li style="margin-bottom:2px;">{{ s }}</li>
+{% endfor %}
+</ol>
+{% endif %}
+
+{% if plan.end_goal %}
+<p style="margin-top:12px; padding:6px 10px; background:#eef4fa; border-left:3px solid #336699;">
+  <b>End state:</b> {{ plan.end_goal }}
+</p>
+{% endif %}
+
+<details style="margin-top:12px;">
+  <summary style="cursor:pointer; color:#666; font-size:11px;">raw args</summary>
+  <pre style="font-size:11px; background:#f5f5f5; padding:6px; border:1px solid #ddd; overflow-x:auto;">{{ job.args }}</pre>
+</details>
+{% else %}
+<table>
 <tr><td><b>Args</b></td><td>{{ job.args }}</td></tr>
 </table>
+{% endif %}
 {% if job.status == 'running' %}
 <br>
 <form method="POST" action="/api/jobs/{{ job.id }}/kill">

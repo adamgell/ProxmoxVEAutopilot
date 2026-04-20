@@ -784,14 +784,229 @@ async def jobs_page(request: Request):
     })
 
 
+def _format_memory(mb) -> str:
+    try:
+        mb = int(mb)
+    except (TypeError, ValueError):
+        return str(mb)
+    if mb >= 1024 and mb % 1024 == 0:
+        return f"{mb // 1024} GB"
+    return f"{mb} MB"
+
+
+def _oem_profile_label(key: str) -> str:
+    """Human label for an OEM profile key, falling back to the key itself."""
+    if not key:
+        return ""
+    try:
+        profiles = load_oem_profiles()
+    except Exception:
+        return key
+    p = profiles.get(key)
+    if not p:
+        return key
+    parts = [p.get("manufacturer"), p.get("product")]
+    pretty = " ".join(x for x in parts if x)
+    return f"{pretty} ({key})" if pretty else key
+
+
+def _describe_sequence_step(step: dict, creds_by_id: dict) -> str:
+    """One-line, human description of a compiled step. No secrets."""
+    t = step.get("step_type")
+    p = step.get("params") or {}
+    if t == "set_oem_hardware":
+        prof = p.get("oem_profile") or "(inherit from form / vars.yml)"
+        ct = p.get("chassis_type") or 0
+        ct_s = f", chassis_type={ct}" if int(ct or 0) > 0 else ""
+        return f"Set OEM hardware → {_oem_profile_label(prof) if prof and '(' not in prof else prof}{ct_s}"
+    if t == "local_admin":
+        cid = p.get("credential_id")
+        cred = creds_by_id.get(int(cid)) if cid else None
+        name = cred["name"] if cred else f"credential id={cid}"
+        return f"Create local admin account (credential: {name})"
+    if t == "autopilot_entra":
+        return "Inject Entra-only AutopilotConfigurationFile.json (Autopilot Entra join)"
+    if t == "autopilot_hybrid":
+        return "Autopilot Hybrid (stub — not executable in v1)"
+    if t == "join_ad_domain":
+        cid = p.get("credential_id")
+        cred = creds_by_id.get(int(cid)) if cid else None
+        domain = cred["payload"].get("domain_fqdn") if cred else "(credential not resolved)"
+        ou = p.get("ou_path") or (cred["payload"].get("ou_hint") if cred else "")
+        name = cred["name"] if cred else f"credential id={cid}"
+        ou_s = f" into {ou}" if ou else ""
+        return f"Join AD domain {domain}{ou_s} (credential: {name})"
+    if t == "rename_computer":
+        src = (p.get("name_source") or "serial").lower()
+        if src == "pattern":
+            return f"Rename computer using pattern: {p.get('pattern','')} (triggers reboot)"
+        return "Rename computer to its SMBIOS serial number (triggers reboot)"
+    if t == "run_script":
+        return f"Run PowerShell: {p.get('script', '')[:60]}..."
+    return f"{t} ({p})"
+
+
+def _build_job_plan(job: dict) -> Optional[dict]:
+    """Produce a human-readable 'plan' for the job:
+      {title, summary, steps: [str], end_goal: str, metadata: [(label, value)]}
+    Returns None if we don't have a decoder for this playbook — the detail
+    page falls back to the raw args dict in that case.
+    """
+    pb = job.get("playbook") or ""
+    args = job.get("args") or {}
+
+    if pb == "provision_clone":
+        count = int(args.get("count") or 1)
+        cores = args.get("cores") or 0
+        mem = args.get("memory_mb") or 0
+        disk = args.get("disk_size_gb") or 0
+        prof_key = args.get("profile") or ""
+        sid = args.get("sequence_id")
+        serial_prefix = args.get("serial_prefix") or ""
+        group_tag = args.get("group_tag") or ""
+        chassis = args.get("chassis_type_override") or 0
+
+        meta: list = []
+        if prof_key:
+            meta.append(("OEM profile", _oem_profile_label(prof_key)))
+        if cores:   meta.append(("CPU cores", str(cores)))
+        if mem:     meta.append(("Memory", _format_memory(mem)))
+        if disk:    meta.append(("Disk", f"{disk} GB"))
+        if serial_prefix: meta.append(("Serial prefix", serial_prefix))
+        if group_tag:     meta.append(("Group tag", group_tag))
+        if chassis:       meta.append(("Chassis-type override", str(chassis)))
+
+        steps: list = []
+        seq_name = ""
+        seq_desc = ""
+        produces_hash = False
+        if sid:
+            try:
+                seq = sequences_db.get_sequence(SEQUENCES_DB, int(sid))
+            except Exception:
+                seq = None
+            if seq:
+                seq_name = seq["name"]
+                seq_desc = seq.get("description", "")
+                produces_hash = bool(seq.get("produces_autopilot_hash"))
+                # Resolve credentials once for human-readable step descs.
+                try:
+                    creds = sequences_db.list_credentials(SEQUENCES_DB)
+                    creds_by_id: dict = {}
+                    for c in creds:
+                        full = sequences_db.get_credential(
+                            SEQUENCES_DB, _cipher(), c["id"],
+                        )
+                        if full:
+                            creds_by_id[c["id"]] = full
+                except Exception:
+                    creds_by_id = {}
+                for st in seq.get("steps", []):
+                    if not st.get("enabled", True):
+                        continue
+                    steps.append(_describe_sequence_step(st, creds_by_id))
+            meta.insert(0, ("Task sequence",
+                            f"{seq_name}" + (
+                                " — produces Autopilot hash" if produces_hash
+                                else "")))
+        else:
+            meta.insert(0, ("Task sequence",
+                            "(none — legacy provision path)"))
+
+        # Assemble end goal from step signals.
+        goals = [f"{count} VM(s) cloned from template"]
+        step_types = set()
+        if sid and seq:
+            step_types = {s["step_type"] for s in seq.get("steps", [])
+                          if s.get("enabled", True)}
+        if "join_ad_domain" in step_types:
+            goals.append("domain-joined during specialize")
+        elif "autopilot_entra" in step_types:
+            goals.append("Entra-joined via Autopilot")
+        if "rename_computer" in step_types:
+            goals.append("renamed to SMBIOS serial and rebooted")
+        if produces_hash:
+            goals.append("Autopilot hash captured and saved")
+        end_goal = ", ".join(goals) + "."
+
+        title = f"Provision {count} VM(s)" + (f" with sequence '{seq_name}'" if seq_name else "")
+        return {
+            "title": title,
+            "summary": seq_desc,
+            "steps": steps,
+            "end_goal": end_goal,
+            "metadata": meta,
+        }
+
+    if pb == "build_template":
+        return {
+            "title": "Build a Windows template",
+            "summary": ("Create a fresh VM, install Windows unattended, "
+                        "install the QEMU guest agent, sysprep "
+                        "/generalize /oobe, delete Panther's answer-file "
+                        "cache, convert the VM to a Proxmox template."),
+            "steps": [
+                "Create VM from Windows ISO + answer ISO + VirtIO drivers",
+                "Boot into WinPE → partition disk → install Windows 11 Enterprise",
+                "FirstLogonCommands install QEMU guest agent + enable RDP",
+                "Run sysprep /generalize /oobe /quit",
+                "Delete C:\\Windows\\Panther\\unattend.xml so clones consult the CD",
+                "Shut down and convert VM to Proxmox template",
+            ],
+            "end_goal": (
+                "A Proxmox template ready for clone provisioning — "
+                "every clone will boot fresh OOBE and consume its own "
+                "per-VM autounattend.xml from sata0."
+            ),
+            "metadata": [
+                ("OEM profile", _oem_profile_label(args.get("profile", ""))),
+            ],
+        }
+
+    if pb == "hash_capture":
+        vmids = args.get("vmids") or ([args["vmid"]] if args.get("vmid") else [])
+        return {
+            "title": f"Capture Autopilot hash for {len(vmids)} VM(s)",
+            "summary": ("Runs Get-WindowsAutopilotInfo via guest-exec to "
+                        "produce the Autopilot hardware hash CSV."),
+            "steps": [
+                "Push the hash-capture PowerShell script to the VM",
+                "Execute Get-WindowsAutopilotInfo → capture CSV on guest",
+                "Retrieve CSV back to the controller",
+                "Save to /app/output/hashes/<serial>_hwid.csv",
+            ],
+            "end_goal": "One CSV per VM, ready for Intune bulk upload.",
+            "metadata": [("Target VMIDs", ", ".join(str(v) for v in vmids))],
+        }
+
+    if pb == "upload_after_capture":
+        return {
+            "title": "Capture + upload Autopilot hashes",
+            "summary": ("Captures the hash then hands it straight to "
+                        "Intune via Microsoft Graph."),
+            "steps": [
+                "Run hash_capture against the target VM",
+                "Authenticate to Microsoft Graph using Entra app creds",
+                "POST the hash to /deviceManagement/importedWindowsAutopilotDeviceIdentities",
+                "Wait for Intune import to reach 'complete' state",
+            ],
+            "end_goal": "VM registered in Intune Autopilot, ready for the Autopilot-deployed identity.",
+            "metadata": [],
+        }
+
+    return None
+
+
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_detail_page(request: Request, job_id: str):
     job = job_manager.get_job(job_id)
     if not job:
         return HTMLResponse("<h1>Job not found</h1>", status_code=404)
+    plan = _build_job_plan(job)
     return templates.TemplateResponse("job_detail.html", {
         "request": request,
         "job": job,
+        "plan": plan,
         "log_content": job_manager.get_log(job_id),
     })
 
