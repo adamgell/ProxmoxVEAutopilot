@@ -153,17 +153,39 @@
     validate_certs: "{{ proxmox_validate_certs }}"
 
 - name: Wait for guest agent (agent was installed during autoinstall)
+  # Layer 3 of qemu-guest-agent defense: fail loudly instead of hanging
+  # forever + swallowing errors. If the agent isn't up after 10 minutes of
+  # retries, the template build can't complete the cloud-init clean step,
+  # so we surface a clear, actionable error.
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/ping"
     method: POST
     headers:
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200, 500]   # 500 = agent not running yet
   register: agent_ping
   until: agent_ping.status == 200
   retries: 60
   delay: 10
   failed_when: false
+
+- name: Fail loudly if the guest agent never came up
+  ansible.builtin.fail:
+    msg: |
+      qemu-guest-agent did not start in the installed Ubuntu template after
+      10 minutes. Common causes:
+        * Autoinstall skipped the `packages:` install silently (subiquity
+          sometimes does this on a cold-cache install environment).
+        * The late-commands `apt-get install qemu-guest-agent` failed (no
+          network in the install target? check /var/log/curtin/ in the VM).
+        * systemd didn't enable the qemu-guest-agent.service.
+      The template was NOT converted — VMID {{ proxmox_template_vmid }} is
+      still a regular VM. Log into the console (user Administrator), run
+      `sudo apt install -y qemu-guest-agent && sudo systemctl enable --now
+      qemu-guest-agent`, then re-run this playbook (it will skip the
+      already-installed VM and proceed from here).
+  when: agent_ping.status != 200
 
 - name: Sysprep analogue — cloud-init clean then shutdown
   ansible.builtin.uri:

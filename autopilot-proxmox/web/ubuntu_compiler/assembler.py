@@ -93,9 +93,18 @@ def compile_sequence(
     user_data = _dump({"autoinstall": autoinstall}, cloud_config_header=True)
     meta_data = _dump({"instance-id": instance_id}, cloud_config_header=False)
 
+    # Layer 2 of the qemu-guest-agent defense: every per-clone cloud-init
+    # runs an idempotent install of qemu-guest-agent on first boot. If the
+    # template somehow missed it (late-commands failed, template was built
+    # with an older revision, someone manually removed it), the clone catches
+    # up. `dpkg -s` is cheap when the package is already installed.
     firstboot: dict[str, Any] = {"hostname": hostname}
-    if firstboot_runcmd:
-        firstboot["runcmd"] = firstboot_runcmd
+    agent_runcmd = [
+        "dpkg -s qemu-guest-agent >/dev/null 2>&1 || "
+        "(apt-get update && apt-get install -y qemu-guest-agent)",
+        "systemctl enable --now qemu-guest-agent",
+    ]
+    firstboot["runcmd"] = agent_runcmd + firstboot_runcmd
     firstboot_user_data = _dump(firstboot, cloud_config_header=True)
     firstboot_meta_data = _dump(
         {"instance-id": f"firstboot-{instance_id}"}, cloud_config_header=False
