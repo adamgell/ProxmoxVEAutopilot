@@ -353,26 +353,33 @@ def _append_final_reboot_if_autologon(out: CompiledSequence) -> None:
     """
     if "oobe_auto_logon" not in out.unattend_blocks:
         return
-    # The PowerShell is single-quoted as a cmd.exe "/c" arg. Escape any
-    # internal single quotes by doubling them per PowerShell rules.
+    # Run PowerShell DIRECTLY — no cmd.exe /c wrapper. cmd.exe's /c
+    # parser terminates the outer quoted block at the first `\"` it
+    # sees (it treats `\` as literal and `"` as end-of-quote, NOT as
+    # an escape-pair), which ate everything after `$k=` in testing on
+    # VM 121 — Set-ItemProperty was invoked with -Path <empty>, no
+    # registry change happened, VM came back auto-logged-in again.
+    # All the unattend's other FLCs use this pattern: single pair of
+    # outer double quotes around -Command, single-quoted literals
+    # inside. XML un-escapes `2&gt;$null` → `2>$null` at load time so
+    # PowerShell's stderr redirect works.
     ps = (
-        "$k='HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon';"
-        "Set-ItemProperty -Path $k -Name AutoAdminLogon -Type String -Value '0' -Force;"
-        "Remove-ItemProperty -Path $k -Name AutoLogonCount -ErrorAction SilentlyContinue;"
-        "Remove-ItemProperty -Path $k -Name DefaultPassword -ErrorAction SilentlyContinue;"
-        "Remove-ItemProperty -Path $k -Name DefaultUserName -ErrorAction SilentlyContinue;"
-        # Cancel whatever shutdown the rename_computer (or similar) step
-        # queued, then schedule ours. /t 15 > /t 5 so the user can read
-        # the message; any earlier shutdown is already aborted.
-        "shutdown.exe /a 2>$null | Out-Null;"
+        "$k='HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'; "
+        "Set-ItemProperty -Path $k -Name AutoAdminLogon -Type String -Value '0' -Force; "
+        "Remove-ItemProperty -Path $k -Name AutoLogonCount -ErrorAction SilentlyContinue; "
+        "Remove-ItemProperty -Path $k -Name DefaultPassword -ErrorAction SilentlyContinue; "
+        "Remove-ItemProperty -Path $k -Name DefaultUserName -ErrorAction SilentlyContinue; "
+        # Cancel whatever shutdown rename_computer (or similar) queued,
+        # then schedule ours. /t 15 > /t 5 so the earlier command's
+        # countdown is aborted and our reboot is the one that fires.
+        "shutdown.exe /a 2>$null; "
         "shutdown.exe /r /t 15 /c 'Provisioning complete, rebooting to logon screen'"
     )
-    cmd = (
-        'cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass '
-        '-Command \\"' + ps + '\\""'
-    )
     out.first_logon_commands.append({
-        "command": cmd,
+        "command": (
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "'
+            + ps + '"'
+        ),
         "description": "Disable auto-logon and reboot to logon screen",
     })
     out.causes_reboot_count += 1
