@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 import sqlite3
 import time
@@ -476,6 +477,92 @@ def _decode_smbios_field(smbios1, field):
     return ""
 
 
+_GUEST_WINDOWS_DETAILS_PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$cs = Get-CimInstance Win32_ComputerSystem
+$os = Get-CimInstance Win32_OperatingSystem
+$ip = ((Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue) |
+       Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.InterfaceAlias -notmatch 'Loopback' } |
+       Select-Object -First 1).IPAddress
+# dsregcmd output tells us whether the device is Azure AD / Entra joined.
+$dsreg = dsregcmd /status 2>$null | Out-String
+$aadJoined = $dsreg -match 'AzureAdJoined\s*:\s*YES'
+$aadTenant = if ($dsreg -match 'TenantName\s*:\s*(\S.+)') { $Matches[1].Trim() } else { '' }
+$domainRole = $cs.DomainRole  # 0=Standalone Workstation, 1=Member Workstation, ...
+[PSCustomObject]@{
+  Name = $cs.Name
+  Domain = $cs.Domain
+  PartOfDomain = [bool]$cs.PartOfDomain
+  DomainRole = $domainRole
+  AadJoined = [bool]$aadJoined
+  AadTenant = $aadTenant
+  OSCaption = $os.Caption
+  OSBuild = $os.BuildNumber
+  OSVersion = $os.Version
+  IPAddress = $ip
+  LastBootUpTime = if ($os.LastBootUpTime) { $os.LastBootUpTime.ToString('yyyy-MM-ddTHH:mm:ssK') } else { '' }
+} | ConvertTo-Json -Compress
+""".strip()
+
+
+def _guest_exec_ps(node: str, vmid: int, ps: str,
+                   timeout_s: int = 20) -> Optional[str]:
+    """Run a PowerShell one-liner via the Proxmox guest agent and return
+    the captured stdout (decoded). Returns None on any failure (agent
+    unresponsive, exec rejected, non-zero exit). Best-effort — callers
+    must handle absence gracefully."""
+    # POST exec with the script as a single argument to powershell.exe.
+    try:
+        exec_resp = _proxmox_api_post(
+            f"/nodes/{node}/qemu/{vmid}/agent/exec",
+            data={
+                "command": [
+                    "powershell.exe", "-NoProfile",
+                    "-ExecutionPolicy", "Bypass", "-Command", ps,
+                ],
+            },
+        )
+    except Exception:
+        return None
+    pid = (exec_resp or {}).get("pid")
+    if pid is None:
+        return None
+    # Poll exec-status.
+    import time as _time
+    deadline = _time.monotonic() + timeout_s
+    while _time.monotonic() < deadline:
+        try:
+            status = _proxmox_api(
+                f"/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}"
+            )
+        except Exception:
+            return None
+        if status and status.get("exited"):
+            if status.get("exitcode", 1) != 0:
+                return None
+            return (status.get("out-data") or "").strip()
+        _time.sleep(0.3)
+    return None
+
+
+def _fetch_guest_windows_details(node: str, vmid: int) -> dict:
+    """Return the parsed dict from _GUEST_WINDOWS_DETAILS_PS, or {}."""
+    out = _guest_exec_ps(node, vmid, _GUEST_WINDOWS_DETAILS_PS, timeout_s=15)
+    if not out:
+        return {}
+    # ConvertTo-Json may emit a lone object (no list wrapper for a single
+    # PSCustomObject). Strip BOM if present.
+    out = out.lstrip("\ufeff").strip()
+    try:
+        data = json.loads(out)
+    except Exception:
+        return {}
+    # Normalize: always return a dict even if PS sent a list of 1.
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return data if isinstance(data, dict) else {}
+
+
 def get_autopilot_vms():
     cfg = _load_proxmox_config()
     node = cfg.get("proxmox_node", "pve")
@@ -521,6 +608,20 @@ def get_autopilot_vms():
             for vmid, hostname in pool.map(fetch_hostname, running_vmids):
                 hostnames[vmid] = hostname
 
+    # Enrich running VMs with Windows-side details via guest-exec +
+    # PowerShell (domain membership, OS build, IP, Entra-join state).
+    # Each call is a ~500ms round-trip; parallelize with the existing
+    # ThreadPoolExecutor. Non-Windows VMs or VMs without guest agent
+    # readiness return {} and render as blank — expected.
+    guest_details: dict = {}
+    if running_vmids:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            for vmid, details in pool.map(
+                lambda v: (v, _fetch_guest_windows_details(node, v)),
+                running_vmids,
+            ):
+                guest_details[vmid] = details
+
     result = []
     for vm in autopilot_vms:
         config = configs.get(vm["vmid"], {})
@@ -529,18 +630,29 @@ def get_autopilot_vms():
         manufacturer = _decode_smbios_field(smbios1, "manufacturer") if smbios1 else ""
         product = _decode_smbios_field(smbios1, "product") if smbios1 else ""
         oem = f"{manufacturer} {product}".strip()
+        guest = guest_details.get(vm["vmid"], {})
         result.append({
             "vmid": vm["vmid"],
             "name": vm.get("name", ""),
             "status": vm.get("status", "unknown"),
             "serial": serial,
             "oem": oem,
-            "hostname": hostnames.get(vm["vmid"], ""),
+            "hostname": hostnames.get(vm["vmid"], "") or guest.get("Name", ""),
             "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
             "cpus": vm.get("cpus", vm.get("maxcpu", "")),
-            # Proxmox tags string (semicolon-separated) — used by the UI to
-            # render enrollment-status chips (enroll-intune-*, enroll-mde-*).
             "tags": vm.get("tags", "") or "",
+            # Windows-side enrichment. Keys are present but empty when
+            # the guest agent didn't respond in time or the VM isn't
+            # running Windows (PowerShell exec returns None then).
+            "domain": guest.get("Domain", ""),
+            "part_of_domain": bool(guest.get("PartOfDomain", False)),
+            "aad_joined": bool(guest.get("AadJoined", False)),
+            "aad_tenant": guest.get("AadTenant", "") or "",
+            "os_caption": guest.get("OSCaption", "") or "",
+            "os_build": str(guest.get("OSBuild", "") or ""),
+            "os_version": guest.get("OSVersion", "") or "",
+            "ip_address": guest.get("IPAddress", "") or "",
+            "last_boot": guest.get("LastBootUpTime", "") or "",
         })
     return sorted(result, key=lambda v: v["vmid"])
 
