@@ -1,0 +1,60 @@
+---
+# proxmox_vm_clone_linux: clone from Ubuntu template + attach per-VM cloud-init seed.
+#
+# Required vars (set by the caller _provision_ubuntu_clone.yml):
+#   target_vmid:         integer VMID for the new VM
+#   source_vmid:         Ubuntu template VMID (proxmox_template_vmid)
+#   vm_hostname:         hostname to set via per-clone cloud-init
+#   sequence_id:         Ubuntu sequence being provisioned
+#   smbios_string:       rendered SMBIOS1 from oem_profiles.yml (optional)
+#   vm_name:             Proxmox VM name (e.g. vm_name_prefix-target_vmid)
+#
+# Shared vars from vars.yml:
+#   proxmox_api_base, proxmox_api_auth_header, proxmox_node, proxmox_validate_certs,
+#   ubuntu_per_vm_seed_pattern, web_base_url (usually http://127.0.0.1:5000)
+
+- name: Clone Ubuntu template
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ source_vmid }}/clone"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      newid: "{{ target_vmid }}"
+      name: "{{ vm_name }}"
+      full: "1"
+    status_code: [200]
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _clone_task
+
+- name: Wait for clone task to complete
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_task.yml"
+  vars:
+    _task_upid: "{{ _clone_task.json.data }}"
+
+- name: Apply SMBIOS if provided
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/config"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      smbios1: "{{ smbios_string }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  when: smbios_string is defined and smbios_string | length > 0
+
+- name: Build + attach per-VM cloud-init seed ISO
+  ansible.builtin.include_tasks: attach_seed.yml
+
+- name: Start the VM
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+
+- name: Wait for cloud-init first-boot to complete
+  ansible.builtin.include_tasks: wait_cloud_init.yml

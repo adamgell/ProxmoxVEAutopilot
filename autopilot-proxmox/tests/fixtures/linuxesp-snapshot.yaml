@@ -1,0 +1,38 @@
+#cloud-config
+timezone: UTC
+locale: en_US.UTF-8
+package_update: true
+package_upgrade: false
+packages:
+  - qemu-guest-agent
+  - curl
+  - git
+  - wget
+  - gpg
+snap:
+  commands:
+    - snap install code --classic
+    - snap install postman
+    - snap install powershell --classic
+runcmd:
+  - systemctl enable --now qemu-guest-agent || true
+  - mkdir -p /tmp/microsoft
+  - "bash -c 'cd /tmp/microsoft && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg'"
+  - install -o root -g root -m 644 /tmp/microsoft/microsoft.gpg /usr/share/keyrings/microsoft.gpg
+  - "bash -c 'echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main\" > /etc/apt/sources.list.d/microsoft-ubuntu-noble-prod.list'"
+  - apt-get update
+  - apt-get install -y intune-portal
+  - mkdir -p /tmp/microsoft
+  - "bash -c 'cd /tmp/microsoft && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg'"
+  - install -o root -g root -m 644 /tmp/microsoft/microsoft.gpg /usr/share/keyrings/microsoft.gpg
+  - "bash -c 'echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/edge stable main\" > /etc/apt/sources.list.d/microsoft-edge.list'"
+  - apt-get update
+  - apt-get install -y microsoft-edge-stable
+  - apt-get purge -y libreoffice-common
+  - apt-get purge -y libreoffice*
+  - apt-get purge -y remmina*
+  - apt-get purge -y transmission*
+  - apt-get autoremove -y
+  - apt-get clean
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop
+  - systemctl set-default graphical.target

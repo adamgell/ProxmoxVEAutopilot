@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+# Tests can be run from either autopilot-proxmox/ (tests importing `from web import ...`)
+# or the repo root. pythonpath makes the `web` package importable without PYTHONPATH hacks.
+pythonpath = ["."]
+testpaths = ["tests"]
+# Show warnings summary; filter the pre-existing third-party deprecations we don't own.
+filterwarnings = [
+    "ignore::DeprecationWarning:starlette.*",
+    "ignore::DeprecationWarning:fastapi.*",
+]
+addopts = "-v --tb=short"

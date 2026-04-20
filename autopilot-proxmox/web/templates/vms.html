@@ -21,7 +21,21 @@
   <td>{{ vm.oem }}</td>
   <td>{% if vm.status == 'running' %}<span class="status-green">{{ vm.status }}</span>{% else %}{{ vm.status }}{% endif %}</td>
   <td>{% if vm.in_autopilot %}<span class="status-green">Registered</span>{% else %}<span class="status-red">Missing</span>{% endif %}</td>
-  <td>{% if vm.has_hash %}<span class="status-green">Yes</span>{% else %}-{% endif %}</td>
+  <td>
+    {% if vm.target_os == 'ubuntu' %}
+      {% set enroll_tags = [] %}
+      {% for tag in vm.tags.split(';') %}
+        {% if tag.startswith('enroll-') %}{% set _ = enroll_tags.append(tag) %}{% endif %}
+      {% endfor %}
+      {% if enroll_tags %}
+        {% for tag in enroll_tags %}
+          <span class="chip chip-{{ tag }}" title="{{ tag }}">{{ tag | replace('enroll-', '') }}</span>
+        {% endfor %}
+      {% else %}
+        <span style="color:#999;" title="Ubuntu VM — click Check to query Intune/MDE status">—</span>
+      {% endif %}
+    {% elif vm.has_hash %}<span class="status-green">Yes</span>{% else %}-{% endif %}
+  </td>
   <td>
     <div class="actions-cell">
     {% if vm.status == 'running' %}
@@ -37,9 +51,18 @@
       </button>
       <span style="color:#ccc;margin:0 2px;">|</span>
       <!-- Tool actions -->
+      {% if vm.target_os == 'ubuntu' %}
+        <button class="action-btn" type="button" disabled title="Ubuntu sequence — no Autopilot hash">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+        </button>
+        <button class="action-btn" type="button" title="Check Intune + MDE enrollment" onclick="checkEnroll({{ vm.vmid }}, this);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#006600" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+      {% else %}
       <button class="action-btn" type="button" title="Capture Hash" onclick="postAction('/api/jobs/capture',{vmid:'{{ vm.vmid }}',vm_name:'{{ vm.name }}'});">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
+      {% endif %}
       <button class="action-btn" type="button" title="Rename to Serial" onclick="if(confirm('Rename computer in VM {{ vm.vmid }} to its serial number? Requires restart to apply.'))postAction('/api/vms/{{ vm.vmid }}/rename');">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
       </button>
@@ -141,7 +164,47 @@
 <p><i>No matching Autopilot devices found.</i></p>
 {% endif %}
 
+<style>
+.chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-right: 3px;
+  margin-bottom: 2px;
+  line-height: 1.4;
+  color: white;
+}
+.chip-enroll-intune-healthy,
+.chip-enroll-mde-healthy { background: #2ecc71; }
+.chip-enroll-intune-missing,
+.chip-enroll-mde-missing { background: #e74c3c; }
+.chip-enroll-mde-not-configured { background: #f39c12; }
+.chip-enroll-intune-unhealthy,
+.chip-enroll-mde-unhealthy { background: #e67e22; }
+</style>
 <script>
+async function checkEnroll(vmid, btn) {
+  btn.disabled = true;
+  var orig = btn.innerHTML;
+  btn.innerHTML = '…';
+  try {
+    var r = await fetch('/api/ubuntu/check-enrollment/' + vmid, {method: 'POST'});
+    var j = await r.json();
+    if (!j.ok) {
+      alert('Error: ' + (j.error || 'unknown'));
+      return;
+    }
+    // Reload so persisted Proxmox tags render as chips via Jinja.
+    window.location.reload();
+  } catch (e) {
+    alert('Error: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
 function typeText(vmid) {
   var text = prompt('Text to type into VM ' + vmid + ':');
   if (text) postAction('/api/vms/' + vmid + '/typetext', {text: text});

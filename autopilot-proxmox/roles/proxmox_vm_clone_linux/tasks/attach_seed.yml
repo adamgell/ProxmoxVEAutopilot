@@ -1,0 +1,33 @@
+---
+# Request a per-VM cloud-init seed ISO from the web backend and attach it on
+# ide3 of the cloned VM. The backend writes the ISO to the Proxmox ISO storage
+# (path pattern ubuntu_per_vm_seed_pattern) and returns the Proxmox-notation
+# path in the "iso" field.
+#
+# Required vars: target_vmid, sequence_id, vm_hostname
+# Optional: web_base_url (default http://127.0.0.1:5000)
+
+- name: Request per-VM seed ISO from web backend
+  ansible.builtin.uri:
+    url: >-
+      {{ web_base_url | default('http://127.0.0.1:5000') }}/api/ubuntu/per-vm-seed?vmid={{ target_vmid }}&sequence_id={{ sequence_id }}&hostname={{ vm_hostname }}
+    method: POST
+    return_content: true
+    status_code: [200]
+  register: _seed_resp
+
+- name: Fail if seed build reported not-ok
+  ansible.builtin.fail:
+    msg: "per-VM seed build failed: {{ _seed_resp.json.error | default('unknown error') }}"
+  when: not _seed_resp.json.ok
+
+- name: Attach the per-VM seed ISO on ide3
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/config"
+    method: POST
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      ide3: "{{ _seed_resp.json.iso }},media=cdrom"
+    validate_certs: "{{ proxmox_validate_certs }}"

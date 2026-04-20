@@ -538,6 +538,9 @@ def get_autopilot_vms():
             "hostname": hostnames.get(vm["vmid"], ""),
             "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
             "cpus": vm.get("cpus", vm.get("maxcpu", "")),
+            # Proxmox tags string (semicolon-separated) — used by the UI to
+            # render enrollment-status chips (enroll-intune-*, enroll-mde-*).
+            "tags": vm.get("tags", "") or "",
         })
     return sorted(result, key=lambda v: v["vmid"])
 
@@ -733,6 +736,7 @@ async def provision_page(request: Request):
         "group_tag":    cfg.get("vm_group_tag", ""),
         "oem_profile":  cfg.get("vm_oem_profile", ""),
         "template_vmid": cfg.get("proxmox_template_vmid", ""),
+        "hostname_pattern": cfg.get("vm_hostname_pattern", "autopilot-{serial}"),
     }
     return templates.TemplateResponse("provision.html", {
         "request": request,
@@ -745,9 +749,12 @@ async def provision_page(request: Request):
 
 @app.get("/template", response_class=HTMLResponse)
 async def template_page(request: Request):
+    all_seqs = sequences_db.list_sequences(SEQUENCES_DB)
+    ubuntu_sequences = [s for s in all_seqs if s.get("target_os") == "ubuntu"]
     return templates.TemplateResponse("template.html", {
         "request": request,
         "profiles": load_oem_profiles(),
+        "ubuntu_sequences": ubuntu_sequences,
     })
 
 
@@ -946,10 +953,20 @@ async def vms_page(request: Request, error: str = ""):
             if vm and vm.get("hostname"):
                 d["display_name"] = vm["hostname"]
 
-    # Tag VMs with their Autopilot status
+    # Tag VMs with their Autopilot status, plus the target_os + sequence
+    # name of the sequence that provisioned them (if any). The UI uses
+    # target_os to conditionally show the Check Enrollment action for
+    # Ubuntu VMs and disable Capture Hash for them (no Autopilot hash on
+    # Linux).
     for vm in vms:
         vm["in_autopilot"] = vm.get("serial", "") in ap_serials
         vm["has_hash"] = vm.get("serial", "") in hash_serials
+        prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
+        seq = None
+        if prov and prov.get("sequence_id"):
+            seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
+        vm["target_os"] = (seq or {}).get("target_os") or "windows"
+        vm["sequence_name"] = (seq or {}).get("name")
 
     # VMs not yet in Autopilot (missing)
     missing_vms = [vm for vm in vms if not vm["in_autopilot"] and vm.get("serial")]
@@ -1032,6 +1049,7 @@ async def start_provision(
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
     sequence_id: int = Form(None),
+    hostname_pattern: str = Form("autopilot-{serial}"),
     chassis_type_override: int = Form(0),
 ):
     profile = _sanitize_input(profile)
@@ -1039,6 +1057,9 @@ async def start_provision(
         group_tag = _sanitize_input(group_tag)
     if serial_prefix:
         serial_prefix = _sanitize_input(serial_prefix)
+    # hostname_pattern contains literal { } tokens — don't _sanitize_input
+    # (which strips special chars); just trim and fall back to the default.
+    hostname_pattern = (hostname_pattern or "").strip() or "autopilot-{serial}"
 
     # Stage the chassis-type SMBIOS binary(ies) on the Proxmox host for
     # every possible source of the effective chassis type. The compiler
@@ -1133,6 +1154,7 @@ async def start_provision(
         if disk_size_gb > 0: tokens += ["-e", f"vm_disk_size_gb={disk_size_gb}"]
         if serial_prefix:    tokens += ["-e", f"vm_serial_prefix={serial_prefix}"]
         if group_tag:        tokens += ["-e", f"vm_group_tag={group_tag}"]
+        if hostname_pattern: tokens += ["-e", f"hostname_pattern={hostname_pattern}"]
         if chassis_type_override and int(chassis_type_override) > 0:
             tokens += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
         return tokens
@@ -1141,6 +1163,7 @@ async def start_provision(
         "profile": profile, "count": count,
         "serial_prefix": serial_prefix, "group_tag": group_tag,
         "cores": cores, "memory_mb": memory_mb, "disk_size_gb": disk_size_gb,
+        "hostname_pattern": hostname_pattern,
     }
 
     # Resolve sequence → Ansible vars (spec §12 precedence).
@@ -1292,6 +1315,27 @@ async def start_template(profile: str = Form(...)):
     args = {"profile": profile}
     job = job_manager.start("build_template", cmd, args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
+@app.post("/api/ubuntu/build-template")
+async def build_ubuntu_template(sequence_id: int):
+    """Kick off the Ubuntu template build playbook for the given sequence.
+    Returns a JSON payload with the launched job id; the UI redirects to
+    /jobs/{job_id} client-side."""
+    seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
+    if seq is None or seq.get("target_os") != "ubuntu":
+        return JSONResponse(
+            {"ok": False, "error": "Ubuntu sequence not found"},
+            status_code=404,
+        )
+    cmd = [
+        "ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml"),
+        "-e", "target_os=ubuntu",
+        "-e", f"ubuntu_template_sequence_id={sequence_id}",
+    ]
+    args = {"target_os": "ubuntu", "sequence_id": sequence_id}
+    job = job_manager.start("build_template_ubuntu", cmd, args=args)
+    return {"ok": True, "job_id": job["id"]}
 
 
 @app.get("/api/vms/{vmid}/console")
@@ -1962,6 +2006,251 @@ async def rebuild_answer_iso():
     }
 
 
+# --- Ubuntu seed ISO rebuild ----------------------------------------------
+
+
+def _referenced_credential_ids(steps: list[dict]) -> set[int]:
+    """Return the set of credential IDs referenced by any *_credential_id param."""
+    out: set[int] = set()
+    for s in steps:
+        params = (s.get("params") or {})
+        for k, v in params.items():
+            if k.endswith("_credential_id") and isinstance(v, int) and v > 0:
+                out.add(v)
+    return out
+
+
+@app.post("/api/ubuntu/rebuild-seed-iso")
+async def rebuild_ubuntu_seed_iso(sequence_id: int):
+    """Compile the given Ubuntu sequence, build a NoCloud seed ISO, and upload
+    to Proxmox ISO storage. Mirrors /api/answer-iso/rebuild for the Windows
+    unattend flow."""
+    seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
+    if seq is None:
+        return JSONResponse(
+            {"ok": False, "error": f"sequence {sequence_id} not found"},
+            status_code=404,
+        )
+    if seq.get("target_os") != "ubuntu":
+        return JSONResponse(
+            {"ok": False,
+             "error": f"sequence target_os is {seq.get('target_os')!r}, not ubuntu"},
+            status_code=400,
+        )
+
+    # Imported lazily so a broken compiler dependency only breaks the Ubuntu
+    # path (not the 404/400 early returns above).
+    import tempfile as _tmp
+
+    from web.ubuntu_compiler import compile_sequence, UbuntuCompileError
+    from web.ubuntu_seed_iso import build_seed_iso
+
+    # Decrypt referenced credentials up front so the compiler can inline secrets.
+    cipher = _cipher()
+    credentials: dict[int, dict] = {}
+    for cid in _referenced_credential_ids(seq["steps"]):
+        row = sequences_db.get_credential(SEQUENCES_DB, cipher, cid)
+        if row is None:
+            continue
+        credentials[cid] = row.get("payload") or {}
+
+    # Inject global Ubuntu-build overrides from vars.yml into step params.
+    # Currently: ubuntu_apt_proxy — if the operator has a LAN apt-cacher,
+    # every build uses it without the user having to edit each sequence.
+    _vars = _load_vars() or {}
+    _apt_proxy = (_vars.get("ubuntu_apt_proxy") or "").strip()
+    steps = [dict(s) for s in seq["steps"]]  # shallow copy so we don't mutate DB snapshot
+    if _apt_proxy:
+        for s in steps:
+            if s.get("step_type") == "install_ubuntu_core":
+                params = dict(s.get("params") or {})
+                params.setdefault("apt_proxy", _apt_proxy)
+                s["params"] = params
+
+    try:
+        user_data, meta_data, _fb_user, _fb_meta = compile_sequence(
+            steps=steps,
+            credentials=credentials,
+            instance_id=f"seq-{sequence_id}",
+            hostname="ubuntu-template",
+        )
+    except UbuntuCompileError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    cfg = _load_proxmox_config()
+    iso_storage = cfg.get("proxmox_iso_storage") or "isos"
+    node = cfg.get("proxmox_node", "pve")
+    iso_name = "ubuntu-seed.iso"
+
+    with _tmp.TemporaryDirectory() as td:
+        iso_path = Path(td) / iso_name
+        try:
+            build_seed_iso(
+                user_data=user_data, meta_data=meta_data, out_path=iso_path,
+            )
+        except RuntimeError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        host = cfg.get("proxmox_host", "")
+        port = cfg.get("proxmox_port", 8006)
+        token_id = cfg.get("vault_proxmox_api_token_id", "")
+        token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+        url = (
+            f"https://{host}:{port}/api2/json/nodes/{node}"
+            f"/storage/{iso_storage}/upload"
+        )
+        try:
+            with open(iso_path, "rb") as fh:
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
+                    data={"content": "iso"},
+                    files={"filename": (iso_name, fh, "application/x-iso9660-image")},
+                    verify=cfg.get("proxmox_validate_certs", False),
+                    timeout=60,
+                )
+        except Exception as e:
+            return JSONResponse(
+                {"ok": False, "error": f"upload failed: {e}"}, status_code=500,
+            )
+        if resp.status_code == 403:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        "403 Forbidden from Proxmox. The API token needs "
+                        "Datastore.AllocateTemplate on /storage/"
+                        f"{iso_storage} (role PVEDatastoreUser or similar)."
+                    ),
+                },
+                status_code=403,
+            )
+        if resp.status_code >= 400:
+            return JSONResponse(
+                {"ok": False,
+                 "error": f"HTTP {resp.status_code}: {resp.text[:500]}"},
+                status_code=502,
+            )
+
+    return {
+        "ok": True,
+        "iso": f"{iso_storage}:iso/{iso_name}",
+        "storage": iso_storage,
+        "node": node,
+    }
+
+
+@app.post("/api/ubuntu/per-vm-seed")
+async def build_per_vm_seed(vmid: int, sequence_id: int, hostname: str):
+    """Build the per-clone NoCloud seed ISO for a specific VMID.
+
+    Unlike /api/ubuntu/rebuild-seed-iso (which emits the template seed ISO
+    carrying the full cloud-init user-data body), this endpoint emits a
+    minimal cloud-init (hostname + firstboot runcmd) keyed to the target VM.
+    Called by the Ansible provisioning role for each cloned VM.
+    """
+    seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
+    if seq is None:
+        return JSONResponse(
+            {"ok": False, "error": f"sequence {sequence_id} not found"},
+            status_code=404,
+        )
+    if seq.get("target_os") != "ubuntu":
+        return JSONResponse(
+            {"ok": False,
+             "error": f"sequence target_os is {seq.get('target_os')!r}, not ubuntu"},
+            status_code=400,
+        )
+
+    import tempfile as _tmp
+
+    from web.ubuntu_compiler import compile_sequence, UbuntuCompileError
+    from web.ubuntu_seed_iso import build_seed_iso
+
+    cipher = _cipher()
+    credentials: dict[int, dict] = {}
+    for cid in _referenced_credential_ids(seq["steps"]):
+        row = sequences_db.get_credential(SEQUENCES_DB, cipher, cid)
+        if row is None:
+            continue
+        credentials[cid] = row.get("payload") or {}
+
+    try:
+        _u, _m, firstboot_user_data, firstboot_meta_data = compile_sequence(
+            steps=seq["steps"],
+            credentials=credentials,
+            instance_id=f"vm-{vmid}",
+            hostname=hostname,
+        )
+    except UbuntuCompileError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    cfg = _load_proxmox_config()
+    iso_storage = cfg.get("proxmox_iso_storage") or "isos"
+    node = cfg.get("proxmox_node", "pve")
+    iso_name = f"ubuntu-per-vm-{vmid}.iso"
+
+    with _tmp.TemporaryDirectory() as td:
+        iso_path = Path(td) / iso_name
+        try:
+            build_seed_iso(
+                user_data=firstboot_user_data,
+                meta_data=firstboot_meta_data,
+                out_path=iso_path,
+            )
+        except RuntimeError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        host = cfg.get("proxmox_host", "")
+        port = cfg.get("proxmox_port", 8006)
+        token_id = cfg.get("vault_proxmox_api_token_id", "")
+        token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+        url = (
+            f"https://{host}:{port}/api2/json/nodes/{node}"
+            f"/storage/{iso_storage}/upload"
+        )
+        try:
+            with open(iso_path, "rb") as fh:
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
+                    data={"content": "iso"},
+                    files={"filename": (iso_name, fh, "application/x-iso9660-image")},
+                    verify=cfg.get("proxmox_validate_certs", False),
+                    timeout=60,
+                )
+        except Exception as e:
+            return JSONResponse(
+                {"ok": False, "error": f"upload failed: {e}"}, status_code=500,
+            )
+        if resp.status_code == 403:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": (
+                        "403 Forbidden from Proxmox. The API token needs "
+                        "Datastore.AllocateTemplate on /storage/"
+                        f"{iso_storage} (role PVEDatastoreUser or similar)."
+                    ),
+                },
+                status_code=403,
+            )
+        if resp.status_code >= 400:
+            return JSONResponse(
+                {"ok": False,
+                 "error": f"HTTP {resp.status_code}: {resp.text[:500]}"},
+                status_code=502,
+            )
+
+    return {
+        "ok": True,
+        "iso": f"{iso_storage}:iso/{iso_name}",
+        "storage": iso_storage,
+        "node": node,
+        "vmid": vmid,
+    }
+
+
 # --- Version / update check ------------------------------------------------
 
 _GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"
@@ -2514,17 +2803,41 @@ def api_credentials_get(cred_id: int):
 
 
 @app.post("/api/credentials", status_code=201)
-def api_credentials_create(body: _CredentialCreate):
-    if body.type not in {"domain_join", "local_admin", "odj_blob"}:
-        raise HTTPException(400, f"unknown credential type: {body.type}")
+async def api_credentials_create(request: Request):
+    """Create a credential.
+
+    Accepts either JSON ``{name, type, payload}`` (existing types) or
+    multipart/form-data with a file field (``mde_onboarding`` uploads the
+    onboarding .py script directly). For multipart the file is base64-encoded
+    and wrapped in the canonical payload shape before encryption.
+    """
+    ctype = (request.headers.get("content-type") or "").lower()
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        name = form.get("name", "")
+        cred_type = form.get("type", "")
+        if not name or not cred_type:
+            raise HTTPException(400, "name and type are required")
+        try:
+            payload = await _payload_from_form(cred_type, form)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    else:
+        body = _CredentialCreate.model_validate(await request.json())
+        name = body.name
+        cred_type = body.type
+        payload = body.payload
+
+    if cred_type not in {"domain_join", "local_admin", "odj_blob", "mde_onboarding"}:
+        raise HTTPException(400, f"unknown credential type: {cred_type}")
     try:
         cid = sequences_db.create_credential(
             SEQUENCES_DB, _cipher(),
-            name=body.name, type=body.type, payload=body.payload,
+            name=name, type=cred_type, payload=payload,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
-            raise HTTPException(409, f"credential name already exists: {body.name}")
+            raise HTTPException(409, f"credential name already exists: {name}")
         raise
     return {"id": cid}
 
@@ -2567,6 +2880,7 @@ class _StepIn(BaseModel):
 class _SequenceCreate(BaseModel):
     name: str
     description: str = ""
+    target_os: str = "windows"
     is_default: bool = False
     produces_autopilot_hash: bool = False
     steps: list[_StepIn] = []
@@ -2575,6 +2889,7 @@ class _SequenceCreate(BaseModel):
 class _SequenceUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    target_os: Optional[str] = None
     is_default: Optional[bool] = None
     produces_autopilot_hash: Optional[bool] = None
     steps: Optional[list[_StepIn]] = None
@@ -2605,6 +2920,7 @@ def api_sequences_create(body: _SequenceCreate):
             name=body.name, description=body.description,
             is_default=body.is_default,
             produces_autopilot_hash=body.produces_autopilot_hash,
+            target_os=body.target_os,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
@@ -2628,6 +2944,7 @@ def api_sequences_update(seq_id: int, body: _SequenceUpdate):
             name=body.name, description=body.description,
             is_default=body.is_default,
             produces_autopilot_hash=body.produces_autopilot_hash,
+            target_os=body.target_os,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
@@ -2863,6 +3180,24 @@ async def _payload_from_form(cred_type: str, form, existing: Optional[dict] = No
         if existing:
             return existing
         raise ValueError("ODJ blob file is required")
+    if cred_type == "mde_onboarding":
+        upload = form.get("onboarding_file")
+        if upload and hasattr(upload, "read"):
+            raw = await upload.read()
+            if not raw:
+                # Empty file upload — treat as "no file" on edit, error on create.
+                if existing:
+                    return existing
+                raise ValueError("onboarding_file required")
+            filename = getattr(upload, "filename", None) or "onboarding.py"
+            return {
+                "filename": filename,
+                "script_b64": base64.b64encode(raw).decode("ascii"),
+                "uploaded_at": _now_iso(),
+            }
+        if existing:
+            return existing
+        raise ValueError("onboarding_file required")
     raise ValueError(f"unknown credential type: {cred_type}")
 
 
@@ -2901,6 +3236,96 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
                 "/sequences", f"name '{new_name}' already exists")
         raise
     return RedirectResponse("/sequences", status_code=303)
+
+
+def _load_oem_profiles_dict() -> dict:
+    path = FILES_DIR / "oem_profiles.yml"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return data.get("oem_profiles", {})
+
+
+@app.post("/api/vm-provisioning")
+async def record_vm_provisioning_route(request: Request):
+    """Record vmid -> sequence_id mapping. Called by the provisioning playbook."""
+    data = await request.json()
+    vmid = int(data.get("vmid", 0))
+    sequence_id = int(data.get("sequence_id", 0))
+    if vmid == 0 or sequence_id == 0:
+        return JSONResponse({"ok": False, "error": "vmid and sequence_id required"}, status_code=400)
+    sequences_db.record_vm_provisioning(SEQUENCES_DB, vmid=vmid, sequence_id=sequence_id)
+    return {"ok": True}
+
+
+@app.post("/api/ubuntu/check-enrollment/{vmid}")
+async def check_ubuntu_enrollment(vmid: int):
+    """Guest-exec intune-portal + mdatp checks on the Ubuntu VM, parse,
+    persist status as Proxmox tags, return the parsed status."""
+    from web.ubuntu_enrollment import parse_enrollment_output, tags_for, merge_tags
+
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    base = cfg.get("proxmox_api_base") or f"https://{cfg.get('proxmox_host')}:{cfg.get('proxmox_port',8006)}/api2/json"
+    auth = f"PVEAPIToken={cfg.get('vault_proxmox_api_token_id')}={cfg.get('vault_proxmox_api_token_secret')}"
+    verify = cfg.get("proxmox_validate_certs", False)
+
+    def exec_cmd(cmd: list) -> tuple:
+        """Synchronous guest-exec + poll for completion; return (rc, stdout)."""
+        try:
+            r = requests.post(
+                f"{base}/nodes/{node}/qemu/{vmid}/agent/exec",
+                headers={"Authorization": auth},
+                json={"command": cmd},
+                verify=verify, timeout=30,
+            )
+            r.raise_for_status()
+            pid = r.json()["data"]["pid"]
+            # Poll exec-status
+            for _ in range(30):
+                s = requests.get(
+                    f"{base}/nodes/{node}/qemu/{vmid}/agent/exec-status",
+                    headers={"Authorization": auth},
+                    params={"pid": pid},
+                    verify=verify, timeout=10,
+                )
+                d = s.json().get("data", {})
+                if d.get("exited"):
+                    return int(d.get("exitcode", 0)), d.get("out-data", "") or ""
+                time.sleep(1)
+        except Exception:
+            pass
+        return 127, ""
+
+    intune_rc, intune_out = exec_cmd(["/bin/sh", "-c", "intune-portal --version 2>/dev/null || echo MISSING; exit $?"])
+    mdatp_rc, mdatp_out = exec_cmd(["/bin/sh", "-c", "mdatp health 2>/dev/null || echo MISSING; exit $?"])
+
+    status = parse_enrollment_output(
+        intune_stdout=intune_out, intune_rc=intune_rc,
+        mdatp_stdout=mdatp_out, mdatp_rc=mdatp_rc,
+    )
+    new_tags = tags_for(status)
+
+    # Fetch current tags, merge, persist
+    try:
+        cfg_resp = requests.get(
+            f"{base}/nodes/{node}/qemu/{vmid}/config",
+            headers={"Authorization": auth}, verify=verify, timeout=10,
+        )
+        existing = (cfg_resp.json().get("data", {}).get("tags") or "").split(";")
+        existing = [t for t in existing if t]
+        merged = merge_tags(existing, new_tags)
+        requests.post(
+            f"{base}/nodes/{node}/qemu/{vmid}/config",
+            headers={"Authorization": auth},
+            data={"tags": ";".join(merged)},
+            verify=verify, timeout=10,
+        )
+    except Exception:
+        pass  # tag persistence is best-effort
+
+    return {"ok": True, "status": status, "tags": new_tags}
 
 
 @app.get("/sequences/new", response_class=HTMLResponse)

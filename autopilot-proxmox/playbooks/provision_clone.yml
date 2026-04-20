@@ -1,12 +1,20 @@
 ---
-# Provision Windows VMs by cloning a template with Autopilot injection and hash capture.
+# Provision VMs by cloning a template.
 #
-# Usage:
+# Dispatches per-VM to the Windows or Ubuntu branch based on target_os
+# (default: windows). Both branches expect proxmox_template_vmid to point
+# at a template of the matching OS.
+#
+# Usage (Windows, default):
 #   ansible-playbook playbooks/provision_clone.yml --ask-vault-pass \
 #     -e proxmox_template_vmid=9000 -e vm_oem_profile=dell-latitude-5540
 #   ansible-playbook playbooks/provision_clone.yml -e vm_count=5
+#
+# Usage (Ubuntu):
+#   ansible-playbook playbooks/provision_clone.yml \
+#     -e target_os=ubuntu -e proxmox_template_vmid=9100 -e sequence_id=1
 
-- name: Provision Windows VMs from template clone
+- name: Provision VMs from template clone
   hosts: localhost
   gather_facts: false
 
@@ -19,8 +27,16 @@
         fail_msg: "proxmox_template_vmid must be set. Use -e proxmox_template_vmid=<vmid> or set it in vars.yml."
 
   tasks:
-    - name: Provision each VM
+    - name: Provision each VM (Windows branch)
       ansible.builtin.include_tasks: _provision_clone_vm.yml
       loop: "{{ range(1, (vm_count | int) + 1) | list }}"
       loop_control:
         loop_var: _vm_index
+      when: target_os | default('windows') == 'windows'
+
+    - name: Provision each VM (Ubuntu branch)
+      ansible.builtin.include_tasks: _provision_ubuntu_clone.yml
+      loop: "{{ range(1, (vm_count | int) + 1) | list }}"
+      loop_control:
+        loop_var: _vm_index
+      when: target_os | default('windows') == 'ubuntu'

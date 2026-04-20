@@ -1,0 +1,155 @@
+---
+# Provision the LAN apt-cache VM (apt-cacher-ng) from the "Ubuntu apt-cache
+# server" seeded sequence. Pinned VMID so the cache has a stable IP across
+# re-runs. After cloud-init finishes, prints the VM's IPv4 so the operator
+# can paste it into vars.yml as:
+#   ubuntu_apt_proxy: "http://<ip>:3142"
+#
+# Usage:
+#   ansible-playbook playbooks/provision_apt_cache.yml
+#
+# Extra vars (all optional, sensible defaults):
+#   apt_cache_vmid            default 900
+#   apt_cache_sequence_name   default "Ubuntu apt-cache server"
+#   apt_cache_source_vmid     default {{ proxmox_template_vmid }} (Ubuntu template)
+#   apt_cache_hostname        default apt-cache
+
+- hosts: localhost
+  gather_facts: false
+  vars:
+    apt_cache_vmid: 900
+    apt_cache_sequence_name: "Ubuntu apt-cache server"
+    apt_cache_hostname: "apt-cache"
+    # Source VMID comes from the Ubuntu template the operator built earlier.
+    apt_cache_source_vmid: "{{ proxmox_template_vmid }}"
+  tasks:
+    - name: Resolve the apt-cache sequence id via the web API
+      ansible.builtin.uri:
+        url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/sequences"
+        method: GET
+        return_content: yes
+      register: _seq_list
+
+    - name: Fail if the apt-cache sequence is not seeded
+      ansible.builtin.fail:
+        msg: >-
+          Sequence {{ apt_cache_sequence_name!r }} not found. Restart the
+          web server so seed_defaults runs, or create the sequence manually.
+      when: >-
+        (_seq_list.json | selectattr('name', 'equalto', apt_cache_sequence_name) | list | length) == 0
+
+    - name: Extract sequence id
+      ansible.builtin.set_fact:
+        _apt_cache_sequence_id: >-
+          {{ (_seq_list.json | selectattr('name', 'equalto', apt_cache_sequence_name) | list | first).id }}
+
+    - name: Check if apt-cache VMID already exists
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ apt_cache_vmid }}/status/current"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200, 500]
+      register: _existing_status
+      failed_when: false
+
+    - name: Short-circuit if VM already exists
+      when: _existing_status.status == 200
+      block:
+        - name: Ensure existing apt-cache VM is running
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ apt_cache_vmid }}/status/start"
+            method: POST
+            headers:
+              Authorization: "{{ proxmox_api_auth_header }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            status_code: [200, 400]  # 400 if already running
+          failed_when: false
+
+        - name: Wait for guest agent on existing VM
+          ansible.builtin.uri:
+            url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ apt_cache_vmid }}/agent/ping"
+            method: POST
+            headers:
+              Authorization: "{{ proxmox_api_auth_header }}"
+            validate_certs: "{{ proxmox_validate_certs }}"
+            status_code: [200, 500]
+          register: _agent_ping
+          until: _agent_ping.status == 200
+          retries: 30
+          delay: 5
+          failed_when: false
+
+    - name: Provision a new apt-cache VM (only if VMID is free)
+      when: _existing_status.status != 200
+      block:
+        - name: Clone + cloud-init via the proxmox_vm_clone_linux role
+          ansible.builtin.include_role:
+            name: proxmox_vm_clone_linux
+          vars:
+            target_vmid: "{{ apt_cache_vmid }}"
+            source_vmid: "{{ apt_cache_source_vmid }}"
+            vm_hostname: "{{ apt_cache_hostname }}"
+            vm_name: "{{ apt_cache_hostname }}-{{ apt_cache_vmid }}"
+            sequence_id: "{{ _apt_cache_sequence_id }}"
+            smbios_string: ""
+
+        - name: Record vm_provisioning (vmid -> sequence_id)
+          ansible.builtin.uri:
+            url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/vm-provisioning"
+            method: POST
+            body_format: json
+            body:
+              vmid: "{{ apt_cache_vmid | int }}"
+              sequence_id: "{{ _apt_cache_sequence_id | int }}"
+            status_code: [200, 201]
+          failed_when: false
+
+    - name: Read apt-cache IPv4 via guest agent — retry until non-loopback IP appears
+      # qemu-guest-agent populates lo first; ens18/eth0 get a DHCP lease a few
+      # seconds after cloud-init brings networking up. Retry until a real IP
+      # shows so we don't report 127.0.0.1.
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ apt_cache_vmid }}/agent/network-get-interfaces"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        return_content: yes
+      register: _netif
+      until: >-
+        (_netif.json.data.result
+          | map(attribute='ip-addresses') | select('iterable') | list | sum(start=[])
+          | selectattr('ip-address-type', 'equalto', 'ipv4')
+          | map(attribute='ip-address') | list
+          | difference(['127.0.0.1'])
+          | length) > 0
+      retries: 30
+      delay: 4
+
+    - name: Pick the first non-loopback IPv4
+      ansible.builtin.set_fact:
+        apt_cache_ip: >-
+          {{ (_netif.json.data.result
+                | map(attribute='ip-addresses') | select('iterable') | list | sum(start=[])
+                | selectattr('ip-address-type', 'equalto', 'ipv4')
+                | map(attribute='ip-address') | list
+                | difference(['127.0.0.1'])
+                | first) }}
+
+    - name: Report the proxy URL to paste into vars.yml
+      ansible.builtin.debug:
+        msg: |
+          apt-cache VM ready.
+
+          VMID: {{ apt_cache_vmid }}
+          IP:   {{ apt_cache_ip }}
+
+          Set this in inventory/group_vars/all/vars.yml to speed up every
+          future Ubuntu template build:
+
+            ubuntu_apt_proxy: "http://{{ apt_cache_ip }}:3142"
+
+          (Then rebuild the Ubuntu seed ISO so the new setting takes effect:
+             curl -X POST 'http://127.0.0.1:5000/api/ubuntu/rebuild-seed-iso?sequence_id=<ubuntu-sequence-id>')

@@ -24,6 +24,7 @@ All communication with guest VMs happens through the Proxmox REST API and QEMU g
 | **Proxmox VE**  | 9.x with API access                                  |
 | **Windows ISO** | Stock Windows 11 Enterprise / Business (unmodified)  |
 | **VirtIO ISO**  | `virtio-win.iso` (latest from Fedora / Red Hat)      |
+| **Ubuntu ISO**  | Ubuntu 24.04 live-server ISO (optional — only needed for Ubuntu sequences) |
 | **Docker host** | Any machine with Docker Compose, reachable on :5000  |
 
 Both ISOs must already be uploaded to a Proxmox ISO storage (e.g. `isos`) before you start.
@@ -98,6 +99,8 @@ The app ships with three seeded **task sequences** — *Entra Join (default)*, *
 
 Stuck? Jump to [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Need the full walkthrough with screenshots and field-by-field detail? See [docs/SETUP.md](docs/SETUP.md).
 
+**Ubuntu path:** On Build Template, toggle **Ubuntu** → pick a sequence → **Rebuild Ubuntu Seed ISO** → **Build Ubuntu Template** (~25 min). Then Provision just like the Windows flow — cloud-init sets the hostname on first boot. See [docs/SETUP.md#ubuntu-path](docs/SETUP.md#ubuntu-path).
+
 ## Web UI
 
 | | |
@@ -113,9 +116,9 @@ Stuck? Jump to [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Need the full
 | **Home** | Dashboard with running jobs and hash file count |
 | **Provision VMs** | Clone VMs from the template with a selected task sequence, OEM profile, count, and group tag |
 | **Devices** | View all Proxmox autopilot VMs and Intune Autopilot devices with inline actions |
-| **Sequences** | Create and edit named **task sequences** — ordered lists of steps (set OEM, create local admin, Entra join, AD domain join, rename, run script, …) that define what happens during OOBE |
-| **Credentials** | Encrypted store for reusable secrets — local admin passwords, AD domain-join accounts, ODJ blobs. Includes a **Test connection** button for domain-join credentials |
-| **Build Template** | Rebuild the answer ISO and create a Windows template (one-time setup) |
+| **Sequences** | Create and edit named **task sequences** — ordered lists of steps that define what happens during OOBE. Windows (Entra Join, AD Domain Join) and Ubuntu (Intune + MDE via LinuxESP, Plain) share one builder |
+| **Credentials** | Encrypted store for reusable secrets — local admin passwords, AD domain-join accounts, ODJ blobs, MDE Linux onboarding scripts. Includes a **Test connection** button for domain-join credentials |
+| **Build Template** | Rebuild the answer ISO and create a Windows or Ubuntu template (one-time setup per OS) |
 | **Upload to Intune** | Upload captured hash files to Microsoft Intune |
 | **Hash Files** | Browse, download, and delete captured hardware hash CSVs |
 | **Import Hashes** | Upload hash CSV files from your local machine |
@@ -161,6 +164,6 @@ Each profile sets SMBIOS type 1 fields and generates a manufacturer-appropriate 
 
 ## More Documentation
 
-- **[docs/SETUP.md](docs/SETUP.md)** — detailed setup walkthrough with field-by-field configuration, unattended-install internals, and an air-gapped answer-ISO recipe.
-- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — symptoms, causes, and fixes for common failures.
+- **[docs/SETUP.md](docs/SETUP.md)** — detailed setup walkthrough with field-by-field configuration, unattended-install internals, and an air-gapped answer-ISO recipe. Includes the Ubuntu path (LinuxESP).
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — symptoms, causes, and fixes for common failures (Windows and Ubuntu).
 - **[autopilot-proxmox/README.md](autopilot-proxmox/README.md)** — Ansible CLI usage, playbooks, and developer reference.

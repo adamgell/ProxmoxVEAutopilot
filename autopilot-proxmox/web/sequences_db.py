@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS task_sequences (
     description TEXT NOT NULL DEFAULT '',
     is_default INTEGER NOT NULL DEFAULT 0,
     produces_autopilot_hash INTEGER NOT NULL DEFAULT 0,
+    target_os TEXT NOT NULL DEFAULT 'windows',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -82,6 +83,17 @@ def init(db_path: Path) -> None:
     """Create tables if they don't exist. Safe to call repeatedly."""
     with _connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # --- Migration: add target_os to task_sequences if missing (pre-existing DBs)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(task_sequences)")}
+        if "target_os" not in cols:
+            conn.execute(
+                "ALTER TABLE task_sequences "
+                "ADD COLUMN target_os TEXT NOT NULL DEFAULT 'windows'"
+            )
+            conn.execute(
+                "UPDATE task_sequences SET target_os='windows' "
+                "WHERE target_os IS NULL OR target_os=''"
+            )
 
 
 class CredentialInUse(Exception):
@@ -203,6 +215,7 @@ def _row_to_sequence(row: sqlite3.Row) -> dict:
         "description": row["description"],
         "is_default": bool(row["is_default"]),
         "produces_autopilot_hash": bool(row["produces_autopilot_hash"]),
+        "target_os": row["target_os"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -221,15 +234,17 @@ def _row_to_step(row: sqlite3.Row) -> dict:
 
 def create_sequence(db_path, *, name: str, description: str,
                     is_default: bool = False,
-                    produces_autopilot_hash: bool = False) -> int:
+                    produces_autopilot_hash: bool = False,
+                    target_os: str = "windows",
+                    steps: Optional[list[dict]] = None) -> int:
     now = _now()
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO task_sequences "
             "(name, description, is_default, produces_autopilot_hash, "
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            " target_os, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name, description, int(is_default), int(produces_autopilot_hash),
-             now, now),
+             target_os, now, now),
         )
         new_id = cur.lastrowid
         # Demote any other defaults AFTER the insert succeeds so a failed
@@ -240,14 +255,19 @@ def create_sequence(db_path, *, name: str, description: str,
                 "UPDATE task_sequences SET is_default = 0 WHERE id != ?",
                 (new_id,),
             )
-        return new_id
+    # Optional steps insertion — same-connection transaction already committed,
+    # so set_sequence_steps opens its own connection.
+    if steps is not None:
+        set_sequence_steps(db_path, new_id, steps)
+    return new_id
 
 
 def update_sequence(db_path, seq_id: int, *,
                     name: Optional[str] = None,
                     description: Optional[str] = None,
                     is_default: Optional[bool] = None,
-                    produces_autopilot_hash: Optional[bool] = None) -> None:
+                    produces_autopilot_hash: Optional[bool] = None,
+                    target_os: Optional[str] = None) -> None:
     now = _now()
     updates, args = [], []
     if name is not None:
@@ -259,6 +279,8 @@ def update_sequence(db_path, seq_id: int, *,
         args.append(int(produces_autopilot_hash))
     if is_default is not None:
         updates.append("is_default = ?"); args.append(int(is_default))
+    if target_os is not None:
+        updates.append("target_os = ?"); args.append(target_os)
     if not updates:
         return
     updates.append("updated_at = ?"); args.append(now)
@@ -386,6 +408,28 @@ def get_vm_sequence_id(db_path, vmid: int) -> Optional[int]:
     return row["sequence_id"] if row else None
 
 
+def get_vm_provisioning(db_path, *, vmid: int) -> Optional[dict]:
+    """Return the vm_provisioning row for vmid, or None.
+
+    Shape: {vmid, sequence_id, provisioned_at}. Used by the Devices page
+    to look up the target_os of the sequence that provisioned a VM so the
+    UI can show the right actions (e.g. Check Enrollment for Ubuntu VMs).
+    """
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT vmid, sequence_id, provisioned_at "
+            "FROM vm_provisioning WHERE vmid = ?",
+            (vmid,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "vmid": row["vmid"],
+        "sequence_id": row["sequence_id"],
+        "provisioned_at": row["provisioned_at"],
+    }
+
+
 # Seed data is defined here rather than a separate file so version-controlled
 # changes to seeded sequences are obvious in the diff.
 
@@ -447,10 +491,11 @@ _SEED_LOCAL_ADMIN_PAYLOAD = {
 
 
 def seed_defaults(db_path, cipher) -> None:
-    """Insert the default credential and three starter sequences if absent.
+    """Insert the default credential and starter sequences if absent.
 
     Idempotent: rows keyed on name are skipped if already present.
     Resolves credential_name references to actual credential IDs.
+    Seeds Windows sequences plus Ubuntu LinuxESP and Ubuntu Plain.
     """
     # 1. Credential first — other seeds reference it by name.
     if not any(c["name"] == "default-local-admin"
@@ -463,7 +508,7 @@ def seed_defaults(db_path, cipher) -> None:
     la_id = next(c["id"] for c in list_credentials(db_path, type="local_admin")
                  if c["name"] == "default-local-admin")
 
-    # 2. Sequences.
+    # 2. Windows sequences.
     existing_names = {s["name"] for s in list_sequences(db_path)}
     for seq in _SEED_SEQUENCES:
         if seq["name"] in existing_names:
@@ -486,3 +531,179 @@ def seed_defaults(db_path, cipher) -> None:
                 "enabled": step["enabled"],
             })
         set_sequence_steps(db_path, sid, resolved_steps)
+
+    # 3. Ubuntu sequences. Use `la_id` as the default local admin credential
+    #    reference; the MDE onboarding credential is left as 0 so the operator
+    #    must wire up a real credential before provisioning.
+    default_admin_id = la_id
+    existing_names = {s["name"] for s in list_sequences(db_path)}
+
+    # ORDERING: ubuntu-desktop is installed LAST because it pulls
+    # NetworkManager, which takes over networking from cloud-init's
+    # systemd-networkd. Any apt fetch after that (Microsoft repos, MDE,
+    # bloat purge) hits "Network is unreachable" during the handover.
+    # Putting MS repo setup + package installs before ubuntu-desktop
+    # avoids the problem entirely.
+    ubuntu_linuxesp_steps = [
+        {"step_type": "install_ubuntu_core",
+         "params": {"locale": "en_US.UTF-8", "timezone": "UTC",
+                    "keyboard_layout": "us", "storage_layout": "lvm"},
+         "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        {"step_type": "install_apt_packages",
+         "params": {"packages": ["curl", "git", "wget", "gpg"]},
+         "enabled": True},
+        {"step_type": "install_intune_portal", "params": {}, "enabled": True},
+        {"step_type": "install_edge", "params": {}, "enabled": True},
+        {"step_type": "install_mde_linux",
+         "params": {"mde_onboarding_credential_id": 0},  # user must fill in
+         "enabled": True},
+        {"step_type": "remove_apt_packages",
+         "params": {"packages": ["libreoffice-common", "libreoffice*",
+                                 "remmina*", "transmission*"]},
+         "enabled": True},
+        {"step_type": "install_snap_packages",
+         "params": {"snaps": [
+             {"name": "code", "classic": True},
+             {"name": "postman"},
+             {"name": "powershell", "classic": True},
+         ]},
+         "enabled": True},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
+         "enabled": True},
+    ]
+
+    ubuntu_plain_steps = [
+        {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        # Give Ubuntu Plain a full desktop. Cloud images are headless; without
+        # this the VM boots to a tty. ubuntu-desktop is ~1.5GB but the LAN
+        # apt proxy makes repeat builds cheap.
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
+         "enabled": True},
+    ]
+
+    # LAN apt cache: a small, always-on VM running apt-cacher-ng. When
+    # `ubuntu_apt_proxy` is set in vars.yml to http://<this-vm-ip>:3142, every
+    # future Ubuntu template build pulls debs through the cache. First cache
+    # hit fills it; subsequent builds finish dramatically faster.
+    # Workstation flavor of the LinuxESP sequence without MDE. Useful for
+    # validating the Intune + Edge half without needing an onboarding script
+    # uploaded to the Credentials page first.
+    #
+    # ORDERING NOTE: install_desktop_environment must come AFTER
+    # install_intune_portal + install_edge. ubuntu-desktop drags in
+    # NetworkManager, which takes over networking from cloud-init's
+    # systemd-networkd; if MS repo fetches happen after that, they fail
+    # with "Network is unreachable" because the DHCP lease is mid-handover.
+    ubuntu_intune_edge_steps = [
+        {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        {"step_type": "install_intune_portal", "params": {}, "enabled": True},
+        {"step_type": "install_edge", "params": {}, "enabled": True},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
+         "enabled": True},
+    ]
+
+    ubuntu_apt_cache_steps = [
+        {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
+        {"step_type": "create_ubuntu_user",
+         "params": {"local_admin_credential_id": default_admin_id},
+         "enabled": True},
+        # Install apt-cacher-ng at FIRST BOOT on the clone. We can't rely on
+        # install_apt_packages here because that emits cloud-config.packages,
+        # which only runs during template build. When you clone from the
+        # standard Ubuntu Plain template, the per-VM NoCloud seed only
+        # carries firstboot runcmd — so the install has to live there.
+        #
+        # Tunnel-enable is preseeded true so apt-cacher-ng allows CONNECT to
+        # HTTPS backends. Microsoft's packages.microsoft.com is HTTPS-only,
+        # and apt sends CONNECT through the proxy for HTTPS repos. Without
+        # tunnels, the proxy returns "403 CONNECT denied" and HTTPS apt
+        # sources fail. Also adds PassThroughPattern as belt-and-suspenders.
+        {"step_type": "run_firstboot_script",
+         "params": {
+             "command": (
+                 "set -e\n"
+                 "if ! dpkg -s apt-cacher-ng >/dev/null 2>&1; then\n"
+                 "  echo 'apt-cacher-ng apt-cacher-ng/tunnelenable boolean true' "
+                 "| debconf-set-selections\n"
+                 "  export DEBIAN_FRONTEND=noninteractive\n"
+                 "  apt-get update\n"
+                 "  apt-get install -y apt-cacher-ng\n"
+                 "fi\n"
+                 "# Explicitly allow HTTPS pass-through to any host — safer\n"
+                 "# than tunnelenable alone and survives future reconfigures.\n"
+                 "# Unquoted — apt-cacher-ng treats the value as a regex; "
+                 "quotes become literal regex characters and break matching.\n"
+                 "grep -q '^PassThroughPattern' /etc/apt-cacher-ng/acng.conf || "
+                 "echo 'PassThroughPattern: .*' >> /etc/apt-cacher-ng/acng.conf\n"
+                 "systemctl enable --now apt-cacher-ng\n"
+                 "systemctl restart apt-cacher-ng"
+             ),
+         },
+         "enabled": True},
+    ]
+
+    if "Ubuntu Intune + MDE (LinuxESP)" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu Intune + MDE (LinuxESP)",
+            description=("Ubuntu 24.04 with Intune Portal, Edge, and MDE "
+                         "(from adamgell/LinuxESP). Set an mde_onboarding "
+                         "credential before first use."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_linuxesp_steps,
+        )
+
+    if "Ubuntu Plain" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu Plain",
+            description=("Minimal Ubuntu 24.04 — no Intune, no MDE. Good "
+                         "starting point for a custom sequence."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_plain_steps,
+        )
+
+    if "Ubuntu Intune + Edge (no MDE)" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu Intune + Edge (no MDE)",
+            description=("Ubuntu 24.04 workstation with Intune Portal and "
+                         "Microsoft Edge, minus the MDE step. Good for "
+                         "validating the Microsoft stack without an "
+                         "mde_onboarding credential uploaded."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_intune_edge_steps,
+        )
+
+    if "Ubuntu apt-cache server" not in existing_names:
+        create_sequence(
+            db_path,
+            name="Ubuntu apt-cache server",
+            description=("LAN-local apt-cacher-ng on Ubuntu 24.04. Provision "
+                         "one VM from this sequence, then point "
+                         "`ubuntu_apt_proxy` in vars.yml at "
+                         "http://<vm-ip>:3142 to accelerate every future "
+                         "Ubuntu template build."),
+            is_default=False,
+            produces_autopilot_hash=False,
+            target_os="ubuntu",
+            steps=ubuntu_apt_cache_steps,
+        )
