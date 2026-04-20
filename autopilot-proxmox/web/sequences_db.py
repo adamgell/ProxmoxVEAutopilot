@@ -527,6 +527,12 @@ def seed_defaults(db_path, cipher) -> None:
     default_admin_id = la_id
     existing_names = {s["name"] for s in list_sequences(db_path)}
 
+    # ORDERING: ubuntu-desktop is installed LAST because it pulls
+    # NetworkManager, which takes over networking from cloud-init's
+    # systemd-networkd. Any apt fetch after that (Microsoft repos, MDE,
+    # bloat purge) hits "Network is unreachable" during the handover.
+    # Putting MS repo setup + package installs before ubuntu-desktop
+    # avoids the problem entirely.
     ubuntu_linuxesp_steps = [
         {"step_type": "install_ubuntu_core",
          "params": {"locale": "en_US.UTF-8", "timezone": "UTC",
@@ -538,16 +544,6 @@ def seed_defaults(db_path, cipher) -> None:
         {"step_type": "install_apt_packages",
          "params": {"packages": ["curl", "git", "wget", "gpg"]},
          "enabled": True},
-        {"step_type": "install_desktop_environment",
-         "params": {"flavor": "ubuntu-desktop"},
-         "enabled": True},
-        {"step_type": "install_snap_packages",
-         "params": {"snaps": [
-             {"name": "code", "classic": True},
-             {"name": "postman"},
-             {"name": "powershell", "classic": True},
-         ]},
-         "enabled": True},
         {"step_type": "install_intune_portal", "params": {}, "enabled": True},
         {"step_type": "install_edge", "params": {}, "enabled": True},
         {"step_type": "install_mde_linux",
@@ -556,6 +552,16 @@ def seed_defaults(db_path, cipher) -> None:
         {"step_type": "remove_apt_packages",
          "params": {"packages": ["libreoffice-common", "libreoffice*",
                                  "remmina*", "transmission*"]},
+         "enabled": True},
+        {"step_type": "install_snap_packages",
+         "params": {"snaps": [
+             {"name": "code", "classic": True},
+             {"name": "postman"},
+             {"name": "powershell", "classic": True},
+         ]},
+         "enabled": True},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
          "enabled": True},
     ]
 
@@ -579,16 +585,22 @@ def seed_defaults(db_path, cipher) -> None:
     # Workstation flavor of the LinuxESP sequence without MDE. Useful for
     # validating the Intune + Edge half without needing an onboarding script
     # uploaded to the Credentials page first.
+    #
+    # ORDERING NOTE: install_desktop_environment must come AFTER
+    # install_intune_portal + install_edge. ubuntu-desktop drags in
+    # NetworkManager, which takes over networking from cloud-init's
+    # systemd-networkd; if MS repo fetches happen after that, they fail
+    # with "Network is unreachable" because the DHCP lease is mid-handover.
     ubuntu_intune_edge_steps = [
         {"step_type": "install_ubuntu_core", "params": {}, "enabled": True},
         {"step_type": "create_ubuntu_user",
          "params": {"local_admin_credential_id": default_admin_id},
          "enabled": True},
+        {"step_type": "install_intune_portal", "params": {}, "enabled": True},
+        {"step_type": "install_edge", "params": {}, "enabled": True},
         {"step_type": "install_desktop_environment",
          "params": {"flavor": "ubuntu-desktop"},
          "enabled": True},
-        {"step_type": "install_intune_portal", "params": {}, "enabled": True},
-        {"step_type": "install_edge", "params": {}, "enabled": True},
     ]
 
     ubuntu_apt_cache_steps = [

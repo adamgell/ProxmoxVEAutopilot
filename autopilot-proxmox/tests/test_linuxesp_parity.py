@@ -20,19 +20,23 @@ def test_seeded_linuxesp_sequence_matches_snapshot() -> None:
                     "keyboard_layout": "us", "storage_layout": "lvm"}},
         {"step_type": "install_apt_packages",
          "params": {"packages": ["curl", "git", "wget", "gpg"]}},
-        {"step_type": "install_desktop_environment",
-         "params": {"flavor": "ubuntu-desktop"}},
+        # Microsoft repo steps MUST run before install_desktop_environment —
+        # ubuntu-desktop brings in NetworkManager which hijacks networkd's
+        # DHCP lease mid-cloud-init, breaking any apt fetches that come
+        # after. See seed_defaults in sequences_db.py for the matching order.
+        {"step_type": "install_intune_portal", "params": {}},
+        {"step_type": "install_edge", "params": {}},
+        {"step_type": "remove_apt_packages",
+         "params": {"packages": ["libreoffice-common", "libreoffice*",
+                                 "remmina*", "transmission*"]}},
         {"step_type": "install_snap_packages",
          "params": {"snaps": [
              {"name": "code", "classic": True},
              {"name": "postman"},
              {"name": "powershell", "classic": True},
          ]}},
-        {"step_type": "install_intune_portal", "params": {}},
-        {"step_type": "install_edge", "params": {}},
-        {"step_type": "remove_apt_packages",
-         "params": {"packages": ["libreoffice-common", "libreoffice*",
-                                 "remmina*", "transmission*"]}},
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"}},
     ]
     u, _, _, _ = compile_sequence(
         steps=steps, credentials={}, instance_id="snap-1", hostname="h"
