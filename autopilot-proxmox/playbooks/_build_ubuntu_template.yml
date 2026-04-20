@@ -154,6 +154,12 @@
   # to 240 * 5s = 20 minutes. pid MUST be passed as a URL query param;
   # Proxmox's GET agent/exec-status rejects form/body on GET with
   # "Unexpected content for method 'GET'".
+  #
+  # Accept BOTH:
+  #   - HTTP 200 with exited=1   (the normal completion case)
+  #   - HTTP 500 "PID does not exist" (qemu-guest-agent GC'd the exec
+  #     record some time after the process exited; effectively the same
+  #     as "completed")
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec-status?pid={{ cloudinit_wait_start.json.data.pid }}"
     method: GET
@@ -161,8 +167,12 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     return_content: yes
+    status_code: [200, 500]
   register: cloudinit_wait_status
-  until: cloudinit_wait_status.json.data.exited | default(0) == 1
+  until: >-
+    (cloudinit_wait_status.status == 200 and (cloudinit_wait_status.json.data.exited | default(0)) == 1)
+    or
+    (cloudinit_wait_status.status == 500 and ('does not exist' in (cloudinit_wait_status.json.message | default(''))))
   retries: 240
   delay: 5
 

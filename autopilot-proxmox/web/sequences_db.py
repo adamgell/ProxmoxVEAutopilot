@@ -613,20 +613,29 @@ def seed_defaults(db_path, cipher) -> None:
         # which only runs during template build. When you clone from the
         # standard Ubuntu Plain template, the per-VM NoCloud seed only
         # carries firstboot runcmd — so the install has to live there.
-        # Debconf preseed + noninteractive frontend prevents the install
-        # from hanging on the "Allow HTTP tunnels?" modal.
+        #
+        # Tunnel-enable is preseeded true so apt-cacher-ng allows CONNECT to
+        # HTTPS backends. Microsoft's packages.microsoft.com is HTTPS-only,
+        # and apt sends CONNECT through the proxy for HTTPS repos. Without
+        # tunnels, the proxy returns "403 CONNECT denied" and HTTPS apt
+        # sources fail. Also adds PassThroughPattern as belt-and-suspenders.
         {"step_type": "run_firstboot_script",
          "params": {
              "command": (
                  "set -e\n"
                  "if ! dpkg -s apt-cacher-ng >/dev/null 2>&1; then\n"
-                 "  echo 'apt-cacher-ng apt-cacher-ng/tunnelenable boolean false' "
+                 "  echo 'apt-cacher-ng apt-cacher-ng/tunnelenable boolean true' "
                  "| debconf-set-selections\n"
                  "  export DEBIAN_FRONTEND=noninteractive\n"
                  "  apt-get update\n"
                  "  apt-get install -y apt-cacher-ng\n"
                  "fi\n"
-                 "systemctl enable --now apt-cacher-ng"
+                 "# Explicitly allow HTTPS pass-through to any host — safer\n"
+                 "# than tunnelenable alone and survives future reconfigures.\n"
+                 "grep -q '^PassThroughPattern' /etc/apt-cacher-ng/acng.conf || "
+                 "echo 'PassThroughPattern: \".*\"' >> /etc/apt-cacher-ng/acng.conf\n"
+                 "systemctl enable --now apt-cacher-ng\n"
+                 "systemctl restart apt-cacher-ng"
              ),
          },
          "enabled": True},
