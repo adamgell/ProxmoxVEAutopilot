@@ -47,6 +47,17 @@ CREATE TABLE IF NOT EXISTS vm_provisioning (
     sequence_id INTEGER REFERENCES task_sequences(id) ON DELETE SET NULL,
     provisioned_at TEXT NOT NULL
 );
+
+-- Content-addressed cache for per-VM unattend ISOs. hash is the full
+-- SHA-256 of the compiled autounattend.xml bytes; short_hash (first
+-- 16 hex chars) appears in the filename on Proxmox storage.
+CREATE TABLE IF NOT EXISTS answer_iso_cache (
+    hash TEXT PRIMARY KEY,
+    short_hash TEXT NOT NULL UNIQUE,
+    volid TEXT NOT NULL,
+    compiled_at TEXT NOT NULL,
+    last_used_at TEXT
+);
 """
 
 
