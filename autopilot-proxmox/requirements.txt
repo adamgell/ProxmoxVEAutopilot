@@ -9,3 +9,4 @@ requests>=2.31
 urllib3>=2.0
 cryptography>=42,<46
 ldap3>=2.9,<3
+dnspython>=2.4
