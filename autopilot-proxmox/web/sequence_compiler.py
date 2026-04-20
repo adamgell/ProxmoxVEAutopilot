@@ -334,19 +334,46 @@ def compile(sequence: dict,
 
 
 def _append_final_reboot_if_autologon(out: CompiledSequence) -> None:
-    """Finalize the FirstLogonCommands with a reboot that lands the
-    guest at the Windows logon screen. Only meaningful when auto-logon
-    was configured — without it, FirstLogonCommands don't run at all.
+    """Finalize FirstLogonCommands so the VM ends at the Windows logon
+    screen (not auto-logged-in as the local admin). Only meaningful
+    when auto-logon was configured — without it, FirstLogonCommands
+    don't run at all.
+
+    The finalizer has to do three things atomically:
+      1. Disable AutoAdminLogon in the Winlogon registry key. LogonCount
+         alone isn't enough — Windows sometimes re-arms auto-logon to
+         finish "pending" FirstLogonCommands across a reboot triggered
+         by an earlier command (e.g., rename_computer's /r /t 5).
+      2. Wipe the cached DefaultPassword / AutoLogonCount values so a
+         later human enabling auto-logon doesn't inherit our creds.
+      3. Cancel any already-scheduled shutdown and schedule our own.
+         Windows only allows one pending shutdown at a time, so without
+         ``shutdown /a`` our reboot is silently dropped when an earlier
+         FLC already scheduled one.
     """
     if "oobe_auto_logon" not in out.unattend_blocks:
         return
+    # The PowerShell is single-quoted as a cmd.exe "/c" arg. Escape any
+    # internal single quotes by doubling them per PowerShell rules.
+    ps = (
+        "$k='HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon';"
+        "Set-ItemProperty -Path $k -Name AutoAdminLogon -Type String -Value '0' -Force;"
+        "Remove-ItemProperty -Path $k -Name AutoLogonCount -ErrorAction SilentlyContinue;"
+        "Remove-ItemProperty -Path $k -Name DefaultPassword -ErrorAction SilentlyContinue;"
+        "Remove-ItemProperty -Path $k -Name DefaultUserName -ErrorAction SilentlyContinue;"
+        # Cancel whatever shutdown the rename_computer (or similar) step
+        # queued, then schedule ours. /t 15 > /t 5 so the user can read
+        # the message; any earlier shutdown is already aborted.
+        "shutdown.exe /a 2>$null | Out-Null;"
+        "shutdown.exe /r /t 15 /c 'Provisioning complete, rebooting to logon screen'"
+    )
+    cmd = (
+        'cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass '
+        '-Command \\"' + ps + '\\""'
+    )
     out.first_logon_commands.append({
-        "command": (
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
-            '"shutdown.exe /r /t 10 /c '
-            "'Provisioning complete — rebooting to login screen'\""
-        ),
-        "description": "Reboot to Windows logon screen",
+        "command": cmd,
+        "description": "Disable auto-logon and reboot to logon screen",
     })
     out.causes_reboot_count += 1
 
