@@ -122,6 +122,22 @@
   ansible.builtin.include_tasks: resize_disk.yml
   when: vm_disk_size_gb is defined and vm_disk_size_gb | int > 0
 
+# Resolve the clone's scsi0 volid for the offline unattend injection
+# below. _current_scsi0 holds the full config-line (volid + options);
+# we only want the volid (before the first comma).
+- name: Extract clone scsi0 volid for unattend injection
+  ansible.builtin.set_fact:
+    _clone_scsi0_volid: "{{ (_current_scsi0 | default('')).split(',')[0] }}"
+
+# Offline-write the per-VM autounattend.xml into C:\Windows\Panther\
+# unattend.xml. Only fires when a sequence compiled an answer payload
+# (i.e., a non-default provision). Windows sysprep-online-specialize
+# skips removable-media scanning; Panther (position 3) is the only
+# location it honors, and a fresh file there is processed cleanly.
+- name: Inject per-VM unattend.xml into clone Panther
+  ansible.builtin.include_tasks: inject_unattend.yml
+  when: _answer_floppy_path is defined and _answer_floppy_path | default('') | length > 0
+
 - name: Start VM
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/start"

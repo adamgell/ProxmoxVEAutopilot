@@ -1,17 +1,8 @@
 ---
-# Strip per-VM answer media from the VM after provisioning completes.
-# Windows has already consumed the floppy during specialize/OOBE and
-# the clone's baked-in sata0 (template-era autounattend.iso) is no
-# longer needed. Leaving them attached pins the cache entry "in use"
-# forever and clutters device manager.
-#
-# Two things to remove:
-#   * sata0          — inherited template CD-ROM. Cleared with a normal
-#                       config PUT using delete=sata0 (API token OK).
-#   * args floppy    — only the `-drive if=floppy,format=raw,file=...img`
-#                       token; anything else on args (chassis -smbios)
-#                       stays. If args ends up empty, the whole field is
-#                       deleted. Root-only → uses the ticket.
+# Detach the template's baked-in sata0 CD-ROM from the clone after
+# provisioning finishes. Windows has consumed the unattend from Panther
+# (injected offline by inject_unattend.yml) and the sata0 ISO — a
+# leftover from the template build — is no longer needed.
 
 - name: "Read final VM config for cleanup on {{ vm_vmid }}"
   ansible.builtin.uri:
@@ -34,51 +25,3 @@
     validate_certs: "{{ proxmox_validate_certs }}"
     status_code: [200]
   when: (_cleanup_config.json.data.sata0 | default('')) | length > 0
-
-- name: "Strip per-VM answer floppy from args on VM {{ vm_vmid }}"
-  when:
-    - (_cleanup_config.json.data.args | default('')) | length > 0
-    - "'autopilot-unattend-' in (_cleanup_config.json.data.args | default(''))"
-    - _proxmox_root_ticket is defined
-    - _proxmox_root_csrf_token is defined
-  block:
-    - name: Compute args string without the floppy token
-      ansible.builtin.set_fact:
-        # Remove the whole `-drive '...autopilot-unattend-<hex>.img'`
-        # substring. Whitespace-tokenizing the args string splits the
-        # quoted drive value into separate words — simple token-filter
-        # would leave an orphan `-drive` behind.
-        _cleaned_args: >-
-          {{ (_cleanup_config.json.data.args | default(''))
-             | regex_replace(" *-drive +'[^']*autopilot-unattend-[0-9a-f]+\\.img[^']*'", '')
-             | trim }}
-
-    - name: "PUT cleaned args (keeping chassis) on VM {{ vm_vmid }}"
-      ansible.builtin.uri:
-        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
-        method: PUT
-        body_format: form-urlencoded
-        body:
-          args: "{{ _cleaned_args }}"
-        headers:
-          Cookie: "PVEAuthCookie={{ _proxmox_root_ticket }}"
-          CSRFPreventionToken: "{{ _proxmox_root_csrf_token }}"
-        validate_certs: "{{ proxmox_validate_certs }}"
-        status_code: [200]
-      when: _cleaned_args | length > 0
-      no_log: true
-
-    - name: "Delete args entirely when the floppy was the only contributor"
-      ansible.builtin.uri:
-        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
-        method: PUT
-        body_format: form-urlencoded
-        body:
-          delete: "args"
-        headers:
-          Cookie: "PVEAuthCookie={{ _proxmox_root_ticket }}"
-          CSRFPreventionToken: "{{ _proxmox_root_csrf_token }}"
-        validate_certs: "{{ proxmox_validate_certs }}"
-        status_code: [200]
-      when: _cleaned_args | length == 0
-      no_log: true

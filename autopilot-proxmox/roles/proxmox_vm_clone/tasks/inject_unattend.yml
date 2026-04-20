@@ -1,0 +1,51 @@
+---
+# Offline-inject the per-VM autounattend.xml into the clone's
+# %WINDIR%\Panther\unattend.xml before first boot.
+#
+# Why this path: Windows 11 25H2's online specialize pass (which runs
+# on every sysprep-d clone boot) does NOT search removable media —
+# setupact.log shows
+#   "Skipping offline-capable module of Microsoft-Windows-Setup-Unattend
+#    when running online"
+# so CDs (sata0) and floppies (-drive if=floppy) are both ignored.
+# The only answer-file location Windows consults in that pass is
+# C:\Windows\Panther — position 3 of the implicit search chain. By
+# writing a fresh per-VM file there (no wcm:action="processed"
+# annotation), Windows re-processes the settings cleanly.
+#
+# We SSH to the Proxmox host as root (same password used for the
+# /access/ticket flow), extract Autounattend.xml from the floppy
+# cache .img, run ntfsfix to clear any dirty bits sysprep left, and
+# guestfish-upload the XML onto the clone's NTFS disk.
+#
+# Prereqs on the Proxmox host: libguestfs-tools + mtools + ntfs-3g.
+
+- name: "Inject per-VM unattend.xml into clone {{ vm_vmid }} Panther"
+  ansible.builtin.shell:
+    cmd: >-
+      sshpass -e ssh -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+        root@{{ proxmox_host }}
+        'set -eu;
+         DISK="$(pvesm path {{ _clone_scsi0_volid }})";
+         if [ -z "$DISK" ]; then echo "no disk path" >&2; exit 1; fi;
+         TMP=$(mktemp -d);
+         trap "rm -rf $TMP" EXIT;
+         mcopy -i {{ _answer_floppy_path | default("") | quote }} ::Autounattend.xml $TMP/unattend.xml;
+         ntfsfix -d $DISK-part4 >/dev/null 2>&1 || true;
+         guestfish --rw -a "$DISK" --
+           run :
+           mount-options rw /dev/sda4 / :
+           mkdir-p /Windows/Panther :
+           upload $TMP/unattend.xml /Windows/Panther/unattend.xml ;
+         echo INJECTED'
+  environment:
+    SSHPASS: "{{ vault_proxmox_root_password }}"
+  delegate_to: localhost
+  register: _panther_inject
+  changed_when: true
+  failed_when: _panther_inject.rc != 0 or 'INJECTED' not in (_panther_inject.stdout | default(''))
+  no_log: false
+  when:
+    - _answer_floppy_path is defined
+    - _answer_floppy_path | default('') | length > 0

@@ -56,15 +56,17 @@
 # routinely ignored when sysprep's online specialize is running.
 - name: Compute the merged args string
   ansible.builtin.set_fact:
-    # Commas inside a -drive/-smbios value must be inside single quotes
-    # — PVE's split_args treats commas as option separators otherwise
-    # and stores only the `-drive` token, dropping the rest silently.
+    # Only chassis -smbios contributes to args. We originally tried
+    # attaching the per-VM answer file as a floppy here, but Windows 11
+    # 25H2's online specialize skips the Microsoft-Windows-Setup-Unattend
+    # module entirely, so CD+floppy drives are never scanned. The
+    # unattend is instead injected directly into the clone's
+    # C:\Windows\Panther\unattend.xml by inject_unattend.yml, which
+    # gets picked up by position 3 of the answer-file search chain.
     _args_tokens: >-
       {{ ([
            (_clone_config.json.data.args | default('') | trim),
            (_smbios_args | default('') | trim),
-           ("-drive 'if=floppy,format=raw,file=" ~ _answer_floppy_path ~ "'"
-              if (_answer_floppy_path | default('') | length > 0) else '')
          ] | reject('equalto', '') | list) }}
 
 - name: Assemble args value
