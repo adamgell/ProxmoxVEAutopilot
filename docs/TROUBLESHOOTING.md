@@ -156,6 +156,124 @@ The test proves *bind + OU visibility*. It does **not** prove the account has "j
 
 **Fix:** Either edit the referencing sequence/step to stop pointing at the credential, or delete the VMs first. Then retry the delete.
 
+## Provision fails with "chassis-type binary ... is not present"
+
+**Symptom:** Provisioning a VM returns a 400 with one of these three messages. The exact wording tells you which fix to apply — the app runs all three diagnostics before blaming you for missing files.
+
+### A. Storage doesn't allow `snippets`
+
+```
+Proxmox storage 'local' does not allow the 'snippets' content type
+(allowed: backup,iso,vztmpl). Enable it on the Proxmox host...
+```
+
+**Cause:** the `local` (or whichever) storage is configured without `snippets` in its `content` list, so Proxmox hides any snippet volumes there.
+
+**Fix:** on the Proxmox host, run the exact command the error printed — it already includes your existing types plus `snippets`:
+
+```bash
+pvesm set local --content backup,iso,import,vztmpl,snippets
+```
+
+### B. API token missing `Datastore.Allocate`
+
+```
+The API token cannot list snippets on storage 'local': it is missing
+the 'Datastore.Allocate' privilege, which Proxmox requires for
+snippet volumes (see PVE::Storage::check_volume_access)...
+```
+
+**Cause:** Proxmox's content listing silently filters out `snippets` entries unless the caller has `Datastore.Allocate` on the storage. `Datastore.AllocateSpace` + `Datastore.Audit` are *not* enough — snippets can run as hookscripts, so Proxmox holds them to a higher bar.
+
+**Fix:** add the privilege to your role (covers every storage), or grant a datastore-admin role scoped to just that storage:
+
+```bash
+# Option 1 — amend the shared role:
+pveum role modify AutopilotProvisioner -privs \
+  +Datastore.Allocate  # plus whatever else is already set
+
+# Option 2 — scope an admin role to one storage:
+pveum acl modify /storage/local \
+  -user autopilot@pve -role PVEDatastoreAdmin
+```
+
+### C. File isn't seeded on the node
+
+```
+autopilot-chassis-type-35.bin is not present on Proxmox node 'pve2'
+(storage 'local', content 'snippets'). Seed it on the node...
+```
+
+**Cause:** storage and token are both fine, but the specific binary QEMU is about to reference isn't in `/var/lib/vz/snippets/` on that node. The app can't drop it via the API — Proxmox's `/upload` endpoint only accepts `iso`, `vztmpl`, and `import` content types.
+
+**Fix:** seed the binary on the target node using the helper script:
+
+```bash
+scp autopilot-proxmox/scripts/seed_chassis_binaries.py root@<node>:/tmp/
+ssh root@<node> 'python3 /tmp/seed_chassis_binaries.py'
+```
+
+With no arguments, the script writes a common set (desktop, laptop, mini-PC, convertible, tablet, all-in-one). Pass specific integers to seed others, e.g. `python3 /tmp/seed_chassis_binaries.py 35 36`. Repeat on every node in your cluster that might host an autopilot VM.
+
+## Provision fails with "only root can set 'args' config"
+
+**Symptom:** the `provision_clone` job fails mid-run with:
+
+```
+Status code was 500 and not [200]: HTTP Error 500: only root can set 'args' config
+```
+
+**Cause:** Proxmox hardcodes the VM `args:` config field to `root@pam` in `PVE::API2::Qemu::check_vm_modify_config_perm`. The chassis-type override feature uses `args:` to pass `-smbios file=<path>` to QEMU, so it needs a `root@pam` API token for that one PUT. Your scoped `autopilot@pve!ansible` token can't cover it regardless of role.
+
+**Fix:** create a `root@pam` API token, add it to `vault.yml`, and restart the container. Full steps in [SETUP.md §5b](SETUP.md#5b-enable-chassis-type-overrides-optional).
+
+In newer builds, requesting a chassis override without the root token configured returns a 400 from the UI **before** the job starts, with the exact remediation commands in the error body. If you're seeing this message mid-run, you're on an older image — `docker compose pull && docker compose up -d` to get the preflight.
+
+## Clone lands at Windows "Select a region" / ignores the answer file
+
+**Symptom:** a cloned VM boots past specialize into interactive OOBE (region, keyboard, account). The per-VM answer ISO on `sata0` was correctly built (check `/answer-isos`), labelled `OEMDRV`, and contains the expected `autounattend.xml`, yet Windows Setup doesn't apply it.
+
+**Cause:** Windows Setup's answer-file search order puts `C:\Windows\Panther\unattend.xml` **above** CD-ROM OEMDRV scanning. When the template was built, Windows copied the install-time `autounattend.xml` into Panther. Clones inherit that file and Windows uses it unconditionally on every boot — the per-VM CD never gets consulted. This shows up as:
+
+- **Sequence 1 (Entra default):** works fine. The template-era Panther copy matches the compiled XML byte-for-byte.
+- **Sequence 2 (AD Domain Join):** fails. The compiled XML adds `<UnattendedJoin>` + rename FirstLogonCommand, but Windows only reads Panther's stale copy.
+
+**Fix:** rebuild the template. The fix for this was landed in `roles/proxmox_template_builder/tasks/sysprep.yml` — it deletes `Panther\unattend.xml` before invoking sysprep so clones fall through to the CD. Any template built on this or a newer image will work correctly.
+
+On the **Build Template** page, click **Build Template**. When the rebuild finishes (~20-30 min), re-try your domain-join provision. If you already have clones stuck in interactive OOBE, delete them — they can't be "fixed in place" since their disks inherited the stale Panther too.
+
+## Domain join fails during OOBE
+
+**Symptom:** the provision job completes, the VM boots to the desktop, but the computer never appears in AD; or Windows shows "trust relationship" errors on first login; or the sequence gets stuck at **Follow guest through 1 reboot(s)**.
+
+**Diagnosis path:**
+
+1. **Check `C:\Windows\Panther\UnattendGC\setupact.log`** on the guest for lines containing `NetJoinDomain` or `DNS_ERROR`. This is the Windows-side truth.
+2. **Check the per-VM answer ISO** on the `/answer-isos` page. Click the row, note the short hash, and confirm the ISO was recent and un-pruned.
+3. **Re-run "Test connection"** on the `domain_join` credential — if it goes red on bind, the password is wrong or expired. Red on OU = the account can't see the OU (typically a delegation issue).
+
+**Common causes:**
+
+| Cause | Fix |
+|---|---|
+| VM can't resolve the domain FQDN. The template's NIC is DHCP by default; your DHCP server must hand out internal DNS. | Add internal DNS servers to your DHCP scope. Temporary fix: `ipconfig /all` inside the VM and verify the resolver points at a DC. |
+| Service account's password expired or was changed without updating the credential. | Rotate in AD, update the credential in the Credentials page. |
+| Delegated rights only cover "create", not "write servicePrincipalName" — fails after join. | Grant the full "Join a computer to the domain" wizard set on the OU. |
+| Clock skew > 5 minutes between guest and DC. | Guests default to UTC (unattend line `<TimeZone>UTC</TimeZone>`); make sure DCs also have sane time. |
+| Sequence references a credential that was deleted. | The compile preflight returns a 400 naming the missing credential id — re-point the step at a current credential. |
+
+## `rename_computer` never reboots — job hangs at "Follow guest through N reboot(s)"
+
+**Symptom:** job log shows `Follow guest through 1 reboot(s)` then stalls until `reboot_wait_timeout_seconds` (default 600s) and finally errors with "Guest never dropped the guest agent."
+
+**Cause:** the FirstLogonCommand that invokes `Rename-Computer; shutdown /r /t 5` never executed. Usually one of:
+
+- QEMU guest agent isn't installed in the template → FirstLogonCommands run, but the agent isn't there to signal the reboot. Rebuild the template (`Build Template`), ensuring the VirtIO ISO is attached.
+- The sequence's `local_admin` credential points at a user that OOBE can't create (special characters in the password that aren't escaped properly). Edit the credential and simplify the password for now.
+- Windows OOBE crashed before FirstLogonCommands. Check `C:\Windows\Panther\UnattendGC\setupact.log` — if absent, OOBE didn't finish.
+
+Workaround if you just want the VM created without rename: edit the sequence, toggle the `rename_computer` step to disabled. The job completes with a VM named `autopilot-<vmid>` instead of its serial.
+
 ## Can't find my storage or SDN zone name
 
 ```bash

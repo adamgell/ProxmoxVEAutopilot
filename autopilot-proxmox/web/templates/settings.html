@@ -5,17 +5,41 @@
 {% if saved %}
 <p style="background: #d4edda; border: 1px solid #c3e6cb; padding: 8px; color: #155724;">Settings saved successfully.</p>
 {% endif %}
-<form method="POST" action="/api/settings">
+
+<p style="color:#555; max-width: 820px;">
+  Values under <b>Credentials (vault.yml)</b> are stored on disk in
+  <code>inventory/group_vars/all/vault.yml</code>. Secret fields show
+  <span class="badge badge-green">set</span> when a value is present;
+  leave them blank on save to keep the current value, or type a new
+  one to rotate it. The browser never receives stored secret values.
+</p>
+
+<form method="POST" action="/api/settings" autocomplete="off">
 {% for group in sections %}
 <h3>{{ group.section }}</h3>
 <table>
 {% for f in group.fields %}
 <tr>
-  <td style="width: 250px;"><b>{{ f.label }}</b><br><small style="color:#999;">{{ f.key }}</small></td>
+  <td style="width: 260px;">
+    <b>{{ f.label }}</b>
+    <br><small style="color:#999;">{{ f.key }}</small>
+    {% if f.help %}
+      <br><small style="color:#777;">{{ f.help }}</small>
+    {% endif %}
+  </td>
   <td>
     {% if f.readonly %}
       <input type="text" value="{{ f.value }}" disabled size="60" style="background:#eee; color:#666;">
       <small style="color:#999;">(computed)</small>
+    {% elif f.type == 'secret' %}
+      <input type="password" name="{{ f.key }}" value=""
+             placeholder="{% if f.is_set %}(unchanged — type new to rotate){% else %}required{% endif %}"
+             size="60" autocomplete="new-password">
+      {% if f.is_set %}
+        <span class="badge badge-green">set</span>
+      {% else %}
+        <span class="badge badge-gray">not set</span>
+      {% endif %}
     {% elif f.type == 'bool' %}
       <input type="checkbox" name="{{ f.key }}" {% if f.value %}checked{% endif %}>
     {% elif f.options %}

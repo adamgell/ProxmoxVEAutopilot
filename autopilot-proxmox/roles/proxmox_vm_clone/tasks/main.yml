@@ -131,6 +131,19 @@
     validate_certs: "{{ proxmox_validate_certs }}"
   when: vm_start_after_create | default(true) | bool
 
+# Sequence-compiled steps that trigger a Windows-side reboot (e.g.,
+# rename_computer) bump _causes_reboot_count. For each expected reboot,
+# wait for the agent to drop and come back so later tasks (hash capture,
+# domain health checks) see the guest in its final state.
+- name: "Follow guest through {{ _causes_reboot_count }} reboot(s)"
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_reboot_cycle.yml"
+  loop: "{{ range(0, _causes_reboot_count | default(0) | int) | list }}"
+  loop_control:
+    loop_var: _reboot_idx
+  when:
+    - vm_start_after_create | default(true) | bool
+    - (_causes_reboot_count | default(0) | int) > 0
+
 - name: Report cloned VM
   ansible.builtin.debug:
     msg: >-

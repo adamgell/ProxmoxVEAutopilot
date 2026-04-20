@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Answer ISOs{% endblock %}
+{% block content %}
+<h2>Answer ISO cache</h2>
+
+<p style="color:#555;">
+  Each provisioned sequence compiles to an <code>autounattend.xml</code>
+  that lives on Proxmox storage as
+  <code>autopilot-unattend-&lt;sha256&gt;.iso</code>. Two VMs whose
+  compiled payloads are byte-identical share one ISO. Prune entries
+  that no running VM depends on — they'll be rebuilt on demand the
+  next time a sequence compiles to the same bytes.
+</p>
+
+{% if rows %}
+<form method="POST" action="/answer-isos/prune" onsubmit="return confirm('Delete the selected ISO(s) from Proxmox storage?');">
+<table>
+<thead>
+<tr>
+  <th style="width:20px;"><input type="checkbox" onclick="for (const c of document.querySelectorAll('input[name=hash]')) c.checked = this.checked;"></th>
+  <th>Short hash</th>
+  <th>Volid</th>
+  <th>Compiled</th>
+  <th>Last used</th>
+  <th>Status</th>
+</tr>
+</thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td><input type="checkbox" name="hash" value="{{ r.hash }}"{% if r.in_use %} disabled title="in use by a VM"{% endif %}></td>
+  <td><code>{{ r.short_hash }}</code></td>
+  <td><code>{{ r.volid }}</code></td>
+  <td>{{ r.compiled_at }}</td>
+  <td>{{ r.last_used_at or '—' }}</td>
+  <td>
+    {% if r.in_use %}
+      <span class="badge badge-green">in use</span>
+    {% else %}
+      <span class="badge badge-gray">unused</span>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<p style="margin-top:10px;">
+  <input type="submit" class="action-btn-delete" value="Prune selected">
+</p>
+</form>
+{% else %}
+<p><i>Cache is empty — no per-VM ISOs have been compiled yet.</i></p>
+{% endif %}
+
+{% if error %}
+<p><span class="status-red">Error:</span> {{ error }}</p>
+{% endif %}
+{% endblock %}

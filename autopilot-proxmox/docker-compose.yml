@@ -4,7 +4,10 @@ services:
     container_name: autopilot
     network_mode: host
     volumes:
-      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml:ro
+      # vault.yml is RW so the /settings page can rotate secrets from the
+      # UI. Mode matches vars.yml; restrict the file on the host with
+      # chmod 600 if stricter access is required.
+      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
       - ./output:/app/output
       - autopilot-jobs:/app/jobs

@@ -1,4 +1,21 @@
 ---
+# Clones inherit the template's C:\Windows\Panther\unattend.xml, which
+# Windows consults BEFORE scanning OEMDRV-labeled CDs. If we leave it in
+# place, every clone re-applies the template-build answer file instead
+# of whatever per-VM autounattend.xml we staged on sata0 (domain join,
+# rename_computer, etc. never run). Nuke Panther's answer-file copies
+# before sysprep so the clone's answer-file search falls through to the
+# CD on first boot.
+- name: Delete stale Panther answer files so clones consult the CD
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
+  vars:
+    _exec_command:
+      - "cmd.exe"
+      - "/c"
+      # Suppress stderr — any of these may legitimately be missing.
+      - 'del /f /q "C:\Windows\Panther\unattend.xml" "C:\Windows\Panther\unattend-original.xml" "C:\Windows\System32\Sysprep\unattend.xml" 2>nul & exit /b 0'
+    _exec_timeout: 60
+
 - name: Execute sysprep in guest
   ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/guest_exec.yml"
   vars:

@@ -82,11 +82,35 @@ DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
 
 SETTINGS_SCHEMA = [
+    # source defaults to "vars" for every field. Sections or individual
+    # fields can set source="vault" to read/write inventory/group_vars/
+    # all/vault.yml instead. Secret fields (type="secret") are rendered
+    # as masked inputs, never echo their value to the browser, and
+    # preserve the current value when the form submits blank.
     {"section": "Proxmox Connection", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
         {"key": "proxmox_port", "label": "Port", "type": "number"},
         {"key": "proxmox_node", "label": "Node", "type": "text"},
         {"key": "proxmox_validate_certs", "label": "Validate Certs", "type": "bool"},
+    ]},
+    {"section": "Credentials (vault.yml)", "source": "vault", "fields": [
+        {"key": "vault_proxmox_api_token_id",
+         "label": "Proxmox API Token ID", "type": "text",
+         "help": "e.g. autopilot@pve!ansible"},
+        {"key": "vault_proxmox_api_token_secret",
+         "label": "Proxmox API Token Secret", "type": "secret"},
+        {"key": "vault_proxmox_root_username",
+         "label": "Proxmox Root Username", "type": "text",
+         "help": "Default: root@pam. Used only for the args PUT on VMs that need a chassis override."},
+        {"key": "vault_proxmox_root_password",
+         "label": "Proxmox Root Password", "type": "secret",
+         "help": "Required for chassis-type overrides. Fetched just-in-time as a /access/ticket per provision; never leaves the container."},
+        {"key": "vault_entra_app_id",
+         "label": "Entra App (client) ID", "type": "text"},
+        {"key": "vault_entra_tenant_id",
+         "label": "Entra Tenant ID", "type": "text"},
+        {"key": "vault_entra_app_secret",
+         "label": "Entra App Secret", "type": "secret"},
     ]},
     {"section": "Storage & Networking", "fields": [
         {"key": "proxmox_storage", "label": "VM Storage", "type": "text"},
@@ -138,6 +162,26 @@ def _load_vars():
             data = yaml.safe_load(f)
         return data or {}
     return {}
+
+
+VAULT_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vault.yml"
+
+
+def _load_vault():
+    """Load vault.yml values only. Caller is responsible for never
+    forwarding raw values to the browser — use _vault_presence() to
+    report which keys are set without echoing them."""
+    if VAULT_PATH.exists():
+        with open(VAULT_PATH) as f:
+            data = yaml.safe_load(f)
+        return data or {}
+    return {}
+
+
+def _vault_presence() -> dict[str, bool]:
+    """Return {key: True} for every vault key whose value is non-empty.
+    Safe to render in HTML — carries no secret material."""
+    return {k: bool(v) for k, v in _load_vault().items()}
 
 
 def _fetch_settings_options():
@@ -216,15 +260,17 @@ def _format_yaml_value(value):
     return f'"{s}"' if needs_quotes else s
 
 
-def _save_vars(updates):
-    """Update vars.yml by line-level replacement to preserve comments."""
-    if not VARS_PATH.exists():
-        VARS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        VARS_PATH.write_text("---\n")
+def _save_yaml_file(path: Path, updates: dict) -> None:
+    """Update a YAML file by line-level replacement, preserving comments
+    and any lines for keys outside the update set. Missing keys are
+    appended. Used for both vars.yml and vault.yml."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("---\n")
 
-    lines = VARS_PATH.read_text().splitlines()
-    matched_keys = set()
-    new_lines = []
+    lines = path.read_text().splitlines()
+    matched_keys: set = set()
+    new_lines: list = []
     for line in lines:
         replaced = False
         for key, value in updates.items():
@@ -238,12 +284,22 @@ def _save_vars(updates):
         if not replaced:
             new_lines.append(line)
 
-    # Append keys not already in the file
     for key, value in updates.items():
         if key not in matched_keys:
             new_lines.append(f"{key}: {_format_yaml_value(value)}")
 
-    VARS_PATH.write_text("\n".join(new_lines) + "\n")
+    path.write_text("\n".join(new_lines) + "\n")
+
+
+def _save_vars(updates):
+    """Update vars.yml. Wrapper for backward compat with callers."""
+    _save_yaml_file(VARS_PATH, updates)
+
+
+def _save_vault(updates):
+    """Update vault.yml. Caller must already have stripped out empty
+    secret values that mean 'keep current'."""
+    _save_yaml_file(VAULT_PATH, updates)
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -331,6 +387,43 @@ def _proxmox_api_put(path, data=None):
     resp = requests.put(url, headers=headers, data=data, verify=False, timeout=10)
     resp.raise_for_status()
     return resp.json().get("data", {})
+
+
+def _proxmox_root_ticket_fetch(cfg: dict) -> tuple[str, str]:
+    """Exchange root@pam username/password for a (ticket, CSRF) pair.
+
+    Proxmox tickets are good for ~2 hours by default — enough for a
+    single provision job. The password is read fresh from the loaded
+    config each call, so rotating in vault.yml + restarting the
+    container is sufficient; no caching here.
+    """
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    username = (cfg.get("vault_proxmox_root_username") or "root@pam").strip()
+    # Proxmox /access/ticket demands <user>@<realm>. A bare 'root' gets
+    # a 401 that looks like a wrong-password error; tolerate it by
+    # defaulting to the @pam realm.
+    if "@" not in username:
+        username = f"{username}@pam"
+    password = cfg.get("vault_proxmox_root_password") or ""
+    if not password:
+        raise ValueError("vault_proxmox_root_password is empty")
+    url = f"https://{host}:{port}/api2/json/access/ticket"
+    resp = requests.post(
+        url,
+        data={"username": username, "password": password},
+        verify=cfg.get("proxmox_validate_certs", False),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data") or {}
+    ticket = data.get("ticket")
+    csrf = data.get("CSRFPreventionToken")
+    if not (ticket and csrf):
+        raise RuntimeError(
+            f"/access/ticket response missing ticket or CSRF token: {data!r}"
+        )
+    return ticket, csrf
 
 
 def _proxmox_api_delete(path):
@@ -705,25 +798,43 @@ async def job_detail_page(request: Request, job_id: str):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, saved: str = ""):
-    current = _load_vars()
+    current_vars = _load_vars()
+    vault_present = _vault_presence()
     options = _fetch_settings_options()
-    # Build schema with current values, readonly flag, and dropdown options
     sections = []
     for group in SETTINGS_SCHEMA:
+        source = group.get("source", "vars")
         fields = []
         for f in group["fields"]:
-            val = current.get(f["key"], "")
+            key = f["key"]
+            if source == "vault":
+                # Secret-safe: never surface the actual value. The UI
+                # only learns whether each key has something set.
+                fields.append({
+                    **f,
+                    "source": "vault",
+                    "value": "",
+                    "is_set": vault_present.get(key, False),
+                    "readonly": False,
+                    "options": [],
+                    "labels": {},
+                })
+                continue
+            val = current_vars.get(key, "")
             is_template = isinstance(val, str) and "{{" in str(val)
-            field_options = options.get(f["key"], [])
-            labels = options.get(f"{f['key']}_labels", {})
+            field_options = options.get(key, [])
+            labels = options.get(f"{key}_labels", {})
             fields.append({
                 **f,
+                "source": "vars",
                 "value": val,
+                "is_set": bool(val),
                 "readonly": is_template,
                 "options": field_options,
                 "labels": labels,
             })
-        sections.append({"section": group["section"], "fields": fields})
+        sections.append({"section": group["section"], "fields": fields,
+                         "source": source})
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "sections": sections,
@@ -778,30 +889,48 @@ async def node_options(node: str):
 @app.post("/api/settings")
 async def save_settings(request: Request):
     form = await request.form()
-    current = _load_vars()
-    updates = {}
+    current_vars = _load_vars()
+    vars_updates: dict = {}
+    vault_updates: dict = {}
     for group in SETTINGS_SCHEMA:
+        source = group.get("source", "vars")
         for f in group["fields"]:
             key = f["key"]
-            # Skip Jinja2 template values
-            cur_val = current.get(key, "")
+            ftype = f["type"]
+
+            if source == "vault":
+                # Secret-safe update semantics: blank input keeps the
+                # current value. Only non-empty submissions change the
+                # file. This matches the credential edit flow operators
+                # are already used to.
+                raw = form.get(key, "")
+                if isinstance(raw, str) and raw.strip() != "":
+                    vault_updates[key] = raw
+                continue
+
+            # Skip Jinja2 template values — they're computed in vars.yml.
+            cur_val = current_vars.get(key, "")
             if isinstance(cur_val, str) and "{{" in str(cur_val):
                 continue
-            if f["type"] == "bool":
-                updates[key] = key in form
-            elif f["type"] == "number":
+            if ftype == "bool":
+                vars_updates[key] = key in form
+            elif ftype == "number":
                 raw = form.get(key, "")
                 if raw == "" or raw == "null":
-                    updates[key] = None
+                    vars_updates[key] = None
                 else:
                     try:
-                        updates[key] = int(raw)
+                        vars_updates[key] = int(raw)
                     except ValueError:
-                        updates[key] = raw
+                        vars_updates[key] = raw
             else:
                 val = form.get(key, "")
-                updates[key] = val if val != "null" and val != "" else None
-    _save_vars(updates)
+                vars_updates[key] = val if val not in ("null", "") else None
+
+    if vars_updates:
+        _save_vars(vars_updates)
+    if vault_updates:
+        _save_vault(vault_updates)
     return RedirectResponse("/settings?saved=1", status_code=303)
 
 
@@ -956,20 +1085,63 @@ async def start_provision(
     if _prof and _prof.get("chassis_type"):
         _chassis_types_to_stage.add(int(_prof["chassis_type"]))
 
-    # Fail-fast on upload errors: if the binary doesn't land on the
-    # Proxmox host, Ansible will still emit `args: -smbios file=<missing>`
-    # and QEMU will fail to start the VM with a confusing "cannot open"
-    # error. Much better to surface the real cause as a 502 here.
+    # Fail-fast if a chassis-type binary isn't staged on the Proxmox
+    # host: otherwise Ansible will emit `args: -smbios file=<missing>`
+    # and QEMU fails to start the VM with a confusing "cannot open".
+    # Surface the real cause + seed instructions as a 400 here.
     from web import proxmox_snippets
     for _ct in _chassis_types_to_stage:
         try:
-            proxmox_snippets.ensure_chassis_type_binary(
+            proxmox_snippets.require_chassis_type_binary(
                 node=_node, storage=_snippets_storage, chassis_type=_ct,
             )
+        except proxmox_snippets.ChassisBinaryMissing as _e:
+            raise HTTPException(status_code=400, detail=str(_e)) from _e
         except Exception as _e:
             raise HTTPException(
                 status_code=502,
-                detail=f"chassis-type binary upload failed for type {_ct}: {_e}",
+                detail=f"could not query chassis-type binary for type {_ct}: {_e}",
+            ) from _e
+
+    # Proxmox hardcodes 'args' as root-only (PVE::API2::Qemu
+    # check_vm_modify_config_perm: literal eq match against 'root@pam').
+    # API tokens — even root@pam!<name> with privsep=0 — never pass that
+    # check because their authuser carries the token suffix. The only
+    # way to PUT args is a /access/ticket response, which requires a
+    # password. Preflight the password is set, then fetch the ticket.
+    _proxmox_root_ticket: Optional[str] = None
+    _proxmox_root_csrf_token: Optional[str] = None
+    if _chassis_types_to_stage:
+        _root_pw = cfg.get("vault_proxmox_root_password", "")
+        if not _root_pw:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Chassis-type override requires setting QEMU 'args', "
+                    "which Proxmox restricts to root@pam password auth "
+                    "(API tokens are rejected by PVE's literal eq check "
+                    "against 'root@pam'). Set vault_proxmox_root_password "
+                    "in vault.yml and restart the container. The password "
+                    "is used for a just-in-time /access/ticket call per "
+                    "provision; the ticket lives 2h and is passed to "
+                    "Ansible only for the single PUT that writes 'args'.\n"
+                    "See docs/SETUP.md §5b for details. To provision "
+                    "without a chassis override, pick an OEM profile "
+                    "whose chassis_type is null and leave the override "
+                    "blank."
+                ),
+            )
+        try:
+            _proxmox_root_ticket, _proxmox_root_csrf_token = \
+                _proxmox_root_ticket_fetch(cfg)
+        except Exception as _e:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Could not obtain a root@pam ticket from Proxmox: "
+                    f"{_e}. Check vault_proxmox_root_username "
+                    f"(default 'root@pam') and vault_proxmox_root_password."
+                ),
             ) from _e
 
     # Build the common -e overrides shared between single and multi paths.
@@ -996,12 +1168,23 @@ async def start_provision(
 
     # Resolve sequence → Ansible vars (spec §12 precedence).
     resolved_vars: dict = {}
+    _answer_iso_volid: Optional[str] = None
+    _causes_reboot_count = 0
     if sequence_id:
         seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
         if seq is None:
             raise HTTPException(404, f"sequence {sequence_id} not found")
+
+        # Resolver: lazy-decrypts credentials as compile visits steps
+        # that reference them. Plaintext never lands on resolved_vars.
+        def _resolve_cred(cid: int):
+            rec = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cid)
+            return rec["payload"] if rec else None
+
         try:
-            compiled = sequence_compiler.compile(seq)
+            compiled = sequence_compiler.compile(
+                seq, resolve_credential=_resolve_cred,
+            )
         except sequence_compiler.CompilerError as e:
             raise HTTPException(400, f"sequence compile failed: {e}")
         # UI form fields the operator may have filled in as overrides.
@@ -1014,6 +1197,41 @@ async def start_provision(
             vars_yml=_load_vars(),
         )
 
+        # Compile to a per-VM unattend and cache the ISO. Any sequence
+        # that touches unattend blocks or adds first_logon_commands will
+        # produce a distinct hash; sequences whose only effects are
+        # ansible_vars compile to bytes identical to the static
+        # autounattend.iso (the Entra-default regression pin).
+        from web import unattend_renderer, answer_iso_cache
+        _unattend_xml = unattend_renderer.render_unattend(compiled)
+        try:
+            _answer_iso_volid = answer_iso_cache.ensure_iso(
+                db_path=SEQUENCES_DB,
+                unattend_bytes=_unattend_xml.encode("utf-8"),
+                proxmox_config=cfg,
+                proxmox_api_get=_proxmox_api,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"answer-ISO build/upload failed: {e}",
+            ) from e
+        _causes_reboot_count = compiled.causes_reboot_count
+
+    # Sequence-driven extras: per-VM answer ISO + reboot-cycle count +
+    # root ticket for the args PUT. All harmless when absent so we only
+    # emit them when the provision actually needs them.
+    _seq_extras: list[str] = []
+    if _answer_iso_volid:
+        _seq_extras += ["-e", f"_answer_iso_volid={_answer_iso_volid}"]
+    if _causes_reboot_count > 0:
+        _seq_extras += ["-e", f"_causes_reboot_count={_causes_reboot_count}"]
+    if _proxmox_root_ticket and _proxmox_root_csrf_token:
+        _seq_extras += [
+            "-e", f"_proxmox_root_ticket={_proxmox_root_ticket}",
+            "-e", f"_proxmox_root_csrf_token={_proxmox_root_csrf_token}",
+        ]
+
     if count <= 1:
         cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]
         # Only emit the form profile if the operator actually set one; a
@@ -1023,6 +1241,7 @@ async def start_provision(
         cmd += ["-e", "vm_count=1"] + _overrides()
         if chassis_type_override and int(chassis_type_override) > 0:
             cmd += ["-e", f"chassis_type_override={int(chassis_type_override)}"]
+        cmd += _seq_extras
         # Collect keys already present in cmd so sequence-compiled vars don't
         # stomp them (form/_overrides() win per spec §12).
         existing_keys = _keys_in_extra_args(cmd)
@@ -1039,7 +1258,7 @@ async def start_provision(
     playbook = shlex.quote(str(PLAYBOOK_DIR / "provision_clone.yml"))
     safe_profile = shlex.quote(profile)
 
-    extra_tokens = " ".join(shlex.quote(t) for t in _overrides())
+    extra_tokens = " ".join(shlex.quote(t) for t in _overrides() + _seq_extras)
 
     # Append resolved sequence vars without duplicating keys already carried
     # by the form profile or _overrides(). Only lock out vm_oem_profile when
@@ -2765,6 +2984,92 @@ def api_sequences_delete(seq_id: int):
             "vmids": e.vmids,
         })
     return {"ok": True}
+
+
+def _referenced_iso_volids() -> set[str]:
+    """Return every answer-ISO volid currently referenced by a VM config
+    on any autopilot-tagged VM. Non-fatal on API errors (treats those as
+    'no references found' so pruning doesn't get permanently blocked by
+    a flaky cluster query)."""
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        vms = _proxmox_api(f"/nodes/{node}/qemu") or []
+    except Exception:
+        return set()
+    refs: set[str] = set()
+    for vm in vms:
+        vmid = vm.get("vmid")
+        if vmid is None:
+            continue
+        try:
+            conf = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
+        except Exception:
+            continue
+        # Any ide*/sata* pointing at an autopilot-unattend-*.iso counts.
+        for key, value in conf.items():
+            if not isinstance(value, str):
+                continue
+            if "autopilot-unattend-" in value and ".iso" in value:
+                # Value shape: "isos:iso/autopilot-unattend-<h>.iso,media=cdrom"
+                # Strip the trailing options to get just the volid.
+                volid = value.split(",", 1)[0].strip()
+                refs.add(volid)
+    return refs
+
+
+@app.get("/answer-isos", response_class=HTMLResponse)
+def page_answer_isos(request: Request, error: str = ""):
+    from web import answer_iso_cache
+    rows = answer_iso_cache.list_cache(
+        SEQUENCES_DB, in_use_volids=_referenced_iso_volids(),
+    )
+    return templates.TemplateResponse("answer_isos.html", {
+        "request": request, "rows": rows, "error": error,
+    })
+
+
+@app.post("/answer-isos/prune")
+async def submit_answer_isos_prune(request: Request):
+    form = await request.form()
+    hashes = form.getlist("hash") if hasattr(form, "getlist") else [form.get("hash")]
+    hashes = [h for h in hashes if h]
+    if not hashes:
+        return RedirectResponse("/answer-isos", status_code=303)
+
+    from web import answer_iso_cache
+    cfg = _load_proxmox_config()
+    try:
+        answer_iso_cache.prune(
+            db_path=SEQUENCES_DB, hashes_to_delete=hashes,
+            proxmox_config=cfg, proxmox_api_delete=_proxmox_api_delete,
+        )
+    except Exception as e:
+        return _redirect_with_error("/answer-isos", str(e))
+    return RedirectResponse("/answer-isos", status_code=303)
+
+
+@app.get("/api/answer-isos")
+def api_answer_isos_list():
+    from web import answer_iso_cache
+    return answer_iso_cache.list_cache(
+        SEQUENCES_DB, in_use_volids=_referenced_iso_volids(),
+    )
+
+
+@app.post("/api/answer-isos/prune")
+async def api_answer_isos_prune(request: Request):
+    body = await request.json()
+    hashes = body.get("hashes") or []
+    if not isinstance(hashes, list):
+        raise HTTPException(400, "body.hashes must be a list")
+    from web import answer_iso_cache
+    cfg = _load_proxmox_config()
+    removed = answer_iso_cache.prune(
+        db_path=SEQUENCES_DB, hashes_to_delete=hashes,
+        proxmox_config=cfg, proxmox_api_delete=_proxmox_api_delete,
+    )
+    return {"removed": removed}
 
 
 @app.get("/credentials", response_class=HTMLResponse)

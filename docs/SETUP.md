@@ -33,10 +33,13 @@ VM.Config.Options,VM.Audit,VM.PowerMgmt,VM.Console,\
 VM.Snapshot,VM.Snapshot.Rollback,\
 VM.GuestAgent.Audit,VM.GuestAgent.FileRead,VM.GuestAgent.FileWrite,\
 VM.GuestAgent.FileSystemMgmt,VM.GuestAgent.Unrestricted,\
-Datastore.AllocateSpace,Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
+Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,\
+Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
 ```
 
 > The backslashes keep the command on one logical line. If you remove them, put the whole thing on one line.
+
+> `Datastore.Allocate` is required for OEM profiles / sequences that set a **chassis type** override. Proxmox filters `snippets` volumes out of content listings unless the caller has this privilege (see [TROUBLESHOOTING](TROUBLESHOOTING.md#provision-fails-with-chassis-type-binary--is-not-present)). If you upgraded from an older setup and don't use chassis overrides, you can leave it off — but adding it is harmless.
 
 ### 1b. Create the service user and token
 
@@ -180,6 +183,63 @@ Expect 20-30 minutes. Watch **Jobs** for live logs.
 
 If it hangs on "waiting for boot" see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#template-build-hangs-at-waiting-for-boot).
 
+## 5b. Enable chassis-type overrides (optional)
+
+Skip this section if none of your OEM profiles or sequences set a **chassis type** override. You can tell by checking `autopilot-proxmox/files/oem_profiles.yml` — if every profile you use has `chassis_type: null`, you're good.
+
+If you do use chassis-type overrides (e.g. `chassis_type: 10` for a laptop, `31` for a convertible, `35` for a mini-PC), QEMU needs two things the Proxmox API can't normally give us:
+
+1. A small SMBIOS Type 3 binary for each chassis type, on `/var/lib/vz/snippets/` on every node that might host the VM.
+2. A root@pam API token, because Proxmox hardcodes the VM `args:` config field to root (`args` is passed straight to QEMU and can expose host resources, so Proxmox denies it to any non-root token regardless of role).
+
+### Seed the chassis binaries on each Proxmox node
+
+```bash
+# From a machine that has the repo checked out:
+scp autopilot-proxmox/scripts/seed_chassis_binaries.py root@<node>:/tmp/
+
+# On the Proxmox node:
+ssh root@<node> 'python3 /tmp/seed_chassis_binaries.py'
+ssh root@<node> 'pvesm set local --content backup,iso,import,vztmpl,snippets'
+```
+
+The script writes binaries for a common set of chassis types (desktop, laptop, mini-PC, convertible, tablet, all-in-one, …) into `/var/lib/vz/snippets/`. Pass explicit types (`python3 /tmp/seed_chassis_binaries.py 3 10 31`) to seed only specific ones.
+
+### Create a root@pam API token scoped to the `args` PUT
+
+On the Proxmox host:
+
+```bash
+pveum user token add root@pam autopilot-args --privsep=0 \
+    --comment "Autopilot args field only"
+```
+
+Proxmox prints the secret **once**. Add both halves to `inventory/group_vars/all/vault.yml`:
+
+```yaml
+vault_proxmox_root_api_token_id: "root@pam!autopilot-args"
+vault_proxmox_root_api_token_secret: "<the-secret-you-just-got>"
+```
+
+Then restart the container (`docker compose up -d`). If you request a provision with a chassis override and haven't configured this token, the UI returns a 400 telling you exactly what's missing; the job never starts.
+
+> **Blast radius.** `root@pam` tokens bypass Proxmox's role-based perm model entirely — a leaked secret is equivalent to root on the cluster. Autopilot uses this token only for the one PUT that writes `args` on a freshly cloned VM. Rotate the token if the vault is ever exposed:
+> ```bash
+> pveum user token remove root@pam autopilot-args
+> pveum user token add root@pam autopilot-args --privsep=0
+> ```
+
+### Verify from the Docker host
+
+```bash
+curl -k https://<PROXMOX_IP>:8006/api2/json/version \
+  -H "Authorization: PVEAPIToken=root@pam!autopilot-args=<SECRET>"
+```
+
+A 200 means the token works. 401 means the secret is wrong.
+
+If you later add a new Proxmox node, repeat the seeding there. If provisioning returns a `chassis-type binary ... is not present` error, the message tells you exactly which of **(a)** storage config, **(b)** token privilege, or **(c)** missing file is the cause.
+
 ## 6. Provision devices and capture hashes
 
 Once the template exists:
@@ -318,6 +378,47 @@ ubuntu_per_vm_seed_pattern: "isos:iso/ubuntu-per-vm-{{ vmid }}.iso"
 ```
 
 Ubuntu-specific accepted risk: the compiled `autoinstall.yaml` on the seed ISO contains the local-admin password hash (via `crypt.SHA512`) and, for the LinuxESP sequence, the base64-encoded MDE onboarding script. Standard cloud-init behaviour strips these after install. Mitigation: use a lab-only onboarding script and rotate the `credential_key` if you suspect exposure.
+
+### Provisioning a domain-joined VM (walkthrough)
+
+Concrete steps using the seeded **AD Domain Join — Local Admin** sequence.
+
+1. **Create a delegated AD account.** In ADUC, create a user (e.g. `svc_autopilot_join`) and delegate "Join a computer to the domain" on the target OU (right-click OU → Delegate Control). Set a strong password.
+2. **Credentials page → New credential → AD domain join.** Fill in:
+   - Name: `home.gell.com join` (anything memorable)
+   - Domain FQDN: `home.gell.com`
+   - Username: `home.gell.com\svc_autopilot_join` (or `svc_autopilot_join@home.gell.com`)
+   - Password: the one you set
+   - Default OU hint: `OU=Autopilot,DC=home,DC=gell,DC=com` (optional — the step can override this)
+
+   Click **Test connection**. Expect green rows for DNS, connect, bind, rootDSE, and (if you set an OU hint) OU-visible. A red row on bind = wrong credentials; a red row on OU = the account can see the domain but not the OU.
+3. **(Optional) Create a fresh `local_admin` credential** if you don't want the default `Nsta1200!!` password. The seeded sequence already points at `default-local-admin` which uses today's hardcoded credential.
+4. **Sequences page → AD Domain Join — Local Admin → Edit.** In the `join_ad_domain` step:
+   - **Credential:** pick the domain-join credential you just created.
+   - **OU path:** (optional) leave blank to use the credential's hint, or override here per-sequence. The step value wins.
+5. **Provision page.** Pick an OEM profile (e.g. `lenovo-t14`). In the **Task Sequence** dropdown pick **AD Domain Join — Local Admin**. Set Count, Cores, Memory, Disk as normal. Submit.
+6. **Jobs page.** Watch the log. You should see:
+   - `Compiler resolved sequence` — compile succeeded, credentials decrypted inline.
+   - `Clone template to new VM ...` — API clone fired.
+   - `Update cloned VM configuration` — sata0 is now pointing at the per-VM answer ISO (see `/answer-isos` for the hash).
+   - `Start VM`.
+   - `Follow guest through 1 reboot(s)` — the `rename_computer` reboot waiter engaging.
+   - `Cloned VM ... UUID=... Disk Serial=...` — done.
+7. **Verify on the domain controller:** the new computer object should appear in the OU you set. `Get-ADComputer -Identity <serial>` from any domain-joined machine.
+
+If step 6 hangs or errors, see [TROUBLESHOOTING.md — Domain join fails during OOBE](TROUBLESHOOTING.md#domain-join-fails-during-oobe).
+
+### Answer-ISO cache (`/answer-isos`)
+
+Every provisioned sequence compiles to an `autounattend.xml` whose bytes depend on the sequence + resolved credentials. The web app content-addresses these payloads on Proxmox ISO storage as `autopilot-unattend-<first-16-hex-of-sha256>.iso`. Two VMs whose compiled payloads are byte-identical (same sequence + same decrypted creds) share one ISO; changing the sequence or the credential creates a new entry.
+
+The `/answer-isos` page lists every cached ISO with:
+- Short hash (the filename fragment)
+- Volid (`isos:iso/autopilot-unattend-<hash>.iso`)
+- Compiled / last-used timestamps
+- **in use** badge when any live VM still references the volid on ide*/sata*.
+
+Select one or more **unused** entries and click **Prune selected** to delete both the cache row and the underlying ISO from storage. In-use rows are checkbox-disabled to prevent yanking an ISO out from a VM still booting. Pruned entries get rebuilt automatically the next time a sequence compiles to the same bytes — there's no harm in being aggressive with the cleanup.
 
 ## Appendix A — Unattended install internals
 
