@@ -27,3 +27,12 @@
   ansible.builtin.include_role:
     name: hash_capture
   when: capture_hardware_hash | default(true) | bool
+
+# Windows has consumed the answer floppy by this point (specialize,
+# OOBE, FirstLogonCommands have all run). Strip it from args and
+# detach the template's baked-in sata0 CD-ROM so the VM presents a
+# clean device list. This doesn't affect the on-host .img — it
+# remains in the content-addressed cache and is shared by any VM
+# that compiled to the same bytes.
+- name: "Strip per-VM answer media from VM {{ vm_vmid }} now that provisioning is done"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/proxmox_vm_clone/tasks/cleanup_answer_media.yml"

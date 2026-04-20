@@ -1326,24 +1326,26 @@ async def start_provision(
     # password. Preflight the password is set, then fetch the ticket.
     _proxmox_root_ticket: Optional[str] = None
     _proxmox_root_csrf_token: Optional[str] = None
-    if _chassis_types_to_stage:
+    # The args PUT is needed for both chassis-type overrides (SMBIOS
+    # file passthrough) and sequence-based provisions (per-VM answer
+    # floppy attachment). Either path triggers the root@pam ticket
+    # flow; both share the same vault_proxmox_root_password.
+    if _chassis_types_to_stage or sequence_id:
         _root_pw = cfg.get("vault_proxmox_root_password", "")
         if not _root_pw:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Chassis-type override requires setting QEMU 'args', "
+                    "This provision needs the QEMU 'args' field set "
+                    "(chassis-type override and/or per-VM answer floppy), "
                     "which Proxmox restricts to root@pam password auth "
                     "(API tokens are rejected by PVE's literal eq check "
                     "against 'root@pam'). Set vault_proxmox_root_password "
-                    "in vault.yml and restart the container. The password "
-                    "is used for a just-in-time /access/ticket call per "
-                    "provision; the ticket lives 2h and is passed to "
-                    "Ansible only for the single PUT that writes 'args'.\n"
-                    "See docs/SETUP.md §5b for details. To provision "
-                    "without a chassis override, pick an OEM profile "
-                    "whose chassis_type is null and leave the override "
-                    "blank."
+                    "in vault.yml (Settings → Credentials) and restart the "
+                    "container. The password drives a just-in-time "
+                    "/access/ticket per provision; the ticket lives 2h "
+                    "and is only used for the single PUT that writes "
+                    "'args'. See docs/SETUP.md §5b for details."
                 ),
             )
         try:
@@ -1383,7 +1385,7 @@ async def start_provision(
 
     # Resolve sequence → Ansible vars (spec §12 precedence).
     resolved_vars: dict = {}
-    _answer_iso_volid: Optional[str] = None
+    _answer_floppy_path: Optional[str] = None
     _causes_reboot_count = 0
     if sequence_id:
         seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
@@ -1402,43 +1404,57 @@ async def start_provision(
             )
         except sequence_compiler.CompilerError as e:
             raise HTTPException(400, f"sequence compile failed: {e}")
-        # UI form fields the operator may have filled in as overrides.
-        form_overrides = {
-            "vm_oem_profile": profile,  # provision form's 'profile' field
-        }
+        form_overrides = {"vm_oem_profile": profile}
         resolved_vars = sequence_compiler.resolve_provision_vars(
             compiled,
             form_overrides=form_overrides,
             vars_yml=_load_vars(),
         )
 
-        # Compile to a per-VM unattend and cache the ISO. Any sequence
-        # that touches unattend blocks or adds first_logon_commands will
-        # produce a distinct hash; sequences whose only effects are
-        # ansible_vars compile to bytes identical to the static
-        # autounattend.iso (the Entra-default regression pin).
-        from web import unattend_renderer, answer_iso_cache
+        # Compile to a per-VM unattend and materialize it as a FAT12
+        # floppy image on the Proxmox host. Windows Setup on a
+        # sysprep-d clone lands on the floppy (position 4 of the
+        # answer-file search) because position 5 (read-only CD) is
+        # unreliable in online specialize. Two provisions whose
+        # compiled unattend matches byte-for-byte share one floppy.
+        from web import unattend_renderer, answer_floppy_cache
         _unattend_xml = unattend_renderer.render_unattend(compiled)
+        _root_user = cfg.get("vault_proxmox_root_username") or "root@pam"
+        _root_password = cfg.get("vault_proxmox_root_password") or ""
+        _root_ssh_user = _root_user.split("@", 1)[0] or "root"
+        if not _root_password:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Sequence-based provisioning needs vault_proxmox_root_password "
+                    "set in vault.yml (Settings → Credentials). The web backend "
+                    "SSHes to the Proxmox host as root to build the per-VM "
+                    "answer floppy and to set the VM's args field."
+                ),
+            )
+        _ssh_runner = answer_floppy_cache.make_sshpass_runner(
+            host=cfg.get("proxmox_host", ""),
+            password=_root_password,
+            user=_root_ssh_user,
+        )
         try:
-            _answer_iso_volid = answer_iso_cache.ensure_iso(
+            _answer_floppy_path = answer_floppy_cache.ensure_floppy(
                 db_path=SEQUENCES_DB,
                 unattend_bytes=_unattend_xml.encode("utf-8"),
-                proxmox_config=cfg,
-                proxmox_api_get=_proxmox_api,
+                ssh=_ssh_runner,
             )
         except Exception as e:
             raise HTTPException(
                 status_code=502,
-                detail=f"answer-ISO build/upload failed: {e}",
+                detail=f"answer-floppy build failed: {e}",
             ) from e
         _causes_reboot_count = compiled.causes_reboot_count
 
-    # Sequence-driven extras: per-VM answer ISO + reboot-cycle count +
-    # root ticket for the args PUT. All harmless when absent so we only
-    # emit them when the provision actually needs them.
+    # Sequence-driven extras: per-VM answer floppy path + reboot-cycle
+    # count + root ticket for the args PUT.
     _seq_extras: list[str] = []
-    if _answer_iso_volid:
-        _seq_extras += ["-e", f"_answer_iso_volid={_answer_iso_volid}"]
+    if _answer_floppy_path:
+        _seq_extras += ["-e", f"_answer_floppy_path={_answer_floppy_path}"]
     if _causes_reboot_count > 0:
         _seq_extras += ["-e", f"_causes_reboot_count={_causes_reboot_count}"]
     if _proxmox_root_ticket and _proxmox_root_csrf_token:
@@ -3201,11 +3217,10 @@ def api_sequences_delete(seq_id: int):
     return {"ok": True}
 
 
-def _referenced_iso_volids() -> set[str]:
-    """Return every answer-ISO volid currently referenced by a VM config
-    on any autopilot-tagged VM. Non-fatal on API errors (treats those as
-    'no references found' so pruning doesn't get permanently blocked by
-    a flaky cluster query)."""
+def _referenced_answer_floppy_paths() -> set[str]:
+    """Return every per-VM answer-floppy path currently referenced by
+    an ``args: -drive if=floppy,...,file=<path>`` in any autopilot-
+    tagged VM config. Non-fatal on API errors."""
     cfg = _load_proxmox_config()
     node = cfg.get("proxmox_node", "pve")
     try:
@@ -3213,6 +3228,8 @@ def _referenced_iso_volids() -> set[str]:
     except Exception:
         return set()
     refs: set[str] = set()
+    import re
+    pat = re.compile(r"file=(/var/lib/vz/snippets/autopilot-unattend-[0-9a-f]+\.img)")
     for vm in vms:
         vmid = vm.get("vmid")
         if vmid is None:
@@ -3221,23 +3238,34 @@ def _referenced_iso_volids() -> set[str]:
             conf = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
         except Exception:
             continue
-        # Any ide*/sata* pointing at an autopilot-unattend-*.iso counts.
-        for key, value in conf.items():
-            if not isinstance(value, str):
-                continue
-            if "autopilot-unattend-" in value and ".iso" in value:
-                # Value shape: "isos:iso/autopilot-unattend-<h>.iso,media=cdrom"
-                # Strip the trailing options to get just the volid.
-                volid = value.split(",", 1)[0].strip()
-                refs.add(volid)
+        args_str = conf.get("args") or ""
+        for m in pat.finditer(args_str):
+            refs.add(m.group(1))
     return refs
+
+
+def _make_root_ssh_runner():
+    """Construct the SshRunner used by the floppy cache. None when the
+    root password isn't configured (prune/list still work, just without
+    the ability to verify/remove remote files)."""
+    cfg = _load_proxmox_config()
+    pw = cfg.get("vault_proxmox_root_password") or ""
+    if not pw:
+        return None
+    from web import answer_floppy_cache
+    user = (cfg.get("vault_proxmox_root_username") or "root@pam").split("@", 1)[0]
+    return answer_floppy_cache.make_sshpass_runner(
+        host=cfg.get("proxmox_host", ""), password=pw, user=user or "root",
+    )
 
 
 @app.get("/answer-isos", response_class=HTMLResponse)
 def page_answer_isos(request: Request, error: str = ""):
-    from web import answer_iso_cache
-    rows = answer_iso_cache.list_cache(
-        SEQUENCES_DB, in_use_volids=_referenced_iso_volids(),
+    # Route name kept for URL stability; content is the answer-floppy
+    # cache now. The template adapts — the row shape hasn't changed.
+    from web import answer_floppy_cache
+    rows = answer_floppy_cache.list_cache(
+        SEQUENCES_DB, in_use_volids=_referenced_answer_floppy_paths(),
     )
     return templates.TemplateResponse("answer_isos.html", {
         "request": request, "rows": rows, "error": error,
@@ -3252,12 +3280,18 @@ async def submit_answer_isos_prune(request: Request):
     if not hashes:
         return RedirectResponse("/answer-isos", status_code=303)
 
-    from web import answer_iso_cache
-    cfg = _load_proxmox_config()
+    from web import answer_floppy_cache
+    ssh = _make_root_ssh_runner()
+    if ssh is None:
+        return _redirect_with_error(
+            "/answer-isos",
+            "Cannot prune floppies: vault_proxmox_root_password is not set "
+            "(Settings → Credentials). Prune also needs SSH to remove the "
+            ".img files from /var/lib/vz/snippets/ on the Proxmox host.",
+        )
     try:
-        answer_iso_cache.prune(
-            db_path=SEQUENCES_DB, hashes_to_delete=hashes,
-            proxmox_config=cfg, proxmox_api_delete=_proxmox_api_delete,
+        answer_floppy_cache.prune(
+            db_path=SEQUENCES_DB, hashes_to_delete=hashes, ssh=ssh,
         )
     except Exception as e:
         return _redirect_with_error("/answer-isos", str(e))
@@ -3266,9 +3300,9 @@ async def submit_answer_isos_prune(request: Request):
 
 @app.get("/api/answer-isos")
 def api_answer_isos_list():
-    from web import answer_iso_cache
-    return answer_iso_cache.list_cache(
-        SEQUENCES_DB, in_use_volids=_referenced_iso_volids(),
+    from web import answer_floppy_cache
+    return answer_floppy_cache.list_cache(
+        SEQUENCES_DB, in_use_volids=_referenced_answer_floppy_paths(),
     )
 
 
@@ -3278,11 +3312,15 @@ async def api_answer_isos_prune(request: Request):
     hashes = body.get("hashes") or []
     if not isinstance(hashes, list):
         raise HTTPException(400, "body.hashes must be a list")
-    from web import answer_iso_cache
-    cfg = _load_proxmox_config()
-    removed = answer_iso_cache.prune(
-        db_path=SEQUENCES_DB, hashes_to_delete=hashes,
-        proxmox_config=cfg, proxmox_api_delete=_proxmox_api_delete,
+    from web import answer_floppy_cache
+    ssh = _make_root_ssh_runner()
+    if ssh is None:
+        raise HTTPException(
+            400, "vault_proxmox_root_password not set — cannot SSH to "
+            "Proxmox host to remove floppy files.",
+        )
+    removed = answer_floppy_cache.prune(
+        db_path=SEQUENCES_DB, hashes_to_delete=hashes, ssh=ssh,
     )
     return {"removed": removed}
 

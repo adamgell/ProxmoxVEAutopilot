@@ -25,16 +25,6 @@
     _config_body: "{{ _config_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
   when: proxmox_virtio_iso is defined and proxmox_virtio_iso | default('') | length > 0
 
-# When the web backend compiled the sequence into a per-VM answer ISO,
-# the template's baked-in sata0 (pointing at the static autounattend.iso)
-# gets replaced with the hash-addressed ISO so this VM picks up its own
-# unattend. When _answer_iso_volid is absent the clone keeps the
-# template's sata0 untouched — preserves the pre-B.2 code path exactly.
-- name: Swap in per-VM answer ISO on sata0
-  ansible.builtin.set_fact:
-    _config_body: "{{ _config_body | combine({'sata0': _answer_iso_volid + ',media=cdrom'}) }}"
-  when: _answer_iso_volid is defined and _answer_iso_volid | default('') | length > 0
-
 - name: Update cloned VM configuration with lock-contention retry
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
@@ -50,35 +40,49 @@
   delay: "{{ clone_config_delay | default(5) }}"
   until: _config_result.status == 200
 
-# 'args' is hardcoded to root@pam in PVE::API2::Qemu::check_vm_modify_config_perm
-# — literal string match against the authuser, so API tokens (even
-# root@pam!<name> with privsep=0) never pass. The only way is a short-lived
-# ticket obtained via /access/ticket with password auth. The web handler
-# preflights that _proxmox_root_ticket/_proxmox_root_csrf_token are set;
-# an auth failure here means the ticket expired mid-run (unlikely in <2h)
-# or the password rotated out-of-band.
-- name: Apply SMBIOS args via root@pam ticket (required for chassis-type override)
-  when: _smbios_args is defined and _smbios_args | length > 0
-  block:
-    - name: Build merged args string (preserve any existing args on the clone)
-      ansible.builtin.set_fact:
-        _merged_args: >-
-          {{ ((_clone_config.json.data.args | default('')) ~ ' ' ~ _smbios_args) | trim }}
+# QEMU 'args' is hardcoded to root@pam in Proxmox
+# (PVE::API2::Qemu::check_vm_modify_config_perm is a literal eq match
+# against the authuser — API tokens never satisfy it). Build the full
+# args string on the controller, then PUT it once via a /access/ticket
+# cookie. Two contributors may want args set:
+#
+#   _smbios_args         -smbios file=/var/lib/vz/snippets/chassis.bin
+#   _answer_floppy_path  /var/lib/vz/snippets/autopilot-unattend-<hash>.img
+#
+# The floppy drive is the per-VM delivery vehicle for autounattend.xml
+# on sysprep-d clones: Windows Setup's answer-file search lands on
+# removable R/W media (position 4) before falling through to
+# Sysprep\unattend (6) or SystemDrive (7). A CD at position 5 is
+# routinely ignored when sysprep's online specialize is running.
+- name: Compute the merged args string
+  ansible.builtin.set_fact:
+    _args_tokens: >-
+      {{ ([
+           (_clone_config.json.data.args | default('') | trim),
+           (_smbios_args | default('') | trim),
+           ('-drive if=floppy,format=raw,file=' ~ _answer_floppy_path
+              if (_answer_floppy_path | default('') | length > 0) else '')
+         ] | reject('equalto', '') | list) }}
 
-    - name: Update args field via root@pam ticket
-      ansible.builtin.uri:
-        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
-        method: PUT
-        body_format: form-urlencoded
-        body:
-          args: "{{ _merged_args }}"
-        headers:
-          Cookie: "PVEAuthCookie={{ _proxmox_root_ticket }}"
-          CSRFPreventionToken: "{{ _proxmox_root_csrf_token }}"
-        validate_certs: "{{ proxmox_validate_certs }}"
-        status_code: [200]
-      register: _args_result
-      retries: "{{ clone_config_retries | default(6) }}"
-      delay: "{{ clone_config_delay | default(5) }}"
-      until: _args_result.status == 200
-      no_log: true
+- name: Assemble args value
+  ansible.builtin.set_fact:
+    _merged_args: "{{ _args_tokens | join(' ') }}"
+
+- name: Apply args via root@pam ticket
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+    method: PUT
+    body_format: form-urlencoded
+    body:
+      args: "{{ _merged_args }}"
+    headers:
+      Cookie: "PVEAuthCookie={{ _proxmox_root_ticket }}"
+      CSRFPreventionToken: "{{ _proxmox_root_csrf_token }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200]
+  register: _args_result
+  retries: "{{ clone_config_retries | default(6) }}"
+  delay: "{{ clone_config_delay | default(5) }}"
+  until: _args_result.status == 200
+  no_log: true
+  when: _merged_args | default('') | length > 0

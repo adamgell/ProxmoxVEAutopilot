@@ -236,12 +236,15 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
     # in Proxmox), so the mocked config includes it.
     with patch("web.app._load_proxmox_config", return_value={
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+        "proxmox_host": "10.0.0.1",
         "vault_proxmox_root_username": "root@pam",
         "vault_proxmox_root_password": "fake-root-pw",
     }), patch("web.proxmox_snippets.require_chassis_type_binary") as mock_require, \
-         patch("web.answer_iso_cache.ensure_iso",
-               return_value="isos:iso/autopilot-unattend-deadbeefdeadbeef.iso") \
-                    as mock_ensure_iso, \
+         patch("web.answer_floppy_cache.ensure_floppy",
+               return_value="/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img") \
+                    as mock_ensure_floppy, \
+         patch("web.answer_floppy_cache.make_sshpass_runner",
+               return_value=lambda cmd: (0, b"", b"")), \
          patch("web.app._proxmox_root_ticket_fetch",
                return_value=("PVE:root@pam:FAKETICKET",
                              "csrf-value")) as mock_ticket:
@@ -261,10 +264,10 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
     cmd = captured["cmd"]
     assert "chassis_type_override=31" in cmd
     mock_require.assert_called_with(node="pve", storage="local", chassis_type=31)
-    # Sequence compile → unattend ISO was built & wired into the ansible cmd.
-    mock_ensure_iso.assert_called_once()
-    assert "_answer_iso_volid=isos:iso/autopilot-unattend-deadbeefdeadbeef.iso" in cmd
-    # Chassis override → root ticket fetched once & threaded into ansible.
+    # Sequence compile → per-VM answer floppy was built & wired into ansible.
+    mock_ensure_floppy.assert_called_once()
+    assert "_answer_floppy_path=/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img" in cmd
+    # Chassis override OR any sequence → root ticket fetched once.
     mock_ticket.assert_called_once()
     assert "_proxmox_root_ticket=PVE:root@pam:FAKETICKET" in cmd
     assert "_proxmox_root_csrf_token=csrf-value" in cmd
@@ -291,8 +294,8 @@ def test_provision_rejects_chassis_override_without_root_password(app_env):
         # Intentionally no root password.
     }), patch("web.proxmox_snippets.require_chassis_type_binary",
               return_value="/var/lib/vz/snippets/fake.bin"), \
-         patch("web.answer_iso_cache.ensure_iso",
-               return_value="isos:iso/unused.iso"):
+         patch("web.answer_floppy_cache.ensure_floppy",
+               return_value="/var/lib/vz/snippets/unused.img"):
         r = app_env.post("/api/jobs/provision", data={
             "profile": "",
             "count": "1",
@@ -335,8 +338,14 @@ def test_provision_with_rename_computer_passes_reboot_count(app_env):
     from unittest.mock import patch
     with patch("web.app._load_proxmox_config", return_value={
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
-    }), patch("web.answer_iso_cache.ensure_iso",
-              return_value="isos:iso/autopilot-unattend-cafebabecafebabe.iso"):
+        "proxmox_host": "10.0.0.1",
+        "vault_proxmox_root_password": "pw",
+    }), patch("web.answer_floppy_cache.ensure_floppy",
+              return_value="/var/lib/vz/snippets/autopilot-unattend-cafebabecafebabe.img"), \
+         patch("web.answer_floppy_cache.make_sshpass_runner",
+               return_value=lambda cmd: (0, b"", b"")), \
+         patch("web.app._proxmox_root_ticket_fetch",
+               return_value=("T", "C")):
         r = app_env.post("/api/jobs/provision", data={
             "profile": "", "count": "1", "cores": "0", "memory_mb": "0",
             "disk_size_gb": "0", "serial_prefix": "", "group_tag": "",
@@ -345,12 +354,13 @@ def test_provision_with_rename_computer_passes_reboot_count(app_env):
     assert r.status_code == 303
     cmd = captured["cmd"]
     assert "_causes_reboot_count=1" in cmd
-    assert "_answer_iso_volid=isos:iso/autopilot-unattend-cafebabecafebabe.iso" in cmd
+    assert "_answer_floppy_path=/var/lib/vz/snippets/autopilot-unattend-cafebabecafebabe.img" in cmd
 
 
-def test_provision_without_sequence_skips_iso_compile(app_env):
-    """A raw provision with no sequence_id must NOT invoke the ISO cache
-    (backward-compatible path — the template's static sata0 stands)."""
+def test_provision_without_sequence_skips_floppy_compile(app_env):
+    """A raw provision with no sequence_id must NOT invoke the floppy
+    cache (backward-compatible path — template's baked-in sata0 is
+    left alone and no per-VM answer media is built)."""
     from web.app import job_manager
 
     captured = {}
@@ -364,10 +374,8 @@ def test_provision_without_sequence_skips_iso_compile(app_env):
     from unittest.mock import patch
     with patch("web.app._load_proxmox_config", return_value={
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
-    }), patch("web.answer_iso_cache.ensure_iso") as mock_ensure:
-        # Empty profile avoids the chassis-type preflight (an OEM profile
-        # with chassis_type set would try to verify the binary). The
-        # point of this test is the "no sequence_id" branch.
+    }), patch("web.answer_floppy_cache.ensure_floppy") as mock_ensure:
+        # Empty profile avoids the chassis-type preflight.
         r = app_env.post("/api/jobs/provision", data={
             "profile": "", "count": "1", "cores": "0",
             "memory_mb": "0", "disk_size_gb": "0",
@@ -376,7 +384,7 @@ def test_provision_without_sequence_skips_iso_compile(app_env):
     assert r.status_code == 303
     assert mock_ensure.call_count == 0
     cmd = captured["cmd"]
-    assert not any(t.startswith("_answer_iso_volid=") for t in cmd)
+    assert not any(t.startswith("_answer_floppy_path=") for t in cmd)
     assert not any(t.startswith("_causes_reboot_count=") for t in cmd)
 
 
