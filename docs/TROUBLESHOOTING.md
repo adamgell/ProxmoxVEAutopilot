@@ -158,28 +158,62 @@ The test proves *bind + OU visibility*. It does **not** prove the account has "j
 
 ## Provision fails with "chassis-type binary ... is not present"
 
-**Symptom:** Provisioning a VM returns a 400 with a message like:
+**Symptom:** Provisioning a VM returns a 400 with one of these three messages. The exact wording tells you which fix to apply — the app runs all three diagnostics before blaming you for missing files.
+
+### A. Storage doesn't allow `snippets`
+
+```
+Proxmox storage 'local' does not allow the 'snippets' content type
+(allowed: backup,iso,vztmpl). Enable it on the Proxmox host...
+```
+
+**Cause:** the `local` (or whichever) storage is configured without `snippets` in its `content` list, so Proxmox hides any snippet volumes there.
+
+**Fix:** on the Proxmox host, run the exact command the error printed — it already includes your existing types plus `snippets`:
+
+```bash
+pvesm set local --content backup,iso,import,vztmpl,snippets
+```
+
+### B. API token missing `Datastore.Allocate`
+
+```
+The API token cannot list snippets on storage 'local': it is missing
+the 'Datastore.Allocate' privilege, which Proxmox requires for
+snippet volumes (see PVE::Storage::check_volume_access)...
+```
+
+**Cause:** Proxmox's content listing silently filters out `snippets` entries unless the caller has `Datastore.Allocate` on the storage. `Datastore.AllocateSpace` + `Datastore.Audit` are *not* enough — snippets can run as hookscripts, so Proxmox holds them to a higher bar.
+
+**Fix:** add the privilege to your role (covers every storage), or grant a datastore-admin role scoped to just that storage:
+
+```bash
+# Option 1 — amend the shared role:
+pveum role modify AutopilotProvisioner -privs \
+  +Datastore.Allocate  # plus whatever else is already set
+
+# Option 2 — scope an admin role to one storage:
+pveum acl modify /storage/local \
+  -user autopilot@pve -role PVEDatastoreAdmin
+```
+
+### C. File isn't seeded on the node
 
 ```
 autopilot-chassis-type-35.bin is not present on Proxmox node 'pve2'
-(storage 'local', content type 'snippets'). Seed it by running
-scripts/seed_chassis_binaries.py on the Proxmox host...
+(storage 'local', content 'snippets'). Seed it on the node...
 ```
 
-**Cause:** The OEM profile (or a sequence step, or the override field) asks QEMU to present a specific SMBIOS chassis type via `-smbios file=/var/lib/vz/snippets/autopilot-chassis-type-N.bin`, but that file isn't on the target Proxmox node. Proxmox's storage `/upload` API only accepts `iso`, `vztmpl`, and `import` content types, so the autopilot container can't drop `snippets` files over the API — an operator has to seed them on each node.
+**Cause:** storage and token are both fine, but the specific binary QEMU is about to reference isn't in `/var/lib/vz/snippets/` on that node. The app can't drop it via the API — Proxmox's `/upload` endpoint only accepts `iso`, `vztmpl`, and `import` content types.
 
-**Fix:** On each Proxmox node that runs autopilot workloads:
+**Fix:** seed the binary on the target node using the helper script:
 
 ```bash
-# copy the seed script onto the node (from a machine that has the repo)
 scp autopilot-proxmox/scripts/seed_chassis_binaries.py root@<node>:/tmp/
 ssh root@<node> 'python3 /tmp/seed_chassis_binaries.py'
-
-# ensure 'snippets' is listed as an allowed content type on local storage
-ssh root@<node> 'pvesm set local --content backup,iso,import,vztmpl,snippets'
 ```
 
-Running `seed_chassis_binaries.py` with no arguments writes a common set (desktop, laptop, mini-PC, convertible, tablet, all-in-one). Pass specific integers to seed others, e.g. `python3 seed_chassis_binaries.py 35 36`.
+With no arguments, the script writes a common set (desktop, laptop, mini-PC, convertible, tablet, all-in-one). Pass specific integers to seed others, e.g. `python3 /tmp/seed_chassis_binaries.py 35 36`. Repeat on every node in your cluster that might host an autopilot VM.
 
 ## Can't find my storage or SDN zone name
 

@@ -33,10 +33,13 @@ VM.Config.Options,VM.Audit,VM.PowerMgmt,VM.Console,\
 VM.Snapshot,VM.Snapshot.Rollback,\
 VM.GuestAgent.Audit,VM.GuestAgent.FileRead,VM.GuestAgent.FileWrite,\
 VM.GuestAgent.FileSystemMgmt,VM.GuestAgent.Unrestricted,\
-Datastore.AllocateSpace,Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
+Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,\
+Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
 ```
 
 > The backslashes keep the command on one logical line. If you remove them, put the whole thing on one line.
+
+> `Datastore.Allocate` is required for OEM profiles / sequences that set a **chassis type** override. Proxmox filters `snippets` volumes out of content listings unless the caller has this privilege (see [TROUBLESHOOTING](TROUBLESHOOTING.md#provision-fails-with-chassis-type-binary--is-not-present)). If you upgraded from an older setup and don't use chassis overrides, you can leave it off — but adding it is harmless.
 
 ### 1b. Create the service user and token
 
@@ -179,6 +182,27 @@ On the **Build Template** page, click **Build Template**. The playbook:
 Expect 20-30 minutes. Watch **Jobs** for live logs.
 
 If it hangs on "waiting for boot" see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#template-build-hangs-at-waiting-for-boot).
+
+## 5b. Seed chassis-type SMBIOS binaries (optional)
+
+Skip this section if none of your OEM profiles or sequences set a **chassis type** override. You can tell by checking `autopilot-proxmox/files/oem_profiles.yml` — if every profile you use has `chassis_type: null`, you're good.
+
+If you do use chassis-type overrides (e.g. `chassis_type: 10` for a laptop, `31` for a convertible, `35` for a mini-PC), QEMU needs a small SMBIOS Type 3 binary for each requested type, placed on every Proxmox node that might host the VM. Proxmox's upload API only accepts `iso`/`vztmpl`/`import` content types — it rejects `snippets` — so these files have to be seeded directly on the host.
+
+Run this **once per Proxmox node** in your cluster:
+
+```bash
+# From a machine that has the repo checked out:
+scp autopilot-proxmox/scripts/seed_chassis_binaries.py root@<node>:/tmp/
+
+# On the Proxmox node:
+ssh root@<node> 'python3 /tmp/seed_chassis_binaries.py'
+ssh root@<node> 'pvesm set local --content backup,iso,import,vztmpl,snippets'
+```
+
+The script writes binaries for a common set of chassis types (desktop, laptop, mini-PC, convertible, tablet, all-in-one, …) into `/var/lib/vz/snippets/`. Pass explicit types (`python3 /tmp/seed_chassis_binaries.py 3 10 31`) to seed only specific ones.
+
+If you later add a new Proxmox node, repeat the commands there. If provisioning returns a `chassis-type binary ... is not present` error, the message tells you exactly which of **(a)** storage config, **(b)** token privilege, or **(c)** missing file is the cause.
 
 ## 6. Provision devices and capture hashes
 
