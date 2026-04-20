@@ -316,15 +316,28 @@ def test_seed_entra_sequence_is_default_and_produces_hash(db_path, key_path):
         pytest.fail("Entra Join (default) not found")
 
 
-def test_seed_default_sequence_b1_compiles_cleanly(db_path, key_path):
-    """After B.1, the seeded default sequence must compile without error
-    using only the B.1 step-type handlers. Any step not yet implemented
-    must be marked enabled=False in the seed."""
+def test_seed_default_sequences_all_compile_cleanly(db_path, key_path):
+    """After B.2a, all three seeded sequences must compile without error
+    (except the Hybrid stub which is expected to raise StepNotImplemented).
+    The AD sequence compiles clean BUT emits a runonce step with
+    credential_id=0 which would fail at render time — that's by design;
+    the operator wires up a real credential before provisioning."""
     from web import crypto, sequences_db, sequence_compiler
     sequences_db.init(db_path)
     cipher = crypto.Cipher(key_path)
     sequences_db.seed_defaults(db_path, cipher)
-    default_id = sequences_db.get_default_sequence_id(db_path)
-    seq = sequences_db.get_sequence(db_path, default_id)
-    compiled = sequence_compiler.compile(seq)  # must not raise
-    assert compiled.autopilot_enabled is True
+    for s in sequences_db.list_sequences(db_path):
+        seq = sequences_db.get_sequence(db_path, s["id"])
+        if s["name"] == "Hybrid Autopilot (stub)":
+            with pytest.raises(sequence_compiler.StepNotImplemented):
+                sequence_compiler.compile(seq)
+        elif s["name"] == "AD Domain Join — Local Admin":
+            # Compiles (join_ad_domain has credential_id=0 which is truthy
+            # to the compiler — the renderer rejects later).
+            compiled = sequence_compiler.compile(seq)
+            # Should have the RunOnce steps present
+            types = [x["step_type"] for x in compiled.runonce_steps]
+            assert "join_ad_domain" in types
+            assert "rename_computer" in types
+        else:
+            compiled = sequence_compiler.compile(seq)

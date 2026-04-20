@@ -410,9 +410,13 @@ _SEED_SEQUENCES = [
              "enabled": False},
             {"step_type": "join_ad_domain",
              "params": {"credential_id": 0, "ou_path": ""},
-             "enabled": False},
+             # Note: credential_id=0 is a placeholder — operator must edit the sequence
+             # via /sequences/<id>/edit and select a real domain_join credential
+             # before provisioning with this sequence.
+             "enabled": True},
             {"step_type": "rename_computer",
-             "params": {"pattern": "{serial}"}, "enabled": False},
+             "params": {"pattern": "{serial}"},
+             "enabled": True},
         ],
     },
     {

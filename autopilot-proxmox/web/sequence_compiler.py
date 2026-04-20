@@ -93,14 +93,14 @@ def _handle_hybrid_stub(params: dict, out: CompiledSequence) -> None:
 
 def _handle_join_ad_domain(params: dict, out: CompiledSequence) -> None:
     cred_id = params.get("credential_id")
-    if not cred_id:
-        raise CompilerError(
-            "join_ad_domain step requires a credential_id (type=domain_join)"
-        )
+    # We do NOT raise on missing/zero credential_id — the seed ships with
+    # credential_id=0 as a placeholder so operators can discover the
+    # sequence and edit it. The RunOnce renderer reports a clear error
+    # at provision time if the credential still hasn't been set.
     out.runonce_steps.append({
         "step_type": "join_ad_domain",
         "ps_template": _JOIN_AD_DOMAIN_PS,
-        "credential_id": int(cred_id),
+        "credential_id": int(cred_id) if cred_id else 0,
         "params": {"ou_path": params.get("ou_path", "") or ""},
         "causes_reboot": True,
     })

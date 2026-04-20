@@ -327,16 +327,6 @@ def test_disabled_runonce_step_is_skipped():
     assert result.runonce_steps == []
 
 
-def test_join_ad_domain_requires_credential_id():
-    from web import sequence_compiler
-    seq = _make_sequence([
-        {"step_type": "join_ad_domain", "params": {"ou_path": "OU=X"}},
-    ])
-    with pytest.raises(sequence_compiler.CompilerError) as exc:
-        sequence_compiler.compile(seq)
-    assert "credential_id" in str(exc.value)
-
-
 def test_join_ad_domain_allows_empty_ou_path():
     """Empty OU path means 'default computers container'. Not an error."""
     from web import sequence_compiler
