@@ -139,20 +139,49 @@ def _handle_join_ad_domain(params: dict, out: CompiledSequence,
                            resolver: Optional[Callable]) -> None:
     payload = _require_credential(params, resolver, "join_ad_domain")
     domain_fqdn = (payload.get("domain_fqdn") or "").strip()
-    username = (payload.get("username") or "").strip()
+    raw_username = (payload.get("username") or "").strip()
     password = payload.get("password") or ""
-    if not (domain_fqdn and username and password):
+    if not (domain_fqdn and raw_username and password):
         raise CredentialMissing(
             "join_ad_domain credential is missing one of domain_fqdn, "
             "username, password."
         )
+    # Windows UnattendedJoin expects a BARE <Username>. When <Domain>
+    # is also provided, Windows concatenates them as `<Domain>\<Username>`;
+    # a credential stored as `DOMAIN\user` (NetBIOS) or `user@domain`
+    # (UPN) would double up and produce
+    # `home.gell.one\home\adam_admin` → ERROR_BAD_USERNAME (0x89a).
+    # Parse both forms and emit the bare account name.
+    user_domain, user_bare = _split_domain_user(raw_username)
     # Step-level ou_path overrides the credential's ou_hint; blanks fall
     # through.
     ou = (params.get("ou_path") or payload.get("ou_hint") or "").strip()
     out.unattend_blocks["specialize_identification"] = _render_join_domain(
-        domain_fqdn=domain_fqdn, username=username, password=password,
+        domain_fqdn=domain_fqdn,
+        # If the credential username embedded a domain, prefer it for
+        # <Domain> (preserves cross-domain join scenarios). Otherwise
+        # default to the target join domain — UnattendedJoin docs say
+        # the creds typically belong to the joining domain.
+        credential_domain=user_domain or domain_fqdn,
+        username=user_bare,
+        password=password,
         ou_path=ou or None,
     )
+
+
+def _split_domain_user(raw: str) -> tuple[str, str]:
+    """Split a credential username into (domain, bare-username).
+
+    Accepts ``DOMAIN\\user``, ``user@domain``, or a bare ``user``.
+    Returns ``('', 'user')`` when no domain can be extracted.
+    """
+    if "\\" in raw:
+        d, u = raw.split("\\", 1)
+        return d.strip(), u.strip()
+    if "@" in raw:
+        u, d = raw.rsplit("@", 1)
+        return d.strip(), u.strip()
+    return "", raw.strip()
 
 
 def _handle_rename_computer(params: dict, out: CompiledSequence,
@@ -243,7 +272,8 @@ def _render_auto_logon(username: str, password: str) -> str:
     )
 
 
-def _render_join_domain(*, domain_fqdn: str, username: str, password: str,
+def _render_join_domain(*, domain_fqdn: str, credential_domain: str,
+                        username: str, password: str,
                         ou_path: Optional[str]) -> str:
     ou_fragment = (
         f"{_INDENT}  <MachineObjectOU>{_xml_escape(ou_path)}</MachineObjectOU>\n"
@@ -252,7 +282,7 @@ def _render_join_domain(*, domain_fqdn: str, username: str, password: str,
     return (
         f"{_INDENT}<Identification>\n"
         f"{_INDENT}  <Credentials>\n"
-        f"{_INDENT}    <Domain>{_xml_escape(domain_fqdn)}</Domain>\n"
+        f"{_INDENT}    <Domain>{_xml_escape(credential_domain)}</Domain>\n"
         f"{_INDENT}    <Username>{_xml_escape(username)}</Username>\n"
         f"{_INDENT}    <Password>{_xml_escape(password)}</Password>\n"
         f"{_INDENT}  </Credentials>\n"

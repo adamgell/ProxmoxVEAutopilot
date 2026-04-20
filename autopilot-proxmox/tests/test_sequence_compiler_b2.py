@@ -116,6 +116,11 @@ def test_local_admin_errors_when_password_missing():
 
 
 def test_join_ad_domain_emits_identification_block():
+    """A credential stored as ``DOMAIN\\user`` must land in the
+    unattend with Domain=DOMAIN and Username=user separated — Windows
+    concatenates them, so leaving `DOMAIN\\user` in <Username> plus
+    <Domain>target-domain</Domain> produces 'target\\DOMAIN\\user'
+    and djoin fails with ERROR_BAD_USERNAME (0x89a)."""
     from web import sequence_compiler
     seq = _make_sequence([
         {"step_type": "join_ad_domain", "params": {"credential_id": 3}},
@@ -125,12 +130,43 @@ def test_join_ad_domain_emits_identification_block():
             "password": "P@ss", "ou_hint": "OU=Workstations,DC=home,DC=gell,DC=com"},
     }))
     idf = result.unattend_blocks["specialize_identification"]
-    assert "<Domain>home.gell.com</Domain>" in idf
-    assert "<Username>home\\joiner</Username>" in idf
+    # Credential's DOMAIN\user format → Domain=home, Username=joiner.
+    assert "<Domain>home</Domain>" in idf
+    assert "<Username>joiner</Username>" in idf
     assert "<Password>P@ss</Password>" in idf
     assert "<JoinDomain>home.gell.com</JoinDomain>" in idf
     # OU hint fell through when the step didn't set ou_path explicitly.
     assert "<MachineObjectOU>OU=Workstations,DC=home,DC=gell,DC=com</MachineObjectOU>" in idf
+
+
+def test_join_ad_domain_parses_upn_username():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "join_ad_domain", "params": {"credential_id": 3}},
+    ])
+    result = sequence_compiler.compile(seq, resolve_credential=_resolver({
+        3: {"domain_fqdn": "home.gell.com",
+            "username": "joiner@home.gell.com", "password": "P@ss"},
+    }))
+    idf = result.unattend_blocks["specialize_identification"]
+    # UPN form → Domain=home.gell.com, Username=joiner
+    assert "<Domain>home.gell.com</Domain>" in idf
+    assert "<Username>joiner</Username>" in idf
+
+
+def test_join_ad_domain_bare_username_defaults_credential_domain_to_join_domain():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "join_ad_domain", "params": {"credential_id": 3}},
+    ])
+    result = sequence_compiler.compile(seq, resolve_credential=_resolver({
+        3: {"domain_fqdn": "home.gell.com", "username": "joiner",
+            "password": "P@ss"},
+    }))
+    idf = result.unattend_blocks["specialize_identification"]
+    # Bare username → credential <Domain> defaults to the join target.
+    assert "<Domain>home.gell.com</Domain>" in idf
+    assert "<Username>joiner</Username>" in idf
 
 
 def test_join_ad_domain_step_ou_path_overrides_credential_hint():
