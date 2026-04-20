@@ -130,9 +130,11 @@
       VM and retry after diagnosing.
   when: agent_ping.status != 200
 
-- name: Wait for cloud-init to finish applying the seed
-  # `cloud-init status --wait` blocks until cloud-init is in "done" or "error"
-  # state. Running via guest-exec avoids flaky ansible_connection=qemu setups.
+- name: Start `cloud-init status --wait` on the guest
+  # Proxmox agent/exec is async — it spawns the command and returns a pid
+  # immediately. We MUST poll exec-status until exited, otherwise the next
+  # task (sysprep) races with cloud-init's runcmd and can kill big
+  # long-running installs like `apt-get install ubuntu-desktop` mid-dpkg.
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec"
     method: POST
@@ -145,6 +147,26 @@
         - "status"
         - "--wait"
     validate_certs: "{{ proxmox_validate_certs }}"
+  register: cloudinit_wait_start
+
+- name: Poll cloud-init exec-status until it has exited
+  # Big installs (ubuntu-desktop is ~1.5GB) can take 10+ minutes. Retry
+  # up to 240 * 5s = 20 minutes with `failed_when: false` so we capture
+  # the final state instead of erroring mid-poll.
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/agent/exec-status"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    body_format: form-urlencoded
+    body:
+      pid: "{{ cloudinit_wait_start.json.data.pid }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    return_content: yes
+  register: cloudinit_wait_status
+  until: cloudinit_wait_status.json.data.exited | default(0) == 1
+  retries: 240
+  delay: 5
 
 - name: Sysprep — cloud-init clean + machine-id reset + shutdown
   # Reset cloud-init so clones re-run it against their own NoCloud seed.
