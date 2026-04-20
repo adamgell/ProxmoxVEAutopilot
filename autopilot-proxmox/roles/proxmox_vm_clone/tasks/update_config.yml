@@ -15,10 +15,18 @@
       net0: "virtio,bridge={{ proxmox_bridge }},firewall=0{{ ',tag=' + (proxmox_vlan_tag | string) if proxmox_vlan_tag else '' }}"
       tags: "autopilot"
 
-- name: Add SMBIOS1 to config
+# smbios1 stays the legacy path. When the per-VM SMBIOS file is in
+# play (chassis-type override branch) this MUST be skipped — the file
+# already provides Type 1, and combining `-smbios type=1,...` with
+# `-smbios file=<full-smbios>` causes QEMU to drop our file's Type 1
+# in favor of its own Bochs defaults.
+- name: Add SMBIOS1 to config (legacy path, when no per-VM SMBIOS file)
   ansible.builtin.set_fact:
     _config_body: "{{ _config_body | combine({'smbios1': _smbios1_string}) }}"
-  when: _smbios1_string is defined and _smbios1_string | default('') | length > 0
+  when:
+    - _smbios1_string is defined
+    - _smbios1_string | default('') | length > 0
+    - not (_use_per_vm_smbios_file | default(false) | bool)
 
 - name: Add VirtIO ISO to config
   ansible.builtin.set_fact:

@@ -34,13 +34,18 @@ def test_build_type3_chassis_byte_at_offset_5():
 
 def test_build_type3_string_indices_point_into_string_section():
     """Bytes 4, 6, 7, 8 are string-set indices for manufacturer,
-    version, serial, asset tag. 1-based. Zero means 'no string'."""
+    version, serial, asset tag. 1-based. Zero means 'no string' —
+    the builder uses 0 for empty inputs to keep the string table
+    minimal and SMBIOS-spec-correct."""
     from web import smbios_builder
-    out = smbios_builder.build_type3_chassis(chassis_type=10)
-    assert out[4] == 1   # manufacturer string index
-    assert out[6] == 2   # version string index
-    assert out[7] == 3   # serial string index
-    assert out[8] == 4   # asset tag string index
+    out = smbios_builder.build_type3_chassis(
+        chassis_type=10, manufacturer="ACME",
+        version="1.0", serial_number="ABC123", asset_tag="A1",
+    )
+    assert out[4] == 1   # manufacturer
+    assert out[6] == 2   # version
+    assert out[7] == 3   # serial
+    assert out[8] == 4   # asset tag
 
 
 def test_build_type3_states_and_security():
@@ -74,28 +79,33 @@ def test_build_type3_strings_section_double_null_terminated():
     strings referenced by the string indices, then an additional null
     terminating the structure (so the section ends with \\0\\0)."""
     from web import smbios_builder
-    out = smbios_builder.build_type3_chassis(chassis_type=10)
+    out = smbios_builder.build_type3_chassis(
+        chassis_type=10, manufacturer="ACME",
+        version="1.0", serial_number="ABC123", asset_tag="A1",
+    )
     strings = out[21:]
-    # Must end with double-null
     assert strings.endswith(b"\x00\x00")
-    # Must contain exactly 4 null-terminated strings (manufacturer,
-    # version, serial, asset tag) + terminating null.
+    # 4 referenced strings + a trailing "Default" placeholder added by
+    # the builder so the string table has at least one entry beyond the
+    # last referenced index (defensive against parsers that walk the
+    # set looking for the double-null too aggressively).
     non_empty = [s for s in strings.rstrip(b"\x00").split(b"\x00") if s]
-    assert len(non_empty) == 4
+    assert len(non_empty) == 5
 
 
-def test_build_type3_default_string_values():
-    """Default strings are deliberately vendor-neutral so the Type 3
-    output merges cleanly with the Type 1 data Proxmox already sets
-    (manufacturer/product come from type=1 which QEMU emits separately)."""
+def test_build_type3_default_manufacturer_and_placeholder():
+    """With no kwargs, manufacturer defaults to 'QEMU' and the only
+    other table entry is the trailing 'Default' placeholder. All other
+    fields' string indices are 0 (no string)."""
     from web import smbios_builder
     out = smbios_builder.build_type3_chassis(chassis_type=10)
+    assert out[4] == 1   # manufacturer = string 1 = "QEMU"
+    assert out[6] == 0   # version absent
+    assert out[7] == 0   # serial absent
+    assert out[8] == 0   # asset tag absent
     strings = out[21:].rstrip(b"\x00").split(b"\x00")
-    # Order matches index 1..4
-    assert strings[0] == b"QEMU"
-    assert strings[1] == b"1.0"
-    assert strings[2] == b"0"
-    assert strings[3] == b""  # asset tag intentionally empty
+    non_empty = [s for s in strings if s]
+    assert non_empty == [b"QEMU", b"Default"]
 
 
 def test_build_type3_rejects_invalid_chassis_type():

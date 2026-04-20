@@ -133,13 +133,15 @@ def test_host_path_uses_local_default_root():
         "/var/lib/vz/snippets/autopilot-chassis-type-10.bin"
 
 
-def test_seed_script_build_matches_smbios_builder():
-    """The stdlib-only seed script must produce byte-identical output
-    to the in-app smbios_builder, so files seeded offline are exactly
-    what the app would have generated."""
+def test_seed_script_emits_well_formed_type3_for_legacy_callers():
+    """The stdlib-only host-side seed script (scripts/seed_chassis_binaries.py)
+    is the legacy pre-seed mechanism that operators may still have
+    deployed on Proxmox hosts. Verify it still emits a syntactically
+    valid SMBIOS Type 3 structure for a few common chassis types,
+    independently of the in-app builder (which has since moved to a
+    full Type 0+1+3 multi-structure format per QEMU issue #2769)."""
     import importlib.util
     from pathlib import Path
-    from web import smbios_builder
 
     script = Path(__file__).resolve().parent.parent / "scripts" / "seed_chassis_binaries.py"
     spec = importlib.util.spec_from_file_location("seed_chassis_binaries", script)
@@ -147,4 +149,8 @@ def test_seed_script_build_matches_smbios_builder():
     spec.loader.exec_module(mod)
 
     for ct in (3, 10, 31, 35):
-        assert mod.build_type3_chassis(ct) == smbios_builder.build_type3_chassis(ct)
+        out = mod.build_type3_chassis(ct)
+        assert out[0] == 0x03  # Type
+        assert out[1] == 0x15  # Length = 21
+        assert out[5] == ct    # Chassis Type byte
+        assert out.endswith(b"\x00\x00")

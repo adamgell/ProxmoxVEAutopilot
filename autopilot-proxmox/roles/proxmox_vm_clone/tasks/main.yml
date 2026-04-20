@@ -33,10 +33,13 @@
     - chassis_type_override is defined
     - (chassis_type_override | int) > 0
 
-- name: Build QEMU -smbios file= args for chassis type
+# A chassis-type override means we need the per-VM SMBIOS file (Type 0
+# + Type 1 + Type 3 in one file). The file is generated AFTER vm_vmid /
+# _vm_serial / _vm_identity are set below — at that point we know all
+# the inputs. The args reference is computed in update_config.yml.
+- name: Mark provision as needing the per-VM SMBIOS file
   ansible.builtin.set_fact:
-    _smbios_args: >-
-      -smbios file=/var/lib/vz/snippets/autopilot-chassis-type-{{ _effective_chassis_type }}.bin
+    _use_per_vm_smbios_file: true
   when:
     - _effective_chassis_type is defined
     - (_effective_chassis_type | int) > 0
@@ -71,7 +74,54 @@
     vm_name: "{{ _vm_serial | regex_replace('[^A-Za-z0-9\\-]', '') }}"
   when: _vm_serial is defined and _vm_serial | length > 0
 
-- name: Build SMBIOS1 string
+# When chassis-type override is in play we generate a per-VM SMBIOS
+# file owning Type 0 + Type 1 + Type 3. Type 1 contains the OEM
+# manufacturer/product/serial/UUID, so smbios1 is REDUNDANT in this
+# branch. (See web/smbios_builder.py for why combining smbios1's
+# `-smbios type=1` with `-smbios file=<type-3-only>` causes Windows
+# to read BOCHS_/BXPC____ — the file overrides the wrong way.)
+- name: Build per-VM SMBIOS file bytes (Type 0 + 1 + 3)
+  ansible.builtin.set_fact:
+    _smbios_file_b64: >-
+      {{ _oem_profile | default({})
+         | build_smbios_bin_b64(serial=_vm_serial,
+                                uuid_str=_vm_identity.uuid,
+                                chassis_type=(_effective_chassis_type | int)) }}
+    _smbios_file_path: "/var/lib/vz/snippets/autopilot-smbios-vm-{{ vm_vmid }}.bin"
+  when: _use_per_vm_smbios_file | default(false) | bool
+
+- name: Stage per-VM SMBIOS file on the Proxmox host
+  ansible.builtin.shell:
+    # Decode base64 on the controller, pipe over SSH, write on the
+    # Proxmox host. sshpass + the same root password used for the
+    # /access/ticket flow.
+    cmd: >-
+      printf '%s' {{ _smbios_file_b64 | quote }}
+      | base64 -d
+      | sshpass -e ssh -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+        root@{{ proxmox_host }}
+        'umask 022;
+         mkdir -p /var/lib/vz/snippets;
+         cat > {{ _smbios_file_path | quote }};
+         test -s {{ _smbios_file_path | quote }} && echo OK_SMBIOS_WRITTEN'
+  environment:
+    SSHPASS: "{{ vault_proxmox_root_password }}"
+  delegate_to: localhost
+  register: _smbios_upload
+  changed_when: true
+  failed_when: _smbios_upload.rc != 0 or 'OK_SMBIOS_WRITTEN' not in (_smbios_upload.stdout | default(''))
+  no_log: true
+  when: _use_per_vm_smbios_file | default(false) | bool
+
+- name: Set _smbios_args to point at the per-VM file
+  ansible.builtin.set_fact:
+    _smbios_args: "-smbios file={{ _smbios_file_path }}"
+  when: _use_per_vm_smbios_file | default(false) | bool
+
+# smbios1 stays the legacy path for provisions WITHOUT a chassis
+# override — Proxmox's `-smbios type=1,...` works fine on its own.
+- name: Build SMBIOS1 string (legacy, when no per-VM file)
   ansible.builtin.set_fact:
     _smbios1_string: >-
       {{ {
@@ -82,12 +132,18 @@
            'sku': _oem_profile.sku | default(''),
            'uuid': _vm_identity.uuid
          } | proxmox_smbios1 }}
-  when: _oem_profile is defined or _vm_identity.uuid is defined
+  when:
+    - not (_use_per_vm_smbios_file | default(false) | bool)
+    - _oem_profile is defined or _vm_identity.uuid is defined
 
-- name: Set SMBIOS1 to UUID-only when no OEM profile
+- name: Set SMBIOS1 to UUID-only when no OEM profile and no SMBIOS file
   ansible.builtin.set_fact:
     _smbios1_string: "uuid={{ _vm_identity.uuid }}"
-  when: _oem_profile is not defined and _vm_identity.uuid is defined and _smbios1_string is not defined
+  when:
+    - not (_use_per_vm_smbios_file | default(false) | bool)
+    - _oem_profile is not defined
+    - _vm_identity.uuid is defined
+    - _smbios1_string is not defined
 
 - name: Clone VM from template
   ansible.builtin.include_tasks: clone_vm.yml

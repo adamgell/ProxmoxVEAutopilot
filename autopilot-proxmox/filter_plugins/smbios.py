@@ -14,7 +14,58 @@ class FilterModule:
             "proxmox_disk_serial": self.proxmox_disk_serial,
             "generate_serial_number": self.generate_serial_number,
             "generate_vm_identity": self.generate_vm_identity,
+            "build_smbios_bin_b64": self.build_smbios_bin_b64,
         }
+
+    @staticmethod
+    def build_smbios_bin_b64(oem_profile, *, serial, uuid_str, chassis_type=None):
+        """Build a per-VM SMBIOS file (Type 0 + Type 1 + Type 3) and
+        return base64 of the bytes — Ansible writes the decoded bytes
+        out to a file, scps to the Proxmox host, references via
+        ``-smbios file=<path>`` in args.
+
+        Why a single file: QEMU CLI doesn't expose Type 3 chassis_type
+        (upstream issue #2769 still open in QEMU 10.1.2), and combining
+        ``-smbios type=1,...`` + ``-smbios file=<type-3-only>`` empirically
+        drops Proxmox's Type 1 — Windows reports BOCHS_ / BXPC____ for
+        Manufacturer/Model and an empty BIOS serial. By bundling Type
+        0/1/3 in one file, the file owns those structures cleanly and
+        QEMU still auto-generates Type 2/4/etc.
+
+        ``oem_profile`` is the dict from oem_profiles.yml (manufacturer,
+        product, family, sku, plus optional chassis_type — overridden by
+        the explicit ``chassis_type`` keyword if passed).
+        """
+        # Late import so the filter plugin loader doesn't bail when
+        # web/* isn't on sys.path during test collection.
+        import sys
+        # Add the autopilot-proxmox dir so `from web.smbios_builder import...`
+        # works when this filter runs from inside the container's Ansible.
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
+        from web.smbios_builder import build_full_smbios
+
+        if not isinstance(oem_profile, dict):
+            oem_profile = {}
+        ct = chassis_type or oem_profile.get("chassis_type")
+        if not ct:
+            # Caller asked for an SMBIOS file but no chassis_type
+            # contributor exists. Default to 3 (Desktop) so the file
+            # is still well-formed.
+            ct = 3
+
+        bytes_ = build_full_smbios(
+            manufacturer=oem_profile.get("manufacturer") or "Generic",
+            product_name=oem_profile.get("product") or "Generic Workstation",
+            family=oem_profile.get("family") or "",
+            sku=oem_profile.get("sku") or "",
+            version=oem_profile.get("version") or "",
+            serial_number=serial or "0",
+            uuid_str=uuid_str,
+            chassis_type=int(ct),
+        )
+        return base64.b64encode(bytes_).decode("ascii")
 
     @staticmethod
     def proxmox_smbios1(fields):
