@@ -564,6 +564,12 @@ def seed_defaults(db_path, cipher) -> None:
         {"step_type": "create_ubuntu_user",
          "params": {"local_admin_credential_id": default_admin_id},
          "enabled": True},
+        # Give Ubuntu Plain a full desktop. Cloud images are headless; without
+        # this the VM boots to a tty. ubuntu-desktop is ~1.5GB but the LAN
+        # apt proxy makes repeat builds cheap.
+        {"step_type": "install_desktop_environment",
+         "params": {"flavor": "ubuntu-desktop"},
+         "enabled": True},
     ]
 
     # LAN apt cache: a small, always-on VM running apt-cacher-ng. When
