@@ -128,6 +128,9 @@ SETTINGS_SCHEMA = [
         {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number"},
         {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number"},
     ]},
+    {"section": "Branding", "fields": [
+        {"key": "brand_name", "label": "Brand Name", "type": "text"},
+    ]},
 ]
 
 
@@ -286,6 +289,24 @@ def _load_proxmox_config():
                 if data:
                     config.update(data)
     return config
+
+
+def _load_brand_context() -> dict:
+    """Return the brand dict threaded to the runonce_renderer.
+
+    Default brand is 'ProxmoxVEAutopilot'. White-label customers set
+    their own via the Branding section of /settings.
+    """
+    cfg = _load_vars()
+    name = (cfg.get("brand_name") or "").strip() or "ProxmoxVEAutopilot"
+    # Windows registry keys can't contain colons or backslashes inside a
+    # component. Sanitize by keeping alphanumerics, hyphens, underscores.
+    safe = "".join(c for c in name if c.isalnum() or c in "-_") or "Brand"
+    return {
+        "name": name,
+        "event_source": safe,
+        "registry_root": fr"HKLM:\SOFTWARE\{safe}",
+    }
 
 
 def _proxmox_api(path, method="GET", data=None, files=None):
