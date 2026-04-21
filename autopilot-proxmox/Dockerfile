@@ -4,6 +4,13 @@ FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gnupg apt-transport-https genisoimage procps \
     openssh-client sshpass \
+    # Kerberos stack for AD monitoring probes (SASL/GSSAPI bind with
+    # signing — required by modern Windows DCs with "LDAP signing"
+    # enforced). libsasl2-modules-gssapi-mit is the GSSAPI plugin
+    # OpenLDAP/libldap2 dispatches to; libldap2-dev + libsasl2-dev
+    # are build deps for python-ldap in the pip layer below.
+    krb5-user libkrb5-dev libsasl2-modules-gssapi-mit libldap2-dev libsasl2-dev \
+    build-essential \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
        | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-debian-bookworm-prod bookworm main" \
@@ -25,6 +32,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project
 COPY . .
+
+# Bake in Kerberos config pointing at HOME.GELL.ONE. Operators with a
+# different realm overlay this via docker-compose volume mount.
+RUN cp /app/files/krb5.conf /etc/krb5.conf
 
 # Embed the build SHA and timestamp so the UI can show what's running.
 ARG GIT_SHA=unknown

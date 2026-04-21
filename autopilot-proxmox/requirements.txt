@@ -11,3 +11,9 @@ cryptography>=42,<46
 ruamel.yaml>=0.18,<1.0
 passlib>=1.7,<2.0
 ldap3>=2.9,<3.0
+# python-ldap used instead of ldap3 for AD queries — ldap3 2.x's
+# GSSAPI doesn't negotiate SASL integrity, so AD DCs with LDAP
+# signing enforced reject its binds with strongerAuthRequired.
+# python-ldap delegates to OpenLDAP+libsasl2 which signs properly.
+python-ldap>=3.4,<4.0
+gssapi>=1.8,<2.0
