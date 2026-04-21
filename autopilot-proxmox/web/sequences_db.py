@@ -390,10 +390,12 @@ _SEED_SEQUENCES = [
              "enabled": True},
             {"step_type": "local_admin",
              "params": {"credential_name": "default-local-admin"},
-             # Disabled until Phase B.2 wires the unattend ISO mechanism
-             # that actually consumes the local-admin output. The local-admin
-             # credentials today come from the template's baked unattend.
-             "enabled": False},
+             # Phase B.2b: RunOnce creates the account at first logon via
+             # New-LocalUser. The template's baked unattend still creates
+             # a default admin — this step layers on top to guarantee the
+             # credential matches the `default-local-admin` row even if
+             # the operator rotates it.
+             "enabled": True},
             {"step_type": "autopilot_entra", "params": {}, "enabled": True},
         ],
     },
@@ -407,7 +409,7 @@ _SEED_SEQUENCES = [
              "params": {"oem_profile": ""}, "enabled": True},
             {"step_type": "local_admin",
              "params": {"credential_name": "default-local-admin"},
-             "enabled": False},
+             "enabled": True},
             {"step_type": "join_ad_domain",
              "params": {"credential_id": 0, "ou_path": ""},
              # Note: credential_id=0 is a placeholder — operator must edit the sequence
