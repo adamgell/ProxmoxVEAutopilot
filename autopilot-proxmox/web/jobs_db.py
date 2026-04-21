@@ -97,10 +97,20 @@ def _now() -> str:
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
-    """Deserialize the cmd_json / args_json columns back to Python."""
+    """Deserialize the cmd_json / args_json columns back to Python.
+
+    Also emit ``started`` / ``ended`` aliases alongside the new
+    ``created_at`` / ``ended_at`` columns so the pre-split templates
+    (``jobs.html``, ``job_detail.html``) and the duration-computing
+    code in ``app.py`` keep working without edits. New code should use
+    the canonical names; these aliases are kept indefinitely for the
+    simple reason that there's no real cost to carrying them.
+    """
     d = dict(row)
     d["cmd"] = json.loads(d.pop("cmd_json"))
     d["args"] = json.loads(d.pop("args_json"))
+    d["started"] = d.get("created_at")
+    d["ended"] = d.get("ended_at")
     return d
 
 
