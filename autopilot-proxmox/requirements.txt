@@ -10,3 +10,4 @@ urllib3>=2.0
 cryptography>=42,<46
 ruamel.yaml>=0.18,<1.0
 passlib>=1.7,<2.0
+ldap3>=2.9,<3.0
