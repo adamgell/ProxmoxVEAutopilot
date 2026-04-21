@@ -123,6 +123,85 @@ def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
     assert "postAction('/api/jobs/capture',{vmid:'108'" in body
 
 
+def test_template_form_post_without_pause_leaves_args_unannotated(client):
+    """Baseline: ticking nothing keeps the existing command unchanged and
+    doesn't add pause args — avoids a regression on the default flow."""
+    from web.app import job_manager
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd); captured["args"] = args or {}
+        return {"id": "fake-id"}
+    job_manager.start.side_effect = fake_start
+    r = client.post("/api/jobs/template", data={"profile": "lenovo-t14"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert "pause_signal_path" not in captured["args"]
+    assert not any("template_pause_signal_path" in t for t in captured["cmd"])
+
+
+def test_template_form_post_with_pause_passes_signal_path(client):
+    """Ticking the checkbox adds template_pause_signal_path to the
+    ansible -e args and stashes the absolute path in job.args so the UI
+    can build a Resume button."""
+    from web.app import job_manager
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd); captured["args"] = args or {}
+        return {"id": "fake-id"}
+    job_manager.start.side_effect = fake_start
+    r = client.post(
+        "/api/jobs/template",
+        data={"profile": "lenovo-t14", "pause_before_sysprep": "on"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    pause_flag = next(
+        (t for t in captured["cmd"] if t.startswith("template_pause_signal_path=")),
+        None,
+    )
+    assert pause_flag is not None
+    # Path is absolute + lives inside the job_manager.jobs_dir.
+    path = pause_flag.split("=", 1)[1]
+    assert path.startswith("/")
+    assert captured["args"]["pause_enabled"] is True
+    assert captured["args"]["pause_signal_path"] == path
+
+
+def test_resume_template_build_touches_signal_file(client, tmp_path):
+    """POST /api/jobs/{id}/resume-template-build creates the signal file
+    (Ansible's wait_for unblocks on its appearance)."""
+    from web.app import job_manager
+    signal_path = tmp_path / "template-resume-xyz"
+    job_manager.get_job.return_value = {
+        "id": "J1", "status": "running",
+        "args": {"pause_enabled": True, "pause_signal_path": str(signal_path)},
+    }
+    assert not signal_path.exists()
+    r = client.post("/api/jobs/J1/resume-template-build")
+    assert r.status_code == 200
+    assert signal_path.exists()
+    # Second call returns 409 (already resumed) rather than silently
+    # re-touching and masking a confused operator clicking twice.
+    r2 = client.post("/api/jobs/J1/resume-template-build")
+    assert r2.status_code == 409
+
+
+def test_resume_template_build_rejects_job_without_pause(client):
+    from web.app import job_manager
+    job_manager.get_job.return_value = {
+        "id": "J2", "status": "running", "args": {"profile": "lenovo-t14"},
+    }
+    r = client.post("/api/jobs/J2/resume-template-build")
+    assert r.status_code == 404
+
+
+def test_resume_template_build_404_on_unknown_job(client):
+    from web.app import job_manager
+    job_manager.get_job.return_value = None
+    r = client.post("/api/jobs/nope/resume-template-build")
+    assert r.status_code == 404
+
+
 def test_redirect_with_error_encodes_special_chars():
     """Error messages with spaces, '&', '#', '?' must round-trip through
     the URL without truncation or param smuggling."""

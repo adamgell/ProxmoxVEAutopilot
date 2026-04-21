@@ -42,6 +42,25 @@
 - name: Inject recovery-partition fix scripts
   ansible.builtin.include_tasks: inject_recovery_fix.yml
 
+# Operator-requested pause — the web form's "Pause before sysprep"
+# checkbox passes `template_pause_signal_path`. When set, we block here
+# until the operator touches that file via the /api/jobs/<id>/resume-
+# template-build endpoint (or directly with `touch` on the host). This
+# window is for installing software into the image before Windows
+# sysprep seals it. Max wait: 2h — if the operator walks away, we
+# don't leave the VM running forever.
+- name: "PAUSE — install software in VMID {{ vm_vmid }} now, then click Resume in the UI"
+  ansible.builtin.wait_for:
+    path: "{{ template_pause_signal_path }}"
+    timeout: 7200
+  when: template_pause_signal_path is defined and template_pause_signal_path | length > 0
+
+- name: Remove resume signal file (cleanup after pause)
+  ansible.builtin.file:
+    path: "{{ template_pause_signal_path }}"
+    state: absent
+  when: template_pause_signal_path is defined and template_pause_signal_path | length > 0
+
 - name: Run sysprep (also waits for stop + removes Panther offline)
   ansible.builtin.include_tasks: sysprep.yml
 

@@ -2578,15 +2578,53 @@ async def start_provision(
 
 
 @app.post("/api/jobs/template")
-async def start_template(profile: str = Form(...)):
+async def start_template(
+    profile: str = Form(...),
+    pause_before_sysprep: str = Form(""),
+):
     profile = _sanitize_input(profile)
     cmd = [
         "ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml"),
         "-e", f"vm_oem_profile={profile}",
     ]
     args = {"profile": profile}
+
+    # Optional pause-for-manual-software-install gate. The checkbox on
+    # /template posts "on" when ticked, "" (or absent) otherwise. If
+    # set, we generate a per-job resume-signal path and pass it into
+    # Ansible; the build_template role waits on that path appearing
+    # before it invokes sysprep. Operator touches the file via
+    # POST /api/jobs/{id}/resume-template-build once they're done
+    # installing apps in the VM.
+    if pause_before_sysprep:
+        import uuid
+        signal_name = f"template-resume-{uuid.uuid4().hex}"
+        signal_path = Path(job_manager.jobs_dir) / signal_name
+        cmd.extend(["-e", f"template_pause_signal_path={signal_path}"])
+        args["pause_signal_path"] = str(signal_path)
+        args["pause_enabled"] = True
+
     job = job_manager.start("build_template", cmd, args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
+@app.post("/api/jobs/{job_id}/resume-template-build")
+async def resume_template_build(job_id: str):
+    """Touch the resume-signal file so the paused template build can
+    continue into sysprep. Returns 404 if the job has no pause gate,
+    409 if it already resumed (file already exists)."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"job {job_id} not found")
+    signal_path = (job.get("args") or {}).get("pause_signal_path")
+    if not signal_path:
+        raise HTTPException(404, "this job does not have a pause gate")
+    p = Path(signal_path)
+    if p.exists():
+        raise HTTPException(409, "already resumed")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.touch()
+    return {"ok": True, "signal_path": str(p)}
 
 
 @app.post("/api/ubuntu/build-template")

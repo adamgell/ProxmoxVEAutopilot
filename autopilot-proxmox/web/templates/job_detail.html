@@ -49,6 +49,44 @@
 {% endif %}
 {% if job.status == 'running' %}
 <br>
+{% if job.args and job.args.pause_enabled %}
+<!-- Template build paused for manual software install. Showing the
+     Resume button unconditionally while the job is running is fine —
+     the server returns 404 if the ansible task hasn't reached the
+     wait_for yet, 409 if already resumed. A one-click handler covers
+     the common path; the rare races surface as a status line. -->
+<div style="margin:10px 0; padding:10px 14px; background:#fff3cf; border:1px solid #f3dfa8; border-radius:4px;">
+  <b>Paused for software install.</b>
+  RDP or <a href="/api/vms/{{ job.args.vm_vmid }}/console" target="_blank">Console</a>
+  into the VM, install whatever you need, then click Resume.
+  <br>
+  <button type="button" onclick="resumeTemplate();" class="action-btn-upload" style="margin-top:6px;">
+    Resume &amp; finalize (sysprep)
+  </button>
+  <span id="resumeStatus" style="margin-left:10px; font-size:12px;"></span>
+</div>
+<script>
+async function resumeTemplate() {
+  var s = document.getElementById('resumeStatus');
+  s.textContent = 'sending…';
+  try {
+    var r = await fetch('/api/jobs/{{ job.id }}/resume-template-build', {method: 'POST'});
+    if (r.ok) {
+      s.style.color = '#2e5500';
+      s.textContent = 'Resumed. Sysprep should start within a few seconds — watch the log below.';
+    } else {
+      var detail = r.statusText;
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      s.style.color = '#8a1d07';
+      s.textContent = 'Resume failed: ' + detail;
+    }
+  } catch (e) {
+    s.style.color = '#8a1d07';
+    s.textContent = 'Network error: ' + e;
+  }
+}
+</script>
+{% endif %}
 <form method="POST" action="/api/jobs/{{ job.id }}/kill">
 <input type="submit" value="EMERGENCY STOP" class="emergency-btn">
 </form>
