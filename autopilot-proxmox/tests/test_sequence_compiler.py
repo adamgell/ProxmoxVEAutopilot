@@ -254,3 +254,143 @@ def test_precedence_chassis_type_varsyml_wins_when_sequence_and_form_blank():
         vars_yml={"chassis_type_override": "3"},
     )
     assert resolved["chassis_type_override"] == "3"
+
+
+# ---------------------------------------------------------------------------
+# run_script + install_module — FirstLogonCommand-producing handlers
+# ---------------------------------------------------------------------------
+
+def _decode_encoded_ps(command: str) -> str:
+    """Helper: pull the -EncodedCommand b64 payload out and decode it."""
+    import base64
+    marker = "-EncodedCommand "
+    idx = command.index(marker) + len(marker)
+    b64 = command[idx:].strip()
+    return base64.b64decode(b64).decode("utf-16-le")
+
+
+def test_run_script_emits_first_logon_command_with_encoded_body():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "run_script",
+         "params": {"name": "firewall-off",
+                    "script": "Set-NetFirewallProfile -Profile Domain -Enabled False"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert len(result.first_logon_commands) == 1
+    flc = result.first_logon_commands[0]
+    assert flc["description"] == "firewall-off"
+    assert flc["command"].startswith("powershell.exe -NoProfile -ExecutionPolicy Bypass")
+    assert "-EncodedCommand " in flc["command"]
+    # The encoded payload round-trips to exactly what the operator wrote.
+    assert _decode_encoded_ps(flc["command"]) == (
+        "Set-NetFirewallProfile -Profile Domain -Enabled False"
+    )
+    # Reboot default is False — no cycle bump.
+    assert result.causes_reboot_count == 0
+
+
+def test_run_script_causes_reboot_flag_bumps_count():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "run_script",
+         "params": {"script": "shutdown /r /t 5", "causes_reboot": True}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.causes_reboot_count == 1
+
+
+def test_run_script_empty_body_is_compile_error():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "run_script", "params": {"script": "   \n  "}},
+    ])
+    with pytest.raises(sequence_compiler.CompilerError):
+        sequence_compiler.compile(seq)
+
+
+def test_run_script_preserves_special_characters():
+    """Quotes, newlines, ampersands in the script body must survive the
+    XML → cmd.exe → PowerShell triple-parser through -EncodedCommand."""
+    from web import sequence_compiler
+    body = (
+        "$x = 'hello \"world\"'\n"
+        "Write-Host $x & echo done <nothing>\n"
+        "if ($true) { 'nested ''quotes''' }"
+    )
+    seq = _make_sequence([
+        {"step_type": "run_script", "params": {"script": body}},
+    ])
+    result = sequence_compiler.compile(seq)
+    flc = result.first_logon_commands[0]
+    # None of the metacharacters leak into the raw command line.
+    assert "&" not in flc["command"]
+    assert "<" not in flc["command"]
+    # And the decoded payload is byte-identical to what we passed in.
+    assert _decode_encoded_ps(flc["command"]) == body
+
+
+def test_install_module_minimal_emits_flc():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module", "params": {"module": "PSWindowsUpdate"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    flc = result.first_logon_commands[0]
+    assert flc["description"] == "Install-Module PSWindowsUpdate"
+    decoded = _decode_encoded_ps(flc["command"])
+    # Contains the three bootstrap pre-reqs the renderer is responsible
+    # for on a fresh Windows image.
+    assert "Tls12" in decoded
+    assert "Install-PackageProvider -Name NuGet" in decoded
+    assert "Set-PSRepository -Name 'PSGallery'" in decoded
+    # And the install invocation has the right defaults.
+    assert "Install-Module -Name 'PSWindowsUpdate'" in decoded
+    assert "-Repository 'PSGallery'" in decoded
+    assert "-Scope 'AllUsers'" in decoded
+
+
+def test_install_module_with_version_and_custom_scope():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module",
+         "params": {"module": "Az", "version": "11.2.0",
+                    "repository": "PSGallery", "scope": "CurrentUser"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    flc = result.first_logon_commands[0]
+    assert flc["description"] == "Install-Module Az 11.2.0"
+    decoded = _decode_encoded_ps(flc["command"])
+    assert "-RequiredVersion '11.2.0'" in decoded
+    assert "-Scope 'CurrentUser'" in decoded
+
+
+def test_install_module_requires_name():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module", "params": {"module": ""}},
+    ])
+    with pytest.raises(sequence_compiler.CompilerError):
+        sequence_compiler.compile(seq)
+
+
+def test_install_module_does_not_cause_reboot():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module", "params": {"module": "Az"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.causes_reboot_count == 0
+
+
+def test_run_script_and_install_module_coexist_in_order():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module", "params": {"module": "Az"}},
+        {"step_type": "run_script",
+         "params": {"name": "after-install", "script": "Connect-AzAccount"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert [c["description"] for c in result.first_logon_commands] == [
+        "Install-Module Az", "after-install",
+    ]

@@ -21,6 +21,7 @@ The output has four buckets that downstream wiring consumes:
 """
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from xml.sax.saxutils import escape as _xml_escape
@@ -214,6 +215,93 @@ def _handle_rename_computer(params: dict, out: CompiledSequence,
     out.unattend_blocks["specialize_computer_name"] = _xml_escape(name_value)
 
 
+def _encode_ps_command(script: str) -> str:
+    """Return a PowerShell -EncodedCommand payload for ``script``.
+
+    Base64 of UTF-16-LE is the encoding ``powershell.exe -EncodedCommand``
+    expects. Going through this avoids every flavor of quoting hell we'd
+    otherwise hit inside XML <CommandLine> → cmd.exe → powershell's
+    triple-stacked parsers: operators can paste multi-line PowerShell
+    with single quotes, double quotes, and shell metacharacters, and it
+    all arrives verbatim at the interpreter.
+    """
+    return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+
+def _handle_run_script(params: dict, out: CompiledSequence,
+                       resolver: Optional[Callable]) -> None:
+    script = params.get("script") or ""
+    if not script.strip():
+        raise CompilerError(
+            "run_script step requires a non-empty 'script' param."
+        )
+    name = (params.get("name") or "").strip() or "run_script"
+    encoded = _encode_ps_command(script)
+    out.first_logon_commands.append({
+        "command": (
+            f"powershell.exe -NoProfile -ExecutionPolicy Bypass "
+            f"-EncodedCommand {encoded}"
+        ),
+        "description": name,
+    })
+    # causes_reboot is caller-declared. The step editor exposes a
+    # checkbox; when True, the post-provision waiter expects an extra
+    # reboot cycle. The script itself is responsible for scheduling the
+    # reboot (`shutdown /r /t 5` is the convention).
+    if params.get("causes_reboot"):
+        out.causes_reboot_count += 1
+
+
+def _handle_install_module(params: dict, out: CompiledSequence,
+                           resolver: Optional[Callable]) -> None:
+    module = (params.get("module") or "").strip()
+    if not module:
+        raise CompilerError(
+            "install_module step requires a 'module' param."
+        )
+    version    = (params.get("version")    or "").strip()
+    repository = (params.get("repository") or "").strip() or "PSGallery"
+    scope      = (params.get("scope")      or "").strip() or "AllUsers"
+
+    # Three pre-reqs on a fresh Windows image:
+    #   1. TLS 1.2 — PSGallery rejected TLS 1.0 years ago.
+    #   2. NuGet provider — Install-Module uses it under the hood.
+    #   3. Repository trust — without it, Install-Module prompts for
+    #      confirmation and silently hangs inside FLC (no stdin).
+    # Single-quote literals for PS strings so they survive XML's
+    # whitespace handling unchanged.
+    lines = [
+        "[Net.ServicePointManager]::SecurityProtocol = "
+        "[Net.ServicePointManager]::SecurityProtocol -bor "
+        "[Net.SecurityProtocolType]::Tls12",
+        f"if ((Get-PSRepository -Name '{repository}' -ErrorAction SilentlyContinue)"
+        f".InstallationPolicy -ne 'Trusted') {{ "
+        f"Set-PSRepository -Name '{repository}' -InstallationPolicy Trusted }}",
+        "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { "
+        "Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null }",
+    ]
+    install_args = [
+        f"-Name '{module}'",
+        f"-Repository '{repository}'",
+        f"-Scope '{scope}'",
+        "-Force",
+        "-AllowClobber",
+    ]
+    if version:
+        install_args.append(f"-RequiredVersion '{version}'")
+    lines.append("Install-Module " + " ".join(install_args))
+    script = "; ".join(lines)
+    encoded = _encode_ps_command(script)
+    out.first_logon_commands.append({
+        "command": (
+            f"powershell.exe -NoProfile -ExecutionPolicy Bypass "
+            f"-EncodedCommand {encoded}"
+        ),
+        "description": f"Install-Module {module}"
+                       + (f" {version}" if version else ""),
+    })
+
+
 _STEP_HANDLERS: dict[str, StepHandler] = {
     "set_oem_hardware": _handle_set_oem_hardware,
     "autopilot_entra": _handle_autopilot_entra,
@@ -221,6 +309,8 @@ _STEP_HANDLERS: dict[str, StepHandler] = {
     "local_admin": _handle_local_admin,
     "join_ad_domain": _handle_join_ad_domain,
     "rename_computer": _handle_rename_computer,
+    "run_script": _handle_run_script,
+    "install_module": _handle_install_module,
 }
 
 

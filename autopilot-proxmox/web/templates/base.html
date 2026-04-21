@@ -3,8 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Hint to the UA so native widgets (scrollbars, form controls,
+     `<select>` menus) pick up dark styling automatically alongside
+     our own tokens. -->
+<meta name="color-scheme" content="light dark">
 <title>{% block title %}Proxmox VE Autopilot{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="/auth/logo">
+<!-- Apply the saved theme BEFORE the body paints to avoid a
+     flash-of-light when an operator who prefers dark mode loads the
+     page.  Synchronous; tiny; guarded against disabled localStorage
+     (private windows, etc.). -->
+<script>
+(function() {
+  try {
+    var saved = null;
+    try { saved = localStorage.getItem('autopilot_theme'); } catch (e) {}
+    var prefers = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var theme = saved || (prefers ? 'dark' : 'light');
+    if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  } catch (e) {}
+})();
+</script>
 <!--
   Typography: IBM Plex Sans + Mono.  Plex has real engineering
   weight (IBM designed it in-house for their product UI) so it
@@ -37,20 +56,42 @@
   --hover: #eef5fc;
   --panel: #ffffff;
 
-  /* Microsoft brand palette — matches the chevrons on /auth/logo
-     and the Sign-in button on the login page.  We use these for
-     status badges + button accents so the visual DNA lines up. */
+  /* Surfaces below --panel in the visual hierarchy.  --surface-muted
+     is the soft gray behind table headers, <pre> blocks, and the
+     monitor-status strip.  --input-bg is the fill for text inputs —
+     white on light, slate on dark.  Both get redefined under
+     [data-theme="dark"] so every downstream rule inherits for free. */
+  --surface-muted: #f3f6f9;
+  --input-bg:      #ffffff;
+
+  /* Microsoft brand palette.  The bright values match the chevrons
+     on /auth/logo and the Sign-in button on the login page — use
+     them for DECORATIVE elements (logo backgrounds, the header
+     rainbow accent, the live-dot on the user chip).  For
+     interactive elements on light backgrounds (buttons, focus
+     rings, text links, UI outlines), reach for the `-dark`
+     variants below — the bright ones fail WCAG contrast against
+     white (#00A4EF = 2.8:1 for text, below the 4.5:1 AA bar; bright
+     green is even worse at 2.4:1).  The -dark values clear
+     AA (4.5:1+) for small text and UI components alike. */
   --ms-red:    #F25022;
   --ms-green:  #7FBA00;
   --ms-blue:   #00A4EF;
   --ms-yellow: #FFB900;
 
-  /* Semantic pill tints derived from the MS palette. */
-  --ok-bg:      #e4f4d9;  --ok-fg:      #3d6f00;
-  --warn-bg:    #fff3cf;  --warn-fg:    #7a5400;
-  --bad-bg:     #fce3dc;  --bad-fg:     #9c2108;
-  --info-bg:    #dcecfb;  --info-fg:    #04669a;
-  --neutral-bg: #e7ebef;  --neutral-fg: #495464;
+  --ms-red-dark:    #bb3c17;  /* 4.9:1 on white — buttons/text */
+  --ms-green-dark:  #4a7500;  /* 5.2:1 on white — buttons/text */
+  --ms-blue-dark:   #0069a8;  /* 5.9:1 on white — focus + links */
+  --ms-yellow-dark: #8a6400;  /* 5.4:1 on white — text only */
+
+  /* Semantic pill tints.  Every pair below is manually verified at
+     ≥4.5:1 (WCAG AA for small text).  Keep the relationship when
+     adding new tints — never a bright MS color + white text. */
+  --ok-bg:      #e4f4d9;  --ok-fg:      #2e5500;   /* 7.4:1 */
+  --warn-bg:    #fff3cf;  --warn-fg:    #6a4600;   /* 7.1:1 */
+  --bad-bg:     #fce3dc;  --bad-fg:     #8a1d07;   /* 7.0:1 */
+  --info-bg:    #dcecfb;  --info-fg:    #054e75;   /* 7.3:1 */
+  --neutral-bg: #e7ebef;  --neutral-fg: #3a4452;   /* 8.1:1 */
 
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -58,6 +99,73 @@
   --shadow-1: 0 1px 2px rgba(23,32,47,0.06);
   --shadow-2: 0 1px 3px rgba(23,32,47,0.08), 0 8px 24px rgba(23,32,47,0.06);
   --shadow-3: 0 2px 6px rgba(23,32,47,0.10), 0 16px 40px rgba(23,32,47,0.10);
+
+  /* Page-wash gradient — split out as a var so dark mode can swap
+     it without re-declaring the entire body rule. */
+  --page-wash:
+    linear-gradient(180deg,
+      rgba(166,207,245,0.35) 0%,
+      rgba(166,207,245,0.12) 200px,
+      rgba(255,255,255,0)    400px),
+    #eef2f5;
+}
+
+/* =================================================================
+   Dark theme.  Activated by <html data-theme="dark"> (set by the
+   nav-bar toggle which persists to localStorage + falls back to
+   prefers-color-scheme: dark).  Same token names, different values
+   — every rule below the :root block reads from these so none of
+   the per-component CSS needs to care.
+   ================================================================= */
+html[data-theme="dark"] {
+  --slate-900: #0a0d14;           /* page bg */
+  --slate-800: #11151e;           /* panel bg / buttons */
+  --slate-700: #1a1f2b;           /* header, deep panels */
+  --slate-600: #262b39;           /* elevated cards */
+  --slate-500: #353a48;           /* borders */
+
+  --ink:        #e6ebf2;          /* primary text */
+  --ink-muted:  #9aa4b2;          /* secondary text — 7.1:1 on panel */
+  --ink-soft:   #6b7686;          /* disabled/hint — UI use only */
+
+  --line:        #262b39;         /* subtle borders between rows */
+  --line-strong: #353a48;
+  --stripe:      #151925;         /* zebra stripe on tables */
+  --hover:       #1e2635;         /* row hover — soft blue tint */
+  --panel:       #11151e;         /* cards + #content */
+
+  --surface-muted: #1a1f2b;       /* table head, pre, monitor-status */
+  --input-bg:      #0e1220;       /* text inputs — a shade below panel */
+
+  /* MS palette stays identical — still the decorative DNA of the
+     product — but the dark variants here are *lighter* than the
+     light-mode -dark tokens so they maintain contrast on a dark
+     panel instead of a white one. */
+  --ms-red-dark:    #ff7a55;      /* 5.0:1 on slate-800 */
+  --ms-green-dark:  #8fce1a;      /* 7.2:1 on slate-800 */
+  --ms-blue-dark:   #4ec0ff;      /* 7.4:1 on slate-800 */
+  --ms-yellow-dark: #ffcf3a;      /* 10.1:1 on slate-800 */
+
+  /* Tints for badges: translucent so they read as glass against
+     the slate panel rather than bright poster paint. */
+  --ok-bg:      rgba(127,186,0,0.18);   --ok-fg:      #a8e64a;  /* 7.8:1 */
+  --warn-bg:    rgba(255,185,0,0.18);   --warn-fg:    #ffd876;  /* 10:1 */
+  --bad-bg:     rgba(242,80,34,0.18);   --bad-fg:     #ff9475;  /* 5.6:1 */
+  --info-bg:    rgba(0,164,239,0.18);   --info-fg:    #7ccffc;  /* 8.7:1 */
+  --neutral-bg: rgba(255,255,255,0.06); --neutral-fg: #b8c0cc;  /* 9.4:1 */
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.5);
+  --shadow-2: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-3: 0 2px 6px rgba(0,0,0,0.5), 0 16px 40px rgba(0,0,0,0.6);
+
+  /* Dark-mode page wash — swaps the Bliss-sky light wash for a
+     subtle deep-blue glow from the top, keeping the "sky at top"
+     memory of the original without the daylight. */
+  --page-wash:
+    radial-gradient(ellipse 1200px 600px at 50% -20%,
+      rgba(0,105,168,0.25) 0%,
+      rgba(0,105,168,0.0)  60%),
+    #0a0d14;
 }
 
 /* -----------------------------------------------------------------
@@ -74,12 +182,7 @@ body {
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--ink);
-  background:
-    linear-gradient(180deg,
-      rgba(166,207,245,0.35) 0%,
-      rgba(166,207,245,0.12) 200px,
-      rgba(255,255,255,0)    400px),
-    #eef2f5;
+  background: var(--page-wash);
   background-attachment: fixed;
   min-height: 100vh;
   animation: page-in 180ms ease-out;
@@ -100,22 +203,22 @@ h1 { font-size: 22px; font-weight: 600; }
 h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.005em;
      margin-top: 20px; padding-bottom: 8px;
      border-bottom: 1px solid var(--line); }
-h3 { font-size: 13.5px; font-weight: 600; color: var(--slate-700); }
+h3 { font-size: 13.5px; font-weight: 600; color: var(--ink); }
 h4 { font-size: 12.5px; font-weight: 600; color: var(--ink-muted);
      text-transform: uppercase; letter-spacing: 0.04em; }
 
-a { color: #0068b3; text-decoration: none; }
-a:hover { color: var(--slate-900); text-decoration: underline;
+a { color: var(--ms-blue-dark); text-decoration: none; }
+a:hover { color: var(--ink); text-decoration: underline;
           text-decoration-color: var(--ms-blue); text-underline-offset: 2px; }
-a:visited { color: #0068b3; }
+a:visited { color: var(--ms-blue-dark); }
 
 code, .mono {
   font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.92em;
-  background: #f3f5f8;
+  background: var(--stripe);
   padding: 1px 5px;
   border-radius: 3px;
-  color: var(--slate-700);
+  color: var(--ink);
 }
 
 hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
@@ -212,6 +315,38 @@ hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
   flex-shrink: 0;
   border: 1px solid rgba(255,255,255,0.08);
 }
+
+/* Theme toggle in the header — same chrome as the user-chip so it
+   reads as a peer control.  Lives OUTSIDE the chip because logged-out
+   users should still be able to flip themes. */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.85);
+  border-radius: 999px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms, color 120ms;
+  padding: 0;
+}
+.theme-toggle:hover {
+  background: rgba(255,255,255,0.15);
+  color: #ffffff;
+}
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--ms-blue);
+  outline-offset: 2px;
+}
+.theme-toggle svg { display: block; }
+/* Swap icons based on current theme: show the moon (flip to dark)
+   when light-mode is active; show the sun (flip to light) when
+   dark-mode is active. */
+.theme-toggle .theme-icon-sun  { display: none; }
+.theme-toggle .theme-icon-moon { display: block; }
+html[data-theme="dark"] .theme-toggle .theme-icon-sun  { display: block; }
+html[data-theme="dark"] .theme-toggle .theme-icon-moon { display: none; }
 .user-chip a {
   color: rgba(255,255,255,0.7);
   font-size: 11px;
@@ -251,14 +386,14 @@ hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
   border-radius: var(--radius-lg);
   padding: 24px 28px;
   box-shadow: var(--shadow-2);
-  border: 1px solid rgba(226,231,237,0.5);
+  border: 1px solid var(--line);
 }
 
 /* Pages that use their own .card / .panel classes (e.g. the
    monitoring dashboard) get consistent styling too. */
 .card, .panel, .monitor-status, .card { /* legacy */ }
 .monitor-status {
-  background: #f7f9fb !important;
+  background: var(--surface-muted) !important;
   border: 1px solid var(--line) !important;
   padding: 10px 14px !important;
   border-radius: var(--radius-md) !important;
@@ -279,7 +414,7 @@ table {
   margin: 10px 0 18px;
 }
 thead th, th {
-  background: #f3f6f9;
+  background: var(--surface-muted);
   color: var(--ink-muted);
   padding: 9px 12px;
   text-align: left;
@@ -316,7 +451,7 @@ input[type="email"], input[type="search"], select, textarea {
   font-family: "IBM Plex Sans", sans-serif;
   font-size: 13px;
   color: var(--ink);
-  background: #ffffff;
+  background: var(--input-bg);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   padding: 6px 10px;
@@ -325,8 +460,8 @@ input[type="email"], input[type="search"], select, textarea {
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--ms-blue);
-  box-shadow: 0 0 0 3px rgba(0,164,239,0.14);
+  border-color: var(--ms-blue-dark);   /* AA UI component contrast */
+  box-shadow: 0 0 0 3px rgba(0,105,168,0.22);  /* blue-dark @ 22% */
 }
 input[type="checkbox"], input[type="radio"] {
   accent-color: var(--ms-blue);
@@ -354,7 +489,7 @@ input[type="submit"]:hover, button:hover, .btn:hover {
 input[type="submit"]:active, button:active, .btn:active { transform: translateY(0.5px); }
 input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0,164,239,0.35);
+  box-shadow: 0 0 0 3px rgba(0,105,168,0.45);   /* blue-dark @ 45% */
 }
 
 /* -----------------------------------------------------------------
@@ -400,8 +535,8 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
   color: var(--info-fg);
   margin-right: 4px;
 }
-.chip.chip-enroll-mde     { background: #fbe1dd; color: #7e2410; }
-.chip.chip-enroll-intune  { background: #dcecfb; color: #04669a; }
+.chip.chip-enroll-mde     { background: var(--bad-bg);  color: var(--bad-fg); }
+.chip.chip-enroll-intune  { background: var(--info-bg); color: var(--info-fg); }
 
 /* -----------------------------------------------------------------
    Action buttons (the icon buttons next to each VM row).  Kept
@@ -409,23 +544,23 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
    ----------------------------------------------------------------- */
 .action-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  background: #ffffff;
+  background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   padding: 4px 5px;
   cursor: pointer;
   position: relative;
   transition: background 120ms, border-color 120ms, transform 80ms;
-  color: var(--slate-700);
+  color: var(--ink);
 }
 .action-btn:hover {
   background: var(--hover);
-  border-color: var(--ms-blue);
+  border-color: var(--ms-blue-dark);
 }
 .action-btn:active { transform: translateY(0.5px); }
 .action-btn.danger:hover {
   background: var(--bad-bg);
-  border-color: var(--ms-red);
+  border-color: var(--ms-red-dark);
 }
 .action-btn:disabled, .action-btn[disabled] {
   opacity: 0.4; cursor: not-allowed;
@@ -471,8 +606,9 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
    Autopilot/Intune actions pane).  Keep the semantics via MS red.
    ----------------------------------------------------------------- */
 .emergency-btn, .action-btn-delete {
-  background: var(--ms-red) !important;
-  border-color: #bc3e1a !important;
+  /* Darker red so white text clears AA (small-text) contrast. */
+  background: var(--ms-red-dark) !important;
+  border-color: #9c3212 !important;
   color: #ffffff !important;
   font-weight: 600 !important;
   font-size: 13px !important;
@@ -480,7 +616,7 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
   border-radius: var(--radius-md) !important;
 }
 .emergency-btn:hover, .action-btn-delete:hover {
-  background: #bc3e1a !important;
+  background: #9c3212 !important;
 }
 .action-btn-upload {
   background: var(--slate-800);
@@ -532,17 +668,17 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
 #footer code#buildSha {
   font-family: "IBM Plex Mono", monospace;
   font-size: 11px;
-  background: #ffffff;
+  background: var(--panel);
   border: 1px solid var(--line);
   padding: 2px 7px;
   border-radius: 3px;
-  color: var(--slate-700);
+  color: var(--ink);
 }
 #footer #updateBtn {
   font-family: "IBM Plex Sans", sans-serif;
   font-size: 11px;
-  background: #ffffff;
-  color: var(--slate-700);
+  background: var(--panel);
+  color: var(--ink);
   border: 1px solid var(--line-strong);
   padding: 3px 10px;
   border-radius: var(--radius-sm);
@@ -553,11 +689,43 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
   background: var(--hover);
   border-color: var(--ms-blue);
 }
+/* "Update to X" mode — the renderBadge JS adds .is-ready instead
+   of mutating inline styles so the color can follow the theme. */
+#footer #updateBtn.is-ready {
+  background: var(--ms-green-dark);
+  color: #ffffff;
+  border-color: var(--ms-green-dark);
+  font-weight: 600;
+}
+#footer #updateBtn.is-ready:hover {
+  filter: brightness(0.92);
+}
 
 /* Update-available badge in the footer → make it look active
-   without being obnoxious. */
-#updateBadge a {
+   without being obnoxious.  These classes replace the inline-styled
+   pills renderBadge used to emit, so badge colors track the theme. */
+#updateBadge a { font-family: "IBM Plex Sans", sans-serif; }
+.update-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  text-decoration: none;
   font-family: "IBM Plex Sans", sans-serif;
+  border: 1px solid transparent;
+}
+.update-pill.warn {
+  background: var(--warn-bg); color: var(--warn-fg);
+  border-color: var(--warn-fg);
+  border-color: color-mix(in srgb, var(--warn-fg) 25%, transparent);
+}
+.update-pill.ok {
+  background: var(--ok-bg); color: var(--ok-fg);
+  border-color: color-mix(in srgb, var(--ok-fg) 25%, transparent);
+}
+.update-pill.info { background: var(--info-bg); color: var(--info-fg); }
+.update-pill.neutral {
+  background: transparent; color: var(--ink-muted);
+  font-weight: 500;
 }
 
 /* Self-update overlay — restyled to match the system. */
@@ -583,7 +751,8 @@ input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
 }
 small { color: var(--ink-muted); }
 pre {
-  background: #f7f9fb;
+  background: var(--surface-muted);
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
@@ -595,8 +764,15 @@ pre {
 
 /* Focus-visible everywhere — not a keyboard-hostile lab tool. */
 :focus-visible {
-  outline: 2px solid var(--ms-blue);
+  outline: 2px solid var(--ms-blue-dark);   /* 5.9:1 UI contrast */
   outline-offset: 2px;
+}
+
+/* Respect OS-level motion preference — no page-in animation for
+   users who've opted out. */
+@media (prefers-reduced-motion: reduce) {
+  body { animation: none; }
+  * { transition: none !important; }
 }
 </style>
 </head>
@@ -624,6 +800,22 @@ pre {
       <a href="/monitoring">Monitoring</a>
       <a href="/settings">Settings</a>
     </nav>
+    <button id="themeToggle" class="theme-toggle" type="button"
+            aria-label="Toggle dark mode" title="Toggle theme">
+      <svg class="theme-icon-moon" xmlns="http://www.w3.org/2000/svg"
+           width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+      <svg class="theme-icon-sun" xmlns="http://www.w3.org/2000/svg"
+           width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
     {% if request and request.session and request.session.get('user') %}
     <span class="user-chip">
       <span class="user-dot" aria-hidden="true"></span>
@@ -665,6 +857,26 @@ pre {
 // nav link's href; the closest-matching prefix wins.  Runs on
 // DOMContentLoaded so no flash of unhighlighted nav.
 // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// Theme toggle.  The initial theme is already applied by the inline
+// script in <head> so there's no flash-of-light; this only handles
+// the click → persist → re-paint cycle.
+// -----------------------------------------------------------------------
+(function() {
+  var btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  btn.addEventListener('click', function() {
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    if (isDark) {
+      document.documentElement.removeAttribute('data-theme');
+      try { localStorage.setItem('autopilot_theme', 'light'); } catch (e) {}
+    } else {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      try { localStorage.setItem('autopilot_theme', 'dark'); } catch (e) {}
+    }
+  });
+})();
+
 (function() {
   function markActive() {
     var links = document.querySelectorAll('#nav a[href]');
@@ -747,29 +959,28 @@ pre {
 
     var badge = document.getElementById('updateBadge');
     var btn = document.getElementById('updateBtn');
+    // All visual states now use tokenised CSS classes (.update-pill.*
+    // + .is-ready on the button) so dark mode picks up the same
+    // colors without inline overrides.
     if (data.update_available === true) {
       latestSha = (data.latest && data.latest.sha_short) || null;
-      badge.innerHTML = '<a href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:2px 9px;background:#fff3cf;color:#7a5400;border:1px solid #f3dfa8;border-radius:999px;font-weight:600;font-size:11px;text-decoration:none;">Update available → ' + (latestSha || '?') + '</a>';
+      badge.innerHTML = '<a class="update-pill warn" href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank">Update available → ' + (latestSha || '?') + '</a>';
       btn.textContent = latestSha ? 'Update to ' + latestSha : 'Update now';
-      btn.style.background = '#7FBA00';
-      btn.style.color = '#ffffff';
-      btn.style.borderColor = '#679700';
-      btn.style.fontWeight = '600';
+      btn.classList.add('is-ready');
       btn.dataset.mode = 'update';
     } else if (data.update_available === false) {
-      badge.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;padding:2px 9px;background:#e4f4d9;color:#3d6f00;border:1px solid #cbe5b0;border-radius:999px;font-size:11px;font-weight:600;">up to date</span>';
+      badge.innerHTML = '<span class="update-pill ok">up to date</span>';
       btn.textContent = 'Check for updates';
-      btn.style.background = '';
-      btn.style.color = '';
-      btn.style.borderColor = '';
-      btn.style.fontWeight = '';
+      btn.classList.remove('is-ready');
       btn.dataset.mode = 'check';
     } else if (data.latest && data.latest.error) {
-      badge.innerHTML = '<span style="color:var(--ink-muted);">update check failed</span>';
+      badge.innerHTML = '<span class="update-pill neutral">update check failed</span>';
       badge.title = data.latest.error;
+      btn.classList.remove('is-ready');
       btn.dataset.mode = 'check';
     } else {
       badge.innerHTML = '';
+      btn.classList.remove('is-ready');
       btn.dataset.mode = 'check';
     }
   }
