@@ -31,7 +31,6 @@ from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from authlib.integrations.httpx_client import OAuth2Client
 from authlib.jose import jwt
 
 log = logging.getLogger(__name__)
