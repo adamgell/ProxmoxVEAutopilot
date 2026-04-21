@@ -379,7 +379,110 @@ async def _device_monitor_loop() -> None:
             except Exception:
                 _log.exception("loop: sweep failed; will retry next tick")
 
+            # Keytab health: probe every sweep; refresh daily (or when
+            # the probe says the keytab is missing/broken).
+            try:
+                await asyncio.to_thread(_run_keytab_checks)
+            except Exception:
+                _log.exception("loop: keytab check failed; will retry next tick")
+
         await asyncio.sleep(max(60, settings.interval_seconds))
+
+
+def _run_keytab_checks() -> None:
+    """Runs in a worker thread. Never raises — all failures land in
+    keytab_health.last_probe_* / last_refresh_*.
+
+    Refresh cadence: once per calendar day, OR whenever the probe
+    says the keytab is missing/broken/stale/kvno-mismatch."""
+    from web import keytab_monitor
+    import logging as _logging
+    _log = _logging.getLogger("web.keytab_monitor.loop")
+
+    cfg = _load_proxmox_config()
+    keytab_path = cfg.get("ad_keytab_path", "/etc/krb5.keytab")
+    ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
+    realm = cfg.get("ad_realm", "HOME.GELL.ONE")
+    gmsa_sam = cfg.get("ad_gmsa_sam", "svc-apmon")
+    gmsa_dn = cfg.get(
+        "ad_gmsa_dn",
+        "CN=svc-apmon,CN=Managed Service Accounts,DC=home,DC=gell,DC=one",
+    )
+    principal = cfg.get("ad_kerberos_principal", f"{gmsa_sam}$@{realm}")
+
+    probe = keytab_monitor.probe_keytab(
+        keytab_path=keytab_path, principal=principal,
+        ldap_host=ldap_host, gmsa_dn=gmsa_dn,
+    )
+    keytab_monitor.record_probe(DEVICE_MONITOR_DB, probe)
+    _log.info("keytab probe: %s (%s)", probe.status, probe.message)
+
+    # Refresh when:
+    #   - probe says missing / broken / kvno-mismatch (anything but OK
+    #     or STALE — STALE means refresher just slipped a bit, normal
+    #     daily cadence will catch it), OR
+    #   - last_refresh_at is >24h ago (daily cadence).
+    current = device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    last_refresh_at = current.get("last_refresh_at")
+    last_refresh_ok = current.get("last_refresh_ok")
+    needs_refresh = probe.status in (
+        keytab_monitor.STATUS_MISSING,
+        keytab_monitor.STATUS_BROKEN,
+        keytab_monitor.STATUS_KVNO_MISMATCH,
+    )
+    if not needs_refresh:
+        if not last_refresh_at:
+            needs_refresh = True                         # never refreshed
+        elif last_refresh_ok == 0:
+            needs_refresh = True                         # last attempt failed — retry
+        elif keytab_monitor._age_hours(last_refresh_at) >= 24:
+            needs_refresh = True                         # daily cadence
+
+    if not needs_refresh:
+        return
+
+    # Resolve the admin credential used to kinit for retrieving the
+    # gMSA password. Reuses the monitoring_settings.ad_credential_id
+    # (the same knob the AD-search config pointed at in the earlier
+    # design; now repurposed as "refresher kinit cred").
+    cred = _resolve_ad_credential()
+    admin_user = cred.get("username") or ""
+    admin_pw = cred.get("password") or ""
+    if not admin_user or not admin_pw:
+        device_history_db.update_keytab_refresh(
+            DEVICE_MONITOR_DB, ok=False,
+            message=(
+                "no AD credential configured for keytab refresh "
+                "(set monitoring_settings.ad_credential_id to a "
+                "credential with Retrieve-Password rights on the gMSA)"
+            ),
+        )
+        return
+
+    # Normalise the username to Kerberos principal form:
+    # "home\adam_admin" → "adam_admin@HOME.GELL.ONE"
+    if "\\" in admin_user:
+        _dom, bare = admin_user.split("\\", 1)
+        kinit_principal = f"{bare}@{realm}"
+    elif "@" in admin_user:
+        kinit_principal = admin_user.upper()
+        # Force UPPER realm half.
+        user_part, _, realm_part = kinit_principal.partition("@")
+        kinit_principal = f"{user_part.lower()}@{realm_part.upper()}"
+    else:
+        kinit_principal = f"{admin_user}@{realm}"
+
+    ok, msg = keytab_monitor.refresh_keytab(
+        db_path=DEVICE_MONITOR_DB,
+        kinit_principal=kinit_principal,
+        kinit_password=admin_pw,
+        keytab_path=keytab_path,
+        gmsa_dn=gmsa_dn,
+        ldap_host=ldap_host,
+        realm=realm,
+        gmsa_sam=gmsa_sam,
+    )
+    _log.info("keytab refresh: ok=%s msg=%s", ok, msg)
 
 
 def _vm_provisioning_vmids() -> set:

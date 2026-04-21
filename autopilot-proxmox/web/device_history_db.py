@@ -104,6 +104,28 @@ CREATE TABLE IF NOT EXISTS monitoring_search_ous (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Single-row keytab health telemetry. Populated by probe_keytab()
+-- (every sweep) and refresh_keytab() (daily). The /monitoring
+-- dashboard banner + /monitoring/settings panel read from here.
+CREATE TABLE IF NOT EXISTS keytab_health (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    keytab_path          TEXT,
+    keytab_mtime         TEXT,
+    keytab_principal     TEXT,
+    keytab_kvno_local    INTEGER,
+    keytab_kvno_ad       INTEGER,
+    last_probe_at        TEXT,
+    last_probe_status    TEXT,    -- ok / stale / missing / broken / kvno-mismatch
+    last_probe_message   TEXT,
+    last_kinit_at        TEXT,
+    last_kinit_ok        INTEGER,
+    last_kinit_error     TEXT,
+    last_refresh_at      TEXT,
+    last_refresh_ok      INTEGER,
+    last_refresh_message TEXT,
+    updated_at           TEXT NOT NULL
+);
 """
 
 
@@ -158,6 +180,11 @@ def init(db_path: Path, *, seed_default_ou: bool = True) -> None:
             "INSERT OR IGNORE INTO monitoring_settings "
             "(id, enabled, interval_seconds, ad_credential_id, updated_at) "
             "VALUES (1, 1, 900, 0, ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO keytab_health (id, updated_at) "
+            "VALUES (1, ?)",
             (now,),
         )
         if seed_default_ou:
@@ -517,6 +544,74 @@ def history_for_vmid(db_path: Path, vmid: int,
         "pve_snapshots": [dict(r) for r in pve],
         "device_probes": [dict(r) for r in probes],
     }
+
+
+# ---------------------------------------------------------------------------
+# keytab health (single-row)
+# ---------------------------------------------------------------------------
+
+
+def get_keytab_health(db_path: Path) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM keytab_health WHERE id = 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_keytab_probe(db_path: Path, *,
+                        keytab_path: Optional[str] = None,
+                        keytab_mtime: Optional[str] = None,
+                        keytab_principal: Optional[str] = None,
+                        keytab_kvno_local: Optional[int] = None,
+                        keytab_kvno_ad: Optional[int] = None,
+                        last_probe_at: Optional[str] = None,
+                        last_probe_status: Optional[str] = None,
+                        last_probe_message: Optional[str] = None,
+                        last_kinit_at: Optional[str] = None,
+                        last_kinit_ok: Optional[bool] = None,
+                        last_kinit_error: Optional[str] = None) -> None:
+    """Partial update; only non-None fields are written."""
+    pairs = {
+        "keytab_path": keytab_path,
+        "keytab_mtime": keytab_mtime,
+        "keytab_principal": keytab_principal,
+        "keytab_kvno_local": keytab_kvno_local,
+        "keytab_kvno_ad": keytab_kvno_ad,
+        "last_probe_at": last_probe_at,
+        "last_probe_status": last_probe_status,
+        "last_probe_message": last_probe_message,
+        "last_kinit_at": last_kinit_at,
+        "last_kinit_ok": None if last_kinit_ok is None else (1 if last_kinit_ok else 0),
+        "last_kinit_error": last_kinit_error,
+    }
+    sets, params = [], []
+    for k, v in pairs.items():
+        if v is not None:
+            sets.append(f"{k} = ?")
+            params.append(v)
+    if not sets:
+        return
+    sets.append("updated_at = ?")
+    params.append(_now())
+    with _connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE keytab_health SET {', '.join(sets)} WHERE id = 1",
+            params,
+        )
+
+
+def update_keytab_refresh(db_path: Path, *,
+                          ok: bool, message: str,
+                          at: Optional[str] = None) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE keytab_health SET "
+            " last_refresh_at = ?, last_refresh_ok = ?, "
+            " last_refresh_message = ?, updated_at = ? "
+            "WHERE id = 1",
+            (at or _now(), 1 if ok else 0, message, _now()),
+        )
 
 
 def latest_per_vmid(db_path: Path) -> list[dict]:
