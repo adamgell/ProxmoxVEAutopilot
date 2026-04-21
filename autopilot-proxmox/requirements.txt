@@ -17,3 +17,8 @@ ldap3>=2.9,<3.0
 # python-ldap delegates to OpenLDAP+libsasl2 which signs properly.
 python-ldap>=3.4,<4.0
 gssapi>=1.8,<2.0
+# WinRM-over-Kerberos client for one-off AD operations (gMSA create,
+# keytab refresh trigger) when the DC's QEMU guest agent is
+# unreachable. pypsrp needs the krb5 Python bindings at install time.
+krb5>=0.5,<1.0
+pypsrp>=0.8,<1.0
