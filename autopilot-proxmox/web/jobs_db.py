@@ -203,3 +203,23 @@ def request_kill(db_path: Path, job_id: str) -> None:
             "UPDATE jobs SET kill_requested=1 WHERE id=?",
             (job_id,),
         )
+
+
+def reap_orphans(db_path: Path, *, stale_threshold_seconds: int = 120) -> int:
+    """Mark running jobs with stale heartbeats as orphaned. Returns row count.
+
+    Called by the monitor container on a 30-second ticker (spec §5).
+    Threshold 120s = 24x the 5s builder heartbeat cadence.
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(seconds=stale_threshold_seconds)
+              ).isoformat(timespec="seconds")
+    now = _now()
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status='orphaned', ended_at=? "
+            "WHERE status='running' AND last_heartbeat < ?",
+            (now, cutoff),
+        )
+    return cur.rowcount

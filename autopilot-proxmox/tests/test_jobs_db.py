@@ -208,3 +208,50 @@ def test_request_kill_sets_flag(db_path):
     jobs_db.claim_next_job(db_path, worker_id="worker-a")
     jobs_db.request_kill(db_path, "j1")
     assert jobs_db.get_job(db_path, "j1")["kill_requested"] == 1
+
+
+def test_reap_orphans_marks_stale_running_as_orphaned(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    # Manually age the heartbeat to 3 minutes ago.
+    from datetime import datetime, timezone, timedelta
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat(timespec="seconds")
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE jobs SET last_heartbeat=? WHERE id=?", (stale, "j1"))
+    n = jobs_db.reap_orphans(db_path, stale_threshold_seconds=120)
+    assert n == 1
+    assert jobs_db.get_job(db_path, "j1")["status"] == "orphaned"
+
+
+def test_reap_orphans_leaves_fresh_jobs_alone(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    n = jobs_db.reap_orphans(db_path, stale_threshold_seconds=120)
+    assert n == 0
+    assert jobs_db.get_job(db_path, "j1")["status"] == "running"
+
+
+def test_reap_orphans_ignores_complete_jobs(db_path):
+    """A complete job with a stale heartbeat (normal — heartbeat isn't
+    touched after finalize) must not be marked orphaned."""
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    jobs_db.finalize_job(db_path, "j1", exit_code=0)
+    from datetime import datetime, timezone, timedelta
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(timespec="seconds")
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE jobs SET last_heartbeat=? WHERE id=?", (stale, "j1"))
+    n = jobs_db.reap_orphans(db_path, stale_threshold_seconds=120)
+    assert n == 0
+    assert jobs_db.get_job(db_path, "j1")["status"] == "complete"
