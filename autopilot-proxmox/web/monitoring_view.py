@@ -135,14 +135,21 @@ class DashboardRow:
     last_checked: str
     win_name: str
     serial: str
+    # AD column
     ad_badge: str
     ad_count: int
+    ad_cn: str                 # distinguishedName's CN or cn attr
+    # Entra column — display name + trust type surface naming drift
+    # between VM name / AD cn / Entra displayName / Intune deviceName.
     entra_badge: str
     entra_count: int
     entra_trust_type: str
+    entra_display_name: str
+    # Intune column
     intune_badge: str
     intune_count: int
     intune_compliance: str
+    intune_device_name: str
 
 
 def build_dashboard_rows(latest: list[dict],
@@ -158,6 +165,9 @@ def build_dashboard_rows(latest: list[dict],
     for entry in latest:
         pve = entry.get("pve") or {}
         probe = entry.get("probe")
+        ad_matches = _parse_json(
+            (probe or {}).get("ad_matches_json"), [],
+        )
         entra_matches = _parse_json(
             (probe or {}).get("entra_matches_json"), [],
         )
@@ -174,6 +184,7 @@ def build_dashboard_rows(latest: list[dict],
             serial=(probe or {}).get("serial") or "",
             ad_badge=classify_ad(probe),
             ad_count=int((probe or {}).get("ad_match_count") or 0),
+            ad_cn=(ad_matches[0].get("cn") if ad_matches else ""),
             entra_badge=classify_entra(
                 probe,
                 ad_first_seen_at=ad_first_seen.get(int(entry["vmid"])),
@@ -182,9 +193,13 @@ def build_dashboard_rows(latest: list[dict],
             entra_count=int((probe or {}).get("entra_match_count") or 0),
             entra_trust_type=(entra_matches[0].get("trustType")
                               if entra_matches else ""),
+            entra_display_name=(entra_matches[0].get("displayName")
+                                if entra_matches else ""),
             intune_badge=classify_intune(probe),
             intune_count=int((probe or {}).get("intune_match_count") or 0),
             intune_compliance=(intune_matches[0].get("complianceState")
                                if intune_matches else ""),
+            intune_device_name=(intune_matches[0].get("deviceName")
+                                if intune_matches else ""),
         ))
     return out

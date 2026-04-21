@@ -13,6 +13,11 @@
   .badge.error   { background: #f5c6cb; color: #721c24; border-color: #f1b0b7; }
   .badge.unknown { background: #f8f9fa; color: #6c757d; border-color: #dee2e6; }
   .count-pill    { font-size: 10px; opacity: 0.7; margin-left: 3px; }
+  .source-name   { font-size: 11px; color: #555; font-family: monospace;
+                   margin-top: 2px; word-break: break-all; }
+  .source-name.mismatch { color: #856404; font-weight: 600;
+                          background: #fff3cd; padding: 0 3px;
+                          border-radius: 2px; display: inline-block; }
   .pve-running   { color: #155724; }
   .pve-stopped   { color: #6c757d; }
   .pve-other     { color: #856404; }
@@ -89,6 +94,12 @@
         {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.ad_badge] }}
         {% if r.ad_count > 1 %}<span class="count-pill">×{{ r.ad_count }}</span>{% endif %}
       </span>
+      {% if r.ad_cn %}
+        <div class="source-name {% if r.win_name and r.ad_cn|lower != r.win_name|lower %}mismatch{% endif %}"
+             title="{% if r.win_name and r.ad_cn|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
+          {{ r.ad_cn }}
+        </div>
+      {% endif %}
     </td>
     <td>
       <span class="badge {{ r.entra_badge }}" title="{{ r.entra_trust_type or 'no match' }} ({{ r.entra_count }})">
@@ -96,6 +107,12 @@
         {% if r.entra_trust_type %}<span class="count-pill">{{ r.entra_trust_type }}</span>{% endif %}
         {% if r.entra_count > 1 %}<span class="count-pill">×{{ r.entra_count }}</span>{% endif %}
       </span>
+      {% if r.entra_display_name %}
+        <div class="source-name {% if r.win_name and r.entra_display_name|lower != r.win_name|lower %}mismatch{% endif %}"
+             title="{% if r.win_name and r.entra_display_name|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
+          {{ r.entra_display_name }}
+        </div>
+      {% endif %}
     </td>
     <td>
       <span class="badge {{ r.intune_badge }}" title="{{ r.intune_compliance or 'no match' }} ({{ r.intune_count }})">
@@ -103,6 +120,12 @@
         {% if r.intune_compliance %}<span class="count-pill">{{ r.intune_compliance }}</span>{% endif %}
         {% if r.intune_count > 1 %}<span class="count-pill">×{{ r.intune_count }}</span>{% endif %}
       </span>
+      {% if r.intune_device_name %}
+        <div class="source-name {% if r.win_name and r.intune_device_name|lower != r.win_name|lower %}mismatch{% endif %}"
+             title="{% if r.win_name and r.intune_device_name|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
+          {{ r.intune_device_name }}
+        </div>
+      {% endif %}
     </td>
     <td>
       <time datetime="{{ r.last_checked }}"
