@@ -638,29 +638,15 @@ def _init_jobs_db_and_migrate() -> None:
     _SCHEMA_READY = True
 
 
-_MONITOR_TASK: Optional["asyncio.Task"] = None
-
-
-@app.on_event("startup")
-async def _start_device_monitor_loop() -> None:
-    """Start the background monitor task. Failures here never crash
-    the app — the loop swallows exceptions and retries on the next
-    tick."""
-    import asyncio
-    global _MONITOR_TASK
-    _MONITOR_TASK = asyncio.create_task(_device_monitor_loop())
-
-
-@app.on_event("shutdown")
-async def _stop_device_monitor_loop() -> None:
-    import asyncio
-    if _MONITOR_TASK is None:
-        return
-    _MONITOR_TASK.cancel()
-    try:
-        await _MONITOR_TASK
-    except (asyncio.CancelledError, Exception):
-        pass
+# Note: the periodic device-monitor sweep + keytab-refresh loop used
+# to live here as `_device_monitor_loop` + `_start_device_monitor_loop`.
+# As of the microservice split (Task 15/16) those tasks are owned by
+# the `monitor` container via `web/monitor_main.py`. Running them here
+# too would cause double-sweeps and double keytab probes, so the web
+# container no longer starts them. The `_run_keytab_checks`,
+# `_build_live_monitor_context`, and `_vm_provisioning_vmids` helpers
+# below are kept because `monitor_main` imports them (and the "refresh
+# now" HTTP endpoint still calls `_run_keytab_checks` directly).
 
 
 _HEALTH_TASK: Optional["asyncio.Task"] = None
@@ -712,50 +698,6 @@ async def _stop_health_heartbeat() -> None:
         await _HEALTH_TASK
     except (asyncio.CancelledError, Exception):
         pass
-
-
-async def _device_monitor_loop() -> None:
-    """Runs :func:`device_monitor.sweep` on a loop, sleeping
-    ``settings.interval_seconds`` between iterations. Re-reads
-    settings every tick so the /monitoring/settings UI takes effect
-    on the next run without a restart. Unhandled exceptions in one
-    tick are logged and the next tick still runs."""
-    import asyncio
-    import logging as _logging
-    _log = _logging.getLogger("web.device_monitor.loop")
-    # Small grace period on startup so the DB-init hook can finish
-    # on slow disks before we try to read settings.
-    await asyncio.sleep(5)
-    while True:
-        try:
-            settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
-        except Exception:
-            _log.exception("loop: could not read settings; retrying in 60s")
-            await asyncio.sleep(60)
-            continue
-
-        if settings.enabled:
-            try:
-                ctx = _build_live_monitor_context()
-                extra = _vm_provisioning_vmids()
-                # sweep() is synchronous + DB-bound; run it in a thread
-                # so we don't block the event loop for the Graph +
-                # LDAP round-trips.
-                await asyncio.to_thread(
-                    device_monitor.sweep, ctx,
-                    extra_in_scope_vmids=extra,
-                )
-            except Exception:
-                _log.exception("loop: sweep failed; will retry next tick")
-
-            # Keytab health: probe every sweep; refresh daily (or when
-            # the probe says the keytab is missing/broken).
-            try:
-                await asyncio.to_thread(_run_keytab_checks)
-            except Exception:
-                _log.exception("loop: keytab check failed; will retry next tick")
-
-        await asyncio.sleep(max(60, settings.interval_seconds))
 
 
 def _run_keytab_checks() -> None:
