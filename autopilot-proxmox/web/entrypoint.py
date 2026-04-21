@@ -23,14 +23,32 @@ def _run_web() -> None:
     uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
 
 
+def _configure_logging() -> None:
+    """Ensure log lines land on stdout for docker logs visibility.
+
+    Uvicorn owns logging in web mode; builder + monitor use plain
+    `logging.getLogger(...)` calls and need basicConfig to wire up a
+    stream handler. Without this, `docker logs autopilot-builder`
+    returns empty even though the loop is running — confusing for ops.
+    """
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+    )
+
+
 def _run_builder() -> None:
     """Start the builder claim/run loop."""
+    _configure_logging()
     from web.builder import run_builder
     run_builder()
 
 
 def _run_monitor() -> None:
     """Start the monitor singleton — sweep loop + keytab + reaper."""
+    _configure_logging()
     from web.monitor_main import run_monitor
     run_monitor()
 
