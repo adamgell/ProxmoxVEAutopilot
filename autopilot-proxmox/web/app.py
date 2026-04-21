@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from web.jobs import JobManager
 from web import devices_db
+from web import jobs_db
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -3334,9 +3335,16 @@ async def api_list_jobs():
 
 @app.post("/api/jobs/{job_id}/kill")
 async def kill_job(job_id: str):
-    killed = job_manager.kill(job_id)
-    if not killed:
+    """Request termination. Flips kill_requested=1 on the job row; the
+    builder owning the job will see it on its next heartbeat cycle
+    (~5s max) and SIGTERM the subprocess. Redirects to /jobs/<id>."""
+    row = jobs_db.get_job(JOBS_DB, job_id)
+    if row is None:
+        raise HTTPException(404, f"job {job_id} not found")
+    if row["status"] != "running":
+        # Already done; ignore quietly so double-clicks don't 400.
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    jobs_db.request_kill(JOBS_DB, job_id)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
