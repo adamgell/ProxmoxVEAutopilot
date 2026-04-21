@@ -12,10 +12,15 @@ import sys
 
 
 def _run_web() -> None:
-    """Launch the FastAPI/uvicorn server (existing entrypoint)."""
+    """Launch the FastAPI/uvicorn server (existing entrypoint).
+
+    Port 5000 matches the Dockerfile EXPOSE and the single-container
+    compose port mapping — changing it would break every existing
+    deploy's reverse-proxy config.
+    """
     import uvicorn
     from web.app import app
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
 
 
 def _run_builder() -> None:
