@@ -7,8 +7,10 @@ init() via executescript, context-managed connections.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -88,3 +90,47 @@ def list_job_type_limits(db_path: Path) -> list[dict]:
             "SELECT job_type, max_concurrent FROM job_type_limits "
             "ORDER BY job_type"
         )]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _row_to_dict(row: sqlite3.Row) -> dict:
+    """Deserialize the cmd_json / args_json columns back to Python."""
+    d = dict(row)
+    d["cmd"] = json.loads(d.pop("cmd_json"))
+    d["args"] = json.loads(d.pop("args_json"))
+    return d
+
+
+def enqueue(db_path: Path, *, job_id: str, job_type: str,
+            playbook: str, cmd: list, args: dict) -> dict:
+    """Insert a new pending job. Returns the row as a dict (with cmd + args
+    already JSON-decoded for callers).
+    """
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO jobs "
+            "(id, job_type, playbook, cmd_json, args_json, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (job_id, job_type, playbook, json.dumps(cmd), json.dumps(args), now),
+        )
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return _row_to_dict(row)
+
+
+def get_job(db_path: Path, job_id: str) -> dict | None:
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def list_jobs(db_path: Path, *, limit: int = 200) -> list[dict]:
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]

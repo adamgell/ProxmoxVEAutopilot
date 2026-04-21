@@ -70,3 +70,44 @@ def test_init_preserves_operator_tuned_concurrency_caps(db_path):
     assert caps["provision_clone"] == 7
     # Other defaults still seeded as expected.
     assert caps["build_template"] == 1
+
+
+def test_enqueue_creates_pending_job(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    job = jobs_db.enqueue(
+        db_path,
+        job_id="20260421-abcd",
+        job_type="provision_clone",
+        playbook="/app/playbooks/provision_clone.yml",
+        cmd=["ansible-playbook", "/app/playbooks/provision_clone.yml", "-e", "vm_count=1"],
+        args={"vm_count": 1, "hostname_pattern": "autopilot-{serial}"},
+    )
+    assert job["id"] == "20260421-abcd"
+    assert job["status"] == "pending"
+    assert job["worker_id"] is None
+    assert job["kill_requested"] == 0
+    assert job["created_at"]
+    assert job["claimed_at"] is None
+
+    got = jobs_db.get_job(db_path, "20260421-abcd")
+    assert got["id"] == "20260421-abcd"
+    assert got["args"]["vm_count"] == 1
+    assert got["cmd"][0] == "ansible-playbook"
+
+
+def test_list_jobs_orders_newest_first(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="older", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.enqueue(db_path, job_id="newer", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    rows = jobs_db.list_jobs(db_path)
+    assert [r["id"] for r in rows] == ["newer", "older"]
+
+
+def test_get_job_returns_none_for_missing(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    assert jobs_db.get_job(db_path, "does-not-exist") is None
