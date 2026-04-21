@@ -385,9 +385,15 @@ async def _require_auth(request: Request, call_next):
     )
 
 
-@app.get("/auth/login")
-async def auth_login(request: Request, next: str = "/"):
-    """Redirect the browser to Entra for sign-in."""
+@app.get("/auth/login", response_class=HTMLResponse)
+async def auth_login(request: Request, next: str = "/",
+                     error: str = ""):
+    """Branded landing page. Operator clicks 'Sign in with Microsoft'
+    to actually hand off to Entra — see /auth/login/start for the
+    redirect itself. The intermediate page is a deliberate UX choice
+    so (a) operators see the app name before MS takes over, and
+    (b) callback failures can surface a readable error banner
+    instead of a raw HTML error page."""
     cfg = _auth_config()
     if not cfg["tenant_id"] or not cfg["client_id"]:
         return HTMLResponse(
@@ -396,6 +402,37 @@ async def auth_login(request: Request, next: str = "/"):
             "<code>vault_entra_app_id</code> in vault.yml, then run "
             "<code>scripts/ad/configure_entra_auth.py</code>.</p>",
             status_code=500,
+        )
+    # Short, human-readable tenant label — prefer the domain name
+    # from the configured realm over the raw GUID.
+    tenant_label = (
+        _load_proxmox_config().get("ad_realm", "")
+        or cfg["tenant_id"]
+    )
+    from urllib.parse import quote as _q
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "error": error,
+        # URL-encode so a next path containing ?&= survives being
+        # re-emitted into the Sign-in link's query string.
+        "next_url": _q(_auth.safe_next_url(next), safe=""),
+        "tenant_label": tenant_label,
+        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
+        "build_time": _APP_VERSION.get("build_time", ""),
+    })
+
+
+@app.get("/auth/login/start")
+async def auth_login_start(request: Request, next: str = "/"):
+    """Actually hand off to Entra. Separate from /auth/login so the
+    landing page can show the app name + 'Sign in with Microsoft'
+    button first. State + PKCE are generated here, stashed in the
+    session, and validated in /auth/callback."""
+    cfg = _auth_config()
+    if not cfg["tenant_id"] or not cfg["client_id"]:
+        return RedirectResponse(
+            url="/auth/login?error=auth+not+configured",
+            status_code=302,
         )
     url = _auth.build_login_url(
         request,
@@ -407,42 +444,54 @@ async def auth_login(request: Request, next: str = "/"):
     return RedirectResponse(url=url, status_code=302)
 
 
+def _login_error(message: str, *, next_url: str = "/") -> RedirectResponse:
+    """Redirect back to the branded /auth/login page with an error
+    banner, rather than dumping raw HTML from the middle of the
+    auth flow. 303 so the browser follows cleanly on re-POST."""
+    from urllib.parse import quote as _q
+    return RedirectResponse(
+        url=f"/auth/login?error={_q(message)}&next={_q(next_url)}",
+        status_code=303,
+    )
+
+
 @app.get("/auth/callback")
 async def auth_callback(request: Request, code: str = "",
                         state: str = "", error: str = "",
                         error_description: str = ""):
     """Exchange the auth code for an ID token, validate, drop session."""
+    next_url = _auth.safe_next_url(request.session.pop("oidc_next", "/"))
     if error:
-        return HTMLResponse(
-            f"<h1>Sign-in cancelled</h1>"
-            f"<p><code>{error}</code>: {error_description}</p>"
-            f"<p><a href='/auth/login'>Try again</a></p>",
-            status_code=400,
+        return _login_error(
+            f"Sign-in cancelled ({error}): {error_description}",
+            next_url=next_url,
         )
     expected_state = request.session.pop("oidc_state", None)
     code_verifier = request.session.pop("oidc_verifier", None)
-    next_url = _auth.safe_next_url(request.session.pop("oidc_next", "/"))
     if not code or not expected_state or state != expected_state:
-        return HTMLResponse(
-            "<h1>State mismatch</h1><p>Sign-in flow got out of sync. "
-            "<a href='/auth/login'>Start over</a>.</p>",
-            status_code=400,
+        return _login_error(
+            "Sign-in flow got out of sync. Please try again.",
+            next_url=next_url,
         )
     cfg = _auth_config()
-    tok = _auth.exchange_code_for_token(
-        tenant_id=cfg["tenant_id"],
-        client_id=cfg["client_id"],
-        client_secret=cfg["client_secret"],
-        redirect_uri=cfg["redirect_uri"],
-        code=code, code_verifier=code_verifier,
-    )
+    try:
+        tok = _auth.exchange_code_for_token(
+            tenant_id=cfg["tenant_id"],
+            client_id=cfg["client_id"],
+            client_secret=cfg["client_secret"],
+            redirect_uri=cfg["redirect_uri"],
+            code=code, code_verifier=code_verifier,
+        )
+    except HTTPException as e:
+        return _login_error(
+            f"Token exchange failed: {e.detail}", next_url=next_url,
+        )
     id_token = tok.get("id_token")
     if not id_token:
-        return HTMLResponse(
-            "<h1>Missing id_token</h1>"
-            "<p>Token response didn't include an id_token. Confirm "
-            "the app reg has 'ID tokens' enabled under Authentication.</p>",
-            status_code=500,
+        return _login_error(
+            "Token response didn't include an id_token — confirm the "
+            "app reg has 'ID tokens' enabled.",
+            next_url=next_url,
         )
     try:
         claims = _auth.validate_id_token(
@@ -451,18 +500,16 @@ async def auth_callback(request: Request, code: str = "",
             client_id=cfg["client_id"],
         )
     except Exception as e:
-        return HTMLResponse(
-            f"<h1>Token validation failed</h1><pre>{e}</pre>",
-            status_code=401,
+        return _login_error(
+            f"Token validation failed: {e}", next_url=next_url,
         )
     user = _auth.user_from_claims(claims)
     if not _auth.is_authorized(user, admin_group_id=cfg["admin_group_id"]):
-        return HTMLResponse(
-            f"<h1>Access denied</h1>"
-            f"<p>{user.get('email') or user.get('upn')} is signed in but "
-            f"isn't a member of the required admin group "
-            f"(<code>{cfg['admin_group_id']}</code>).</p>",
-            status_code=403,
+        who = user.get("email") or user.get("upn") or "this user"
+        return _login_error(
+            f"{who} signed in but isn't a member of the required "
+            f"admin group. Ask an admin to add them.",
+            next_url=next_url,
         )
     request.session["user"] = user
     return RedirectResponse(url=next_url, status_code=302)
