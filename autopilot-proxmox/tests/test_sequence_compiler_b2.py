@@ -229,31 +229,36 @@ def test_join_ad_domain_does_not_add_to_causes_reboot_count():
 
 
 def test_rename_computer_defaults_to_serial():
+    """Renaming during specialize — not at first-logon — so the machine
+    joins AD with the right name on the first try. A post-join
+    Rename-Computer would need -DomainCredential; specialize avoids
+    that complication entirely."""
     from web import sequence_compiler
     seq = _make_sequence([
         {"step_type": "rename_computer", "params": {}},
     ])
     result = sequence_compiler.compile(seq)
-    assert len(result.first_logon_commands) == 1
-    cmd = result.first_logon_commands[0]["command"]
-    assert "Get-CimInstance Win32_BIOS" in cmd
-    assert "SerialNumber" in cmd
-    assert "Rename-Computer" in cmd
-    assert "shutdown" in cmd.lower()
-    assert result.causes_reboot_count == 1
+    # No FLC rename (that path fails silently on domain-joined hosts).
+    assert result.first_logon_commands == []
+    # Sentinel: inject_unattend.yml substitutes %AUTOPILOT_SERIAL% with
+    # _vm_serial after mcopy extracts the cached floppy.
+    assert result.unattend_blocks["specialize_computer_name"] == "%AUTOPILOT_SERIAL%"
+    # Specialize rename is part of Windows's normal setup reboots.
+    assert result.causes_reboot_count == 0
 
 
-def test_rename_computer_pattern_substitutes_vmid_and_serial():
+def test_rename_computer_pattern_emits_sentinel_placeholders():
     from web import sequence_compiler
     seq = _make_sequence([
         {"step_type": "rename_computer",
          "params": {"name_source": "pattern", "pattern": "DEV-{vmid}-{serial}"}},
     ])
     result = sequence_compiler.compile(seq)
-    cmd = result.first_logon_commands[0]["command"]
-    assert "DEV-{vmid}-{serial}" in cmd
-    assert "Replace('{vmid}', $vmid)" in cmd
-    assert "Replace('{serial}', $serial)" in cmd
+    assert (
+        result.unattend_blocks["specialize_computer_name"]
+        == "DEV-%AUTOPILOT_VMID%-%AUTOPILOT_SERIAL%"
+    )
+    assert result.first_logon_commands == []
 
 
 def test_rename_computer_pattern_requires_nonempty_pattern():
@@ -266,17 +271,20 @@ def test_rename_computer_pattern_requires_nonempty_pattern():
         sequence_compiler.compile(seq)
 
 
-def test_rename_computer_escapes_single_quote_in_pattern():
-    """Pattern is injected into a single-quoted PowerShell literal; an
-    embedded apostrophe must be doubled to avoid breaking out of the string."""
+def test_rename_computer_xml_escapes_pattern():
+    """Pattern lands inside an XML element; ampersands, angle-brackets
+    must be entity-encoded so the unattend parses. (Literal apostrophes
+    are fine inside element content.)"""
     from web import sequence_compiler
     seq = _make_sequence([
         {"step_type": "rename_computer",
-         "params": {"name_source": "pattern", "pattern": "it's-a-trap"}},
+         "params": {"name_source": "pattern", "pattern": "A&B<c>"}},
     ])
     result = sequence_compiler.compile(seq)
-    cmd = result.first_logon_commands[0]["command"]
-    assert "it''s-a-trap" in cmd
+    assert (
+        result.unattend_blocks["specialize_computer_name"]
+        == "A&amp;B&lt;c&gt;"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -309,11 +317,12 @@ def test_seeded_ad_domain_sequence_end_to_end():
     assert "oobe_user_accounts" in result.unattend_blocks
     assert "oobe_auto_logon" in result.unattend_blocks
     assert "specialize_identification" in result.unattend_blocks
-    # rename_computer adds one FirstLogon; the auto-logon finalizer adds
-    # a second that reboots into the login screen.
-    assert len(result.first_logon_commands) == 2
-    assert result.causes_reboot_count == 2
-    # Finalizer is always last and uses shutdown /r.
+    # rename_computer is handled in specialize via <ComputerName>, so it
+    # emits no FLC; only the auto-logon finalizer (reboot to the login
+    # screen) contributes a command.
+    assert result.unattend_blocks["specialize_computer_name"] == "%AUTOPILOT_SERIAL%"
+    assert len(result.first_logon_commands) == 1
+    assert result.causes_reboot_count == 1
     final = result.first_logon_commands[-1]
     assert "logon screen" in final["description"].lower()
     assert "shutdown" in final["command"].lower()

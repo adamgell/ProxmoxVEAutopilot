@@ -94,7 +94,12 @@ def test_join_ad_domain_sequence_inserts_identification_component():
     assert "<MachineObjectOU>OU=Lab,DC=home,DC=gell,DC=com</MachineObjectOU>" in out
 
 
-def test_rename_computer_appends_first_logon_commands():
+def test_rename_computer_sets_specialize_computer_name_with_sentinel():
+    """rename_computer emits <ComputerName> into the specialize pass so
+    the machine has the right name BEFORE join_ad_domain creates the
+    computer object in AD. The value contains %AUTOPILOT_SERIAL% /
+    %AUTOPILOT_VMID% sentinels that the clone role substitutes per-VM
+    after extracting the cached floppy."""
     from web import sequence_compiler, unattend_renderer
 
     seq = {
@@ -109,14 +114,27 @@ def test_rename_computer_appends_first_logon_commands():
     compiled = sequence_compiler.compile(seq)
     out = unattend_renderer.render_unattend(compiled)
 
-    # New command lands with Order=4 (after the three hardcoded defaults).
-    assert "<Order>4</Order>" in out
-    assert "Rename computer and reboot" in out
-    # XML special chars in the PowerShell command get escaped so the
-    # XML stays well-formed.
-    assert "&quot;" not in out  # Quote inside <CommandLine> stays literal.
-    # But & < > should be escaped.
-    assert "<CommandLine>powershell.exe" in out
+    assert "<ComputerName>%AUTOPILOT_SERIAL%</ComputerName>" in out
+    # No FLC-rename — that path silently failed on domain-joined hosts
+    # (needed -DomainCredential) and has been dropped.
+    assert "Rename-Computer" not in out
+    assert "Rename computer and reboot" not in out
+
+
+def test_default_unattend_leaves_computer_name_wildcard():
+    """Sequences without rename_computer fall back to <ComputerName>*</ComputerName>
+    so Windows auto-generates WIN-<random> — keeps the byte-identical
+    regression against files/autounattend.xml passing."""
+    from web import sequence_compiler, unattend_renderer
+
+    seq = {
+        "id": 5, "name": "no-rename", "description": "",
+        "is_default": False, "produces_autopilot_hash": False,
+        "steps": [],
+    }
+    compiled = sequence_compiler.compile(seq)
+    out = unattend_renderer.render_unattend(compiled)
+    assert "<ComputerName>*</ComputerName>" in out
 
 
 def test_no_sequence_steps_still_renders_default_bytes():

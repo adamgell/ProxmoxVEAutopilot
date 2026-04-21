@@ -186,6 +186,17 @@ def _split_domain_user(raw: str) -> tuple[str, str]:
 
 def _handle_rename_computer(params: dict, out: CompiledSequence,
                             resolver: Optional[Callable]) -> None:
+    # Emit <ComputerName> into the specialize pass. Running at specialize
+    # means the machine is renamed BEFORE join_ad_domain creates the
+    # computer object — otherwise the object lands in AD as WIN-random
+    # and the post-join Rename-Computer FLC silently fails (needs
+    # -DomainCredential on a domain-joined machine).
+    #
+    # The pattern may contain {serial} and {vmid} tokens. We can't
+    # substitute here because the per-sequence unattend is content-hash
+    # cached across provisions; substituting per-VM would blow the
+    # cache. Instead, emit sentinel placeholders that inject_unattend.yml
+    # replaces with the actual values just before writing Panther.
     source = (params.get("name_source") or "serial").strip().lower()
     if source == "pattern":
         pattern = params.get("pattern") or ""
@@ -194,32 +205,13 @@ def _handle_rename_computer(params: dict, out: CompiledSequence,
                 "rename_computer with name_source='pattern' requires a "
                 "non-empty 'pattern' param."
             )
-        # The pattern is evaluated on the guest via PowerShell format
-        # strings: {vmid} → $env:AUTOPILOT_VMID (set below), {serial} →
-        # SMBIOS SerialNumber. We wire both so sequences can choose.
-        new_name_expr = (
-            "($pattern = '" + _ps_escape(pattern) + "'); "
-            "$serial = (Get-CimInstance Win32_BIOS).SerialNumber; "
-            "$vmid = $env:AUTOPILOT_VMID; "
-            "$new = $pattern.Replace('{serial}', $serial)"
-            ".Replace('{vmid}', $vmid)"
-        )
     else:
-        # Default: rename to SMBIOS SerialNumber.
-        new_name_expr = (
-            "$new = (Get-CimInstance Win32_BIOS).SerialNumber"
-        )
-    cmd = (
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \""
-        + new_name_expr + "; "
-        "Rename-Computer -NewName $new -Force; "
-        "shutdown.exe /r /t 5 /c 'Autopilot rename restart'\""
+        pattern = "{serial}"
+    name_value = (
+        pattern.replace("{serial}", "%AUTOPILOT_SERIAL%")
+               .replace("{vmid}", "%AUTOPILOT_VMID%")
     )
-    out.first_logon_commands.append({
-        "command": cmd,
-        "description": "Rename computer and reboot",
-    })
-    out.causes_reboot_count += 1
+    out.unattend_blocks["specialize_computer_name"] = _xml_escape(name_value)
 
 
 _STEP_HANDLERS: dict[str, StepHandler] = {

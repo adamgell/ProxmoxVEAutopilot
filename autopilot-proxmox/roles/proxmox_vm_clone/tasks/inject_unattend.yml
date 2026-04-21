@@ -22,6 +22,11 @@
 
 - name: "Build the remote-inject command as a single line"
   ansible.builtin.set_fact:
+    # Between mcopy (cached-floppy extract) and the guestfish upload,
+    # substitute per-VM sentinels that the compiler left in the
+    # unattend — currently %AUTOPILOT_SERIAL% (→ _vm_serial) and
+    # %AUTOPILOT_VMID% (→ vm_vmid). Sentinels stay in the cached
+    # floppy; concrete values only live on the clone's NTFS disk.
     _inject_remote_cmd: >-
       set -eu;
       DISK="$(pvesm path {{ _clone_scsi0_volid }})";
@@ -29,6 +34,7 @@
       TMP=$(mktemp -d);
       trap 'rm -rf "$TMP"' EXIT;
       mcopy -i {{ _answer_floppy_path | quote }} ::Autounattend.xml "$TMP/unattend.xml";
+      sed -i -e 's/%AUTOPILOT_SERIAL%/{{ _vm_serial | default("") }}/g' -e 's/%AUTOPILOT_VMID%/{{ vm_vmid }}/g' "$TMP/unattend.xml";
       ntfsfix -d "${DISK}-part4" >/dev/null 2>&1 || true;
       guestfish --rw -a "$DISK" -- run : mount-options rw /dev/sda4 / : mkdir-p /Windows/Panther : upload "$TMP/unattend.xml" /Windows/Panther/unattend.xml;
       echo INJECTED

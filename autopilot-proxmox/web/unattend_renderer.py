@@ -119,6 +119,14 @@ def render_unattend(compiled: CompiledSequence,
                                       _DEFAULT_USER_ACCOUNTS),
         oobe_auto_logon=blocks.get("oobe_auto_logon",
                                    _DEFAULT_AUTO_LOGON),
+        # "*" = let Windows auto-generate (WIN-<random>). Sequences that
+        # want a deterministic name emit a value containing
+        # %AUTOPILOT_SERIAL% / %AUTOPILOT_VMID% sentinels that
+        # inject_unattend.yml substitutes with the concrete per-VM
+        # values right before writing Panther. Keeping sentinels (rather
+        # than concrete values) here preserves the per-sequence content
+        # hash — one cached floppy covers every VM in the sequence.
+        specialize_computer_name=blocks.get("specialize_computer_name", "*"),
         specialize_identification_component=_wrap_identification(
             blocks.get("specialize_identification", "")),
         extra_first_logon_commands=_render_first_logon_extras(
