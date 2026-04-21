@@ -3,17 +3,17 @@
 {% block content %}
 
 {% if request.query_params.get('synced') %}
-<p style="background:#d4edda;border:1px solid #c3e6cb;padding:8px;color:#155724;">Synced ({{ request.query_params.get('synced') }}).</p>
+<p style="background:var(--ok-bg);border:1px solid var(--ok-fg);padding:8px;color:var(--ok-fg);">Synced ({{ request.query_params.get('synced') }}).</p>
 {% endif %}
 {% if request.query_params.get('deleted') %}
-<p style="background:#d4edda;border:1px solid #c3e6cb;padding:8px;color:#155724;">Deleted {{ request.query_params.get('deleted') }} object(s). Failed: {{ request.query_params.get('failed', '0') }}.</p>
+<p style="background:var(--ok-bg);border:1px solid var(--ok-fg);padding:8px;color:var(--ok-fg);">Deleted {{ request.query_params.get('deleted') }} object(s). Failed: {{ request.query_params.get('failed', '0') }}.</p>
 {% endif %}
 {% if request.query_params.get('error') %}
-<p style="background:#f8d7da;border:1px solid #f5c6cb;padding:8px;color:#721c24;">{{ request.query_params.get('error') }}</p>
+<p style="background:var(--bad-bg);border:1px solid var(--bad-fg);padding:8px;color:var(--bad-fg);">{{ request.query_params.get('error') }}</p>
 {% endif %}
 
 <h2>Cloud Devices
-  <small style="color:#999;font-weight:normal;font-size:11px;">
+  <small style="color:var(--ink-soft);font-weight:normal;font-size:11px;">
     {% if windows_only and meta.counts_filtered %}
       (showing Windows only — Autopilot: {{ meta.counts_filtered.autopilot }} · Intune: {{ meta.counts_filtered.intune }}/{{ meta.counts.intune }} · Entra: {{ meta.counts_filtered.entra }}/{{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %}) <a href="/cloud?all=1">Show all platforms</a>
     {% else %}
@@ -28,7 +28,7 @@
 <input type="text" id="filter" placeholder="Search serial, name, tag, object/device/ZTDID…"
        oninput="applyFilter();" autocomplete="off"
        style="margin-left:10px;width:350px;padding:3px 6px;">
-<span id="visiblecount" style="color:#999;font-size:10px;margin-left:6px;"></span>
+<span id="visiblecount" style="color:var(--ink-soft);font-size:10px;margin-left:6px;"></span>
 
 {% if groups or unmatched %}
 <form id="nukeForm" method="POST" action="/api/cloud/delete">
@@ -44,17 +44,17 @@
 </tr>
 {% macro id_cell(source, row, pve=None) %}
   <div style="font-family:monospace;font-size:10px;line-height:1.5;">
-    <div><span style="color:#999;">obj </span>{{ row.id }}</div>
+    <div><span style="color:var(--ink-soft);">obj </span>{{ row.id }}</div>
     {% if source == 'autopilot' %}
-      {% if row.azure_ad_device_id %}<div><span style="color:#999;">dev </span>{{ row.azure_ad_device_id }}</div>{% endif %}
-      <div><span style="color:#999;">ztd </span>{{ row.id }}</div>
+      {% if row.azure_ad_device_id %}<div><span style="color:var(--ink-soft);">dev </span>{{ row.azure_ad_device_id }}</div>{% endif %}
+      <div><span style="color:var(--ink-soft);">ztd </span>{{ row.id }}</div>
     {% elif source == 'intune' %}
-      {% if row.azure_ad_device_id %}<div><span style="color:#999;">dev </span>{{ row.azure_ad_device_id }}</div>{% endif %}
+      {% if row.azure_ad_device_id %}<div><span style="color:var(--ink-soft);">dev </span>{{ row.azure_ad_device_id }}</div>{% endif %}
     {% else %}
-      {% if row.device_id %}<div><span style="color:#999;">dev </span>{{ row.device_id }}</div>{% endif %}
-      {% if row.ztdid %}<div><span style="color:#999;">ztd </span>{{ row.ztdid }}</div>{% endif %}
+      {% if row.device_id %}<div><span style="color:var(--ink-soft);">dev </span>{{ row.device_id }}</div>{% endif %}
+      {% if row.ztdid %}<div><span style="color:var(--ink-soft);">ztd </span>{{ row.ztdid }}</div>{% endif %}
     {% endif %}
-    {% if pve %}<div><span style="color:#999;">pve </span>{{ pve.vmid }}<span style="color:#999;"> ({{ pve.status }})</span></div>{% endif %}
+    {% if pve %}<div><span style="color:var(--ink-soft);">pve </span>{{ pve.vmid }}<span style="color:var(--ink-soft);"> ({{ pve.status }})</span></div>{% endif %}
   </div>
 {% endmacro %}
 
@@ -64,15 +64,15 @@
   {% if g.intune %}{% set _ = group_rows.append(('intune', g.intune)) %}{% endif %}
   {% for e in g.entra %}{% set _ = group_rows.append(('entra', e)) %}{% endfor %}
   {% for source, row in group_rows %}
-  <tr class="data-row"{% if loop.first %} style="border-top:2px solid #bbb;"{% endif %}>
+  <tr class="data-row"{% if loop.first %} style="border-top:2px solid var(--line-strong);"{% endif %}>
     <td><input type="checkbox" name="targets" value="{{ source }}:{{ row.id }}"
               data-serial="{{ g.serial }}" data-name="{{ row.display_name or row.device_name or '' }}"
               onchange="updateCount();"></td>
-    <td style="font-weight:bold;{% if not loop.first %}color:#aaa;font-weight:normal;{% endif %}">{{ g.serial }}</td>
+    <td style="font-weight:bold;{% if not loop.first %}color:var(--ink-soft);font-weight:normal;{% endif %}">{{ g.serial }}</td>
     <td>
-      {% if source == 'autopilot' %}<span class="badge" style="background:#cce5ff;color:#004085;">Autopilot</span>
-      {% elif source == 'intune' %}<span class="badge" style="background:#d1ecf1;color:#0c5460;">Intune</span>
-      {% else %}<span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span>{% endif %}
+      {% if source == 'autopilot' %}<span class="badge badge-blue">Autopilot</span>
+      {% elif source == 'intune' %}<span class="badge ok">Intune</span>
+      {% else %}<span class="badge badge-gray">Entra</span>{% endif %}
     </td>
     <td>{{ id_cell(source, row, g.pve) }}</td>
     <td>{{ row.display_name or row.device_name or '—' }}</td>
@@ -93,14 +93,14 @@
 {% endfor %}
 
 {% if unmatched %}
-<tr class="section-row"><td colspan="7" style="background:#f0f0f0;font-weight:bold;padding:4px 8px;">Unmatched Entra objects (no serial / no Intune linkage)</td></tr>
+<tr class="section-row"><td colspan="7" style="background:var(--surface-muted);font-weight:bold;padding:4px 8px;">Unmatched Entra objects (no serial / no Intune linkage)</td></tr>
 {% for row in unmatched %}
 <tr class="data-row">
   <td><input type="checkbox" name="targets" value="entra:{{ row.id }}"
               data-serial="" data-name="{{ row.display_name or '' }}"
               onchange="updateCount();"></td>
-  <td style="color:#999;">—</td>
-  <td><span class="badge" style="background:#e2d5f0;color:#4a148c;">Entra</span></td>
+  <td style="color:var(--ink-soft);">—</td>
+  <td><span class="badge badge-gray">Entra</span></td>
   <td>{{ id_cell('entra', row) }}</td>
   <td>{{ row.display_name or '—' }}</td>
   <td>{{ row.operating_system or '—' }} {{ row.operating_system_version or '' }} · {{ row.trust_type or '—' }} · {% if row.account_enabled %}enabled{% else %}disabled{% endif %}</td>
@@ -112,23 +112,23 @@
 <br>
 <div style="display:flex;gap:8px;align-items:center;">
   <button type="button" onclick="nukeSelected();" class="action-btn-delete">Nuke Selected</button>
-  <span id="selcount" style="color:#999;font-size:10px;">0 selected</span>
-  <label style="color:#666;font-size:10px;margin-left:15px;">
+  <span id="selcount" style="color:var(--ink-soft);font-size:10px;">0 selected</span>
+  <label style="color:var(--ink-muted);font-size:10px;margin-left:15px;">
     <input type="checkbox" id="includePve" checked>
     Also delete matching Proxmox VMs (by serial, autopilot tag required)
   </label>
-  <span style="color:#999;font-size:10px;margin-left:auto;">Order: Proxmox → Intune → Autopilot → Entra</span>
+  <span style="color:var(--ink-soft);font-size:10px;margin-left:auto;">Order: Proxmox → Intune → Autopilot → Entra</span>
 </div>
 </form>
 
-<div id="progressPanel" style="display:none;margin-top:20px;border:2px solid #336699;background:#fff;padding:12px;">
-  <h3 style="margin-top:0;">Deletion progress <span id="progressSummary" style="font-weight:normal;color:#666;font-size:11px;"></span></h3>
-  <p style="color:#666;font-size:10px;margin:4px 0 10px;">
+<div id="progressPanel" style="display:none;margin-top:20px;border:2px solid var(--ms-blue-dark);background:var(--panel);padding:12px;">
+  <h3 style="margin-top:0;">Deletion progress <span id="progressSummary" style="font-weight:normal;color:var(--ink-muted);font-size:11px;"></span></h3>
+  <p style="color:var(--ink-muted);font-size:10px;margin:4px 0 10px;">
     Autopilot DELETE is async (HTTP 202) — Graph's background workflow can take several minutes to an hour to propagate.
     The job keeps running in the background even if you close this tab; reopen /cloud and sync to confirm the final state.
   </p>
-  <div style="background:#eee;height:14px;border:1px solid #ccc;margin-bottom:10px;">
-    <div id="progressBar" style="background:#336699;height:100%;width:0%;transition:width 200ms;"></div>
+  <div style="background:var(--surface-muted);height:14px;border:1px solid var(--line);margin-bottom:10px;">
+    <div id="progressBar" style="background:var(--ms-blue-dark);height:100%;width:0%;transition:width 200ms;"></div>
   </div>
   <table style="width:100%;">
     <tr><th>#</th><th>Source</th><th>Serial</th><th>Name</th><th>Object ID</th><th>State</th><th>Message</th></tr>
@@ -136,7 +136,7 @@
   </table>
   <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
     <button type="button" id="progressClose" onclick="closeProgress();" style="display:none;">Close &amp; refresh</button>
-    <span id="progressElapsed" style="color:#999;font-size:10px;"></span>
+    <span id="progressElapsed" style="color:var(--ink-soft);font-size:10px;"></span>
   </div>
 </div>
 {% else %}
@@ -159,7 +159,7 @@
   <td>{{ d.source }}</td>
   <td style="font-family:monospace;font-size:10px;">{{ d.object_id }}</td>
   <td>{% if d.status == 'ok' %}<span class="status-green">ok</span>{% else %}<span class="status-red">error</span>{% endif %}</td>
-  <td style="color:#666;">{{ d.message or '' }}</td>
+  <td style="color:var(--ink-muted);">{{ d.message or '' }}</td>
 </tr>
 {% endfor %}
 </table>
@@ -271,22 +271,23 @@ function renderInitialRowsFromJob(items) {
       '<td>' + (item.display_name || '—') + '</td>' +
       '<td style="font-family:monospace;font-size:10px;">' + item.object_id + '</td>' +
       '<td><span class="state state-pending">pending</span></td>' +
-      '<td class="message" style="color:#666;"></td>';
+      '<td class="message" style="color:var(--ink-muted);"></td>';
     tbody.appendChild(tr);
   });
 }
 
 function stateBadge(state) {
-  var colors = {
-    pending:    ['#e2e3e5', '#383d41'],
-    deleting:   ['#fff3cd', '#856404'],
-    verifying:  ['#cce5ff', '#004085'],
-    deleted:    ['#d4edda', '#155724'],
-    unverified: ['#f8d7da', '#721c24'],
-    error:      ['#f8d7da', '#721c24'],
+  // Map transport state -> badge CSS class (defined in base.html)
+  var classes = {
+    pending:    'badge badge-gray',
+    deleting:   'badge warn',
+    verifying:  'badge pending',
+    deleted:    'badge ok',
+    unverified: 'badge error',
+    error:      'badge error',
   };
-  var c = colors[state] || colors.pending;
-  return '<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:' + c[0] + ';color:' + c[1] + ';font-weight:bold;font-size:10px;">' + state + '</span>';
+  var cls = classes[state] || 'badge badge-gray';
+  return '<span class="' + cls + '">' + state + '</span>';
 }
 
 function pollJob(jobId) {

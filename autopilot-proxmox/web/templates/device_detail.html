@@ -3,41 +3,41 @@
 {% block content %}
 
 <style>
-  .bc { color:#666; font-size:12px; }
-  .linkage { margin:10px 0; padding:8px; background:#f8f9fa;
-             border:1px solid #dee2e6; }
+  .bc { color:var(--ink-muted); font-size:12px; }
+  .linkage { margin:10px 0; padding:8px; background:var(--surface-muted);
+             border:1px solid var(--line); }
   .linkage-row { display:grid; grid-template-columns: 320px 40px 1fr;
                  gap:8px; padding:3px 0; font-size:13px; }
-  .linkage-row .lk-ok { color:#155724; font-weight:600; }
-  .linkage-row .lk-bad { color:#721c24; font-weight:600; }
-  .linkage-row .lk-pending { color:#6c757d; }
+  .linkage-row .lk-ok { color:var(--ok-fg); font-weight:600; }
+  .linkage-row .lk-bad { color:var(--bad-fg); font-weight:600; }
+  .linkage-row .lk-pending { color:var(--ink-soft); }
   .cols { display:grid; grid-template-columns: repeat(4, 1fr);
           gap:10px; margin:10px 0; }
-  .col { border:1px solid #dee2e6; padding:10px;
-         background:#fff; font-size:13px; min-width:0; }
-  .col h3 { margin:0 0 8px 0; font-size:14px; border-bottom:1px solid #eee;
+  .col { border:1px solid var(--line); padding:10px;
+         background:var(--panel); font-size:13px; min-width:0; }
+  .col h3 { margin:0 0 8px 0; font-size:14px; border-bottom:1px solid var(--line);
             padding-bottom:4px; }
-  .col dt { font-size:11px; color:#666; margin-top:6px; }
+  .col dt { font-size:11px; color:var(--ink-muted); margin-top:6px; }
   .col dd { margin:0 0 2px 0; word-break:break-word; font-family:monospace;
             font-size:12px; }
-  .col .note { color:#999; font-size:11px; }
-  .ev { padding:6px 0; border-bottom:1px dotted #eee; }
-  .ev-head { font-size:12px; color:#666; }
-  .ev .src-pve    { color:#0b5ed7; }
-  .ev .src-ad     { color:#0c5460; }
-  .ev .src-entra  { color:#155724; }
-  .ev .src-intune { color:#856404; }
-  .sev-regression   { background:#f8d7da; padding:1px 5px; border-radius:3px; }
-  .sev-progression  { background:#d4edda; padding:1px 5px; border-radius:3px; }
-  .sev-rename       { background:#fff3cd; padding:1px 5px; border-radius:3px; }
-  .sev-ou-move      { background:#fff3cd; padding:1px 5px; border-radius:3px; }
-  .sev-link-broken  { background:#f8d7da; padding:1px 5px; border-radius:3px; }
-  .sev-sync-pending { background:#e2e3e5; padding:1px 5px; border-radius:3px; }
-  .sev-replacement  { background:#fff3cd; padding:1px 5px; border-radius:3px; }
-  .sev-event        { background:#f8f9fa; padding:1px 5px; border-radius:3px; }
+  .col .note { color:var(--ink-soft); font-size:11px; }
+  .ev { padding:6px 0; border-bottom:1px dotted var(--line); }
+  .ev-head { font-size:12px; color:var(--ink-muted); }
+  .ev .src-pve    { color:var(--ms-blue-dark); }
+  .ev .src-ad     { color:var(--info-fg); }
+  .ev .src-entra  { color:var(--ok-fg); }
+  .ev .src-intune { color:var(--warn-fg); }
+  .sev-regression   { background:var(--bad-bg);     color:var(--bad-fg);     padding:1px 5px; border-radius:3px; }
+  .sev-progression  { background:var(--ok-bg);      color:var(--ok-fg);      padding:1px 5px; border-radius:3px; }
+  .sev-rename       { background:var(--warn-bg);    color:var(--warn-fg);    padding:1px 5px; border-radius:3px; }
+  .sev-ou-move      { background:var(--warn-bg);    color:var(--warn-fg);    padding:1px 5px; border-radius:3px; }
+  .sev-link-broken  { background:var(--bad-bg);     color:var(--bad-fg);     padding:1px 5px; border-radius:3px; }
+  .sev-sync-pending { background:var(--neutral-bg); color:var(--neutral-fg); padding:1px 5px; border-radius:3px; }
+  .sev-replacement  { background:var(--warn-bg);    color:var(--warn-fg);    padding:1px 5px; border-radius:3px; }
+  .sev-event        { background:var(--surface-muted); color:var(--ink-muted); padding:1px 5px; border-radius:3px; }
   details.raw { margin-top:20px; }
-  details.raw summary { cursor:pointer; color:#666; font-size:12px; }
-  details.raw pre { background:#fff; border:1px solid #eee; padding:6px;
+  details.raw summary { cursor:pointer; color:var(--ink-muted); font-size:12px; }
+  details.raw pre { background:var(--surface-muted); border:1px solid var(--line); padding:6px;
                     font-size:11px; max-height:400px; overflow:auto; }
 </style>
 
@@ -181,8 +181,8 @@
       </div>
       <div>{{ e.summary }}</div>
       {% if e.details %}
-      <details><summary style="cursor:pointer;font-size:11px;color:#666;">details</summary>
-        <pre style="background:#fff;border:1px solid #eee;padding:4px;font-size:10px;">{{ e.details | tojson(indent=2) }}</pre>
+      <details><summary style="cursor:pointer;font-size:11px;color:var(--ink-muted);">details</summary>
+        <pre style="background:var(--surface-muted);border:1px solid var(--line);padding:4px;font-size:10px;">{{ e.details | tojson(indent=2) }}</pre>
       </details>
       {% endif %}
     </li>

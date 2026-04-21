@@ -3,29 +3,29 @@
 {% block content %}
 
 <style>
-  .card { padding: 10px; background: #fff; border: 1px solid #dee2e6;
+  .card { padding: 10px; background: var(--panel); border: 1px solid var(--line);
           margin: 10px 0; }
-  .card h3 { margin: 0 0 8px 0; font-size: 15px; border-bottom: 1px solid #eee;
+  .card h3 { margin: 0 0 8px 0; font-size: 15px; border-bottom: 1px solid var(--line);
              padding-bottom: 4px; }
   label { display: inline-block; min-width: 180px; font-size: 13px; }
   .row { padding: 4px 0; }
-  .warn-banner { background:#fff3cd; border:1px solid #ffeeba;
-                 padding:6px; color:#856404; font-size:12px;
+  .warn-banner { background:var(--warn-bg); border:1px solid var(--warn-fg);
+                 padding:6px; color:var(--warn-fg); font-size:12px;
                  margin:6px 0; display:none; }
   .warn-banner.visible { display:block; }
   .ou-table { border-collapse: collapse; width: 100%; }
-  .ou-table th, .ou-table td { border: 1px solid #dee2e6; padding: 4px 6px;
+  .ou-table th, .ou-table td { border: 1px solid var(--line); padding: 4px 6px;
                                 text-align: left; font-size: 13px; }
   .ou-table input[type=text] { width: 340px; font-family: monospace;
                                 font-size: 12px; }
   .ou-table input.label-input { width: 120px; }
   .ou-table input.order-input { width: 50px; text-align: center; }
-  .btn { font-size: 12px; padding: 2px 6px; border: 1px solid #ccc;
-         background: #f8f9fa; cursor: pointer; border-radius: 3px; }
-  .btn.btn-danger { background: #f8d7da; border-color: #f5c6cb; color:#721c24; }
+  .btn { font-size: 12px; padding: 2px 6px; border: 1px solid var(--line);
+         background: var(--surface-muted); cursor: pointer; border-radius: 3px; }
+  .btn.btn-danger { background: var(--bad-bg); border-color: var(--bad-fg); color:var(--bad-fg); }
   .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
-  .error { color:#721c24; font-size:12px; margin-left:8px; }
-  .ok { color:#155724; font-size:12px; margin-left:8px; }
+  .error { color:var(--bad-fg); font-size:12px; margin-left:8px; }
+  .ok { color:var(--ok-fg); font-size:12px; margin-left:8px; }
 </style>
 
 <p class="bc"><a href="/monitoring">Monitoring</a> › settings</p>

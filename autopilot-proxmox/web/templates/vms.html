@@ -3,21 +3,21 @@
 {% block content %}
 
 {% if error %}
-<p style="background:#f8d7da;border:1px solid #f5c6cb;padding:8px;color:#721c24;">{{ error }}</p>
+<p style="background:var(--bad-bg);border:1px solid var(--bad-fg);padding:8px;color:var(--bad-fg);">{{ error }}</p>
 {% endif %}
 
 <h2>Proxmox VMs
-  <span style="font-size:12px;font-weight:normal;color:#666;margin-left:10px;">
+  <span style="font-size:12px;font-weight:normal;color:var(--ink-muted);margin-left:10px;">
     {% if cache_age_seconds is defined and cache_age_seconds is not none %}
       data
       <time datetime="{{ cache_fetched_at_iso }}" data-utc="{{ cache_fetched_at_iso }}"
             title="{{ cache_fetched_at_iso }}">
         {% if cache_age_seconds < 5 %}fresh{% else %}{{ cache_age_seconds }}s old{% endif %}
       </time>
-      {% if cache_refreshing %}· <span style="color:#0b5ed7;">refreshing…</span>{% endif %}
+      {% if cache_refreshing %}· <span style="color:var(--ms-blue-dark);">refreshing…</span>{% endif %}
       ·
     {% endif %}
-    <button type="button" onclick="refreshVms();" style="font-size:11px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">↻ Refresh</button>
+    <button type="button" onclick="refreshVms();" style="font-size:11px;padding:1px 6px;background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer;">↻ Refresh</button>
   </span>
 </h2>
 <script>
@@ -48,7 +48,7 @@ async function refreshVms() {
   <td>
     <a href="/devices/{{ vm.vmid }}" title="Open monitoring detail (PVE / AD / Entra / Intune)">{{ vm.name }}</a>
     {% if vm.sequence_name %}
-      <br><small style="color:#666;" title="Provisioned from this sequence">↳ {{ vm.sequence_name }}</small>
+      <br><small style="color:var(--ink-muted);" title="Provisioned from this sequence">↳ {{ vm.sequence_name }}</small>
     {% endif %}
   </td>
   <td>
@@ -63,7 +63,7 @@ async function refreshVms() {
   <td>
     {{ vm.oem or '—' }}
     {% if vm.os_caption %}
-      <br><small style="color:#666;">{{ vm.os_caption | replace('Microsoft ', '') }}{% if vm.os_build %} · build {{ vm.os_build }}{% endif %}</small>
+      <br><small style="color:var(--ink-muted);">{{ vm.os_caption | replace('Microsoft ', '') }}{% if vm.os_build %} · build {{ vm.os_build }}{% endif %}</small>
     {% endif %}
   </td>
   <td>
@@ -81,7 +81,7 @@ async function refreshVms() {
           <span class="chip chip-{{ tag }}" title="{{ tag }}">{{ tag | replace('enroll-', '') }}</span>
         {% endfor %}
       {% else %}
-        <span style="color:#999;" title="Ubuntu VM — click Check to query Intune/MDE status">—</span>
+        <span style="color:var(--ink-soft);" title="Ubuntu VM — click Check to query Intune/MDE status">—</span>
       {% endif %}
     {% else %}
       {% if vm.in_autopilot %}<span class="badge badge-green" title="Registered in Intune Autopilot">Autopilot</span>{% endif %}
@@ -90,7 +90,7 @@ async function refreshVms() {
       {% if not vm.in_autopilot and not vm.aad_joined and not vm.part_of_domain and vm.status == 'running' %}
         <span class="badge badge-gray" title="No enrollment state detected">unenrolled</span>
       {% elif vm.status != 'running' %}
-        <span style="color:#999;">—</span>
+        <span style="color:var(--ink-soft);">—</span>
       {% endif %}
     {% endif %}
   </td>
@@ -98,55 +98,55 @@ async function refreshVms() {
     <div class="actions-cell">
     {% if vm.status == 'running' %}
       <!-- Power actions -->
-      <button class="action-btn" type="button" title="Shutdown" onclick="if(confirm('Shutdown VM {{ vm.vmid }}?'))postAction('/api/vms/{{ vm.vmid }}/shutdown');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc8800" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/></svg>
+      <button class="action-btn" type="button" title="Shutdown" style="color:var(--warn-fg);" onclick="if(confirm('Shutdown VM {{ vm.vmid }}?'))postAction('/api/vms/{{ vm.vmid }}/shutdown');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/></svg>
       </button>
-      <button class="action-btn danger" type="button" title="Force Stop" onclick="if(confirm('Force stop VM {{ vm.vmid }}? This is like pulling the power plug.'))postAction('/api/vms/{{ vm.vmid }}/stop');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="#cc0000"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+      <button class="action-btn danger" type="button" title="Force Stop" style="color:var(--ms-red-dark);" onclick="if(confirm('Force stop VM {{ vm.vmid }}? This is like pulling the power plug.'))postAction('/api/vms/{{ vm.vmid }}/stop');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button class="action-btn" type="button" title="Reset" onclick="postAction('/api/vms/{{ vm.vmid }}/reset');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+      <button class="action-btn" type="button" title="Reset" style="color:var(--ms-blue-dark);" onclick="postAction('/api/vms/{{ vm.vmid }}/reset');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       </button>
-      <span style="color:#ccc;margin:0 2px;">|</span>
+      <span style="color:var(--line);margin:0 2px;">|</span>
       <!-- Tool actions -->
       {% if vm.target_os == 'ubuntu' %}
-        <button class="action-btn" type="button" disabled title="Ubuntu sequence — no Autopilot hash">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+        <button class="action-btn" type="button" disabled title="Ubuntu sequence — no Autopilot hash" style="color:var(--ink-soft);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
         </button>
-        <button class="action-btn" type="button" title="Check Intune + MDE enrollment" onclick="checkEnroll({{ vm.vmid }}, this);">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#006600" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <button class="action-btn" type="button" title="Check Intune + MDE enrollment" style="color:var(--ok-fg);" onclick="checkEnroll({{ vm.vmid }}, this);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
       {% else %}
-      <button class="action-btn" type="button" title="Capture Hash" onclick="postAction('/api/jobs/capture',{vmid:'{{ vm.vmid }}',vm_name:'{{ vm.name }}'});">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+      <button class="action-btn" type="button" title="Capture Hash" style="color:var(--ms-blue-dark);" onclick="postAction('/api/jobs/capture',{vmid:'{{ vm.vmid }}',vm_name:'{{ vm.name }}'});">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
       {% endif %}
-      <button class="action-btn" type="button" title="Rename computer" onclick="openRenameDialog('{{ vm.vmid }}', '{{ vm.name }}');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+      <button class="action-btn" type="button" title="Rename computer" style="color:var(--ms-blue-dark);" onclick="openRenameDialog('{{ vm.vmid }}', '{{ vm.name }}');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
       </button>
-      <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console" style="color:var(--ms-blue-dark);">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       </a>
-      <button class="action-btn" type="button" title="Type Text" onclick="typeText('{{ vm.vmid }}');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
+      <button class="action-btn" type="button" title="Type Text" style="color:var(--ms-blue-dark);" onclick="typeText('{{ vm.vmid }}');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
       </button>
-      <button class="action-btn" type="button" title="Send Ctrl+Alt+Del" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ctrl-alt-delete'});">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc8800" stroke-width="2" stroke-linecap="round"><rect x="1" y="5" width="22" height="14" rx="2"/><text x="12" y="14" text-anchor="middle" font-size="7" font-family="Verdana" fill="#cc8800" stroke="none">CAD</text></svg>
+      <button class="action-btn" type="button" title="Send Ctrl+Alt+Del" style="color:var(--warn-fg);" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ctrl-alt-delete'});">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="1" y="5" width="22" height="14" rx="2"/><text x="12" y="14" text-anchor="middle" font-size="7" font-family="Verdana" fill="currentColor" stroke="none">CAD</text></svg>
       </button>
-      <button class="action-btn" type="button" title="Send Enter" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ret'});">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,10 4,15 9,20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      <button class="action-btn" type="button" title="Send Enter" style="color:var(--ms-blue-dark);" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ret'});">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,10 4,15 9,20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
       </button>
-      <span style="color:#ccc;margin:0 2px;">|</span>
+      <span style="color:var(--line);margin:0 2px;">|</span>
     {% else %}
       <!-- Stopped: Start -->
-      <button class="action-btn" type="button" title="Start" onclick="postAction('/api/vms/{{ vm.vmid }}/start');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="#006600"><polygon points="5,3 19,12 5,21"/></svg>
+      <button class="action-btn" type="button" title="Start" style="color:var(--ok-fg);" onclick="postAction('/api/vms/{{ vm.vmid }}/start');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
       </button>
-      <span style="color:#ccc;margin:0 2px;">|</span>
+      <span style="color:var(--line);margin:0 2px;">|</span>
     {% endif %}
       <!-- Delete (always shown) -->
-      <button class="action-btn danger" type="button" title="Delete VM" onclick="if(confirm('Delete VM {{ vm.vmid }}? This cannot be undone.'))postAction('/api/vms/{{ vm.vmid }}/delete');">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cc0000" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <button class="action-btn danger" type="button" title="Delete VM" style="color:var(--ms-red-dark);" onclick="if(confirm('Delete VM {{ vm.vmid }}? This cannot be undone.'))postAction('/api/vms/{{ vm.vmid }}/delete');">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
   </td>
@@ -232,15 +232,14 @@ async function refreshVms() {
   margin-right: 3px;
   margin-bottom: 2px;
   line-height: 1.4;
-  color: white;
 }
 .chip-enroll-intune-healthy,
-.chip-enroll-mde-healthy { background: #2ecc71; }
+.chip-enroll-mde-healthy { background: var(--ok-bg); color: var(--ok-fg); }
 .chip-enroll-intune-missing,
-.chip-enroll-mde-missing { background: #e74c3c; }
-.chip-enroll-mde-not-configured { background: #f39c12; }
+.chip-enroll-mde-missing { background: var(--bad-bg); color: var(--bad-fg); }
+.chip-enroll-mde-not-configured { background: var(--warn-bg); color: var(--warn-fg); }
 .chip-enroll-intune-unhealthy,
-.chip-enroll-mde-unhealthy { background: #e67e22; }
+.chip-enroll-mde-unhealthy { background: var(--warn-bg); color: var(--warn-fg); }
 </style>
 <script>
 async function checkEnroll(vmid, btn) {
@@ -292,28 +291,28 @@ async function openRenameDialog(vmid, vmName) {
   var modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;font-family:sans-serif;';
   modal.innerHTML =
-    '<div style="background:#fff;border-radius:4px;padding:18px;width:440px;box-shadow:0 4px 20px rgba(0,0,0,0.2);">'
+    '<div style="background:var(--panel);color:var(--ink);border-radius:4px;padding:18px;width:440px;box-shadow:0 4px 20px rgba(0,0,0,0.2);">'
     + '<h3 style="margin:0 0 10px 0;font-size:15px;">Rename VM ' + vmid + '</h3>'
-    + '<p style="color:#666;font-size:12px;margin:0 0 12px 0;">Max 15 chars, A–Z / 0–9 / <code>-</code>. '
+    + '<p style="color:var(--ink-muted);font-size:12px;margin:0 0 12px 0;">Max 15 chars, A–Z / 0–9 / <code>-</code>. '
     + 'Sanitisation runs server-side; what you see below is the final live preview.</p>'
     + '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
-    + '<tr><td style="padding:4px 6px;color:#666;width:90px;">Base name</td>'
+    + '<tr><td style="padding:4px 6px;color:var(--ink-muted);width:90px;">Base name</td>'
     +   '<td><input id="rnBase" type="text" style="width:100%;font-family:monospace;" '
     +       'value="' + _htmlEsc(suggested) + '"></td></tr>'
-    + '<tr><td style="padding:4px 6px;color:#666;">Prefix</td>'
+    + '<tr><td style="padding:4px 6px;color:var(--ink-muted);">Prefix</td>'
     +   '<td><input id="rnPrefix" type="text" style="width:100%;font-family:monospace;" '
     +       'placeholder="(optional) prepended to base"></td></tr>'
-    + '<tr><td style="padding:4px 6px;color:#666;">Custom</td>'
+    + '<tr><td style="padding:4px 6px;color:var(--ink-muted);">Custom</td>'
     +   '<td><input id="rnCustom" type="text" style="width:100%;font-family:monospace;" '
     +       'placeholder="(optional) full override — ignores base+prefix"></td></tr>'
-    + '<tr><td style="padding:8px 6px;color:#666;">Will rename to</td>'
-    +   '<td><code id="rnPreview" style="background:#f1f3f5;padding:2px 6px;border-radius:2px;'
+    + '<tr><td style="padding:8px 6px;color:var(--ink-muted);">Will rename to</td>'
+    +   '<td><code id="rnPreview" style="background:var(--surface-muted);padding:2px 6px;border-radius:2px;'
     +       'display:inline-block;min-width:180px;"></code>'
-    +       '<span id="rnWarn" style="color:#856404;margin-left:8px;font-size:11px;"></span></td></tr>'
+    +       '<span id="rnWarn" style="color:var(--warn-fg);margin-left:8px;font-size:11px;"></span></td></tr>'
     + '</table>'
     + '<div style="margin-top:14px;text-align:right;">'
     +   '<button type="button" id="rnCancel" style="padding:4px 10px;margin-right:6px;">Cancel</button>'
-    +   '<button type="button" id="rnOk" style="padding:4px 10px;background:#336699;color:#fff;border:1px solid #225588;border-radius:3px;">Rename</button>'
+    +   '<button type="button" id="rnOk" style="padding:4px 10px;background:var(--ms-blue-dark);color:#fff;border:1px solid var(--ms-blue-dark);border-radius:3px;">Rename</button>'
     + '</div></div>';
   document.body.appendChild(modal);
 

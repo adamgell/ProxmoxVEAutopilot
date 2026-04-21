@@ -12,13 +12,13 @@
 <p><b>Warning:</b> This takes 20-30 minutes. A new VM will be created from the Windows ISO, installed unattended, sysprepped, and converted to a Proxmox template.</p>
 
 <h3>Answer ISO</h3>
-<p style="color:#666;font-size:11px;">
+<p style="color:var(--ink-muted);font-size:11px;">
   The unattended-install answer ISO is a baked artifact on Proxmox storage. Rebuild it whenever
   <code>files/autounattend.xml</code> changes (e.g. partition layout tweaks) — otherwise the next template
   build installs using the stale copy.
 </p>
 <button type="button" onclick="rebuildAnswerIso(this);" class="action-btn-upload" style="margin-bottom:15px;">Rebuild Answer ISO</button>
-<span id="answerIsoStatus" style="color:#666;font-size:11px;margin-left:10px;"></span>
+<span id="answerIsoStatus" style="color:var(--ink-muted);font-size:11px;margin-left:10px;"></span>
 
 <h3>Build</h3>
 <form method="POST" action="/api/jobs/template">
@@ -39,7 +39,7 @@
       Pause before sysprep (for manual software install)
     </label>
     <br>
-    <small style="color:#666;">
+    <small style="color:var(--ink-muted);">
       Stops the build after Windows OOBE finishes but before sysprep seals the image.
       RDP or Console in, install whatever you need, then click <b>Resume &amp; finalize</b>
       on the job page. Max wait is 2&nbsp;hours.
@@ -75,12 +75,12 @@
   <td>
     <button type="button" class="action-btn-upload" onclick="rebuildUbuntuSeedIso(this);">Rebuild Ubuntu Seed ISO</button>
     <button type="button" class="action-btn-upload" onclick="buildUbuntuTemplate(this);" style="margin-left:4px;">Build Ubuntu Template</button>
-    <span id="ubuntuSeedIsoStatus" style="color:#666;font-size:11px;margin-left:10px;"></span>
+    <span id="ubuntuSeedIsoStatus" style="color:var(--ink-muted);font-size:11px;margin-left:10px;"></span>
   </td>
 </tr>
 </table>
 {% else %}
-<p style="color:#cc0000;">No Ubuntu sequences defined. Create one on the <a href="/sequences">Sequences</a> page first.</p>
+<p style="color:var(--bad-fg);">No Ubuntu sequences defined. Create one on the <a href="/sequences">Sequences</a> page first.</p>
 {% endif %}
 </div>
 
@@ -100,21 +100,21 @@ function rebuildAnswerIso(btn) {
   var status = document.getElementById('answerIsoStatus');
   btn.disabled = true;
   status.textContent = 'building + uploading…';
-  status.style.color = '#999';
+  status.style.color = 'var(--ink-soft)';
   fetch('/api/answer-iso/rebuild', {method: 'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d.ok) {
         status.textContent = 'rebuilt — ' + d.path + ' (' + d.bytes + ' bytes source)';
-        status.style.color = '#006600';
+        status.style.color = 'var(--ok-fg)';
       } else {
         status.textContent = 'failed: ' + (d.error || 'unknown');
-        status.style.color = '#cc0000';
+        status.style.color = 'var(--bad-fg)';
       }
     })
     .catch(function(e){
       status.textContent = 'error: ' + e.message;
-      status.style.color = '#cc0000';
+      status.style.color = 'var(--bad-fg)';
     })
     .finally(function(){ btn.disabled = false; });
 }
@@ -128,21 +128,21 @@ function rebuildUbuntuSeedIso(btn) {
   var orig = btn.textContent;
   btn.textContent = 'Rebuilding…';
   status.textContent = 'building + uploading…';
-  status.style.color = '#999';
+  status.style.color = 'var(--ink-soft)';
   fetch('/api/ubuntu/rebuild-seed-iso?sequence_id=' + encodeURIComponent(sid), {method: 'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d.ok) {
         status.textContent = 'rebuilt — ' + (d.iso || '');
-        status.style.color = '#006600';
+        status.style.color = 'var(--ok-fg)';
       } else {
         status.textContent = 'failed: ' + (d.error || 'unknown');
-        status.style.color = '#cc0000';
+        status.style.color = 'var(--bad-fg)';
       }
     })
     .catch(function(e){
       status.textContent = 'error: ' + e.message;
-      status.style.color = '#cc0000';
+      status.style.color = 'var(--bad-fg)';
     })
     .finally(function(){ btn.disabled = false; btn.textContent = orig; });
 }
@@ -162,14 +162,14 @@ function buildUbuntuTemplate(btn) {
         window.location.href = '/jobs/' + d.job_id;
       } else {
         status.textContent = 'failed: ' + (d.error || 'unknown');
-        status.style.color = '#cc0000';
+        status.style.color = 'var(--bad-fg)';
         btn.disabled = false;
         btn.textContent = orig;
       }
     })
     .catch(function(e){
       status.textContent = 'error: ' + e.message;
-      status.style.color = '#cc0000';
+      status.style.color = 'var(--bad-fg)';
       btn.disabled = false;
       btn.textContent = orig;
     });
@@ -180,19 +180,21 @@ function buildUbuntuTemplate(btn) {
 .target-os-toggle .toggle {
   padding: 4px 14px;
   margin-right: 4px;
-  border: 1px solid #999;
-  background: #e8e8e8;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-muted);
+  color: var(--ink);
   cursor: pointer;
   font-family: Verdana, Tahoma, Arial, sans-serif;
   font-size: 11px;
 }
 .target-os-toggle .toggle.active {
-  background: #336699;
+  background: var(--ms-blue-dark);
   color: white;
-  border-color: #264d73;
+  border-color: var(--ms-blue-dark);
 }
 #os-ubuntu-btn.active {
   background: #e95420;
+  color: white;
   border-color: #c44117;
 }
 </style>
