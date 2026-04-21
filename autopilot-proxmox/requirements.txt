@@ -30,9 +30,10 @@ pypsrp>=0.8,<1.0
 impacket>=0.12,<1.0
 # docker-py talks to /var/run/docker.sock directly. Used by
 # POST /api/update/run to spawn a short-lived sidecar container
-# that runs `git pull && docker compose up -d autopilot` — the
-# sidecar outlives our own container's restart, so the self-update
-# completes even as this process is being replaced.
+# that runs `git pull && docker compose pull && docker compose up -d`
+# (rolling web + builder + monitor together) — the sidecar outlives
+# our own container's restart, so the self-update completes even as
+# this process is being replaced.
 docker>=7,<8
 # Entra OIDC for the web UI. authlib wraps the Authorization-Code +
 # PKCE flow, discovery, JWT validation. itsdangerous is a Starlette

@@ -3773,10 +3773,11 @@ def _host_repo_path() -> str:
 @app.post("/api/update/run")
 async def api_update_run():
     """Start a self-update. Spawns a detached sidecar container that
-    runs `git pull && docker compose pull && docker compose up -d
-    autopilot`. The sidecar lives beyond our own restart — by the
-    time docker-compose kills us and starts a new container, the
-    sidecar has already finished and removed itself.
+    runs `git pull && docker compose pull && docker compose up -d`
+    (no service arg — rolls web + builder + monitor together). The
+    sidecar lives beyond our own restart — by the time docker-compose
+    kills us and starts a new container, the sidecar has already
+    finished and removed itself.
 
     Returns 202 with the sidecar container id. Poll /api/update/status
     for progress; on success the browser can reload to see the new
@@ -3840,8 +3841,8 @@ async def api_update_run():
         f"cd {host_repo} && "
         "echo '--- git pull ---' && git pull && "
         "cd autopilot-proxmox && "
-        "echo '--- docker compose pull ---' && docker compose pull autopilot && "
-        "echo '--- docker compose up -d ---' && docker compose up -d autopilot && "
+        "echo '--- docker compose pull ---' && docker compose pull && "
+        "echo '--- docker compose up -d ---' && docker compose up -d && "
         "echo '--- done ---'"
     )
     run_kwargs = dict(
