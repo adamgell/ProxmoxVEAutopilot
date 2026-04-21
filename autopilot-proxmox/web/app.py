@@ -59,6 +59,11 @@ def _load_version() -> dict:
 _APP_VERSION = _load_version()
 _LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, "error": None}
 
+# Flipped True at the end of the last schema-init startup hook. /healthz
+# returns 503 until then, so docker-compose `depends_on: service_healthy`
+# keeps builder/monitor from racing the web DB initializers on cold start.
+_SCHEMA_READY = False
+
 
 def _sanitize_input(value):
     """Reject input containing shell-dangerous characters."""
@@ -543,7 +548,12 @@ async def auth_logout(request: Request):
 
 @app.get("/healthz")
 async def healthz():
-    """Uptime probe — exempt from auth so external monitors can hit it."""
+    """Uptime probe — exempt from auth so external monitors can hit it.
+    Gated on _SCHEMA_READY: returns 503 until all startup schema-init
+    hooks finish, so docker-compose dependents (builder/monitor) don't
+    start against a half-initialized DB."""
+    if not _SCHEMA_READY:
+        raise HTTPException(503, "schema init not complete")
     return {"ok": True}
 
 
@@ -612,6 +622,8 @@ def _init_sequences_db() -> None:
     sequences_db.init(SEQUENCES_DB)
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
     device_history_db.init(DEVICE_MONITOR_DB)
+    global _SCHEMA_READY
+    _SCHEMA_READY = True
 
 
 @app.on_event("startup")
@@ -622,6 +634,8 @@ def _init_jobs_db_and_migrate() -> None:
         jobs_dir=Path(job_manager.jobs_dir),
         db_path=JOBS_DB,
     )
+    global _SCHEMA_READY
+    _SCHEMA_READY = True
 
 
 _MONITOR_TASK: Optional["asyncio.Task"] = None

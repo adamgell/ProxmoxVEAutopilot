@@ -305,3 +305,9 @@ def test_kill_sets_kill_requested_flag(client):
     assert r.status_code == 303
     row = jobs_db.get_job(app_module.JOBS_DB, "live")
     assert row["kill_requested"] == 1
+
+
+def test_healthz_ok_after_startup(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
