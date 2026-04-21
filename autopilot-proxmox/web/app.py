@@ -400,7 +400,7 @@ def _run_keytab_checks() -> None:
     _log = _logging.getLogger("web.keytab_monitor.loop")
 
     cfg = _load_proxmox_config()
-    keytab_path = cfg.get("ad_keytab_path", "/etc/krb5.keytab")
+    keytab_path = cfg.get("ad_keytab_path", "/app/secrets/krb5.keytab")
     ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
     realm = cfg.get("ad_realm", "HOME.GELL.ONE")
     gmsa_sam = cfg.get("ad_gmsa_sam", "svc-apmon")
@@ -541,7 +541,7 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
 
     # --- LDAP (python-ldap + SASL/GSSAPI) ---
     ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
-    keytab_path = cfg.get("ad_keytab_path", "/etc/krb5.keytab")
+    keytab_path = cfg.get("ad_keytab_path", "/app/secrets/krb5.keytab")
     ad_principal = cfg.get("ad_kerberos_principal", "svc-apmon$@HOME.GELL.ONE")
 
     def _ad_search(search_base: str, win_name: str) -> list[dict]:
