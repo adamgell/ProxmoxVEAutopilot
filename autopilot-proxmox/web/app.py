@@ -81,6 +81,7 @@ SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
 CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
 DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
+DEVICE_MONITOR_DB = BASE_DIR / "output" / "device_monitor.db"
 
 SETTINGS_SCHEMA = [
     # source defaults to "vars" for every field. Sections or individual
@@ -308,6 +309,7 @@ job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
 
 from web import sequences_db, crypto as _crypto
 from web import sequence_compiler
+from web import device_history_db, device_monitor
 
 
 @app.on_event("startup")
@@ -315,6 +317,241 @@ def _init_sequences_db() -> None:
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     sequences_db.init(SEQUENCES_DB)
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
+    device_history_db.init(DEVICE_MONITOR_DB)
+
+
+_MONITOR_TASK: Optional["asyncio.Task"] = None
+
+
+@app.on_event("startup")
+async def _start_device_monitor_loop() -> None:
+    """Start the background monitor task. Failures here never crash
+    the app — the loop swallows exceptions and retries on the next
+    tick."""
+    import asyncio
+    global _MONITOR_TASK
+    _MONITOR_TASK = asyncio.create_task(_device_monitor_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_device_monitor_loop() -> None:
+    import asyncio
+    if _MONITOR_TASK is None:
+        return
+    _MONITOR_TASK.cancel()
+    try:
+        await _MONITOR_TASK
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _device_monitor_loop() -> None:
+    """Runs :func:`device_monitor.sweep` on a loop, sleeping
+    ``settings.interval_seconds`` between iterations. Re-reads
+    settings every tick so the /monitoring/settings UI takes effect
+    on the next run without a restart. Unhandled exceptions in one
+    tick are logged and the next tick still runs."""
+    import asyncio
+    import logging as _logging
+    _log = _logging.getLogger("web.device_monitor.loop")
+    # Small grace period on startup so the DB-init hook can finish
+    # on slow disks before we try to read settings.
+    await asyncio.sleep(5)
+    while True:
+        try:
+            settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
+        except Exception:
+            _log.exception("loop: could not read settings; retrying in 60s")
+            await asyncio.sleep(60)
+            continue
+
+        if settings.enabled:
+            try:
+                ctx = _build_live_monitor_context()
+                extra = _vm_provisioning_vmids()
+                # sweep() is synchronous + DB-bound; run it in a thread
+                # so we don't block the event loop for the Graph +
+                # LDAP round-trips.
+                await asyncio.to_thread(
+                    device_monitor.sweep, ctx,
+                    extra_in_scope_vmids=extra,
+                )
+            except Exception:
+                _log.exception("loop: sweep failed; will retry next tick")
+
+        await asyncio.sleep(max(60, settings.interval_seconds))
+
+
+def _vm_provisioning_vmids() -> set:
+    """VMIDs that were provisioned through this system — stays
+    in-scope for the monitor even if the ``autopilot`` tag was
+    later stripped off."""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(SEQUENCES_DB)
+        try:
+            rows = conn.execute("SELECT vmid FROM vm_provisioning").fetchall()
+        finally:
+            conn.close()
+        return {int(r[0]) for r in rows}
+    except Exception:
+        return set()
+
+
+def _build_live_monitor_context() -> "device_monitor.MonitorContext":
+    """Wire the real I/O backends: Proxmox API for VM list + config,
+    existing _guest_exec helper for Windows probes, ldap3 for AD,
+    requests for Graph. Resolves credentials from vault.yml +
+    sequences DB on every call so rotations take effect without a
+    restart."""
+    cfg = _load_proxmox_config()
+    # --- Proxmox ---
+    def _list_pve_vms() -> list[dict]:
+        # Cluster-wide resources include node + status + tags + name.
+        rows = _proxmox_api("/cluster/resources?type=vm") or []
+        out = []
+        for r in rows:
+            if r.get("type") != "qemu":
+                continue
+            out.append({
+                "vmid": int(r.get("vmid", 0)),
+                "name": r.get("name", ""),
+                "node": r.get("node", ""),
+                "status": r.get("status", ""),
+                "tags": r.get("tags", "") or "",
+                "lock": r.get("lock"),
+            })
+        return out
+
+    def _fetch_pve_config(vmid: int, node: str) -> dict:
+        return _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
+
+    def _fetch_guest_details(vmid: int, node: str):
+        # Reuses the existing helper if present; otherwise returns
+        # None so the sweep just records AD match by VM name.
+        try:
+            return _fetch_guest_windows_details(vmid, node)  # type: ignore[name-defined]
+        except NameError:
+            return None
+        except Exception:
+            return None
+
+    # --- LDAP ---
+    ad_cred = _resolve_ad_credential()
+    ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
+
+    def _ad_search(search_base: str, win_name: str) -> list[dict]:
+        from ldap3 import Connection, Server, SUBTREE
+        from ldap3.utils.conv import escape_filter_chars
+        user = ad_cred.get("username") or ""
+        password = ad_cred.get("password") or ""
+        if not user or not password:
+            raise RuntimeError(
+                "AD credential not configured "
+                "(see /monitoring/settings → AD credential)"
+            )
+        server = Server(ldap_host, use_ssl=False, connect_timeout=10)
+        conn = Connection(server, user=user, password=password, auto_bind=True)
+        try:
+            conn.search(
+                search_base=search_base,
+                search_filter=f"(&(objectClass=computer)(name={escape_filter_chars(win_name)}))",
+                search_scope=SUBTREE,
+                attributes=[
+                    "objectGUID", "objectSid",
+                    "distinguishedName", "cn", "sAMAccountName", "name",
+                    "userAccountControl", "whenCreated", "whenChanged",
+                    "pwdLastSet", "lastLogonTimestamp",
+                    "operatingSystem", "operatingSystemVersion",
+                    "dNSHostName",
+                ],
+            )
+            out: list[dict] = []
+            for e in conn.entries:
+                attrs: dict = {}
+                for a in e.entry_attributes:
+                    v = e[a].value
+                    # Coerce bytes / datetimes to strings so json.dumps
+                    # in the caller never chokes.
+                    if isinstance(v, bytes):
+                        v = v.hex()
+                    elif hasattr(v, "isoformat"):
+                        v = v.isoformat()
+                    attrs[a] = v
+                out.append(attrs)
+            return out
+        finally:
+            try:
+                conn.unbind()
+            except Exception:
+                pass
+
+    # --- Graph ---
+    tenant = cfg.get("vault_entra_tenant_id", "")
+    client = cfg.get("vault_entra_app_id", "")
+    secret = cfg.get("vault_entra_app_secret", "")
+
+    def _graph_find_entra_device(win_name: str) -> list[dict]:
+        q = device_monitor._quote_graph_string(win_name)
+        url = (
+            "https://graph.microsoft.com/v1.0/devices"
+            f"?$filter=displayName eq '{q}'"
+            "&$select=id,displayName,deviceId,trustType,accountEnabled,"
+            "approximateLastSignInDateTime,operatingSystem,"
+            "operatingSystemVersion,registrationDateTime,deviceOwnership,"
+            "onPremisesSyncEnabled,onPremisesLastSyncDateTime,"
+            "onPremisesSecurityIdentifier,physicalIds,alternativeSecurityIds"
+        )
+        body = device_monitor._graph_get(
+            url, tenant_id=tenant, client_id=client, client_secret=secret,
+        )
+        return list(body.get("value", []) or [])
+
+    def _graph_find_intune_device(serial: str) -> list[dict]:
+        q = device_monitor._quote_graph_string(serial)
+        url = (
+            "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices"
+            f"?$filter=serialNumber eq '{q}'"
+            "&$select=id,deviceName,serialNumber,azureADDeviceId,"
+            "enrolledDateTime,complianceState,lastSyncDateTime,"
+            "operatingSystem,managedDeviceOwnerType"
+        )
+        body = device_monitor._graph_get(
+            url, tenant_id=tenant, client_id=client, client_secret=secret,
+        )
+        return list(body.get("value", []) or [])
+
+    return device_monitor.MonitorContext(
+        db_path=DEVICE_MONITOR_DB,
+        list_pve_vms=_list_pve_vms,
+        fetch_pve_config=_fetch_pve_config,
+        fetch_guest_details=_fetch_guest_details,
+        ad_search=_ad_search,
+        graph_find_entra_device=_graph_find_entra_device,
+        graph_find_intune_device=_graph_find_intune_device,
+    )
+
+
+def _resolve_ad_credential() -> dict:
+    """Look up the configured AD credential. Returns
+    ``{username, password}`` or ``{}`` if unconfigured."""
+    s = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    cred_id = s.ad_credential_id
+    if not cred_id:
+        return {}
+    try:
+        cred = sequences_db.get_credential(
+            SEQUENCES_DB, int(cred_id), _cipher(),
+        )
+    except Exception:
+        return {}
+    if not cred:
+        return {}
+    payload = cred.get("payload", {}) or {}
+    return {
+        "username": payload.get("username", ""),
+        "password": payload.get("password", ""),
+    }
 
 
 _CIPHER: Optional[_crypto.Cipher] = None
@@ -3710,3 +3947,106 @@ def page_sequence_edit(request: Request, seq_id: int):
         "request": request, "seq": seq,
         "oem_profiles": load_oem_profiles(),
     })
+
+
+
+# ---------------------------------------------------------------------------
+# Device state monitoring — REST API
+# ---------------------------------------------------------------------------
+
+class _MonitoringSettingsPatch(BaseModel):
+    enabled: Optional[bool] = None
+    interval_seconds: Optional[int] = None
+    ad_credential_id: Optional[int] = None
+
+
+class _SearchOuCreate(BaseModel):
+    dn: str
+    label: str = ""
+    enabled: bool = True
+    sort_order: Optional[int] = None
+
+
+class _SearchOuPatch(BaseModel):
+    dn: Optional[str] = None
+    label: Optional[str] = None
+    enabled: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+@app.get("/api/monitoring/settings")
+def api_monitoring_settings_get():
+    s = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    return {
+        "enabled": s.enabled,
+        "interval_seconds": s.interval_seconds,
+        "ad_credential_id": s.ad_credential_id,
+        "updated_at": s.updated_at,
+    }
+
+
+@app.put("/api/monitoring/settings")
+def api_monitoring_settings_update(body: _MonitoringSettingsPatch):
+    try:
+        device_history_db.update_settings(
+            DEVICE_MONITOR_DB,
+            enabled=body.enabled,
+            interval_seconds=body.interval_seconds,
+            ad_credential_id=body.ad_credential_id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return api_monitoring_settings_get()
+
+
+@app.get("/api/monitoring/search-ous")
+def api_monitoring_search_ous_list():
+    return [
+        {"id": o.id, "dn": o.dn, "label": o.label,
+         "enabled": o.enabled, "sort_order": o.sort_order,
+         "created_at": o.created_at, "updated_at": o.updated_at}
+        for o in device_history_db.list_search_ous(DEVICE_MONITOR_DB)
+    ]
+
+
+@app.post("/api/monitoring/search-ous", status_code=201)
+def api_monitoring_search_ous_create(body: _SearchOuCreate):
+    try:
+        ou_id = device_history_db.add_search_ou(
+            DEVICE_MONITOR_DB,
+            dn=body.dn, label=body.label,
+            enabled=body.enabled, sort_order=body.sort_order,
+        )
+    except device_history_db.InvalidDn as e:
+        raise HTTPException(400, str(e)) from e
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(
+            409, f"search OU with dn={body.dn!r} already exists",
+        ) from e
+    return {"id": ou_id}
+
+
+@app.put("/api/monitoring/search-ous/{ou_id}")
+def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
+    try:
+        device_history_db.update_search_ou(
+            DEVICE_MONITOR_DB, ou_id,
+            dn=body.dn, label=body.label,
+            enabled=body.enabled, sort_order=body.sort_order,
+        )
+    except device_history_db.CannotDeleteLastOu as e:
+        raise HTTPException(409, str(e)) from e
+    except device_history_db.InvalidDn as e:
+        raise HTTPException(400, str(e)) from e
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
+
+
+@app.delete("/api/monitoring/search-ous/{ou_id}")
+def api_monitoring_search_ous_delete(ou_id: int):
+    try:
+        device_history_db.delete_search_ou(DEVICE_MONITOR_DB, ou_id)
+    except device_history_db.CannotDeleteLastOu as e:
+        raise HTTPException(409, str(e)) from e
+    return {"ok": True}
