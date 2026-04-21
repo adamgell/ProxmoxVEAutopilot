@@ -43,8 +43,14 @@ when names collide (expected for re-enrolled / duplicated devices).
 
 ## Scope restriction
 
-All AD LDAP searches use `searchBase = OU=WorkspaceLabs,DC=home,DC=gell,DC=one`
-with `SCOPE_SUBTREE`. Devices outside that subtree are not recorded.
+AD LDAP searches run against every enabled entry in the configurable
+`monitoring_search_ous` table (see schema below). Each DN uses
+`SCOPE_SUBTREE`, results are unioned, and matches are tagged with the
+source DN they came from so the UI can render "found under …". The
+list is seeded with `OU=WorkspaceLabs,DC=home,DC=gell,DC=one` and the
+settings UI lets operators add, remove, reorder, or disable entries —
+with the invariant that at least one entry must remain enabled at all
+times. Devices outside every listed subtree are not recorded.
 
 Entra and Intune have no equivalent OU concept, so we instead:
 
@@ -124,37 +130,79 @@ CREATE TABLE device_probes (
 );
 CREATE INDEX idx_probe_vmid_time ON device_probes (vmid, checked_at DESC);
 
--- Single-row settings table (id is a sentinel).
+-- Single-row scalar settings (id is a sentinel).
 CREATE TABLE monitoring_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     enabled          INTEGER NOT NULL DEFAULT 1,
     interval_seconds INTEGER NOT NULL DEFAULT 900,   -- 15 min
-    scope_ou_dn      TEXT    NOT NULL DEFAULT 'OU=WorkspaceLabs,DC=home,DC=gell,DC=one',
     ad_credential_id INTEGER NOT NULL DEFAULT 7,     -- home\adam_admin
     updated_at       TEXT    NOT NULL
 );
+
+-- Additive list of AD search OUs. Sweeps query each OU (SCOPE_SUBTREE)
+-- and union the results. The "always at least one" invariant is
+-- enforced at the API/DAL layer, not the schema (SQLite can't express
+-- "row count >= 1" cleanly), but init seeds the default row and the
+-- delete endpoint refuses to remove the last remaining entry.
+CREATE TABLE monitoring_search_ous (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dn TEXT NOT NULL UNIQUE,       -- full DN, e.g. "OU=WorkspaceLabs,DC=home,DC=gell,DC=one"
+    label TEXT NOT NULL DEFAULT '', -- optional human label shown in UI
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 ```
+
+### Search-OU list invariants
+
+- `monitoring_search_ous` is seeded at init with one row:
+  `dn='OU=WorkspaceLabs,DC=home,DC=gell,DC=one'`, `label='WorkspaceLabs'`.
+- `dal.delete_search_ou(id)` raises `CannotDeleteLastOu` when the delete
+  would leave the table empty, **OR** when it would leave zero `enabled=1`
+  rows. The API returns 409 in that case.
+- `dal.disable_search_ou(id)` follows the same rule — you can't disable
+  the last enabled row.
+- `sweep()` loads `SELECT dn FROM monitoring_search_ous WHERE enabled=1
+  ORDER BY sort_order, id` and runs one LDAP search per DN; results are
+  concatenated into `ad_matches_json` with each match tagged with its
+  source OU so the UI can show "found under OU X".
+- DN format is validated on insert/update with a lightweight regex
+  (`^(?:OU|CN|DC)=[^,]+(?:,(?:OU|CN|DC)=[^,]+)*$`). Invalid → 400.
 
 ## Probes
 
 ### AD probe
 
-Using `ldap3` (new dependency — pure-Python, no system libs):
+Using `ldap3` (new dependency — pure-Python, no system libs). One bind
+per sweep; one `search()` per enabled search-OU row:
 
-```
-conn = Connection(Server('dns.home.gell.one'), user='home\\adam_admin', password='...', auto_bind=True)
-conn.search(
-    search_base='OU=WorkspaceLabs,DC=home,DC=gell,DC=one',
-    search_filter=f'(&(objectClass=computer)(name={escape_filter_chars(win_name)}))',
-    search_scope=SUBTREE,
-    attributes=['distinguishedName', 'objectGUID', 'pwdLastSet', 'operatingSystem',
-                'operatingSystemVersion', 'userAccountControl', 'whenCreated'],
-)
+```python
+conn = Connection(Server('dns.home.gell.one'),
+                  user='home\\adam_admin', password='...', auto_bind=True)
+matches = []
+for ou in dal.list_enabled_search_ous(db):
+    conn.search(
+        search_base=ou.dn,
+        search_filter=f'(&(objectClass=computer)(name={escape_filter_chars(win_name)}))',
+        search_scope=SUBTREE,
+        attributes=['distinguishedName', 'objectGUID', 'pwdLastSet',
+                    'operatingSystem', 'operatingSystemVersion',
+                    'userAccountControl', 'whenCreated'],
+    )
+    for e in conn.entries:
+        matches.append({**_entry_to_dict(e), 'source_ou_dn': ou.dn,
+                        'source_ou_label': ou.label})
 ```
 
-Return ALL matches — the collector does not de-dup. `userAccountControl`
-bit 2 (`ACCOUNTDISABLE`) is preserved in `ad_matches_json` so the UI
-can render "1 active + 1 disabled".
+Return ALL matches from ALL OUs — the collector does not de-dup by DN
+(the same computer object under two overlapping OUs will show twice,
+which is correct: the UI can show that too). `userAccountControl` bit 2
+(`ACCOUNTDISABLE`) is preserved so the UI can render "1 active + 1
+disabled". If a search fails on one OU (permissions, typo), the error
+is recorded in `probe_errors_json.ad_per_ou[<dn>]` and the remaining
+OUs still run.
 
 ### Entra probe
 
@@ -224,14 +272,24 @@ transitions.
 
 - `/monitoring` — table: VMID, VM name, last checked, AD ✅/⚠️/❌
   (✅=1 active, ⚠️=1 disabled or >1 matches, ❌=none), Entra (same),
-  Intune (same), latest regression if any.
+  Intune (same), latest regression if any. Each AD cell is clickable
+  and opens a popover listing every match with its source-OU label, so
+  overlapping or duplicated entries are visible at a glance.
 - `/monitoring/<vmid>` — top card: current full state. Below, a
   timeline of probes (newest first, paginated 50 per page) with each
   transition flagged and clickable to show the raw JSON diff.
-- `/monitoring/settings` — form: enable toggle, interval seconds (min
-  60, warn below 900), scope OU DN, AD credential selector. Save →
-  writes `monitoring_settings` row; background loop picks up on next
-  iteration.
+- `/monitoring/settings` — two sections:
+  1. **Monitor configuration** — enable toggle, interval seconds
+     (min 60, banner below 900: "not tested below 15 minutes"), AD
+     credential selector.
+  2. **AD search OUs** — table of DN / label / enabled / sort order
+     with add / edit / enable-toggle / delete / reorder controls. Save
+     per-row writes `monitoring_search_ous`. The delete and
+     disable controls are grayed out on the last remaining enabled
+     row, with a tooltip explaining "at least one OU must stay
+     enabled." A server-side 409 is the backstop if the UI state
+     drifts. DN input is regex-validated client-side with the same
+     pattern the DAL enforces.
 
 ## Failure modes
 
@@ -242,6 +300,8 @@ transitions.
 | Guest agent down on VM               | Only PVE-side fields (vmid, vm_name) populated; directory probes skipped for that VM, stored as `probe_errors_json.guest='agent_down'` |
 | VM stopped                           | Still probed by name + last-known serial (if we've seen it before) so an unexpectedly-stopped VM doesn't drop out of the dashboard |
 | Duplicate directory objects          | All stored in `*_matches_json`; UI marks as ⚠️              |
+| Search-OU permission denied (one DN) | Recorded in `probe_errors_json.ad_per_ou[dn]`; remaining OUs still run |
+| User tries to delete / disable the last enabled OU | DAL raises `CannotDeleteLastOu`; API returns 409; UI greys the button |
 | Collector raises unhandled exception | Caught at the loop level; logged; next tick still runs    |
 
 ## Testing
@@ -249,6 +309,10 @@ transitions.
 - Unit: `device_monitor.probe_vm` given a fake PVE/LDAP/Graph context
   — assert matches arrays land with correct shapes for 0/1/2 matches.
 - Unit: regression detector — feed pairs of probes, assert flag.
+- Unit: `dal.delete_search_ou` / `disable_search_ou` raise
+  `CannotDeleteLastOu` when called on the sole remaining enabled row.
+- Unit: `sweep()` with two configured OUs runs two LDAP searches and
+  merges results, tagging each match with its source DN.
 - Integration: against the live cluster, one sweep against
   `OU=WorkspaceLabs` — assert VM 109 and 116 appear with `ad_found=1`,
   `entra_trustType=ServerAd`.
@@ -256,13 +320,21 @@ transitions.
 
 ## Delivery steps (commit boundaries)
 
-1. `ldap3` dependency + `web/device_history_db.py` (schema, DAL, tests)
-2. `web/device_monitor.py` — probe functions + sweep; tests against
-   fake context
-3. FastAPI startup hook + background loop + settings endpoints
-4. `/monitoring` list page + template
-5. `/monitoring/<vmid>` timeline + regression detector
-6. Live run against the cluster; adjust for whatever duplicates exist
+1. `ldap3` dependency + `web/device_history_db.py` — schema (including
+   `monitoring_search_ous`), DAL, seeding of the default OU, and the
+   `CannotDeleteLastOu` invariant + tests.
+2. `web/device_monitor.py` — probe functions (one LDAP search per
+   enabled OU, unioned) + sweep; tests against a fake context
+   exercising 1-OU and 2-OU configurations.
+3. FastAPI startup hook + background loop + settings API endpoints
+   (scalar settings + CRUD for search OUs, all guarded by the
+   last-enabled invariant).
+4. `/monitoring` list page + template — AD cell popover lists matches
+   per source OU.
+5. `/monitoring/<vmid>` timeline + regression detector.
+6. `/monitoring/settings` page — scalar form + additive OU list editor
+   with client-side "can't remove last enabled" affordances.
+7. Live run against the cluster; adjust for whatever duplicates exist.
 
 Each step commits independently and the system is usable after step 3
 (UI added in 4-5).
