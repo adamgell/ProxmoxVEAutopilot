@@ -56,6 +56,12 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     # persisted in the file header but setting it is cheap and
     # defensive against tools that reset it.
     conn.execute("PRAGMA journal_mode=WAL")
+    # With multiple processes writing (web + N builders + monitor),
+    # writer/writer contention is inevitable. WAL only removes
+    # reader/writer contention — busy_timeout is what keeps a second
+    # writer waiting for the lock instead of raising OperationalError
+    # immediately. 5s is generous; our write burst is tiny.
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn

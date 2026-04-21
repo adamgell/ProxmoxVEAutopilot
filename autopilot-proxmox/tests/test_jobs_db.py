@@ -48,3 +48,25 @@ def test_wal_mode_enabled(db_path):
     with sqlite3.connect(db_path) as conn:
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     assert mode.lower() == "wal"
+
+
+def test_init_preserves_operator_tuned_concurrency_caps(db_path):
+    """INSERT OR IGNORE in init() is what lets operators tune caps via
+    /settings without having the next container restart overwrite the
+    value. Break this and operator config silently reverts."""
+    from web import jobs_db
+    jobs_db.init(db_path)
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE job_type_limits SET max_concurrent = 7 "
+            "WHERE job_type = 'provision_clone'"
+        )
+        conn.commit()
+    # Re-init should NOT clobber the tuned value.
+    jobs_db.init(db_path)
+    caps = {r["job_type"]: r["max_concurrent"]
+            for r in jobs_db.list_job_type_limits(db_path)}
+    assert caps["provision_clone"] == 7
+    # Other defaults still seeded as expected.
+    assert caps["build_template"] == 1
