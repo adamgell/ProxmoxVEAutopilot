@@ -307,7 +307,10 @@ def _save_vault(updates):
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
+job_manager = JobManager(
+    jobs_dir=str(BASE_DIR / "jobs"),
+    jobs_db_path=JOBS_DB,
+)
 
 from web import sequences_db, crypto as _crypto
 from web import sequence_compiler

@@ -3,13 +3,15 @@ import os
 import subprocess
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 class JobManager:
     """Manages Ansible playbook runs as subprocesses. Thread-safe."""
 
-    def __init__(self, jobs_dir="jobs"):
+    def __init__(self, jobs_dir="jobs", jobs_db_path: Path | None = None):
         self.jobs_dir = jobs_dir
+        self.jobs_db_path = jobs_db_path
         os.makedirs(jobs_dir, exist_ok=True)
         self._lock = threading.Lock()
         self._active = {}
@@ -61,6 +63,22 @@ class JobManager:
             "exit_code": None,
             "args": args or {},
         }
+
+        # Mirror into jobs.db (Phase 0 bridge — Task 13 will strip the
+        # subprocess spawn so web becomes enqueue-only). Web claims the
+        # row in-process so status transitions pending→running; the real
+        # subprocess is what's actually driving the work today.
+        if self.jobs_db_path is not None:
+            from web import jobs_db
+            jobs_db.enqueue(
+                self.jobs_db_path,
+                job_id=job_id,
+                job_type=playbook_name,
+                playbook=command[1] if len(command) > 1 else playbook_name,
+                cmd=list(command),
+                args=args or {},
+            )
+            jobs_db.claim_next_job(self.jobs_db_path, worker_id="web-inproc")
 
         log_file = open(log_path, "w")
         proc = subprocess.Popen(
