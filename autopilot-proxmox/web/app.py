@@ -79,6 +79,7 @@ FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
 SECRETS_DIR = BASE_DIR / "secrets"
 SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
+JOBS_DB = BASE_DIR / "output" / "jobs.db"
 CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
 DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
@@ -607,6 +608,16 @@ def _init_sequences_db() -> None:
     sequences_db.init(SEQUENCES_DB)
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
     device_history_db.init(DEVICE_MONITOR_DB)
+
+
+@app.on_event("startup")
+def _init_jobs_db_and_migrate() -> None:
+    from web import jobs_db, jobs_migration
+    jobs_db.init(JOBS_DB)
+    jobs_migration.migrate_legacy_index(
+        jobs_dir=Path(job_manager.jobs_dir),
+        db_path=JOBS_DB,
+    )
 
 
 _MONITOR_TASK: Optional["asyncio.Task"] = None
