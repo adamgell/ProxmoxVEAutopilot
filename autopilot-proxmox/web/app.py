@@ -1063,21 +1063,56 @@ def get_autopilot_vms():
     for vm in autopilot_vms:
         config = configs.get(vm["vmid"], {})
         smbios1 = config.get("smbios1", "")
-        serial = _decode_smbios_serial(smbios1) if smbios1 else ""
-        manufacturer = _decode_smbios_field(smbios1, "manufacturer") if smbios1 else ""
-        product = _decode_smbios_field(smbios1, "product") if smbios1 else ""
-        oem = f"{manufacturer} {product}".strip()
-        guest = guest_details.get(vm["vmid"], {})
+        args = config.get("args", "") or ""
+        vm_name = vm.get("name", "") or ""
+        guest = guest_details.get(vm["vmid"], {}) or {}
+
+        # Serial — prefer the authoritative Windows-side Win32_BIOS.
+        # SerialNumber; fall back to vm_name when the VM is autopilot-
+        # provisioned (our convention: vm_name == real SMBIOS serial).
+        # smbios1.serial is LAST because per-VM SMBIOS files
+        # (`args: -smbios file=…`) leave smbios1 with the template
+        # default (e.g., Gell-1F02ADE6) that matches nothing.
+        smbios1_serial = _decode_smbios_serial(smbios1) if smbios1 else ""
+        per_vm_smbios_active = ("smbios file=" in args)
+        if guest.get("Serial"):
+            serial = guest["Serial"]
+        elif per_vm_smbios_active and vm_name.lower().startswith("gell-"):
+            serial = vm_name
+        else:
+            serial = smbios1_serial
+
+        # OEM / Hardware — guest-exec's WMI values first (real runtime
+        # identity), then smbios1 as last resort. When per-VM SMBIOS
+        # is active AND guest is unreachable, smbios1 shows the
+        # template defaults; tag the display so operators know.
+        if guest.get("Manufacturer") or guest.get("Model"):
+            oem = f"{guest.get('Manufacturer','')} {guest.get('Model','')}".strip()
+        else:
+            manufacturer = _decode_smbios_field(smbios1, "manufacturer") if smbios1 else ""
+            product = _decode_smbios_field(smbios1, "product") if smbios1 else ""
+            oem = f"{manufacturer} {product}".strip()
+            if per_vm_smbios_active and oem:
+                oem = f"{oem} (template default)"
         result.append({
             "vmid": vm["vmid"],
-            "name": vm.get("name", ""),
+            "name": vm_name,
             "status": vm.get("status", "unknown"),
             "serial": serial,
             "oem": oem,
-            "hostname": hostnames.get(vm["vmid"], "") or guest.get("Name", ""),
+            # Hostname: guest-agent get-host-name → guest-exec Name →
+            # fall back to vm_name so the column isn't an empty dash.
+            "hostname": (hostnames.get(vm["vmid"], "")
+                         or guest.get("Name", "")
+                         or (vm_name if vm.get("status") == "running" else "")),
             "mem_mb": int(vm.get("maxmem", 0) / 1024 / 1024),
             "cpus": vm.get("cpus", vm.get("maxcpu", "")),
             "tags": vm.get("tags", "") or "",
+            # has_guest_data gates the domain/workgroup badge in the
+            # template so a vm_name-fallback hostname doesn't produce
+            # a misleading "workgroup" label for VMs we simply
+            # couldn't reach over guest-exec.
+            "has_guest_data": bool(guest),
             # Windows-side enrichment. Keys are present but empty when
             # the guest agent didn't respond in time or the VM isn't
             # running Windows (PowerShell exec returns None then).

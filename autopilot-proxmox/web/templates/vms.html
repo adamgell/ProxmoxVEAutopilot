@@ -36,7 +36,7 @@
     {{ vm.hostname or '—' }}
     {% if vm.part_of_domain and vm.domain %}
       <br><span class="badge badge-green" title="Active Directory domain-joined">{{ vm.domain }}</span>
-    {% elif vm.status == 'running' and vm.hostname %}
+    {% elif vm.status == 'running' and vm.hostname and vm.has_guest_data %}
       <br><span class="badge badge-gray" title="Not joined to an AD domain">workgroup</span>
     {% endif %}
   </td>
