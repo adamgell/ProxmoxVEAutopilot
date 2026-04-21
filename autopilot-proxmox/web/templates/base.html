@@ -278,11 +278,12 @@ hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
   display: flex; align-items: stretch;
   flex: 1;
   min-height: 56px;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  /* No overflow clipping here — dropdown panels rendered by the
+     .nav-item children need to escape the nav box vertically.
+     A clipping context on either axis (overflow-x:auto was the
+     previous value) truncates the panel.  The 6-tab grouped nav
+     fits comfortably; the mobile hamburger takes over under 700px. */
 }
-#nav::-webkit-scrollbar { height: 2px; }
-#nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); }
 
 /* Each top-level tab lives in a .nav-item (which may also host a
    dropdown panel).  .nav-tab is the clickable element itself — it
