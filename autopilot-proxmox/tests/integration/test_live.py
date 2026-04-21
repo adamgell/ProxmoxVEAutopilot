@@ -265,3 +265,158 @@ def test_sequence_builder_page_loads_for_seeded_default(session, base_url):
     assert r.status_code == 200
     # The builder template renders the seed's steps inline as JSON
     assert "set_oem_hardware" in r.text or "autopilot_entra" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Microservice split integration tests (Tasks 22-25)
+# Run with: pytest tests/integration/test_live.py --run-integration -v
+# Prereqs:
+#   - Target box is running the split compose stack
+#   - AUTOPILOT_ENABLE_TEST_JOBS=1 is set in web container environment
+#   - --scale autopilot-builder=N for scale test
+# These tests adapt to the existing (session, base_url) fixtures above:
+#   - `session` is a requests.Session pre-flighted against the live box
+#   - `live_host` is derived from AUTOPILOT_LIVE_HOST (default 192.168.2.4)
+#     for the ssh-based tests (singleton + wedge).
+# ---------------------------------------------------------------------------
+
+import subprocess
+from urllib.parse import urlparse
+
+
+@pytest.fixture(scope="module")
+def live_host() -> str:
+    """Hostname of the live autopilot box used for ssh-driven checks
+    (singleton + wedge tests). Falls back to the host part of
+    AUTOPILOT_BASE_URL if AUTOPILOT_LIVE_HOST isn't set."""
+    explicit = os.environ.get("AUTOPILOT_LIVE_HOST")
+    if explicit:
+        return explicit
+    base = os.environ.get("AUTOPILOT_BASE_URL", "http://192.168.2.4:5000")
+    parsed = urlparse(base)
+    return parsed.hostname or "192.168.2.4"
+
+
+def test_kill_stops_running_job_within_10s(session, base_url):
+    """Enqueue a long-sleeping test job, POST /kill, observe status
+    transition within 10 seconds (5s heartbeat + grace)."""
+    r = session.post(base_url + "/api/jobs/test-long-sleep",
+                     data={"duration": "60"}, timeout=10)
+    assert r.status_code == 200, r.text
+    job_id = r.json()["id"]
+
+    # Wait for builder to claim (up to 10s).
+    deadline = time.time() + 10
+    job = None
+    while time.time() < deadline:
+        job = session.get(base_url + f"/api/jobs/{job_id}", timeout=10).json()
+        if job.get("status") == "running":
+            break
+        time.sleep(0.5)
+    assert job and job.get("status") == "running", f"expected running, got {job}"
+
+    session.post(base_url + f"/api/jobs/{job_id}/kill", timeout=10,
+                 allow_redirects=False)
+
+    # Expect terminal status within 10s (5s max heartbeat cycle + grace).
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        job = session.get(base_url + f"/api/jobs/{job_id}", timeout=10).json()
+        if job.get("status") in ("complete", "failed"):
+            break
+        time.sleep(0.5)
+    assert job.get("status") in ("complete", "failed"), \
+        f"kill didn't terminate within 10s, status={job.get('status')}"
+
+
+def test_scale_three_builders_runs_three_concurrent_jobs(session, base_url):
+    """With --scale autopilot-builder=3, peak concurrency is 3.
+    Requires operator to have scaled the compose stack before running."""
+    ids = []
+    for _ in range(5):
+        r = session.post(base_url + "/api/jobs/test-long-sleep",
+                         data={"duration": "30"}, timeout=10)
+        ids.append(r.json()["id"])
+
+    deadline = time.time() + 15
+    peak_running = 0
+    try:
+        while time.time() < deadline:
+            rows = session.get(base_url + "/api/jobs?limit=10", timeout=10).json()
+            running = sum(
+                1 for row in rows
+                if row.get("id") in ids and row.get("status") == "running"
+            )
+            peak_running = max(peak_running, running)
+            if peak_running >= 3:
+                break
+            time.sleep(0.5)
+        assert peak_running == 3, \
+            f"expected 3 concurrent builders, peak={peak_running}"
+    finally:
+        # Best-effort cleanup so the 30s sleeps don't linger for the
+        # next test (especially when run repeatedly against a live box).
+        for job_id in ids:
+            try:
+                session.post(base_url + f"/api/jobs/{job_id}/kill",
+                             timeout=5, allow_redirects=False)
+            except Exception:
+                pass
+
+
+def test_monitor_singleton_rejects_second_instance(live_host):
+    """A second monitor container sharing the volume should exit 0 with
+    the 'already running elsewhere' warning (flock holds the lock)."""
+    result = subprocess.run(
+        [
+            "ssh", f"root@{live_host}",
+            "docker run --rm "
+            "-v /opt/ProxmoxVEAutopilot/autopilot-proxmox/output:/app/output "
+            "ghcr.io/adamgell/proxmox-autopilot:latest monitor 2>&1 | head -5",
+        ],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, \
+        f"second monitor crashed instead of exiting cleanly: {result.stderr}"
+    assert "already running elsewhere" in result.stdout
+
+
+def test_web_responsive_when_builder_stalls(session, base_url, live_host):
+    """SIGSTOP the builder's ansible subprocess. Web routes must stay
+    under 1s each — the whole point of the split."""
+    r = session.post(base_url + "/api/jobs/test-long-sleep",
+                     data={"duration": "120"}, timeout=10)
+    job_id = r.json()["id"]
+
+    # Wait for it to start running.
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        status = session.get(base_url + f"/api/jobs/{job_id}",
+                             timeout=10).json().get("status")
+        if status == "running":
+            break
+        time.sleep(0.5)
+
+    # SIGSTOP the ansible subprocess to simulate a wedge.
+    subprocess.run(
+        ["ssh", f"root@{live_host}",
+         "pkill -STOP -f 'ansible-playbook.*_test_long_sleep'"],
+        check=True, timeout=10,
+    )
+
+    try:
+        for path in ("/healthz", "/vms", "/monitoring", "/jobs"):
+            t0 = time.time()
+            r = session.get(base_url + path, timeout=5)
+            elapsed = time.time() - t0
+            assert r.status_code == 200, f"{path} returned {r.status_code}"
+            assert elapsed < 1.0, f"{path} took {elapsed:.2f}s (>1s budget)"
+    finally:
+        # SIGCONT so the process can finish cleanly, then kill.
+        subprocess.run(
+            ["ssh", f"root@{live_host}",
+             "pkill -CONT -f 'ansible-playbook.*_test_long_sleep'"],
+            timeout=10,
+        )
+        session.post(base_url + f"/api/jobs/{job_id}/kill",
+                     timeout=5, allow_redirects=False)
