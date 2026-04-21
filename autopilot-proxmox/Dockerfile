@@ -35,6 +35,30 @@ ENV APP_VERSION_FILE=/app/VERSION
 # Create runtime directories
 RUN mkdir -p /app/jobs /app/output/hashes /app/secrets
 
+# Enable OpenSSL legacy provider so hashlib.new("md4") works. NTLM
+# auth (used by ldap3 when talking to our DC) needs MD4 for the NT
+# hash; OpenSSL 3.x hides MD4 behind the legacy provider by default.
+# TODO: when we migrate AD auth to Kerberos/LDAPS+channel-binding we
+# can delete this and drop the legacy provider. Tracked in
+# docs/specs/2026-04-20-device-state-monitoring-design.md.
+RUN printf '%s\n' \
+    'openssl_conf = openssl_init' \
+    '' \
+    '[openssl_init]' \
+    'providers = provider_sect' \
+    '' \
+    '[provider_sect]' \
+    'default = default_sect' \
+    'legacy = legacy_sect' \
+    '' \
+    '[default_sect]' \
+    'activate = 1' \
+    '' \
+    '[legacy_sect]' \
+    'activate = 1' \
+    > /etc/ssl/openssl-legacy.cnf
+ENV OPENSSL_CONF=/etc/ssl/openssl-legacy.cnf
+
 EXPOSE 5000
 
 CMD ["uvicorn", "web.app:app", "--host", "0.0.0.0", "--port", "5000"]

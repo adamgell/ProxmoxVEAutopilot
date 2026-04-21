@@ -441,7 +441,22 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
     ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
 
     def _ad_search(search_base: str, win_name: str) -> list[dict]:
-        from ldap3 import Connection, Server, SUBTREE
+        # Auth path choice — evaluated against this cluster's DC:
+        #   - Plain SIMPLE over port 389 → strongerAuthRequired (LDAP
+        #     signing enforced).
+        #   - LDAPS on port 636 → "Connection reset by peer" because
+        #     no LDAPS cert is issued on the DC (no Enterprise CA).
+        #   - NTLM → works, negotiates the signing the DC demands.
+        # NTLM requires MD4 (NT hash); OpenSSL 3.x hides MD4 behind
+        # the legacy provider, enabled via OPENSSL_CONF in the
+        # Dockerfile. DEPRECATION FOLLOW-UP: NTLMv1 / v2 are both on
+        # Microsoft's removal path (Windows Server 2025+ disables
+        # NTLM by default; future Windows client releases will
+        # follow). Migrate to Kerberos (GSSAPI with a
+        # container-side keytab) or to LDAPS once a DC-issued cert
+        # is available. See docs/specs/2026-04-20-device-state-
+        # monitoring-design.md → "Auth follow-up".
+        from ldap3 import Connection, Server, SUBTREE, NTLM
         from ldap3.utils.conv import escape_filter_chars
         user = ad_cred.get("username") or ""
         password = ad_cred.get("password") or ""
@@ -451,7 +466,21 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
                 "(see /monitoring/settings → AD credential)"
             )
         server = Server(ldap_host, use_ssl=False, connect_timeout=10)
-        conn = Connection(server, user=user, password=password, auto_bind=True)
+        # KNOWN LIMITATION: against DCs that enforce "LDAP signing
+        # required" (Windows Server default since 2023), NTLM through
+        # ldap3 will hit strongerAuthRequired because ldap3 2.x does
+        # NOT negotiate NTLM sign+seal. The AD probe records this as
+        # a per-OU error and the other sources (PVE / Entra / Intune)
+        # continue to work. To resolve: either deploy an LDAPS cert
+        # on the DC (LDAPS here currently resets the connection
+        # because no cert is issued) OR switch this block to Kerberos
+        # GSSAPI with a container-side keytab. Both are tracked in
+        # docs/specs/2026-04-20-device-state-monitoring-design.md
+        # → "Auth follow-up".
+        conn = Connection(
+            server, user=user, password=password,
+            authentication=NTLM, auto_bind=True,
+        )
         try:
             conn.search(
                 search_base=search_base,
@@ -540,8 +569,11 @@ def _resolve_ad_credential() -> dict:
     if not cred_id:
         return {}
     try:
+        # sequences_db.get_credential signature is (db, cipher, id) —
+        # earlier revision had (db, id, cipher), which raised a silent
+        # sqlite3 bind error and dropped all AD probes.
         cred = sequences_db.get_credential(
-            SEQUENCES_DB, int(cred_id), _cipher(),
+            SEQUENCES_DB, _cipher(), int(cred_id),
         )
     except Exception:
         return {}

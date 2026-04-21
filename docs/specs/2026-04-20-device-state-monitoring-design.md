@@ -599,6 +599,58 @@ None — scope (OU), interval default (15 min with UI override), duplicate
 tolerance (store all), and credential sources (cred 7 for AD, existing
 vault Entra app for Graph) all confirmed in prior conversation.
 
+## Auth follow-up
+
+AD bind has an active limitation that landed during step-7 live
+verification and is tracked here for a future pass. The other three
+sources (PVE, Entra, Intune) all work against the live cluster today.
+
+**Current state:** AD probes use NTLM over plain LDAP (port 389).
+Works against DCs that allow unsigned binds. On our DC ("Require LDAP
+signing" enforced, which is the Windows Server 2022+ default) NTLM
+succeeds on the bind but the first search returns
+`strongerAuthRequired` because ldap3 2.x does not negotiate NTLM
+sign+seal.
+
+**What we tried:**
+
+| Path | Result |
+|------|--------|
+| Plain SIMPLE bind (port 389) | `strongerAuthRequired` — LDAP signing policy |
+| NTLM (port 389) | Bind succeeds, first search returns `strongerAuthRequired` (no signing support in ldap3) |
+| NTLM with `session_security=ENCRYPT` | `TypeError` — not a real ldap3 kwarg |
+| LDAPS (port 636) | `Connection reset by peer` — no LDAPS cert issued on the DC (no Enterprise CA) |
+
+**Path forward (pick one when we come back to this):**
+
+1. **LDAPS with a DC cert** — deploy a server-auth cert from an
+   Enterprise CA onto the DC so LDAPS starts answering. Then flip
+   the code back to `use_ssl=True, port=636` with a simple bind.
+   Zero code change once the cert is there; the plumbing is already
+   commented into `_ad_search`.
+2. **Kerberos GSSAPI + keytab** — install `gssapi` + `krb5-user` in
+   the container image, generate a keytab for `adam_admin@HOME.GELL.ONE`
+   on the DC, mount it into the container, and change `_ad_search` to
+   `authentication=SASL, sasl_mechanism='GSSAPI'`. Works without any
+   DC-side cert work and also is the modern replacement for NTLM once
+   Windows Server 2025+ removes NTLM entirely.
+3. **python-ldap with SASL GSS-SPNEGO** — alternative to ldap3 that
+   supports sign+seal on plain 389 via SPNEGO. Larger migration since
+   we'd be swapping out the library; only worth it if neither cert
+   nor keytab is deployable.
+
+**Why NTLM is the stopgap, not the answer:** NTLM (v1 and v2) is on
+Microsoft's removal path. Windows Server 2025 disables NTLM by
+default, subsequent client Windows releases follow. Our `_ad_search`
+comment block calls this out so a future reader sees the deprecation
+context before accepting the current state.
+
+**Impact while this is outstanding:** `ad_found` stays 0 on every
+probe, `probe_errors_json.ad_per_ou[<dn>]` records the
+`strongerAuthRequired` error, the /monitoring dashboard shows AD as
+⚠️ (per-OU error badge), and Entra/Intune continue to probe normally.
+No crash, no data loss — the failure is contained as designed.
+
 ## Appendix A — /devices/<vmid> mockup
 
 Timestamps below are shown in UTC for faithfulness to the server-side
