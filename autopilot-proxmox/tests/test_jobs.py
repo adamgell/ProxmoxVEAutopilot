@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -97,3 +99,43 @@ def test_index_persisted_to_disk(manager):
     data = json.loads(open(index_path).read())
     assert len(data) >= 1
     assert data[0]["id"] == job["id"]
+
+
+def test_job_manager_start_inserts_row_in_jobs_db():
+    """JobManager.start writes to jobs.db AND still spawns subprocess
+    (Phase 0 — web is still the runner). Popen mocked so no real
+    subprocess runs."""
+    from web import jobs, jobs_db
+    with tempfile.TemporaryDirectory() as d:
+        jobs_dir = Path(d)
+        db_path = jobs_dir / "jobs.db"
+        jobs_db.init(db_path)
+
+        mgr = jobs.JobManager(jobs_dir=str(jobs_dir), jobs_db_path=db_path)
+        with patch("web.jobs.subprocess.Popen") as mock_popen:
+            mock_popen.return_value.pid = 12345
+            mock_popen.return_value.wait.return_value = 0
+            entry = mgr.start(
+                "build_template", ["ansible-playbook", "x.yml"],
+                args={"profile": "p"},
+            )
+        assert entry["id"]
+        row = jobs_db.get_job(db_path, entry["id"])
+        assert row is not None
+        assert row["job_type"] == "build_template"
+        # Row should be running or complete (web claimed immediately).
+        assert row["status"] in ("running", "complete")
+
+
+def test_job_manager_start_without_jobs_db_path_still_works():
+    """Backwards compat: if jobs_db_path isn't provided, JobManager
+    should still work (no new behavior)."""
+    from web import jobs
+    with tempfile.TemporaryDirectory() as d:
+        mgr = jobs.JobManager(jobs_dir=str(d))  # no jobs_db_path
+        with patch("web.jobs.subprocess.Popen") as mock_popen:
+            mock_popen.return_value.pid = 12345
+            mock_popen.return_value.wait.return_value = 0
+            entry = mgr.start("test_playbook", ["true"], args={})
+        assert entry["id"]
+        # No jobs.db was set, so no crash on the absent attribute.
