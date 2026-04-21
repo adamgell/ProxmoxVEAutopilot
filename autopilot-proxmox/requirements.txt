@@ -22,3 +22,9 @@ gssapi>=1.8,<2.0
 # unreachable. pypsrp needs the krb5 Python bindings at install time.
 krb5>=0.5,<1.0
 pypsrp>=0.8,<1.0
+# impacket provides the RFC 3962 AES string_to_key used by the
+# keytab refresher (scripts/ad/refresh_keytab.py) to derive Kerberos
+# keys from the gMSA's UTF-16LE managed-password bytes. Also used
+# by the one-shot scripts/ad/create_gmsa.py via DCSync for
+# diagnostics.
+impacket>=0.12,<1.0
