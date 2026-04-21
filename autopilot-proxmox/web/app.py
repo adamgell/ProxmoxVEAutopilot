@@ -1642,13 +1642,16 @@ def compute_duration(job):
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
+    # Every data-bearing module on the dashboard fetches via JSON
+    # endpoints so the page can refresh live. We only pass the
+    # initial running/queued counts so the first paint shows real
+    # numbers (no flash of "…").
     jobs = job_manager.list_jobs()
-    running = sum(1 for j in jobs if j["status"] == "running")
+    running = [j for j in jobs if j.get("status") == "running"]
     return templates.TemplateResponse("home.html", {
         "request": request,
-        "running_count": running,
-        "hash_count": len(get_hash_files()),
-        "total_jobs": len(jobs),
+        "initial_running_count": len(running),
+        "initial_queued_count": 0,
     })
 
 
@@ -3270,6 +3273,230 @@ async def kill_job(job_id: str):
     if not killed:
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.get("/api/jobs/recent")
+async def api_recent_jobs(limit: int = 5):
+    """Return the N most recently-started jobs, newest first.
+
+    Used by the home-page dashboard. Keeps the payload small —
+    only the fields the dashboard renders, plus a precomputed
+    duration string so the client doesn't need to know about
+    started/ended ISO parsing.
+    """
+    try:
+        limit = max(1, min(int(limit), 50))
+    except (TypeError, ValueError):
+        limit = 5
+    jobs = job_manager.list_jobs()[:limit]
+    out = []
+    for j in jobs:
+        args = j.get("args") or {}
+        # Best-effort "target" label — the thing the job is acting
+        # on. Different job types stash different keys, so try a
+        # handful in priority order and fall back to "—".
+        target = (
+            args.get("hostname_pattern")
+            or args.get("vm_name")
+            or args.get("template_name")
+            or args.get("serial")
+            or args.get("sequence_name")
+            or ""
+        )
+        out.append({
+            "id": j["id"],
+            "playbook": j.get("playbook"),
+            "status": j.get("status"),
+            "started": j.get("started"),
+            "ended": j.get("ended"),
+            "duration": compute_duration(j),
+            "target": target,
+        })
+    return {"jobs": out}
+
+
+@app.get("/api/jobs/running")
+async def api_running_jobs():
+    """Return currently-running jobs with elapsed seconds + a
+    rough progress estimate (0-99).
+
+    Used by the home-page Live-now module. Progress uses a
+    per-playbook expected-seconds table; if the job type isn't
+    known, we fall back to 50% so the bar still moves.
+    """
+    # Expected seconds per playbook type — rough order-of-magnitude
+    # numbers pulled from recent successful runs. Accurate enough
+    # for a progress bar; the dashboard is not a scheduler.
+    expected = {
+        "provision.yml":      20 * 60,
+        "template.yml":       45 * 60,
+        "capture.yml":         3 * 60,
+        "upload.yml":          2 * 60,
+        "bulk-capture.yml":   10 * 60,
+        "cloud-delete.yml":    5 * 60,
+    }
+    now = datetime.now(timezone.utc)
+    running = []
+    queued = 0
+    for j in job_manager.list_jobs():
+        if j.get("status") != "running":
+            continue
+        started_iso = j.get("started")
+        elapsed = 0
+        if started_iso:
+            try:
+                elapsed = int(
+                    (now - datetime.fromisoformat(started_iso)).total_seconds()
+                )
+            except Exception:
+                elapsed = 0
+        pb = j.get("playbook") or ""
+        exp = expected.get(pb, 0)
+        if exp > 0:
+            pct = min(99, int(elapsed / exp * 100))
+        else:
+            pct = 50
+        args = j.get("args") or {}
+        target = (
+            args.get("hostname_pattern")
+            or args.get("vm_name")
+            or args.get("template_name")
+            or args.get("serial")
+            or args.get("sequence_name")
+            or ""
+        )
+        running.append({
+            "id": j["id"],
+            "playbook": pb,
+            "target": target,
+            "started": started_iso,
+            "elapsed_seconds": elapsed,
+            "progress_pct": pct,
+        })
+    return {
+        "running": running,
+        "running_count": len(running),
+        "queued_count": queued,
+    }
+
+
+@app.get("/api/services")
+async def api_services():
+    """Read per-service heartbeats from the ``service_health`` table.
+
+    The table is owned by the microservice-split PR — until that
+    ships, the table won't exist. In that case we return
+    ``{"services": [], "available": false}`` so the dashboard strip
+    can hide itself gracefully without throwing a 500.
+    """
+    db_path = DEVICE_MONITOR_DB
+    if not db_path.exists():
+        return {"services": [], "available": False}
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            exists = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='service_health'"
+            ).fetchone()
+            if not exists:
+                return {"services": [], "available": False}
+            rows = conn.execute(
+                "SELECT service_id, service_type, version_sha, "
+                "started_at, last_heartbeat, detail "
+                "FROM service_health ORDER BY service_type, service_id"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        # Schema drift, lock contention, corrupted file — don't
+        # blow up the dashboard. Silently degrade.
+        return {"services": [], "available": False}
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in rows:
+        age = None
+        hb = r["last_heartbeat"]
+        if hb:
+            try:
+                age = int((now - datetime.fromisoformat(hb)).total_seconds())
+            except Exception:
+                age = None
+        out.append({
+            "service_id":     r["service_id"],
+            "service_type":   r["service_type"],
+            "version_sha":    r["version_sha"],
+            "started_at":     r["started_at"],
+            "last_heartbeat": hb,
+            "detail":         r["detail"],
+            "age_seconds":    age,
+        })
+    return {"services": out, "available": True}
+
+
+@app.get("/api/fleet/summary")
+async def api_fleet_summary():
+    """Fleet enrollment counts + percentages from the most-recent
+    sweep's ``device_probes`` rows.
+
+    Only columns that actually exist in ``device_history_db`` are
+    reported. MDE has no column today, so the ``mde_pct`` key is
+    intentionally omitted rather than fabricated — the dashboard
+    will simply render "—" for that cell.
+    """
+    db_path = DEVICE_MONITOR_DB
+    default = {"total": 0}
+    if not db_path.exists():
+        return default
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            # Is the table present? (Early in a fresh install the
+            # monitor may not have run yet.)
+            has = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='device_probes'"
+            ).fetchone()
+            if not has:
+                return default
+            # Latest sweep only — older sweeps would double-count.
+            sweep_row = conn.execute(
+                "SELECT MAX(sweep_id) AS sid FROM device_probes"
+            ).fetchone()
+            sweep_id = sweep_row["sid"] if sweep_row else None
+            if not sweep_id:
+                return default
+            row = conn.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(ad_found)     AS ad, "
+                "SUM(entra_found)  AS entra, "
+                "SUM(intune_found) AS intune "
+                "FROM device_probes WHERE sweep_id = ?",
+                (sweep_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return default
+
+    total = int(row["total"] or 0)
+    if total == 0:
+        return {"total": 0}
+    out: dict = {"total": total}
+    # Entra device == Autopilot-registered device in practice here;
+    # the spec asks for "autopilot_pct" so we surface entra_found
+    # under that key since we have no dedicated autopilot column.
+    if row["ad"] is not None:
+        out["ad_joined_pct"] = round(100 * int(row["ad"]) / total)
+    if row["entra"] is not None:
+        out["autopilot_pct"] = round(100 * int(row["entra"]) / total)
+    if row["intune"] is not None:
+        out["intune_pct"] = round(100 * int(row["intune"]) / total)
+    # mde_pct intentionally omitted — no column for it yet.
+    return out
 
 
 @app.get("/api/jobs/{job_id}")
