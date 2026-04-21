@@ -12,7 +12,7 @@
 <h3>{{ plan.title }}</h3>
 
 {% if plan.summary %}
-<p style="max-width:820px; color:#555;">{{ plan.summary }}</p>
+<p style="max-width:820px; color:var(--ink-muted);">{{ plan.summary }}</p>
 {% endif %}
 
 {% if plan.metadata %}
@@ -33,14 +33,14 @@
 {% endif %}
 
 {% if plan.end_goal %}
-<p style="margin-top:12px; padding:6px 10px; background:#eef4fa; border-left:3px solid #336699;">
+<p style="margin-top:12px; padding:6px 10px; background:var(--info-bg); color:var(--info-fg); border-left:3px solid var(--ms-blue-dark);">
   <b>End state:</b> {{ plan.end_goal }}
 </p>
 {% endif %}
 
 <details style="margin-top:12px;">
-  <summary style="cursor:pointer; color:#666; font-size:11px;">raw args</summary>
-  <pre style="font-size:11px; background:#f5f5f5; padding:6px; border:1px solid #ddd; overflow-x:auto;">{{ job.args }}</pre>
+  <summary style="cursor:pointer; color:var(--ink-muted); font-size:11px;">raw args</summary>
+  <pre style="font-size:11px; background:var(--surface-muted); padding:6px; border:1px solid var(--line); overflow-x:auto;">{{ job.args }}</pre>
 </details>
 {% else %}
 <table>
@@ -60,7 +60,7 @@
        * PAUSED — Ansible is blocking on the signal file. Full-color
          card, live Resume button. -->
 {% if job.paused %}
-<div style="margin:10px 0; padding:10px 14px; background:#fff3cf; border:1px solid #f3dfa8; border-radius:4px;">
+<div style="margin:10px 0; padding:10px 14px; background:var(--warn-bg); color:var(--warn-fg); border:1px solid var(--warn-fg); border-radius:4px;">
   <b>Paused for software install.</b>
   RDP or <a href="/api/vms/{{ job.args.vm_vmid }}/console" target="_blank">Console</a>
   into the VM, install whatever you need, then click Resume.
@@ -71,14 +71,14 @@
   <span id="resumeStatus" style="margin-left:10px; font-size:12px;"></span>
 </div>
 {% else %}
-<div style="margin:10px 0; padding:10px 14px; background:#f3f5f8; border:1px solid #d9dee4; border-radius:4px; color:#555;">
+<div style="margin:10px 0; padding:10px 14px; background:var(--surface-muted); border:1px solid var(--line); border-radius:4px; color:var(--ink-muted);">
   <b>Pause gate armed.</b>
   Waiting for Windows install and OOBE to complete before the pause kicks in — typically 20–25 minutes from job start. This page auto-refreshes once paused; the Resume button will enable itself then.
   <br>
   <button type="button" class="action-btn-upload" style="margin-top:6px; opacity:0.5; cursor:not-allowed;" disabled>
     Resume &amp; finalize (sysprep)
   </button>
-  <span style="margin-left:10px; font-size:12px; color:#888;">not yet paused</span>
+  <span style="margin-left:10px; font-size:12px; color:var(--ink-soft);">not yet paused</span>
 </div>
 <script>
 // Light poll — the job_detail page's WebSocket streams log but doesn't
@@ -96,16 +96,16 @@ async function resumeTemplate() {
   try {
     var r = await fetch('/api/jobs/{{ job.id }}/resume-template-build', {method: 'POST'});
     if (r.ok) {
-      s.style.color = '#2e5500';
+      s.style.color = 'var(--ok-fg)';
       s.textContent = 'Resumed. Sysprep should start within a few seconds — watch the log below.';
     } else {
       var detail = r.statusText;
       try { detail = (await r.json()).detail || detail; } catch (e) {}
-      s.style.color = '#8a1d07';
+      s.style.color = 'var(--bad-fg)';
       s.textContent = 'Resume failed: ' + detail;
     }
   } catch (e) {
-    s.style.color = '#8a1d07';
+    s.style.color = 'var(--bad-fg)';
     s.textContent = 'Network error: ' + e;
   }
 }

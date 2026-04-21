@@ -3,10 +3,10 @@
 {% block content %}
 <h2>Settings</h2>
 {% if saved %}
-<p style="background: #d4edda; border: 1px solid #c3e6cb; padding: 8px; color: #155724;">Settings saved successfully.</p>
+<p style="background: var(--ok-bg); border: 1px solid var(--ok-fg); padding: 8px; color: var(--ok-fg);">Settings saved successfully.</p>
 {% endif %}
 
-<p style="color:#555; max-width: 820px;">
+<p style="color:var(--ink-muted); max-width: 820px;">
   Values under <b>Credentials (vault.yml)</b> are stored on disk in
   <code>inventory/group_vars/all/vault.yml</code>. Secret fields show
   <span class="badge badge-green">set</span> when a value is present;
@@ -22,15 +22,15 @@
 <tr>
   <td style="width: 260px;">
     <b>{{ f.label }}</b>
-    <br><small style="color:#999;">{{ f.key }}</small>
+    <br><small style="color:var(--ink-soft);">{{ f.key }}</small>
     {% if f.help %}
-      <br><small style="color:#777;">{{ f.help }}</small>
+      <br><small style="color:var(--ink-soft);">{{ f.help }}</small>
     {% endif %}
   </td>
   <td>
     {% if f.readonly %}
-      <input type="text" value="{{ f.value }}" disabled size="60" style="background:#eee; color:#666;">
-      <small style="color:#999;">(computed)</small>
+      <input type="text" value="{{ f.value }}" disabled size="60" style="background:var(--surface-muted); color:var(--ink-muted);">
+      <small style="color:var(--ink-soft);">(computed)</small>
     {% elif f.type == 'secret' %}
       <input type="password" name="{{ f.key }}" value=""
              placeholder="{% if f.is_set %}(unchanged — type new to rotate){% else %}required{% endif %}"
@@ -49,7 +49,7 @@
         {% endfor %}
       </select>
       {% if f.key == 'proxmox_node' %}
-      <small id="node_loading" style="color:#999; display:none;"> loading...</small>
+      <small id="node_loading" style="color:var(--ink-soft); display:none;"> loading...</small>
       {% endif %}
     {% elif f.type == 'number' %}
       <input type="number" name="{{ f.key }}" value="{{ f.value if f.value is not none else '' }}">
