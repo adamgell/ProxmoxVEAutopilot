@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Device {{ vmid }} - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+
+<style>
+  .bc { color:#666; font-size:12px; }
+  .linkage { margin:10px 0; padding:8px; background:#f8f9fa;
+             border:1px solid #dee2e6; }
+  .linkage-row { display:grid; grid-template-columns: 320px 40px 1fr;
+                 gap:8px; padding:3px 0; font-size:13px; }
+  .linkage-row .lk-ok { color:#155724; font-weight:600; }
+  .linkage-row .lk-bad { color:#721c24; font-weight:600; }
+  .linkage-row .lk-pending { color:#6c757d; }
+  .cols { display:grid; grid-template-columns: repeat(4, 1fr);
+          gap:10px; margin:10px 0; }
+  .col { border:1px solid #dee2e6; padding:10px;
+         background:#fff; font-size:13px; min-width:0; }
+  .col h3 { margin:0 0 8px 0; font-size:14px; border-bottom:1px solid #eee;
+            padding-bottom:4px; }
+  .col dt { font-size:11px; color:#666; margin-top:6px; }
+  .col dd { margin:0 0 2px 0; word-break:break-word; font-family:monospace;
+            font-size:12px; }
+  .col .note { color:#999; font-size:11px; }
+  .ev { padding:6px 0; border-bottom:1px dotted #eee; }
+  .ev-head { font-size:12px; color:#666; }
+  .ev .src-pve    { color:#0b5ed7; }
+  .ev .src-ad     { color:#0c5460; }
+  .ev .src-entra  { color:#155724; }
+  .ev .src-intune { color:#856404; }
+  .sev-regression   { background:#f8d7da; padding:1px 5px; border-radius:3px; }
+  .sev-progression  { background:#d4edda; padding:1px 5px; border-radius:3px; }
+  .sev-rename       { background:#fff3cd; padding:1px 5px; border-radius:3px; }
+  .sev-ou-move      { background:#fff3cd; padding:1px 5px; border-radius:3px; }
+  .sev-link-broken  { background:#f8d7da; padding:1px 5px; border-radius:3px; }
+  .sev-sync-pending { background:#e2e3e5; padding:1px 5px; border-radius:3px; }
+  .sev-replacement  { background:#fff3cd; padding:1px 5px; border-radius:3px; }
+  .sev-event        { background:#f8f9fa; padding:1px 5px; border-radius:3px; }
+  details.raw { margin-top:20px; }
+  details.raw summary { cursor:pointer; color:#666; font-size:12px; }
+  details.raw pre { background:#fff; border:1px solid #eee; padding:6px;
+                    font-size:11px; max-height:400px; overflow:auto; }
+</style>
+
+<p class="bc"><a href="/monitoring">Monitoring</a> ›
+  {{ vmid }} › {{ pve.name if pve else '(unknown)' }}</p>
+
+<h2>{{ pve.name if pve else 'VM ' ~ vmid }}</h2>
+
+{# -------- Linkage health strip -------- #}
+<div class="linkage">
+  <strong>Linkage health</strong>
+  {% for chk in linkage %}
+    <div class="linkage-row">
+      <div>{{ chk.label }}</div>
+      <div>
+        {% if chk.ok == True %}
+          <span class="lk-ok">✓</span>
+        {% elif chk.ok == False %}
+          <span class="lk-bad">✗</span>
+        {% else %}
+          <span class="lk-pending">⏳</span>
+        {% endif %}
+      </div>
+      <div><code>{{ chk.value }}</code></div>
+    </div>
+  {% endfor %}
+</div>
+
+{# -------- Four columns -------- #}
+<div class="cols">
+  <div class="col">
+    <h3>PVE</h3>
+    {% if pve %}
+      <dl>
+        <dt>vmid</dt><dd>{{ pve.vmid }}</dd>
+        <dt>name</dt><dd>{{ pve.name }}</dd>
+        <dt>node</dt><dd>{{ pve.node }}</dd>
+        <dt>status</dt><dd>{{ pve.status or '—' }}</dd>
+        {% if pve.lock_mode %}<dt>lock</dt><dd>{{ pve.lock_mode }}</dd>{% endif %}
+        <dt>tags</dt><dd>{{ pve.tags_csv or '—' }}</dd>
+        <dt>cores / memory</dt>
+        <dd>{{ pve.cores or '?' }} / {{ pve.memory_mb or '?' }} MB</dd>
+        <dt>machine / bios</dt>
+        <dd>{{ pve.machine or '?' }} / {{ pve.bios or '?' }}</dd>
+        <dt>smbios1</dt><dd>{{ (pve.smbios1 or '—')[:80] }}{% if pve.smbios1 and pve.smbios1|length > 80 %}…{% endif %}</dd>
+        <dt>args</dt><dd>{{ (pve.args or '—')[:80] }}{% if pve.args and pve.args|length > 80 %}…{% endif %}</dd>
+        <dt>vmgenid</dt><dd>{{ pve.vmgenid or '—' }}</dd>
+        <dt>last checked</dt>
+        <dd><time datetime="{{ pve.checked_at }}" data-utc="{{ pve.checked_at }}" title="{{ pve.checked_at }}">{{ pve.checked_at }}</time></dd>
+      </dl>
+    {% else %}
+      <div class="note">No PVE snapshot.</div>
+    {% endif %}
+  </div>
+
+  <div class="col">
+    <h3>Active Directory{% if ad_matches|length > 1 %} <span class="sev-rename">×{{ ad_matches|length }}</span>{% endif %}</h3>
+    {% if ad_matches %}
+      {% for m in ad_matches %}
+        <dl>
+          <dt>objectGUID</dt><dd>{{ m.objectGUID or '—' }}</dd>
+          <dt>DN</dt><dd>{{ m.distinguishedName or '—' }}</dd>
+          <dt>cn / sAMAccountName</dt>
+          <dd>{{ m.cn or '—' }} / {{ m.sAMAccountName or '—' }}</dd>
+          <dt>objectSid</dt><dd>{{ m.objectSid or '—' }}</dd>
+          <dt>UAC</dt>
+          <dd>{{ m.userAccountControl or '?' }}
+            {% if m.userAccountControl and (m.userAccountControl|int) % 4 >= 2 %}(DISABLED){% endif %}
+          </dd>
+          <dt>source OU</dt><dd>{{ m.source_ou_label or m.source_ou_dn or '—' }}</dd>
+          <dt>whenCreated</dt>
+          <dd>{% if m.whenCreated %}<time datetime="{{ m.whenCreated }}" data-utc="{{ m.whenCreated }}">{{ m.whenCreated }}</time>{% else %}—{% endif %}</dd>
+          <dt>whenChanged</dt>
+          <dd>{% if m.whenChanged %}<time datetime="{{ m.whenChanged }}" data-utc="{{ m.whenChanged }}">{{ m.whenChanged }}</time>{% else %}—{% endif %}</dd>
+        </dl>
+        {% if not loop.last %}<hr>{% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="note">No AD object found.</div>
+    {% endif %}
+  </div>
+
+  <div class="col">
+    <h3>Entra{% if entra_matches|length > 1 %} <span class="sev-rename">×{{ entra_matches|length }}</span>{% endif %}</h3>
+    {% if entra_matches %}
+      {% for m in entra_matches %}
+        <dl>
+          <dt>id / deviceId</dt>
+          <dd>{{ m.id or '—' }}<br>{{ m.deviceId or '—' }}</dd>
+          <dt>displayName</dt><dd>{{ m.displayName or '—' }}</dd>
+          <dt>trustType</dt><dd>{{ m.trustType or '—' }}</dd>
+          <dt>onPremSyncEnabled</dt><dd>{{ m.onPremisesSyncEnabled }}</dd>
+          <dt>onPremSyncAt</dt>
+          <dd>{% if m.onPremisesLastSyncDateTime %}<time datetime="{{ m.onPremisesLastSyncDateTime }}" data-utc="{{ m.onPremisesLastSyncDateTime }}">{{ m.onPremisesLastSyncDateTime }}</time>{% else %}—{% endif %}</dd>
+          <dt>onPremSID</dt><dd>{{ m.onPremisesSecurityIdentifier or '—' }}</dd>
+          <dt>accountEnabled</dt><dd>{{ m.accountEnabled }}</dd>
+          <dt>registrationDateTime</dt>
+          <dd>{% if m.registrationDateTime %}<time datetime="{{ m.registrationDateTime }}" data-utc="{{ m.registrationDateTime }}">{{ m.registrationDateTime }}</time>{% else %}—{% endif %}</dd>
+        </dl>
+        {% if not loop.last %}<hr>{% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="note">No Entra device.</div>
+    {% endif %}
+  </div>
+
+  <div class="col">
+    <h3>Intune{% if intune_matches|length > 1 %} <span class="sev-rename">×{{ intune_matches|length }}</span>{% endif %}</h3>
+    {% if intune_matches %}
+      {% for m in intune_matches %}
+        <dl>
+          <dt>id</dt><dd>{{ m.id or '—' }}</dd>
+          <dt>deviceName</dt><dd>{{ m.deviceName or '—' }}</dd>
+          <dt>complianceState</dt><dd>{{ m.complianceState or '—' }}</dd>
+          <dt>serialNumber</dt><dd>{{ m.serialNumber or '—' }}</dd>
+          <dt>azureADDeviceId</dt><dd>{{ m.azureADDeviceId or '—' }}</dd>
+          <dt>enrolledDateTime</dt>
+          <dd>{% if m.enrolledDateTime %}<time datetime="{{ m.enrolledDateTime }}" data-utc="{{ m.enrolledDateTime }}">{{ m.enrolledDateTime }}</time>{% else %}—{% endif %}</dd>
+          <dt>lastSyncDateTime</dt>
+          <dd>{% if m.lastSyncDateTime %}<time datetime="{{ m.lastSyncDateTime }}" data-utc="{{ m.lastSyncDateTime }}">{{ m.lastSyncDateTime }}</time>{% else %}—{% endif %}</dd>
+          <dt>ownerType</dt><dd>{{ m.managedDeviceOwnerType or '—' }}</dd>
+        </dl>
+        {% if not loop.last %}<hr>{% endif %}
+      {% endfor %}
+    {% else %}
+      <div class="note">No Intune enrollment.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# -------- Unified timeline -------- #}
+<h3>Timeline <span class="bc">· newest first</span></h3>
+{% if timeline %}
+<ol style="list-style:none;padding-left:0;margin:0;">
+  {% for e in timeline %}
+    <li class="ev">
+      <div class="ev-head">
+        <time datetime="{{ e.at }}" data-utc="{{ e.at }}" title="{{ e.at }}">{{ e.at }}</time>
+        · <span class="src-{{ e.source }}">{{ e.source }}</span>
+        · <span class="sev-{{ e.severity }}">{{ e.type }}</span>
+      </div>
+      <div>{{ e.summary }}</div>
+      {% if e.details %}
+      <details><summary style="cursor:pointer;font-size:11px;color:#666;">details</summary>
+        <pre style="background:#fff;border:1px solid #eee;padding:4px;font-size:10px;">{{ e.details | tojson(indent=2) }}</pre>
+      </details>
+      {% endif %}
+    </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="bc">No events yet — waiting for a second sweep so transitions can be computed.</p>
+{% endif %}
+
+{# -------- Raw data explorer -------- #}
+<details class="raw">
+  <summary>Raw data explorer (last 50 sweeps)</summary>
+  <h4>pve_snapshots</h4>
+  <pre>{{ history.pve_snapshots | tojson(indent=2) }}</pre>
+  <h4>device_probes</h4>
+  <pre>{{ history.device_probes | tojson(indent=2) }}</pre>
+</details>
+
+{% endblock %}

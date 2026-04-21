@@ -4089,3 +4089,128 @@ def page_monitoring(request: Request):
         "settings": settings,
         "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
     })
+
+
+def _latest_match_or_none(json_str: str) -> dict:
+    """Pick the first match from a ``*_matches_json`` blob, or {}."""
+    import json as _json
+    try:
+        matches = _json.loads(json_str or "[]")
+    except (TypeError, ValueError):
+        return {}
+    return matches[0] if matches else {}
+
+
+def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
+    """Return the four cross-system checks for the top-of-page strip."""
+    import json as _json
+    if not probe_row:
+        return []
+    ad_matches = _json.loads(probe_row.get("ad_matches_json") or "[]")
+    entra_matches = _json.loads(probe_row.get("entra_matches_json") or "[]")
+    intune_matches = _json.loads(probe_row.get("intune_matches_json") or "[]")
+    serial = (probe_row.get("serial") or "").strip()
+    win_name = (probe_row.get("win_name") or "").strip()
+
+    checks = []
+
+    # SMBIOS serial ↔ Intune serialNumber.
+    if serial and intune_matches:
+        match = any(m.get("serialNumber") == serial for m in intune_matches)
+        checks.append({
+            "label": "SMBIOS.serial → Intune.serialNumber",
+            "ok": match,
+            "value": serial,
+        })
+    else:
+        checks.append({
+            "label": "SMBIOS.serial → Intune.serialNumber",
+            "ok": None,  # not yet resolvable
+            "value": serial or "—",
+        })
+
+    # Windows name ↔ AD cn.
+    if win_name and ad_matches:
+        cns = [m.get("cn") or "" for m in ad_matches]
+        exact = win_name in cns
+        ci = any(c.lower() == win_name.lower() for c in cns)
+        checks.append({
+            "label": "Windows.Name → AD.cn",
+            "ok": exact if exact else (None if ci else False),
+            "value": win_name,
+        })
+    else:
+        checks.append({
+            "label": "Windows.Name → AD.cn",
+            "ok": None, "value": win_name or "—",
+        })
+
+    # AD.objectSid ↔ Entra.onPremisesSecurityIdentifier (hybrid only).
+    server_ad = [m for m in entra_matches if m.get("trustType") == "ServerAd"]
+    if server_ad:
+        ad_sids = {m.get("objectSid") for m in ad_matches if m.get("objectSid")}
+        entra_sid = server_ad[0].get("onPremisesSecurityIdentifier")
+        checks.append({
+            "label": "AD.objectSid → Entra.onPremSecurityIdentifier",
+            "ok": bool(entra_sid and entra_sid in ad_sids),
+            "value": entra_sid or "—",
+        })
+    else:
+        checks.append({
+            "label": "AD.objectSid → Entra.onPremSecurityIdentifier",
+            "ok": None, "value": "—",
+        })
+
+    # Entra.deviceId ↔ Intune.azureADDeviceId.
+    if entra_matches and intune_matches:
+        e_ids = {m.get("deviceId") for m in entra_matches if m.get("deviceId")}
+        i_ids = {m.get("azureADDeviceId") for m in intune_matches if m.get("azureADDeviceId")}
+        checks.append({
+            "label": "Entra.deviceId → Intune.azureADDeviceId",
+            "ok": bool(e_ids & i_ids),
+            "value": next(iter(e_ids & i_ids), "—") if (e_ids & i_ids) else "—",
+        })
+    else:
+        checks.append({
+            "label": "Entra.deviceId → Intune.azureADDeviceId",
+            "ok": None, "value": "—",
+        })
+
+    return checks
+
+
+@app.get("/devices/{vmid}", response_class=HTMLResponse)
+def page_device_detail(request: Request, vmid: int):
+    from web import device_regression, monitoring_view
+    pve = device_history_db.latest_pve_snapshot(DEVICE_MONITOR_DB, vmid)
+    probe = device_history_db.latest_device_probe(DEVICE_MONITOR_DB, vmid)
+    if pve is None and probe is None:
+        raise HTTPException(404, f"no monitoring data for vmid {vmid}")
+
+    pve_dict = dict(pve) if pve else None
+    probe_dict = dict(probe) if probe else None
+
+    history = device_history_db.history_for_vmid(DEVICE_MONITOR_DB, vmid, limit=50)
+    # Detector wants oldest-first for correct transition ordering.
+    timeline = device_regression.build_timeline(
+        list(reversed(history["pve_snapshots"])),
+        list(reversed(history["device_probes"])),
+    )
+
+    linkage = _linkage_health(pve_dict or {}, probe_dict or {})
+    import json as _json
+    ad_matches = _json.loads((probe_dict or {}).get("ad_matches_json") or "[]")
+    entra_matches = _json.loads((probe_dict or {}).get("entra_matches_json") or "[]")
+    intune_matches = _json.loads((probe_dict or {}).get("intune_matches_json") or "[]")
+    return templates.TemplateResponse("device_detail.html", {
+        "request": request,
+        "vmid": vmid,
+        "pve": pve_dict,
+        "probe": probe_dict,
+        "ad_matches": ad_matches,
+        "entra_matches": entra_matches,
+        "intune_matches": intune_matches,
+        "linkage": linkage,
+        "timeline": timeline,
+        "history": history,
+    })
