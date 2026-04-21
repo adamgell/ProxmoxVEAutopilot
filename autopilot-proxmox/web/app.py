@@ -1059,6 +1059,39 @@ def get_autopilot_vms():
             ):
                 guest_details[vmid] = details
 
+    # Fallback IP source: the QEMU guest agent's own
+    # network-get-interfaces endpoint. This works for any running
+    # guest agent — doesn't need PowerShell on Windows, works for
+    # Linux too. Used when _fetch_guest_windows_details returned
+    # nothing (PS exec failed, guest isn't running Windows, etc.)
+    # but the base agent might still answer the lighter query.
+    ip_fallback: dict[int, str] = {}
+    def fetch_ip(vmid):
+        try:
+            data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
+        except Exception:
+            return vmid, ""
+        # Response: {"result": [{"name":"Ethernet", "ip-addresses":[{"ip-address":"…", "ip-address-type":"ipv4"}]}]}
+        ifaces = (data or {}).get("result", data) or []
+        if isinstance(ifaces, dict):
+            ifaces = ifaces.get("result", []) or []
+        for iface in ifaces:
+            # Skip loopback + link-local + unwanted interfaces.
+            name = (iface.get("name") or "").lower()
+            if name in ("lo", "loopback") or name.startswith(("lo ", "lo\t")):
+                continue
+            for addr in iface.get("ip-addresses", []) or []:
+                if addr.get("ip-address-type") != "ipv4":
+                    continue
+                ip = addr.get("ip-address") or ""
+                if ip and not (ip.startswith("127.") or ip.startswith("169.254.")):
+                    return vmid, ip
+        return vmid, ""
+    if running_vmids:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            for vmid, ip in pool.map(fetch_ip, running_vmids):
+                ip_fallback[vmid] = ip
+
     result = []
     for vm in autopilot_vms:
         config = configs.get(vm["vmid"], {})
@@ -1123,7 +1156,8 @@ def get_autopilot_vms():
             "os_caption": guest.get("OSCaption", "") or "",
             "os_build": str(guest.get("OSBuild", "") or ""),
             "os_version": guest.get("OSVersion", "") or "",
-            "ip_address": guest.get("IPAddress", "") or "",
+            "ip_address": (guest.get("IPAddress", "")
+                           or ip_fallback.get(vm["vmid"], "")),
             "last_boot": guest.get("LastBootUpTime", "") or "",
         })
     return sorted(result, key=lambda v: v["vmid"])
