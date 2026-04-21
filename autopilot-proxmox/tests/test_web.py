@@ -94,3 +94,58 @@ def test_load_brand_context_default():
     assert brand["name"] == "ProxmoxVEAutopilot" or brand["name"]  # whatever vars.yml carries
     assert "registry_root" in brand
     assert brand["registry_root"].startswith(r"HKLM:\SOFTWARE")
+
+
+# ---------------------------------------------------------------------------
+# Phase B.2b — Capture-hash button gated by sequence.produces_autopilot_hash
+# ---------------------------------------------------------------------------
+
+def _seed_with_ad_vm(seq_db_path):
+    """Seed sequences + wire a VM (vmid 200) to the non-Autopilot AD seed."""
+    from web import crypto, sequences_db
+    cipher_key = Path(seq_db_path).parent / "credential_key"
+    cipher_key.write_bytes(b"0" * 32)  # Fernet raw key — 32 bytes, will be b64'd
+    # Use the real Cipher; seed_defaults wants one.
+    from cryptography.fernet import Fernet
+    cipher_key.write_bytes(Fernet.generate_key())
+    cipher = crypto.Cipher(cipher_key)
+    sequences_db.seed_defaults(seq_db_path, cipher)
+    ad_seq = next(s for s in sequences_db.list_sequences(seq_db_path)
+                  if s["name"].startswith("AD Domain Join"))
+    entra_seq = next(s for s in sequences_db.list_sequences(seq_db_path)
+                     if s["name"].startswith("Entra Join"))
+    sequences_db.record_vm_provisioning(seq_db_path, vmid=200, sequence_id=ad_seq["id"])
+    sequences_db.record_vm_provisioning(seq_db_path, vmid=201, sequence_id=entra_seq["id"])
+    return ad_seq["id"], entra_seq["id"]
+
+
+def test_vms_page_disables_capture_for_non_autopilot_sequence(client, tmp_dirs):
+    """A VM provisioned from a sequence with produces_autopilot_hash=0
+    (the AD domain-join seed) renders the Capture Hash button disabled.
+    A VM from the Entra seed renders it enabled. A VM with no
+    provisioning row (legacy) renders enabled too."""
+    from web import app as web_app
+    _seed_with_ad_vm(web_app.SEQUENCES_DB)
+    fake_vms = [
+        {"vmid": 200, "name": "ad-join-01",   "hostname": "",
+         "serial": "AD200", "oem": "", "status": "running"},
+        {"vmid": 201, "name": "entra-01",     "hostname": "",
+         "serial": "EN201", "oem": "", "status": "running"},
+        {"vmid": 999, "name": "legacy-no-seq","hostname": "",
+         "serial": "LG999", "oem": "", "status": "running"},
+    ]
+    with patch("web.app.get_autopilot_vms", return_value=fake_vms), \
+         patch("web.app.get_autopilot_devices", return_value=([], None)), \
+         patch("web.app.get_hash_files", return_value=[]):
+        r = client.get("/vms")
+    assert r.status_code == 200
+    body = r.text
+    # Disabled capture button for vmid 200 — reason text present.
+    assert "Sequence does not produce an Autopilot hash" in body
+    # Bulk checkbox for vmid 200 is disabled; for 201 it's active.
+    # (Can't assert strict order without parsing, but both markers must
+    # appear — the "disabled" form is for the AD VM, the value=... with
+    # 201 is for the Entra VM.)
+    assert 'value="201:entra-01"' in body
+    # The legacy VM (no sequence row) should still allow capture.
+    assert 'value="999:legacy-no-seq"' in body

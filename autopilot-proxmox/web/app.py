@@ -839,13 +839,41 @@ async def vms_page(request: Request, error: str = ""):
             if vm and vm.get("hostname"):
                 d["display_name"] = vm["hostname"]
 
-    # Tag VMs with their Autopilot status
+    # Tag VMs with their Autopilot status + whether the sequence that
+    # provisioned them is supposed to produce a hash. A VM provisioned
+    # from a `produces_autopilot_hash=0` sequence (the AD-domain-join
+    # seed, for example) has no Autopilot image on disk — calling the
+    # capture job would just churn and time out. We surface the decision
+    # to the template so the button can render disabled with tooltip
+    # instead of silently failing.
+    #
+    # VMs with no vm_provisioning row (provisioned before sequences
+    # existed, or manually created) default to can_capture=True to
+    # preserve current behavior for legacy rows.
+    seq_hash_flag: dict[int, bool] = {
+        s["id"]: bool(s["produces_autopilot_hash"])
+        for s in sequences_db.list_sequences(SEQUENCES_DB)
+    }
     for vm in vms:
         vm["in_autopilot"] = vm.get("serial", "") in ap_serials
         vm["has_hash"] = vm.get("serial", "") in hash_serials
+        seq_id = sequences_db.get_vm_sequence_id(SEQUENCES_DB, int(vm["vmid"]))
+        if seq_id is None:
+            vm["can_capture_hash"] = True
+            vm["capture_hash_reason"] = ""
+        else:
+            vm["can_capture_hash"] = seq_hash_flag.get(seq_id, True)
+            vm["capture_hash_reason"] = (
+                "" if vm["can_capture_hash"]
+                else "Sequence does not produce an Autopilot hash"
+            )
 
     # VMs not yet in Autopilot (missing)
     missing_vms = [vm for vm in vms if not vm["in_autopilot"] and vm.get("serial")]
+    # Same rule for the bulk-missing table: non-Autopilot-hash sequences
+    # shouldn't offer capture there either.
+    for vm in missing_vms:
+        vm.setdefault("can_capture_hash", True)
 
     return templates.TemplateResponse("vms.html", {
         "request": request,
