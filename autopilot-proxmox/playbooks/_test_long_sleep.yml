@@ -1,0 +1,4 @@
+- hosts: localhost
+  tasks:
+    - name: Long sleep for kill-path integration test
+      ansible.builtin.command: sleep {{ duration }}

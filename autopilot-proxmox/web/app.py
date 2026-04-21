@@ -3304,6 +3304,21 @@ async def kill_job(job_id: str):
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
+# Test-only harness — enabled when AUTOPILOT_ENABLE_TEST_JOBS=1.
+# Used by the Phase 6 integration suite (kill path, scale, wedged-playbook
+# survival). The playbook simply runs `sleep {{ duration }}` so tests can
+# exercise the builder/kill machinery without spawning a real provision.
+if os.environ.get("AUTOPILOT_ENABLE_TEST_JOBS") == "1":
+    @app.post("/api/jobs/test-long-sleep")
+    async def _enqueue_test_long_sleep(duration: str = Form("60")):
+        cmd = ["ansible-playbook",
+               str(PLAYBOOK_DIR / "_test_long_sleep.yml"),
+               "-e", f"duration={duration}"]
+        entry = job_manager.start("capture_hash", cmd,
+                                  args={"duration": duration})
+        return {"id": entry["id"]}
+
+
 @app.get("/api/jobs/recent")
 async def api_recent_jobs(limit: int = 5):
     """Return the N most recently-started jobs, newest first.
