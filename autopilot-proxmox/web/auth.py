@@ -44,6 +44,7 @@ _EXEMPT_PREFIXES = (
     "/healthz",
     "/api/version",
     "/static/",
+    "/favicon.ico",
 )
 
 

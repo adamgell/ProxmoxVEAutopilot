@@ -543,6 +543,37 @@ async def healthz():
 
 
 _BLISS_JPG = BASE_DIR / "files" / "bliss.jpg"
+_LOGO_SVG = BASE_DIR / "files" / "logo.svg"
+
+
+@app.get("/auth/logo")
+async def auth_logo():
+    """Serve the app mark (SVG). Exempt from auth via the /auth/
+    prefix so it renders on the login page. Same extension-less
+    pattern as /auth/bliss — avoids the upstream nginx static-asset
+    interceptor."""
+    if not _LOGO_SVG.exists():
+        raise HTTPException(404, "logo.svg not baked into image")
+    return FileResponse(
+        _LOGO_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Browsers auto-fetch /favicon.ico; serve the SVG mark so tabs
+    show the app icon. Exempt route via explicit exemption list in
+    _require_auth — shipping as SVG (not ICO) is fine for modern
+    browsers and saves bundling a raster version."""
+    if not _LOGO_SVG.exists():
+        raise HTTPException(404)
+    return FileResponse(
+        _LOGO_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
 
 
 @app.get("/auth/bliss")

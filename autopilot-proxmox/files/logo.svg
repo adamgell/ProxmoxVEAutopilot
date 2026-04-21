@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Proxmox VE Autopilot mark.
+  Three upward chevrons in Microsoft brand colors (red / green /
+  blue, the palette shared with the Microsoft wordmark and the
+  Sign-in button beneath this logo) on a dark slate rounded
+  square. Three chevrons instead of two lean harder into the
+  "auto-lift" feeling — each one is a step the autopilot takes
+  for you. Pure geometry, flat fills, no gradients: reads the
+  same from favicon-size (16x16) up to any display scale.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"
+     width="64" height="64" aria-label="Proxmox VE Autopilot">
+  <!-- Dark slate rounded square. Slightly lighter than pure black
+       so it doesn't slam against the white card at high contrast. -->
+  <rect x="0" y="0" width="64" height="64" rx="12" ry="12"
+        fill="#1E1F26"/>
+
+  <!-- Three stacked chevrons, evenly spaced 10-54 vertical range.
+       Colors lifted from the Microsoft 2012+ logo swatch:
+         red   #F25022   (top    — "go")
+         green #7FBA00   (middle — "ok")
+         blue  #00A4EF   (bottom — "stable") -->
+  <g stroke-width="5" stroke-linecap="round" stroke-linejoin="round"
+     fill="none">
+    <polyline points="14,22 32,10 50,22" stroke="#F25022"/>
+    <polyline points="14,38 32,26 50,38" stroke="#7FBA00"/>
+    <polyline points="14,54 32,42 50,54" stroke="#00A4EF"/>
+  </g>
+</svg>
