@@ -530,14 +530,69 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
         return _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
 
     def _fetch_guest_details(vmid: int, node: str):
-        # Reuses the existing helper if present; otherwise returns
-        # None so the sweep just records AD match by VM name.
+        # Two-tier fallback so serial/name are populated even when the
+        # guest agent is down:
+        #   1. guest-exec for the authoritative Windows-side values
+        #      (what the OS actually sees — catches renames, drift)
+        #   2. PVE config.smbios1 for the "what we provisioned" baseline
+        #      — always available, proves-out Intune lookups even for
+        #      stopped VMs that match by serial.
+        raw = {}
         try:
-            return _fetch_guest_windows_details(vmid, node)  # type: ignore[name-defined]
+            raw = _fetch_guest_windows_details(node, vmid) or {}  # type: ignore[name-defined]
         except NameError:
-            return None
+            raw = {}
         except Exception:
+            raw = {}
+        # Fall back to PVE config when guest-exec is unavailable.
+        # Note: for autopilot provisions the `smbios1` config field
+        # holds the TEMPLATE's default values (e.g., Gell-1F02ADE6) —
+        # the real per-VM SMBIOS serial lives in the binary file
+        # referenced by `args: -smbios file=<…>.bin`, which we can't
+        # cheaply parse here. But our provisioning convention makes
+        # vm_name == serial (both `Gell-<hex>`), so trust that when
+        # the VM is autopilot-tagged OR name matches the pattern.
+        try:
+            cfg = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
+        except Exception:
+            cfg = {}
+        smbios1 = cfg.get("smbios1", "")
+        uuid_fallback = _decode_smbios_field(smbios1, "uuid")
+        vm_name_fallback = cfg.get("name")
+        tags = (cfg.get("tags") or "")
+        autopilot_tagged = any(
+            t.strip() == "autopilot"
+            for t in tags.replace(";", ",").split(",")
+        )
+        if autopilot_tagged or (
+            vm_name_fallback and vm_name_fallback.lower().startswith("gell-")
+        ):
+            serial_fallback = vm_name_fallback
+        else:
+            serial_fallback = _decode_smbios_field(smbios1, "serial")
+
+        win_name = raw.get("Name") or raw.get("ComputerName")
+        serial = raw.get("Serial") or raw.get("SerialNumber") or serial_fallback
+        uuid = raw.get("UUID") or raw.get("ProductUUID") or uuid_fallback
+        if not (win_name or serial or uuid or raw):
+            # Nothing usable from either source — let the sweep record
+            # a 'guest agent down' error and move on.
             return None
+        return {
+            # win_name defaults to the VM's PVE name when the guest can't
+            # be asked — not perfect (won't catch a Windows-side rename)
+            # but enough to drive AD lookup by cn.
+            "win_name": win_name or vm_name_fallback,
+            "serial": serial,
+            "uuid": uuid,
+            "os_build": raw.get("OSBuild") or raw.get("BuildNumber"),
+            "dsreg": {
+                "AzureAdJoined": raw.get("AadJoined"),
+                "DomainJoined": raw.get("PartOfDomain"),
+                "Domain": raw.get("Domain"),
+                "TenantName": raw.get("AadTenant"),
+            },
+        }
 
     # --- LDAP (python-ldap + SASL/GSSAPI) ---
     ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
@@ -855,6 +910,8 @@ _GUEST_WINDOWS_DETAILS_PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $cs = Get-CimInstance Win32_ComputerSystem
 $os = Get-CimInstance Win32_OperatingSystem
+$bios = Get-CimInstance Win32_BIOS
+$csp = Get-CimInstance Win32_ComputerSystemProduct
 $ip = ((Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue) |
        Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.InterfaceAlias -notmatch 'Loopback' } |
        Select-Object -First 1).IPAddress
@@ -875,6 +932,12 @@ $domainRole = $cs.DomainRole  # 0=Standalone Workstation, 1=Member Workstation, 
   OSVersion = $os.Version
   IPAddress = $ip
   LastBootUpTime = if ($os.LastBootUpTime) { $os.LastBootUpTime.ToString('yyyy-MM-ddTHH:mm:ssK') } else { '' }
+  # SMBIOS identifiers — Intune's managedDevices filter keys on
+  # serialNumber, so without these the Intune probe always misses.
+  Serial = $bios.SerialNumber
+  UUID = $csp.UUID
+  Manufacturer = $cs.Manufacturer
+  Model = $cs.Model
 } | ConvertTo-Json -Compress
 """.strip()
 
