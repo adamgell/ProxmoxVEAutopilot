@@ -61,11 +61,88 @@
         </option>
       {% endfor %}
     </select>
-    <span class="bc">pick a <code>domain_join</code> credential — reused from the existing credential store.</span>
+    <span class="bc">domain-join credential — the refresher uses this to kinit
+    and read the gMSA's managed password, then writes a keytab at
+    <code>/etc/krb5.keytab</code> for the AD probes to bind with.</span>
   </div>
   <div class="row">
     <button class="btn" id="saveSettings">Save</button>
     <span id="saveMsg"></span>
+  </div>
+</div>
+
+<div class="card" id="keytab">
+  <h3>Kerberos keytab health</h3>
+  <p class="bc">The autopilot container authenticates to AD via a
+  Kerberos keytab at <code>/etc/krb5.keytab</code>, kept fresh by an
+  in-container refresher that runs daily. The refresher uses the AD
+  credential above to read the gMSA's <code>msDS-ManagedPassword</code>
+  and derive new AES keys before the 30-day rotation window.</p>
+  <table class="ou-table" style="max-width:800px;">
+    <tr><th style="width:180px;">Probe status</th>
+        <td>
+          {% if keytab and keytab.last_probe_status %}
+            <span class="badge {{
+              {'ok':'ok','stale':'warn','kvno-mismatch':'warn',
+               'missing':'missing','broken':'missing',
+               'unchecked':'unknown'}.get(keytab.last_probe_status,'unknown') }}">
+              {{ keytab.last_probe_status }}
+            </span>
+            {{ keytab.last_probe_message or '' }}
+          {% else %}<span class="bc">(no probe yet — wait for first sweep)</span>{% endif %}
+        </td></tr>
+    <tr><th>Path</th>
+        <td><code>{{ keytab.keytab_path if keytab else '/etc/krb5.keytab' }}</code></td></tr>
+    <tr><th>Principal</th>
+        <td><code>{{ keytab.keytab_principal or '—' if keytab else '—' }}</code></td></tr>
+    <tr><th>KVNO (local / AD)</th>
+        <td>
+          {% if keytab %}
+            {{ keytab.keytab_kvno_local or '—' }}
+            /
+            {{ keytab.keytab_kvno_ad or '—' }}
+            {% if keytab.keytab_kvno_local and keytab.keytab_kvno_ad
+                  and keytab.keytab_kvno_local == keytab.keytab_kvno_ad %}
+              <span class="ok">✓ match</span>
+            {% elif keytab.keytab_kvno_local and keytab.keytab_kvno_ad %}
+              <span class="error">✗ mismatch — refresh pending</span>
+            {% endif %}
+          {% else %}—{% endif %}
+        </td></tr>
+    <tr><th>File mtime</th>
+        <td>{% if keytab and keytab.keytab_mtime %}
+              <time datetime="{{ keytab.keytab_mtime }}"
+                    data-utc="{{ keytab.keytab_mtime }}"
+                    title="{{ keytab.keytab_mtime }}">{{ keytab.keytab_mtime }}</time>
+            {% else %}—{% endif %}</td></tr>
+    <tr><th>Last <code>kinit -kt</code></th>
+        <td>
+          {% if keytab and keytab.last_kinit_at %}
+            <time datetime="{{ keytab.last_kinit_at }}"
+                  data-utc="{{ keytab.last_kinit_at }}">{{ keytab.last_kinit_at }}</time>
+            {% if keytab.last_kinit_ok == 1 %}
+              · <span class="ok">✓ success</span>
+            {% elif keytab.last_kinit_ok == 0 %}
+              · <span class="error">✗ {{ keytab.last_kinit_error or 'failed' }}</span>
+            {% endif %}
+          {% else %}—{% endif %}
+        </td></tr>
+    <tr><th>Last refresh</th>
+        <td>
+          {% if keytab and keytab.last_refresh_at %}
+            <time datetime="{{ keytab.last_refresh_at }}"
+                  data-utc="{{ keytab.last_refresh_at }}">{{ keytab.last_refresh_at }}</time>
+            {% if keytab.last_refresh_ok == 1 %}
+              · <span class="ok">✓ {{ keytab.last_refresh_message or '' }}</span>
+            {% elif keytab.last_refresh_ok == 0 %}
+              · <span class="error">✗ {{ keytab.last_refresh_message or '' }}</span>
+            {% endif %}
+          {% else %}<span class="bc">(never refreshed)</span>{% endif %}
+        </td></tr>
+  </table>
+  <div class="row" style="margin-top:8px;">
+    <button class="btn" id="refreshNowBtn">Refresh now</button>
+    <span id="refreshMsg"></span>
   </div>
 </div>
 
@@ -102,6 +179,25 @@ function msg(el, text, cls) {
   el.textContent = text || '';
   if (text) setTimeout(()=>{ el.textContent=''; }, 4000);
 }
+
+const refreshNowBtn = document.getElementById('refreshNowBtn');
+if (refreshNowBtn) refreshNowBtn.onclick = async () => {
+  const msgEl = document.getElementById('refreshMsg');
+  refreshNowBtn.disabled = true;
+  msgEl.className = 'bc';
+  msgEl.textContent = 'kinit + refresh running on the backend…';
+  try {
+    const r = await fetch('/api/monitoring/keytab/refresh-now', {method: 'POST'});
+    if (!r.ok) {
+      msg(msgEl, 'refresh failed: ' + (await r.text()).slice(0, 200), 'error');
+    } else {
+      msg(msgEl, 'refresh complete — reloading…', 'ok');
+      setTimeout(() => location.reload(), 800);
+    }
+  } finally {
+    refreshNowBtn.disabled = false;
+  }
+};
 
 async function refreshSettings() {
   const r = await fetch('/api/monitoring/settings');

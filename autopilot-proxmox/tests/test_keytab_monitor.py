@@ -65,6 +65,7 @@ def test_probe_kinit_failure_returns_broken(tmp_path):
     run, _ = _fake_runner({
         "klist": (0, "KVNO Principal\n---- --------\n   7 svc-apmon$@HOME.GELL.ONE\n"),
         "kinit": (1, "kinit: Preauthentication failed"),
+        "kdestroy": (0, ""),   # cleanup after kinit failure
     })
     out = keytab_monitor.probe_keytab(
         keytab_path=str(kt),

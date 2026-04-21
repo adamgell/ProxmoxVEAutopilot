@@ -22,6 +22,21 @@
 
 <h2>Device monitoring</h2>
 
+{% if keytab and keytab.last_probe_status and keytab.last_probe_status not in ('ok','unchecked') %}
+<div class="monitor-status"
+     style="background:{{ '#fff3cd' if keytab.last_probe_status in ('stale','kvno-mismatch') else '#f8d7da' }};
+            border-color:{{ '#ffeeba' if keytab.last_probe_status in ('stale','kvno-mismatch') else '#f5c6cb' }};
+            color:{{ '#856404' if keytab.last_probe_status in ('stale','kvno-mismatch') else '#721c24' }};">
+  <strong>{{ '⚠️' if keytab.last_probe_status in ('stale','kvno-mismatch') else '🔴' }}
+   Kerberos keytab: {{ keytab.last_probe_status }}</strong>
+  — {{ keytab.last_probe_message or 'no details' }}
+  · <a href="/monitoring/settings#keytab">settings → Keytab health</a>
+  {% if keytab.last_probe_status in ('missing', 'broken') %}
+  · AD probes currently suspended
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="monitor-status">
   <strong>Status:</strong>
   {% if settings.enabled %}

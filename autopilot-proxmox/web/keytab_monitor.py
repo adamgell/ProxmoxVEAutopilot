@@ -171,13 +171,15 @@ def probe_keytab(*,
     )
     if rc == 0:
         result.kinit_ok = True
-        # Clean up the cache.
-        run_cmd(["kdestroy", "-c", ephemeral_cc], env=env)
+        # NOTE: DO NOT kdestroy here — the LDAP kvno-compare below
+        # needs the ticket. Destroyed at the end of the function.
     else:
         result.kinit_ok = False
         result.kinit_error = output[:500]
         result.status = STATUS_BROKEN
         result.message = f"kinit -kt failed (rc={rc}): {output[:200]}"
+        # Clean up whatever partial cache got created.
+        run_cmd(["kdestroy", "-c", ephemeral_cc], env=env)
         return result
 
     # LDAP probe for AD-side kvno. Uses the ticket we just got, so
@@ -217,6 +219,10 @@ def probe_keytab(*,
             # if LDAP is blocked. The kinit already proved the keytab
             # works for auth.
             log.info("keytab kvno probe: LDAP lookup failed: %s", e)
+
+    # Clean up the ephemeral ccache now that both kinit-check and
+    # the LDAP kvno-compare have finished with it.
+    run_cmd(["kdestroy", "-c", ephemeral_cc], env=env)
 
     # KVNO mismatch is YELLOW — refresher wrote a stale key. Will
     # self-heal on the next refresh cycle.

@@ -4220,11 +4220,13 @@ def page_monitoring(request: Request):
         now_iso=now_iso,
     )
     settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,
         "settings": settings,
         "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
+        "keytab": keytab,
     })
 
 
@@ -4360,9 +4362,28 @@ def page_monitoring_settings(request: Request):
     # Only credentials of type domain_join are useful for AD.
     all_creds = sequences_db.list_credentials(SEQUENCES_DB)
     domain_creds = [c for c in all_creds if c.get("type") == "domain_join"]
+    keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
     return templates.TemplateResponse("monitoring_settings.html", {
         "request": request,
         "settings": settings,
         "search_ous": ous,
         "domain_creds": domain_creds,
+        "keytab": keytab,
     })
+
+
+@app.post("/api/monitoring/keytab/refresh-now")
+async def api_monitoring_keytab_refresh_now():
+    """Operator-triggered immediate refresh — unblocks 'broken' state
+    without waiting for the next sweep tick."""
+    import asyncio
+    try:
+        await asyncio.to_thread(_run_keytab_checks)
+    except Exception as e:
+        raise HTTPException(500, f"refresh failed: {e}") from e
+    return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+
+
+@app.get("/api/monitoring/keytab/health")
+def api_monitoring_keytab_health():
+    return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
