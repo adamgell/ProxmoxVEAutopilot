@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from web.jobs import JobManager
 from web import devices_db
+from web import jobs_db
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -58,6 +59,11 @@ def _load_version() -> dict:
 _APP_VERSION = _load_version()
 _LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, "error": None}
 
+# Flipped True at the end of the last schema-init startup hook. /healthz
+# returns 503 until then, so docker-compose `depends_on: service_healthy`
+# keeps builder/monitor from racing the web DB initializers on cold start.
+_SCHEMA_READY = False
+
 
 def _sanitize_input(value):
     """Reject input containing shell-dangerous characters."""
@@ -79,6 +85,7 @@ FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
 SECRETS_DIR = BASE_DIR / "secrets"
 SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
+JOBS_DB = BASE_DIR / "output" / "jobs.db"
 CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
 DEVICES_DB = BASE_DIR / "output" / "devices.db"
 devices_db.init(DEVICES_DB)
@@ -306,7 +313,10 @@ def _save_vault(updates):
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
+job_manager = JobManager(
+    jobs_dir=str(BASE_DIR / "jobs"),
+    jobs_db_path=JOBS_DB,
+)
 
 from web import sequences_db, crypto as _crypto
 from web import sequence_compiler
@@ -538,7 +548,12 @@ async def auth_logout(request: Request):
 
 @app.get("/healthz")
 async def healthz():
-    """Uptime probe — exempt from auth so external monitors can hit it."""
+    """Uptime probe — exempt from auth so external monitors can hit it.
+    Gated on _SCHEMA_READY: returns 503 until all startup schema-init
+    hooks finish, so docker-compose dependents (builder/monitor) don't
+    start against a half-initialized DB."""
+    if not _SCHEMA_READY:
+        raise HTTPException(503, "schema init not complete")
     return {"ok": True}
 
 
@@ -607,75 +622,82 @@ def _init_sequences_db() -> None:
     sequences_db.init(SEQUENCES_DB)
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
     device_history_db.init(DEVICE_MONITOR_DB)
-
-
-_MONITOR_TASK: Optional["asyncio.Task"] = None
+    global _SCHEMA_READY
+    _SCHEMA_READY = True
 
 
 @app.on_event("startup")
-async def _start_device_monitor_loop() -> None:
-    """Start the background monitor task. Failures here never crash
-    the app — the loop swallows exceptions and retries on the next
-    tick."""
+def _init_jobs_db_and_migrate() -> None:
+    from web import jobs_db, jobs_migration
+    jobs_db.init(JOBS_DB)
+    jobs_migration.migrate_legacy_index(
+        jobs_dir=Path(job_manager.jobs_dir),
+        db_path=JOBS_DB,
+    )
+    global _SCHEMA_READY
+    _SCHEMA_READY = True
+
+
+# Note: the periodic device-monitor sweep + keytab-refresh loop used
+# to live here as `_device_monitor_loop` + `_start_device_monitor_loop`.
+# As of the microservice split (Task 15/16) those tasks are owned by
+# the `monitor` container via `web/monitor_main.py`. Running them here
+# too would cause double-sweeps and double keytab probes, so the web
+# container no longer starts them. The `_run_keytab_checks`,
+# `_build_live_monitor_context`, and `_vm_provisioning_vmids` helpers
+# below are kept because `monitor_main` imports them (and the "refresh
+# now" HTTP endpoint still calls `_run_keytab_checks` directly).
+
+
+_HEALTH_TASK: Optional["asyncio.Task"] = None
+
+
+def _load_version_sha() -> str:
+    """Best-effort running git SHA. Matches the footer's buildSha."""
+    try:
+        path = BASE_DIR / "VERSION"
+        if path.exists():
+            return path.read_text().strip()[:7]
+    except Exception:
+        pass
+    return "unknown"
+
+
+@app.on_event("startup")
+async def _start_health_heartbeat() -> None:
     import asyncio
-    global _MONITOR_TASK
-    _MONITOR_TASK = asyncio.create_task(_device_monitor_loop())
+    import logging as _logging
+    from web import service_health
+    service_health.init(DEVICE_MONITOR_DB)
+
+    async def _loop():
+        while True:
+            try:
+                service_health.heartbeat(
+                    DEVICE_MONITOR_DB,
+                    service_id="web",
+                    service_type="web",
+                    version_sha=_load_version_sha(),
+                    detail="idle",
+                )
+            except Exception:
+                _logging.getLogger("web.health").exception("heartbeat failed")
+            await asyncio.sleep(10)
+
+    global _HEALTH_TASK
+    _HEALTH_TASK = asyncio.create_task(_loop())
 
 
 @app.on_event("shutdown")
-async def _stop_device_monitor_loop() -> None:
+async def _stop_health_heartbeat() -> None:
     import asyncio
-    if _MONITOR_TASK is None:
+    if _HEALTH_TASK is None:
         return
-    _MONITOR_TASK.cancel()
+    _HEALTH_TASK.cancel()
     try:
-        await _MONITOR_TASK
+        await _HEALTH_TASK
     except (asyncio.CancelledError, Exception):
         pass
-
-
-async def _device_monitor_loop() -> None:
-    """Runs :func:`device_monitor.sweep` on a loop, sleeping
-    ``settings.interval_seconds`` between iterations. Re-reads
-    settings every tick so the /monitoring/settings UI takes effect
-    on the next run without a restart. Unhandled exceptions in one
-    tick are logged and the next tick still runs."""
-    import asyncio
-    import logging as _logging
-    _log = _logging.getLogger("web.device_monitor.loop")
-    # Small grace period on startup so the DB-init hook can finish
-    # on slow disks before we try to read settings.
-    await asyncio.sleep(5)
-    while True:
-        try:
-            settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
-        except Exception:
-            _log.exception("loop: could not read settings; retrying in 60s")
-            await asyncio.sleep(60)
-            continue
-
-        if settings.enabled:
-            try:
-                ctx = _build_live_monitor_context()
-                extra = _vm_provisioning_vmids()
-                # sweep() is synchronous + DB-bound; run it in a thread
-                # so we don't block the event loop for the Graph +
-                # LDAP round-trips.
-                await asyncio.to_thread(
-                    device_monitor.sweep, ctx,
-                    extra_in_scope_vmids=extra,
-                )
-            except Exception:
-                _log.exception("loop: sweep failed; will retry next tick")
-
-            # Keytab health: probe every sweep; refresh daily (or when
-            # the probe says the keytab is missing/broken).
-            try:
-                await asyncio.to_thread(_run_keytab_checks)
-            except Exception:
-                _log.exception("loop: keytab check failed; will retry next tick")
-
-        await asyncio.sleep(max(60, settings.interval_seconds))
 
 
 def _run_keytab_checks() -> None:
@@ -3269,10 +3291,32 @@ async def api_list_jobs():
 
 @app.post("/api/jobs/{job_id}/kill")
 async def kill_job(job_id: str):
-    killed = job_manager.kill(job_id)
-    if not killed:
+    """Request termination. Flips kill_requested=1 on the job row; the
+    builder owning the job will see it on its next heartbeat cycle
+    (~5s max) and SIGTERM the subprocess. Redirects to /jobs/<id>."""
+    row = jobs_db.get_job(JOBS_DB, job_id)
+    if row is None:
+        raise HTTPException(404, f"job {job_id} not found")
+    if row["status"] != "running":
+        # Already done; ignore quietly so double-clicks don't 400.
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    jobs_db.request_kill(JOBS_DB, job_id)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+# Test-only harness — enabled when AUTOPILOT_ENABLE_TEST_JOBS=1.
+# Used by the Phase 6 integration suite (kill path, scale, wedged-playbook
+# survival). The playbook simply runs `sleep {{ duration }}` so tests can
+# exercise the builder/kill machinery without spawning a real provision.
+if os.environ.get("AUTOPILOT_ENABLE_TEST_JOBS") == "1":
+    @app.post("/api/jobs/test-long-sleep")
+    async def _enqueue_test_long_sleep(duration: str = Form("60")):
+        cmd = ["ansible-playbook",
+               str(PLAYBOOK_DIR / "_test_long_sleep.yml"),
+               "-e", f"duration={duration}"]
+        entry = job_manager.start("capture_hash", cmd,
+                                  args={"duration": duration})
+        return {"id": entry["id"]}
 
 
 @app.get("/api/jobs/recent")
@@ -3949,10 +3993,11 @@ def _host_repo_path() -> str:
 @app.post("/api/update/run")
 async def api_update_run():
     """Start a self-update. Spawns a detached sidecar container that
-    runs `git pull && docker compose pull && docker compose up -d
-    autopilot`. The sidecar lives beyond our own restart — by the
-    time docker-compose kills us and starts a new container, the
-    sidecar has already finished and removed itself.
+    runs `git pull && docker compose pull && docker compose up -d`
+    (no service arg — rolls web + builder + monitor together). The
+    sidecar lives beyond our own restart — by the time docker-compose
+    kills us and starts a new container, the sidecar has already
+    finished and removed itself.
 
     Returns 202 with the sidecar container id. Poll /api/update/status
     for progress; on success the browser can reload to see the new
@@ -4016,8 +4061,8 @@ async def api_update_run():
         f"cd {host_repo} && "
         "echo '--- git pull ---' && git pull && "
         "cd autopilot-proxmox && "
-        "echo '--- docker compose pull ---' && docker compose pull autopilot && "
-        "echo '--- docker compose up -d ---' && docker compose up -d autopilot && "
+        "echo '--- docker compose pull ---' && docker compose pull && "
+        "echo '--- docker compose up -d ---' && docker compose up -d && "
         "echo '--- done ---'"
     )
     run_kwargs = dict(
@@ -5317,7 +5362,7 @@ def _ad_first_seen_map() -> dict[int, str]:
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
-    from web import monitoring_view
+    from web import monitoring_view, service_health
     latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = monitoring_view.build_dashboard_rows(
@@ -5327,12 +5372,19 @@ def page_monitoring(request: Request):
     )
     settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
     keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
+    try:
+        svc_rows = service_health.list_services(DEVICE_MONITOR_DB)
+    except sqlite3.OperationalError:
+        # service_health table may not exist yet on a freshly-initialized
+        # device_monitor.db (init() is called from the startup hook).
+        svc_rows = []
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,
         "settings": settings,
         "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
         "keytab": keytab,
+        "service_health": svc_rows,
     })
 
 

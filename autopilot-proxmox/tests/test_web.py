@@ -21,14 +21,22 @@ def client(tmp_dirs):
     jobs_dir, hash_dir = tmp_dirs
     with tempfile.TemporaryDirectory() as seq_dir:
         seq_db = Path(seq_dir) / "sequences.db"
+        jobs_db_path = Path(seq_dir) / "jobs.db"
         sequences_db.init(seq_db)
+        # Also init jobs.db here — post-Task-13 tests enqueue/claim
+        # against app_module.JOBS_DB and a fresh temp DB prevents
+        # UNIQUE-constraint collisions across tests.
+        from web import jobs_db
+        jobs_db.init(jobs_db_path)
         with patch("web.app.HASH_DIR", Path(hash_dir)):
             with patch("web.app.SEQUENCES_DB", seq_db):
-                with patch("web.app.job_manager") as mock_manager:
-                    from web.app import app
-                    mock_manager.list_jobs.return_value = []
-                    mock_manager.jobs_dir = jobs_dir
-                    yield TestClient(app)
+                with patch("web.app.JOBS_DB", jobs_db_path):
+                    with patch("web.app.job_manager") as mock_manager:
+                        from web.app import app
+                        mock_manager.list_jobs.return_value = []
+                        mock_manager.jobs_dir = jobs_dir
+                        with TestClient(app) as tc:
+                            yield tc
 
 
 def test_home_page_renders(client):
@@ -275,3 +283,38 @@ def test_redirect_with_error_encodes_special_chars():
     from urllib.parse import parse_qs, urlparse
     qs = parse_qs(urlparse(loc).query)
     assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
+
+
+def test_web_writes_service_health_heartbeat_on_startup(client):
+    """Starting the app creates a 'web' row in service_health."""
+    from web import app as web_app, service_health
+    # Force one heartbeat synchronously via the module-level helper;
+    # we don't need to wait for the async loop to tick.
+    service_health.heartbeat(
+        web_app.DEVICE_MONITOR_DB,
+        service_id="web", service_type="web",
+        version_sha="testsha", detail="idle",
+    )
+    rows = service_health.list_services(web_app.DEVICE_MONITOR_DB)
+    ids = [r["service_id"] for r in rows]
+    assert "web" in ids
+
+
+def test_kill_sets_kill_requested_flag(client):
+    """POST /api/jobs/<id>/kill flips kill_requested=1 and redirects."""
+    from web import app as app_module, jobs_db
+    jobs_db.enqueue(app_module.JOBS_DB, job_id="live",
+                    job_type="capture_hash", playbook="x",
+                    cmd=["sleep", "1"], args={})
+    jobs_db.claim_next_job(app_module.JOBS_DB, worker_id="test-worker")
+
+    r = client.post("/api/jobs/live/kill", follow_redirects=False)
+    assert r.status_code == 303
+    row = jobs_db.get_job(app_module.JOBS_DB, "live")
+    assert row["kill_requested"] == 1
+
+
+def test_healthz_ok_after_startup(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
