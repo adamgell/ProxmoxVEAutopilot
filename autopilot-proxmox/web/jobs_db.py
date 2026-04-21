@@ -223,3 +223,20 @@ def reap_orphans(db_path: Path, *, stale_threshold_seconds: int = 120) -> int:
             (now, cutoff),
         )
     return cur.rowcount
+
+
+def _insert_migrated(db_path: Path, *, job_id: str, job_type: str,
+                     playbook: str, args: dict, status: str,
+                     started_at: str, ended_at: str | None,
+                     exit_code: int | None) -> None:
+    """Internal helper for jobs_migration. Inserts a row with specific
+    status (complete/failed/orphaned) — bypasses normal enqueue flow."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO jobs "
+            "(id, job_type, playbook, cmd_json, args_json, status, "
+            " created_at, claimed_at, ended_at, exit_code) "
+            "VALUES (?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
+            (job_id, job_type, playbook, json.dumps(args),
+             status, started_at, started_at, ended_at, exit_code),
+        )
