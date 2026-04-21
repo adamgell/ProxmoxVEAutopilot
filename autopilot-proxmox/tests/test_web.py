@@ -21,15 +21,22 @@ def client(tmp_dirs):
     jobs_dir, hash_dir = tmp_dirs
     with tempfile.TemporaryDirectory() as seq_dir:
         seq_db = Path(seq_dir) / "sequences.db"
+        jobs_db_path = Path(seq_dir) / "jobs.db"
         sequences_db.init(seq_db)
+        # Also init jobs.db here — post-Task-13 tests enqueue/claim
+        # against app_module.JOBS_DB and a fresh temp DB prevents
+        # UNIQUE-constraint collisions across tests.
+        from web import jobs_db
+        jobs_db.init(jobs_db_path)
         with patch("web.app.HASH_DIR", Path(hash_dir)):
             with patch("web.app.SEQUENCES_DB", seq_db):
-                with patch("web.app.job_manager") as mock_manager:
-                    from web.app import app
-                    mock_manager.list_jobs.return_value = []
-                    mock_manager.jobs_dir = jobs_dir
-                    with TestClient(app) as tc:
-                        yield tc
+                with patch("web.app.JOBS_DB", jobs_db_path):
+                    with patch("web.app.job_manager") as mock_manager:
+                        from web.app import app
+                        mock_manager.list_jobs.return_value = []
+                        mock_manager.jobs_dir = jobs_dir
+                        with TestClient(app) as tc:
+                            yield tc
 
 
 def test_home_page_renders(client):
