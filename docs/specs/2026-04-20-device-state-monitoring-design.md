@@ -187,14 +187,45 @@ for ou in dal.list_enabled_search_ous(db):
         search_base=ou.dn,
         search_filter=f'(&(objectClass=computer)(name={escape_filter_chars(win_name)}))',
         search_scope=SUBTREE,
-        attributes=['distinguishedName', 'objectGUID', 'pwdLastSet',
-                    'operatingSystem', 'operatingSystemVersion',
-                    'userAccountControl', 'whenCreated'],
+        attributes=[
+            # Durable identity WITHIN AD — survives renames + OU moves.
+            'objectGUID',
+            # objectSid is the cross-directory key: Entra's hybrid
+            # devices expose this exact SID as
+            # onPremisesSecurityIdentifier, which is how we join
+            # AD → Entra for trustType=ServerAd rows.
+            'objectSid',
+            # Name triplet — all three can change independently. We
+            # store each so rename-in-place (CN/sAMAccountName edit)
+            # and OU moves (DN change only) are both detectable.
+            'distinguishedName', 'cn', 'sAMAccountName', 'name',
+            # Lifecycle / health.
+            'userAccountControl', 'whenCreated', 'whenChanged',
+            'pwdLastSet', 'lastLogonTimestamp',
+            # OS strings from the directory (may diverge from the
+            # guest's actual Win32 values — divergence is a signal).
+            'operatingSystem', 'operatingSystemVersion',
+            # dNSHostName = FQDN registered in AD; useful for DNS
+            # reconciliation separately from the computer name itself.
+            'dNSHostName',
+        ],
     )
     for e in conn.entries:
         matches.append({**_entry_to_dict(e), 'source_ou_dn': ou.dn,
                         'source_ou_label': ou.label})
 ```
+
+`objectGUID` is the stable key for tracking the same AD object across
+renames and OU moves. `sAMAccountName` (always ends with `$`), `cn`,
+and the parent container inside `distinguishedName` are the three
+axes of change the UI surfaces:
+
+- **CN/sAM rename**: `objectGUID` unchanged, `cn` or `sAMAccountName`
+  differs from the prior probe.
+- **OU move**: `objectGUID` unchanged, DN prefix unchanged but the
+  parent container (everything after the first comma) differs.
+- **Replacement**: `objectGUID` changed — the name matched a new
+  object (likely a disable-and-recreate, or a duplicate).
 
 Return ALL matches from ALL OUs — the collector does not de-dup by DN
 (the same computer object under two overlapping OUs will show twice,
@@ -208,8 +239,11 @@ OUs still run.
 
 ```
 GET https://graph.microsoft.com/v1.0/devices?$filter=displayName eq '<win_name>'
-    &$select=id,displayName,deviceId,trustType,accountEnabled,approximateLastSignInDateTime,
-             operatingSystem,operatingSystemVersion,registrationDateTime,deviceOwnership
+    &$select=id,displayName,deviceId,trustType,accountEnabled,
+             approximateLastSignInDateTime,operatingSystem,
+             operatingSystemVersion,registrationDateTime,deviceOwnership,
+             onPremisesSyncEnabled,onPremisesLastSyncDateTime,
+             onPremisesSecurityIdentifier,physicalIds,alternativeSecurityIds
 ```
 
 `trustType` maps to:
@@ -217,8 +251,26 @@ GET https://graph.microsoft.com/v1.0/devices?$filter=displayName eq '<win_name>'
 - `ServerAd` → **Hybrid-joined** (what we expect for sequence 2)
 - `Workplace` → Registered (not joined)
 
+**Hybrid linkage.** For `trustType=ServerAd`, the collector stores
+`onPremisesSecurityIdentifier` (SID). On the AD side we already pull
+`objectSid`. A link is considered strong when those two strings match
+exactly; the `/monitoring/<vmid>` detail page renders the link as
+"AD ↔ Entra linked" when they do, or "Entra displayName matches but
+SID ≠ AD objectSid — investigate" when they don't (that's the shape of
+a stale Entra object surviving an AD recreation).
+
 All rows stored; `entra_match_count` > 1 is an info banner, not an
 error.
+
+**Sync-lag tolerance.** A newly-hybrid-joined device only appears in
+Entra after AD→Entra Connect runs (~30 min cadence). `entra_found=0`
+within 45 minutes of the first AD match for the same VMID is treated
+as a transient "sync pending" state — UI renders ⏳ not ❌, and the
+regression detector does **not** fire `entra_found=0 → 1` as a
+"joined" progression until the ⏳ window expires or the device
+actually lands in Entra. The 45-minute window is hard-coded in the
+detector (not a user setting — shorter values fight the upstream
+sync cadence).
 
 ### Intune probe
 
@@ -254,19 +306,30 @@ Computed at read time (not stored). For the detail view, load the last
 N probes for a VMID ordered by `checked_at`. Compare each probe to its
 predecessor and flag transitions:
 
-| From → To                        | Severity  |
-|----------------------------------|-----------|
-| ad_found=1 → 0                   | regression |
-| entra_trustType ServerAd → (nothing, or AzureAd) | regression |
-| intune_found=1 → 0               | regression |
-| complianceState compliant → noncompliant | regression |
-| ad_found=0 → 1                   | progression |
-| entra_found=0 → ServerAd          | progression |
-| intune_found=0 → 1               | progression |
+Transitions are matched **per AD object** using `objectGUID` as the
+stable key, so a rename or OU move isn't misread as "gone + new".
+
+| From → To                                                     | Severity   |
+|---------------------------------------------------------------|------------|
+| ad_found=1 → 0 (no object with same GUID anywhere)            | regression |
+| ad: userAccountControl ACCOUNTDISABLE bit 0 → 1               | regression |
+| ad: cn / sAMAccountName changed (same objectGUID)             | rename     |
+| ad: parent DN changed (same objectGUID, different OU)         | ou-move    |
+| ad: objectGUID changed for same VMID+winName                  | replacement (regression) |
+| ad.objectSid ≠ entra.onPremisesSecurityIdentifier (trustType=ServerAd) | link-broken (regression) |
+| entra_trustType ServerAd → (nothing, or AzureAd)              | regression |
+| entra: deviceId changed for same VMID                         | replacement |
+| entra_found=0 within 45 min of first AD match                 | sync-pending (informational, not a regression) |
+| intune_found=1 → 0                                            | regression |
+| complianceState compliant → noncompliant                      | regression |
+| ad_found=0 → 1                                                | progression |
+| entra_found=0 → ServerAd                                      | progression |
+| intune_found=0 → 1                                            | progression |
 
 The `/monitoring` page shows only the latest probe per VMID; the
 `/monitoring/<vmid>` detail page shows the timeline with coloured
-transitions.
+transitions and, for AD, a per-`objectGUID` track so a rename reads as
+one object evolving rather than "deleted + created".
 
 ## UI
 
@@ -302,6 +365,8 @@ transitions.
 | Duplicate directory objects          | All stored in `*_matches_json`; UI marks as ⚠️              |
 | Search-OU permission denied (one DN) | Recorded in `probe_errors_json.ad_per_ou[dn]`; remaining OUs still run |
 | User tries to delete / disable the last enabled OU | DAL raises `CannotDeleteLastOu`; API returns 409; UI greys the button |
+| Hybrid-joined in AD but not yet in Entra (sync lag) | UI renders ⏳ "sync pending"; regression detector suppresses the transition for the first 45 min after the first AD match |
+| Entra displayName match but SID ≠ AD objectSid | Recorded as `link-broken`; UI flags "investigate"; common signature of a stale Entra device outliving a recreated AD object |
 | Collector raises unhandled exception | Caught at the loop level; logged; next tick still runs    |
 
 ## Testing
@@ -313,6 +378,14 @@ transitions.
   `CannotDeleteLastOu` when called on the sole remaining enabled row.
 - Unit: `sweep()` with two configured OUs runs two LDAP searches and
   merges results, tagging each match with its source DN.
+- Unit: regression detector preserves AD-object continuity across a
+  rename (same objectGUID, different cn) and an OU-move (same GUID,
+  different parent), and emits `replacement` when the GUID does change.
+- Unit: regression detector emits `link-broken` when the Entra
+  `onPremisesSecurityIdentifier` ≠ the AD `objectSid` on the latest
+  probe with `trustType=ServerAd`.
+- Unit: regression detector suppresses `entra_found=0 → 1` within the
+  45-min post-AD-join sync-pending window and renders ⏳ instead.
 - Integration: against the live cluster, one sweep against
   `OU=WorkspaceLabs` — assert VM 109 and 116 appear with `ad_found=1`,
   `entra_trustType=ServerAd`.
