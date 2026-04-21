@@ -403,12 +403,23 @@ async def auth_login(request: Request, next: str = "/",
             "<code>scripts/ad/configure_entra_auth.py</code>.</p>",
             status_code=500,
         )
-    # Short, human-readable tenant label — prefer the domain name
-    # from the configured realm over the raw GUID.
-    tenant_label = (
-        _load_proxmox_config().get("ad_realm", "")
-        or cfg["tenant_id"]
-    )
+    # Short, human-readable tenant label — prefer ad_realm from
+    # vars.yml, then the Kerberos realm baked into /etc/krb5.conf,
+    # then fall back to the raw GUID so the page still renders.
+    app_cfg = _load_proxmox_config()
+    tenant_label = app_cfg.get("ad_realm") or ""
+    if not tenant_label:
+        try:
+            for line in Path("/etc/krb5.conf").read_text().splitlines():
+                line = line.strip()
+                if line.lower().startswith("default_realm"):
+                    _, _, v = line.partition("=")
+                    tenant_label = v.strip()
+                    break
+        except Exception:
+            pass
+    if not tenant_label:
+        tenant_label = cfg["tenant_id"]
     from urllib.parse import quote as _q
     return templates.TemplateResponse("login.html", {
         "request": request,
