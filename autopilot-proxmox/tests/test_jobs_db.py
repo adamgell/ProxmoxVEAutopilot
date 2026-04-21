@@ -111,3 +111,100 @@ def test_get_job_returns_none_for_missing(db_path):
     from web import jobs_db
     jobs_db.init(db_path)
     assert jobs_db.get_job(db_path, "does-not-exist") is None
+
+
+def test_claim_next_job_picks_oldest_pending(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="old", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.enqueue(db_path, job_id="new", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    claimed = jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    assert claimed["id"] == "old"
+    assert claimed["status"] == "running"
+    assert claimed["worker_id"] == "worker-a"
+    assert claimed["claimed_at"]
+
+
+def test_claim_next_job_respects_type_cap(db_path):
+    """build_template has cap=1. Two pending build_template jobs → first
+    claim succeeds, second returns None even though a job is pending."""
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="b1", job_type="build_template",
+                    playbook="x", cmd=[], args={})
+    jobs_db.enqueue(db_path, job_id="b2", job_type="build_template",
+                    playbook="x", cmd=[], args={})
+    c1 = jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    assert c1["id"] == "b1"
+    c2 = jobs_db.claim_next_job(db_path, worker_id="worker-b")
+    assert c2 is None
+
+
+def test_claim_next_job_picks_other_type_under_cap(db_path):
+    """If build_template is capped at 1 and one is running, a claim
+    still returns a provision_clone job (cap=3)."""
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="b1", job_type="build_template",
+                    playbook="x", cmd=[], args={})
+    jobs_db.enqueue(db_path, job_id="p1", job_type="provision_clone",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    other = jobs_db.claim_next_job(db_path, worker_id="worker-b")
+    assert other["id"] == "p1"
+
+
+def test_claim_next_job_returns_none_when_empty(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    assert jobs_db.claim_next_job(db_path, worker_id="worker-a") is None
+
+
+def test_touch_heartbeat_updates_timestamp(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    before = jobs_db.get_job(db_path, "j1")["last_heartbeat"]
+    import time; time.sleep(1.1)
+    jobs_db.touch_heartbeat(db_path, "j1")
+    after = jobs_db.get_job(db_path, "j1")["last_heartbeat"]
+    assert after > before
+
+
+def test_finalize_job_sets_status_and_exit_code(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    jobs_db.finalize_job(db_path, "j1", exit_code=0)
+    row = jobs_db.get_job(db_path, "j1")
+    assert row["status"] == "complete"
+    assert row["exit_code"] == 0
+    assert row["ended_at"]
+
+
+def test_finalize_nonzero_exit_marks_failed(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    jobs_db.finalize_job(db_path, "j1", exit_code=2)
+    row = jobs_db.get_job(db_path, "j1")
+    assert row["status"] == "failed"
+    assert row["exit_code"] == 2
+
+
+def test_request_kill_sets_flag(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="worker-a")
+    jobs_db.request_kill(db_path, "j1")
+    assert jobs_db.get_job(db_path, "j1")["kill_requested"] == 1

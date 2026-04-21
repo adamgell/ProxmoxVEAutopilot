@@ -134,3 +134,72 @@ def list_jobs(db_path: Path, *, limit: int = 200) -> list[dict]:
             (limit,),
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+def claim_next_job(db_path: Path, *, worker_id: str) -> dict | None:
+    """Atomically claim the oldest pending job whose type is under its cap.
+
+    BEGIN IMMEDIATE transaction, SELECT candidate respecting per-type cap,
+    conditional UPDATE with status='pending' guard. Returns claimed row
+    or None if nothing claimable.
+    """
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("""
+                SELECT j.id
+                FROM jobs j
+                JOIN job_type_limits l ON l.job_type = j.job_type
+                WHERE j.status = 'pending'
+                  AND (SELECT COUNT(*) FROM jobs
+                       WHERE job_type = j.job_type AND status = 'running')
+                      < l.max_concurrent
+                ORDER BY j.created_at ASC, j.rowid ASC
+                LIMIT 1
+            """).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return None
+            n = conn.execute(
+                "UPDATE jobs SET status='running', worker_id=?, "
+                "claimed_at=?, last_heartbeat=? "
+                "WHERE id=? AND status='pending'",
+                (worker_id, now, now, row["id"]),
+            ).rowcount
+            if n != 1:
+                conn.execute("ROLLBACK")
+                return None
+            claimed = conn.execute(
+                "SELECT * FROM jobs WHERE id=?", (row["id"],),
+            ).fetchone()
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    return _row_to_dict(claimed)
+
+
+def touch_heartbeat(db_path: Path, job_id: str) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET last_heartbeat=? WHERE id=?",
+            (_now(), job_id),
+        )
+
+
+def finalize_job(db_path: Path, job_id: str, *, exit_code: int) -> None:
+    status = "complete" if exit_code == 0 else "failed"
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET status=?, exit_code=?, ended_at=? WHERE id=?",
+            (status, exit_code, _now(), job_id),
+        )
+
+
+def request_kill(db_path: Path, job_id: str) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET kill_requested=1 WHERE id=?",
+            (job_id,),
+        )
