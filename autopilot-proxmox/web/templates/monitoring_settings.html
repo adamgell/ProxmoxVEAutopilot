@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Monitoring settings - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+
+<style>
+  .card { padding: 10px; background: #fff; border: 1px solid #dee2e6;
+          margin: 10px 0; }
+  .card h3 { margin: 0 0 8px 0; font-size: 15px; border-bottom: 1px solid #eee;
+             padding-bottom: 4px; }
+  label { display: inline-block; min-width: 180px; font-size: 13px; }
+  .row { padding: 4px 0; }
+  .warn-banner { background:#fff3cd; border:1px solid #ffeeba;
+                 padding:6px; color:#856404; font-size:12px;
+                 margin:6px 0; display:none; }
+  .warn-banner.visible { display:block; }
+  .ou-table { border-collapse: collapse; width: 100%; }
+  .ou-table th, .ou-table td { border: 1px solid #dee2e6; padding: 4px 6px;
+                                text-align: left; font-size: 13px; }
+  .ou-table input[type=text] { width: 340px; font-family: monospace;
+                                font-size: 12px; }
+  .ou-table input.label-input { width: 120px; }
+  .ou-table input.order-input { width: 50px; text-align: center; }
+  .btn { font-size: 12px; padding: 2px 6px; border: 1px solid #ccc;
+         background: #f8f9fa; cursor: pointer; border-radius: 3px; }
+  .btn.btn-danger { background: #f8d7da; border-color: #f5c6cb; color:#721c24; }
+  .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .error { color:#721c24; font-size:12px; margin-left:8px; }
+  .ok { color:#155724; font-size:12px; margin-left:8px; }
+</style>
+
+<p class="bc"><a href="/monitoring">Monitoring</a> › settings</p>
+<h2>Monitoring settings</h2>
+
+<div class="card">
+  <h3>Monitor configuration</h3>
+  <div class="row">
+    <label for="enabled">Enabled</label>
+    <input type="checkbox" id="enabled"
+           {% if settings.enabled %}checked{% endif %}>
+  </div>
+  <div class="row">
+    <label for="interval">Sweep interval (seconds)</label>
+    <input type="number" id="interval" min="60" step="30"
+           value="{{ settings.interval_seconds }}">
+    <span id="intervalNote" class="bc">15 min = 900 · hourly = 3600</span>
+    <div id="intervalWarn" class="warn-banner">
+      ⚠️ Not tested below 900s (15 min).
+      Upstream AD → Entra Connect sync cadence is ~30 min, so intervals
+      below that may surface noisy ⏳ sync-pending states without
+      actually catching regressions any faster.
+    </div>
+  </div>
+  <div class="row">
+    <label for="adcred">AD credential</label>
+    <select id="adcred">
+      <option value="0">(none — disable AD probes)</option>
+      {% for cred in domain_creds %}
+        <option value="{{ cred.id }}"
+          {% if settings.ad_credential_id == cred.id %}selected{% endif %}>
+          #{{ cred.id }} · {{ cred.name }}
+        </option>
+      {% endfor %}
+    </select>
+    <span class="bc">pick a <code>domain_join</code> credential — reused from the existing credential store.</span>
+  </div>
+  <div class="row">
+    <button class="btn" id="saveSettings">Save</button>
+    <span id="saveMsg"></span>
+  </div>
+</div>
+
+<div class="card">
+  <h3>AD search OUs</h3>
+  <p class="bc">Each sweep runs one LDAP search per enabled OU
+  (SCOPE_SUBTREE) and unions the results. At least one OU must
+  stay enabled at all times — the delete and disable controls are
+  greyed out when disabling or deleting would leave zero enabled
+  entries.</p>
+  <table class="ou-table" id="ouTable">
+    <thead>
+      <tr><th>DN</th><th>Label</th><th>Enabled</th><th>Sort</th><th>Actions</th></tr>
+    </thead>
+    <tbody id="ouBody"></tbody>
+  </table>
+  <div class="row" style="margin-top:8px;">
+    <input type="text" id="newDn" size="60"
+           placeholder="OU=Example,DC=home,DC=gell,DC=one">
+    <input type="text" id="newLabel" class="label-input" placeholder="Label">
+    <button class="btn" id="addOu">Add OU</button>
+    <span id="addMsg"></span>
+  </div>
+</div>
+
+<script>
+// DN regex — mirrors the DAL's _DN_RE. Surfaces obvious typos (semis,
+// double equals) client-side before a round-trip.
+const DN_RE = /^(?:OU|CN|DC)=[^,;=\x00]+(?:,(?:OU|CN|DC)=[^,;=\x00]+)*$/i;
+const BADGES = {ok:'✅', warn:'⚠️', missing:'❌'};
+
+function msg(el, text, cls) {
+  el.className = cls || 'ok';
+  el.textContent = text || '';
+  if (text) setTimeout(()=>{ el.textContent=''; }, 4000);
+}
+
+async function refreshSettings() {
+  const r = await fetch('/api/monitoring/settings');
+  const s = await r.json();
+  document.getElementById('enabled').checked = s.enabled;
+  document.getElementById('interval').value = s.interval_seconds;
+  updateIntervalWarn();
+  const sel = document.getElementById('adcred');
+  sel.value = String(s.ad_credential_id || 0);
+}
+
+function updateIntervalWarn() {
+  const n = parseInt(document.getElementById('interval').value, 10);
+  const banner = document.getElementById('intervalWarn');
+  if (n && n < 900) banner.classList.add('visible');
+  else banner.classList.remove('visible');
+}
+document.getElementById('interval').addEventListener('input', updateIntervalWarn);
+
+document.getElementById('saveSettings').onclick = async () => {
+  const body = {
+    enabled: document.getElementById('enabled').checked,
+    interval_seconds: parseInt(document.getElementById('interval').value, 10),
+    ad_credential_id: parseInt(document.getElementById('adcred').value, 10) || 0,
+  };
+  const r = await fetch('/api/monitoring/settings', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const el = document.getElementById('saveMsg');
+  if (r.ok) { msg(el, 'saved', 'ok'); }
+  else { const t = await r.text(); msg(el, 'error: ' + t.slice(0,200), 'error'); }
+};
+
+async function refreshOus() {
+  const r = await fetch('/api/monitoring/search-ous');
+  const ous = await r.json();
+  const tbody = document.getElementById('ouBody');
+  tbody.innerHTML = '';
+  const enabledCount = ous.filter(o => o.enabled).length;
+  ous.forEach(ou => {
+    const tr = document.createElement('tr');
+    const isLastEnabled = ou.enabled && enabledCount === 1;
+    const cannotDelete = ous.length === 1 || isLastEnabled;
+    tr.innerHTML = `
+      <td><input type="text" data-field="dn" value="${esc(ou.dn)}"></td>
+      <td><input type="text" class="label-input" data-field="label" value="${esc(ou.label)}"></td>
+      <td><input type="checkbox" data-field="enabled" ${ou.enabled ? 'checked' : ''} ${isLastEnabled ? 'disabled title="at least one OU must stay enabled"' : ''}></td>
+      <td><input type="number" class="order-input" data-field="sort_order" value="${ou.sort_order}"></td>
+      <td>
+        <button class="btn" data-act="save" data-id="${ou.id}">Save</button>
+        <button class="btn btn-danger" data-act="delete" data-id="${ou.id}" ${cannotDelete ? 'disabled title="at least one OU must remain enabled"' : ''}>Delete</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  tbody.onclick = onOuAction;
+}
+
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function rowValues(tr) {
+  const out = {};
+  tr.querySelectorAll('[data-field]').forEach(i => {
+    const f = i.dataset.field;
+    if (i.type === 'checkbox') out[f] = i.checked;
+    else if (i.type === 'number') out[f] = parseInt(i.value, 10);
+    else out[f] = i.value;
+  });
+  return out;
+}
+
+async function onOuAction(e) {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const tr = btn.closest('tr');
+  const id = btn.dataset.id;
+  const act = btn.dataset.act;
+  if (act === 'save') {
+    const body = rowValues(tr);
+    if (body.dn && !DN_RE.test(body.dn)) {
+      alert('DN looks malformed: ' + body.dn); return;
+    }
+    const r = await fetch(`/api/monitoring/search-ous/${id}`, {
+      method: 'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { alert('save failed: ' + await r.text()); return; }
+    await refreshOus();
+  } else if (act === 'delete') {
+    if (!confirm('Delete this search OU?')) return;
+    const r = await fetch(`/api/monitoring/search-ous/${id}`, {method:'DELETE'});
+    if (!r.ok) { alert('delete failed: ' + await r.text()); return; }
+    await refreshOus();
+  }
+}
+
+document.getElementById('addOu').onclick = async () => {
+  const dn = document.getElementById('newDn').value.trim();
+  const label = document.getElementById('newLabel').value.trim();
+  const el = document.getElementById('addMsg');
+  if (!DN_RE.test(dn)) { msg(el, 'DN looks malformed', 'error'); return; }
+  const r = await fetch('/api/monitoring/search-ous', {
+    method: 'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({dn, label, enabled: true}),
+  });
+  if (!r.ok) { msg(el, 'add failed: ' + await r.text(), 'error'); return; }
+  document.getElementById('newDn').value = '';
+  document.getElementById('newLabel').value = '';
+  msg(el, 'added', 'ok');
+  await refreshOus();
+};
+
+refreshSettings(); refreshOus();
+</script>
+
+{% endblock %}

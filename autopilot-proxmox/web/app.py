@@ -4214,3 +4214,18 @@ def page_device_detail(request: Request, vmid: int):
         "timeline": timeline,
         "history": history,
     })
+
+
+@app.get("/monitoring/settings", response_class=HTMLResponse)
+def page_monitoring_settings(request: Request):
+    settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    ous = device_history_db.list_search_ous(DEVICE_MONITOR_DB)
+    # Only credentials of type domain_join are useful for AD.
+    all_creds = sequences_db.list_credentials(SEQUENCES_DB)
+    domain_creds = [c for c in all_creds if c.get("type") == "domain_join"]
+    return templates.TemplateResponse("monitoring_settings.html", {
+        "request": request,
+        "settings": settings,
+        "search_ous": ous,
+        "domain_creds": domain_creds,
+    })
