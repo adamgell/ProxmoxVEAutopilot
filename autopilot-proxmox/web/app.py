@@ -1767,12 +1767,102 @@ async def save_settings(request: Request):
     return RedirectResponse("/settings?saved=1", status_code=303)
 
 
+# ---------------------------------------------------------------------------
+# /vms page — cached result + background refresh
+# ---------------------------------------------------------------------------
+# get_autopilot_vms() fires PVE config + PS guest-exec + agent calls
+# for every autopilot-tagged VM. When guest agents are dead each
+# exec hits its 15s timeout before falling through, stacking up to
+# ~30s of hang on page load. Cache the result for 30s and refresh
+# in the background so /vms renders instantly off the cached copy.
+
+_VMS_CACHE: dict = {
+    "data": None,                 # list[dict] once warmed
+    "devices": None,              # (devices, ap_error) tuple
+    "hash_serials": None,         # set[str]
+    "fetched_at": 0.0,            # monotonic() when last updated
+    "refreshing": False,          # True while a background refresh is in flight
+}
+_VMS_CACHE_TTL_SECONDS = 30.0
+_VMS_CACHE_STALE_SECONDS = 5 * 60  # if older than this, refetch synchronously
+
+
+def _fetch_vms_payload():
+    """Synchronous fetcher — calls every upstream the /vms page needs.
+    Returns a dict ready to stash in _VMS_CACHE."""
+    return {
+        "data": get_autopilot_vms(),
+        "devices": get_autopilot_devices(),
+        "hash_serials": {f["serial"] for f in get_hash_files()},
+    }
+
+
+async def _refresh_vms_cache_bg() -> None:
+    """Background refresher — never raises; leaves old data in place
+    if anything goes wrong."""
+    import asyncio
+    if _VMS_CACHE["refreshing"]:
+        return
+    _VMS_CACHE["refreshing"] = True
+    try:
+        payload = await asyncio.to_thread(_fetch_vms_payload)
+        _VMS_CACHE.update(payload)
+        _VMS_CACHE["fetched_at"] = time.monotonic()
+    except Exception:
+        # Leave the previous cache intact; next sweep will retry.
+        import logging as _logging
+        _logging.getLogger("web.vms").exception(
+            "/vms background refresh failed; cache left stale",
+        )
+    finally:
+        _VMS_CACHE["refreshing"] = False
+
+
+async def _get_vms_payload():
+    """Return (payload, age_seconds). Serves from cache when warm,
+    triggers a background refresh when stale, and blocks only on a
+    true cold start or when the cache is older than STALE_SECONDS."""
+    import asyncio
+    now = time.monotonic()
+    age = now - _VMS_CACHE["fetched_at"] if _VMS_CACHE["fetched_at"] else float("inf")
+
+    # Cold start — nobody has ever fetched. Block to avoid serving
+    # empty tables.
+    if _VMS_CACHE["data"] is None:
+        payload = await asyncio.to_thread(_fetch_vms_payload)
+        _VMS_CACHE.update(payload)
+        _VMS_CACHE["fetched_at"] = time.monotonic()
+        return _VMS_CACHE, 0.0
+
+    # Very stale — block rather than serve badly outdated data.
+    if age >= _VMS_CACHE_STALE_SECONDS:
+        await _refresh_vms_cache_bg()
+        return _VMS_CACHE, 0.0
+
+    # Past TTL but within staleness — kick a background refresh,
+    # return what we have.
+    if age >= _VMS_CACHE_TTL_SECONDS and not _VMS_CACHE["refreshing"]:
+        asyncio.create_task(_refresh_vms_cache_bg())
+
+    return _VMS_CACHE, age
+
+
+@app.post("/api/vms/refresh")
+async def api_vms_refresh():
+    """Manual refresh trigger. Always blocks until the new payload
+    is in the cache so the caller's subsequent GET /vms sees fresh
+    data."""
+    await _refresh_vms_cache_bg()
+    return {"ok": True, "fetched_at": _VMS_CACHE["fetched_at"]}
+
+
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request, error: str = ""):
-    vms = get_autopilot_vms()
+    cache, cache_age = await _get_vms_payload()
+    vms = list(cache["data"] or [])
     vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
-    devices, ap_error = get_autopilot_devices()
-    hash_serials = {f["serial"] for f in get_hash_files()}
+    devices, ap_error = cache["devices"] or ([], "")
+    hash_serials = cache["hash_serials"] or set()
     ap_serials = {d["serial"] for d in devices}
 
     # Only show Autopilot devices that match a Proxmox VM serial
@@ -1811,6 +1901,15 @@ async def vms_page(request: Request, error: str = ""):
         "missing_vms": missing_vms,
         "ap_error": ap_error,
         "error": error,
+        # Surface to the footer so the operator can tell whether
+        "cache_age_seconds": int(cache_age),
+        "cache_fetched_at_iso": (
+            datetime.fromtimestamp(
+                time.time() - cache_age, tz=timezone.utc
+            ).isoformat(timespec="seconds")
+            if cache_age is not None else ""
+        ),
+        "cache_refreshing": _VMS_CACHE["refreshing"],
     })
 
 

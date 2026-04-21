@@ -6,7 +6,26 @@
 <p style="background:#f8d7da;border:1px solid #f5c6cb;padding:8px;color:#721c24;">{{ error }}</p>
 {% endif %}
 
-<h2>Proxmox VMs</h2>
+<h2>Proxmox VMs
+  <span style="font-size:12px;font-weight:normal;color:#666;margin-left:10px;">
+    {% if cache_age_seconds is defined and cache_age_seconds is not none %}
+      data
+      <time datetime="{{ cache_fetched_at_iso }}" data-utc="{{ cache_fetched_at_iso }}"
+            title="{{ cache_fetched_at_iso }}">
+        {% if cache_age_seconds < 5 %}fresh{% else %}{{ cache_age_seconds }}s old{% endif %}
+      </time>
+      {% if cache_refreshing %}· <span style="color:#0b5ed7;">refreshing…</span>{% endif %}
+      ·
+    {% endif %}
+    <button type="button" onclick="refreshVms();" style="font-size:11px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">↻ Refresh</button>
+  </span>
+</h2>
+<script>
+async function refreshVms() {
+  const r = await fetch('/api/vms/refresh', {method: 'POST'});
+  if (r.ok) location.reload();
+}
+</script>
 {% if vms %}
 <form method="POST" action="/api/jobs/bulk-capture">
 <table>
