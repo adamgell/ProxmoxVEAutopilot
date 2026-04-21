@@ -28,7 +28,8 @@ def client(tmp_dirs):
                     from web.app import app
                     mock_manager.list_jobs.return_value = []
                     mock_manager.jobs_dir = jobs_dir
-                    yield TestClient(app)
+                    with TestClient(app) as tc:
+                        yield tc
 
 
 def test_home_page_renders(client):
@@ -275,3 +276,18 @@ def test_redirect_with_error_encodes_special_chars():
     from urllib.parse import parse_qs, urlparse
     qs = parse_qs(urlparse(loc).query)
     assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
+
+
+def test_web_writes_service_health_heartbeat_on_startup(client):
+    """Starting the app creates a 'web' row in service_health."""
+    from web import app as web_app, service_health
+    # Force one heartbeat synchronously via the module-level helper;
+    # we don't need to wait for the async loop to tick.
+    service_health.heartbeat(
+        web_app.DEVICE_MONITOR_DB,
+        service_id="web", service_type="web",
+        version_sha="testsha", detail="idle",
+    )
+    rows = service_health.list_services(web_app.DEVICE_MONITOR_DB)
+    ids = [r["service_id"] for r in rows]
+    assert "web" in ids
