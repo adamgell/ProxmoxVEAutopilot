@@ -1,0 +1,124 @@
+{#
+  Shared page-pattern macros for the operator cockpit.
+
+  All markup here reads from the design tokens declared in base.html
+  (--ok-bg / --ok-fg / --line / --ink-muted / ...).  No hardcoded
+  colors — dark mode works automatically because every color flows
+  from a token that has a dark-theme override.
+
+  detail_grid choice: this file ships a single {% call detail_grid() %}
+  wrapper that emits a two-column CSS grid.  Callers place their own
+  two direct children (conventionally an <aside> for metadata and a
+  <section> for the active area); CSS grid handles column placement
+  via natural DOM order.  This is simpler than exposing separate
+  detail_grid_left() / detail_grid_right() macros because it keeps
+  the open/close pairing tied to a single {% call %} block and lets
+  callers nest whatever elements they like without macro gymnastics.
+#}
+
+{# ----------------------------------------------------------------- #}
+{# page_head — H1 + optional subtitle on the left, optional CTA on   #}
+{# the right.  Sits at the very top of a page template.              #}
+{# ----------------------------------------------------------------- #}
+{% macro page_head(title, subtitle=None, action_href=None, action_label=None, action_level="primary") %}
+<div class="page-head">
+  <div class="page-head-titles">
+    <h1>{{ title }}</h1>
+    {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+  </div>
+  {% if action_href and action_label %}
+  <div class="page-head-action">
+    <a href="{{ action_href }}" class="btn btn-{{ action_level }}">{{ action_label }}</a>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# ----------------------------------------------------------------- #}
+{# alert — semantic banner.  Two usage shapes:                        #}
+{#                                                                   #}
+{#   {{ alert("Saved.", level="ok") }}                                #}
+{#   {% call alert(level="bad") %}                                    #}
+{#     <strong>Failed</strong> — see log.                             #}
+{#   {% endcall %}                                                    #}
+{#                                                                   #}
+{# level ∈ ok | warn | bad | info | neutral                          #}
+{# ----------------------------------------------------------------- #}
+{% macro alert(message=None, level="info", dismissible=False) %}
+<div class="alert alert-{{ level }}{% if dismissible %} is-dismissible{% endif %}" role="status">
+  <span class="alert-dot" aria-hidden="true"></span>
+  <div class="alert-body">
+    {% if message is not none %}{{ message }}{% endif %}
+    {% if caller is defined %}{{ caller() }}{% endif %}
+  </div>
+  {% if dismissible %}
+  <button type="button" class="alert-close" aria-label="Dismiss"
+          onclick="this.closest('.alert').style.display='none';">&times;</button>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# ----------------------------------------------------------------- #}
+{# filter_bar — horizontal row of <select>s that read + write the    #}
+{# page's query string.  filters = [                                  #}
+{#   { "name": "state",                                               #}
+{#     "label": "State",                                              #}
+{#     "options": [("all", "All"), ("ok", "OK")],                     #}
+{#     "value": "all" }                                               #}
+{# ]                                                                  #}
+{# Right-aligned "X of Y" shown when shown/total supplied.            #}
+{# ----------------------------------------------------------------- #}
+{% macro filter_bar(filters=None, total=None, shown=None) %}
+<div class="filter-bar">
+  {% if filters %}
+    {% for f in filters %}
+    <label class="filter-bar-item">
+      <span class="filter-bar-label">{{ f.label }}</span>
+      <select name="{{ f.name }}"
+              onchange="(function(el){
+                var u = new URL(window.location.href);
+                if (el.value === '' || el.value === null) u.searchParams.delete(el.name);
+                else u.searchParams.set(el.name, el.value);
+                window.location.href = u.toString();
+              })(this);">
+        {% for opt_val, opt_label in f.options %}
+        <option value="{{ opt_val }}"{% if (f.value|string) == (opt_val|string) %} selected{% endif %}>{{ opt_label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endfor %}
+  {% endif %}
+  {% if total is not none and shown is not none %}
+  <div class="filter-bar-count">
+    <span class="mono">{{ shown }}</span> of <span class="mono">{{ total }}</span>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# ----------------------------------------------------------------- #}
+{# empty_state — centered "nothing here yet" block for 0-row tables. #}
+{# ----------------------------------------------------------------- #}
+{% macro empty_state(message, action_href=None, action_label=None, hint=None) %}
+<div class="empty-state">
+  <p class="empty-state-message">{{ message }}</p>
+  {% if action_href and action_label %}
+  <a href="{{ action_href }}" class="btn">{{ action_label }}</a>
+  {% endif %}
+  {% if hint %}
+  <p class="empty-state-hint">{{ hint }}</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# ----------------------------------------------------------------- #}
+{# detail_grid — {% call detail_grid() %}...{% endcall %} wrapper.   #}
+{# Expects two direct-child blocks; CSS places the first in the      #}
+{# 340px metadata column and the second in the flexible right        #}
+{# column.  Stacks vertically below ~800px.                          #}
+{# ----------------------------------------------------------------- #}
+{% macro detail_grid() %}
+<div class="detail-grid">
+{{ caller() }}
+</div>
+{% endmacro %}
