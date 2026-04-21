@@ -62,6 +62,40 @@
 
 <h2>Device monitoring</h2>
 
+{% if service_health %}
+<h3 style="margin-top: 0;">Services</h3>
+<table style="margin-bottom: 20px;">
+  <thead>
+    <tr>
+      <th>Service</th>
+      <th>Version</th>
+      <th>Heartbeat</th>
+      <th>Detail</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for s in service_health %}
+    <tr>
+      <td><code>{{ s.service_id }}</code></td>
+      <td><code>{{ s.version_sha }}</code></td>
+      <td title="last heartbeat: {{ s.last_heartbeat }}">{{ s.age_seconds }}s ago</td>
+      <td>{{ s.detail }}</td>
+      <td>
+        {% if s.status == 'ok' %}
+          <span class="badge ok">OK</span>
+        {% elif s.status == 'degraded' %}
+          <span class="badge warn">degraded</span>
+        {% else %}
+          <span class="badge missing">dead</span>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
 {% if keytab and keytab.last_probe_status and keytab.last_probe_status not in ('ok','unchecked') %}
 <div class="monitor-status {{ 'is-warn' if keytab.last_probe_status in ('stale','kvno-mismatch') else 'is-bad' }}">
   <strong>{{ '⚠️' if keytab.last_probe_status in ('stale','kvno-mismatch') else '🔴' }}

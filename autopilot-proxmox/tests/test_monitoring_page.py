@@ -71,3 +71,24 @@ def test_monitoring_page_interval_warning_below_15min(client, monkeypatch):
     device_history_db.update_settings(db, interval_seconds=300)
     r = c.get("/monitoring")
     assert "aggressive" in r.text
+
+
+def test_monitoring_page_shows_service_health(client):
+    from web import service_health
+    c, db = client
+    service_health.init(db)
+    service_health.heartbeat(
+        db,
+        service_id="web", service_type="web",
+        version_sha="abc1234", detail="idle",
+    )
+    service_health.heartbeat(
+        db,
+        service_id="builder-xyz", service_type="builder",
+        version_sha="abc1234", detail="running",
+    )
+    r = c.get("/monitoring")
+    assert r.status_code == 200
+    assert "web" in r.text
+    assert "builder-xyz" in r.text
+    assert "abc1234" in r.text

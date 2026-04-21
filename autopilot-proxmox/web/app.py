@@ -5380,7 +5380,7 @@ def _ad_first_seen_map() -> dict[int, str]:
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
-    from web import monitoring_view
+    from web import monitoring_view, service_health
     latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = monitoring_view.build_dashboard_rows(
@@ -5390,12 +5390,19 @@ def page_monitoring(request: Request):
     )
     settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
     keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
+    try:
+        svc_rows = service_health.list_services(DEVICE_MONITOR_DB)
+    except sqlite3.OperationalError:
+        # service_health table may not exist yet on a freshly-initialized
+        # device_monitor.db (init() is called from the startup hook).
+        svc_rows = []
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,
         "settings": settings,
         "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
         "keytab": keytab,
+        "service_health": svc_rows,
     })
 
 
