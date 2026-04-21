@@ -542,6 +542,26 @@ async def healthz():
     return {"ok": True}
 
 
+_BLISS_JPG = BASE_DIR / "files" / "bliss.jpg"
+
+
+@app.get("/auth/bliss")
+async def auth_bliss():
+    """Serve the login-page background. Extension-less path on
+    purpose — our upstream nginx/NPM has a static-asset rule that
+    502s .jpg paths without proxying to the backend. Returning
+    image/jpeg content via a dynamic route sidesteps that."""
+    if not _BLISS_JPG.exists():
+        raise HTTPException(404, "bliss.jpg not baked into image")
+    return FileResponse(
+        _BLISS_JPG,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "public, max-age=86400, immutable",
+        },
+    )
+
+
 # SessionMiddleware is the LAST middleware registered so it sits OUTER-
 # most in Starlette's stack — runs before every other middleware +
 # handler, so request.session is ready when _require_auth checks it.
