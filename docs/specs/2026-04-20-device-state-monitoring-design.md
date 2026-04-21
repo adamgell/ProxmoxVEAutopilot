@@ -3,16 +3,19 @@
 **Date:** 2026-04-20
 **Status:** Proposed — awaiting review
 **Scope:** Autopilot-provisioned Windows VMs on the PVE cluster whose AD
-computer object lives under `OU=WorkspaceLabs,DC=home,DC=gell,DC=one`.
+computer object lives under one of the configured search OUs (seeded
+with `OU=WorkspaceLabs,DC=home,DC=gell,DC=one`).
 
 ## Why
 
 After a VM is provisioned we have no ongoing visibility into whether
-it stays registered in the places it should be (AD, Entra, Intune), or
-whether those registrations drift (hybrid object goes stale,
-compliance flips, device re-enrolls with a new Entra ID). We want a
-dashboard that joins all three directories against PVE VMIDs on a
-schedule and records every state change so regressions are visible.
+it stays registered in the places it should be (PVE, AD, Entra,
+Intune), or whether those registrations drift (the VM gets migrated
+to another node, a hybrid object goes stale, compliance flips, a
+device re-enrolls with a new Entra ID). We want a dashboard that
+joins PVE VM state against all three directories on a schedule,
+records every state change so regressions are visible, and exposes a
+per-device page showing all four systems side-by-side.
 
 ## Non-goals
 
@@ -25,21 +28,37 @@ schedule and records every state change so regressions are visible.
 
 ## Matching keys
 
-Each VM has up to four identifiers that link the four surfaces:
+Each VM has identifiers across four surfaces:
 
 | Source       | Identifier                            | Read from                         |
 |--------------|---------------------------------------|-----------------------------------|
-| PVE          | `vmid`, `name` (e.g. `Gell-EC41E7EB`) | `qm list`                         |
+| PVE          | `vmid` (stable across the VM's life)  | pvesh / qm list                   |
+| PVE          | `name`, `node`, `status`, `tags`      | `qm config <vmid>` + cluster API  |
+| PVE          | `vmgenid`, smbios1.uuid, smbios1.serial | `qm config <vmid>`              |
+| PVE          | sequence_id, provision job_id         | local `vm_provisioning` table + `jobs` |
 | Windows      | `Win32_BIOS.SerialNumber`             | guest-exec (already implemented)  |
 | Windows      | `Win32_ComputerSystemProduct.UUID`    | guest-exec                        |
 | Windows      | `Win32_ComputerSystem.Name`           | guest-exec                        |
-| AD           | `distinguishedName`                   | LDAP under scope OU               |
-| Entra        | `deviceId`, `trustType`               | Graph `/v1.0/devices`             |
-| Intune       | `id`, `serialNumber`, `complianceState` | Graph `/v1.0/deviceManagement/managedDevices` |
+| AD           | `objectGUID` (stable identity)        | LDAP under configured OUs         |
+| AD           | `objectSid`                           | LDAP — joins AD ↔ Entra hybrid   |
+| AD           | `distinguishedName`, `cn`, `sAMAccountName` | LDAP                        |
+| Entra        | `id`, `deviceId`, `trustType`, `onPremisesSecurityIdentifier` | Graph `/v1.0/devices` |
+| Intune       | `id`, `serialNumber`, `azureADDeviceId`, `complianceState` | Graph `/v1.0/deviceManagement/managedDevices` |
 
-The **joining key** is the Windows computer name for AD + Entra, and
-the SMBIOS serial for Intune. The per-VM UUID is used as a tiebreaker
-when names collide (expected for re-enrolled / duplicated devices).
+Join path end-to-end:
+
+```
+PVE.vmid
+  → PVE.smbios1.serial == Windows.SerialNumber == Intune.serialNumber
+  → Windows.ComputerName  == AD.cn / sAMAccountName (bare)
+                            == Entra.displayName
+  → AD.objectSid          == Entra.onPremisesSecurityIdentifier (hybrid only)
+  → Intune.azureADDeviceId == Entra.deviceId
+```
+
+Within AD, `objectGUID` is the durable key (survives rename + OU
+move). Across AD ↔ Entra, the SID is the hybrid-link key. Across
+Entra ↔ Intune, `azureADDeviceId == Entra.deviceId` is the link.
 
 ## Scope restriction
 
@@ -83,6 +102,52 @@ found" without the collector having to pick a winner.
 duplicate appears during provisioning and triggers today's `len(...) == 1`
 assertion somewhere, it's a bug — the whole monitor has to keep running.
 
+## PVE lifecycle tracking
+
+Every sweep also captures a snapshot of each in-scope VM's PVE-side
+state. "In-scope" for PVE = VMs tagged `autopilot` OR VMs with a row
+in the existing `vm_provisioning` table. Config-level changes between
+consecutive snapshots produce lifecycle events on the timeline.
+
+**Captured fields (per VM per sweep):**
+
+- `vmid`, `node`, `name`, `status` (running / stopped / paused /
+  suspended), `tags` (sorted CSV), `lock` (if set).
+- `cores`, `sockets`, `memory_mb`, `balloon_mb`.
+- `machine` (`pc-q35-10.1` etc.), `bios` (seabios / ovmf),
+  `smbios1` (verbatim), `args` (verbatim — where the per-VM SMBIOS
+  file path lives).
+- `vmgenid`.
+- Disks: JSON array of `{bus, index, storage, size_bytes, serial}` —
+  serial matters because our sequence 2 sets a specific SCSI serial
+  (e.g., `APHV000109FC718DFBB8`) for Autopilot stability.
+- Network: JSON array of `{index, model, bridge, mac, firewall, vlan}`.
+- Provisioning linkage (one-shot, joined at read time, not
+  re-captured every sweep): `sequence_id` from `vm_provisioning`, the
+  matching `provision` job id from `jobs`, and its `ended` time.
+
+A `config_digest` = `sha256(canonical_json(snapshot))` lets the
+transition detector cheaply say "no config change since last sweep"
+without a field-by-field compare.
+
+**PVE lifecycle events (computed read-time from consecutive PVE snapshots):**
+
+| From → To                                     | Event type           |
+|-----------------------------------------------|----------------------|
+| status running → stopped                      | power-off            |
+| status stopped → running                      | power-on             |
+| status → paused / suspended                   | paused / suspended   |
+| node A → node B                               | migration            |
+| any config_digest change (not status-only)    | config-changed       |
+| args string change (e.g., SMBIOS file path)   | smbios-reconfig      |
+| disk added / removed                          | disk-attached / detached |
+| tag `autopilot` removed                       | untagged (triggers scope-drop warning) |
+| vm no longer present in `qm list`             | deleted              |
+
+PVE events are stored alongside probe transitions on the per-device
+timeline. A `deleted` event closes out the timeline but the
+historical probe rows are retained indefinitely (append-only DB).
+
 ## Data model
 
 Single new SQLite DB: `web/data/device_monitor.db`. Append-only except
@@ -99,6 +164,38 @@ CREATE TABLE monitoring_sweeps (
     vm_count   INTEGER NOT NULL DEFAULT 0,
     errors_json TEXT NOT NULL DEFAULT '{}'  -- high-level (e.g., Graph token failure)
 );
+
+-- One row per (sweep, VM). Captures PVE-side config state at sweep
+-- time. Lifecycle events (power on/off, migration, config change)
+-- are computed read-time by diffing consecutive snapshots for the
+-- same vmid. config_digest lets the diff short-circuit when nothing
+-- changed.
+CREATE TABLE pve_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sweep_id   INTEGER NOT NULL REFERENCES monitoring_sweeps(id) ON DELETE CASCADE,
+    checked_at TEXT    NOT NULL,
+    vmid       INTEGER NOT NULL,
+    present    INTEGER NOT NULL DEFAULT 1,  -- 0 = "no longer in qm list"
+    node       TEXT,
+    name       TEXT,
+    status     TEXT,                         -- running / stopped / paused / suspended
+    tags_csv   TEXT NOT NULL DEFAULT '',     -- sorted, comma-joined
+    lock_mode  TEXT,                         -- null, migrate, backup, snapshot, etc.
+    cores      INTEGER,
+    sockets    INTEGER,
+    memory_mb  INTEGER,
+    balloon_mb INTEGER,
+    machine    TEXT,
+    bios       TEXT,
+    smbios1    TEXT,                         -- raw
+    args       TEXT,                         -- raw
+    vmgenid    TEXT,
+    disks_json TEXT NOT NULL DEFAULT '[]',   -- array of {bus,index,storage,size_bytes,serial}
+    net_json   TEXT NOT NULL DEFAULT '[]',   -- array of {index,model,bridge,mac,firewall,vlan}
+    config_digest TEXT NOT NULL,             -- sha256 of canonical snapshot JSON
+    probe_error TEXT                          -- set if the qm config call failed
+);
+CREATE INDEX idx_pve_vmid_time ON pve_snapshots (vmid, checked_at DESC);
 
 -- One row per (sweep, VM). The canonical "what's the state right now".
 CREATE TABLE device_probes (
@@ -284,12 +381,22 @@ GET https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$filter=ser
 
 New module `web/device_monitor.py`:
 
-- `probe_vm(vmid, ctx) -> dict` — runs the four probes for one VM.
-  Any single-source exception is caught and stored in
-  `probe_errors_json[source]`; the others still run.
-- `sweep(ctx) -> sweep_id` — enumerates running Windows VMs via
-  `qm list --full`, calls `probe_vm` for each, inserts one
-  `monitoring_sweeps` row + N `device_probes` rows in one transaction.
+- `probe_pve(vmid, ctx) -> dict` — calls `qm config <vmid>` via
+  Proxmox API, normalises into the `pve_snapshots` shape, computes
+  the config_digest. Runs for every in-scope VM, whether the guest
+  agent is up or not.
+- `probe_vm(vmid, ctx) -> dict` — runs the AD / Entra / Intune
+  probes for one VM. Any single-source exception is caught and
+  stored in `probe_errors_json[source]`; the others still run.
+  Guest-exec is only attempted if the VM's PVE status is `running`.
+- `sweep(ctx) -> sweep_id` — enumerates in-scope VMs (tagged
+  `autopilot` OR present in `vm_provisioning`). For each: calls
+  `probe_pve`, then `probe_vm` when the VM is running. Inserts one
+  `monitoring_sweeps` row + N `pve_snapshots` rows + N
+  `device_probes` rows in one transaction. VMs that have dropped
+  out of `qm list` but existed in the previous sweep get a
+  `pve_snapshots` row with `present=0` so the timeline records the
+  deletion.
 - `start_background_loop(app)` — asyncio task registered in the
   FastAPI startup hook. Sleeps `interval_seconds` between sweeps,
   re-reads interval from DB on every loop so UI changes take effect
@@ -299,6 +406,8 @@ New module `web/device_monitor.py`:
 
 A Graph access token is cached per process and refreshed when it's
 within 5 min of expiry; LDAP connections are per-sweep, closed after.
+Proxmox API calls reuse the existing token-auth helper
+(`web.app._proxmox_api`).
 
 ## Regression detection
 
@@ -333,26 +442,98 @@ one object evolving rather than "deleted + created".
 
 ## UI
 
-- `/monitoring` — table: VMID, VM name, last checked, AD ✅/⚠️/❌
-  (✅=1 active, ⚠️=1 disabled or >1 matches, ❌=none), Entra (same),
-  Intune (same), latest regression if any. Each AD cell is clickable
-  and opens a popover listing every match with its source-OU label, so
-  overlapping or duplicated entries are visible at a glance.
-- `/monitoring/<vmid>` — top card: current full state. Below, a
-  timeline of probes (newest first, paginated 50 per page) with each
-  transition flagged and clickable to show the raw JSON diff.
-- `/monitoring/settings` — two sections:
-  1. **Monitor configuration** — enable toggle, interval seconds
-     (min 60, banner below 900: "not tested below 15 minutes"), AD
-     credential selector.
-  2. **AD search OUs** — table of DN / label / enabled / sort order
-     with add / edit / enable-toggle / delete / reorder controls. Save
-     per-row writes `monitoring_search_ous`. The delete and
-     disable controls are grayed out on the last remaining enabled
-     row, with a tooltip explaining "at least one OU must stay
-     enabled." A server-side 409 is the backstop if the UI state
-     drifts. DN input is regex-validated client-side with the same
-     pattern the DAL enforces.
+Three surfaces:
+
+### `/monitoring` — dashboard
+
+Table, one row per VM: VMID, VM name, PVE status (running / migrated /
+deleted), last checked, AD ✅/⚠️/❌ (✅=1 active, ⚠️=1 disabled or >1
+matches, ❌=none), Entra (same, plus ⏳ for sync-pending), Intune
+(same), latest regression if any. Each directory cell is clickable
+and opens a popover listing every match with its source OU (for AD) or
+its raw Graph object (Entra / Intune).
+
+### `/devices/<vmid>` — per-device side-by-side detail page
+
+Replaces and extends the current `/vms/<vmid>` rendering. Top of page
+is a four-column "current state" card, one column per system,
+populated from the most-recent `pve_snapshots` row and the most-recent
+`device_probes` row for this vmid. Fields shown:
+
+| PVE column           | AD column                  | Entra column             | Intune column             |
+|----------------------|----------------------------|--------------------------|---------------------------|
+| vmid, name, node     | objectGUID (short)         | id, deviceId             | id                        |
+| status + lock        | DN                         | displayName              | deviceName                |
+| tags                 | cn / sAMAccountName        | trustType badge          | complianceState badge     |
+| cores / memory / disk| OU container               | onPremisesSyncEnabled    | enrolledDateTime          |
+| smbios.serial / uuid | objectSid                  | onPremisesSecurityIdentifier | serialNumber         |
+| machine / bios       | userAccountControl flags   | accountEnabled           | managedDeviceOwnerType    |
+| args (truncated)     | pwdLastSet, lastLogon      | registrationDateTime     | lastSyncDateTime          |
+| sequence + job link  | whenCreated / whenChanged  | physicalIds (joined)     | azureADDeviceId           |
+
+Cross-column health strip sits above the columns showing the linkage
+keys and whether they match:
+
+- SMBIOS serial → Intune serialNumber: ✅ / ❌
+- Windows name → AD cn : ✅ / ❌ / ⚠️ (case-mismatch)
+- AD.objectSid → Entra.onPremisesSecurityIdentifier (hybrid only): ✅ / ❌ / ⏳
+- Entra.deviceId → Intune.azureADDeviceId: ✅ / ❌
+
+Below the four columns: **unified timeline**. One chronological list
+(newest first, paginated 50 per page) merging PVE lifecycle events,
+directory transitions, and provision/job entries. Each row has a
+coloured source icon (PVE / AD / Entra / Intune / Autopilot), a type
+badge (power-on, rename, ou-move, compliance-flip, link-broken, …),
+the old→new delta, and a click-to-expand with the raw JSON diff of the
+underlying snapshot / probe rows.
+
+At the bottom of the page: **raw data explorer** — collapsible
+sections letting an operator see the last N `pve_snapshots` rows and
+the last N `device_probes.*_matches_json` blobs for this vmid
+directly, for when something funky is going on and the summary hides
+the detail.
+
+### Timestamp rendering
+
+Every timestamp in the system is stored as an ISO 8601 string with an
+explicit UTC offset (`2026-04-20T23:52:14+00:00`). The server never
+renders a formatted date — it emits the raw UTC string inside a
+`<time>` element with the UTC value also in a data attribute, e.g.
+
+```html
+<time datetime="2026-04-20T23:52:14+00:00"
+      data-utc="2026-04-20T23:52:14+00:00">—</time>
+```
+
+A tiny page-level script (loaded on every monitoring + devices page)
+walks every `time[data-utc]` on `DOMContentLoaded` and on history
+change, replaces the text node with
+`new Date(utc).toLocaleString(undefined, { ... })` using the
+browser's resolved locale and timezone, and sets `title` to the raw
+UTC string so hovering shows the source value. An `.relative` class
+switches between absolute ("Apr 21 00:09:14") and relative
+("12 min ago") formats — timeline rows use `.relative` by default,
+the detail panels use absolute. Log exports keep the UTC original
+verbatim regardless of what the browser rendered.
+
+No server-side timezone config. The viewer's browser is authoritative
+for presentation; UTC is authoritative for storage and diffs.
+
+### `/monitoring/settings`
+
+Two sections:
+
+1. **Monitor configuration** — enable toggle, interval seconds
+   (min 60, banner below 900: "not tested below 15 minutes"), AD
+   credential selector.
+2. **AD search OUs** — table of DN / label / enabled / sort order
+   with add / edit / enable-toggle / delete / reorder controls. Save
+   per-row writes `monitoring_search_ous`. The delete and disable
+   controls are grayed out on the last remaining enabled row, with a
+   tooltip explaining "at least one OU must stay enabled." A
+   server-side 409 is the backstop if the UI state drifts. DN input
+   is regex-validated client-side with the same pattern the DAL
+   enforces.
 
 ## Failure modes
 
@@ -417,3 +598,120 @@ Each step commits independently and the system is usable after step 3
 None — scope (OU), interval default (15 min with UI override), duplicate
 tolerance (store all), and credential sources (cred 7 for AD, existing
 vault Entra app for Graph) all confirmed in prior conversation.
+
+## Appendix A — /devices/<vmid> mockup
+
+Timestamps below are shown in UTC for faithfulness to the server-side
+storage. In the live UI every `<time>` element is converted to the
+viewer's browser locale + timezone on load (see **Timestamp
+rendering** above); a user in America/New_York sees `2026-04-20
+19:52:14 EDT`, a user in Europe/Berlin sees `2026-04-21 01:52:14
+CEST`, a user in UTC sees the stored value unchanged, and hover
+always reveals the canonical UTC original.
+
+### Healthy state (VM 116, real data from 2026-04-20 live run)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  ⌂ Devices › 116 › Gell-EC41E7EB                          [ Refresh ] [ Probe now ] [ ⚙ ] │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│  Linkage health                                                                              │
+│   SMBIOS.serial ──✓── Intune.serialNumber                  Gell-EC41E7EB                     │
+│   Windows.Name  ──✓── AD.cn                                GELL-EC41E7EB                     │
+│   AD.objectSid  ──✓── Entra.onPremSecurityIdentifier      S-1-5-21-4163347863-…-4829        │
+│   Entra.deviceId ──✓── Intune.azureADDeviceId             a6c91d4e-3f21-4891-9d44-…         │
+├────────────────────────┬─────────────────────────┬─────────────────────────┬─────────────────┤
+│ PVE                    │ Active Directory        │ Entra (Azure AD)        │ Intune          │
+├────────────────────────┼─────────────────────────┼─────────────────────────┼─────────────────┤
+│ vmid    116            │ objectGUID              │ id                      │ id              │
+│ name    Gell-EC41E7EB  │  7d41fbb4-b239-9ce6-…   │  ab56021c-b01a-485e-…   │  f8153fe8-24e7… │
+│ node    pve2           │                         │                         │                 │
+│ status  ● running      │ DN                      │ displayName             │ deviceName      │
+│ lock    —              │  CN=GELL-EC41E7EB,      │  GELL-EC41E7EB          │  GELL-EC41E7EB  │
+│ tags    autopilot      │  OU=Devices,            │                         │                 │
+│                        │  OU=WorkspaceLabs,      │ trustType               │ complianceState │
+│ cores     2            │  DC=home,DC=gell,DC=one │  ServerAd (Hybrid) 🛡️   │  compliant ✅   │
+│ memory    4096 MB      │                         │                         │                 │
+│ disk      64 GB (scsi0)│ cn / sAM                │ onPremSyncEnabled true  │ enrolled        │
+│                        │  GELL-EC41E7EB          │ onPremLastSync          │  2026-04-20     │
+│ smbios                 │  GELL-EC41E7EB$         │  2026-04-20 23:52 UTC   │  21:14 UTC      │
+│  serial  Gell-EC41E7EB │                         │                         │                 │
+│  uuid    B092D2EB-7D41 │ OU container            │ onPremSecurityId        │ serialNumber    │
+│         -4FB4-B239-…   │  OU=Devices,OU=…        │  S-1-5-21-…-4829        │  Gell-EC41E7EB  │
+│                        │                         │                         │                 │
+│ machine pc-q35-10.1    │ objectSid               │ accountEnabled    true  │ ownerType       │
+│ bios    ovmf           │  S-1-5-21-…-4829        │ registrationDateTime    │  company        │
+│                        │                         │  2026-04-20 23:52 UTC   │                 │
+│ args                   │ UAC flags               │                         │ lastSync        │
+│ -smbios                │  WORKSTATION_TRUST      │ physicalIds (3)         │  2026-04-21     │
+│ file=/var/lib/vz/      │  (no ACCOUNTDISABLE)    │  [USER-HWID]:…          │  00:09 UTC      │
+│ snippets/autopilot-    │                         │  [HWID]:h:…             │                 │
+│ smbios-vm-116.bin      │ pwdLastSet              │  [OrderId]:GellNative   │ azureADDeviceId │
+│                        │  2026-04-20 23:47 UTC   │                         │  a6c91d4e-…     │
+│ Provisioned            │ lastLogonTimestamp      │                         │                 │
+│  sequence #2           │  2026-04-21 00:01 UTC   │                         │                 │
+│  "AD Domain Join—Home" │                         │                         │                 │
+│  job 20260421-fb7d ↗  │ whenCreated             │                         │                 │
+│  2026-04-20 23:48 UTC  │  2026-04-20 23:47 UTC   │                         │                 │
+│                        │ whenChanged             │                         │                 │
+│                        │  2026-04-21 00:01 UTC   │                         │                 │
+└────────────────────────┴─────────────────────────┴─────────────────────────┴─────────────────┘
+
+  Unified timeline                              [newest first · 50/page]  Filter: [All ▾]
+
+  ● 2026-04-21 00:09 UTC  Intune · enrolled          🟢 progression
+                         complianceState → compliant
+  ● 2026-04-20 23:52 UTC  Entra · hybrid-synced      🟢 progression
+                         sync-pending (⏳ 45m) → trustType=ServerAd
+                         onPremSecurityIdentifier populated, link established
+  ● 2026-04-20 23:47 UTC  AD · object-created         🟢 progression
+                         new object in OU=Devices,OU=WorkspaceLabs
+                         cn=GELL-EC41E7EB  objectGUID=7d41fbb4-…
+  ● 2026-04-20 23:42 UTC  PVE · power-on              ⚪ event
+                         stopped → running  (node=pve2)
+  ● 2026-04-20 23:41 UTC  PVE · provisioned          🟢 event
+                         sequence #2 via job 20260421-fb7d
+                         smbios file=autopilot-smbios-vm-116.bin attached
+  ● 2026-04-20 23:41 UTC  PVE · vm-created           ⚪ event
+                         cloned from template 250   tagged: autopilot
+
+  ▶ Raw data explorer (last 5 sweeps)
+      pve_snapshots[0..4]       device_probes[0..4]
+```
+
+### Degraded state (illustrative — every failure mode surfaced)
+
+```
+Linkage health
+ SMBIOS.serial ──✓── Intune.serialNumber
+ Windows.Name  ──⚠── AD.cn            case-mismatch: gell-ec41e7eb vs GELL-EC41E7EB
+ AD.objectSid  ──✗── Entra.onPremSecurityIdentifier   stale Entra device (different SID)
+ Entra.deviceId ──⏳── Intune.azureADDeviceId         Intune not yet linked
+
+AD column:  ⚠️ 2 matches
+            [Active]   CN=GELL-EC41E7EB,OU=Devices,OU=WorkspaceLabs,…
+            [Disabled] CN=GELL-EC41E7EB,OU=OldDevices,OU=WorkspaceLabs,…  ← duplicate
+Entra column: ⚠️ 2 matches
+            ServerAd   id=ab56021c-…  onPremSID matches AD
+            AzureAd    id=07e2b1f9-…  Entra-only, different deviceId  ← stale
+
+Timeline (most recent)
+  ● 2026-04-21 02:15 UTC  AD · renamed                🟡 rename
+                         cn: GELL-EC41E7EB → gell-ec41e7eb   (same objectGUID)
+  ● 2026-04-21 01:58 UTC  Entra · link-broken         🔴 regression
+                         trustType=ServerAd but onPremSecurityIdentifier ≠ AD.objectSid
+  ● 2026-04-20 22:05 UTC  PVE · migration             ⚪ event
+                         node pve2 → pve1
+```
+
+### Visual conventions
+
+- **Column header dot** — `●` green = healthy, `⚠️` yellow = duplicate
+  / disabled / case-mismatch, `❌` red = missing, `⏳` grey =
+  sync-pending.
+- **Linkage strip** at the top is the at-a-glance "are the four
+  systems actually pointing at the same thing?" check — the single
+  most useful piece of the page when something breaks.
+- **Timeline is cross-system and chronological** — a rename on day 5
+  appears next to an Intune compliance flip on the same day, not
+  buried in per-source tabs.
