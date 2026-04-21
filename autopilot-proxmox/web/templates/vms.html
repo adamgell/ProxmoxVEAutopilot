@@ -25,9 +25,9 @@
 {% for vm in vms %}
 <tr>
   <td>{% if vm.status == 'running' %}<input type="checkbox" name="vmids" value="{{ vm.vmid }}:{{ vm.name }}">{% else %}<input type="checkbox" disabled>{% endif %}</td>
-  <td>{{ vm.vmid }}</td>
+  <td><a href="/devices/{{ vm.vmid }}" title="Open monitoring detail (PVE / AD / Entra / Intune)">{{ vm.vmid }}</a></td>
   <td>
-    {{ vm.name }}
+    <a href="/devices/{{ vm.vmid }}" title="Open monitoring detail (PVE / AD / Entra / Intune)">{{ vm.name }}</a>
     {% if vm.sequence_name %}
       <br><small style="color:#666;" title="Provisioned from this sequence">↳ {{ vm.sequence_name }}</small>
     {% endif %}
@@ -151,8 +151,8 @@
 {% for vm in missing_vms %}
 <tr>
   <td>{% if vm.status == 'running' %}<input type="checkbox" name="missing_vmids" value="{{ vm.vmid }}:{{ vm.name }}">{% else %}<input type="checkbox" disabled>{% endif %}</td>
-  <td>{{ vm.vmid }}</td>
-  <td>{{ vm.name }}</td>
+  <td><a href="/devices/{{ vm.vmid }}" title="Open monitoring detail">{{ vm.vmid }}</a></td>
+  <td><a href="/devices/{{ vm.vmid }}" title="Open monitoring detail">{{ vm.name }}</a></td>
   <td>{{ vm.serial }}</td>
   <td>{{ vm.oem }}</td>
   <td>{% if vm.status == 'running' %}<span class="status-green">{{ vm.status }}</span>{% else %}{{ vm.status }}{% endif %}</td>
