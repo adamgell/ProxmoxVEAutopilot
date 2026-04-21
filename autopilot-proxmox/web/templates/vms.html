@@ -121,7 +121,7 @@ async function refreshVms() {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
       {% endif %}
-      <button class="action-btn" type="button" title="Rename to Serial" onclick="if(confirm('Rename computer in VM {{ vm.vmid }} to its serial number? Requires restart to apply.'))postAction('/api/vms/{{ vm.vmid }}/rename');">
+      <button class="action-btn" type="button" title="Rename computer" onclick="openRenameDialog('{{ vm.vmid }}', '{{ vm.name }}');">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#336699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
       </button>
       <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console">
@@ -266,6 +266,104 @@ async function checkEnroll(vmid, btn) {
 function typeText(vmid) {
   var text = prompt('Text to type into VM ' + vmid + ':');
   if (text) postAction('/api/vms/' + vmid + '/typetext', {text: text});
+}
+
+// -----------------------------------------------------------------------
+// Rename-computer dialog.
+// Three inputs, all reactive to a live preview:
+//   - base name     (defaults to the server-suggested target)
+//   - prefix        (prepended to base for bulk "Gell-*" style renames)
+//   - custom name   (fully overrides base+prefix when non-empty)
+// Server validates to NetBIOS-safe (A-Z, 0-9, '-', ≤15 chars).
+// -----------------------------------------------------------------------
+
+async function openRenameDialog(vmid, vmName) {
+  // Fetch the server's suggested target so the preview matches what
+  // a zero-input submit would produce.
+  var suggested = vmName || '';
+  try {
+    var r = await fetch('/api/vms/' + vmid + '/rename-suggest');
+    if (r.ok) {
+      var j = await r.json();
+      suggested = j.suggested || suggested;
+    }
+  } catch (_) { /* offline ok — fall back to vm_name */ }
+
+  var modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;font-family:sans-serif;';
+  modal.innerHTML =
+    '<div style="background:#fff;border-radius:4px;padding:18px;width:440px;box-shadow:0 4px 20px rgba(0,0,0,0.2);">'
+    + '<h3 style="margin:0 0 10px 0;font-size:15px;">Rename VM ' + vmid + '</h3>'
+    + '<p style="color:#666;font-size:12px;margin:0 0 12px 0;">Max 15 chars, A–Z / 0–9 / <code>-</code>. '
+    + 'Sanitisation runs server-side; what you see below is the final live preview.</p>'
+    + '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
+    + '<tr><td style="padding:4px 6px;color:#666;width:90px;">Base name</td>'
+    +   '<td><input id="rnBase" type="text" style="width:100%;font-family:monospace;" '
+    +       'value="' + _htmlEsc(suggested) + '"></td></tr>'
+    + '<tr><td style="padding:4px 6px;color:#666;">Prefix</td>'
+    +   '<td><input id="rnPrefix" type="text" style="width:100%;font-family:monospace;" '
+    +       'placeholder="(optional) prepended to base"></td></tr>'
+    + '<tr><td style="padding:4px 6px;color:#666;">Custom</td>'
+    +   '<td><input id="rnCustom" type="text" style="width:100%;font-family:monospace;" '
+    +       'placeholder="(optional) full override — ignores base+prefix"></td></tr>'
+    + '<tr><td style="padding:8px 6px;color:#666;">Will rename to</td>'
+    +   '<td><code id="rnPreview" style="background:#f1f3f5;padding:2px 6px;border-radius:2px;'
+    +       'display:inline-block;min-width:180px;"></code>'
+    +       '<span id="rnWarn" style="color:#856404;margin-left:8px;font-size:11px;"></span></td></tr>'
+    + '</table>'
+    + '<div style="margin-top:14px;text-align:right;">'
+    +   '<button type="button" id="rnCancel" style="padding:4px 10px;margin-right:6px;">Cancel</button>'
+    +   '<button type="button" id="rnOk" style="padding:4px 10px;background:#336699;color:#fff;border:1px solid #225588;border-radius:3px;">Rename</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+
+  function sanitize(s) { return (s || '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 15); }
+  function computeTarget() {
+    var custom = document.getElementById('rnCustom').value;
+    if (custom) return custom;
+    var prefix = document.getElementById('rnPrefix').value;
+    var base = document.getElementById('rnBase').value;
+    return prefix + base;
+  }
+  function updatePreview() {
+    var raw = computeTarget();
+    var clean = sanitize(raw);
+    var prev = document.getElementById('rnPreview');
+    var warn = document.getElementById('rnWarn');
+    prev.textContent = clean || '(empty)';
+    if (!clean) {
+      warn.textContent = 'empty after sanitisation — rename disabled';
+      document.getElementById('rnOk').disabled = true;
+    } else if (clean !== raw) {
+      warn.textContent = 'sanitised from "' + raw + '"';
+      document.getElementById('rnOk').disabled = false;
+    } else {
+      warn.textContent = '';
+      document.getElementById('rnOk').disabled = false;
+    }
+  }
+  ['rnBase', 'rnPrefix', 'rnCustom'].forEach(function(id) {
+    document.getElementById(id).addEventListener('input', updatePreview);
+  });
+  updatePreview();
+
+  document.getElementById('rnCancel').onclick = function() {
+    document.body.removeChild(modal);
+  };
+  document.getElementById('rnOk').onclick = function() {
+    var target = computeTarget();
+    var clean = sanitize(target);
+    if (!clean) return;
+    document.body.removeChild(modal);
+    postAction('/api/vms/' + vmid + '/rename', {new_name: target});
+  };
+  document.getElementById('rnBase').focus();
+  document.getElementById('rnBase').select();
+}
+
+function _htmlEsc(s) {
+  return (s || '').replace(/[&<>"']/g,
+    function(c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; });
 }
 function postAction(url, fields) {
   var f = document.createElement('form');

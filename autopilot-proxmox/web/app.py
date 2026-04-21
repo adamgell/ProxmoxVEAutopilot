@@ -2659,34 +2659,113 @@ async def vm_key_json(vmid: int, key: str = Form(...)):
     return {"ok": True, "key": key}
 
 
-@app.post("/api/vms/{vmid}/rename")
-async def vm_rename(vmid: int):
-    """Rename the Windows computer inside the VM to match its SMBIOS serial."""
+def _suggested_rename_for_vm(vmid: int, node: str) -> str:
+    """Compute the 'sensible default' target name for a rename.
+
+    Same precedence as the /vms page uses for serial/hostname:
+    guest-exec WMI Serial → vm_name (for autopilot-convention
+    Gell-* names with per-VM SMBIOS files) → smbios1 serial as a
+    last resort.
+    """
+    config = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
+    vm_name = (config.get("name") or "").strip()
+    args = config.get("args") or ""
+    per_vm_smbios = "smbios file=" in args
+    smbios1 = config.get("smbios1") or ""
+    # Prefer the Windows-side authoritative serial when the guest is
+    # reachable. If the agent is dead, vm_name is the next-best
+    # source — our autopilot flow makes vm_name == real serial.
+    try:
+        raw = _fetch_guest_windows_details(node, vmid) or {}
+    except Exception:
+        raw = {}
+    if raw.get("Serial"):
+        return raw["Serial"]
+    if per_vm_smbios and vm_name.lower().startswith("gell-"):
+        return vm_name
+    smbios_serial = _decode_smbios_serial(smbios1)
+    if smbios_serial:
+        return smbios_serial
+    return vm_name  # last resort — better than empty
+
+
+def _sanitize_windows_hostname(raw: str) -> str:
+    """Windows NetBIOS name constraints: 1-15 chars, no spaces, no
+    reserved chars. Strip whitespace / dots / slashes / etc.; truncate
+    to 15 chars. Returns '' if the result is empty."""
+    return re.sub(r"[^A-Za-z0-9\-]", "", (raw or "").strip())[:15]
+
+
+@app.get("/api/vms/{vmid}/rename-suggest")
+async def vm_rename_suggest(vmid: int):
+    """Return the suggested target name + source so the UI can show a
+    preview before the operator commits. Free of side effects."""
     cfg = _load_proxmox_config()
     node = cfg.get("proxmox_node", "pve")
     try:
-        # Get the serial from the VM config
-        config = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config")
-        smbios1 = config.get("smbios1", "") if isinstance(config, dict) else ""
-        serial = _decode_smbios_serial(smbios1)
-        if not serial:
-            return _redirect_with_error("/vms", f"VM {vmid} has no serial number configured")
-        # Windows hostnames max 15 chars, no special chars
-        hostname = re.sub(r'[^A-Za-z0-9\-]', '', serial)[:15]
+        suggested = _suggested_rename_for_vm(vmid, node)
+    except Exception as e:
+        raise HTTPException(500, f"probe failed: {e}") from e
+    sanitized = _sanitize_windows_hostname(suggested)
+    return {
+        "suggested": suggested,
+        "sanitized": sanitized,
+        "max_length": 15,
+    }
+
+
+@app.post("/api/vms/{vmid}/rename")
+async def vm_rename(vmid: int, new_name: str = Form("")):
+    """Rename the Windows computer inside the VM.
+
+    ``new_name`` is the operator's final choice (maybe with a prefix,
+    maybe custom); if omitted we fall back to the computed suggestion
+    so the button can still be clicked from scripts without a form.
+    Updates the Proxmox VM name to match so /vms, /devices, and
+    monitoring stay in sync.
+    """
+    cfg = _load_proxmox_config()
+    node = cfg.get("proxmox_node", "pve")
+    try:
+        target = (new_name or "").strip()
+        if not target:
+            target = _suggested_rename_for_vm(vmid, node)
+        hostname = _sanitize_windows_hostname(target)
         if not hostname:
-            return _redirect_with_error("/vms", f"Serial '{serial}' produces invalid hostname")
-        # Update Proxmox VM name to include the serial
-        pve_name = re.sub(r'[^A-Za-z0-9\-]', '', serial)
-        _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/config", data={"name": pve_name})
-        # Execute rename via guest agent
-        ps_cmd = f"Rename-Computer -NewName '{hostname}' -Force"
-        _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/agent/exec", data={
-            "command": "powershell.exe",
-            "input-data": ps_cmd,
-        })
+            return _redirect_with_error(
+                "/vms",
+                f"Rename target '{target}' produced an empty hostname "
+                "after sanitisation (Windows allows A-Z, 0-9, '-' only, "
+                "max 15 chars).",
+            )
+        # Update Proxmox VM name (uses same sanitised form).
+        _proxmox_api_put(
+            f"/nodes/{node}/qemu/{vmid}/config", data={"name": hostname},
+        )
+        # Execute rename via guest agent — best effort; if the agent
+        # is dead the PVE rename still stuck, which is useful.
+        try:
+            ps_cmd = f"Rename-Computer -NewName '{hostname}' -Force"
+            _proxmox_api_post(
+                f"/nodes/{node}/qemu/{vmid}/agent/exec",
+                data={"command": "powershell.exe", "input-data": ps_cmd},
+            )
+        except Exception:
+            # PVE rename succeeded, guest-side didn't. User sees the
+            # VM-name change; Windows-side rename requires manual
+            # action or agent recovery.
+            return _redirect_with_error(
+                "/vms",
+                f"Renamed VM {vmid} to {hostname} (PVE only — guest "
+                "agent unreachable, run Rename-Computer manually inside "
+                "Windows or reboot to pick up the new name).",
+            )
     except Exception as e:
         return _redirect_with_error("/vms", f"Rename failed: {e}")
-    return _redirect_with_error("/vms", f"Renamed VM {vmid} to {hostname} — restart required to apply")
+    return _redirect_with_error(
+        "/vms",
+        f"Renamed VM {vmid} to {hostname} — restart required to apply",
+    )
 
 
 @app.post("/api/jobs/capture-and-upload")
