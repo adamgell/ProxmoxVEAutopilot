@@ -24,6 +24,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import re
 import shlex
+import socket
 from urllib.parse import quote_plus
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -1059,12 +1060,12 @@ def get_autopilot_vms():
             ):
                 guest_details[vmid] = details
 
-    # Fallback IP source: the QEMU guest agent's own
-    # network-get-interfaces endpoint. This works for any running
-    # guest agent — doesn't need PowerShell on Windows, works for
-    # Linux too. Used when _fetch_guest_windows_details returned
-    # nothing (PS exec failed, guest isn't running Windows, etc.)
-    # but the base agent might still answer the lighter query.
+    # Fallback IP sources, in order:
+    #   1. QEMU guest agent's network-get-interfaces — cheaper than
+    #      PowerShell exec, answers whenever the base agent is up.
+    #   2. AD DNS lookup against the DC — works even when the guest
+    #      agent is entirely dead, as long as the VM is
+    #      domain-joined and auto-registered its A record.
     ip_fallback: dict[int, str] = {}
     def fetch_ip(vmid):
         try:
@@ -1091,6 +1092,40 @@ def get_autopilot_vms():
         with ThreadPoolExecutor(max_workers=10) as pool:
             for vmid, ip in pool.map(fetch_ip, running_vmids):
                 ip_fallback[vmid] = ip
+
+    # DNS fallback for VMs whose agent is entirely dead. Domain-
+    # joined Windows VMs auto-register an A record with the AD-
+    # integrated DNS server, so a simple A lookup against the DC
+    # gives us the live IP without any agent involvement.
+    def fetch_ip_from_dns(vm_name: str) -> str:
+        if not vm_name:
+            return ""
+        try:
+            import dns.resolver
+            r = dns.resolver.Resolver(configure=False)
+            r.nameservers = [socket.gethostbyname(cfg.get("ldap_host", "dns.home.gell.one"))]
+            r.timeout = 3
+            r.lifetime = 3
+            fqdn = f"{vm_name}.{cfg.get('ad_realm', 'HOME.GELL.ONE').lower()}"
+            answer = r.resolve(fqdn, "A")
+            return str(answer[0]) if answer else ""
+        except Exception:
+            return ""
+
+    dns_fallback: dict[int, str] = {}
+    needs_dns = [vm["vmid"] for vm in autopilot_vms
+                 if vm.get("status") == "running"
+                 and not (guest_details.get(vm["vmid"], {}) or {}).get("IPAddress")
+                 and not ip_fallback.get(vm["vmid"])]
+    if needs_dns:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            names = [(v, next((x.get("name") for x in autopilot_vms
+                              if x["vmid"] == v), "")) for v in needs_dns]
+            for vmid, ip in pool.map(
+                lambda pair: (pair[0], fetch_ip_from_dns(pair[1])),
+                names,
+            ):
+                dns_fallback[vmid] = ip
 
     result = []
     for vm in autopilot_vms:
@@ -1157,7 +1192,8 @@ def get_autopilot_vms():
             "os_build": str(guest.get("OSBuild", "") or ""),
             "os_version": guest.get("OSVersion", "") or "",
             "ip_address": (guest.get("IPAddress", "")
-                           or ip_fallback.get(vm["vmid"], "")),
+                           or ip_fallback.get(vm["vmid"], "")
+                           or dns_fallback.get(vm["vmid"], "")),
             "last_boot": guest.get("LastBootUpTime", "") or "",
         })
     return sorted(result, key=lambda v: v["vmid"])
