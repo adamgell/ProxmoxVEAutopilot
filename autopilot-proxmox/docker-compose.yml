@@ -2,6 +2,7 @@ services:
   autopilot:
     image: ghcr.io/adamgell/proxmox-autopilot:latest
     container_name: autopilot
+    command: ["web"]
     network_mode: host
     volumes:
       # vault.yml is RW so the /settings page can rotate secrets from the
@@ -17,11 +18,12 @@ services:
       # container via the host Docker socket to do `git pull` +
       # `docker compose up -d`. The sidecar needs the host repo
       # dir to git-pull + find the compose file.
+      # These two mounts are web-only; builder/monitor don't need them.
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/ProxmoxVEAutopilot:/host/repo
     security_opt:
       - apparmor=unconfined
-    environment:
+    environment: &common_env
       # MD4 (NT hash) lives in OpenSSL's legacy provider in 3.x.
       # Required by python-ldap's NTLM fallback + any transient
       # kinit path that still ends up needing it.
@@ -30,6 +32,46 @@ services:
       # /host/repo via the bind mount). Used by /api/update/run
       # to tell the sidecar where to run git pull / compose.
       HOST_REPO_PATH: /opt/ProxmoxVEAutopilot
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  autopilot-builder:
+    image: ghcr.io/adamgell/proxmox-autopilot:latest
+    # No container_name: --scale spins up replicas which need auto-names.
+    command: ["builder"]
+    network_mode: host
+    # Anchor lives here: the shared 5-mount set (no docker.sock, no /host/repo).
+    volumes: &common_mounts
+      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
+      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
+      - ./output:/app/output
+      - autopilot-jobs:/app/jobs
+      - ./secrets:/app/secrets
+    security_opt:
+      - apparmor=unconfined
+    environment: *common_env
+    depends_on:
+      autopilot:
+        condition: service_healthy
+    restart: unless-stopped
+
+  autopilot-monitor:
+    image: ghcr.io/adamgell/proxmox-autopilot:latest
+    container_name: autopilot-monitor
+    command: ["monitor"]
+    network_mode: host
+    volumes: *common_mounts
+    security_opt:
+      - apparmor=unconfined
+    environment: *common_env
+    depends_on:
+      autopilot:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
