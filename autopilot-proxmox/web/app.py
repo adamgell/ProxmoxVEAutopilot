@@ -436,84 +436,86 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
         except Exception:
             return None
 
-    # --- LDAP ---
-    ad_cred = _resolve_ad_credential()
+    # --- LDAP (python-ldap + SASL/GSSAPI) ---
     ldap_host = cfg.get("ldap_host", "dns.home.gell.one")
+    keytab_path = cfg.get("ad_keytab_path", "/etc/krb5.keytab")
+    ad_principal = cfg.get("ad_kerberos_principal", "svc-apmon$@HOME.GELL.ONE")
 
     def _ad_search(search_base: str, win_name: str) -> list[dict]:
-        # Auth path choice — evaluated against this cluster's DC:
-        #   - Plain SIMPLE over port 389 → strongerAuthRequired (LDAP
-        #     signing enforced).
-        #   - LDAPS on port 636 → "Connection reset by peer" because
-        #     no LDAPS cert is issued on the DC (no Enterprise CA).
-        #   - NTLM → works, negotiates the signing the DC demands.
-        # NTLM requires MD4 (NT hash); OpenSSL 3.x hides MD4 behind
-        # the legacy provider, enabled via OPENSSL_CONF in the
-        # Dockerfile. DEPRECATION FOLLOW-UP: NTLMv1 / v2 are both on
-        # Microsoft's removal path (Windows Server 2025+ disables
-        # NTLM by default; future Windows client releases will
-        # follow). Migrate to Kerberos (GSSAPI with a
-        # container-side keytab) or to LDAPS once a DC-issued cert
-        # is available. See docs/specs/2026-04-20-device-state-
-        # monitoring-design.md → "Auth follow-up".
-        from ldap3 import Connection, Server, SUBTREE, NTLM
-        from ldap3.utils.conv import escape_filter_chars
-        user = ad_cred.get("username") or ""
-        password = ad_cred.get("password") or ""
-        if not user or not password:
+        # python-ldap binds via libsasl2-modules-gssapi-mit, which
+        # negotiates signing with the DC automatically (SASL SSF: 256).
+        # GSSAPI auto-acquires credentials from the keytab via
+        # KRB5_CLIENT_KTNAME + KRB5_CCNAME; we set both so the sweep
+        # doesn't depend on any external kinit. The keytab is kept
+        # fresh by the DC-side refresher cron (B.8); staleness
+        # surfaces as a health probe signal (B.4).
+        import os
+        import ldap
+        import ldap.sasl
+        import ldap.filter
+
+        if not Path(keytab_path).exists():
             raise RuntimeError(
-                "AD credential not configured "
-                "(see /monitoring/settings → AD credential)"
+                f"Kerberos keytab not found at {keytab_path}. Configure "
+                "the DC-side refresher cron (docs/specs/...#auth-follow-up) "
+                "or set ad_keytab_path in vars.yml."
             )
-        server = Server(ldap_host, use_ssl=False, connect_timeout=10)
-        # KNOWN LIMITATION: against DCs that enforce "LDAP signing
-        # required" (Windows Server default since 2023), NTLM through
-        # ldap3 will hit strongerAuthRequired because ldap3 2.x does
-        # NOT negotiate NTLM sign+seal. The AD probe records this as
-        # a per-OU error and the other sources (PVE / Entra / Intune)
-        # continue to work. To resolve: either deploy an LDAPS cert
-        # on the DC (LDAPS here currently resets the connection
-        # because no cert is issued) OR switch this block to Kerberos
-        # GSSAPI with a container-side keytab. Both are tracked in
-        # docs/specs/2026-04-20-device-state-monitoring-design.md
-        # → "Auth follow-up".
-        conn = Connection(
-            server, user=user, password=password,
-            authentication=NTLM, auto_bind=True,
-        )
+        # Point MIT Kerberos at our keytab + a private ccache per
+        # process so concurrent sweeps don't clobber each other.
+        env = os.environ.copy()
+        os.environ["KRB5_CLIENT_KTNAME"] = keytab_path
+        os.environ.setdefault("KRB5CCNAME", f"FILE:/tmp/krb5cc_ad_{os.getpid()}")
         try:
-            conn.search(
-                search_base=search_base,
-                search_filter=f"(&(objectClass=computer)(name={escape_filter_chars(win_name)}))",
-                search_scope=SUBTREE,
-                attributes=[
-                    "objectGUID", "objectSid",
-                    "distinguishedName", "cn", "sAMAccountName", "name",
-                    "userAccountControl", "whenCreated", "whenChanged",
-                    "pwdLastSet", "lastLogonTimestamp",
-                    "operatingSystem", "operatingSystemVersion",
-                    "dNSHostName",
-                ],
-            )
-            out: list[dict] = []
-            for e in conn.entries:
-                attrs: dict = {}
-                for a in e.entry_attributes:
-                    v = e[a].value
-                    # Coerce bytes / datetimes to strings so json.dumps
-                    # in the caller never chokes.
-                    if isinstance(v, bytes):
-                        v = v.hex()
-                    elif hasattr(v, "isoformat"):
-                        v = v.isoformat()
-                    attrs[a] = v
-                out.append(attrs)
-            return out
-        finally:
+            l = ldap.initialize(f"ldap://{ldap_host}")
+            l.set_option(ldap.OPT_REFERRALS, 0)
+            l.set_option(ldap.OPT_PROTOCOL_VERSION, 3)
+            l.set_option(ldap.OPT_NETWORK_TIMEOUT, 10)
+            # sasl.gssapi("") uses the default (keytab-backed) principal.
+            l.sasl_interactive_bind_s("", ldap.sasl.gssapi(""))
             try:
-                conn.unbind()
-            except Exception:
-                pass
+                fltr = ("(&(objectClass=computer)(name="
+                        + ldap.filter.escape_filter_chars(win_name) + "))")
+                raw = l.search_s(
+                    search_base, ldap.SCOPE_SUBTREE, fltr,
+                    [
+                        "objectGUID", "objectSid",
+                        "distinguishedName", "cn", "sAMAccountName", "name",
+                        "userAccountControl", "whenCreated", "whenChanged",
+                        "pwdLastSet", "lastLogonTimestamp",
+                        "operatingSystem", "operatingSystemVersion",
+                        "dNSHostName",
+                    ],
+                )
+            finally:
+                try:
+                    l.unbind_s()
+                except Exception:
+                    pass
+        finally:
+            # Restore the prior env so other parts of the process
+            # (Ansible runs, Graph probes) don't inherit our kerberos
+            # config.
+            os.environ.clear()
+            os.environ.update(env)
+
+        out: list[dict] = []
+        for dn, attrs in raw:
+            if dn is None:
+                continue  # LDAP referral (we disabled referral chasing)
+            flat: dict = {"distinguishedName": dn}
+            for k, vlist in attrs.items():
+                # python-ldap hands back lists of bytes; coerce to a
+                # single JSON-safe value (hex for non-UTF-8 bytes).
+                v = vlist[0] if vlist else None
+                if isinstance(v, bytes):
+                    try:
+                        flat[k] = v.decode("utf-8")
+                    except UnicodeDecodeError:
+                        flat[k] = v.hex()
+                else:
+                    flat[k] = v
+            out.append(flat)
+        return out
 
     # --- Graph ---
     tenant = cfg.get("vault_entra_tenant_id", "")
