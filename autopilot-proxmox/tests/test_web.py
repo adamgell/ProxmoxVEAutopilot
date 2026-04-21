@@ -291,3 +291,9 @@ def test_web_writes_service_health_heartbeat_on_startup(client):
     rows = service_health.list_services(web_app.DEVICE_MONITOR_DB)
     ids = [r["service_id"] for r in rows]
     assert "web" in ids
+
+
+def test_healthz_ok_after_startup(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
