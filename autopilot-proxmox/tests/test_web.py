@@ -291,3 +291,17 @@ def test_web_writes_service_health_heartbeat_on_startup(client):
     rows = service_health.list_services(web_app.DEVICE_MONITOR_DB)
     ids = [r["service_id"] for r in rows]
     assert "web" in ids
+
+
+def test_kill_sets_kill_requested_flag(client):
+    """POST /api/jobs/<id>/kill flips kill_requested=1 and redirects."""
+    from web import app as app_module, jobs_db
+    jobs_db.enqueue(app_module.JOBS_DB, job_id="live",
+                    job_type="capture_hash", playbook="x",
+                    cmd=["sleep", "1"], args={})
+    jobs_db.claim_next_job(app_module.JOBS_DB, worker_id="test-worker")
+
+    r = client.post("/api/jobs/live/kill", follow_redirects=False)
+    assert r.status_code == 303
+    row = jobs_db.get_job(app_module.JOBS_DB, "live")
+    assert row["kill_requested"] == 1
