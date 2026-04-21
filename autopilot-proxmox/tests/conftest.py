@@ -27,6 +27,12 @@ as-is.
 """
 from __future__ import annotations
 
+import os
+
+# Tests never go through Entra — flip the auth bypass BEFORE web.app
+# is imported so the env check in app.py picks it up.
+os.environ.setdefault("AUTOPILOT_AUTH_BYPASS", "1")
+
 from pathlib import Path
 
 import pytest

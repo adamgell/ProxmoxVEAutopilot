@@ -34,3 +34,8 @@ impacket>=0.12,<1.0
 # sidecar outlives our own container's restart, so the self-update
 # completes even as this process is being replaced.
 docker>=7,<8
+# Entra OIDC for the web UI. authlib wraps the Authorization-Code +
+# PKCE flow, discovery, JWT validation. itsdangerous is a Starlette
+# SessionMiddleware dep for cookie signing.
+authlib>=1.3,<2.0
+itsdangerous>=2.1,<3.0

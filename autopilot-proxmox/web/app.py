@@ -311,6 +311,185 @@ job_manager = JobManager(jobs_dir=str(BASE_DIR / "jobs"))
 from web import sequences_db, crypto as _crypto
 from web import sequence_compiler
 from web import device_history_db, device_monitor
+from web import auth as _auth
+
+
+# ---------------------------------------------------------------------------
+# Entra OIDC auth — every route except /auth/*, /healthz, /api/version,
+# and /static/ requires a valid session.
+# ---------------------------------------------------------------------------
+
+_SESSION_SECRET_FILE = SECRETS_DIR / "session_secret"
+
+
+def _load_or_create_session_secret() -> str:
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    if _SESSION_SECRET_FILE.exists():
+        return _SESSION_SECRET_FILE.read_text().strip()
+    import secrets as _sec
+    s = _sec.token_urlsafe(48)
+    _SESSION_SECRET_FILE.write_text(s)
+    try:
+        os.chmod(_SESSION_SECRET_FILE, 0o600)
+    except Exception:
+        pass
+    return s
+
+
+def _auth_config() -> dict:
+    cfg = _load_proxmox_config()
+    return {
+        "tenant_id": cfg.get("vault_entra_tenant_id", ""),
+        "client_id": cfg.get("vault_entra_app_id", ""),
+        "client_secret": cfg.get("vault_entra_app_secret", ""),
+        "redirect_uri": cfg.get(
+            "auth_redirect_uri",
+            "https://autopilot.gell.one/auth/callback",
+        ),
+        "admin_group_id": cfg.get("vault_entra_admin_group_id") or None,
+    }
+
+
+# Tests set AUTOPILOT_AUTH_BYPASS=1 so the middleware doesn't redirect
+# every fixture to /auth/login. Never set this in production — the
+# fail-open behaviour is only safe inside pytest.
+_AUTH_BYPASS = os.environ.get("AUTOPILOT_AUTH_BYPASS") == "1"
+
+
+# NOTE on middleware order: Starlette runs the LAST-added middleware
+# first, so we register _require_auth FIRST (becomes inner) and
+# SessionMiddleware LAST (becomes outer). That way SessionMiddleware
+# populates request.session before _require_auth tries to read it.
+@app.middleware("http")
+async def _require_auth(request: Request, call_next):
+    """Reject un-authenticated requests before they reach any handler.
+    Exempt routes get a free pass; everything else redirects to
+    /auth/login (for HTML) or returns 401 (for JSON/API)."""
+    if _AUTH_BYPASS:
+        return await call_next(request)
+    if _auth.is_exempt_path(request.url.path):
+        return await call_next(request)
+    if request.session.get("user"):
+        return await call_next(request)
+    accept = request.headers.get("accept", "")
+    if request.url.path.startswith("/api/") or "application/json" in accept:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "authentication required"},
+        )
+    next_url = request.url.path
+    if request.url.query:
+        next_url += "?" + request.url.query
+    return RedirectResponse(
+        url=f"/auth/login?next={next_url}", status_code=302,
+    )
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request, next: str = "/"):
+    """Redirect the browser to Entra for sign-in."""
+    cfg = _auth_config()
+    if not cfg["tenant_id"] or not cfg["client_id"]:
+        return HTMLResponse(
+            "<h1>Auth not configured</h1>"
+            "<p>Set <code>vault_entra_tenant_id</code> and "
+            "<code>vault_entra_app_id</code> in vault.yml, then run "
+            "<code>scripts/ad/configure_entra_auth.py</code>.</p>",
+            status_code=500,
+        )
+    url = _auth.build_login_url(
+        request,
+        tenant_id=cfg["tenant_id"],
+        client_id=cfg["client_id"],
+        redirect_uri=cfg["redirect_uri"],
+        next_url=_auth.safe_next_url(next),
+    )
+    return RedirectResponse(url=url, status_code=302)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request, code: str = "",
+                        state: str = "", error: str = "",
+                        error_description: str = ""):
+    """Exchange the auth code for an ID token, validate, drop session."""
+    if error:
+        return HTMLResponse(
+            f"<h1>Sign-in cancelled</h1>"
+            f"<p><code>{error}</code>: {error_description}</p>"
+            f"<p><a href='/auth/login'>Try again</a></p>",
+            status_code=400,
+        )
+    expected_state = request.session.pop("oidc_state", None)
+    code_verifier = request.session.pop("oidc_verifier", None)
+    next_url = _auth.safe_next_url(request.session.pop("oidc_next", "/"))
+    if not code or not expected_state or state != expected_state:
+        return HTMLResponse(
+            "<h1>State mismatch</h1><p>Sign-in flow got out of sync. "
+            "<a href='/auth/login'>Start over</a>.</p>",
+            status_code=400,
+        )
+    cfg = _auth_config()
+    tok = _auth.exchange_code_for_token(
+        tenant_id=cfg["tenant_id"],
+        client_id=cfg["client_id"],
+        client_secret=cfg["client_secret"],
+        redirect_uri=cfg["redirect_uri"],
+        code=code, code_verifier=code_verifier,
+    )
+    id_token = tok.get("id_token")
+    if not id_token:
+        return HTMLResponse(
+            "<h1>Missing id_token</h1>"
+            "<p>Token response didn't include an id_token. Confirm "
+            "the app reg has 'ID tokens' enabled under Authentication.</p>",
+            status_code=500,
+        )
+    try:
+        claims = _auth.validate_id_token(
+            id_token,
+            tenant_id=cfg["tenant_id"],
+            client_id=cfg["client_id"],
+        )
+    except Exception as e:
+        return HTMLResponse(
+            f"<h1>Token validation failed</h1><pre>{e}</pre>",
+            status_code=401,
+        )
+    user = _auth.user_from_claims(claims)
+    if not _auth.is_authorized(user, admin_group_id=cfg["admin_group_id"]):
+        return HTMLResponse(
+            f"<h1>Access denied</h1>"
+            f"<p>{user.get('email') or user.get('upn')} is signed in but "
+            f"isn't a member of the required admin group "
+            f"(<code>{cfg['admin_group_id']}</code>).</p>",
+            status_code=403,
+        )
+    request.session["user"] = user
+    return RedirectResponse(url=next_url, status_code=302)
+
+
+@app.get("/auth/logout")
+async def auth_logout(request: Request):
+    """Clear the session; operator's Entra browser session remains
+    (they'd need to log out of Microsoft itself to fully sign out).
+    After clearing, hand back to Entra's logout endpoint so MS clears
+    too — best effort; stubbed out as a simple redirect to /."""
+    request.session.clear()
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/healthz")
+async def healthz():
+    """Uptime probe — exempt from auth so external monitors can hit it."""
+    return {"ok": True}
+
+
+# SessionMiddleware is the LAST middleware registered so it sits OUTER-
+# most in Starlette's stack — runs before every other middleware +
+# handler, so request.session is ready when _require_auth checks it.
+_auth.install_session_middleware(
+    app, secret=_load_or_create_session_secret(),
+)
 
 
 @app.on_event("startup")
