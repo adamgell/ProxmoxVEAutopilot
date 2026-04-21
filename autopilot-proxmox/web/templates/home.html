@@ -1,18 +1,591 @@
 {% extends "base.html" %}
-{% block title %}Home - Proxmox VE Autopilot{% endblock %}
+{% block title %}Dashboard - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Status</h2>
-<table>
-<tr><td><b>Running Jobs</b></td><td>{{ running_count }}</td></tr>
-<tr><td><b>Hash Files</b></td><td>{{ hash_count }}</td></tr>
-<tr><td><b>Total Jobs</b></td><td>{{ total_jobs }}</td></tr>
-</table>
-<h2>Actions</h2>
-<ul>
-<li><a href="/provision">Provision VMs from template</a></li>
-<li><a href="/template">Build a new template from ISO</a></li>
-<li><a href="/upload">Upload hardware hashes to Intune</a></li>
-<li><a href="/hashes">Browse captured hash files</a></li>
-<li><a href="/jobs">View job history</a></li>
-</ul>
+<style>
+/* -----------------------------------------------------------------
+   Dashboard-only layout. Everything else lives in base.html's
+   token system — no hex values here, just var() references so
+   dark mode works without extra rules.
+   ----------------------------------------------------------------- */
+
+/* Module spacing: a touch more breathing room than the default
+   <h2> rhythm so the five modules read as distinct areas. */
+.dash-module {
+  margin-top: 24px;
+}
+.dash-module:first-of-type { margin-top: 0; }
+
+.dash-module h3 {
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+/* --- Module 1: service health strip ------------------------------ */
+.svc-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.svc-strip-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+.svc-strip-meta code {
+  background: var(--panel);
+}
+.svc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--neutral-bg);
+  color: var(--neutral-fg);
+}
+.svc-chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neutral-fg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--neutral-fg) 15%, transparent);
+}
+.svc-chip.ok    { background: var(--ok-bg);   color: var(--ok-fg); }
+.svc-chip.ok    .dot { background: var(--ok-fg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok-fg) 25%, transparent); }
+.svc-chip.warn  { background: var(--warn-bg); color: var(--warn-fg); }
+.svc-chip.warn  .dot { background: var(--warn-fg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn-fg) 25%, transparent); }
+.svc-chip.bad   { background: var(--bad-bg);  color: var(--bad-fg); }
+.svc-chip.bad   .dot { background: var(--bad-fg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad-fg) 25%, transparent); }
+.svc-chip .svc-detail {
+  color: inherit;
+  opacity: 0.7;
+  font-weight: 400;
+  font-size: 10.5px;
+}
+
+/* --- Module 2: Live now + Fleet health (two columns) ------------- */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 800px) {
+  .two-col { grid-template-columns: 1fr; }
+}
+
+.card-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+}
+
+/* Live-now hero number + queued pill. */
+.live-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.live-count {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  font-size: 38px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.live-label {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.queued-pill {
+  margin-left: auto;
+  align-self: center;
+}
+
+.running-row {
+  display: block;
+  text-decoration: none;
+  color: var(--ink);
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.running-row:hover {
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--hover);
+}
+.running-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12.5px;
+  gap: 8px;
+}
+.running-row-target {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.running-row-elapsed {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-muted);
+  flex-shrink: 0;
+}
+.progress-track {
+  margin-top: 4px;
+  height: 4px;
+  background: var(--surface-muted);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--ms-blue-dark);
+  transition: width 300ms ease-out;
+}
+.live-empty {
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+/* Fleet health 2x2 grid. */
+.fleet-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.fleet-total-num {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.fleet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.fleet-cell {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--panel);
+  transition: border-color 120ms, background 120ms;
+}
+.fleet-cell:hover {
+  border-color: var(--ms-blue);
+  background: var(--hover);
+  text-decoration: none;
+  color: var(--ink);
+}
+.fleet-cell-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.fleet-cell-value {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.1;
+  margin-top: 2px;
+}
+.fleet-cell-value.muted {
+  color: var(--ink-soft);
+}
+
+/* --- Module 3: Launchpad ----------------------------------------- */
+.launchpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .launchpad { grid-template-columns: 1fr; }
+}
+.cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 20px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink);
+  transition: background 120ms, border-color 120ms, transform 80ms;
+}
+.cta:hover {
+  background: var(--hover);
+  border-color: var(--ms-blue);
+  text-decoration: none;
+  color: var(--ink);
+}
+.cta:active { transform: translateY(0.5px); }
+.cta.primary {
+  background: var(--ms-blue-dark);
+  color: #ffffff;
+  border-color: var(--ms-blue-dark);
+}
+.cta.primary:hover {
+  background: var(--ms-blue-dark);
+  color: #ffffff;
+  filter: brightness(1.08);
+}
+
+/* --- Module 4: Recent jobs table --------------------------------- */
+.recent-jobs-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.recent-jobs-head a {
+  font-size: 12px;
+}
+#recent-jobs-table td { font-size: 12.5px; }
+#recent-jobs-table .mono {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+/* --- Module 5: Quick shortcuts ----------------------------------- */
+.shortcuts {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-muted);
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.shortcuts a {
+  color: var(--ink-muted);
+  text-decoration: none;
+}
+.shortcuts a:hover {
+  color: var(--ms-blue-dark);
+  text-decoration: underline;
+}
+</style>
+
+<h1>Dashboard</h1>
+<p class="subtitle">Operator status overview — updates live.</p>
+
+<!-- Module 1: Service health strip (hidden until we confirm the
+     backend table exists) -->
+<section id="svc-strip-section" class="dash-module" hidden>
+  <h3>Service health</h3>
+  <div id="svc-strip" class="svc-strip">
+    <span class="svc-strip-meta" id="svc-strip-meta"></span>
+  </div>
+</section>
+
+<!-- Module 2: Live now + Fleet health -->
+<section class="dash-module two-col">
+  <div class="card-panel" id="live-now">
+    <h3>Live now</h3>
+    <div class="live-head">
+      <span class="live-count" id="live-count">{{ initial_running_count }}</span>
+      <span class="live-label">running</span>
+      <span class="badge pending queued-pill" id="queued-pill">{{ initial_queued_count }} queued</span>
+    </div>
+    <div id="running-list">
+      <div class="live-empty">No active jobs.</div>
+    </div>
+  </div>
+
+  <div class="card-panel" id="fleet-health">
+    <h3>Fleet health</h3>
+    <div class="fleet-total">
+      <span class="fleet-total-num" id="fleet-total">—</span>
+      <span class="live-label">devices</span>
+    </div>
+    <div class="fleet-grid">
+      <a class="fleet-cell" href="/vms" data-key="ad_joined_pct">
+        <div class="fleet-cell-label">AD joined</div>
+        <div class="fleet-cell-value muted">—</div>
+      </a>
+      <a class="fleet-cell" href="/vms" data-key="autopilot_pct">
+        <div class="fleet-cell-label">Autopilot</div>
+        <div class="fleet-cell-value muted">—</div>
+      </a>
+      <a class="fleet-cell" href="/vms" data-key="intune_pct">
+        <div class="fleet-cell-label">Intune</div>
+        <div class="fleet-cell-value muted">—</div>
+      </a>
+      <a class="fleet-cell" href="/vms" data-key="mde_pct">
+        <div class="fleet-cell-label">MDE</div>
+        <div class="fleet-cell-value muted">—</div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Module 3: Launchpad -->
+<section class="dash-module">
+  <h3>Launchpad</h3>
+  <div class="launchpad">
+    <a class="cta primary" href="/provision">Provision VMs →</a>
+    <a class="cta" href="/template">Build Template</a>
+    <a class="cta" href="/hashes">Capture Hash</a>
+  </div>
+</section>
+
+<!-- Module 4: Recent jobs -->
+<section class="dash-module">
+  <div class="recent-jobs-head">
+    <h3 style="margin-bottom:0;">Recent jobs</h3>
+    <a href="/jobs">View all →</a>
+  </div>
+  <table id="recent-jobs-table">
+    <thead>
+      <tr>
+        <th style="width:18%">ID</th>
+        <th style="width:22%">Playbook</th>
+        <th>Target</th>
+        <th style="width:14%">Status</th>
+        <th style="width:18%">Started</th>
+      </tr>
+    </thead>
+    <tbody id="recent-jobs-body">
+      <tr><td colspan="5" style="color:var(--ink-muted); text-align:center; padding:16px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Module 5: Quick shortcuts -->
+<nav class="shortcuts">
+  <a href="/sequences">Sequences</a>
+  <span>·</span>
+  <a href="/answer-isos">Answer ISOs</a>
+  <span>·</span>
+  <a href="/hashes">Hashes</a>
+  <span>·</span>
+  <a href="/credentials">Credentials</a>
+</nav>
+
+<script>
+(function() {
+  // ---------------- helpers ------------------
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return "";
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function fmtElapsed(sec) {
+    if (sec == null || isNaN(sec)) return "—";
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    if (h) return h + "h " + m + "m";
+    if (m) return m + "m " + s + "s";
+    return s + "s";
+  }
+  function fmtRelative(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var sec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (sec < 60)   return sec + "s ago";
+    if (sec < 3600) return Math.floor(sec / 60) + "m ago";
+    if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+    return Math.floor(sec / 86400) + "d ago";
+  }
+  function statusClass(s) {
+    if (s === "running")  return "pending";
+    if (s === "complete") return "ok";
+    if (s === "failed")   return "error";
+    return "unknown";
+  }
+  function statusLabel(s) {
+    if (!s) return "—";
+    return s.toUpperCase();
+  }
+
+  // ---------------- module 1: service strip --
+  function renderServices(data) {
+    var section = document.getElementById("svc-strip-section");
+    if (!data || data.available === false || !Array.isArray(data.services) || !data.services.length) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = false;
+    var strip = document.getElementById("svc-strip");
+    // Clear out existing chips but leave the meta span at the end.
+    var meta = document.getElementById("svc-strip-meta");
+    strip.querySelectorAll(".svc-chip").forEach(function(el) { el.remove(); });
+
+    data.services.forEach(function(svc) {
+      var age = svc.age_seconds;
+      var cls = "bad";
+      if (age != null && age <= 20)      cls = "ok";
+      else if (age != null && age <= 50) cls = "warn";
+      var chip = document.createElement("span");
+      chip.className = "svc-chip " + cls;
+      var detail = svc.detail ? '<span class="svc-detail">· ' + escapeHtml(svc.detail) + '</span>' : '';
+      chip.innerHTML =
+        '<span class="dot"></span>' +
+        '<span>' + escapeHtml(svc.service_id) + '</span>' +
+        '<span class="svc-detail">' + (age == null ? "" : age + "s") + '</span>' +
+        detail;
+      strip.insertBefore(chip, meta);
+    });
+  }
+  function renderStripMeta(version) {
+    var meta = document.getElementById("svc-strip-meta");
+    var running = (version && version.running) || {};
+    var sha = running.sha_short || "—";
+    var when = running.build_time && running.build_time !== "unknown" ? running.build_time : "";
+    meta.innerHTML =
+      '<span>build <code class="mono">' + escapeHtml(sha) + '</code></span>' +
+      (when ? '<span>· built ' + escapeHtml(when) + '</span>' : '');
+  }
+
+  // ---------------- module 2a: live jobs -----
+  function renderLive(data) {
+    var running = (data && data.running) || [];
+    document.getElementById("live-count").textContent = (data && data.running_count) || 0;
+    document.getElementById("queued-pill").textContent = ((data && data.queued_count) || 0) + " queued";
+
+    var list = document.getElementById("running-list");
+    if (!running.length) {
+      list.innerHTML = '<div class="live-empty">No active jobs.</div>';
+      return;
+    }
+    var html = "";
+    running.slice(0, 3).forEach(function(j) {
+      var target = j.target || j.playbook || "—";
+      html +=
+        '<a class="running-row" href="/jobs/' + encodeURIComponent(j.id) + '">' +
+          '<div class="running-row-head">' +
+            '<span class="running-row-target">' +
+              escapeHtml(j.playbook || "") + ' · ' + escapeHtml(target) +
+            '</span>' +
+            '<span class="running-row-elapsed">' + fmtElapsed(j.elapsed_seconds) + '</span>' +
+          '</div>' +
+          '<div class="progress-track">' +
+            '<div class="progress-fill" style="width:' + (j.progress_pct || 0) + '%;"></div>' +
+          '</div>' +
+        '</a>';
+    });
+    list.innerHTML = html;
+  }
+
+  // ---------------- module 2b: fleet ---------
+  function renderFleet(data) {
+    if (!data) data = {};
+    var total = data.total || 0;
+    document.getElementById("fleet-total").textContent = total ? total : "—";
+    var cells = document.querySelectorAll(".fleet-cell");
+    cells.forEach(function(cell) {
+      var key = cell.dataset.key;
+      var valEl = cell.querySelector(".fleet-cell-value");
+      var v = data[key];
+      if (v == null) {
+        valEl.textContent = "—";
+        valEl.classList.add("muted");
+      } else {
+        valEl.textContent = v + "%";
+        valEl.classList.remove("muted");
+      }
+    });
+  }
+
+  // ---------------- module 4: recent jobs ----
+  function renderRecent(data) {
+    var jobs = (data && data.jobs) || [];
+    var tbody = document.getElementById("recent-jobs-body");
+    if (!jobs.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="5" style="color:var(--ink-muted); text-align:center; padding:16px;">No jobs yet.</td></tr>';
+      return;
+    }
+    var html = "";
+    jobs.forEach(function(j) {
+      html +=
+        '<tr>' +
+          '<td><a href="/jobs/' + encodeURIComponent(j.id) + '"><span class="mono">' + escapeHtml(j.id) + '</span></a></td>' +
+          '<td>' + escapeHtml(j.playbook || "—") + '</td>' +
+          '<td>' + escapeHtml(j.target || "—") + '</td>' +
+          '<td><span class="badge ' + statusClass(j.status) + '">' + escapeHtml(statusLabel(j.status)) + '</span></td>' +
+          '<td title="' + escapeHtml(j.started || "") + '">' + escapeHtml(fmtRelative(j.started)) + '</td>' +
+        '</tr>';
+    });
+    tbody.innerHTML = html;
+  }
+
+  // ---------------- polling ------------------
+  function safeFetch(url) {
+    return fetch(url, {cache: "no-store"}).then(function(r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  function refreshServices() {
+    safeFetch("/api/services").then(renderServices).catch(function() {
+      // Network hiccup — just hide the strip until next poll succeeds.
+      document.getElementById("svc-strip-section").hidden = true;
+    });
+  }
+  function refreshLive() {
+    safeFetch("/api/jobs/running").then(renderLive).catch(function() {});
+    safeFetch("/api/jobs/recent?limit=5").then(renderRecent).catch(function() {});
+  }
+  function refreshFleet() {
+    safeFetch("/api/fleet/summary").then(renderFleet).catch(function() {});
+  }
+  function refreshVersion() {
+    safeFetch("/api/version").then(renderStripMeta).catch(function() {});
+  }
+
+  // Initial paint + poll schedules.
+  refreshServices();
+  refreshVersion();
+  refreshLive();
+  refreshFleet();
+  setInterval(refreshServices, 10000);
+  setInterval(refreshLive, 5000);
+  setInterval(refreshFleet, 30000);
+})();
+</script>
 {% endblock %}

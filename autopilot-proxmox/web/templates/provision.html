@@ -2,12 +2,12 @@
 {% block title %}Provision VMs - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 <h2>Provision VMs from Template
-  <small style="color:#999;font-weight:normal;font-size:11px;">
+  <small style="color:var(--ink-soft);font-weight:normal;font-size:11px;">
     Template VMID: {{ defaults.template_vmid or '—' }}{% if template_disk_gb %} · template disk {{ template_disk_gb }} GB{% endif %}
     · <a href="/settings">change defaults</a>
   </small>
 </h2>
-<p style="color:#666;font-size:11px;">Fields are pre-filled from <a href="/settings">Settings</a>. Override here for this provision run only.</p>
+<p style="color:var(--ink-muted);font-size:11px;">Fields are pre-filled from <a href="/settings">Settings</a>. Override here for this provision run only.</p>
 
 <form method="POST" action="/api/jobs/provision">
 <table border="0" cellpadding="3">
@@ -18,7 +18,7 @@
     <option value="{{ s.id }}"{% if s.is_default %} selected{% endif %}>{{ s.name }}{% if s.is_default %} (default){% endif %}</option>
     {% endfor %}
   </select>
-  <small style="color:#999;">Phase A: selection is recorded but still uses the hardcoded flow. Phase B wires the compiler.</small></td>
+  <small style="color:var(--ink-soft);">Phase A: selection is recorded but still uses the hardcoded flow. Phase B wires the compiler.</small></td>
 </tr>
 <tr>
   <td><b>OEM Profile:</b></td>
@@ -27,7 +27,7 @@
     <option value="{{ key }}"{% if key == defaults.oem_profile %} selected{% endif %}>{{ key }} - {{ profile.manufacturer }} {{ profile.product }}</option>
     {% endfor %}
   </select>
-  <small style="color:#999;">default: {{ defaults.oem_profile or '—' }}</small></td>
+  <small style="color:var(--ink-soft);">default: {{ defaults.oem_profile or '—' }}</small></td>
 </tr>
 <tr>
   <td><b>Chassis Type override:</b></td>
@@ -44,17 +44,17 @@
     <option value="32">32 — Detachable</option>
     <option value="35">35 — Mini PC</option>
   </select>
-  <small style="color:#999;">Overrides the OEM profile's chassis_type. Applied to the guest via SMBIOS Type 3; reports through WMI Win32_SystemEnclosure.</small>
+  <small style="color:var(--ink-soft);">Overrides the OEM profile's chassis_type. Applied to the guest via SMBIOS Type 3; reports through WMI Win32_SystemEnclosure.</small>
   </td>
 </tr>
 <tr>
   <td><b>VM Count:</b></td>
-  <td><input type="number" name="count" value="{{ defaults.count }}" min="1" max="50"> <small style="color:#999;">default: {{ defaults.count }}</small></td>
+  <td><input type="number" name="count" value="{{ defaults.count }}" min="1" max="50"> <small style="color:var(--ink-soft);">default: {{ defaults.count }}</small></td>
 </tr>
 <tr>
   <td><b>Hostname Pattern:</b></td>
   <td><input type="text" name="hostname_pattern" value="{{ defaults.hostname_pattern | default('autopilot-{serial}') }}" size="30" placeholder="autopilot-{serial}">
-    <small style="color:#999;">
+    <small style="color:var(--ink-soft);">
       Tokens: <code>{serial}</code>, <code>{vmid}</code>, <code>{index}</code>.
       Windows: used for computer-name during specialize pass.
       Ubuntu: applied via cloud-init on first boot.
@@ -62,28 +62,28 @@
 </tr>
 <tr>
   <td><b>CPU Cores:</b></td>
-  <td><input type="number" name="cores" value="{{ defaults.cores }}" min="1" max="64"> <small style="color:#999;">default: {{ defaults.cores }}</small></td>
+  <td><input type="number" name="cores" value="{{ defaults.cores }}" min="1" max="64"> <small style="color:var(--ink-soft);">default: {{ defaults.cores }}</small></td>
 </tr>
 <tr>
   <td><b>Memory (MB):</b></td>
-  <td><input type="number" name="memory_mb" value="{{ defaults.memory_mb }}" min="512" step="512"> <small style="color:#999;">default: {{ defaults.memory_mb }}</small></td>
+  <td><input type="number" name="memory_mb" value="{{ defaults.memory_mb }}" min="512" step="512"> <small style="color:var(--ink-soft);">default: {{ defaults.memory_mb }}</small></td>
 </tr>
 <tr>
   <td><b>Disk Size (GB):</b></td>
   <td><input type="number" name="disk_size_gb" value="{{ defaults.disk_size_gb }}" min="{{ template_disk_gb or 1 }}" max="2048">
-    <small style="color:#999;">
+    <small style="color:var(--ink-soft);">
       default: {{ defaults.disk_size_gb }}{% if template_disk_gb %} · template minimum: {{ template_disk_gb }} GB{% endif %}
     </small></td>
 </tr>
 <tr>
   <td><b>Serial Prefix:</b></td>
   <td><input type="text" name="serial_prefix" value="{{ defaults.serial_prefix }}" size="30">
-    <small style="color:#999;">default: {{ defaults.serial_prefix or 'OEM profile prefix' }}</small></td>
+    <small style="color:var(--ink-soft);">default: {{ defaults.serial_prefix or 'OEM profile prefix' }}</small></td>
 </tr>
 <tr>
   <td><b>Group Tag:</b></td>
   <td><input type="text" name="group_tag" value="{{ defaults.group_tag }}" size="30">
-    <small style="color:#999;">default: {{ defaults.group_tag or '—' }}</small></td>
+    <small style="color:var(--ink-soft);">default: {{ defaults.group_tag or '—' }}</small></td>
 </tr>
 <tr>
   <td></td>
