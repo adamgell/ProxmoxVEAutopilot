@@ -336,3 +336,132 @@ def test_join_ad_domain_allows_empty_ou_path():
     ])
     result = sequence_compiler.compile(seq)
     assert len(result.runonce_steps) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase B.2b — local_admin, run_script, install_module
+# ---------------------------------------------------------------------------
+
+def test_local_admin_emits_runonce_step():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "local_admin", "params": {"credential_id": 17}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert len(result.runonce_steps) == 1
+    step = result.runonce_steps[0]
+    assert step["step_type"] == "local_admin"
+    assert step["credential_id"] == 17
+    # No reboot — creating a local user + group membership takes effect
+    # immediately; Windows doesn't need a restart to see it.
+    assert step["causes_reboot"] is False
+    assert "{{ cred.username | ps_escape }}" in step["ps_template"]
+    assert "{{ cred.password | ps_escape }}" in step["ps_template"]
+    assert "New-LocalUser" in step["ps_template"]
+    # Uses the well-known Administrators SID so it works on localized Windows.
+    assert "S-1-5-32-544" in step["ps_template"]
+
+
+def test_local_admin_tolerates_missing_credential_id():
+    """Like join_ad_domain, local_admin treats 0/None as a placeholder the
+    renderer will complain about — compiling does not fail."""
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "local_admin", "params": {}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.runonce_steps[0]["credential_id"] == 0
+
+
+def test_run_script_passes_body_and_reboot_flag():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "run_script",
+         "params": {
+             "name": "enable-firewall",
+             "script": "Set-NetFirewallProfile -Profile Domain -Enabled True",
+             "causes_reboot": True,
+         }},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert len(result.runonce_steps) == 1
+    step = result.runonce_steps[0]
+    assert step["step_type"] == "run_script"
+    assert step["credential_id"] is None
+    assert step["causes_reboot"] is True
+    assert step["params"]["script"] == "Set-NetFirewallProfile -Profile Domain -Enabled True"
+    # The template just echoes the script into the envelope; unescaped
+    # on purpose (operator writes PS, not a PS string literal).
+    assert "{{ params.script }}" in step["ps_template"]
+
+
+def test_run_script_defaults_reboot_to_false():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "run_script",
+         "params": {"script": "Write-Host hi"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert result.runonce_steps[0]["causes_reboot"] is False
+
+
+def test_run_script_empty_body_is_compile_error():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "run_script", "params": {"script": "  \n  "}},
+    ])
+    with pytest.raises(sequence_compiler.CompilerError):
+        sequence_compiler.compile(seq)
+
+
+def test_install_module_minimal():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module", "params": {"module": "PSWindowsUpdate"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    step = result.runonce_steps[0]
+    assert step["step_type"] == "install_module"
+    assert step["credential_id"] is None
+    assert step["causes_reboot"] is False
+    assert step["params"]["module"] == "PSWindowsUpdate"
+    # Empty defaults — renderer decides PSGallery + AllUsers inline.
+    assert step["params"]["version"] == ""
+    assert step["params"]["repository"] == ""
+    assert step["params"]["scope"] == ""
+    assert "Install-Module" in step["ps_template"]
+    assert "Install-PackageProvider -Name NuGet" in step["ps_template"]
+
+
+def test_install_module_with_version_and_scope():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module",
+         "params": {"module": "Az", "version": "11.2.0",
+                    "repository": "PSGallery", "scope": "CurrentUser"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    p = result.runonce_steps[0]["params"]
+    assert p == {"module": "Az", "version": "11.2.0",
+                 "repository": "PSGallery", "scope": "CurrentUser"}
+
+
+def test_install_module_requires_name():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "install_module", "params": {"module": ""}},
+    ])
+    with pytest.raises(sequence_compiler.CompilerError):
+        sequence_compiler.compile(seq)
+
+
+def test_b2b_step_types_preserve_sequence_order():
+    from web import sequence_compiler
+    seq = _make_sequence([
+        {"step_type": "local_admin",    "params": {"credential_id": 1}},
+        {"step_type": "install_module", "params": {"module": "Az"}},
+        {"step_type": "run_script",     "params": {"script": "Write-Host done"}},
+    ])
+    result = sequence_compiler.compile(seq)
+    assert [s["step_type"] for s in result.runonce_steps] == [
+        "local_admin", "install_module", "run_script"]
