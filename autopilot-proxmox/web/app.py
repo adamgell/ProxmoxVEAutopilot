@@ -4050,3 +4050,42 @@ def api_monitoring_search_ous_delete(ou_id: int):
     except device_history_db.CannotDeleteLastOu as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Device state monitoring — UI pages
+# ---------------------------------------------------------------------------
+
+def _ad_first_seen_map() -> dict[int, str]:
+    """For each vmid that has an AD match in any historical probe,
+    return the earliest checked_at at which ad_found=1. Used to
+    decide whether "Entra missing" is a sync-pending ⏳ or a real ❌."""
+    import sqlite3
+    conn = sqlite3.connect(DEVICE_MONITOR_DB)
+    try:
+        rows = conn.execute(
+            "SELECT vmid, MIN(checked_at) FROM device_probes "
+            "WHERE ad_found = 1 GROUP BY vmid"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {int(vmid): ts for vmid, ts in rows}
+
+
+@app.get("/monitoring", response_class=HTMLResponse)
+def page_monitoring(request: Request):
+    from web import monitoring_view
+    latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    rows = monitoring_view.build_dashboard_rows(
+        latest,
+        ad_first_seen=_ad_first_seen_map(),
+        now_iso=now_iso,
+    )
+    settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    return templates.TemplateResponse("monitoring.html", {
+        "request": request,
+        "rows": rows,
+        "settings": settings,
+        "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
+    })

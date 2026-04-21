@@ -207,6 +207,7 @@ a:visited {
 <a href="/answer-isos">Answer ISOs</a> |
 <a href="/cloud">Cloud</a> |
 <a href="/jobs">Jobs</a> |
+<a href="/monitoring">Monitoring</a> |
 <a href="/settings">Settings</a>
 </div>
 <div id="content">
@@ -219,6 +220,53 @@ a:visited {
   <button type="button" onclick="checkUpdate(true);" style="margin-left:8px;font-size:10px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">Check for updates</button>
 </div>
 <script>
+// -----------------------------------------------------------------------
+// <time data-utc=...> → browser locale + timezone.
+// Server always emits UTC in ISO 8601. This script converts each
+// <time> with a data-utc attribute to the viewer's locale on load
+// and on MutationObserver fires (for dynamically injected rows).
+// The original UTC string is preserved in `title` so hovering any
+// rendered timestamp shows the canonical UTC source.
+// -----------------------------------------------------------------------
+(function() {
+  function fmt(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    try {
+      return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        timeZoneName: 'short',
+      });
+    } catch (e) {
+      return d.toString();
+    }
+  }
+  function convertAll(root) {
+    (root || document).querySelectorAll('time[data-utc]').forEach(function(el) {
+      var utc = el.getAttribute('data-utc');
+      if (!utc || el.dataset.tzDone === '1') return;
+      el.textContent = fmt(utc);
+      if (!el.title) el.title = utc;
+      el.dataset.tzDone = '1';
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { convertAll(); });
+  } else {
+    convertAll();
+  }
+  // Catch dynamically added <time> elements.
+  if (window.MutationObserver) {
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        m.addedNodes && m.addedNodes.forEach(function(n) {
+          if (n.nodeType === 1) convertAll(n);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+})();
 (function() {
   function renderBadge(data) {
     var sha = data.running && data.running.sha_short ? data.running.sha_short : 'unknown';

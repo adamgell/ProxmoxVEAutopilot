@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Monitoring - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+
+<style>
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
+           font-size: 11px; line-height: 1.4; font-weight: 600;
+           border: 1px solid transparent; }
+  .badge.ok      { background: #d4edda; color: #155724; border-color: #c3e6cb; }
+  .badge.warn    { background: #fff3cd; color: #856404; border-color: #ffeeba; }
+  .badge.missing { background: #f8d7da; color: #721c24; border-color: #f5c6cb; }
+  .badge.pending { background: #e2e3e5; color: #383d41; border-color: #d6d8db; }
+  .badge.error   { background: #f5c6cb; color: #721c24; border-color: #f1b0b7; }
+  .badge.unknown { background: #f8f9fa; color: #6c757d; border-color: #dee2e6; }
+  .count-pill    { font-size: 10px; opacity: 0.7; margin-left: 3px; }
+  .pve-running   { color: #155724; }
+  .pve-stopped   { color: #6c757d; }
+  .pve-other     { color: #856404; }
+  .monitor-status { margin: 10px 0; padding: 8px;
+                    background: #f8f9fa; border: 1px solid #dee2e6; }
+</style>
+
+<h2>Device monitoring</h2>
+
+<div class="monitor-status">
+  <strong>Status:</strong>
+  {% if settings.enabled %}
+    <span class="badge ok">enabled</span>
+  {% else %}
+    <span class="badge missing">disabled</span>
+  {% endif %}
+  · sweep every {{ settings.interval_seconds }}s
+  {% if settings.interval_seconds < 900 %}
+    <span class="badge warn" title="Not tested below 15 minutes — upstream AD→Entra sync cadence is ~30min.">aggressive</span>
+  {% endif %}
+  · searching {{ search_ous | length }} OU{% if search_ous | length != 1 %}s{% endif %}
+  (<a href="/monitoring/settings">configure</a>)
+</div>
+
+{% if not rows %}
+  <p>No devices probed yet. The background monitor runs every
+  {{ settings.interval_seconds }} seconds — check back after the first
+  sweep completes. You can also
+  <a href="/monitoring/settings">adjust settings</a>
+  (interval, AD credential, search OUs).</p>
+{% else %}
+
+<table>
+  <tr>
+    <th>VMID</th>
+    <th>Name</th>
+    <th>Node</th>
+    <th>PVE</th>
+    <th>Windows name</th>
+    <th>Serial</th>
+    <th>AD</th>
+    <th>Entra</th>
+    <th>Intune</th>
+    <th>Last checked</th>
+    <th>Actions</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.vmid }}</td>
+    <td><a href="/devices/{{ r.vmid }}">{{ r.vm_name or '(unnamed)' }}</a></td>
+    <td>{{ r.node }}</td>
+    <td class="{% if r.pve_status == 'running' %}pve-running{% elif r.pve_status == 'stopped' %}pve-stopped{% else %}pve-other{% endif %}">
+      {{ r.pve_status or '—' }}
+    </td>
+    <td>{{ r.win_name or '—' }}</td>
+    <td>{{ r.serial or '—' }}</td>
+    <td>
+      <span class="badge {{ r.ad_badge }}" title="{{ r.ad_count }} AD match{% if r.ad_count != 1 %}es{% endif %}">
+        {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.ad_badge] }}
+        {% if r.ad_count > 1 %}<span class="count-pill">×{{ r.ad_count }}</span>{% endif %}
+      </span>
+    </td>
+    <td>
+      <span class="badge {{ r.entra_badge }}" title="{{ r.entra_trust_type or 'no match' }} ({{ r.entra_count }})">
+        {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.entra_badge] }}
+        {% if r.entra_trust_type %}<span class="count-pill">{{ r.entra_trust_type }}</span>{% endif %}
+        {% if r.entra_count > 1 %}<span class="count-pill">×{{ r.entra_count }}</span>{% endif %}
+      </span>
+    </td>
+    <td>
+      <span class="badge {{ r.intune_badge }}" title="{{ r.intune_compliance or 'no match' }} ({{ r.intune_count }})">
+        {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.intune_badge] }}
+        {% if r.intune_compliance %}<span class="count-pill">{{ r.intune_compliance }}</span>{% endif %}
+        {% if r.intune_count > 1 %}<span class="count-pill">×{{ r.intune_count }}</span>{% endif %}
+      </span>
+    </td>
+    <td>
+      <time datetime="{{ r.last_checked }}"
+            data-utc="{{ r.last_checked }}"
+            title="{{ r.last_checked }}">{{ r.last_checked }}</time>
+    </td>
+    <td><a href="/devices/{{ r.vmid }}">Detail</a></td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% endif %}
+
+{% endblock %}
