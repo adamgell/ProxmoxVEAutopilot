@@ -217,7 +217,20 @@ a:visited {
   Proxmox VE Autopilot &copy; 2026
   <span style="margin-left:15px;">Build: <span id="buildSha" style="font-family:monospace;">…</span></span>
   <span id="updateBadge" style="margin-left:8px;"></span>
-  <button type="button" onclick="checkUpdate(true);" style="margin-left:8px;font-size:10px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">Check for updates</button>
+  <button id="updateBtn" type="button" onclick="onUpdateClick();"
+          style="margin-left:8px;font-size:10px;padding:1px 6px;background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;">Check for updates</button>
+  <span id="updateStatus" style="margin-left:8px;"></span>
+</div>
+
+<!-- Self-update progress overlay (hidden by default) -->
+<div id="updateOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;color:#fff;font-family:monospace;padding:40px;overflow:auto;">
+  <h2 style="color:#fff;margin:0 0 10px 0;">Updating autopilot…</h2>
+  <div id="updateStage" style="color:#ffc;margin-bottom:10px;">starting sidecar…</div>
+  <pre id="updateLog" style="background:#111;color:#ddd;padding:10px;border:1px solid #444;max-height:60vh;overflow:auto;font-size:12px;"></pre>
+  <div id="updateFooter" style="margin-top:12px;color:#aaa;font-size:12px;">
+    The container will restart when the new image is pulled.
+    The browser connection will drop briefly — this page will auto-reload once the new build is reachable.
+  </div>
 </div>
 <script>
 // -----------------------------------------------------------------------
@@ -268,6 +281,9 @@ a:visited {
   }
 })();
 (function() {
+  var latestSha = null;   // remember origin/main head so the Update
+                          // button can label itself with the target.
+
   function renderBadge(data) {
     var sha = data.running && data.running.sha_short ? data.running.sha_short : 'unknown';
     var when = data.running && data.running.build_time && data.running.build_time !== 'unknown' ? data.running.build_time : '';
@@ -276,21 +292,110 @@ a:visited {
     el.title = (data.running && data.running.sha ? data.running.sha : '') + (when ? ' — built ' + when : '');
 
     var badge = document.getElementById('updateBadge');
+    var btn = document.getElementById('updateBtn');
     if (data.update_available === true) {
-      badge.innerHTML = '<a href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank" style="display:inline-block;padding:1px 6px;background:#fff3cd;color:#856404;border-radius:3px;font-weight:bold;text-decoration:none;">Update available: ' + (data.latest.sha_short || '?') + '</a>';
+      latestSha = (data.latest && data.latest.sha_short) || null;
+      badge.innerHTML = '<a href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank" style="display:inline-block;padding:1px 6px;background:#fff3cd;color:#856404;border-radius:3px;font-weight:bold;text-decoration:none;">Update available: ' + (latestSha || '?') + '</a>';
+      // Morph "Check for updates" → actionable "Update now" button.
+      btn.textContent = latestSha ? 'Update to ' + latestSha : 'Update now';
+      btn.style.background = '#198754';
+      btn.style.color = '#fff';
+      btn.style.borderColor = '#146c43';
+      btn.dataset.mode = 'update';
     } else if (data.update_available === false) {
       badge.innerHTML = '<span style="display:inline-block;padding:1px 6px;background:#d4edda;color:#155724;border-radius:3px;">up to date</span>';
+      btn.textContent = 'Check for updates';
+      btn.style.background = '';
+      btn.style.color = '';
+      btn.style.borderColor = '#ccc';
+      btn.dataset.mode = 'check';
     } else if (data.latest && data.latest.error) {
       badge.innerHTML = '<span style="color:#999;">update check failed</span>';
       badge.title = data.latest.error;
+      btn.dataset.mode = 'check';
     } else {
       badge.innerHTML = '';
+      btn.dataset.mode = 'check';
     }
   }
+
   window.checkUpdate = function(withRemote) {
     var url = withRemote ? '/api/version?check=1' : '/api/version';
     fetch(url).then(function(r) { return r.json(); }).then(renderBadge).catch(function(){});
   };
+
+  // ---- Self-update flow ----
+  async function doUpdate() {
+    var overlay = document.getElementById('updateOverlay');
+    var stage = document.getElementById('updateStage');
+    var logEl = document.getElementById('updateLog');
+    overlay.style.display = 'block';
+    stage.textContent = 'spawning update sidecar…';
+    logEl.textContent = '';
+    try {
+      var r = await fetch('/api/update/run', {method: 'POST'});
+      if (!r.ok) {
+        stage.textContent = 'start failed: ' + (await r.text());
+        return;
+      }
+      var body = await r.json();
+      stage.textContent = 'sidecar started (' + (body.container_id || 'unknown') + ') — streaming log…';
+    } catch (e) {
+      stage.textContent = 'request failed — is the container still reachable? ' + e;
+      return;
+    }
+
+    // Poll status until the sidecar finishes OR we lose the backend.
+    var firstLostContact = null;
+    var pollInterval = 2000;
+    async function poll() {
+      try {
+        var r = await fetch('/api/update/status');
+        if (!r.ok) throw new Error('status ' + r.status);
+        var s = await r.json();
+        firstLostContact = null;
+        logEl.textContent = s.log || '(waiting for output…)';
+        logEl.scrollTop = logEl.scrollHeight;
+        if (s.running) {
+          stage.textContent = 'sidecar running…';
+        } else if (s.finished) {
+          stage.textContent = 'update complete — reloading in 3s…';
+          setTimeout(function() { location.reload(); }, 3000);
+          return;
+        } else {
+          stage.textContent = 'sidecar finished — checking new build…';
+          setTimeout(function() { location.reload(); }, 2000);
+          return;
+        }
+      } catch (e) {
+        // Backend lost — that's EXPECTED during the compose up phase
+        // when our container is being replaced. Show a friendly
+        // message and keep polling until the new container answers.
+        firstLostContact = firstLostContact || Date.now();
+        var secs = Math.floor((Date.now() - firstLostContact) / 1000);
+        stage.textContent = 'container restarting (' + secs + 's)… waiting for new build to come up';
+        // After 120s of lost contact without recovery, give up.
+        if (secs > 120) {
+          stage.textContent = 'container did not come back in 120s — manually check docker compose logs autopilot';
+          return;
+        }
+      }
+      setTimeout(poll, pollInterval);
+    }
+    poll();
+  }
+
+  window.onUpdateClick = function() {
+    var btn = document.getElementById('updateBtn');
+    if (btn.dataset.mode === 'update') {
+      if (confirm('Pull latest image and restart the autopilot container?\n\nThe browser will reload automatically when the new build is up.')) {
+        doUpdate();
+      }
+    } else {
+      checkUpdate(true);
+    }
+  };
+
   // Initial render: show the running build. Do the GitHub check after a
   // short delay so the rest of the page loads first.
   checkUpdate(false);

@@ -28,3 +28,9 @@ pypsrp>=0.8,<1.0
 # by the one-shot scripts/ad/create_gmsa.py via DCSync for
 # diagnostics.
 impacket>=0.12,<1.0
+# docker-py talks to /var/run/docker.sock directly. Used by
+# POST /api/update/run to spawn a short-lived sidecar container
+# that runs `git pull && docker compose up -d autopilot` — the
+# sidecar outlives our own container's restart, so the self-update
+# completes even as this process is being replaced.
+docker>=7,<8

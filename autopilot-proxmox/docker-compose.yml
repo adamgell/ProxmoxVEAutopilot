@@ -12,8 +12,24 @@ services:
       - ./output:/app/output
       - autopilot-jobs:/app/jobs
       - ./secrets:/app/secrets
+      # Self-update: the footer's [Update] button POSTs to
+      # /api/update/run, which spawns a short-lived sidecar
+      # container via the host Docker socket to do `git pull` +
+      # `docker compose up -d`. The sidecar needs the host repo
+      # dir to git-pull + find the compose file.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/ProxmoxVEAutopilot:/host/repo
     security_opt:
       - apparmor=unconfined
+    environment:
+      # MD4 (NT hash) lives in OpenSSL's legacy provider in 3.x.
+      # Required by python-ldap's NTLM fallback + any transient
+      # kinit path that still ends up needing it.
+      OPENSSL_CONF: /etc/ssl/openssl-legacy.cnf
+      # Host repo path (available inside the container at
+      # /host/repo via the bind mount). Used by /api/update/run
+      # to tell the sidecar where to run git pull / compose.
+      HOST_REPO_PATH: /opt/ProxmoxVEAutopilot
     restart: unless-stopped
 
 volumes:

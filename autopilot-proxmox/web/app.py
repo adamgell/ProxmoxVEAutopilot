@@ -3228,6 +3228,173 @@ def _fetch_latest_main_sha():
     return cache
 
 
+# ---------------------------------------------------------------------------
+# Self-update endpoint
+# ---------------------------------------------------------------------------
+
+_UPDATE_LOG = BASE_DIR / "output" / "update.log"
+_UPDATE_SIDECAR_NAME = "autopilot-updater"
+
+
+def _host_repo_path() -> str:
+    """Absolute path on the host of the cloned repo. docker-compose.yml
+    bind-mounts it at /host/repo inside us; the sidecar needs the
+    *host-side* path because its docker.sock calls get translated
+    against the host's filesystem namespace."""
+    return os.environ.get("HOST_REPO_PATH", "/opt/ProxmoxVEAutopilot")
+
+
+@app.post("/api/update/run")
+async def api_update_run():
+    """Start a self-update. Spawns a detached sidecar container that
+    runs `git pull && docker compose pull && docker compose up -d
+    autopilot`. The sidecar lives beyond our own restart — by the
+    time docker-compose kills us and starts a new container, the
+    sidecar has already finished and removed itself.
+
+    Returns 202 with the sidecar container id. Poll /api/update/status
+    for progress; on success the browser can reload to see the new
+    build SHA in the footer.
+    """
+    try:
+        import docker as _docker
+    except ImportError:
+        raise HTTPException(500, "docker-py not installed in image")
+
+    # Don't double-spawn if one is already running.
+    try:
+        client = _docker.from_env()
+        client.ping()
+    except Exception as e:
+        raise HTTPException(
+            500,
+            f"cannot reach docker socket ({e}); confirm "
+            "/var/run/docker.sock is mounted into this container",
+        ) from e
+
+    for existing in client.containers.list(all=True, filters={"name": _UPDATE_SIDECAR_NAME}):
+        # If it's still running, report back. If it already exited but
+        # was left around, nuke the carcass so we can start fresh.
+        if existing.status == "running":
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "ok": True, "already_running": True,
+                    "container_id": existing.short_id,
+                },
+            )
+        try:
+            existing.remove()
+        except Exception:
+            pass
+
+    _UPDATE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    _UPDATE_LOG.write_text(
+        f"update started {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
+    )
+
+    # The sidecar uses docker:27-cli (includes `docker` + compose
+    # plugin). `apk add git` adds git (~5MB) on the fly.
+    host_repo = _host_repo_path()
+    cmd = (
+        "set -euo pipefail; "
+        "apk add --no-cache git >/dev/null 2>&1 || apk add --no-cache git; "
+        "cd /repo && "
+        "echo '--- git pull ---' && git pull && "
+        "cd autopilot-proxmox && "
+        "echo '--- docker compose pull ---' && docker compose pull autopilot && "
+        "echo '--- docker compose up -d ---' && docker compose up -d autopilot && "
+        "echo '--- done ---'"
+    )
+    try:
+        container = client.containers.run(
+            image="docker:27-cli",
+            command=["sh", "-c", cmd],
+            detach=True,
+            remove=True,
+            name=_UPDATE_SIDECAR_NAME,
+            volumes={
+                "/var/run/docker.sock": {
+                    "bind": "/var/run/docker.sock", "mode": "rw",
+                },
+                host_repo: {"bind": "/repo", "mode": "rw"},
+            },
+            labels={"app": "autopilot-updater"},
+            # Stream the sidecar's stdout/stderr to our shared output
+            # volume so the browser can tail it via /api/update/status.
+            # Easiest mechanism: redirect in the command itself.
+        )
+    except _docker.errors.ImageNotFound:
+        # First run — pull the sidecar image and retry.
+        client.images.pull("docker:27-cli")
+        container = client.containers.run(
+            image="docker:27-cli",
+            command=["sh", "-c", cmd],
+            detach=True, remove=True,
+            name=_UPDATE_SIDECAR_NAME,
+            volumes={
+                "/var/run/docker.sock": {
+                    "bind": "/var/run/docker.sock", "mode": "rw",
+                },
+                host_repo: {"bind": "/repo", "mode": "rw"},
+            },
+            labels={"app": "autopilot-updater"},
+        )
+
+    # Stream logs in a background thread until container finishes so
+    # /api/update/status can tail /app/output/update.log.
+    def _stream_logs(cid: str):
+        try:
+            c = client.containers.get(cid)
+            for chunk in c.logs(stream=True, follow=True):
+                try:
+                    with open(_UPDATE_LOG, "ab") as f:
+                        f.write(chunk)
+                except Exception:
+                    break
+        except Exception:
+            pass
+
+    import threading
+    threading.Thread(
+        target=_stream_logs, args=(container.id,), daemon=True,
+    ).start()
+
+    return JSONResponse(
+        status_code=202,
+        content={"ok": True, "container_id": container.short_id},
+    )
+
+
+@app.get("/api/update/status")
+def api_update_status():
+    """Report on the most recent update run. Returns the tail of
+    update.log + whether the sidecar is still running."""
+    log_text = ""
+    if _UPDATE_LOG.exists():
+        try:
+            log_text = _UPDATE_LOG.read_text()[-4000:]
+        except Exception as e:
+            log_text = f"(log read failed: {e})"
+    running = False
+    try:
+        import docker as _docker
+        client = _docker.from_env()
+        for c in client.containers.list(filters={"name": _UPDATE_SIDECAR_NAME}):
+            if c.status == "running":
+                running = True
+                break
+    except Exception:
+        pass
+    # "done" heuristic: the sidecar's final echo line lands in the log.
+    finished = "--- done ---" in log_text
+    return {
+        "running": running,
+        "finished": finished and not running,
+        "log": log_text,
+    }
+
+
 @app.get("/api/version")
 async def api_version(check: bool = False):
     """Return running build SHA + timestamp. With ?check=1, also query GitHub
