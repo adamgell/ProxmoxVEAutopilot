@@ -283,26 +283,168 @@ hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
 }
 #nav::-webkit-scrollbar { height: 2px; }
 #nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); }
-#nav a {
+
+/* Each top-level tab lives in a .nav-item (which may also host a
+   dropdown panel).  .nav-tab is the clickable element itself — it
+   can be <a> (leaf tabs) or <button> (parents with dropdowns). */
+.nav-item { position: relative; display: flex; align-items: stretch; }
+.nav-tab {
   display: inline-flex; align-items: center;
   padding: 0 13px;
+  font-family: "IBM Plex Sans", sans-serif;
   font-size: 13px; font-weight: 500;
   color: rgba(255,255,255,0.72);
   white-space: nowrap;
+  border: none;
   border-bottom: 2px solid transparent;
   transition: color 120ms, border-color 120ms, background 120ms;
   text-decoration: none;
   position: relative;
+  background: transparent;
+  cursor: pointer;
+  letter-spacing: inherit;
+  height: 100%;
+  min-height: 56px;
+  border-radius: 0;
+  gap: 6px;
 }
-#nav a:hover {
+.nav-tab:hover {
   color: #ffffff;
   background: rgba(255,255,255,0.04);
   text-decoration: none;
 }
-#nav a.is-active {
+.nav-tab.is-active {
   color: #ffffff;
   border-bottom-color: var(--ms-blue);
   background: rgba(0,164,239,0.08);
+}
+.nav-tab:focus-visible {
+  outline: 2px solid var(--ms-blue);
+  outline-offset: -2px;
+}
+.nav-caret {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+  transition: transform 120ms;
+  opacity: 0.75;
+}
+.nav-item.is-open .nav-caret {
+  transform: rotate(-135deg) translate(-1px, -1px);
+}
+
+/* Dropdown panel — slate-tinted card anchored to the tab. */
+.nav-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%; left: 0;
+  min-width: 200px;
+  background: var(--slate-800);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  padding: 6px 0;
+  margin: 0;
+  list-style: none;
+  box-shadow: var(--shadow-2);
+  z-index: 60;
+}
+.nav-item.is-open > .nav-dropdown { display: block; }
+.nav-dropdown a {
+  display: block;
+  padding: 7px 16px;
+  color: rgba(255,255,255,0.82);
+  font-size: 13px; font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  border-left: 2px solid transparent;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.nav-dropdown a:hover,
+.nav-dropdown a:focus-visible {
+  background: rgba(255,255,255,0.06);
+  color: #ffffff;
+  text-decoration: none;
+  outline: none;
+}
+.nav-dropdown a.is-active {
+  color: #ffffff;
+  background: rgba(0,164,239,0.12);
+  border-left-color: var(--ms-blue);
+}
+
+/* Hamburger: desktop hides it, mobile drawer swaps in. */
+.nav-hamburger {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 36px; height: 36px;
+  margin-left: auto;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.9);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  padding: 0;
+}
+.nav-hamburger:hover { background: rgba(255,255,255,0.15); color: #ffffff; }
+.nav-hamburger:focus-visible { outline: 2px solid var(--ms-blue); outline-offset: 2px; }
+.nav-hamburger svg { display: block; }
+
+/* Mobile drawer — hidden by default; shown via .is-open under 700px. */
+.nav-drawer {
+  display: none;
+  position: absolute;
+  top: 100%; left: 0; right: 0;
+  background: var(--slate-900);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  box-shadow: var(--shadow-2);
+  padding: 8px 0 10px;
+  z-index: 55;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+.nav-drawer.is-open { display: block; }
+.nav-drawer a {
+  display: block;
+  padding: 10px 20px;
+  color: rgba(255,255,255,0.82);
+  font-size: 14px; font-weight: 500;
+  text-decoration: none;
+  border-left: 3px solid transparent;
+}
+.nav-drawer a:hover,
+.nav-drawer a:focus-visible {
+  background: rgba(255,255,255,0.05);
+  color: #ffffff;
+  text-decoration: none;
+  outline: none;
+}
+.nav-drawer a.is-active {
+  color: #ffffff;
+  background: rgba(0,164,239,0.1);
+  border-left-color: var(--ms-blue);
+}
+.nav-drawer-group-label {
+  display: block;
+  padding: 10px 20px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.4);
+}
+.nav-drawer-group a { padding-left: 32px; }
+
+@media (max-width: 700px) {
+  #nav { display: none; }
+  .nav-hamburger { display: inline-flex; }
+  /* Let the header be a positioning context for the full-width drawer. */
+  #header { position: sticky; }
+}
+@media (min-width: 701px) {
+  .nav-drawer { display: none !important; }
 }
 
 .user-chip {
@@ -358,11 +500,7 @@ html[data-theme="dark"] .theme-toggle .theme-icon-moon { display: none; }
   box-shadow: 0 0 0 2px rgba(127,186,0,0.2);
 }
 
-/* Hide the nav pipe separators; the old ` | ` characters come
-   through in the template — neutralise them with CSS so we don't
-   touch the markup. */
 #nav { white-space: nowrap; }
-#nav > a + a { margin-left: 0; }
 
 /* -----------------------------------------------------------------
    Content region + panel containers.  Old templates dump their
@@ -942,20 +1080,96 @@ pre {
         <span class="brand-subtitle">Operator Console</span>
       </div>
     </a>
-    <nav id="nav">
-      <a href="/">Home</a>
-      <a href="/provision">Provision</a>
-      <a href="/vms">Devices</a>
-      <a href="/sequences">Sequences</a>
-      <a href="/credentials">Credentials</a>
-      <a href="/template">Template</a>
-      <a href="/hashes">Hashes</a>
-      <a href="/answer-isos">Answer ISOs</a>
-      <a href="/cloud">Cloud</a>
-      <a href="/jobs">Jobs</a>
-      <a href="/monitoring">Monitoring</a>
-      <a href="/settings">Settings</a>
+    <nav id="nav" aria-label="Primary">
+      <div class="nav-item" data-route="/">
+        <a class="nav-tab" href="/">Dashboard</a>
+      </div>
+
+      <div class="nav-item" data-dropdown="provision"
+           data-routes="/provision,/template,/sequences,/answer-isos">
+        <button class="nav-tab" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="nav-dd-provision">
+          Provision<span class="nav-caret" aria-hidden="true"></span>
+        </button>
+        <ul class="nav-dropdown" id="nav-dd-provision" role="menu">
+          <li role="none"><a role="menuitem" href="/provision">Provision VMs</a></li>
+          <li role="none"><a role="menuitem" href="/template">Build Template</a></li>
+          <li role="none"><a role="menuitem" href="/sequences">Sequences</a></li>
+          <li role="none"><a role="menuitem" href="/answer-isos">Answer ISOs</a></li>
+        </ul>
+      </div>
+
+      <div class="nav-item" data-dropdown="fleet"
+           data-routes="/vms,/hashes,/cloud">
+        <button class="nav-tab" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="nav-dd-fleet">
+          Fleet<span class="nav-caret" aria-hidden="true"></span>
+        </button>
+        <ul class="nav-dropdown" id="nav-dd-fleet" role="menu">
+          <li role="none"><a role="menuitem" href="/vms">Devices</a></li>
+          <li role="none"><a role="menuitem" href="/hashes">Hashes</a></li>
+          <li role="none"><a role="menuitem" href="/cloud">Cloud</a></li>
+        </ul>
+      </div>
+
+      <div class="nav-item" data-route="/jobs">
+        <a class="nav-tab" href="/jobs">Jobs</a>
+      </div>
+
+      <div class="nav-item" data-route="/monitoring">
+        <a class="nav-tab" href="/monitoring">Monitoring</a>
+      </div>
+
+      <div class="nav-item" data-dropdown="settings"
+           data-routes="/credentials,/settings">
+        <button class="nav-tab" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="nav-dd-settings">
+          Settings<span class="nav-caret" aria-hidden="true"></span>
+        </button>
+        <ul class="nav-dropdown" id="nav-dd-settings" role="menu">
+          <li role="none"><a role="menuitem" href="/credentials">Credentials</a></li>
+          <li role="none"><a role="menuitem" href="/settings">General</a></li>
+        </ul>
+      </div>
     </nav>
+    <button id="navHamburger" class="nav-hamburger" type="button"
+            aria-label="Toggle navigation menu" aria-expanded="false"
+            aria-controls="navDrawer">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+           viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+    <div id="navDrawer" class="nav-drawer" aria-label="Mobile navigation">
+      <a href="/" data-route="/">Dashboard</a>
+      <div class="nav-drawer-group">
+        <span class="nav-drawer-group-label">Provision</span>
+        <a href="/provision" data-route="/provision">Provision VMs</a>
+        <a href="/template" data-route="/template">Build Template</a>
+        <a href="/sequences" data-route="/sequences">Sequences</a>
+        <a href="/answer-isos" data-route="/answer-isos">Answer ISOs</a>
+      </div>
+      <div class="nav-drawer-group">
+        <span class="nav-drawer-group-label">Fleet</span>
+        <a href="/vms" data-route="/vms">Devices</a>
+        <a href="/hashes" data-route="/hashes">Hashes</a>
+        <a href="/cloud" data-route="/cloud">Cloud</a>
+      </div>
+      <a href="/jobs" data-route="/jobs">Jobs</a>
+      <a href="/monitoring" data-route="/monitoring">Monitoring</a>
+      <div class="nav-drawer-group">
+        <span class="nav-drawer-group-label">Settings</span>
+        <a href="/credentials" data-route="/credentials">Credentials</a>
+        <a href="/settings" data-route="/settings">General</a>
+      </div>
+    </div>
     <button id="themeToggle" class="theme-toggle" type="button"
             aria-label="Toggle dark mode" title="Toggle theme">
       <svg class="theme-icon-moon" xmlns="http://www.w3.org/2000/svg"
@@ -1033,24 +1247,216 @@ pre {
   });
 })();
 
+// -----------------------------------------------------------------------
+// Nav: active-tab detection + click-to-open dropdowns + mobile drawer.
+//   - Active detection walks each .nav-item's data-routes (parents) or
+//     data-route (leaf) and picks the longest match against the current
+//     path.  The parent tab AND the matching dropdown item both get
+//     `.is-active` so the user can see their place even before opening
+//     the menu.
+//   - Dropdowns are click-to-open (no hover).  Closing happens on
+//     outside click, Escape, another dropdown being opened, or a link
+//     click inside the panel.
+//   - Keyboard: Enter/Space opens; ArrowDown/ArrowUp moves between
+//     menuitems inside the panel; Escape closes and returns focus to
+//     the parent button.
+//   - Mobile (≤700px): hamburger toggles the full-width drawer.  Same
+//     close triggers (outside click, link click, Escape).
+// -----------------------------------------------------------------------
 (function() {
+  var path = location.pathname;
+
+  // Longest-prefix match against a comma-separated list of routes.
+  function routeMatches(routesAttr) {
+    if (!routesAttr) return -1;
+    var best = -1;
+    routesAttr.split(',').forEach(function(r) {
+      r = r.trim();
+      if (!r) return;
+      var hit = (r === '/') ? (path === '/') : (path === r || path.indexOf(r + '/') === 0 || path === r);
+      // Allow trailing-slash variants: /template/ and /template both match /template.
+      if (!hit && r !== '/' && path.indexOf(r) === 0) {
+        var next = path.charAt(r.length);
+        if (next === '' || next === '/' || next === '?') hit = true;
+      }
+      if (hit && r.length > best) best = r.length;
+    });
+    return best;
+  }
+
   function markActive() {
-    var links = document.querySelectorAll('#nav a[href]');
-    var path = location.pathname;
-    var best = null, bestLen = -1;
-    links.forEach(function(a) {
-      var href = a.getAttribute('href');
-      if (!href || href === '#') return;
-      if (href === '/' ? path === '/' : path.indexOf(href) === 0) {
-        if (href.length > bestLen) { best = a; bestLen = href.length; }
+    var items = document.querySelectorAll('#nav .nav-item');
+    var bestItem = null, bestLen = -1;
+    items.forEach(function(item) {
+      var routes = item.getAttribute('data-routes') || item.getAttribute('data-route') || '';
+      var len = routeMatches(routes);
+      if (len > bestLen) { bestLen = len; bestItem = item; }
+    });
+    if (bestItem) {
+      var tab = bestItem.querySelector('.nav-tab');
+      if (tab) tab.classList.add('is-active');
+      // Highlight the matching dropdown item too, if any.
+      var dd = bestItem.querySelector('.nav-dropdown');
+      if (dd) {
+        var ddBest = null, ddBestLen = -1;
+        dd.querySelectorAll('a[href]').forEach(function(a) {
+          var href = a.getAttribute('href');
+          var len = routeMatches(href);
+          if (len > ddBestLen) { ddBestLen = len; ddBest = a; }
+        });
+        if (ddBest) ddBest.classList.add('is-active');
+      }
+    }
+    // Mobile drawer links — same longest-prefix logic.
+    var drawerLinks = document.querySelectorAll('#navDrawer a[data-route]');
+    var dBest = null, dBestLen = -1;
+    drawerLinks.forEach(function(a) {
+      var len = routeMatches(a.getAttribute('data-route'));
+      if (len > dBestLen) { dBestLen = len; dBest = a; }
+    });
+    if (dBest) dBest.classList.add('is-active');
+  }
+
+  // ---- Dropdowns ----
+  function closeAllDropdowns(except) {
+    document.querySelectorAll('#nav .nav-item.is-open').forEach(function(item) {
+      if (item === except) return;
+      item.classList.remove('is-open');
+      var btn = item.querySelector('.nav-tab');
+      if (btn && btn.tagName === 'BUTTON') btn.setAttribute('aria-expanded', 'false');
+    });
+  }
+  function openDropdown(item) {
+    closeAllDropdowns(item);
+    item.classList.add('is-open');
+    var btn = item.querySelector('.nav-tab');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+  function toggleDropdown(item) {
+    if (item.classList.contains('is-open')) closeAllDropdowns();
+    else openDropdown(item);
+  }
+
+  function wireDropdowns() {
+    var parents = document.querySelectorAll('#nav .nav-item[data-dropdown]');
+    parents.forEach(function(item) {
+      var btn = item.querySelector('.nav-tab');
+      var menu = item.querySelector('.nav-dropdown');
+      if (!btn || !menu) return;
+
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleDropdown(item);
+      });
+
+      btn.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openDropdown(item);
+          var first = menu.querySelector('a[role="menuitem"]');
+          if (first) first.focus();
+        } else if (e.key === 'Escape') {
+          closeAllDropdowns();
+        }
+      });
+
+      // Arrow-key navigation inside the menu.
+      menu.addEventListener('keydown', function(e) {
+        var items = Array.prototype.slice.call(menu.querySelectorAll('a[role="menuitem"]'));
+        var idx = items.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          var next = items[(idx + 1) % items.length];
+          if (next) next.focus();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          var prev = items[(idx - 1 + items.length) % items.length];
+          if (prev) prev.focus();
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          if (items[0]) items[0].focus();
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          if (items.length) items[items.length - 1].focus();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeAllDropdowns();
+          btn.focus();
+        } else if (e.key === 'Tab') {
+          // Let Tab close the menu naturally.
+          closeAllDropdowns();
+        }
+      });
+
+      // Close when a menu item is clicked (so the browser navigates
+      // with a clean state).
+      menu.querySelectorAll('a').forEach(function(a) {
+        a.addEventListener('click', function() { closeAllDropdowns(); });
+      });
+    });
+
+    // Outside click.
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest || !e.target.closest('#nav .nav-item[data-dropdown]')) {
+        closeAllDropdowns();
       }
     });
-    if (best) best.classList.add('is-active');
+    // Global Escape.
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeAllDropdowns();
+        closeDrawer();
+      }
+    });
+  }
+
+  // ---- Mobile drawer ----
+  function openDrawer() {
+    var d = document.getElementById('navDrawer');
+    var b = document.getElementById('navHamburger');
+    if (!d || !b) return;
+    d.classList.add('is-open');
+    b.setAttribute('aria-expanded', 'true');
+  }
+  function closeDrawer() {
+    var d = document.getElementById('navDrawer');
+    var b = document.getElementById('navHamburger');
+    if (!d || !b) return;
+    d.classList.remove('is-open');
+    b.setAttribute('aria-expanded', 'false');
+  }
+  function wireDrawer() {
+    var btn = document.getElementById('navHamburger');
+    var drawer = document.getElementById('navDrawer');
+    if (!btn || !drawer) return;
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (drawer.classList.contains('is-open')) closeDrawer();
+      else openDrawer();
+    });
+    // Link click inside drawer → close.
+    drawer.querySelectorAll('a').forEach(function(a) {
+      a.addEventListener('click', function() { closeDrawer(); });
+    });
+    // Outside click.
+    document.addEventListener('click', function(e) {
+      if (!drawer.classList.contains('is-open')) return;
+      if (e.target === btn || btn.contains(e.target)) return;
+      if (drawer.contains(e.target)) return;
+      closeDrawer();
+    });
+  }
+
+  function init() {
+    markActive();
+    wireDropdowns();
+    wireDrawer();
   }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', markActive);
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    markActive();
+    init();
   }
 })();
 
