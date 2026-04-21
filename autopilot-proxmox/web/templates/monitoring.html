@@ -3,35 +3,67 @@
 {% block content %}
 
 <style>
+  /* Status badges on this page.  base.html ships a pill-shaped
+     `.badge` (border-radius 999px, inline-flex) for the header chip
+     look; here we want a sharper rectangular tag that fits the dense
+     table rows, so we re-declare geometry and size — but all COLORS
+     come from the shared theme tokens so dark mode picks them up
+     automatically. */
   .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
            font-size: 11px; line-height: 1.4; font-weight: 600;
            border: 1px solid transparent; }
-  .badge.ok      { background: #d4edda; color: #155724; border-color: #c3e6cb; }
-  .badge.warn    { background: #fff3cd; color: #856404; border-color: #ffeeba; }
-  .badge.missing { background: #f8d7da; color: #721c24; border-color: #f5c6cb; }
-  .badge.pending { background: #e2e3e5; color: #383d41; border-color: #d6d8db; }
-  .badge.error   { background: #f5c6cb; color: #721c24; border-color: #f1b0b7; }
-  .badge.unknown { background: #f8f9fa; color: #6c757d; border-color: #dee2e6; }
-  .count-pill    { font-size: 10px; opacity: 0.7; margin-left: 3px; }
-  .source-name   { font-size: 11px; color: #555; font-family: monospace;
-                   margin-top: 2px; word-break: break-all; }
-  .source-name.mismatch { color: #856404; font-weight: 600;
-                          background: #fff3cd; padding: 0 3px;
-                          border-radius: 2px; display: inline-block; }
-  .pve-running   { color: #155724; }
-  .pve-stopped   { color: #6c757d; }
-  .pve-other     { color: #856404; }
-  .monitor-status { margin: 10px 0; padding: 8px;
-                    background: #f8f9fa; border: 1px solid #dee2e6; }
+  .badge.ok      { background: var(--ok-bg);      color: var(--ok-fg);      border-color: var(--ok-fg); }
+  .badge.warn    { background: var(--warn-bg);    color: var(--warn-fg);    border-color: var(--warn-fg); }
+  .badge.missing { background: var(--bad-bg);     color: var(--bad-fg);     border-color: var(--bad-fg); }
+  .badge.pending { background: var(--neutral-bg); color: var(--neutral-fg); border-color: var(--neutral-fg); }
+  .badge.error   { background: var(--bad-bg);     color: var(--bad-fg);     border-color: var(--bad-fg); }
+  .badge.unknown { background: var(--neutral-bg); color: var(--neutral-fg); border-color: var(--line); }
+  /* Softer borders — 25% mix fades to panel in either theme.  Keeps
+     the tag shape without the heavy outline that reads as "loud" on
+     dark mode. */
+  .badge.ok, .badge.warn, .badge.missing,
+  .badge.pending, .badge.error, .badge.unknown {
+    border-color: color-mix(in srgb, currentColor 30%, transparent);
+  }
+
+  .count-pill { font-size: 10px; opacity: 0.75; margin-left: 3px; }
+
+  /* Source-name row (the CN/DN/displayName echoed under each badge).
+     Muted ink in either theme; flips to warn-tint when it doesn't
+     match the Windows hostname so naming drift is visible. */
+  .source-name { font-size: 11px; color: var(--ink-muted);
+                 font-family: "IBM Plex Mono", ui-monospace, monospace;
+                 margin-top: 2px; word-break: break-all; }
+  .source-name.mismatch {
+    color: var(--warn-fg); font-weight: 600;
+    background: var(--warn-bg); padding: 0 3px;
+    border-radius: 2px; display: inline-block;
+  }
+
+  .pve-running { color: var(--ok-fg); font-weight: 600; }
+  .pve-stopped { color: var(--ink-muted); }
+  .pve-other   { color: var(--warn-fg); font-weight: 600; }
+
+  /* Keytab-health banner variants.  base.html already styles the
+     neutral `.monitor-status`; add .is-warn / .is-bad modifiers so
+     the Kerberos probe banner can pick a tint without inline styles
+     (which wouldn't theme-swap). */
+  .monitor-status.is-warn {
+    background: var(--warn-bg) !important;
+    border-color: var(--warn-fg) !important;
+    color: var(--warn-fg) !important;
+  }
+  .monitor-status.is-bad {
+    background: var(--bad-bg) !important;
+    border-color: var(--bad-fg) !important;
+    color: var(--bad-fg) !important;
+  }
 </style>
 
 <h2>Device monitoring</h2>
 
 {% if keytab and keytab.last_probe_status and keytab.last_probe_status not in ('ok','unchecked') %}
-<div class="monitor-status"
-     style="background:{{ '#fff3cd' if keytab.last_probe_status in ('stale','kvno-mismatch') else '#f8d7da' }};
-            border-color:{{ '#ffeeba' if keytab.last_probe_status in ('stale','kvno-mismatch') else '#f5c6cb' }};
-            color:{{ '#856404' if keytab.last_probe_status in ('stale','kvno-mismatch') else '#721c24' }};">
+<div class="monitor-status {{ 'is-warn' if keytab.last_probe_status in ('stale','kvno-mismatch') else 'is-bad' }}">
   <strong>{{ '⚠️' if keytab.last_probe_status in ('stale','kvno-mismatch') else '🔴' }}
    Kerberos keytab: {{ keytab.last_probe_status }}</strong>
   — {{ keytab.last_probe_message or 'no details' }}
