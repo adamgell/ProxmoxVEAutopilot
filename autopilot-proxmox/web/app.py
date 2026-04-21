@@ -634,6 +634,57 @@ async def _stop_device_monitor_loop() -> None:
         pass
 
 
+_HEALTH_TASK: Optional["asyncio.Task"] = None
+
+
+def _load_version_sha() -> str:
+    """Best-effort running git SHA. Matches the footer's buildSha."""
+    try:
+        path = BASE_DIR / "VERSION"
+        if path.exists():
+            return path.read_text().strip()[:7]
+    except Exception:
+        pass
+    return "unknown"
+
+
+@app.on_event("startup")
+async def _start_health_heartbeat() -> None:
+    import asyncio
+    import logging as _logging
+    from web import service_health
+    service_health.init(DEVICE_MONITOR_DB)
+
+    async def _loop():
+        while True:
+            try:
+                service_health.heartbeat(
+                    DEVICE_MONITOR_DB,
+                    service_id="web",
+                    service_type="web",
+                    version_sha=_load_version_sha(),
+                    detail="idle",
+                )
+            except Exception:
+                _logging.getLogger("web.health").exception("heartbeat failed")
+            await asyncio.sleep(10)
+
+    global _HEALTH_TASK
+    _HEALTH_TASK = asyncio.create_task(_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_health_heartbeat() -> None:
+    import asyncio
+    if _HEALTH_TASK is None:
+        return
+    _HEALTH_TASK.cancel()
+    try:
+        await _HEALTH_TASK
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
 async def _device_monitor_loop() -> None:
     """Runs :func:`device_monitor.sweep` on a loop, sleeping
     ``settings.interval_seconds`` between iterations. Re-reads
@@ -3949,10 +4000,11 @@ def _host_repo_path() -> str:
 @app.post("/api/update/run")
 async def api_update_run():
     """Start a self-update. Spawns a detached sidecar container that
-    runs `git pull && docker compose pull && docker compose up -d
-    autopilot`. The sidecar lives beyond our own restart — by the
-    time docker-compose kills us and starts a new container, the
-    sidecar has already finished and removed itself.
+    runs `git pull && docker compose pull && docker compose up -d`
+    (no service arg — rolls web + builder + monitor together). The
+    sidecar lives beyond our own restart — by the time docker-compose
+    kills us and starts a new container, the sidecar has already
+    finished and removed itself.
 
     Returns 202 with the sidecar container id. Poll /api/update/status
     for progress; on success the browser can reload to see the new
@@ -4016,8 +4068,8 @@ async def api_update_run():
         f"cd {host_repo} && "
         "echo '--- git pull ---' && git pull && "
         "cd autopilot-proxmox && "
-        "echo '--- docker compose pull ---' && docker compose pull autopilot && "
-        "echo '--- docker compose up -d ---' && docker compose up -d autopilot && "
+        "echo '--- docker compose pull ---' && docker compose pull && "
+        "echo '--- docker compose up -d ---' && docker compose up -d && "
         "echo '--- done ---'"
     )
     run_kwargs = dict(
