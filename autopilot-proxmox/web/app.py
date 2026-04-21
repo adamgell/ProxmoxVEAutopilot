@@ -1720,6 +1720,15 @@ async def jobs_page(request: Request):
     jobs = job_manager.list_jobs()
     for job in jobs:
         job["duration"] = compute_duration(job)
+        # Only running jobs can be paused; reading the log for finished
+        # jobs is pointless (and the most recent N-lines read is cheap
+        # enough for the handful that are actually live). Slicing to
+        # the last 4 KiB keeps the scan O(1) regardless of log size.
+        if job["status"] == "running" and (job.get("args") or {}).get("pause_enabled"):
+            tail = job_manager.get_log(job["id"])[-4096:]
+            job["paused"] = _detect_template_pause(job, tail)
+        else:
+            job["paused"] = False
     return templates.TemplateResponse("jobs.html", {
         "request": request,
         "jobs": jobs,
@@ -1939,17 +1948,42 @@ def _build_job_plan(job: dict) -> Optional[dict]:
     return None
 
 
+def _detect_template_pause(job: dict, log_content: str) -> bool:
+    """Return True when a pause-enabled template build has actually reached
+    the wait_for gate (not merely been submitted with the checkbox ticked).
+
+    Source of truth: the Ansible task title we emit in
+    roles/proxmox_template_builder/tasks/main.yml appears in the log as
+    ``TASK [PAUSE — install software in VMID ...]`` the moment wait_for
+    starts. We check that the task started AND that the next task
+    (``Remove resume signal file``) has NOT yet started — that second
+    task only fires after the operator clicks Resume, which is our
+    signal that the pause is over.
+    """
+    if not (job.get("args") or {}).get("pause_enabled"):
+        return False
+    if "PAUSE — install software in VMID" not in log_content:
+        return False
+    # Once the post-pause cleanup task has started, the wait_for returned
+    # and we're executing sysprep now — not paused anymore.
+    if "Remove resume signal file" in log_content:
+        return False
+    return True
+
+
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_detail_page(request: Request, job_id: str):
     job = job_manager.get_job(job_id)
     if not job:
         return HTMLResponse("<h1>Job not found</h1>", status_code=404)
     plan = _build_job_plan(job)
+    log_content = job_manager.get_log(job_id)
+    job["paused"] = _detect_template_pause(job, log_content)
     return templates.TemplateResponse("job_detail.html", {
         "request": request,
         "job": job,
         "plan": plan,
-        "log_content": job_manager.get_log(job_id),
+        "log_content": log_content,
     })
 
 

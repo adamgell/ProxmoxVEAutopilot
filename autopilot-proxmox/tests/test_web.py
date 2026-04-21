@@ -202,6 +202,62 @@ def test_resume_template_build_404_on_unknown_job(client):
     assert r.status_code == 404
 
 
+def test_detect_template_pause_states():
+    """Unit test the log-scan pause detector — it's what drives the
+    PAUSED badge on both /jobs and /jobs/<id>."""
+    from web.app import _detect_template_pause
+
+    # Not a pause-enabled job → always False regardless of log content.
+    assert _detect_template_pause(
+        {"args": {}},
+        "TASK [PAUSE — install software in VMID 9001]",
+    ) is False
+
+    # Pause-enabled but wait_for hasn't started yet (early job).
+    assert _detect_template_pause(
+        {"args": {"pause_enabled": True}},
+        "TASK [Install Windows] ...\nPLAY RECAP",
+    ) is False
+
+    # Pause-enabled AND wait_for has started AND cleanup hasn't run.
+    assert _detect_template_pause(
+        {"args": {"pause_enabled": True}},
+        "TASK [PAUSE — install software in VMID 9001]\nok: [localhost]",
+    ) is True
+
+    # After Resume: wait_for unblocked, cleanup task has started → no
+    # longer paused even though the PAUSE marker is still in the log.
+    assert _detect_template_pause(
+        {"args": {"pause_enabled": True}},
+        "TASK [PAUSE — install software in VMID 9001]\n"
+        "ok: [localhost]\n"
+        "TASK [Remove resume signal file (cleanup after pause)]\n",
+    ) is False
+
+
+def test_jobs_page_marks_paused_jobs(client):
+    """/jobs renders a PAUSED badge for jobs with pause_enabled AND whose
+    log shows the wait_for task has started but cleanup hasn't run yet."""
+    from web.app import job_manager
+    job_manager.list_jobs.return_value = [
+        {"id": "paused-1", "playbook": "build_template",
+         "status": "running", "started": "2026-04-21T12:00:00Z",
+         "args": {"pause_enabled": True, "pause_signal_path": "/tmp/x"}},
+        {"id": "running-1", "playbook": "provision_clone",
+         "status": "running", "started": "2026-04-21T12:00:00Z",
+         "args": {}},
+    ]
+    job_manager.get_log.return_value = (
+        "TASK [PAUSE — install software in VMID 9001]\nok: [localhost]\n"
+    )
+    r = client.get("/jobs")
+    assert r.status_code == 200
+    body = r.text
+    assert "PAUSED" in body
+    assert "paused-1" in body
+    assert "running-1" in body
+
+
 def test_redirect_with_error_encodes_special_chars():
     """Error messages with spaces, '&', '#', '?' must round-trip through
     the URL without truncation or param smuggling."""

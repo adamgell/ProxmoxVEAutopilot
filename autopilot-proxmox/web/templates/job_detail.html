@@ -4,7 +4,7 @@
 <h2>Job: {{ job.id }}</h2>
 <table>
 <tr><td style="width:120px;"><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
-<tr><td><b>Status</b></td><td>{% if job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED (exit {{ job.exit_code }})</span>{% endif %}</td></tr>
+<tr><td><b>Status</b></td><td>{% if job.paused %}<span class="badge warn" style="font-size:12px;padding:2px 10px;">PAUSED — awaiting Resume</span>{% elif job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED (exit {{ job.exit_code }})</span>{% endif %}</td></tr>
 <tr><td><b>Started</b></td><td>{{ job.started[:19] }}</td></tr>
 </table>
 
@@ -50,11 +50,16 @@
 {% if job.status == 'running' %}
 <br>
 {% if job.args and job.args.pause_enabled %}
-<!-- Template build paused for manual software install. Showing the
-     Resume button unconditionally while the job is running is fine —
-     the server returns 404 if the ansible task hasn't reached the
-     wait_for yet, 409 if already resumed. A one-click handler covers
-     the common path; the rare races surface as a status line. -->
+<!-- Template build with pause-before-sysprep enabled. The card has
+     two visual states depending on whether Ansible has actually
+     reached the wait_for gate yet (detected server-side by scanning
+     the job log for the PAUSE task marker):
+       * NOT YET PAUSED — OOBE hasn't completed. Muted text, disabled
+         Resume button, auto-refresh every 10s so operator sees the
+         moment the pause actually starts.
+       * PAUSED — Ansible is blocking on the signal file. Full-color
+         card, live Resume button. -->
+{% if job.paused %}
 <div style="margin:10px 0; padding:10px 14px; background:#fff3cf; border:1px solid #f3dfa8; border-radius:4px;">
   <b>Paused for software install.</b>
   RDP or <a href="/api/vms/{{ job.args.vm_vmid }}/console" target="_blank">Console</a>
@@ -65,6 +70,25 @@
   </button>
   <span id="resumeStatus" style="margin-left:10px; font-size:12px;"></span>
 </div>
+{% else %}
+<div style="margin:10px 0; padding:10px 14px; background:#f3f5f8; border:1px solid #d9dee4; border-radius:4px; color:#555;">
+  <b>Pause gate armed.</b>
+  Waiting for Windows install and OOBE to complete before the pause kicks in — typically 20–25 minutes from job start. This page auto-refreshes once paused; the Resume button will enable itself then.
+  <br>
+  <button type="button" class="action-btn-upload" style="margin-top:6px; opacity:0.5; cursor:not-allowed;" disabled>
+    Resume &amp; finalize (sysprep)
+  </button>
+  <span style="margin-left:10px; font-size:12px; color:#888;">not yet paused</span>
+</div>
+<script>
+// Light poll — the job_detail page's WebSocket streams log but doesn't
+// rebuild the status badge. Re-GET the page every 15s while we're
+// waiting so the PAUSED state surfaces within a reasonable window.
+setTimeout(function() {
+  if (!document.hidden) window.location.reload();
+}, 15000);
+</script>
+{% endif %}
 <script>
 async function resumeTemplate() {
   var s = document.getElementById('resumeStatus');
