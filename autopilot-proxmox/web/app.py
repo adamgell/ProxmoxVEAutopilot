@@ -3295,51 +3295,57 @@ async def api_update_run():
 
     # The sidecar uses docker:27-cli (includes `docker` + compose
     # plugin). `apk add git` adds git (~5MB) on the fly.
+    #
+    # CRITICAL bind-mount note: the sidecar mounts the repo at the
+    # SAME host path it lives at on the host. When `docker compose
+    # up -d` inside the sidecar issues a container-create request
+    # over the shared docker.sock, the daemon resolves the compose
+    # file's `./inventory/...` relative paths against the SIDECAR's
+    # CWD — but the resulting absolute paths are then sent to the
+    # daemon, which interprets them against the HOST filesystem.
+    # If the sidecar CWD was `/repo/autopilot-proxmox` the daemon
+    # would try to bind `/repo/autopilot-proxmox/inventory/...`
+    # which doesn't exist on the host. Mounting at the same path
+    # makes the resolution agree with the host.
     host_repo = _host_repo_path()
     cmd = (
         "set -euo pipefail; "
         "apk add --no-cache git >/dev/null 2>&1 || apk add --no-cache git; "
-        "cd /repo && "
+        f"cd {host_repo} && "
         "echo '--- git pull ---' && git pull && "
         "cd autopilot-proxmox && "
         "echo '--- docker compose pull ---' && docker compose pull autopilot && "
         "echo '--- docker compose up -d ---' && docker compose up -d autopilot && "
         "echo '--- done ---'"
     )
-    try:
-        container = client.containers.run(
-            image="docker:27-cli",
-            command=["sh", "-c", cmd],
-            detach=True,
-            remove=True,
-            name=_UPDATE_SIDECAR_NAME,
-            volumes={
-                "/var/run/docker.sock": {
-                    "bind": "/var/run/docker.sock", "mode": "rw",
-                },
-                host_repo: {"bind": "/repo", "mode": "rw"},
+    run_kwargs = dict(
+        image="docker:27-cli",
+        command=["sh", "-c", cmd],
+        detach=True,
+        remove=True,
+        name=_UPDATE_SIDECAR_NAME,
+        volumes={
+            "/var/run/docker.sock": {
+                "bind": "/var/run/docker.sock", "mode": "rw",
             },
-            labels={"app": "autopilot-updater"},
-            # Stream the sidecar's stdout/stderr to our shared output
-            # volume so the browser can tail it via /api/update/status.
-            # Easiest mechanism: redirect in the command itself.
-        )
+            # Same-path bind — see note above. The sidecar sees the
+            # repo at exactly the host path so compose's relative
+            # mounts resolve identically on both sides of the socket.
+            host_repo: {"bind": host_repo, "mode": "rw"},
+        },
+        # Host network so `git pull` resolves github.com the same way
+        # our own container does. The default bridge network inherits
+        # the docker daemon's DNS, which on the autopilot host doesn't
+        # have /etc/resolv.conf pointed anywhere useful.
+        network_mode="host",
+        labels={"app": "autopilot-updater"},
+    )
+    try:
+        container = client.containers.run(**run_kwargs)
     except _docker.errors.ImageNotFound:
         # First run — pull the sidecar image and retry.
         client.images.pull("docker:27-cli")
-        container = client.containers.run(
-            image="docker:27-cli",
-            command=["sh", "-c", cmd],
-            detach=True, remove=True,
-            name=_UPDATE_SIDECAR_NAME,
-            volumes={
-                "/var/run/docker.sock": {
-                    "bind": "/var/run/docker.sock", "mode": "rw",
-                },
-                host_repo: {"bind": "/repo", "mode": "rw"},
-            },
-            labels={"app": "autopilot-updater"},
-        )
+        container = client.containers.run(**run_kwargs)
 
     # Stream logs in a background thread until container finishes so
     # /api/update/status can tail /app/output/update.log.
