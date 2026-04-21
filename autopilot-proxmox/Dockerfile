@@ -72,4 +72,5 @@ ENV OPENSSL_CONF=/etc/ssl/openssl-legacy.cnf
 
 EXPOSE 5000
 
-CMD ["uvicorn", "web.app:app", "--host", "0.0.0.0", "--port", "5000"]
+ENTRYPOINT ["python", "-m", "web.entrypoint"]
+CMD ["web"]
