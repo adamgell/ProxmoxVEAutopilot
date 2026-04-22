@@ -812,6 +812,51 @@ def _vm_provisioning_vmids() -> set:
         return set()
 
 
+def _sid_bytes_to_str(b: bytes) -> str:
+    """Convert a Windows NT SID binary blob to canonical 'S-r-a-s-s-...' form.
+
+    Layout (see MS-DTYP 2.4.2.2):
+      byte 0:    Revision (always 1)
+      byte 1:    SubAuthorityCount (N)
+      bytes 2-7: IdentifierAuthority (48-bit big-endian)
+      bytes 8+:  SubAuthority[0..N-1] (each 32-bit little-endian)
+
+    Used when copying ``objectSid`` out of AD so the value compares
+    cleanly against Graph's ``onPremisesSecurityIdentifier`` (which
+    uses the canonical string form). Before this, AD's SID was hex-
+    encoded from raw bytes, which meant the linkage-health check on
+    the device detail page always showed a red X even for correctly
+    hybrid-joined devices.
+    """
+    if not b or len(b) < 8:
+        return b.hex() if b else ""
+    revision = b[0]
+    sub_count = b[1]
+    authority = int.from_bytes(b[2:8], "big")
+    subs = [
+        int.from_bytes(b[8 + 4 * i : 12 + 4 * i], "little")
+        for i in range(sub_count)
+    ]
+    return "S-" + str(revision) + "-" + str(authority) + "".join(
+        "-" + str(s) for s in subs
+    )
+
+
+def _guid_bytes_to_str(b: bytes) -> str:
+    """Convert a Windows ``objectGUID`` (16 raw bytes in mixed-endian
+    order) to the canonical hyphenated UUID string Graph returns. Same
+    motivation as _sid_bytes_to_str — raw hex from AD never matched
+    the UUID-format values other systems use.
+    """
+    import uuid as _uuid
+    if not b or len(b) != 16:
+        return b.hex() if b else ""
+    try:
+        return str(_uuid.UUID(bytes_le=b))
+    except Exception:
+        return b.hex()
+
+
 def _build_live_monitor_context() -> "device_monitor.MonitorContext":
     """Wire the real I/O backends: Proxmox API for VM list + config,
     existing _guest_exec helper for Windows probes, ldap3 for AD,
@@ -974,13 +1019,26 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
             flat: dict = {"distinguishedName": dn}
             for k, vlist in attrs.items():
                 # python-ldap hands back lists of bytes; coerce to a
-                # single JSON-safe value (hex for non-UTF-8 bytes).
+                # single JSON-safe value. Two binary attrs need special
+                # handling to match how they appear in other systems:
+                #   * objectSid is a raw NT SID blob — convert to the
+                #     canonical "S-1-5-21-..." string so it compares
+                #     cleanly with Entra.onPremisesSecurityIdentifier.
+                #   * objectGUID is 16 raw bytes in Windows-GUID byte
+                #     order — convert to the hyphenated UUID form that
+                #     Graph returns for deviceId.
+                # Everything else: utf-8 if possible, hex otherwise.
                 v = vlist[0] if vlist else None
                 if isinstance(v, bytes):
-                    try:
-                        flat[k] = v.decode("utf-8")
-                    except UnicodeDecodeError:
-                        flat[k] = v.hex()
+                    if k == "objectSid":
+                        flat[k] = _sid_bytes_to_str(v)
+                    elif k == "objectGUID":
+                        flat[k] = _guid_bytes_to_str(v)
+                    else:
+                        try:
+                            flat[k] = v.decode("utf-8")
+                        except UnicodeDecodeError:
+                            flat[k] = v.hex()
                 else:
                     flat[k] = v
             out.append(flat)
@@ -5426,14 +5484,16 @@ def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
             "value": serial or "—",
         })
 
-    # Windows name ↔ AD cn.
+    # Windows name ↔ AD cn. Windows AD computer names are canonically
+    # case-insensitive — AD upper-cases the CN regardless of what the
+    # guest reports for its hostname. Treat a case-insensitive match
+    # as a green check; exact case only matters for cosmetics.
     if win_name and ad_matches:
         cns = [m.get("cn") or "" for m in ad_matches]
-        exact = win_name in cns
         ci = any(c.lower() == win_name.lower() for c in cns)
         checks.append({
             "label": "Windows.Name → AD.cn",
-            "ok": exact if exact else (None if ci else False),
+            "ok": ci,
             "value": win_name,
         })
     else:

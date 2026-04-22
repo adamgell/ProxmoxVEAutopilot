@@ -159,3 +159,73 @@ def test_device_detail_shows_link_broken_warning(client):
     assert "link-broken" in r.text
     # Linkage strip shows ✗ (the check is False for SID mismatch).
     assert "lk-bad" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Identifier-conversion helpers (fixes the always-red SID linkage check)
+# ---------------------------------------------------------------------------
+
+def test_sid_bytes_to_str_canonical_form():
+    """Raw NT SID blob must round-trip to 'S-1-5-21-...' string form.
+
+    This is the fixture that makes AD.objectSid comparable to Entra's
+    onPremisesSecurityIdentifier — before the fix, AD's SID came out as
+    a hex dump and the linkage check was always red.
+    """
+    from web.app import _sid_bytes_to_str
+    # S-1-5-21-4163347863-3329390546-514099273-4601 — one of the live
+    # box's actual machine SIDs.
+    blob = (
+        bytes([1, 5])              # revision=1, subauthority_count=5
+        + (5).to_bytes(6, "big")   # IdentifierAuthority=5 (NT Authority)
+        + (21).to_bytes(4, "little")
+        + (4163347863).to_bytes(4, "little")
+        + (3329390546).to_bytes(4, "little")
+        + (514099273).to_bytes(4, "little")
+        + (4601).to_bytes(4, "little")
+    )
+    assert _sid_bytes_to_str(blob) == (
+        "S-1-5-21-4163347863-3329390546-514099273-4601"
+    )
+
+
+def test_sid_bytes_to_str_empty_and_short():
+    """Defensive: empty or truncated input must not raise."""
+    from web.app import _sid_bytes_to_str
+    assert _sid_bytes_to_str(b"") == ""
+    assert _sid_bytes_to_str(b"\x01\x00\x00") == "010000"  # too short → hex fallback
+
+
+def test_guid_bytes_to_str_matches_windows_mixed_endian():
+    """Windows objectGUID is mixed-endian — UUID(bytes_le=...) handles it.
+    Confirm the byte order matches what Graph/tools emit."""
+    from web.app import _guid_bytes_to_str
+    # Known example: 01020304-0506-0708-090a-0b0c0d0e0f10
+    # With mixed-endian (Windows), the on-disk bytes are
+    # 04 03 02 01 06 05 08 07 09 0a 0b 0c 0d 0e 0f 10
+    raw = bytes([
+        0x04, 0x03, 0x02, 0x01,  # Data1 (little-endian)
+        0x06, 0x05,              # Data2 (little-endian)
+        0x08, 0x07,              # Data3 (little-endian)
+        0x09, 0x0a,              # Data4[0..1] (big-endian)
+        0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,  # Data4[2..7]
+    ])
+    assert _guid_bytes_to_str(raw) == "01020304-0506-0708-090a-0b0c0d0e0f10"
+
+
+def test_linkage_windows_name_to_ad_cn_is_case_insensitive():
+    """AD uppercases the CN (GELL-E9C0C757) while Windows reports the
+    mixed-case hostname (Gell-E9C0C757). Should be a green check, not
+    the old hourglass."""
+    from web.app import _linkage_health
+    import json
+    probe = {
+        "serial": "",
+        "win_name": "Gell-E9C0C757",
+        "ad_matches_json": json.dumps([{"cn": "GELL-E9C0C757"}]),
+        "entra_matches_json": "[]",
+        "intune_matches_json": "[]",
+    }
+    rows = _linkage_health({}, probe)
+    hit = next(r for r in rows if r["label"] == "Windows.Name → AD.cn")
+    assert hit["ok"] is True
