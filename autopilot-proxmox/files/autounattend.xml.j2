@@ -171,6 +171,38 @@
                publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
       <ComputerName>{{ specialize_computer_name }}</ComputerName>
       <TimeZone>UTC</TimeZone>
+    </component>
+
+    <!-- Install QEMU Guest Agent from the VirtIO ISO during specialize.
+         This runs as SYSTEM before OOBE starts — NO AutoLogon required
+         — so the clone has a working GA by the time Ansible's
+         hash_capture / autopilot_inject tasks try to reach it via
+         `qm guest exec`. Previously the MSI install was in
+         FirstLogonCommands, which only fire when AutoLogon is set;
+         we disabled AutoLogon so the clone stays at OOBE for Autopilot,
+         and clones stopped getting GA as a side-effect.
+
+         The loop scans D:, E:, F: because the VirtIO ISO's drive
+         letter shifts depending on which removable media the clone
+         has attached. msiexec /qn /norestart is silent + doesn't
+         force a reboot mid-specialize. -->
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>cmd.exe /c for %d in (D E F) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart</Path>
+          <Description>Install QEMU Guest Agent</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>cmd.exe /c sc config QEMU-GA start= auto &amp;&amp; net start QEMU-GA</Path>
+          <Description>Ensure QEMU-GA service is set to auto-start and running</Description>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
     </component>{{ specialize_identification_component }}
   </settings>
 
