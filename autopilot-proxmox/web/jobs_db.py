@@ -39,13 +39,27 @@ CREATE TABLE IF NOT EXISTS job_type_limits (
 """
 
 
+# Job-type names MUST match the strings passed to job_manager.start()
+# in web/app.py — the claim query LEFT JOINs on this table to enforce
+# caps, so any job whose type is missing here falls back to the
+# DEFAULT_CAP below. Previous versions misspelled some of these
+# (`capture_hash` vs `hash_capture`, `hash_upload` vs
+# `upload_after_capture`), which made the INNER-JOIN claim query
+# silently skip those jobs forever. The fallback in claim_next_job
+# now makes such misspellings degrade gracefully instead.
 _DEFAULT_LIMITS = [
     ("build_template", 1),
     ("provision_clone", 3),
-    ("capture_hash", 5),
-    ("hash_upload", 5),
+    ("hash_capture", 5),
+    ("upload_after_capture", 5),
     ("retry_inject_hash", 3),
 ]
+
+# Cap applied to any job_type NOT in job_type_limits. Conservative
+# default — 1 serial job at a time — so an unknown type can still
+# complete rather than block forever, but also can't accidentally
+# thunder-herd the builder if an operator introduces a new type.
+_DEFAULT_CAP = 1
 
 
 @contextmanager
@@ -72,9 +86,34 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def init(db_path: Path) -> None:
-    """Create tables if absent; seed default concurrency caps."""
+    """Create tables if absent; seed default concurrency caps.
+
+    Also migrates misspelled job_type names from earlier versions of
+    the seed (capture_hash → hash_capture, hash_upload →
+    upload_after_capture) so existing deploys that ran the old seed
+    get their jobs_db.db corrected on next boot without manual SQL.
+    """
     with _connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # Rename legacy misspellings — keep whatever max_concurrent
+        # the operator may have tuned; only the type name changes.
+        for old, new in [
+            ("capture_hash", "hash_capture"),
+            ("hash_upload", "upload_after_capture"),
+        ]:
+            conn.execute(
+                "UPDATE job_type_limits SET job_type = ? "
+                "WHERE job_type = ? "
+                "AND NOT EXISTS (SELECT 1 FROM job_type_limits WHERE job_type = ?)",
+                (new, old, new),
+            )
+            # If both old and new rows exist (operator already added the
+            # correct name manually), drop the old one rather than leave
+            # a stale entry.
+            conn.execute(
+                "DELETE FROM job_type_limits WHERE job_type = ?",
+                (old,),
+            )
         # INSERT OR IGNORE so operator-tuned values survive re-init.
         for job_type, cap in _DEFAULT_LIMITS:
             conn.execute(
@@ -157,14 +196,21 @@ def claim_next_job(db_path: Path, *, worker_id: str) -> dict | None:
     with _connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            row = conn.execute("""
+            # LEFT JOIN + COALESCE so a job_type with no row in
+            # job_type_limits (operator added a new type, or we missed
+            # seeding one) falls back to DEFAULT_CAP (1) instead of
+            # being ignored by an INNER JOIN. The INNER-JOIN form was
+            # why `hash_capture` / `upload_after_capture` jobs hung as
+            # pending forever when the seed table was misspelled
+            # `capture_hash` / `hash_upload`.
+            row = conn.execute(f"""
                 SELECT j.id
                 FROM jobs j
-                JOIN job_type_limits l ON l.job_type = j.job_type
+                LEFT JOIN job_type_limits l ON l.job_type = j.job_type
                 WHERE j.status = 'pending'
                   AND (SELECT COUNT(*) FROM jobs
                        WHERE job_type = j.job_type AND status = 'running')
-                      < l.max_concurrent
+                      < COALESCE(l.max_concurrent, {_DEFAULT_CAP})
                 ORDER BY j.created_at ASC, j.rowid ASC
                 LIMIT 1
             """).fetchone()
