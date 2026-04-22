@@ -1,0 +1,59 @@
+---
+# Recover a paused template build whose Ansible controller died.
+#
+# Scenario: operator kicked off a build with `pause_before_sysprep=on`,
+# installed software inside the paused VM, but the controller process
+# (the ansible-playbook subprocess inside the builder container) was
+# terminated before they clicked Resume — usually because the container
+# was recreated during a deploy / upgrade. The VM itself is still
+# running, waiting in OOBE with the installed software in place.
+#
+# This playbook picks up from the sysprep step onward, so the template
+# finishes without having to re-run the 25-minute install.
+#
+# Usage:
+#   ansible-playbook playbooks/resume_template_build.yml \
+#     --ask-vault-pass \
+#     -e vm_vmid=108 -e proxmox_node=pve2
+#
+# vm_name is derived from vm_vmid unless provided; that's fine because
+# sysprep + template conversion only need the VMID.
+
+- name: Resume a paused template build (sysprep → convert → report)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    vm_name: "{{ vm_name | default('autopilot-' ~ vm_vmid) }}"
+
+  tasks:
+    - name: Validate required vars
+      ansible.builtin.assert:
+        that:
+          - vm_vmid is defined
+          - proxmox_node is defined
+        fail_msg: >
+          vm_vmid and proxmox_node must be set. Example:
+          -e vm_vmid=108 -e proxmox_node=pve2
+
+    - name: Run sysprep (also waits for stop + removes Panther offline)
+      # include_role (not include_tasks) so `role_path` resolves —
+      # sysprep.yml internally references {{ role_path }}/../common/tasks/*.
+      ansible.builtin.include_role:
+        name: proxmox_template_builder
+        tasks_from: sysprep.yml
+
+    - name: Convert VM to template
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/template"
+        method: POST
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Report template recovery
+      ansible.builtin.debug:
+        msg: >
+          Template recovered from VM {{ vm_name }} (VMID: {{ vm_vmid }}).
+          Use this VMID as proxmox_template_vmid for clone provisioning.
