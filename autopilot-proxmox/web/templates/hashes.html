@@ -17,33 +17,62 @@
 </form>
 
 {% if hash_files %}
-<h3>Hash Files <small style="color:var(--ink-soft);font-weight:normal;">({{ hash_files|length }} file{{ 's' if hash_files|length != 1 }})</small></h3>
+<h3>Hash Files
+  <small style="color:var(--ink-soft);font-weight:normal;">
+    <span id="visibleCount">{{ hash_files|length }}</span>
+    of {{ hash_files|length }} file{{ 's' if hash_files|length != 1 }}
+  </small>
+</h3>
+
+<!-- Filter: case-insensitive substring match against vm_name / serial / oem / group-tag input -->
+<div style="margin:8px 0 12px; display:flex; gap:8px; align-items:center;">
+  <label for="hashFilter" style="font-weight:500;">Filter:</label>
+  <input id="hashFilter" type="search" placeholder="name, serial, or OEM…"
+         style="flex:1; max-width:320px;"
+         oninput="applyFilter();">
+  <span style="color:var(--ink-soft);font-size:11px;">Click a column header to sort.</span>
+</div>
+
+<style>
+  /* Sortable header affordance. Arrow rendered via ::after so it doesn't
+     interfere with the existing thead styling. */
+  table.sortable th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.sortable th.sortable::after { content: " ⇅"; color: var(--ink-soft); font-size: 0.85em; }
+  table.sortable th.sort-asc::after  { content: " ▲"; color: var(--ink); }
+  table.sortable th.sort-desc::after { content: " ▼"; color: var(--ink); }
+  table.sortable th.sortable:hover { background: var(--hover); }
+</style>
+
 <form id="hashForm">
-<table>
+<table class="sortable" id="hashTable">
+<thead>
 <tr>
-  <th><input type="checkbox" onclick="var c=document.getElementsByName('selected');for(var i=0;i<c.length;i++)c[i].checked=this.checked;updateCount();"></th>
-  <th>VM Name</th>
-  <th>Serial</th>
-  <th>OEM</th>
+  <th><input type="checkbox" onclick="var c=document.querySelectorAll('#hashTable tbody tr:not([hidden]) input[name=selected]');for(var i=0;i<c.length;i++)c[i].checked=this.checked;updateCount();"></th>
+  <th class="sortable" data-sort-col="1" data-sort-type="str">VM Name</th>
+  <th class="sortable" data-sort-col="2" data-sort-type="str">Serial</th>
+  <th class="sortable" data-sort-col="3" data-sort-type="str">OEM</th>
   <th>Group Tag</th>
-  <th>Intune Status</th>
-  <th>Size</th>
-  <th>Modified</th>
+  <th class="sortable" data-sort-col="5" data-sort-type="str">Intune Status</th>
+  <th class="sortable" data-sort-col="6" data-sort-type="num">Size</th>
+  <th class="sortable" data-sort-col="7" data-sort-type="num">Modified</th>
   <th>Actions</th>
 </tr>
+</thead>
+<tbody>
 {% for f in hash_files %}
-<tr>
+<tr data-search="{{ (f.vm_name ~ ' ' ~ f.serial ~ ' ' ~ f.oem)|lower }}">
   <td><input type="checkbox" name="selected" value="{{ f.name }}" onchange="updateCount();"></td>
   <td>{{ f.vm_name }}</td>
   <td>{{ f.serial }}</td>
   <td>{{ f.oem }}</td>
   <td><input type="text" name="tag_{{ f.name }}" value="" size="12" style="font-size:10px;border:1px solid var(--line);padding:1px 3px;" placeholder="none"></td>
-  <td>{% if f.in_intune %}<span class="badge badge-green">Registered</span>{% else %}<span class="badge badge-gray">Not Uploaded</span>{% endif %}</td>
-  <td>{{ f.size }}</td>
-  <td>{{ f.modified }}</td>
+  <td data-sort-value="{{ 1 if f.in_intune else 0 }}">{% if f.in_intune %}<span class="badge badge-green">Registered</span>{% else %}<span class="badge badge-gray">Not Uploaded</span>{% endif %}</td>
+  <td data-sort-value="{{ f.size_bytes }}">{{ f.size }}</td>
+  <td data-sort-value="{{ f.modified_epoch }}">{{ f.modified }}</td>
   <td><a href="/api/hashes/{{ f.name }}">Download</a></td>
 </tr>
 {% endfor %}
+</tbody>
 </table>
 </form>
 <br>
@@ -61,6 +90,72 @@ function updateCount() {
   var c = document.querySelectorAll('input[name="selected"]:checked');
   document.getElementById('selcount').textContent = c.length + ' selected';
 }
+
+// ---------------------------------------------------------------------------
+// Client-side filter + sortable columns.
+//
+// Filter: case-insensitive substring against the row's data-search
+// attribute (vm_name + serial + OEM, lowercased server-side). Pure
+// show/hide; selection and sort state are preserved.
+//
+// Sort: click a header with .sortable → rows re-order by that column.
+// The ::after arrow in CSS flips between ⇅ / ▲ / ▼ based on the class.
+// Numeric columns (Size, Modified) use data-sort-value (raw bytes /
+// epoch seconds) so "999 bytes" < "1,024 bytes" sorts correctly.
+// ---------------------------------------------------------------------------
+function applyFilter() {
+  var q = (document.getElementById('hashFilter').value || '').trim().toLowerCase();
+  var rows = document.querySelectorAll('#hashTable tbody tr');
+  var visible = 0;
+  rows.forEach(function(tr) {
+    var show = !q || (tr.dataset.search || '').indexOf(q) !== -1;
+    tr.hidden = !show;
+    if (show) visible++;
+  });
+  var badge = document.getElementById('visibleCount');
+  if (badge) badge.textContent = visible;
+}
+
+function _cellSortValue(cell, type) {
+  var raw = cell.getAttribute('data-sort-value');
+  if (raw !== null) {
+    return type === 'num' ? parseFloat(raw) : raw.toLowerCase();
+  }
+  var text = (cell.textContent || '').trim();
+  return type === 'num' ? parseFloat(text) || 0 : text.toLowerCase();
+}
+
+function sortBy(colIndex, type, header) {
+  var table = document.getElementById('hashTable');
+  var tbody = table.tBodies[0];
+  var headers = table.tHead.rows[0].cells;
+  // Determine direction: toggle if already sorted by this column,
+  // else start ascending.
+  var asc = !header.classList.contains('sort-asc');
+  for (var i = 0; i < headers.length; i++) {
+    headers[i].classList.remove('sort-asc', 'sort-desc');
+  }
+  header.classList.add(asc ? 'sort-asc' : 'sort-desc');
+
+  var rows = Array.prototype.slice.call(tbody.rows);
+  rows.sort(function(a, b) {
+    var av = _cellSortValue(a.cells[colIndex], type);
+    var bv = _cellSortValue(b.cells[colIndex], type);
+    if (av < bv) return asc ? -1 : 1;
+    if (av > bv) return asc ? 1 : -1;
+    return 0;
+  });
+  rows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('#hashTable th.sortable').forEach(function(th) {
+    th.addEventListener('click', function() {
+      sortBy(parseInt(th.dataset.sortCol, 10),
+             th.dataset.sortType || 'str', th);
+    });
+  });
+});
 
 function getSelected() {
   var checked = document.querySelectorAll('input[name="selected"]:checked');
