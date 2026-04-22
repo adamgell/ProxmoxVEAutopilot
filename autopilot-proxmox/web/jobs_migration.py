@@ -18,6 +18,12 @@ _log = logging.getLogger(__name__)
 def migrate_legacy_index(*, jobs_dir: Path, db_path: Path) -> int:
     """Read jobs_dir/index.json, insert into jobs.db, rename the file.
     Returns count of migrated rows. Idempotent after the rename.
+
+    Partial-failure semantics: per-row exceptions are caught and the
+    other rows still migrate. The file is renamed to .pre-split.bak
+    regardless so future boots no-op, but any dropped IDs are logged
+    at WARNING level with the backup path so operators can recover
+    them offline.
     """
     index_path = Path(jobs_dir) / "index.json"
     if not index_path.exists():
@@ -27,7 +33,9 @@ def migrate_legacy_index(*, jobs_dir: Path, db_path: Path) -> int:
     except Exception:
         _log.exception("failed to read %s; skipping migration", index_path)
         return 0
+    total = len(entries)
     inserted = 0
+    failed_ids: list[str] = []
     for entry in entries:
         status = entry.get("status")
         if status == "running":
@@ -51,9 +59,18 @@ def migrate_legacy_index(*, jobs_dir: Path, db_path: Path) -> int:
             inserted += 1
         except Exception:
             _log.exception("failed to migrate job %r", entry.get("id"))
-    # Rename even on partial failure — don't retry bad rows on every boot.
+            failed_ids.append(entry.get("id") or "<unknown>")
     backup = index_path.with_suffix(".json.pre-split.bak")
     index_path.rename(backup)
-    _log.info("migrated %d jobs; legacy index backed up to %s",
-              inserted, backup)
+    if failed_ids:
+        _log.warning(
+            "jobs migration dropped %d of %d rows: %s \u2014 "
+            "original data preserved at %s (grep by id to recover)",
+            len(failed_ids), total, failed_ids, backup,
+        )
+    else:
+        _log.info(
+            "migrated %d jobs cleanly; legacy index backed up to %s",
+            inserted, backup,
+        )
     return inserted
