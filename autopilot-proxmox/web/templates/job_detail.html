@@ -64,6 +64,23 @@
   <b>Paused for software install.</b>
   RDP or <a href="/api/vms/{{ job.args.vm_vmid }}/console" target="_blank">Console</a>
   into the VM, install whatever you need, then click Resume.
+  <div style="margin-top:8px;font-size:12px;">
+    <b>Before you click Resume — sysprep checklist:</b>
+    <ul style="margin:4px 0 0 18px;padding:0;">
+      <li>All installs are machine-scoped
+          (<code>winget install --scope machine</code> / admin MSI).
+          Per-user apps will hang sysprep on a GUI error.</li>
+      <li>Close Edge / Store / taskbar apps you opened — first-launch
+          provisions a per-user copy that blocks generalize.</li>
+      <li>Sign out of any accounts (OneDrive, etc.) so their
+          per-user state doesn't get baked into the image.</li>
+    </ul>
+    If you're not sure, run this in an admin PowerShell first:
+    <code style="display:block;margin-top:4px;padding:4px 6px;background:var(--panel);color:var(--ink);">
+      Get-AppxPackage -AllUsers | Where-Object NonRemovable -eq $false |
+          Remove-AppxPackage -AllUsers
+    </code>
+  </div>
   <br>
   <button type="button" onclick="resumeTemplate();" class="action-btn-upload" style="margin-top:6px;">
     Resume &amp; finalize (sysprep)

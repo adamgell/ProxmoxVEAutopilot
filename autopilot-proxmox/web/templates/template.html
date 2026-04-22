@@ -44,6 +44,22 @@
       RDP or Console in, install whatever you need, then click <b>Resume &amp; finalize</b>
       on the job page. Max wait is 2&nbsp;hours.
     </small>
+    <div style="margin-top:8px;padding:8px 10px;background:var(--warn-bg);
+                border:1px solid var(--warn-fg);color:var(--warn-fg);
+                border-radius:4px;font-size:12px;max-width:640px;">
+      <b>Heads-up — sysprep-compatible installs only.</b>
+      Apps you install during the pause MUST be <b>machine-scoped</b>; if
+      anything registers per-user, sysprep's <code>/generalize</code> will
+      hang on a GUI error dialog that nothing in the container can dismiss.
+      <ul style="margin:6px 0 0 18px;padding:0;">
+        <li>Prefer MSI installers run as admin, or
+            <code>winget install --scope machine &lt;pkg&gt;</code>.</li>
+        <li>Don't launch Edge, Store, or any Windows app during the pause —
+            first launch silently provisions a per-user copy.</li>
+        <li>If a per-user app slips in: <code>Get-AppxPackage -AllUsers &lt;name&gt; |
+            Remove-AppxPackage -AllUsers</code> before clicking Resume.</li>
+      </ul>
+    </div>
   </td>
 </tr>
 <tr>
