@@ -153,9 +153,11 @@ def _run_loops(*, stop_event: threading.Event,
         # Short wake interval so cadence rounding stays tight (a 0.1s
         # reaper_interval_seconds in tests needs sub-second wake-ups;
         # production tickers are all >=10s so a 1s tick is fine).
-        stop_event.wait(timeout=min(1.0, heartbeat_interval_seconds / 2
-                                    if heartbeat_interval_seconds < 2
-                                    else 1.0))
+        if heartbeat_interval_seconds < 2:
+            wake_seconds = min(1.0, heartbeat_interval_seconds / 2)
+        else:
+            wake_seconds = 1.0
+        stop_event.wait(timeout=wake_seconds)
 
     _log.info("monitor loops stopping")
 
