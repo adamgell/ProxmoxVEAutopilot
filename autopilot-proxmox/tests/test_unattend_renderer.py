@@ -49,10 +49,16 @@ def test_default_sequence_omits_autologin_so_oobe_stays_open_for_autopilot():
     # No baked-in Administrator account from the legacy default.
     assert "<Name>Administrator</Name>" not in rendered
     assert "Nsta1200!!" not in rendered
-    # OOBE skip flags still present (they're in the static template,
-    # not the optional blocks) so Autopilot's standard config still
-    # bypasses the EULA / wireless / online-account screens.
-    assert "<HideOnlineAccountScreens>true</HideOnlineAccountScreens>" in rendered
+    # OOBE Hide* flags removed — clones run interactively starting at
+    # the Region screen. Operator drives OOBE manually for hash
+    # capture + Autopilot enrollment workflows.
+    assert "<HideOnlineAccountScreens>" not in rendered
+    assert "<HideEULAPage>" not in rendered
+    # Region/keyboard auto-fill removed from oobeSystem so OOBE stops
+    # at the very first screen (the WinPE-pass International-Core for
+    # template install is unaffected).
+    rendered_oobe = rendered.split('pass="oobeSystem"', 1)[-1]
+    assert "Microsoft-Windows-International-Core" not in rendered_oobe
 
 
 def test_local_admin_sequence_substitutes_user_accounts_and_auto_logon():
