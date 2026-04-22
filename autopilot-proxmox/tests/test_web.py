@@ -347,13 +347,41 @@ def test_vms_page_escapes_vm_name_in_data_attributes(client):
          patch("web.app.get_hash_files", return_value=[]):
         r = client.get("/vms")
     assert r.status_code == 200
-    # The payload must NOT appear inside an inline onclick — and if it
-    # appears in a data-* attribute the quote gets HTML-escaped which
-    # is safe for that context.
     body = r.text
-    # No raw unescaped single quote inside an onclick= attribute.
-    # Simple heuristic: data-vm-name with our payload HTML-escaped.
     assert 'data-vm-name="evil&#39;); alert(1)//"' in body \
            or 'data-vm-name="evil\'); alert(1)//"' in body
-    # And the old-pattern inline onclick with vm_name is gone.
     assert "vm_name:'evil" not in body
+
+
+def test_healthz_503_before_full_init():
+    """Simulate schema init not complete: /healthz must 503, not 200.
+    Exercised by temporarily patching both flags to False."""
+    from fastapi.testclient import TestClient
+    from web import app as app_module
+    from unittest.mock import patch
+    with patch.object(app_module, "_SEQUENCES_READY", False), \
+         patch.object(app_module, "_JOBS_READY", False):
+        client = TestClient(app_module.app)
+        r = client.get("/healthz")
+    assert r.status_code == 503
+    assert "not complete" in r.json().get("detail", "")
+
+
+def test_detect_template_pause_ignores_debug_echo_of_marker(client):
+    """False-trigger guard: if a debug task's msg= contains the raw
+    pause phrase, _detect_template_pause must NOT report paused
+    because we anchor on the TASK [...] header."""
+    from web.app import _detect_template_pause
+    job = {"args": {"pause_enabled": True, "pause_signal_path": "/x"}}
+    log = (
+        "TASK [Install apps]\n"
+        "ok: [localhost] => {\"msg\": \"PAUSE — install software in VMID 108\"}\n"
+    )
+    assert _detect_template_pause(job, log) is False
+
+
+def test_detect_template_pause_anchored_on_task_header(client):
+    from web.app import _detect_template_pause
+    job = {"args": {"pause_enabled": True, "pause_signal_path": "/x"}}
+    log = "TASK [PAUSE — install software in VMID 108 now, then click Resume]\nok\n"
+    assert _detect_template_pause(job, log) is True
