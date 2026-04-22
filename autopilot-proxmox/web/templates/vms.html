@@ -98,13 +98,16 @@ async function refreshVms() {
     <div class="actions-cell">
     {% if vm.status == 'running' %}
       <!-- Power actions -->
-      <button class="action-btn" type="button" title="Shutdown" style="color:var(--warn-fg);" onclick="if(confirm('Shutdown VM {{ vm.vmid }}?'))postAction('/api/vms/{{ vm.vmid }}/shutdown');">
+      <button class="action-btn" type="button" title="Shutdown" style="color:var(--warn-fg);"
+              data-vm-action="shutdown" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="12"/></svg>
       </button>
-      <button class="action-btn danger" type="button" title="Force Stop" style="color:var(--ms-red-dark);" onclick="if(confirm('Force stop VM {{ vm.vmid }}? This is like pulling the power plug.'))postAction('/api/vms/{{ vm.vmid }}/stop');">
+      <button class="action-btn danger" type="button" title="Force Stop" style="color:var(--ms-red-dark);"
+              data-vm-action="stop" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
       </button>
-      <button class="action-btn" type="button" title="Reset" style="color:var(--ms-blue-dark);" onclick="postAction('/api/vms/{{ vm.vmid }}/reset');">
+      <button class="action-btn" type="button" title="Reset" style="color:var(--ms-blue-dark);"
+              data-vm-action="reset" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       </button>
       <span style="color:var(--line);margin:0 2px;">|</span>
@@ -113,39 +116,47 @@ async function refreshVms() {
         <button class="action-btn" type="button" disabled title="Ubuntu sequence — no Autopilot hash" style="color:var(--ink-soft);">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
         </button>
-        <button class="action-btn" type="button" title="Check Intune + MDE enrollment" style="color:var(--ok-fg);" onclick="checkEnroll({{ vm.vmid }}, this);">
+        <button class="action-btn" type="button" title="Check Intune + MDE enrollment" style="color:var(--ok-fg);"
+                data-vm-action="check-enroll" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
       {% else %}
-      <button class="action-btn" type="button" title="Capture Hash" style="color:var(--ms-blue-dark);" onclick="postAction('/api/jobs/capture',{vmid:'{{ vm.vmid }}',vm_name:'{{ vm.name }}'});">
+      <button class="action-btn" type="button" title="Capture Hash" style="color:var(--ms-blue-dark);"
+              data-vm-action="capture" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
       {% endif %}
-      <button class="action-btn" type="button" title="Rename computer" style="color:var(--ms-blue-dark);" onclick="openRenameDialog('{{ vm.vmid }}', '{{ vm.name }}');">
+      <button class="action-btn" type="button" title="Rename computer" style="color:var(--ms-blue-dark);"
+              data-vm-action="rename" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
       </button>
       <a href="/api/vms/{{ vm.vmid }}/console" target="_blank" class="action-btn" title="Console" style="color:var(--ms-blue-dark);">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       </a>
-      <button class="action-btn" type="button" title="Type Text" style="color:var(--ms-blue-dark);" onclick="typeText('{{ vm.vmid }}');">
+      <button class="action-btn" type="button" title="Type Text" style="color:var(--ms-blue-dark);"
+              data-vm-action="type-text" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
       </button>
-      <button class="action-btn" type="button" title="Send Ctrl+Alt+Del" style="color:var(--warn-fg);" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ctrl-alt-delete'});">
+      <button class="action-btn" type="button" title="Send Ctrl+Alt+Del" style="color:var(--warn-fg);"
+              data-vm-action="sendkey-cad" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="1" y="5" width="22" height="14" rx="2"/><text x="12" y="14" text-anchor="middle" font-size="7" font-family="Verdana" fill="currentColor" stroke="none">CAD</text></svg>
       </button>
-      <button class="action-btn" type="button" title="Send Enter" style="color:var(--ms-blue-dark);" onclick="postAction('/api/vms/{{ vm.vmid }}/sendkey',{key:'ret'});">
+      <button class="action-btn" type="button" title="Send Enter" style="color:var(--ms-blue-dark);"
+              data-vm-action="sendkey-ret" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,10 4,15 9,20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
       </button>
       <span style="color:var(--line);margin:0 2px;">|</span>
     {% else %}
       <!-- Stopped: Start -->
-      <button class="action-btn" type="button" title="Start" style="color:var(--ok-fg);" onclick="postAction('/api/vms/{{ vm.vmid }}/start');">
+      <button class="action-btn" type="button" title="Start" style="color:var(--ok-fg);"
+              data-vm-action="start" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
       </button>
       <span style="color:var(--line);margin:0 2px;">|</span>
     {% endif %}
       <!-- Delete (always shown) -->
-      <button class="action-btn danger" type="button" title="Delete VM" style="color:var(--ms-red-dark);" onclick="if(confirm('Delete VM {{ vm.vmid }}? This cannot be undone.'))postAction('/api/vms/{{ vm.vmid }}/delete');">
+      <button class="action-btn danger" type="button" title="Delete VM" style="color:var(--ms-red-dark);"
+              data-vm-action="delete" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -380,5 +391,59 @@ function postAction(url, fields) {
   document.body.appendChild(f);
   f.submit();
 }
+
+// -----------------------------------------------------------------------
+// Delegated click handler for every VM action button.
+// We route through data-* attributes (HTML-context-safe) instead of
+// inlining vm.name / vm.vmid into onclick= JS string literals, which
+// would let an operator-supplied VM name like `'); alert(1)//` break
+// out of the quote even after Jinja autoescape (the browser decodes
+// &#39; back to ' before the JS parser sees the attribute).
+// -----------------------------------------------------------------------
+document.addEventListener('click', function(ev) {
+  var btn = ev.target.closest('[data-vm-action]');
+  if (!btn) return;
+  var action = btn.dataset.vmAction;
+  var vmid = btn.dataset.vmid;
+  var vmName = btn.dataset.vmName || '';
+  switch (action) {
+    case 'shutdown':
+      if (confirm('Shutdown VM ' + vmid + '?'))
+        postAction('/api/vms/' + vmid + '/shutdown');
+      break;
+    case 'stop':
+      if (confirm('Force stop VM ' + vmid + '? This is like pulling the power plug.'))
+        postAction('/api/vms/' + vmid + '/stop');
+      break;
+    case 'reset':
+      postAction('/api/vms/' + vmid + '/reset');
+      break;
+    case 'start':
+      postAction('/api/vms/' + vmid + '/start');
+      break;
+    case 'delete':
+      if (confirm('Delete VM ' + vmid + '? This cannot be undone.'))
+        postAction('/api/vms/' + vmid + '/delete');
+      break;
+    case 'capture':
+      postAction('/api/jobs/capture', {vmid: vmid, vm_name: vmName});
+      break;
+    case 'rename':
+      openRenameDialog(vmid, vmName);
+      break;
+    case 'check-enroll':
+      checkEnroll(vmid, btn);
+      break;
+    case 'type-text':
+      typeText(vmid);
+      break;
+    case 'sendkey-cad':
+      postAction('/api/vms/' + vmid + '/sendkey', {key: 'ctrl-alt-delete'});
+      break;
+    case 'sendkey-ret':
+      postAction('/api/vms/' + vmid + '/sendkey', {key: 'ret'});
+      break;
+  }
+});
 </script>
 {% endblock %}

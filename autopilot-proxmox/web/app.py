@@ -59,10 +59,16 @@ def _load_version() -> dict:
 _APP_VERSION = _load_version()
 _LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, "error": None}
 
-# Flipped True at the end of the last schema-init startup hook. /healthz
-# returns 503 until then, so docker-compose `depends_on: service_healthy`
-# keeps builder/monitor from racing the web DB initializers on cold start.
-_SCHEMA_READY = False
+# Two flags, one per startup hook. /healthz gates on BOTH so
+# docker-compose `depends_on: service_healthy` can't release
+# builder/monitor after only one hook has completed — FastAPI runs
+# startup hooks in registration order, so a single shared flag flipped
+# True at the end of EITHER hook would leave a race window where the
+# jobs.db migration (second hook) hasn't finished yet. Keeping
+# sequences-init and jobs-init as separate functions matters because
+# the jobs migration reads rows that sequences-init seeds.
+_SEQUENCES_READY = False
+_JOBS_READY = False
 
 
 def _sanitize_input(value):
@@ -546,13 +552,17 @@ async def auth_logout(request: Request):
     return RedirectResponse(url="/", status_code=302)
 
 
+# /healthz is in _EXEMPT_PREFIXES (see web/auth.py) so the compose
+# healthcheck and depends_on: service_healthy gate can hit it without
+# a session cookie. Anything leaked here should be limited to schema
+# readiness — no device/job/secrets data.
 @app.get("/healthz")
 async def healthz():
     """Uptime probe — exempt from auth so external monitors can hit it.
-    Gated on _SCHEMA_READY: returns 503 until all startup schema-init
-    hooks finish, so docker-compose dependents (builder/monitor) don't
-    start against a half-initialized DB."""
-    if not _SCHEMA_READY:
+    Gated on BOTH _SEQUENCES_READY and _JOBS_READY: returns 503 until
+    every startup schema-init hook finishes, so docker-compose dependents
+    (builder/monitor) don't start against a half-initialized DB."""
+    if not (_SEQUENCES_READY and _JOBS_READY):
         raise HTTPException(503, "schema init not complete")
     return {"ok": True}
 
@@ -622,8 +632,8 @@ def _init_sequences_db() -> None:
     sequences_db.init(SEQUENCES_DB)
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
     device_history_db.init(DEVICE_MONITOR_DB)
-    global _SCHEMA_READY
-    _SCHEMA_READY = True
+    global _SEQUENCES_READY
+    _SEQUENCES_READY = True
 
 
 @app.on_event("startup")
@@ -634,8 +644,8 @@ def _init_jobs_db_and_migrate() -> None:
         jobs_dir=Path(job_manager.jobs_dir),
         db_path=JOBS_DB,
     )
-    global _SCHEMA_READY
-    _SCHEMA_READY = True
+    global _JOBS_READY
+    _JOBS_READY = True
 
 
 # Note: the periodic device-monitor sweep + keytab-refresh loop used
@@ -831,6 +841,11 @@ def _sid_bytes_to_str(b: bytes) -> str:
     if not b or len(b) < 8:
         return b.hex() if b else ""
     revision = b[0]
+    # MS-DTYP 2.4.2.2: revision is always 1 in every shipped Windows.
+    # Anything else means a corrupted or non-SID blob; fall back to
+    # hex rather than emit nonsense canonical form.
+    if revision != 1:
+        return b.hex()
     sub_count = b[1]
     authority = int.from_bytes(b[2:8], "big")
     subs = [
@@ -2038,18 +2053,25 @@ def _detect_template_pause(job: dict, log_content: str) -> bool:
     Source of truth: the Ansible task title we emit in
     roles/proxmox_template_builder/tasks/main.yml appears in the log as
     ``TASK [PAUSE — install software in VMID ...]`` the moment wait_for
-    starts. We check that the task started AND that the next task
-    (``Remove resume signal file``) has NOT yet started — that second
-    task only fires after the operator clicks Resume, which is our
-    signal that the pause is over.
+    starts. We anchor on the ``TASK [`` prefix of the header line
+    instead of the raw phrase, so operator debug output (e.g. an
+    ``ansible.builtin.debug msg=...`` that happens to mention the pause
+    text, or a later failure message that echoes task context) cannot
+    false-trigger the PAUSED badge. We also check that the cleanup task
+    (``Remove resume signal file (cleanup after pause)``) has NOT yet
+    started — that task only fires after the operator clicks Resume,
+    which is our signal that the pause is over.
     """
     if not (job.get("args") or {}).get("pause_enabled"):
         return False
-    if "PAUSE — install software in VMID" not in log_content:
+    # Anchor on the Ansible TASK header line (start-of-line, bracketed)
+    # so operator debug output that mentions the phrase doesn't
+    # false-trigger.
+    pause_marker = "TASK [PAUSE — install software in VMID"
+    cleanup_marker = "TASK [Remove resume signal file (cleanup after pause)]"
+    if pause_marker not in log_content:
         return False
-    # Once the post-pause cleanup task has started, the wait_for returned
-    # and we're executing sysprep now — not paused anymore.
-    if "Remove resume signal file" in log_content:
+    if cleanup_marker in log_content:
         return False
     return True
 

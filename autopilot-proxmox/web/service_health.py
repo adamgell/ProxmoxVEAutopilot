@@ -69,9 +69,23 @@ def heartbeat(db_path: Path, *, service_id: str, service_type: str,
         )
 
 
+def _parse_utc(iso: str) -> datetime:
+    """Parse an ISO timestamp and guarantee a tz-aware UTC datetime.
+
+    All heartbeats written by this module include the ``+00:00`` offset,
+    but a stray naive row (e.g., hand-inserted for testing, or an older
+    migration path that dropped the tz) would otherwise raise TypeError
+    when subtracted from a tz-aware value.
+    """
+    dt = datetime.fromisoformat(iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _classify(last_heartbeat_iso: str, now_iso: str) -> str:
-    last = datetime.fromisoformat(last_heartbeat_iso)
-    now = datetime.fromisoformat(now_iso)
+    last = _parse_utc(last_heartbeat_iso)
+    now = _parse_utc(now_iso)
     age = (now - last).total_seconds()
     if age <= _OK_THRESHOLD:
         return "ok"
@@ -83,6 +97,7 @@ def _classify(last_heartbeat_iso: str, now_iso: str) -> str:
 def list_services(db_path: Path) -> list[dict]:
     """Render-ready rows with a computed `status` + `age_seconds` column."""
     now_iso = _now()
+    now_dt = _parse_utc(now_iso)
     with _connect(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM service_health ORDER BY service_type, service_id"
@@ -91,8 +106,8 @@ def list_services(db_path: Path) -> list[dict]:
     for r in rows:
         d = dict(r)
         d["status"] = _classify(d["last_heartbeat"], now_iso)
-        last = datetime.fromisoformat(d["last_heartbeat"])
-        d["age_seconds"] = int((datetime.fromisoformat(now_iso) - last).total_seconds())
+        last = _parse_utc(d["last_heartbeat"])
+        d["age_seconds"] = int((now_dt - last).total_seconds())
         out.append(d)
     return out
 

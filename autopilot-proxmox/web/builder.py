@@ -27,14 +27,25 @@ _log = logging.getLogger("web.builder")
 
 def _worker_id() -> str:
     """Persist a uuid under /app/output/worker-id.<hostname> so compose
-    restarts preserve identity for the health UI."""
+    restarts preserve identity for the health UI. Uses O_CREAT|O_EXCL
+    to survive any (pathological) simultaneous-start race."""
     hostname = os.uname().nodename
     path = Path("/app/output") / f"worker-id.{hostname}"
-    if path.exists():
+    try:
         return path.read_text().strip()
+    except FileNotFoundError:
+        pass
     new_id = f"builder-{uuid.uuid4().hex[:8]}"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(new_id)
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        # Someone beat us; re-read.
+        return path.read_text().strip()
+    try:
+        os.write(fd, new_id.encode())
+    finally:
+        os.close(fd)
     return new_id
 
 
@@ -46,33 +57,62 @@ def _version_sha() -> str:
 def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
                  worker_id: str, stop_event: threading.Event,
                  heartbeat_seconds: float = 5.0) -> None:
-    """Spawn the subprocess, heartbeat, react to kill, finalize."""
-    log_file = open(log_path, "a")
+    """Spawn, heartbeat, react to kill, finalize — defensively.
+
+    - DB failures (transient sqlite.OperationalError) are logged and
+      swallowed so the heartbeat loop keeps running.
+    - If touch_heartbeat returns 0 rows updated, another writer (the
+      reaper, or the /kill endpoint via a race) has taken us out of
+      'running' state — terminate the subprocess and exit without
+      calling finalize_job (the status is already terminal).
+    - Any exit path (normal, kill, reap, exception) terminates the
+      subprocess if it's still alive, so we never leak processes.
+    """
     _log.info("starting job %s (type=%s) on %s",
               row["id"], row["job_type"], worker_id)
+    log_file = open(log_path, "a")
+    proc = None
     try:
-        proc = subprocess.Popen(
-            row["cmd"], stdout=log_file, stderr=subprocess.STDOUT, text=True,
-        )
-    except Exception:
-        _log.exception("failed to spawn subprocess for job %s", row["id"])
-        jobs_db.finalize_job(db_path, row["id"], exit_code=-1)
-        log_file.close()
-        return
+        try:
+            proc = subprocess.Popen(
+                row["cmd"], stdout=log_file, stderr=subprocess.STDOUT, text=True,
+            )
+        except Exception:
+            _log.exception("failed to spawn subprocess for job %s", row["id"])
+            try:
+                jobs_db.finalize_job(db_path, row["id"], exit_code=-1)
+            except Exception:
+                _log.exception("finalize_job failed for %s", row["id"])
+            return
 
-    try:
+        reaped = False
+        exit_code = None
         while True:
             exit_code = proc.poll()
             if exit_code is not None:
                 break
-            jobs_db.touch_heartbeat(db_path, row["id"])
-            current = jobs_db.get_job(db_path, row["id"])
-            if current and current["kill_requested"]:
-                _log.info("kill_requested set — terminating job %s", row["id"])
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
+            try:
+                n = jobs_db.touch_heartbeat(db_path, row["id"])
+                if n == 0:
+                    _log.warning(
+                        "job %s no longer in 'running' state — "
+                        "reaped or finalized externally; terminating",
+                        row["id"],
+                    )
+                    reaped = True
+                    break
+                current = jobs_db.get_job(db_path, row["id"])
+                if current and current.get("kill_requested"):
+                    _log.info("kill_requested on %s — terminating",
+                              row["id"])
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+            except Exception:
+                _log.exception("db error during heartbeat for %s — "
+                               "swallowing, will retry next tick",
+                               row["id"])
             if stop_event.is_set():
                 _log.info("stop_event set — terminating job %s", row["id"])
                 try:
@@ -80,9 +120,28 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
                 except Exception:
                     pass
             time.sleep(heartbeat_seconds)
-        jobs_db.finalize_job(db_path, row["id"], exit_code=exit_code)
-        _log.info("job %s finished with exit_code=%s", row["id"], exit_code)
+
+        if not reaped:
+            try:
+                n = jobs_db.finalize_job(db_path, row["id"], exit_code=exit_code)
+                if n == 0:
+                    _log.warning(
+                        "finalize_job for %s found row already terminal "
+                        "(likely reaped mid-run)", row["id"],
+                    )
+            except Exception:
+                _log.exception("finalize_job failed for %s", row["id"])
+            _log.info("job %s finished with exit_code=%s",
+                      row["id"], exit_code)
     finally:
+        # Never leak a subprocess. If we're leaving this function and
+        # the proc is still alive (reap, exception, stop_event escape,
+        # anything), SIGTERM it.
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
         log_file.close()
 
 

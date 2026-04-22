@@ -12,7 +12,7 @@
   <td>{% if job.paused %}<span class="badge warn" title="Template build paused — waiting for operator Resume">PAUSED</span>{% elif job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED</span>{% endif %}</td>
   <td>{{ job.started[:19] }}</td>
   <td>{{ job.duration or '' }}</td>
-  <td>{{ job.args }}</td>
+  <td><code style="font-size:11px;">{{ job.args | tojson }}</code></td>
 </tr>
 {% endfor %}
 </table>

@@ -6,6 +6,10 @@
   <title>Sign in - Proxmox VE Autopilot</title>
   <link rel="icon" type="image/svg+xml" href="/auth/logo">
   <style>
+    /* Login page is intentionally a fixed light aesthetic. The XP Bliss
+       wallpaper defines the mood; supporting dark-mode tokens here would
+       make the card clash with the photo. Once the operator authenticates,
+       the authenticated app (/base.html) is fully theme-aware. */
     html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, sans-serif; color: #212529; }
     body {
       /* Bliss-remastered 5K, baked into /app/files/bliss.jpg and
@@ -36,7 +40,7 @@
 
     .tenant {
       display: flex; align-items: center; gap: 6px;
-      font-size: 12px; color: #495057; margin-bottom: 16px;
+      font-size: 12px; color: #343a40; margin-bottom: 16px;
     }
     .tenant-label {
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -68,7 +72,7 @@
     .footer code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   </style>
 </head>
-<body>
+<body class="bliss">
 <div class="wrap">
   <div class="card">
     <div class="brand">
@@ -109,13 +113,15 @@
 </div>
 
 <script>
-// Probe the local bliss.jpg; apply the .bliss class only if it
-// loads, so if the file is ever missing (old image tag without the
-// asset, broken mount) the sky-and-grass gradient fallback is
-// what shows instead of a broken background.
+// Probe the local bliss.jpg; start with .bliss applied so the photo
+// paints immediately, and remove the class only if the probe fails.
+// (Inverted polarity avoids a ~100ms flash of the gradient fallback
+// on cold loads when the image probe beats first paint.) If the file
+// is ever missing (old image tag without the asset, broken mount)
+// the sky-and-grass gradient fallback takes over.
 (function() {
   var img = new Image();
-  img.onload = function() { document.body.classList.add('bliss'); };
+  img.onerror = function() { document.body.classList.remove('bliss'); };
   img.src = '/auth/bliss';
 })();
 </script>

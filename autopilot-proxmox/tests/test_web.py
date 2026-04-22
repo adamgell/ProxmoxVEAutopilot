@@ -122,13 +122,18 @@ def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
                 resp = client.get("/vms")
     assert resp.status_code == 200
     body = resp.text
-    # Ubuntu VM: Check Enrollment button wired to checkEnroll(107, ...)
-    assert "checkEnroll(107" in body
+    # Ubuntu VM: Check Enrollment button wired via data-* attributes
+    # (delegated handler routes data-vm-action="check-enroll" to
+    # checkEnroll(vmid, btn)).
+    assert 'data-vm-action="check-enroll"' in body
+    assert 'data-vmid="107"' in body
     # Ubuntu VM: enrollment chips rendered from persisted tags
     assert "chip-enroll-intune-healthy" in body
     assert "chip-enroll-mde-missing" in body
-    # Windows VM keeps its normal Capture Hash action
-    assert "postAction('/api/jobs/capture',{vmid:'108'" in body
+    # Windows VM keeps its normal Capture Hash action (same data-*
+    # pattern, action=capture).
+    assert 'data-vm-action="capture"' in body
+    assert 'data-vmid="108"' in body
 
 
 def test_template_form_post_without_pause_leaves_args_unannotated(client):
@@ -318,3 +323,65 @@ def test_healthz_ok_after_startup(client):
     r = client.get("/healthz")
     assert r.status_code == 200
     assert r.json() == {"ok": True}
+
+
+def test_vms_page_escapes_vm_name_in_data_attributes(client):
+    """VM names can contain characters that would break inline onclick
+    JS strings. After the fix, vm.name lands only in data-* attributes
+    which are HTML-context-safe."""
+    from web import app as app_module
+    # The /vms page is backed by a process-wide cache that survives
+    # across tests in the same module. Force a cold-start so our
+    # patched get_autopilot_vms is actually invoked.
+    app_module._VMS_CACHE.update(
+        {"data": None, "devices": None, "hash_serials": None,
+         "fetched_at": 0.0, "refreshing": False},
+    )
+    fake_vms = [{
+        "vmid": 42, "name": "evil'); alert(1)//",
+        "status": "running", "serial": "X0001", "oem": "",
+        "hostname": "evil", "tags": "", "target_os": "windows",
+    }]
+    with patch("web.app.get_autopilot_vms", return_value=fake_vms), \
+         patch("web.app.get_autopilot_devices", return_value=([], None)), \
+         patch("web.app.get_hash_files", return_value=[]):
+        r = client.get("/vms")
+    assert r.status_code == 200
+    body = r.text
+    assert 'data-vm-name="evil&#39;); alert(1)//"' in body \
+           or 'data-vm-name="evil\'); alert(1)//"' in body
+    assert "vm_name:'evil" not in body
+
+
+def test_healthz_503_before_full_init():
+    """Simulate schema init not complete: /healthz must 503, not 200.
+    Exercised by temporarily patching both flags to False."""
+    from fastapi.testclient import TestClient
+    from web import app as app_module
+    from unittest.mock import patch
+    with patch.object(app_module, "_SEQUENCES_READY", False), \
+         patch.object(app_module, "_JOBS_READY", False):
+        client = TestClient(app_module.app)
+        r = client.get("/healthz")
+    assert r.status_code == 503
+    assert "not complete" in r.json().get("detail", "")
+
+
+def test_detect_template_pause_ignores_debug_echo_of_marker(client):
+    """False-trigger guard: if a debug task's msg= contains the raw
+    pause phrase, _detect_template_pause must NOT report paused
+    because we anchor on the TASK [...] header."""
+    from web.app import _detect_template_pause
+    job = {"args": {"pause_enabled": True, "pause_signal_path": "/x"}}
+    log = (
+        "TASK [Install apps]\n"
+        "ok: [localhost] => {\"msg\": \"PAUSE — install software in VMID 108\"}\n"
+    )
+    assert _detect_template_pause(job, log) is False
+
+
+def test_detect_template_pause_anchored_on_task_header(client):
+    from web.app import _detect_template_pause
+    job = {"args": {"pause_enabled": True, "pause_signal_path": "/x"}}
+    log = "TASK [PAUSE — install software in VMID 108 now, then click Resume]\nok\n"
+    assert _detect_template_pause(job, log) is True
