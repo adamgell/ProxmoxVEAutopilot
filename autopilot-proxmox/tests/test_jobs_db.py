@@ -255,3 +255,57 @@ def test_reap_orphans_ignores_complete_jobs(db_path):
     n = jobs_db.reap_orphans(db_path, stale_threshold_seconds=120)
     assert n == 0
     assert jobs_db.get_job(db_path, "j1")["status"] == "complete"
+
+
+def test_touch_heartbeat_returns_zero_after_reap(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="w")
+    # Simulate reap by stale-heartbeating then reaping.
+    from datetime import datetime, timezone, timedelta
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(timespec="seconds")
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE jobs SET last_heartbeat=? WHERE id=?", (stale, "j1"))
+    jobs_db.reap_orphans(db_path, stale_threshold_seconds=300)
+    # Now touch should report 0 rows updated because status=orphaned.
+    assert jobs_db.touch_heartbeat(db_path, "j1") == 0
+
+
+def test_finalize_on_reaped_job_returns_zero_and_doesnt_revive(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="w")
+    # Manually orphan it.
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE jobs SET status='orphaned' WHERE id=?", ("j1",))
+    n = jobs_db.finalize_job(db_path, "j1", exit_code=0)
+    assert n == 0
+    # status stays orphaned.
+    assert jobs_db.get_job(db_path, "j1")["status"] == "orphaned"
+
+
+def test_finalize_clears_kill_requested(db_path):
+    from web import jobs_db
+    jobs_db.init(db_path)
+    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
+                    playbook="x", cmd=[], args={})
+    jobs_db.claim_next_job(db_path, worker_id="w")
+    jobs_db.request_kill(db_path, "j1")
+    jobs_db.finalize_job(db_path, "j1", exit_code=130)
+    row = jobs_db.get_job(db_path, "j1")
+    assert row["status"] == "failed"
+    assert row["kill_requested"] == 0
+
+
+def test_reap_orphans_default_threshold_is_300_seconds(db_path):
+    """Regression guard: bumped from 120 to 300 per code review C2."""
+    from web import jobs_db
+    import inspect
+    sig = inspect.signature(jobs_db.reap_orphans)
+    assert sig.parameters["stale_threshold_seconds"].default == 300

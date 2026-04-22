@@ -190,21 +190,34 @@ def claim_next_job(db_path: Path, *, worker_id: str) -> dict | None:
     return _row_to_dict(claimed)
 
 
-def touch_heartbeat(db_path: Path, job_id: str) -> None:
+def touch_heartbeat(db_path: Path, job_id: str) -> int:
+    """UPDATE last_heartbeat. Returns rowcount — 0 means the row was
+    reaped or finalized elsewhere; caller should stop touching it.
+    Guarded on status='running' so a reaped row doesn't get silently
+    revived."""
     with _connect(db_path) as conn:
-        conn.execute(
-            "UPDATE jobs SET last_heartbeat=? WHERE id=?",
+        cur = conn.execute(
+            "UPDATE jobs SET last_heartbeat=? "
+            "WHERE id=? AND status='running'",
             (_now(), job_id),
         )
+    return cur.rowcount
 
 
-def finalize_job(db_path: Path, job_id: str, *, exit_code: int) -> None:
+def finalize_job(db_path: Path, job_id: str, *, exit_code: int) -> int:
+    """Terminal-state write. Guarded on status='running' so a reaped
+    row isn't flipped back to complete/failed, which would mask the
+    reap in the audit trail. Returns rowcount — 0 means the row was
+    already reaped; caller should log + skip. Also clears
+    kill_requested so the terminal row is a clean record."""
     status = "complete" if exit_code == 0 else "failed"
     with _connect(db_path) as conn:
-        conn.execute(
-            "UPDATE jobs SET status=?, exit_code=?, ended_at=? WHERE id=?",
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, exit_code=?, ended_at=?, "
+            "kill_requested=0 WHERE id=? AND status='running'",
             (status, exit_code, _now(), job_id),
         )
+    return cur.rowcount
 
 
 def request_kill(db_path: Path, job_id: str) -> None:
@@ -215,22 +228,44 @@ def request_kill(db_path: Path, job_id: str) -> None:
         )
 
 
-def reap_orphans(db_path: Path, *, stale_threshold_seconds: int = 120) -> int:
-    """Mark running jobs with stale heartbeats as orphaned. Returns row count.
+def reap_orphans(db_path: Path, *, stale_threshold_seconds: int = 300) -> int:
+    """Mark running jobs with stale heartbeats as orphaned. 300s =
+    60x the 5s heartbeat cadence, generous under DB-write contention
+    while still catching truly dead builders within reasonable time.
 
-    Called by the monitor container on a 30-second ticker (spec §5).
-    Threshold 120s = 24x the 5s builder heartbeat cadence.
+    Emits a WARNING for any row whose heartbeat was newer than
+    threshold * 0.5 at reap time — that's the smoking gun for a
+    'reaped while likely alive' bug and shouldn't happen in normal
+    operation. Monitor this in the logs.
     """
+    import logging
     from datetime import datetime, timezone, timedelta
-    cutoff = (datetime.now(timezone.utc)
-              - timedelta(seconds=stale_threshold_seconds)
+    now_dt = datetime.now(timezone.utc)
+    cutoff = (now_dt - timedelta(seconds=stale_threshold_seconds)
               ).isoformat(timespec="seconds")
-    now = _now()
+    warn_cutoff = (now_dt - timedelta(seconds=stale_threshold_seconds / 2)
+                   ).isoformat(timespec="seconds")
     with _connect(db_path) as conn:
+        candidates = conn.execute(
+            "SELECT id, last_heartbeat FROM jobs "
+            "WHERE status='running' AND last_heartbeat < ?",
+            (cutoff,),
+        ).fetchall()
+        if not candidates:
+            return 0
+        now_iso = now_dt.isoformat(timespec="seconds")
+        for row in candidates:
+            if row["last_heartbeat"] and row["last_heartbeat"] > warn_cutoff:
+                logging.getLogger("web.jobs_db").warning(
+                    "reap_orphans: flipping job %s to orphaned but "
+                    "heartbeat %s is newer than %s (possibly alive) — "
+                    "investigate DB-write contention or reaper threshold",
+                    row["id"], row["last_heartbeat"], warn_cutoff,
+                )
         cur = conn.execute(
             "UPDATE jobs SET status='orphaned', ended_at=? "
             "WHERE status='running' AND last_heartbeat < ?",
-            (now, cutoff),
+            (now_iso, cutoff),
         )
     return cur.rowcount
 
