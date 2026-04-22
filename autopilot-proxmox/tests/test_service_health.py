@@ -92,3 +92,26 @@ def test_prune_dead_workers_removes_old_rows(db_path):
     n = service_health.prune_dead_workers(db_path, max_age_seconds=600)
     assert n == 1
     assert service_health.list_services(db_path) == []
+
+
+def test_classify_handles_naive_heartbeat(db_path):
+    """Defensive: a row with a naive timestamp (no +00:00 suffix)
+    must not crash list_services — treat it as UTC."""
+    from web import service_health
+    service_health.init(db_path)
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    naive_recent = (datetime.now(timezone.utc) - timedelta(seconds=5)
+                    ).replace(tzinfo=None).isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO service_health "
+            "(service_id, service_type, version_sha, started_at, last_heartbeat) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("naive-web", "web", "sha", naive_recent, naive_recent),
+        )
+    rows = service_health.list_services(db_path)
+    naive_row = next(r for r in rows if r["service_id"] == "naive-web")
+    # Correctly classified as fresh ('ok') rather than raising TypeError.
+    assert naive_row["status"] == "ok"
+    assert isinstance(naive_row["age_seconds"], int)
