@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Job {{ job.id }} - Proxmox VE Autopilot{% endblock %}
 {% block content %}
+<style>
+  /* .action-btn-upload is its own class in base.html — it does NOT
+     inherit the .action-btn:disabled rule, so give it an equivalent
+     disabled appearance here. */
+  .action-btn-upload[disabled] { opacity: 0.5; cursor: not-allowed; }
+</style>
 <h2>Job: {{ job.id }}</h2>
 <table>
 <tr><td style="width:120px;"><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
@@ -76,13 +82,13 @@
           per-user state doesn't get baked into the image.</li>
     </ul>
     If you're not sure, run this in an admin PowerShell first:
-    <code style="display:block;margin-top:4px;padding:4px 6px;background:var(--panel);color:var(--ink);">
+    <code style="display:block;margin-top:4px;padding:4px 6px;background:var(--panel);color:var(--ink);white-space:pre-wrap;word-break:break-all;user-select:all;">
       Get-AppxPackage -AllUsers | Where-Object NonRemovable -eq $false |
           Remove-AppxPackage -AllUsers
     </code>
   </div>
   <br>
-  <button type="button" onclick="resumeTemplate();" class="action-btn-upload" style="margin-top:6px;">
+  <button id="resumeBtn" type="button" onclick="resumeTemplate();" class="action-btn-upload" style="margin-top:6px;">
     Resume &amp; finalize (sysprep)
   </button>
   <span id="resumeStatus" style="margin-left:10px; font-size:12px;"></span>
@@ -90,20 +96,30 @@
 {% else %}
 <div style="margin:10px 0; padding:10px 14px; background:var(--surface-muted); border:1px solid var(--line); border-radius:4px; color:var(--ink-muted);">
   <b>Pause gate armed.</b>
-  Waiting for Windows install and OOBE to complete before the pause kicks in — typically 20–25 minutes from job start. This page auto-refreshes once paused; the Resume button will enable itself then.
+  <span id="resumeHint">Waiting for Windows install and OOBE to complete before the pause kicks in — typically 20–25 minutes from job start. This page auto-refreshes once paused; the Resume button will enable itself then.</span>
   <br>
-  <button type="button" class="action-btn-upload" style="margin-top:6px; opacity:0.5; cursor:not-allowed;" disabled>
+  <button id="resumeBtn" type="button" class="action-btn-upload" style="margin-top:6px;" disabled
+          aria-disabled="true" aria-describedby="resumeHint">
     Resume &amp; finalize (sysprep)
   </button>
   <span style="margin-left:10px; font-size:12px; color:var(--ink-soft);">not yet paused</span>
 </div>
 <script>
 // Light poll — the job_detail page's WebSocket streams log but doesn't
-// rebuild the status badge. Re-GET the page every 15s while we're
-// waiting so the PAUSED state surfaces within a reasonable window.
-setTimeout(function() {
-  if (!document.hidden) window.location.reload();
-}, 15000);
+// rebuild the status badge.  We want the PAUSED-state transition to
+// surface within a reasonable window even if the operator has tabbed
+// away, so use setInterval (self-re-arming) plus a visibilitychange
+// handler that forces an immediate reload on tab refocus.  The old
+// one-shot setTimeout + document.hidden guard meant a hidden tab at
+// the 15s mark would never reload and the page stayed stale forever.
+(function() {
+  setInterval(function() {
+    if (!document.hidden) window.location.reload();
+  }, 15000);
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) window.location.reload();
+  });
+})();
 </script>
 {% endif %}
 <script>
@@ -115,12 +131,21 @@ async function resumeTemplate() {
     if (r.ok) {
       s.style.color = 'var(--ok-fg)';
       s.textContent = 'Resumed. Sysprep should start within a few seconds — watch the log below.';
-    } else {
-      var detail = r.statusText;
-      try { detail = (await r.json()).detail || detail; } catch (e) {}
-      s.style.color = 'var(--bad-fg)';
-      s.textContent = 'Resume failed: ' + detail;
+      return;
     }
+    if (r.status === 503) {
+      // Schema init race on cold start (healthz gating applies across
+      // the API in practice); auto-retry once after 3s instead of
+      // showing the generic failure banner.
+      s.style.color = 'var(--warn-fg)';
+      s.textContent = 'services still initializing — retrying in 3s…';
+      setTimeout(resumeTemplate, 3000);
+      return;
+    }
+    var detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch (e) {}
+    s.style.color = 'var(--bad-fg)';
+    s.textContent = 'Resume failed: ' + detail;
   } catch (e) {
     s.style.color = 'var(--bad-fg)';
     s.textContent = 'Network error: ' + e;
