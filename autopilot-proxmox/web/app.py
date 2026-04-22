@@ -1709,9 +1709,14 @@ def get_hash_files():
             "serial": serial,
             "oem": _serial_to_oem(serial),
             "size": f"{stat.st_size:,} bytes",
+            # Raw numeric + ISO used as data-sort-value attributes on
+            # the /hashes page so client-side column sort works on
+            # the real values, not the display strings.
+            "size_bytes": stat.st_size,
             "modified": datetime.fromtimestamp(
                 stat.st_mtime, tz=timezone.utc
             ).strftime("%Y-%m-%d %H:%M"),
+            "modified_epoch": int(stat.st_mtime),
         })
     return files
 
