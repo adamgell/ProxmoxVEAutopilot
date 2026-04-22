@@ -10,7 +10,16 @@
 <h2>Job: {{ job.id }}</h2>
 <table>
 <tr><td style="width:120px;"><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
-<tr><td><b>Status</b></td><td>{% if job.paused %}<span class="badge warn" style="font-size:12px;padding:2px 10px;">PAUSED — awaiting Resume</span>{% elif job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED (exit {{ job.exit_code }})</span>{% endif %}</td></tr>
+<tr><td><b>Status</b></td><td>
+{%- if job.paused %}<span class="badge warn" style="font-size:12px;padding:2px 10px;">PAUSED — awaiting Resume</span>
+{%- elif job.status == 'pending' %}<span class="badge" style="background:var(--neutral-bg);color:var(--neutral-fg);font-size:12px;padding:2px 10px;">PENDING — waiting for builder</span>
+{%- elif job.status == 'running' %}<span class="status-green">RUNNING</span>
+{%- elif job.status == 'complete' %}<span class="status-green">OK</span>
+{%- elif job.status == 'orphaned' %}<span class="badge warn" style="font-size:12px;padding:2px 10px;">ORPHANED — builder lost contact</span>
+{%- elif job.status == 'failed' %}<span class="status-red">FAILED (exit {{ job.exit_code }})</span>
+{%- else %}<span class="status-red">UNKNOWN ({{ job.status }})</span>
+{%- endif %}
+</td></tr>
 <tr><td><b>Started</b></td><td>{{ job.started[:19] }}</td></tr>
 </table>
 
