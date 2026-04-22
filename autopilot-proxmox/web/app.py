@@ -2635,8 +2635,12 @@ async def start_provision(
     _seq_extras: list[str] = []
     if _answer_floppy_path:
         _seq_extras += ["-e", f"_answer_floppy_path={_answer_floppy_path}"]
-    if _causes_reboot_count > 0:
-        _seq_extras += ["-e", f"_causes_reboot_count={_causes_reboot_count}"]
+    # Always pass _causes_reboot_count, even when 0 — the playbook's
+    # "Follow guest through N reboot(s)" task interpolates it in its
+    # name string, and undefined triggers a Jinja error on EVERY run
+    # (the when/loop have `| default(0)` but the name string does not,
+    # and Ansible evaluates task names independently of when/loop).
+    _seq_extras += ["-e", f"_causes_reboot_count={_causes_reboot_count}"]
     if _proxmox_root_ticket and _proxmox_root_csrf_token:
         _seq_extras += [
             "-e", f"_proxmox_root_ticket={_proxmox_root_ticket}",

@@ -24,8 +24,11 @@ def test_monitoring_page_empty_state(client):
     assert "No devices probed yet" in r.text
     # Badge for enabled monitor renders.
     assert "enabled" in r.text
-    # Nav link visible.
-    assert '<a href="/monitoring">Monitoring</a>' in r.text
+    # Nav link visible — the operator-cockpit redesign wrapped nav links
+    # with class attributes, so match the href + label substrings
+    # separately instead of the bare anchor tag.
+    assert 'href="/monitoring"' in r.text
+    assert "Monitoring" in r.text
 
 
 def test_monitoring_page_renders_a_row_with_badges(client):
