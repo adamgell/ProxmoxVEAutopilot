@@ -1,8 +1,17 @@
-"""Byte-identical guard for the unattend template.
+"""Contract tests for the per-clone unattend renderer.
 
-Rendering the Phase A seed-1 "Entra Join (default)" sequence through
-the compiler + renderer must produce output that exactly matches
-``files/autounattend.xml``. Any drift breaks every existing install.
+Pre-Phase-B, sysprepped clones had no per-VM unattend and OOBE ran
+fresh on first boot. The Phase B renderer originally defaulted to a
+byte-identical copy of files/autounattend.xml — which carried the
+template-build's <AutoLogon> block onto every clone, auto-completing
+OOBE as Administrator and silently breaking Autopilot self-deploying
+mode (Autopilot reads its config DURING OOBE; if OOBE is bypassed,
+the JSON file sits unused on disk).
+
+These tests pin the corrected contract: clones land at OOBE by
+default. Sequences that explicitly want auto-logon (FLC chains, AD
+domain join's local_admin step) opt in via _handle_local_admin which
+sets oobe_user_accounts + oobe_auto_logon when the step is enabled.
 """
 from pathlib import Path
 
@@ -10,7 +19,11 @@ from pathlib import Path
 _FILES_DIR = Path(__file__).resolve().parent.parent / "files"
 
 
-def test_default_sequence_renders_byte_identical_to_static_file():
+def test_default_sequence_omits_autologin_so_oobe_stays_open_for_autopilot():
+    """The Phase A seed-1 'Entra Join (default)' sequence (with
+    local_admin disabled) must render an unattend with NO AutoLogon
+    and NO UserAccounts blocks — that's what lets Autopilot
+    self-deploy during a fresh OOBE on first boot of the clone."""
     from web import sequence_compiler, unattend_renderer
 
     seed = {
@@ -20,8 +33,6 @@ def test_default_sequence_renders_byte_identical_to_static_file():
             {"id": 1, "sequence_id": 1, "order_index": 0,
              "step_type": "set_oem_hardware",
              "params": {"oem_profile": ""}, "enabled": True},
-            # local_admin step exists in the seed but is disabled by
-            # default so defaults render unchanged.
             {"id": 2, "sequence_id": 1, "order_index": 1,
              "step_type": "local_admin",
              "params": {"credential_id": 1}, "enabled": False},
@@ -32,12 +43,16 @@ def test_default_sequence_renders_byte_identical_to_static_file():
     compiled = sequence_compiler.compile(seed)
     rendered = unattend_renderer.render_unattend(compiled)
 
-    expected = (_FILES_DIR / "autounattend.xml").read_text()
-    assert rendered == expected, (
-        "unattend template drifted from files/autounattend.xml. "
-        "Either update the template + defaults together, or fix the "
-        "regression."
-    )
+    # No AutoLogon block — OOBE must not be auto-completed.
+    assert "<AutoLogon>" not in rendered
+    assert "AutoAdminLogon" not in rendered
+    # No baked-in Administrator account from the legacy default.
+    assert "<Name>Administrator</Name>" not in rendered
+    assert "Nsta1200!!" not in rendered
+    # OOBE skip flags still present (they're in the static template,
+    # not the optional blocks) so Autopilot's standard config still
+    # bypasses the EULA / wireless / online-account screens.
+    assert "<HideOnlineAccountScreens>true</HideOnlineAccountScreens>" in rendered
 
 
 def test_local_admin_sequence_substitutes_user_accounts_and_auto_logon():
@@ -137,8 +152,10 @@ def test_default_unattend_leaves_computer_name_wildcard():
     assert "<ComputerName>*</ComputerName>" in out
 
 
-def test_no_sequence_steps_still_renders_default_bytes():
-    """Empty steps list → identical to the static file too."""
+def test_no_sequence_steps_renders_clean_oobe():
+    """Empty steps list → no AutoLogon, no UserAccounts. Same contract
+    as the default-sequence test above; this is the truly-empty
+    canary."""
     from web import sequence_compiler, unattend_renderer
 
     seq = {
@@ -148,5 +165,6 @@ def test_no_sequence_steps_still_renders_default_bytes():
     }
     compiled = sequence_compiler.compile(seq)
     rendered = unattend_renderer.render_unattend(compiled)
-    expected = (_FILES_DIR / "autounattend.xml").read_text()
-    assert rendered == expected
+    assert "<AutoLogon>" not in rendered
+    assert "<UserAccounts>" not in rendered
+    assert "<Name>Administrator</Name>" not in rendered

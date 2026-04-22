@@ -25,35 +25,36 @@ _FILES_DIR = Path(__file__).resolve().parent.parent / "files"
 _TEMPLATE_PATH = _FILES_DIR / "autounattend.xml.j2"
 
 
-# Defaults match files/autounattend.xml verbatim so an "empty" sequence
-# (no unattend_blocks, no first_logon_commands) renders byte-identical
-# output. Update both together.
-
-_DEFAULT_USER_ACCOUNTS = """\
-      <UserAccounts>
-        <LocalAccounts>
-          <LocalAccount wcm:action="add">
-            <Name>Administrator</Name>
-            <Group>Administrators</Group>
-            <Password>
-              <Value>Nsta1200!!</Value>
-              <PlainText>true</PlainText>
-            </Password>
-          </LocalAccount>
-        </LocalAccounts>
-      </UserAccounts>"""
-
-
-_DEFAULT_AUTO_LOGON = """\
-      <AutoLogon>
-        <Enabled>true</Enabled>
-        <Username>Administrator</Username>
-        <Password>
-          <Value>Nsta1200!!</Value>
-          <PlainText>true</PlainText>
-        </Password>
-        <LogonCount>1</LogonCount>
-      </AutoLogon>"""
+# Defaults for the per-clone unattend.
+#
+# These were originally a verbatim copy of files/autounattend.xml's
+# OOBE block — including <AutoLogon>Enabled=true</AutoLogon> — so that
+# an "empty" sequence rendered byte-identically to the static unattend
+# the template was built with. That decision was correct for the
+# template-install autounattend (post-install needs AutoLogon to run
+# FirstLogonCommands as Administrator: install QEMU GA, enable RDP,
+# etc.) but wrong for clones.
+#
+# Pre-Phase-B, sysprepped clones had NO per-VM unattend — they booted
+# into a fresh OOBE where Autopilot's self-deploying mode could fire.
+# Post-Phase-B, the "byte-identical" default copied AutoLogon onto
+# every clone, auto-completing OOBE as Administrator and bypassing
+# Autopilot entirely (the AutopilotConfigurationFile.json is read
+# DURING OOBE; once it's auto-completed, the file sits unused on
+# disk).
+#
+# Empty defaults restore the pre-Phase-B clone behavior:
+#   - Clones land at OOBE → Autopilot self-deploys if a config + a
+#     registered hash exist
+#   - QEMU guest agent runs as a Windows service from boot, so
+#     ansible's autopilot_inject + hash_capture still reach it without
+#     needing a logged-in user
+#   - Sequences that DO want auto-logon (FLC chains, AD domain join's
+#     local_admin step) opt in explicitly via _handle_local_admin,
+#     which sets oobe_user_accounts + oobe_auto_logon when the step
+#     is enabled.
+_DEFAULT_USER_ACCOUNTS = ""
+_DEFAULT_AUTO_LOGON = ""
 
 
 _IDENT_COMPONENT_WRAPPER = """
