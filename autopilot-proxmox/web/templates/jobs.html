@@ -9,7 +9,16 @@
 <tr>
   <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
   <td>{{ job.playbook }}</td>
-  <td>{% if job.paused %}<span class="badge warn" title="Template build paused — waiting for operator Resume">PAUSED</span>{% elif job.status == 'running' %}<span class="status-green">RUNNING</span>{% elif job.status == 'complete' %}<span class="status-green">OK</span>{% else %}<span class="status-red">FAILED</span>{% endif %}</td>
+  <td>
+{%- if job.paused %}<span class="badge warn" title="Template build paused — waiting for operator Resume">PAUSED</span>
+{%- elif job.status == 'pending' %}<span class="badge" style="background:var(--neutral-bg);color:var(--neutral-fg);" title="Waiting for a builder to claim this job">PENDING</span>
+{%- elif job.status == 'running' %}<span class="status-green">RUNNING</span>
+{%- elif job.status == 'complete' %}<span class="status-green">OK</span>
+{%- elif job.status == 'orphaned' %}<span class="badge warn" title="Builder stopped heartbeating; subprocess fate unknown">ORPHANED</span>
+{%- elif job.status == 'failed' %}<span class="status-red">FAILED</span>
+{%- else %}<span class="status-red">{{ job.status | upper }}</span>
+{%- endif %}
+  </td>
   <td>{{ job.started[:19] }}</td>
   <td>{{ job.duration or '' }}</td>
   <td><code style="font-size:11px;">{{ job.args | tojson }}</code></td>
