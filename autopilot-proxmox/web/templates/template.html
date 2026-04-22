@@ -45,8 +45,8 @@
       on the job page. Max wait is 2&nbsp;hours.
     </small>
     <div style="margin-top:8px;padding:8px 10px;background:var(--warn-bg);
-                border:1px solid var(--warn-fg);color:var(--warn-fg);
-                border-radius:4px;font-size:12px;max-width:640px;">
+                border:1px solid color-mix(in srgb, var(--warn-fg) 30%, transparent);
+                color:var(--warn-fg);border-radius:4px;font-size:12px;max-width:640px;">
       <b>Heads-up — sysprep-compatible installs only.</b>
       Apps you install during the pause MUST be <b>machine-scoped</b>; if
       anything registers per-user, sysprep's <code>/generalize</code> will
