@@ -314,16 +314,28 @@ def test_provision_rejects_chassis_override_without_root_password(app_env):
 
 
 def test_provision_with_rename_computer_passes_reboot_count(app_env):
-    """A sequence containing rename_computer compiles causes_reboot_count=1;
-    that value must flow through to ansible as -e _causes_reboot_count=1
-    so the role's wait_reboot_cycle loop runs once."""
+    """A sequence containing rename_computer + local_admin compiles
+    causes_reboot_count=1 (rename itself runs in specialize and shares
+    the specialize→OOBE reboot Windows already does; the +1 comes from
+    the autologon finalizer that local_admin enables). That value must
+    flow through to ansible as -e _causes_reboot_count=1 so the role's
+    wait_reboot_cycle loop runs once."""
     from web import sequences_db
     from web.app import SEQUENCES_DB, job_manager
+
+    # Need a local_admin credential so the step can reference it by id.
+    from web.app import _cipher
+    la_id = sequences_db.create_credential(
+        SEQUENCES_DB, _cipher(), name="rename-test-admin", type="local_admin",
+        payload={"username": "Admin", "password": "Pw!"},
+    )
 
     seq_id = sequences_db.create_sequence(
         SEQUENCES_DB, name="rename-only", description="",
     )
     sequences_db.set_sequence_steps(SEQUENCES_DB, seq_id, [
+        {"step_type": "local_admin",
+         "params": {"credential_id": la_id}, "enabled": True},
         {"step_type": "rename_computer", "params": {}, "enabled": True},
     ])
 
@@ -385,7 +397,10 @@ def test_provision_without_sequence_skips_floppy_compile(app_env):
     assert mock_ensure.call_count == 0
     cmd = captured["cmd"]
     assert not any(t.startswith("_answer_floppy_path=") for t in cmd)
-    assert not any(t.startswith("_causes_reboot_count=") for t in cmd)
+    # _causes_reboot_count is always emitted (even as 0) so the playbook's
+    # "Follow guest through N reboot(s)" task name template doesn't throw
+    # on an undefined var. Emitting 0 is the explicit no-reboot signal.
+    assert "_causes_reboot_count=0" in cmd
 
 
 def test_proxmox_root_ticket_fetch_posts_credentials(monkeypatch):
@@ -534,16 +549,31 @@ def test_provision_with_sequence_passes_compiled_vars(app_env):
     job_manager.set_arg = lambda *a, **k: None
     job_manager.add_on_complete = lambda *a, **k: None
 
-    r = app_env.post("/api/jobs/provision", data={
-        "profile": "",
-        "count": "1",
-        "cores": "2",
-        "memory_mb": "4096",
-        "disk_size_gb": "64",
-        "serial_prefix": "",
-        "group_tag": "",
-        "sequence_id": str(seq_id),
-    }, follow_redirects=False)
+    # Sequence provisioning needs the Proxmox root password + floppy
+    # builder wired up. Tests that exercise the provisioning path patch
+    # these; this one was missing them, which is why it historically
+    # 400'd.
+    from unittest.mock import patch
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_node": "pve", "proxmox_snippets_storage": "local",
+        "proxmox_host": "10.0.0.1",
+        "vault_proxmox_root_password": "pw",
+    }), patch("web.answer_floppy_cache.ensure_floppy",
+              return_value="/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img"), \
+         patch("web.answer_floppy_cache.make_sshpass_runner",
+               return_value=lambda cmd: (0, b"", b"")), \
+         patch("web.app._proxmox_root_ticket_fetch",
+               return_value=("T", "C")):
+        r = app_env.post("/api/jobs/provision", data={
+            "profile": "",
+            "count": "1",
+            "cores": "2",
+            "memory_mb": "4096",
+            "disk_size_gb": "64",
+            "serial_prefix": "",
+            "group_tag": "",
+            "sequence_id": str(seq_id),
+        }, follow_redirects=False)
     assert r.status_code == 303
 
     cmd = captured["cmd"]
