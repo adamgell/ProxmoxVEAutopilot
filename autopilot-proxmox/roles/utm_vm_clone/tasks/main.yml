@@ -8,11 +8,6 @@
 #
 # Exports:
 #   vm_vmid = vm_name (so common/tasks/* work backend-agnostically)
-#
-# NOTE (Phase 2 scope): OEM profile / SMBIOS / chassis-type overrides
-# are NOT yet applied for UTM clones. `utmctl clone` does not expose
-# these knobs; post-clone config.plist editing is deferred. The initial
-# focus is "clone + boot + guest-exec" so hash_capture works end-to-end.
 
 - name: "UTM clone: sanity-check required inputs"
   ansible.builtin.assert:
@@ -25,6 +20,32 @@
 
 - name: "UTM clone: perform the clone"
   ansible.builtin.include_tasks: clone_vm.yml
+
+- name: "UTM clone: verify cloned VM is stopped before editing plist"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _status_check
+  failed_when: "'stopped' not in _status_check.stdout"
+  changed_when: false
+
+- name: "UTM clone: set vm_vmid for OEM resolver (UTM uses vm_name as identity seed)"
+  ansible.builtin.set_fact:
+    vm_vmid: "{{ vm_name }}"
+
+- name: "UTM clone: resolve OEM profile + identity"
+  ansible.builtin.include_role:
+    name: oem_profile_resolver
+
+- name: "UTM clone: apply SMBIOS overrides to bundle"
+  ansible.builtin.include_role:
+    name: utm_vm_smbios_override
+
+- name: "UTM clone: apply network overrides to bundle"
+  ansible.builtin.include_role:
+    name: utm_vm_network_override
 
 - name: "UTM clone: start the new VM"
   ansible.builtin.include_tasks: start_vm.yml
