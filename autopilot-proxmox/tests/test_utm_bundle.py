@@ -210,3 +210,20 @@ def test_render_plist_returns_bytes_when_asked():
     assert data.startswith(b'<?xml')
     assert b'<plist version="1.0">' in data
     assert b'<key>ConfigurationVersion</key>' in data
+
+
+def test_render_plist_bytes_matches_golden_fixture():
+    """Snapshot test — ensures we don't accidentally shift the plist bytes
+    without noticing. Regenerate with:
+        python -m web.utm_bundle _regenerate_golden_fixture
+    (committed with a PR comment explaining the intentional change).
+    """
+    from web import utm_bundle as ub
+    actual = ub.render_plist_bytes(_sample_win11_spec())
+    expected = (FIXTURES / "win11_template_expected.plist").read_bytes()
+    assert actual == expected, (
+        "Rendered plist differs from golden fixture.\n"
+        "If the change is intentional, regenerate the fixture via:\n"
+        "    python -m web.utm_bundle _regenerate_golden_fixture\n"
+        "and commit with a PR comment explaining why."
+    )

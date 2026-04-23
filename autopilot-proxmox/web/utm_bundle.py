@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import plistlib
 import random
 import sys
@@ -229,6 +230,20 @@ def _cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_regenerate_golden(args: argparse.Namespace) -> int:
+    """Write tests/fixtures/win11_template_expected.plist from the test's
+    sample spec. Run this from autopilot-proxmox/ after any intentional
+    renderer change."""
+    # Import locally to avoid a test dependency during normal imports.
+    sys.path.insert(0, "tests")
+    from test_utm_bundle import _sample_win11_spec  # type: ignore
+    dest = pathlib.Path("tests/fixtures/win11_template_expected.plist")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(render_plist_bytes(_sample_win11_spec()))
+    print(f"wrote {dest}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="utm_bundle")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -236,6 +251,9 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--spec", required=True, help="path to spec JSON, or '-' for stdin")
     build.add_argument("--out", required=True, help="absolute path to the .utm bundle to create")
     build.set_defaults(func=_cmd_build)
+    regen = sub.add_parser("_regenerate_golden_fixture",
+                           help="(dev) rewrite tests/fixtures/win11_template_expected.plist")
+    regen.set_defaults(func=_cmd_regenerate_golden)
     args = parser.parse_args(argv)
     return args.func(args)
 
