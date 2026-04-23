@@ -130,3 +130,5 @@ ubuntu_per_vm_seed_pattern: "isos:iso/ubuntu-per-vm-{{ vmid }}.iso"
 utm_library_path: null
 utm_qemu_binary_path: null
 utm_uefi_firmware_path: null
+utm_network_mode: shared
+utm_bridge_interface: ""

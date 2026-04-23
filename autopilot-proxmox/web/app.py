@@ -136,6 +136,13 @@ SETTINGS_SCHEMA = [
          "help": "Filename (not path) of the Windows 11 ARM64 ISO inside utm_iso_dir."},
         {"key": "utm_windows_server_iso_name", "label": "Windows Server ISO Filename", "type": "text",
          "help": "Filename (not path) of the Windows Server ARM64 ISO inside utm_iso_dir."},
+        {"key": "utm_network_mode", "label": "Network Mode", "type": "text",
+         "options": ["shared", "bridged", "host"],
+         "labels": {"shared": "Shared (NAT)", "bridged": "Bridged (LAN-visible)",
+                    "host": "Host-Only"},
+         "help": "Shared = macOS NAT (default, works everywhere). Bridged gets the VM its own LAN IP (required for Autopilot OOBE discovery on some networks). Host-Only = isolated subnet with the host."},
+        {"key": "utm_bridge_interface", "label": "Bridge Interface", "type": "text",
+         "help": "macOS network interface to bridge to, e.g. en0 for Wi-Fi or Thunderbolt Ethernet. Only used when Network Mode = bridged. Leave empty to let UTM pick the default."},
     ]},
     {"section": "Proxmox Connection", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
