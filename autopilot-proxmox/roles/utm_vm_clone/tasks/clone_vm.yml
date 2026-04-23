@@ -8,6 +8,12 @@
       - --name
       - "{{ vm_name }}"
   register: _clone_result
+  # utmctl returns rc=0 even on semantic errors (e.g. "source VM must
+  # be stopped" — OSStatus -2700). The real signal is on stderr. Any
+  # non-empty stderr means something went wrong.
+  failed_when:
+    - _clone_result.rc != 0
+      or (_clone_result.stderr | default('') | length) > 0
 
 - name: "UTM clone: adopt vm_name as vm_vmid for downstream common tasks"
   ansible.builtin.set_fact:

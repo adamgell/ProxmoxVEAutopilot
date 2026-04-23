@@ -66,8 +66,10 @@
       - "/c"
       - "{{ _utm_exec_wrapped }}"
   register: _utm_exec_run
-  # utmctl returns the guest process's exit code; don't fail the task
-  # on non-zero — we want to surface it via _guest_exec_status like Proxmox.
+  # utmctl consistently returns rc=0 even on semantic errors (agent not
+  # running, etc.) — the error text shows up on stderr. Surface it via
+  # _guest_exec_status like Proxmox would so callers can assert on it,
+  # but don't hard-fail here.
   failed_when: false
 
 - name: "UTM guest_exec: pull stdout from guest"
@@ -115,6 +117,17 @@
       json:
         data:
           exited: true
-          exitcode: "{{ _utm_exec_run.rc | int }}"
+          # If utmctl itself reported an agent-layer error (non-empty
+          # stderr), surface it as exitcode=255 — downstream assertions
+          # look for exitcode==0 and would otherwise silently ignore an
+          # agent-unreachable condition (utmctl returns rc=0 even on
+          # OSStatus -2700 errors).
+          exitcode: >-
+            {{ 255 if ((_utm_exec_run.stderr | default('')) | length) > 0
+               else (_utm_exec_run.rc | int) }}
           out-data: "{{ _utm_exec_stdout.stdout | default('') }}"
-          err-data: "{{ _utm_exec_stderr.stdout | default('') }}"
+          err-data: >-
+            {{ _utm_exec_stderr.stdout | default('')
+               + (('\n' + _utm_exec_run.stderr)
+                  if ((_utm_exec_run.stderr | default('')) | length) > 0
+                  else '') }}

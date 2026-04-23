@@ -1,0 +1,42 @@
+---
+# End-to-end Phase 3 validation:
+#   1. Ansible clones Windows → e2e-autopilot-1 via utm_vm_clone role
+#   2. Starts the clone
+#   3. Waits for SPICE agent
+#   4. Runs `hostname` through the dispatcher to verify guest_exec
+#
+# Usage (after stopping the source VM):
+#   ansible-playbook -i inventory/hosts.yml playbooks/_test_utm_e2e.yml \
+#     -e utm_template_vm_name=Windows -e vm_name=e2e-autopilot-1
+
+- name: UTM end-to-end clone + exec test
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    hypervisor_type: "utm"
+    vm_name: "e2e-autopilot-1"
+    utm_template_vm_name: "Windows"
+    guest_agent_timeout_seconds: 300
+    guest_agent_poll_interval_seconds: 5
+    guest_exec_timeout_seconds: 60
+    guest_exec_poll_interval_seconds: 2
+  tasks:
+    - name: Clone + start + wait via utm_vm_clone role
+      ansible.builtin.include_role:
+        name: utm_vm_clone
+
+    - name: Exec hostname via dispatcher
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/guest_exec.yml"
+      vars:
+        _exec_command:
+          - "cmd.exe"
+          - "/c"
+          - "hostname"
+
+    - name: E2E RESULT
+      ansible.builtin.debug:
+        msg:
+          cloned_vm: "{{ vm_name }}"
+          exitcode: "{{ _guest_exec_status.json.data.exitcode }}"
+          hostname: "{{ _guest_exec_status.json.data['out-data'] }}"
