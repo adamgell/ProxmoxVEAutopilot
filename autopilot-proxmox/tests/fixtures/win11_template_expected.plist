@@ -84,8 +84,6 @@
 			<true/>
 			<key>NativeResolution</key>
 			<true/>
-			<key>VgaRamMib</key>
-			<integer>64</integer>
 			<key>UpscalingFilter</key>
 			<string>Linear</string>
 			<key>DownscalingFilter</key>

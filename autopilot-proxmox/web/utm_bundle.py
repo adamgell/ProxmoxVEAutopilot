@@ -58,7 +58,12 @@ class DisplaySpec:
     hardware: str = "virtio-ramfb-gl"
     dynamic_resolution: bool = True
     native_resolution: bool = True
-    vga_ram_mib: int = 64
+    # Optional. UTM unconditionally appends `vgamem_mb=<val>` to the -device
+    # arg when this is set, which QEMU rejects for virtio-ramfb-gl (that
+    # device has no vgamem_mb property). Leave None for virtio-ramfb-gl
+    # and related virtio-gpu variants; set a value only for VGA-family
+    # devices that support the property.
+    vga_ram_mib: int | None = None
 
 
 @dataclass
@@ -167,14 +172,15 @@ def _render_drive(d: DriveSpec) -> dict:
 
 
 def _render_display(d: DisplaySpec) -> dict:
-    # All five non-optional keys + optional VgaRamMib.
-    return {
+    entry = {
         "Hardware":          d.hardware,
         "DynamicResolution": d.dynamic_resolution,
         "NativeResolution":  d.native_resolution,
-        "VgaRamMib":         d.vga_ram_mib,
         **_DEFAULT_DISPLAY_FILTERS,
     }
+    if d.vga_ram_mib is not None:
+        entry["VgaRamMib"] = d.vga_ram_mib
+    return entry
 
 
 def _render_network(n: NetworkSpec) -> dict:
