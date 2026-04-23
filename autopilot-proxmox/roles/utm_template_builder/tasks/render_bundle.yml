@@ -29,6 +29,21 @@
     _answer_cd_uuid_gen: "{{ lookup('pipe', 'uuidgen') }}"
     _virtio_cd_uuid_gen: "{{ lookup('pipe', 'uuidgen') }}"
 
+- name: "Render bundle: assemble iso_sources map"
+  # Ansible does not interpolate Jinja expressions used as YAML dict keys,
+  # so assembling iso_sources directly in _bundle_spec below leaves literal
+  # "{{ utm_iso_name }}" keys in the JSON we hand to the CLI. Build the
+  # dict via a Jinja dict-literal expression where keys are real Python
+  # expressions evaluated at set_fact time.
+  ansible.builtin.set_fact:
+    _iso_sources: >-
+      {{ {
+        utm_iso_name: utm_iso_dir ~ '/' ~ utm_iso_name,
+        'AUTOUNATTEND.iso': utm_answer_iso_path,
+        (utm_virtio_win_iso_name | default('virtio-win.iso')):
+          utm_iso_dir ~ '/' ~ (utm_virtio_win_iso_name | default('virtio-win.iso')),
+      } }}
+
 - name: "Render bundle: build spec payload"
   ansible.builtin.set_fact:
     _bundle_spec:
@@ -60,11 +75,7 @@
       disk_size_gib: "{{ vm_disk_gb | int }}"
       efi_vars_source: >-
         {{ utm_app_path | default('/Applications/UTM.app') }}/Contents/Resources/qemu/edk2-arm-secure-vars.fd
-      iso_sources:
-        "{{ utm_iso_name }}": "{{ utm_iso_dir }}/{{ utm_iso_name }}"
-        "AUTOUNATTEND.iso":   "{{ utm_answer_iso_path }}"
-        "{{ utm_virtio_win_iso_name | default('virtio-win.iso') }}": >-
-          {{ utm_iso_dir }}/{{ utm_virtio_win_iso_name | default('virtio-win.iso') }}
+      iso_sources: "{{ _iso_sources }}"
       register: true
 
 - name: "Render bundle: check destination bundle existence"
