@@ -1,30 +1,30 @@
 ---
 # utm_template_builder/tasks/create_bundle.yml
 #
-# 1. Resolve and assert the skeleton bundle path and installer ISO exist.
-# 2. Copy the skeleton to UTM's Documents directory as {{ vm_name }}.utm.
-# 3. Generate four fresh UUIDs (bundle, cd, disk, answer-cd).
-# 4. Create a blank qcow2 system disk inside the bundle's Data/ directory.
-# 5. Copy the installer ISO into the bundle's Data/ directory.
+# Creates a UTM VM bundle by invoking UTM's own AppleScript API
+# (`make new virtual machine`).  UTM writes a fully schema-valid
+# config.plist (Backend, ConfigurationVersion, Information, System,
+# QEMU, Input, Sharing, Display, Drive, Network, Serial, Sound) so
+# we no longer maintain a hand-built skeleton bundle.
+#
+# After creation we:
+#   1. Copy the installer ISO into the bundle's Data/ directory.
+#   2. Insert Drive.0.ImageName via plutil (the only schema bit
+#      AppleScript `make` does NOT populate from `source:`).
+#
+# Exported facts (consumed by the calling playbook):
+#   _bundle_uuid        — UTM-assigned VM UUID
+#   _bundle_dest        — absolute path to the .utm bundle
+#   _plist_path         — absolute path to config.plist
+#   _data_dir           — absolute path to bundle Data/
+#   _cd_uuid            — Drive.0 (installer CD) identifier
+#   _disk_uuid          — Drive.1 (system disk) identifier
+#   _disk_filename      — system qcow2 filename (UTM-generated)
 
-- name: "Create bundle: resolve skeleton path for '{{ vm_os_kind }}'"
+- name: "Create bundle: resolve paths"
   ansible.builtin.set_fact:
-    _skeleton_stem: "{{ 'windows11-arm64' if vm_os_kind == 'windows11' else 'windows-server-arm64' }}"
-
-- name: "Create bundle: set full skeleton and destination paths"
-  ansible.builtin.set_fact:
-    _skeleton_path: "{{ utm_skeleton_dir }}/{{ _skeleton_stem }}.utm"
     _bundle_dest: "{{ utm_documents_dir }}/{{ vm_name }}.utm"
     _iso_src: "{{ utm_iso_dir }}/{{ utm_iso_name }}"
-
-- name: "Create bundle: assert skeleton exists"
-  ansible.builtin.assert:
-    that:
-      - _skeleton_path is directory
-    fail_msg: >-
-      Skeleton bundle not found at '{{ _skeleton_path }}'.
-      Ensure the assets/utm-templates/ skeletons have been committed and
-      utm_skeleton_dir is correct (current value: {{ utm_skeleton_dir }}).
 
 - name: "Create bundle: assert installer ISO exists"
   ansible.builtin.assert:
@@ -44,74 +44,107 @@
   ansible.builtin.fail:
     msg: >-
       Bundle '{{ _bundle_dest }}' already exists.
-      Delete it manually or set utm_overwrite_bundle=true to replace it.
+      Delete it via UTM (right-click -> Delete) or set
+      utm_overwrite_bundle=true to replace it.
   when:
     - _bundle_dest_stat.stat.exists
     - not (utm_overwrite_bundle | default(false) | bool)
 
-- name: "Create bundle: remove existing bundle (utm_overwrite_bundle=true)"
-  ansible.builtin.file:
-    path: "{{ _bundle_dest }}"
-    state: absent
+- name: "Create bundle: delete existing VM via AppleScript (utm_overwrite_bundle=true)"
+  ansible.builtin.shell: |
+    /usr/bin/osascript <<'OSA'
+    tell application "UTM"
+        try
+            delete virtual machine named "{{ vm_name }}"
+        end try
+    end tell
+    OSA
+    /bin/rm -rf "{{ _bundle_dest }}"
+  args:
+    executable: /bin/bash
+  changed_when: true
   when:
     - _bundle_dest_stat.stat.exists
     - utm_overwrite_bundle | default(false) | bool
 
-- name: "Create bundle: copy skeleton to UTM Documents dir"
-  ansible.builtin.copy:
-    src: "{{ _skeleton_path }}/"
-    dest: "{{ _bundle_dest }}/"
-    mode: preserve
+- name: "Create bundle: create VM via UTM AppleScript `make`"
+  ansible.builtin.shell: |
+    /usr/bin/osascript <<OSA
+    tell application "UTM"
+        set newVM to make new virtual machine with properties ¬
+            {backend:qemu, configuration:{ ¬
+                name:"{{ vm_name }}", ¬
+                architecture:"aarch64", ¬
+                machine:"virt", ¬
+                memory:{{ vm_memory_mb | int }}, ¬
+                cpu cores:{{ vm_cpu_cores | int }}, ¬
+                uefi:true, ¬
+                hypervisor:true, ¬
+                drives:{ ¬
+                    {removable:true}, ¬
+                    {guest size:{{ (vm_disk_gb | int) * 1024 }}} ¬
+                } ¬
+            }}
+        return id of newVM
+    end tell
+    OSA
+  args:
+    executable: /bin/bash
+  register: _osa_make
+  failed_when: _osa_make.rc != 0 or (_osa_make.stdout | trim | length) != 36
+  changed_when: true
 
-- name: "Create bundle: generate bundle UUID"
-  ansible.builtin.command:
-    argv: [uuidgen]
-  register: _uuidgen_bundle
-  changed_when: false
-
-- name: "Create bundle: generate installer CD UUID"
-  ansible.builtin.command:
-    argv: [uuidgen]
-  register: _uuidgen_cd
-  changed_when: false
-
-- name: "Create bundle: generate system disk UUID"
-  ansible.builtin.command:
-    argv: [uuidgen]
-  register: _uuidgen_disk
-  changed_when: false
-
-- name: "Create bundle: generate answer-CD UUID"
-  ansible.builtin.command:
-    argv: [uuidgen]
-  register: _uuidgen_answer_cd
-  changed_when: false
-
-- name: "Create bundle: register UUID facts"
+- name: "Create bundle: register UTM-assigned UUID and bundle paths"
   ansible.builtin.set_fact:
-    _bundle_uuid: "{{ _uuidgen_bundle.stdout | trim | upper }}"
-    _cd_uuid: "{{ _uuidgen_cd.stdout | trim | upper }}"
-    _disk_uuid: "{{ _uuidgen_disk.stdout | trim | upper }}"
-    _answer_cd_uuid: "{{ _uuidgen_answer_cd.stdout | trim | upper }}"
+    _bundle_uuid: "{{ _osa_make.stdout | trim }}"
     _plist_path: "{{ _bundle_dest }}/config.plist"
     _data_dir: "{{ _bundle_dest }}/Data"
-    _disk_filename: "{{ _uuidgen_disk.stdout | trim | upper }}.qcow2"
 
-- name: "Create bundle: create blank qcow2 system disk"
+- name: "Create bundle: assert UTM created the bundle at the expected path"
+  ansible.builtin.stat:
+    path: "{{ _plist_path }}"
+  register: _plist_stat
+  failed_when: not _plist_stat.stat.exists
+
+- name: "Create bundle: read UTM-generated drive identifiers from config.plist"
   ansible.builtin.command:
     argv:
-      - "{{ utm_qemu_img_path }}"
-      - create
-      - -f
-      - qcow2
-      - "{{ _data_dir }}/{{ _disk_filename }}"
-      - "{{ vm_disk_gb }}G"
-  register: _qemu_img_result
-  failed_when: _qemu_img_result.rc != 0
-  changed_when: true
+      - /usr/libexec/PlistBuddy
+      - -c
+      - "Print :Drive:0:Identifier"
+      - "{{ _plist_path }}"
+  register: _drive0_id
+  changed_when: false
+
+- name: "Create bundle: read system-disk identifier from config.plist"
+  ansible.builtin.command:
+    argv:
+      - /usr/libexec/PlistBuddy
+      - -c
+      - "Print :Drive:1:Identifier"
+      - "{{ _plist_path }}"
+  register: _drive1_id
+  changed_when: false
+
+- name: "Create bundle: register drive UUID facts"
+  ansible.builtin.set_fact:
+    _cd_uuid: "{{ _drive0_id.stdout | trim }}"
+    _disk_uuid: "{{ _drive1_id.stdout | trim }}"
+    _disk_filename: "{{ _drive1_id.stdout | trim }}.qcow2"
 
 - name: "Create bundle: copy installer ISO into bundle Data/"
   ansible.builtin.copy:
     src: "{{ _iso_src }}"
     dest: "{{ _data_dir }}/{{ utm_iso_name }}"
     mode: "0644"
+
+- name: "Create bundle: report bundle facts"
+  ansible.builtin.debug:
+    msg: >-
+      Bundle '{{ vm_name }}.utm' created via UTM AppleScript API —
+      UUID: {{ _bundle_uuid }},
+      cd UUID: {{ _cd_uuid }},
+      disk UUID: {{ _disk_uuid }},
+      disk file: {{ _disk_filename }},
+      CPU: {{ vm_cpu_cores }}, RAM: {{ vm_memory_mb }} MB,
+      bundle: {{ _bundle_dest }}

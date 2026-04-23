@@ -1,58 +1,20 @@
 ---
 # utm_template_builder/tasks/customize_plist.yml
 #
-# Patches config.plist inside the copied bundle using macOS `plutil`.
-# Replaces placeholder UUIDs, sets VM name, wires drive image names,
-# and applies CPU/RAM sizing.
+# UTM's AppleScript `make` API writes a fully schema-valid plist
+# (Backend, ConfigurationVersion, System, QEMU, Sharing, Serial,
+# Sound, Display, Network, Information.UUID, Information.Name,
+# Drive[].Identifier, Drive[].ImageType, etc.) so almost every
+# plutil step we used to need is gone.
+#
+# The only piece UTM does NOT populate is the installer CD's
+# ImageName -- the `source:` property on a new drive in `make`
+# is silently ignored.  We fill it in here.
 #
 # Depends on facts set by create_bundle.yml:
-#   _plist_path, _bundle_uuid, _cd_uuid, _disk_uuid, _answer_cd_uuid,
-#   _disk_filename
+#   _plist_path, utm_iso_name
 
-# ── Identity ─────────────────────────────────────────────────────────────────
-
-- name: "Customize plist: set Information.UUID"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - Information.UUID
-      - -string
-      - "{{ _bundle_uuid }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-- name: "Customize plist: set Information.Name"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - Information.Name
-      - -string
-      - "{{ vm_name }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-# ── Drive 0: installer CD ─────────────────────────────────────────────────────
-
-- name: "Customize plist: set Drive.0.Identifier (installer CD)"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - Drive.0.Identifier
-      - -string
-      - "{{ _cd_uuid }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-- name: "Customize plist: attempt to replace Drive.0.ImageName (installer CD)"
+- name: "Customize plist: replace Drive.0.ImageName (installer CD)"
   ansible.builtin.command:
     argv:
       - plutil
@@ -74,89 +36,7 @@
       - -string
       - "{{ utm_iso_name }}"
       - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
+  register: _plutil_insert_cd_image
+  failed_when: _plutil_insert_cd_image.rc != 0
   changed_when: true
   when: _plutil_replace_cd_image.rc != 0
-
-# ── Drive 1: system disk ──────────────────────────────────────────────────────
-
-- name: "Customize plist: set Drive.1.Identifier (system disk)"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - Drive.1.Identifier
-      - -string
-      - "{{ _disk_uuid }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-- name: "Customize plist: set Drive.1.ImageName to disk UUID filename"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - Drive.1.ImageName
-      - -string
-      - "{{ _disk_filename }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-# ── Drive 2: answer/secondary CD (reserved) ───────────────────────────────────
-
-- name: "Customize plist: set Drive.2.Identifier (answer CD, reserved)"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - Drive.2.Identifier
-      - -string
-      - "{{ _answer_cd_uuid }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-# ── System sizing ─────────────────────────────────────────────────────────────
-
-- name: "Customize plist: set System.CPUCount"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - System.CPUCount
-      - -integer
-      - "{{ vm_cpu_cores | int }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-- name: "Customize plist: set System.MemorySize (MB)"
-  ansible.builtin.command:
-    argv:
-      - plutil
-      - -replace
-      - System.MemorySize
-      - -integer
-      - "{{ vm_memory_mb | int }}"
-      - "{{ _plist_path }}"
-  register: _plutil_result
-  failed_when: _plutil_result.rc != 0
-  changed_when: true
-
-- name: "Customize plist: report bundle configuration"
-  ansible.builtin.debug:
-    msg: >-
-      Bundle '{{ vm_name }}.utm' configured —
-      bundle UUID: {{ _bundle_uuid }},
-      cd UUID: {{ _cd_uuid }},
-      disk UUID: {{ _disk_uuid }},
-      answer-cd UUID: {{ _answer_cd_uuid }},
-      disk file: {{ _disk_filename }},
-      CPU: {{ vm_cpu_cores }}, RAM: {{ vm_memory_mb }} MB

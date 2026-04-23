@@ -1,17 +1,19 @@
 # utm_template_builder
 
-Builds a UTM (macOS/ARM64) template VM from a skeleton bundle and a Windows installer ISO. Mirrors `proxmox_template_builder` but for the UTM hypervisor.
+Builds a UTM (macOS/ARM64) template VM from a Windows installer ISO. Mirrors `proxmox_template_builder` but for the UTM hypervisor.
 
 ## Overview
 
-UTM has no native "create VM" CLI primitive, so this role materialises a valid `.utm` bundle on disk inside UTM's Documents directory by:
+UTM exposes a `make new virtual machine` command in its AppleScript dictionary (see `Scripting/UTM.sdef` in [utmapp/UTM](https://github.com/utmapp/UTM)). This role drives that API via `osascript`, which lets UTM itself author a fully schema-valid `config.plist` (no hand-built skeleton, no `plutil` schema-key inserts).
 
-1. Copying a skeleton bundle from `assets/utm-templates/`
-2. Patching `config.plist` with fresh UUIDs, the VM name, ISO reference, disk filename, CPU and RAM sizing
-3. Creating a blank qcow2 system disk via `qemu-img`
-4. Copying the installer ISO into the bundle's `Data/` directory
-5. Starting the VM so the operator can complete the Windows OOBE
-6. (On resume) Running Sysprep to generalise the image as a reusable template
+The flow is:
+
+1. Call UTM's `make new virtual machine with properties {backend:qemu, configuration:{...}}` via `osascript`. UTM creates the bundle in its Documents directory, writes a complete `config.plist`, generates a blank qcow2 system disk, and registers the VM with `utmctl` atomically.
+2. Read the UTM-generated drive identifiers back from `config.plist` via `PlistBuddy`.
+3. Copy the installer ISO into the bundle's `Data/` directory.
+4. Insert `Drive[0].ImageName` via `plutil` (the only field UTM does **not** populate from the AppleScript `source:` parameter).
+5. Start the VM so the operator (or unattended `autounattend.xml`) can complete Windows Setup.
+6. (On resume) Run Sysprep to generalise the image as a reusable template.
 
 ## Two-phase execution
 
@@ -21,7 +23,7 @@ UTM has no native "create VM" CLI primitive, so this role materialises a valid `
 ansible-playbook playbooks/build_utm_template.yml
 ```
 
-The playbook creates the bundle, starts the VM, prints operator instructions, and **intentionally fails** to pause execution.  Complete the Windows OOBE in the UTM window.
+Creates the bundle, starts the VM, prints operator instructions, and **intentionally fails** to pause execution. Complete the Windows OOBE in UTM (or let `autounattend.xml` do it).
 
 ### Phase 2 — Finalise (re-run after OOBE)
 
@@ -29,7 +31,7 @@ The playbook creates the bundle, starts the VM, prints operator instructions, an
 ansible-playbook playbooks/build_utm_template.yml -e utm_build_resume=true
 ```
 
-Runs Windows Sysprep (`/generalize /oobe /shutdown`), polls until the VM stops, and prints the final "template ready" message.
+Runs Windows Sysprep (`/generalize /oobe /shutdown`), polls until the VM stops, writes the `autopilot-template.ready` marker.
 
 ## Required variables
 
@@ -48,35 +50,34 @@ Runs Windows Sysprep (`/generalize /oobe /shutdown`), polls until the VM stops, 
 | `vm_disk_gb` | `80` | System disk size in GB |
 | `utm_build_wait_mode` | `manual` | `manual` = operator drives OOBE |
 | `utm_build_resume` | `false` | Set `true` on re-run to trigger sysprep |
-| `utm_overwrite_bundle` | `false` | Overwrite an existing bundle at the destination |
+| `utm_overwrite_bundle` | `false` | Delete an existing VM with the same name before creating |
 
 ## Global variables (from `inventory/group_vars/all/vars.yml`)
 
 | Variable | Default |
 |---|---|
 | `utm_iso_dir` | `~/UTM-ISOs` |
-| `utm_skeleton_dir` | `{{ playbook_dir }}/../assets/utm-templates` |
-| `utm_qemu_img_path` | `/opt/homebrew/bin/qemu-img` |
 | `utm_documents_dir` | `~/Library/Containers/com.utmapp.UTM/Data/Documents` |
 | `utm_utmctl_path` | `/Applications/UTM.app/Contents/MacOS/utmctl` |
+
+`utm_skeleton_dir` and `utm_qemu_img_path` are no longer used by this role and may be removed from inventory.
 
 ## Task files
 
 | File | Purpose |
 |---|---|
 | `tasks/main.yml` | Orchestrator; routes between phase 1 and phase 2 |
-| `tasks/create_bundle.yml` | Copies skeleton, generates UUIDs, creates qcow2, copies ISO |
-| `tasks/customize_plist.yml` | Patches `config.plist` via macOS `plutil` |
+| `tasks/create_bundle.yml` | Calls UTM `make` via AppleScript, copies ISO into Data/ |
+| `tasks/customize_plist.yml` | Inserts `Drive[0].ImageName` via `plutil` (sole post-`make` patch) |
 | `tasks/start_and_wait.yml` | Starts VM, polls for `started`, halts for operator |
 | `tasks/sysprep_finalize.yml` | Runs Sysprep, polls for `stopped`, emits final message |
 
-## Skeleton bundles
+## Why no skeleton bundle?
 
-Skeletons are stored at `assets/utm-templates/<os>-arm64.utm/` with placeholder UUIDs:
+Earlier revisions of this role copied a hand-maintained `assets/utm-templates/<os>-arm64.utm/` skeleton and patched its `config.plist` via `plutil`. That approach was abandoned because:
 
-- `Information.UUID` → `00000000-0000-0000-0000-000000000000`
-- `Drive[0].Identifier` → `00000000-0000-0000-0000-000000000001` (installer CD)
-- `Drive[1].Identifier` → `00000000-0000-0000-0000-000000000002` (system disk)
-- `Drive[2].Identifier` → `00000000-0000-0000-0000-000000000003` (answer CD, reserved)
+- UTM's `config.plist` schema (defined in `UTMQemuConfiguration.swift`) requires top-level `System`, `Sharing`, `Serial`, `Sound`, `Backend`, and `ConfigurationVersion` keys; missing any of them triggers a "Cannot import this VM" rejection by UTM at registration time.
+- `Drive[].Identifier` UUIDs must be uppercase.
+- A bad bundle that registers but is invalid can be silently aliased by UTM's `Registry.<UUID>.Package.Path` to an existing bundle, leading to data loss when the user later "deletes" it via the sidebar.
 
-This role replaces all placeholders at runtime and wires real filenames.
+Letting UTM's own code construct the bundle eliminates every one of these failure modes by construction.
