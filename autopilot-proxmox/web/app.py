@@ -307,7 +307,16 @@ def _format_yaml_value(value):
         or ':' in s or '#' in s or ',' in s
         or s.lower() in ('true', 'false', 'yes', 'no', 'null', 'on', 'off')
     )
-    return f'"{s}"' if needs_quotes else s
+    if not needs_quotes:
+        return s
+    # Prefer single quotes when the string contains backslashes — double-quoted
+    # YAML processes escape sequences (`\U`, `\n`, etc.), which would mangle
+    # Windows paths like 'C:\Users\Public' on save. Single-quoted scalars are
+    # literal except for ' -> '' doubling.
+    if '\\' in s and "'" not in s:
+        return "'" + s + "'"
+    # Fall back to double-quoted with backslash + double-quote escaped.
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def _save_yaml_file(path: Path, updates: dict) -> None:
