@@ -2,11 +2,42 @@
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
   <!-- ================================================================
-       Windows PE — disk partitioning and image selection
-       (ARM64: no VirtIO driver loading; Windows 11 ARM64 includes
-       built-in virtio-net / virtio-blk drivers)
+       Windows PE — disk partitioning and image selection.
+       DriverPaths belt-and-braces for the VirtIO system disk: paths
+       cover drive letters D:/E:/F: so Setup finds viostor on whatever
+       letter the virtio-win CD gets assigned. Setup silently skips
+       nonexistent paths, so listing all three is safe even when Win11
+       ARM64 already has the driver in boot.wim.
        ================================================================ -->
   <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <DriverPaths>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+          <Path>D:\viostor\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+          <Path>E:\viostor\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3">
+          <Path>F:\viostor\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4">
+          <Path>D:\NetKVM\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5">
+          <Path>E:\NetKVM\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6">
+          <Path>F:\NetKVM\w11\ARM64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+    </component>
+
 
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="arm64" language="neutral"
