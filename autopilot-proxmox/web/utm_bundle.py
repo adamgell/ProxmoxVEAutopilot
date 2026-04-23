@@ -19,7 +19,11 @@ def _cmd_build(args: argparse.Namespace) -> int:
     to --out, print {"uuid": ..., "bundle_path": ..., "drive_uuids": [...]}
     as JSON on stdout.
     """
-    raw = sys.stdin.read() if args.spec == "-" else open(args.spec).read()
+    if args.spec == "-":
+        raw = sys.stdin.read()
+    else:
+        with open(args.spec) as f:
+            raw = f.read()
     spec = json.loads(raw)
     result = {"uuid": spec.get("uuid"), "bundle_path": args.out, "drive_uuids": []}
     json.dump(result, sys.stdout)
