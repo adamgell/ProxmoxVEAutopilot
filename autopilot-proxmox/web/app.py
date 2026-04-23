@@ -143,6 +143,9 @@ SETTINGS_SCHEMA = [
          "help": "Shared = macOS NAT (default, works everywhere). Bridged gets the VM its own LAN IP (required for Autopilot OOBE discovery on some networks). Host-Only = isolated subnet with the host."},
         {"key": "utm_bridge_interface", "label": "Bridge Interface", "type": "text",
          "help": "macOS network interface to bridge to, e.g. en0 for Wi-Fi or Thunderbolt Ethernet. Only used when Network Mode = bridged. Leave empty to let UTM pick the default."},
+        {"key": "utm_snapshot_auto_before_sequence", "label": "Auto-Snapshot Before Sequence", "type": "bool",
+         "applies_to": "utm",
+         "help": "Reserved for future use: automatically create a qcow2 snapshot before running a sequence on a UTM VM. Requires the VM to be stopped. Not yet invoked — see TODO in roles/utm_vm_clone/README.md."},
     ]},
     {"section": "UTM Answer ISO", "applies_to": "utm", "fields": [
         {"key": "utm_answer_iso_enabled", "label": "Enable Answer ISO", "type": "bool",
@@ -3437,6 +3440,144 @@ async def utm_open_in_app(name: str):
         return {"ok": False, "error": str(exc)}
 
     return {"ok": True, "bundle": str(bundle)}
+
+
+# ---------------------------------------------------------------------------
+# UTM snapshot endpoints  (Phase 9 — qemu-img snapshot)
+# ---------------------------------------------------------------------------
+
+_SNAP_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _snap_validate_name(name: str):
+    """Return a 400 JSONResponse if the snapshot name is invalid, else None."""
+    if not _SNAP_NAME_RE.match(name):
+        return JSONResponse(
+            {"ok": False, "error": "Snapshot name must be 1–64 alphanumeric/._- characters"},
+            status_code=400,
+        )
+    return None
+
+
+@app.get("/api/utm/vms/{name}/snapshots")
+async def utm_list_snapshots(name: str):
+    """List qcow2 internal snapshots for a UTM VM.
+
+    Uses qemu-img -l -U so it works on any VM state (including started).
+    Returns 409 when hypervisor_type != utm.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_snapshots
+    try:
+        snaps = utm_snapshots.list_snapshots(name)
+        return {"ok": True, "snapshots": snaps}
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/utm/vms/{name}/snapshots")
+async def utm_create_snapshot(name: str, request: Request):
+    """Create a named qcow2 snapshot.  VM must be stopped.
+
+    Body: ``{"name": "snap-name", "description": "optional"}``
+    Returns 409 when hypervisor_type != utm or VM is not stopped.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    snap_name = (body.get("name") or "").strip()
+    if not snap_name:
+        return JSONResponse(
+            {"ok": False, "error": "Request body must include a non-empty 'name' field"},
+            status_code=400,
+        )
+    sv = _snap_validate_name(snap_name)
+    if sv:
+        return sv
+
+    description = (body.get("description") or "").strip()
+
+    from web import utm_snapshots
+    try:
+        result = utm_snapshots.create_snapshot(name, snap_name, description)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        status = 409 if "must be stopped" in msg else 500
+        return JSONResponse({"ok": False, "error": msg}, status_code=status)
+
+
+@app.post("/api/utm/vms/{name}/snapshots/{snap_name}/restore")
+async def utm_restore_snapshot(name: str, snap_name: str):
+    """Restore (apply) a named qcow2 snapshot.  VM must be stopped.
+
+    Returns 409 when hypervisor_type != utm or VM is not stopped.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    sv = _snap_validate_name(snap_name)
+    if sv:
+        return sv
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_snapshots
+    try:
+        result = utm_snapshots.restore_snapshot(name, snap_name)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        status = 409 if "must be stopped" in msg else 500
+        return JSONResponse({"ok": False, "error": msg}, status_code=status)
+
+
+@app.delete("/api/utm/vms/{name}/snapshots/{snap_name}")
+async def utm_delete_snapshot(name: str, snap_name: str):
+    """Delete a named qcow2 snapshot.  VM must be stopped.
+
+    Returns 409 when hypervisor_type != utm or VM is not stopped.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    sv = _snap_validate_name(snap_name)
+    if sv:
+        return sv
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_snapshots
+    try:
+        result = utm_snapshots.delete_snapshot(name, snap_name)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        status = 409 if "must be stopped" in msg else 500
+        return JSONResponse({"ok": False, "error": msg}, status_code=status)
 
 
 @app.get("/api/utm/host-summary")
