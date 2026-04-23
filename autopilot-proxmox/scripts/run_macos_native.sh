@@ -31,6 +31,22 @@ fi
 # Re-export in case it was already set externally — the child needs it.
 export AUTOPILOT_WEB_PORT="${AUTOPILOT_WEB_PORT:-}"
 
+# Builder + monitor default to /app/output inside the Docker image, but
+# "/" is read-only for non-root on macOS. Point them at repo-local dirs
+# (the TUI does the same) unless the operator has overridden them.
+: "${AUTOPILOT_OUTPUT_DIR:=$(pwd)/output}"
+: "${AUTOPILOT_JOBS_DIR:=$(pwd)/jobs}"
+mkdir -p "${AUTOPILOT_OUTPUT_DIR}" "${AUTOPILOT_JOBS_DIR}"
+export AUTOPILOT_OUTPUT_DIR AUTOPILOT_JOBS_DIR
+
+# If the vault.yml was copied from production, auth_redirect_uri will
+# point at the prod hostname and Entra will redirect the user there
+# after login. Pin the callback to localhost for native runs unless the
+# operator has explicitly set one. The localhost URL must also be
+# registered as a Redirect URI in the Entra app registration.
+: "${AUTOPILOT_AUTH_REDIRECT_URI:=http://localhost:${AUTOPILOT_WEB_PORT:-5055}/auth/callback}"
+export AUTOPILOT_AUTH_REDIRECT_URI
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this launcher is macOS-only (detected $(uname -s))" >&2
   echo "       on Linux/CI, use docker compose instead." >&2

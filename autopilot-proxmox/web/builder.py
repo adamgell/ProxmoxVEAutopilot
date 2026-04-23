@@ -25,12 +25,18 @@ from web import jobs_db, service_health
 _log = logging.getLogger("web.builder")
 
 
-def _worker_id() -> str:
-    """Persist a uuid under /app/output/worker-id.<hostname> so compose
+def _worker_id(output_dir: Path | None = None) -> str:
+    """Persist a uuid under <output_dir>/worker-id.<hostname> so compose
     restarts preserve identity for the health UI. Uses O_CREAT|O_EXCL
-    to survive any (pathological) simultaneous-start race."""
+    to survive any (pathological) simultaneous-start race.
+
+    `output_dir` defaults to /app/output (the container volume) so
+    existing callers keep their behavior; macOS-native runs pass the
+    repo-local output path.
+    """
     hostname = os.uname().nodename
-    path = Path("/app/output") / f"worker-id.{hostname}"
+    base = Path(output_dir) if output_dir is not None else Path("/app/output")
+    path = base / f"worker-id.{hostname}"
     try:
         return path.read_text().strip()
     except FileNotFoundError:
@@ -50,8 +56,16 @@ def _worker_id() -> str:
 
 
 def _version_sha() -> str:
-    path = Path("/app/VERSION")
-    return path.read_text().strip()[:7] if path.exists() else "unknown"
+    # /app/VERSION is the container copy; fall back to repo root for
+    # native runs (macOS/UTM path) so the health UI still shows a sha.
+    for candidate in (Path("/app/VERSION"),
+                      Path(__file__).resolve().parent.parent / "VERSION"):
+        try:
+            if candidate.exists():
+                return candidate.read_text().strip()[:7] or "unknown"
+        except Exception:
+            continue
+    return "unknown"
 
 
 def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
@@ -158,7 +172,7 @@ def run_builder(*, jobs_dir: Path | str = "/app/jobs",
     monitor_db_path = Path(monitor_db_path)
 
     if worker_id is None:
-        worker_id = _worker_id()
+        worker_id = _worker_id(output_dir=db_path.parent)
     stop_event = stop_event or _install_signal_handlers()
     version = _version_sha()
 

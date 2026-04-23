@@ -44,18 +44,50 @@ def _configure_logging() -> None:
     )
 
 
+def _paths_from_env() -> tuple[str, str]:
+    """Resolve output + jobs dirs from env, defaulting to container paths.
+
+    Docker keeps /app/output and /app/jobs as volumes; macOS-native
+    operators (UTM backend) set AUTOPILOT_OUTPUT_DIR / AUTOPILOT_JOBS_DIR
+    to repo-local paths (e.g. ./output, ./jobs) because "/" is
+    read-only for non-root. The scripts/tui.sh and run_macos_native.sh
+    wrappers set these automatically.
+    """
+    import os
+    out = os.environ.get("AUTOPILOT_OUTPUT_DIR", "/app/output")
+    jobs = os.environ.get("AUTOPILOT_JOBS_DIR", "/app/jobs")
+    return out, jobs
+
+
 def _run_builder() -> None:
     """Start the builder claim/run loop."""
     _configure_logging()
+    from pathlib import Path
     from web.builder import run_builder
-    run_builder()
+    out, jobs = _paths_from_env()
+    out_p = Path(out)
+    out_p.mkdir(parents=True, exist_ok=True)
+    Path(jobs).mkdir(parents=True, exist_ok=True)
+    run_builder(
+        jobs_dir=jobs,
+        db_path=out_p / "jobs.db",
+        monitor_db_path=out_p / "device_monitor.db",
+    )
 
 
 def _run_monitor() -> None:
     """Start the monitor singleton — sweep loop + keytab + reaper."""
     _configure_logging()
+    from pathlib import Path
     from web.monitor_main import run_monitor
-    run_monitor()
+    out, _ = _paths_from_env()
+    out_p = Path(out)
+    out_p.mkdir(parents=True, exist_ok=True)
+    run_monitor(
+        lock_path=out_p / "monitor.lock",
+        monitor_db_path=out_p / "device_monitor.db",
+        jobs_db_path=out_p / "jobs.db",
+    )
 
 
 _MODES = {

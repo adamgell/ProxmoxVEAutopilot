@@ -177,6 +177,24 @@ def _start(mode: str) -> tuple[bool, str]:
 
     env = os.environ.copy()
     env.setdefault("AUTOPILOT_WEB_PORT", str(WEB_PORT))
+    # Builder + monitor default to /app/output inside the Docker
+    # image; on native macOS the root is read-only, so steer them at
+    # repo-local directories (created below). Web doesn't need these
+    # but exporting is harmless.
+    output_dir = REPO_ROOT / "output"
+    jobs_dir = REPO_ROOT / "jobs"
+    output_dir.mkdir(exist_ok=True)
+    jobs_dir.mkdir(exist_ok=True)
+    env.setdefault("AUTOPILOT_OUTPUT_DIR", str(output_dir))
+    env.setdefault("AUTOPILOT_JOBS_DIR", str(jobs_dir))
+    # Local dev: if the vault.yml was copied from prod, auth_redirect_uri
+    # points at the production hostname and Entra bounces the user there
+    # after login. Override to match the local bind. The operator must
+    # add this URL as a Redirect URI in the Entra app registration.
+    env.setdefault(
+        "AUTOPILOT_AUTH_REDIRECT_URI",
+        f"http://localhost:{WEB_PORT}/auth/callback",
+    )
 
     # start_new_session detaches from our controlling TTY so the child
     # survives TUI exit and doesn't receive our SIGINT on Ctrl+C.

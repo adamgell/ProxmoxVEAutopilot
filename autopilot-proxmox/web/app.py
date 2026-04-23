@@ -375,14 +375,22 @@ def _load_or_create_session_secret() -> str:
 
 def _auth_config() -> dict:
     cfg = _load_proxmox_config()
+    # Env override wins over the vault setting so a single production
+    # vault.yml can be shared across prod + local dev without the
+    # local instance redirecting into production after login. Local
+    # dev / macOS-native sets AUTOPILOT_AUTH_REDIRECT_URI to the
+    # http://localhost:<port>/auth/callback registered against the
+    # same Entra app as an additional Redirect URI.
+    env_redirect = os.environ.get("AUTOPILOT_AUTH_REDIRECT_URI")
+    redirect_uri = env_redirect or cfg.get(
+        "auth_redirect_uri",
+        "https://autopilot.gell.one/auth/callback",
+    )
     return {
         "tenant_id": cfg.get("vault_entra_tenant_id", ""),
         "client_id": cfg.get("vault_entra_app_id", ""),
         "client_secret": cfg.get("vault_entra_app_secret", ""),
-        "redirect_uri": cfg.get(
-            "auth_redirect_uri",
-            "https://autopilot.gell.one/auth/callback",
-        ),
+        "redirect_uri": redirect_uri,
         "admin_group_id": cfg.get("vault_entra_admin_group_id") or None,
     }
 
