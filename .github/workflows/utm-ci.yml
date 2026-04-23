@@ -1,0 +1,61 @@
+name: UTM macOS CI
+
+on:
+  push:
+    branches: [main, "feature/utm-*"]
+    paths:
+      - "autopilot-proxmox/web/utm_*.py"
+      - "autopilot-proxmox/roles/utm_*/**"
+      - "autopilot-proxmox/roles/oem_profile_resolver/**"
+      - ".github/workflows/utm-ci.yml"
+  pull_request:
+    paths:
+      - "autopilot-proxmox/web/utm_*.py"
+      - "autopilot-proxmox/roles/utm_*/**"
+      - "autopilot-proxmox/roles/oem_profile_resolver/**"
+      - ".github/workflows/utm-ci.yml"
+
+jobs:
+  utm-validation:
+    name: UTM code validation (macOS ARM64)
+    runs-on: macos-latest
+    # Intentionally no `needs:` — runs in parallel with any Proxmox/Docker jobs.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        # pyyaml  — imported by utm_cli.py and utm_vm_metrics.py
+        # ansible-lint pulls in ansible-core as a transitive dep
+        run: pip install --quiet pyyaml ansible-lint
+
+      - name: Syntax check — compileall
+        # Catches syntax errors in every .py under web/, including new utm_* modules.
+        # Does not require third-party deps; stdlib only.
+        working-directory: autopilot-proxmox
+        run: python -m compileall web/ -q
+
+      - name: Import smoke test — UTM modules
+        # Validates that utm_cli, utm_host_metrics, and utm_vm_metrics can be
+        # imported without a running UTM daemon or utmctl binary.
+        working-directory: autopilot-proxmox
+        run: python -c "from web import utm_cli, utm_host_metrics, utm_vm_metrics"
+
+      - name: Lint UTM roles
+        # Runs ansible-lint with the production profile (zero findings required).
+        # utmctl is intentionally not invoked — role tasks are validated for
+        # structure and best-practices only.
+        working-directory: autopilot-proxmox
+        run: |
+          ansible-lint \
+            roles/utm_template_builder \
+            roles/utm_vm_clone \
+            roles/utm_vm_iso \
+            roles/utm_vm_network_override \
+            roles/utm_vm_smbios_override \
+            roles/oem_profile_resolver
