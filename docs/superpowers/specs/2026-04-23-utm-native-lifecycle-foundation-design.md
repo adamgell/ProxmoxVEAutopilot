@@ -380,9 +380,38 @@ The full Win11 ARM64 template build is the E2E test. No automation — manual ru
 - Windows Setup completes without any interactive input (including the disk picker).
 - `autopilot-template.ready` marker file appears in the bundle after sysprep phase.
 
-### 10.4 Plist compatibility check on UTM upgrade
+### 10.4 UTM upstream drift tracking
 
-When `/Applications/UTM.app` version changes, run the smoke test. If a rendered bundle no longer registers cleanly, bump `ConfigurationVersion` in `utm_bundle.py` and update any drifted keys. Document the UTM version coverage at the top of `utm_bundle.py`.
+Two tiers ship in sub-project 1 to turn "upstream UTM changed its schema" into a visible, actionable signal instead of a silent runtime break. A third tier (full UTM source build in CI) is deferred.
+
+**Tier 1 — schema diff notification.** Treat `/Users/Adam.Gell/src/UTM` as a tracked reference tree. Add a `scripts/check_utm_schema_drift.sh` (or a Makefile target) that:
+
+- `git -C ~/src/UTM fetch origin main`
+- `git -C ~/src/UTM diff <last-known-good-sha>..origin/main -- Configuration/UTMQemuConfiguration*.swift Configuration/QEMUConstant.swift Configuration/QEMUConstantGenerated.swift`
+- Prints a summary of added/removed `CodingKeys` cases and changed enum values.
+- Non-zero exit iff the diff is non-empty.
+
+Wire into CI as a **warning-only** job (does not block merges). The `<last-known-good-sha>` is stored in `autopilot-proxmox/web/utm_schema_known_good.txt` and bumped by a human after reviewing the diff and deciding it doesn't affect us. Zero build cost; pure text diff. Detects schema churn early.
+
+**Tier 2 — schema contract + round-trip test.** A generator script `scripts/extract_utm_schema.py` parses the Swift sources (regex over `case foo = "Foo"` lines inside `CodingKeys` enums and over the `QEMUConstant` enum cases) and emits `autopilot-proxmox/tests/fixtures/utm_schema_contract_v4.json`. The contract lists:
+
+- All PascalCase plist keys per config section.
+- All enum values for drive interface, image type, display hardware, network mode, QEMU architecture, QEMU target.
+
+Regeneration runs in a pre-commit hook and as a CI step; the generated JSON is committed so drift shows up in review.
+
+Unit tests assert:
+- Every plist key our renderer emits exists in the contract for its section.
+- Every enum value our spec accepts exists in the contract.
+- (Soft assertion, warning-level): every key UTM marks as required and absent from our render is flagged. Some UTM-required keys are genuinely optional for our use case — we allow-list these explicitly in the test.
+
+When UTM upstream adds a key we care about, the Tier 1 diff shows it; regenerating the contract adds it to the JSON; we decide whether to emit it in the renderer. When UTM removes a key we emit, the contract diff flags it and our test fails.
+
+**Tier 3 — UTM-from-source build in CI.** Deferred as follow-up ticket `utm-ci-build-from-source`. Requires a macOS runner with Xcode, codesigning certs, and ~20 minutes per build. Only worth the cost if Tiers 1+2 miss a real regression in practice.
+
+### 10.5 Plist compatibility check on UTM.app upgrade
+
+Complementary to 10.4 — when the user upgrades their local `/Applications/UTM.app`, run the smoke test. If a rendered bundle no longer registers cleanly, bump `ConfigurationVersion` in `utm_bundle.py` and update any drifted keys. Document the UTM.app version coverage at the top of `utm_bundle.py`.
 
 ## 11. Migration and retirement
 
@@ -411,19 +440,21 @@ Two-phase commit, single branch (`feature/utm-macos-arm64-support` or a new chil
 To be consumed by `writing-plans` to produce `docs/superpowers/plans/2026-04-23-utm-native-lifecycle-foundation-plan.md`.
 
 1. Skeleton `utm_bundle.py` with dataclasses and a stub `build` CLI that prints the spec JSON it received. Wire `render_bundle.yml` to call it. Unit tests for dataclass construction.
-2. Plist renderer — dict construction + `plistlib.dumps`. Unit tests for schema shape, UUID casing, drive order, Win11 invariants. Commit the golden plist fixture.
-3. Bundle writer — `mkdir`, `plistlib` write, `qemu-img create`, ISO copies, `efi_vars.fd` copy (unmodified). Smoke test.
-4. `utmctl` wrapper — `register`, `start`, `stop`, `status`, `exec`, `delete`. Unit tests that mock `subprocess`.
-5. Cut `main.yml` over from `create_bundle.yml`/`customize_plist.yml` to `render_bundle.yml`. First Phase A E2E build.
-6. `autounattend.xml.j2` `DriverPaths` — XML edit, regenerate answer ISO, confirm Setup reaches OOBE without a driver click.
-7. **Experiment:** `virt-fw-vars` integration. Time-box 1 working day. Two paths out — succeeds (delete all keystroke code) or doesn't (move to step 8).
-8. Minimal keystroke fallback (only if step 7 didn't converge). Delete the 30-line keystroke block from the playbook; replace with the 5-line version.
-9. Delete `create_bundle.yml` + `customize_plist.yml`. Update handoff notes. Phase B commit.
+2. **Tier 2 — schema contract extraction.** `scripts/extract_utm_schema.py` parses the Swift sources and emits `tests/fixtures/utm_schema_contract_v4.json`. Commit the first generated contract.
+3. Plist renderer — dict construction + `plistlib.dumps`. Unit tests for schema shape, UUID casing, drive order, Win11 invariants. Contract-based assertions (every emitted key exists in the contract). Commit the golden plist fixture.
+4. Bundle writer — `mkdir`, `plistlib` write, `qemu-img create`, ISO copies, `efi_vars.fd` copy (unmodified). Smoke test.
+5. `utmctl` wrapper — `register`, `start`, `stop`, `status`, `exec`, `delete`. Unit tests that mock `subprocess`.
+6. **Tier 1 — schema drift notification.** `scripts/check_utm_schema_drift.sh` + `utm_schema_known_good.txt`. Wire into CI as a warning-only job.
+7. Cut `main.yml` over from `create_bundle.yml`/`customize_plist.yml` to `render_bundle.yml`. First Phase A E2E build.
+8. `autounattend.xml.j2` `DriverPaths` — XML edit, regenerate answer ISO, confirm Setup reaches OOBE without a driver click.
+9. **Experiment:** `virt-fw-vars` integration. Time-box 1 working day. Two paths out — succeeds (delete all keystroke code) or doesn't (move to step 10).
+10. Minimal keystroke fallback (only if step 9 didn't converge). Delete the 30-line keystroke block from the playbook; replace with the 5-line version.
+11. Delete `create_bundle.yml` + `customize_plist.yml`. Update handoff notes. Phase B commit.
 
 ## 13. Open questions and risks
 
 - **`virt-fw-vars` API specifics.** The exact call pattern for adding a `Boot0000` entry with a USB CD device path needs live investigation. Mitigation: time-boxed experiment (step 7), fallback planned.
-- **UTM version drift.** ConfigurationVersion 4 is pinned to UTM 4.7.5. A UTM upgrade that bumps the config version will break our renderer. Mitigation: a version check in `utm_bundle.py` that refuses to run against an installed UTM with a higher `currentVersion`, with a clear "bump the constant and rerun tests" error message. Document UTM version coverage at the top of `utm_bundle.py`.
+- **UTM version drift.** ConfigurationVersion 4 is pinned to UTM 4.7.5. A UTM upgrade that bumps the config version will break our renderer. Mitigation (layered): (1) Tier 1 diff job catches upstream schema churn the moment we sync source; (2) Tier 2 contract test catches any key we emit that drifted relative to the contract; (3) a version check in `utm_bundle.py` that refuses to run against an installed `UTM.app` with a higher `currentVersion` than we've tested, with a clear "bump the constant, regenerate the contract, rerun tests" error message. Document `UTM.app` version coverage at the top of `utm_bundle.py`.
 - **UUID-upper-casing drift.** UTM requires uppercase UUIDs in a few specific fields but not others (see commit 1eaa9d5). The golden-plist fixture catches regressions in either direction, but there's room for the exact rule to be miscoded. Mitigation: explicit unit tests per field.
 - **VirtIO-win ARM64 driver stability.** Upstream Fedora virtio-win ARM64 builds are less battle-tested than x86. If `viostor\w11\ARM64` gives a Setup-time driver error, we fall back to attaching the system disk via `usb-storage` or `nvme` (both have in-box drivers in WinPE), losing VirtIO performance on the system disk. Track as a known limitation; not a blocker for the sub-project.
 - **Ansible-to-Python fact handoff.** Spec JSON in → bundle JSON out pattern requires disciplined schema. A malformed or out-of-date spec JSON is a possible silent failure mode. Mitigation: schema-validate the input in the Python CLI (`pydantic` or hand-rolled), fail loudly with a helpful error.
