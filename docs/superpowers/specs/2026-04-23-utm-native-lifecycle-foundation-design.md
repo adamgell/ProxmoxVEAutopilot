@@ -48,7 +48,7 @@ Three places the hybrid approach hit friction — each gets a structural fix:
 
 | Path | Purpose |
 |------|---------|
-| `autopilot-proxmox/web/utm_bundle.py` | Library: dataclasses mirroring the UTM ConfigurationVersion 4 schema, `render_plist()`, `write_bundle()`, `utmctl` wrapper, `qemu-img` wrapper, `efi_vars` builder (via `virt-fw-vars` where used). CLI entrypoint `python -m autopilot.utm_bundle build` for Ansible to invoke. |
+| `autopilot-proxmox/web/utm_bundle.py` | Library: dataclasses mirroring the UTM ConfigurationVersion 4 schema, `render_plist()`, `write_bundle()`, `utmctl` wrapper, `qemu-img` wrapper, `efi_vars` builder (via `virt-fw-vars` where used). CLI entrypoint `python -m web.utm_bundle build` (invoked from `autopilot-proxmox/`) for Ansible to call. |
 | `autopilot-proxmox/roles/utm_template_builder/tasks/render_bundle.yml` | Three Ansible tasks — build spec JSON, shell out to the Python CLI, register with UTM. Replaces `create_bundle.yml` + `customize_plist.yml`. |
 | `autopilot-proxmox/tests/test_utm_bundle.py` | pytest: plist shape, drive ordering, UUID casing, schema version, golden comparisons. |
 
@@ -98,7 +98,8 @@ playbook utm_build_win11_template.yml
   │     │                     answer iso path, virtio-win iso path,
   │     │                     cpu/memory/disk sizing, OEM inputs)
   │     │
-  │     ├─► python -m autopilot.utm_bundle build --spec - --out <bundle path>
+  │     ├─► python -m web.utm_bundle build --spec - --out <bundle path>
+  │     │   (invoked from autopilot-proxmox/; pyproject pythonpath resolves `web.`)
   │     │
   │     │   utm_bundle.py:
   │     │     1. read spec JSON from stdin
@@ -249,7 +250,7 @@ Two changes replace the interactive steps in today's Win11 ARM64 build.
 
 ```python
 # sketch inside utm_bundle.py
-from virt.firmware.efi.varstore import EdkVarStore  # exact import TBD per API
+from virt.firmware.efi.varstore import EdkVarStore  # exact import verified during implementation
 
 vars_in  = read_bytes(UTM_RESOURCES / "edk2-arm-secure-vars.fd")
 vars_out = add_usb_cd_boot_entry(
@@ -350,7 +351,7 @@ Unchanged from today: `utmctl exec <uuid> -- powershell "Test-Path C:\autopilot\
 
 ## 10. Testing strategy
 
-### 10.1 Unit tests (`tests/test_utm_bundle.py`)
+### 10.1 Unit tests (`autopilot-proxmox/tests/test_utm_bundle.py`)
 
 Fast, pure-Python, no UTM or QEMU invocation.
 
@@ -434,5 +435,5 @@ Sub-project 1 is done when:
 1. `ansible-playbook playbooks/utm_build_win11_template.yml -e vm_name=... -e utm_iso_name=...` produces a working Win11 ARM64 template with no human interaction from start to `autopilot-template.ready` marker, three runs in a row, on a clean host.
 2. No `plutil` / `PlistBuddy` / `cp efi_vars.fd` calls remain in any UTM code path.
 3. Keystroke automation either removed entirely (preferred) or reduced to the 5-line fallback behind a feature flag.
-4. `tests/test_utm_bundle.py` green locally.
+4. `autopilot-proxmox/tests/test_utm_bundle.py` green locally.
 5. Handoff document updated to reflect the new architecture.
