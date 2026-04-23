@@ -40,3 +40,9 @@ docker>=7,<8
 # SessionMiddleware dep for cookie signing.
 authlib>=1.3,<2.0
 itsdangerous>=2.1,<3.0
+
+# virt-fw-vars CLI for pre-populating EDK2 NVRAM variable stores
+# (efi_vars.fd) with explicit Boot#### entries and BootOrder. Used by
+# web.utm_bundle to eliminate the osascript keystroke fallback that
+# escapes the EFI shell drop on first boot of aarch64/virt VMs.
+virt-firmware>=24.10,<27
