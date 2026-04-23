@@ -105,7 +105,10 @@ SETTINGS_SCHEMA = [
     # preserve the current value when the form submits blank.
     {"section": "Hypervisor Backend", "fields": [
         {"key": "hypervisor_type", "label": "Hypervisor Type", "type": "text",
-         "help": "proxmox (default) or utm"},
+         "options": ["proxmox", "utm"],
+         "labels": {"proxmox": "Proxmox VE (Linux/x86_64)",
+                    "utm": "UTM + QEMU (macOS/ARM64)"},
+         "help": "Proxmox = standard Docker deployment. UTM requires running the web service natively on macOS — see docs/UTM_MACOS_SETUP.md."},
     ]},
     {"section": "UTM (macOS/ARM64) Configuration", "fields": [
         {"key": "utm_utmctl_path", "label": "utmctl Path", "type": "text",

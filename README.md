@@ -17,6 +17,12 @@ Proxmox VE Autopilot creates Windows VMs that appear as real OEM hardware to Win
 
 All communication with guest VMs happens through the Proxmox REST API and QEMU guest agent — no WinRM, no SSH, no network access to the guest required.
 
+> **Also supported (experimental): UTM + QEMU on macOS ARM64.**
+> Run Windows ARM64 VMs on Apple Silicon using UTM.app. Requires
+> running the web service natively on macOS (not in Docker) because
+> `utmctl` is a macOS-host binary. See
+> [`docs/UTM_MACOS_SETUP.md`](docs/UTM_MACOS_SETUP.md) for setup.
+
 ## Prerequisites
 
 | Component       | Requirement                                          |
