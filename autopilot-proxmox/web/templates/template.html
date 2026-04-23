@@ -1,7 +1,188 @@
 {% extends "base.html" %}
 {% block title %}Build Template - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Build Template from ISO</h2>
+<h2>Build Template{% if hypervisor_type == "utm" %} — UTM (macOS/ARM64){% else %} from ISO{% endif %}</h2>
+
+{% if hypervisor_type == "utm" %}
+{# ─────────────────────────── UTM path ──────────────────────────────────── #}
+
+<div id="utm-builder-card" style="
+  background:var(--card-bg,var(--surface-muted));
+  border:1px solid var(--line-strong);
+  border-radius:6px;
+  padding:18px 22px;
+  max-width:680px;
+  margin-bottom:22px;">
+<h3 style="margin-top:0;">UTM Template Builder</h3>
+<p style="color:var(--ink-muted);font-size:12px;margin-top:0;">
+  Creates a new UTM VM bundle from a skeleton, attaches your installer ISO,
+  and launches the VM. Complete Windows OOBE manually in UTM.app, then let
+  Autopilot run sysprep to seal the template.
+</p>
+
+<form id="utm-template-form" method="POST" action="/api/jobs/template">
+<table border="0" cellpadding="4" style="width:100%;">
+<tr>
+  <td style="width:180px;"><b>OS:</b></td>
+  <td>
+    <select name="vm_os_kind" id="utm-os-kind" onchange="utmOsChanged(this);">
+      <option value="windows11">Windows 11 ARM64</option>
+      <option value="windows_server">Windows Server ARM64</option>
+    </select>
+  </td>
+</tr>
+<tr>
+  <td><b>Template Name:</b></td>
+  <td><input type="text" name="vm_name" id="utm-vm-name" value="win11-template"
+             style="width:260px;font-family:monospace;"
+             pattern="[a-zA-Z0-9_\-]{1,64}" required
+             title="Letters, numbers, hyphens and underscores, 1–64 chars"></td>
+</tr>
+<tr>
+  <td style="vertical-align:top;padding-top:6px;"><b>ISO:</b></td>
+  <td>
+    <select name="utm_iso_name" id="utm-iso-select" style="width:360px;">
+      <option value="">Loading ISOs…</option>
+    </select>
+    <span id="utm-iso-status" style="display:block;font-size:11px;color:var(--ink-muted);margin-top:4px;"></span>
+  </td>
+</tr>
+<tr>
+  <td><b>CPU Cores:</b></td>
+  <td><input type="number" name="vm_cpu_cores" value="4" min="1" max="32" style="width:80px;"></td>
+</tr>
+<tr>
+  <td><b>RAM (MB):</b></td>
+  <td><input type="number" name="vm_memory_mb" value="8192" min="2048" step="512" style="width:100px;"></td>
+</tr>
+<tr>
+  <td><b>Disk (GB):</b></td>
+  <td><input type="number" name="vm_disk_gb" value="80" min="40" max="2048" style="width:80px;"></td>
+</tr>
+<tr>
+  <td></td>
+  <td style="padding-top:8px;">
+    <input type="submit" id="utm-submit-btn" value="Build UTM Template" class="action-btn-upload">
+  </td>
+</tr>
+</table>
+</form>
+</div>
+
+<div id="utm-vms-card" style="
+  background:var(--card-bg,var(--surface-muted));
+  border:1px solid var(--line-strong);
+  border-radius:6px;
+  padding:18px 22px;
+  max-width:680px;">
+<h3 style="margin-top:0;">Existing UTM VMs</h3>
+<p style="color:var(--ink-muted);font-size:12px;margin-top:0;">
+  Copy the template name from the table below into
+  <b>Settings → UTM → Template VM Name</b> (<code>utm_template_vm_name</code>)
+  to provision new VMs from it.
+</p>
+<div id="utm-vms-content" style="color:var(--ink-muted);font-size:12px;">Loading…</div>
+</div>
+
+<script>
+var _utmDefaultNames = {windows11: "win11-template", windows_server: "winserver-template"};
+
+function utmOsChanged(sel) {
+  var name = document.getElementById('utm-vm-name');
+  if (name) name.value = _utmDefaultNames[sel.value] || "win-template";
+}
+
+function _fmtMB(bytes) {
+  if (!bytes) return "0 B";
+  var mb = bytes / (1024 * 1024);
+  return mb.toFixed(0) + " MB";
+}
+
+function loadUtmIsos() {
+  var sel = document.getElementById('utm-iso-select');
+  var status = document.getElementById('utm-iso-status');
+  fetch('/api/utm/isos')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      sel.innerHTML = '';
+      if (d.warning) {
+        status.textContent = d.warning;
+        status.style.color = 'var(--warn-fg)';
+        var opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No ISOs found in ' + (d.iso_dir || 'configured directory') + ' — drop a Windows ARM64 ISO there and reload.';
+        sel.appendChild(opt);
+        return;
+      }
+      if (d.note) {
+        status.textContent = d.note;
+        return;
+      }
+      if (!d.isos || d.isos.length === 0) {
+        status.textContent = 'No ISOs found in ' + (d.iso_dir || '?') + '. Drop a Windows ARM64 .iso file there and reload.';
+        status.style.color = 'var(--warn-fg)';
+        var opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '(no ISOs found)';
+        sel.appendChild(opt);
+        return;
+      }
+      status.textContent = d.iso_dir;
+      status.style.color = 'var(--ink-muted)';
+      d.isos.forEach(function(iso) {
+        var opt = document.createElement('option');
+        opt.value = iso.name;
+        opt.textContent = iso.name + '  (' + _fmtMB(iso.size_bytes) + ')';
+        sel.appendChild(opt);
+      });
+    })
+    .catch(function(e){
+      status.textContent = 'Error loading ISOs: ' + e.message;
+      status.style.color = 'var(--bad-fg)';
+    });
+}
+
+function loadUtmVms() {
+  var container = document.getElementById('utm-vms-content');
+  fetch('/api/utm/vms')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) {
+        container.innerHTML = '<span style="color:var(--bad-fg);">Error: ' + d.error + '</span>';
+        return;
+      }
+      if (d.note) {
+        container.textContent = d.note;
+        return;
+      }
+      if (!d.vms || d.vms.length === 0) {
+        container.textContent = 'No VMs found in UTM.';
+        return;
+      }
+      var html = '<table border="0" cellpadding="4" style="width:100%;border-collapse:collapse;">';
+      html += '<tr style="border-bottom:1px solid var(--line);"><th style="text-align:left;">Name</th><th style="text-align:left;">Status</th><th style="text-align:left;">UUID</th></tr>';
+      d.vms.forEach(function(vm) {
+        var statusColor = vm.status === 'started' ? 'var(--ok-fg)' : 'var(--ink-muted)';
+        html += '<tr style="border-bottom:1px solid var(--line);">'
+          + '<td style="font-family:monospace;">' + vm.name + '</td>'
+          + '<td style="color:' + statusColor + ';">' + vm.status + '</td>'
+          + '<td style="font-family:monospace;font-size:11px;color:var(--ink-muted);">' + vm.uuid + '</td>'
+          + '</tr>';
+      });
+      html += '</table>';
+      container.innerHTML = html;
+    })
+    .catch(function(e){
+      container.innerHTML = '<span style="color:var(--bad-fg);">Error: ' + e.message + '</span>';
+    });
+}
+
+loadUtmIsos();
+loadUtmVms();
+</script>
+
+{% else %}
+{# ─────────────────────────── Proxmox path (unchanged) ──────────────────── #}
 
 <div class="target-os-toggle" style="margin-bottom:10px;">
   <button type="button" id="os-windows-btn" class="toggle active" data-os="windows">Windows</button>
@@ -214,4 +395,6 @@ function buildUbuntuTemplate(btn) {
   border-color: #c44117;
 }
 </style>
+
+{% endif %}
 {% endblock %}

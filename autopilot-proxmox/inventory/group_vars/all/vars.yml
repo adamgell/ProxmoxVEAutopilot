@@ -18,6 +18,12 @@ utm_utmctl_path: "/Applications/UTM.app/Contents/MacOS/utmctl"
 # on Windows ARM64 — see upstream utmapp/UTM#5134).
 utm_exec_scratch_dir: "C:\\Users\\Public"
 utm_template_vm_name: ""
+utm_iso_dir: "{{ lookup('env','HOME') }}/UTM-ISOs"
+utm_skeleton_dir: "{{ playbook_dir }}/../assets/utm-templates"
+utm_qemu_img_path: "/opt/homebrew/bin/qemu-img"
+utm_documents_dir: "{{ lookup('env','HOME') }}/Library/Containers/com.utmapp.UTM/Data/Documents"
+utm_windows_iso_name: ""
+utm_windows_server_iso_name: ""
 
 # =============================================================================
 # Proxmox connection

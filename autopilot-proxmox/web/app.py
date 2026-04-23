@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import sqlite3
+import subprocess
 import time
 import urllib3
 from datetime import datetime, timezone
@@ -123,6 +124,18 @@ SETTINGS_SCHEMA = [
          "help": "Name or UUID of the Windows template VM registered in UTM (e.g., Windows11-Template-ARM64)"},
         {"key": "utm_exec_scratch_dir", "label": "Guest Scratch Directory", "type": "text",
          "help": "C:\\\\Users\\\\Public (writable path on guest used for exec output capture)"},
+        {"key": "utm_iso_dir", "label": "ISO Directory", "type": "text",
+         "help": "Host directory where Windows ARM64 installer ISOs live. Operator populates this manually."},
+        {"key": "utm_skeleton_dir", "label": "Skeleton Bundle Directory", "type": "text",
+         "help": "Where the repo-provided .utm skeleton bundles are stored. Usually leave at default."},
+        {"key": "utm_qemu_img_path", "label": "qemu-img Path", "type": "text",
+         "help": "Path to qemu-img. Install via `brew install qemu` if missing."},
+        {"key": "utm_documents_dir", "label": "UTM Library Documents Dir", "type": "text",
+         "help": "Where UTM.app stores its VM bundles."},
+        {"key": "utm_windows_iso_name", "label": "Windows 11 ISO Filename", "type": "text",
+         "help": "Filename (not path) of the Windows 11 ARM64 ISO inside utm_iso_dir."},
+        {"key": "utm_windows_server_iso_name", "label": "Windows Server ISO Filename", "type": "text",
+         "help": "Filename (not path) of the Windows Server ARM64 ISO inside utm_iso_dir."},
     ]},
     {"section": "Proxmox Connection", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
@@ -1838,10 +1851,13 @@ async def provision_page(request: Request):
 async def template_page(request: Request):
     all_seqs = sequences_db.list_sequences(SEQUENCES_DB)
     ubuntu_sequences = [s for s in all_seqs if s.get("target_os") == "ubuntu"]
+    current_vars = _load_vars()
     return templates.TemplateResponse("template.html", {
         "request": request,
         "profiles": load_oem_profiles(),
         "ubuntu_sequences": ubuntu_sequences,
+        "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
+        "utm_iso_dir": current_vars.get("utm_iso_dir", "~/UTM-ISOs"),
     })
 
 
@@ -2769,9 +2785,26 @@ async def start_provision(
 
 @app.post("/api/jobs/template")
 async def start_template(
-    profile: str = Form(...),
+    request: Request,
+    profile: str = Form(""),
     pause_before_sysprep: str = Form(""),
+    vm_os_kind: str = Form(""),
+    vm_name: str = Form(""),
+    utm_iso_name: str = Form(""),
+    vm_cpu_cores: str = Form("4"),
+    vm_memory_mb: str = Form("8192"),
+    vm_disk_gb: str = Form("80"),
 ):
+    if _load_vars().get("hypervisor_type") == "utm":
+        return await _enqueue_utm_template_job(
+            vm_os_kind=vm_os_kind,
+            vm_name=vm_name,
+            utm_iso_name=utm_iso_name,
+            vm_cpu_cores=vm_cpu_cores,
+            vm_memory_mb=vm_memory_mb,
+            vm_disk_gb=vm_disk_gb,
+        )
+
     profile = _sanitize_input(profile)
     cmd = [
         "ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml"),
@@ -2795,6 +2828,73 @@ async def start_template(
         args["pause_enabled"] = True
 
     job = job_manager.start("build_template", cmd, args=args)
+    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
+async def _enqueue_utm_template_job(
+    *,
+    vm_os_kind: str,
+    vm_name: str,
+    utm_iso_name: str,
+    vm_cpu_cores: str,
+    vm_memory_mb: str,
+    vm_disk_gb: str,
+):
+    """Validate inputs and enqueue a UTM template-build job."""
+    import re as _re
+
+    valid_os_kinds = {"windows11", "windows_server"}
+    if vm_os_kind not in valid_os_kinds:
+        return JSONResponse(
+            {"ok": False, "error": f"vm_os_kind must be one of {sorted(valid_os_kinds)}"},
+            status_code=400,
+        )
+
+    if not _re.match(r'^[a-zA-Z0-9_-]{1,64}$', vm_name):
+        return JSONResponse(
+            {"ok": False, "error": "vm_name must match ^[a-zA-Z0-9_-]{1,64}$"},
+            status_code=400,
+        )
+
+    current_vars = _load_vars()
+    iso_dir_raw = current_vars.get("utm_iso_dir", "~/UTM-ISOs")
+    iso_dir = Path(os.path.expanduser(iso_dir_raw)).resolve()
+    iso_path = (iso_dir / utm_iso_name).resolve()
+
+    if not str(iso_path).startswith(str(iso_dir)):
+        return JSONResponse({"ok": False, "error": "Path traversal detected in utm_iso_name"}, status_code=400)
+
+    if not iso_path.is_file():
+        return JSONResponse(
+            {"ok": False, "error": f"ISO file not found: {utm_iso_name} (looked in {iso_dir})"},
+            status_code=400,
+        )
+
+    try:
+        cpu_cores = int(vm_cpu_cores)
+        memory_mb = int(vm_memory_mb)
+        disk_gb = int(vm_disk_gb)
+    except (ValueError, TypeError):
+        return JSONResponse({"ok": False, "error": "cpu_cores, memory_mb, and disk_gb must be integers"}, status_code=400)
+
+    cmd = [
+        "ansible-playbook", str(PLAYBOOK_DIR / "build_utm_template.yml"),
+        "-e", f"vm_name={vm_name}",
+        "-e", f"vm_os_kind={vm_os_kind}",
+        "-e", f"utm_iso_name={utm_iso_name}",
+        "-e", f"vm_cpu_cores={cpu_cores}",
+        "-e", f"vm_memory_mb={memory_mb}",
+        "-e", f"vm_disk_gb={disk_gb}",
+    ]
+    args = {
+        "vm_name": vm_name,
+        "vm_os_kind": vm_os_kind,
+        "utm_iso_name": utm_iso_name,
+        "vm_cpu_cores": cpu_cores,
+        "vm_memory_mb": memory_mb,
+        "vm_disk_gb": disk_gb,
+    }
+    job = job_manager.start("build_utm_template", cmd, args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
@@ -2822,6 +2922,11 @@ async def build_ubuntu_template(sequence_id: int):
     """Kick off the Ubuntu template build playbook for the given sequence.
     Returns a JSON payload with the launched job id; the UI redirects to
     /jobs/{job_id} client-side."""
+    if _load_vars().get("hypervisor_type") == "utm":
+        return JSONResponse(
+            {"ok": False, "error": "Ubuntu UTM templates not yet supported"},
+            status_code=400,
+        )
     seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
     if seq is None or seq.get("target_os") != "ubuntu":
         return JSONResponse(
@@ -2836,6 +2941,78 @@ async def build_ubuntu_template(sequence_id: int):
     args = {"target_os": "ubuntu", "sequence_id": sequence_id}
     job = job_manager.start("build_template_ubuntu", cmd, args=args)
     return {"ok": True, "job_id": job["id"]}
+
+
+@app.get("/api/utm/isos")
+async def utm_list_isos():
+    """List Windows ARM64 ISOs in the configured utm_iso_dir.
+    Returns 200 in all cases; uses a 'warning' field if the directory is absent."""
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") != "utm":
+        return {"iso_dir": "", "isos": [], "note": "hypervisor_type is not utm"}
+
+    iso_dir_raw = current_vars.get("utm_iso_dir", "~/UTM-ISOs")
+    iso_dir = Path(os.path.expanduser(iso_dir_raw)).resolve()
+
+    if not iso_dir.exists():
+        return {
+            "iso_dir": str(iso_dir),
+            "isos": [],
+            "warning": f"Directory not found — create it or update utm_iso_dir: {iso_dir}",
+        }
+
+    isos = []
+    for entry in sorted(iso_dir.iterdir()):
+        if entry.is_file() and entry.suffix.lower() == ".iso":
+            stat = entry.stat()
+            isos.append({
+                "name": entry.name,
+                "size_bytes": stat.st_size,
+                "mtime": int(stat.st_mtime),
+            })
+
+    return {"iso_dir": str(iso_dir), "isos": isos}
+
+
+@app.get("/api/utm/vms")
+async def utm_list_vms():
+    """List UTM VMs by running `utmctl list`.
+    Returns 200 in all cases; uses an 'error' field on failure."""
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") != "utm":
+        return {"vms": [], "note": "hypervisor_type is not utm"}
+
+    utmctl = current_vars.get("utm_utmctl_path", "/Applications/UTM.app/Contents/MacOS/utmctl")
+    try:
+        result = subprocess.run(
+            [utmctl, "list"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return {"vms": [], "error": result.stderr.strip() or f"utmctl exited {result.returncode}"}
+
+        vms = []
+        lines = result.stdout.splitlines()
+        for line in lines[1:]:  # skip header row
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 2)
+            if len(parts) >= 3:
+                vms.append({"uuid": parts[0], "status": parts[1], "name": parts[2]})
+            elif len(parts) == 2:
+                vms.append({"uuid": parts[0], "status": parts[1], "name": ""})
+
+        return {"vms": vms}
+
+    except subprocess.TimeoutExpired:
+        return {"vms": [], "error": "utmctl list timed out"}
+    except FileNotFoundError:
+        return {"vms": [], "error": f"utmctl not found at {utmctl}"}
+    except Exception as exc:
+        return {"vms": [], "error": str(exc)}
 
 
 @app.get("/api/vms/{vmid}/console")
