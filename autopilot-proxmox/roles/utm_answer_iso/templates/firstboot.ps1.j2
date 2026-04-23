@@ -1,0 +1,142 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    Autopilot firstboot payload for Windows 11 ARM64 UTM template builds.
+
+.DESCRIPTION
+    Staged under $OEM$\$1\autopilot\ on the answer ISO → copied to
+    C:\autopilot\ by Windows text-mode setup.  Runs as a FirstLogonCommand
+    (Order 2) in autounattend.xml.
+
+    This script:
+      1. Creates C:\autopilot\ if it doesn't already exist.
+      2. Enables WinRM over HTTPS with a self-signed certificate.
+      3. Opens firewall port 5986 (WinRM HTTPS).
+      4. Installs the hash-capture hook (autopilot\hash_capture_hook.ps1).
+      5. Writes the sentinel file C:\autopilot\autopilot-firstboot.done.
+         The utm_build_win11_template.yml playbook polls for this file
+         via `utmctl exec` to know when firstboot has finished.
+
+    Variables below are injected by Jinja2 at ISO-build time.
+    Literal single quotes inside PowerShell strings are PS-escaped via
+    the sequence_compiler._ps_escape convention ('' inside single-quoted
+    strings).
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$AutopilotDir = 'C:\autopilot'
+$SentinelFile = "$AutopilotDir\autopilot-firstboot.done"
+$LogFile      = "$AutopilotDir\firstboot.log"
+
+function Write-Log {
+    param([string]$Message)
+    $ts = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    "$ts  $Message" | Tee-Object -FilePath $LogFile -Append | Out-Null
+    Write-Host "$ts  $Message"
+}
+
+# ---------------------------------------------------------------------------
+# 0. Ensure autopilot directory exists
+# ---------------------------------------------------------------------------
+if (-not (Test-Path $AutopilotDir)) {
+    New-Item -ItemType Directory -Path $AutopilotDir -Force | Out-Null
+}
+Write-Log 'autopilot-firstboot: start'
+
+# ---------------------------------------------------------------------------
+# 1. WinRM over HTTPS — self-signed certificate
+# ---------------------------------------------------------------------------
+try {
+    Write-Log 'Configuring WinRM HTTPS ...'
+
+    # Generate a self-signed cert valid for 10 years.
+    $Hostname = $env:COMPUTERNAME
+    $Cert = New-SelfSignedCertificate `
+        -DnsName $Hostname `
+        -CertStoreLocation 'Cert:\LocalMachine\My' `
+        -NotAfter (Get-Date).AddYears(10) `
+        -KeyUsage DigitalSignature, KeyEncipherment `
+        -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.1')
+
+    $CertThumbprint = $Cert.Thumbprint
+
+    # Remove any existing HTTPS listener, then create a new one.
+    Get-ChildItem WSMan:\localhost\Listener | Where-Object {
+        $_.Keys -contains 'Transport=HTTPS'
+    } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    New-Item -Path WSMan:\localhost\Listener `
+        -Transport HTTPS `
+        -Address '*' `
+        -CertificateThumbprint $CertThumbprint `
+        -Force | Out-Null
+
+    # Enable WinRM service.
+    Set-Service -Name WinRM -StartupType Automatic
+    Start-Service -Name WinRM -ErrorAction SilentlyContinue
+
+    # Allow unencrypted + basic auth on localhost (needed for Ansible
+    # when using local_connection; tighten this in production).
+    Set-Item -Path 'WSMan:\localhost\Service\Auth\Basic' -Value $true
+    Set-Item -Path 'WSMan:\localhost\Service\AllowUnencrypted' -Value $false
+
+    Write-Log "WinRM HTTPS listener created (cert thumbprint: $CertThumbprint)"
+} catch {
+    Write-Log "WARNING: WinRM HTTPS configuration failed: $_"
+}
+
+# ---------------------------------------------------------------------------
+# 2. Open firewall port 5986 (WinRM HTTPS)
+# ---------------------------------------------------------------------------
+try {
+    Write-Log 'Opening firewall port 5986 (WinRM HTTPS) ...'
+    $RuleName = 'AutopilotWinRMHTTPS'
+    if (-not (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule `
+            -Name        $RuleName `
+            -DisplayName 'Autopilot WinRM HTTPS (5986)' `
+            -Direction   Inbound `
+            -Protocol    TCP `
+            -LocalPort   5986 `
+            -Action      Allow `
+            -Profile     Any | Out-Null
+    }
+    Write-Log 'Firewall rule created/verified.'
+} catch {
+    Write-Log "WARNING: firewall rule creation failed: $_"
+}
+
+# ---------------------------------------------------------------------------
+# 3. Hash-capture hook — write stub script that Ansible replaces later
+# ---------------------------------------------------------------------------
+try {
+    $HashCaptureHook = "$AutopilotDir\hash_capture_hook.ps1"
+    if (-not (Test-Path $HashCaptureHook)) {
+        @'
+# Autopilot hardware-hash capture hook.
+# This stub is replaced by the Ansible hash_capture role during
+# the first full provisioning run.
+Write-Host 'hash_capture_hook: stub — run Ansible autopilot_inject to populate.'
+'@ | Set-Content -Path $HashCaptureHook -Encoding UTF8
+    }
+    Write-Log 'Hash-capture hook stub written.'
+} catch {
+    Write-Log "WARNING: hash-capture hook write failed: $_"
+}
+
+# ---------------------------------------------------------------------------
+# 4. Write sentinel — signals playbook polling loop that firstboot finished
+# ---------------------------------------------------------------------------
+try {
+    $Timestamp = (Get-Date -Format 'o')
+    "autopilot-firstboot completed at $Timestamp`n" |
+        Set-Content -Path $SentinelFile -Encoding UTF8
+    Write-Log "Sentinel written: $SentinelFile"
+} catch {
+    Write-Log "ERROR: failed to write sentinel: $_"
+    exit 1
+}
+
+Write-Log 'autopilot-firstboot: done'
