@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import plistlib
+import random
 import sys
 from dataclasses import dataclass, field
 
@@ -71,6 +73,144 @@ class BundleSpec:
     drives: list[DriveSpec]
     display: DisplaySpec
     network: NetworkSpec
+
+
+# Baked-in defaults. Keys and value formats are pulled directly from UTM's
+# Codable definitions (Configuration/UTMQemuConfiguration*.swift) — they are
+# NOT guesses. If upstream renames any of these, the Tier 2 contract test
+# will fail, forcing an explicit bump here.
+_DEFAULT_INPUT = {
+    "UsbBusSupport":   "3.0",          # QEMUUSBBus: "Disabled" | "2.0" | "3.0"
+    "UsbSharing":      False,          # USB passthrough off for template builds
+    "MaximumUsbShare": 3,
+}
+_DEFAULT_SHARING = {
+    "DirectoryShareMode":     "None",  # QEMUFileShareMode: "None" | "WebDAV" | "VirtFS"
+    "DirectoryShareReadOnly": False,
+    "ClipboardSharing":       True,
+}
+_DEFAULT_DISPLAY_FILTERS = {
+    "UpscalingFilter":   "Linear",     # QEMUScaler: "Linear" | "Nearest"
+    "DownscalingFilter": "Linear",
+}
+
+
+def _random_mac() -> str:
+    """Generate a locally-administered unicast MAC (02:...). UTM requires
+    Network[].MacAddress to be present as a non-optional String."""
+    octets = [0x02] + [random.randint(0, 0xff) for _ in range(5)]
+    return ":".join(f"{b:02X}" for b in octets)
+
+
+def _render_system(s: SystemSpec) -> dict:
+    # System does NOT own Hypervisor — that lives in QEMU. See
+    # UTMQemuConfigurationSystem.swift / UTMQemuConfigurationQEMU.swift.
+    return {
+        "Architecture":   s.architecture,
+        "Target":         s.target,
+        "MemorySize":     s.memory_mib,
+        "CPUCount":       s.cpu_count,
+        "ForceMulticore": False,
+        "JITCacheSize":   s.jit_cache_size,
+        "CPU":            "default",
+        "CPUFlagsAdd":    [],
+        "CPUFlagsRemove": [],
+    }
+
+
+def _render_qemu(q: QemuSpec, use_hypervisor: bool) -> dict:
+    # Required by UTM's Codable decode: DebugLog, UEFIBoot, RNGDevice,
+    # BalloonDevice, TPMDevice, Hypervisor, RTCLocalTime, PS2Controller,
+    # AdditionalArguments. TSO and MachinePropertyOverride are optional.
+    return {
+        "DebugLog":             q.debug_log,
+        "UEFIBoot":             q.uefi_boot,
+        "RNGDevice":            q.rng_device,
+        "BalloonDevice":        q.balloon_device,
+        "TPMDevice":            q.tpm_device,
+        "Hypervisor":           use_hypervisor,
+        "RTCLocalTime":         q.rtc_local_time,
+        "PS2Controller":        False,
+        "AdditionalArguments":  list(q.additional_arguments),
+    }
+
+
+def _render_drive(d: DriveSpec) -> dict:
+    # UTM's Drive schema keys: Identifier, ImageType, Interface,
+    # InterfaceVersion, ReadOnly, ImageName. There is NO "External" key —
+    # `isExternal` is inferred at decode time from whether ImageName is
+    # present. We still emit ImageName for removable CDs because that's
+    # how UTM learns which ISO to mount in the slot (the existing code
+    # base works this way; verified against current bundles).
+    entry = {
+        "Identifier":       d.identifier.upper(),
+        "ImageType":        d.image_type,
+        "Interface":        d.interface,
+        "InterfaceVersion": d.interface_version,
+        "ReadOnly":         d.read_only,
+    }
+    if d.image_name is not None:
+        # Uppercase UUID portion if image_name starts with a UUID
+        parts = d.image_name.split(".")
+        if len(parts) > 0 and len(parts[0]) == 36:  # UUID length is 36 chars
+            try:
+                # If first part looks like a UUID, uppercase it
+                parts[0] = parts[0].upper()
+            except Exception:
+                pass
+        entry["ImageName"] = ".".join(parts)
+    return entry
+
+
+def _render_display(d: DisplaySpec) -> dict:
+    # All five non-optional keys + optional VgaRamMib.
+    return {
+        "Hardware":          d.hardware,
+        "DynamicResolution": d.dynamic_resolution,
+        "NativeResolution":  d.native_resolution,
+        "VgaRamMib":         d.vga_ram_mib,
+        **_DEFAULT_DISPLAY_FILTERS,
+    }
+
+
+def _render_network(n: NetworkSpec) -> dict:
+    # Required: Mode, Hardware, MacAddress, IsolateFromHost, PortForward.
+    return {
+        "Mode":            n.mode,
+        "Hardware":        n.hardware,
+        "MacAddress":      n.mac_address or _random_mac(),
+        "IsolateFromHost": False,
+        "PortForward":     [],
+    }
+
+
+def render_plist(spec: BundleSpec) -> dict:
+    """Return the config.plist body as a Python dict. Keys are PascalCase
+    per UTM's Codable schema (ConfigurationVersion 4). Callers either pass
+    this to plistlib.dumps or inspect it in tests."""
+    return {
+        "ConfigurationVersion": UTM_CONFIGURATION_VERSION,
+        "Backend": "qemu",
+        "Information": {
+            "Name":       spec.name,
+            "UUID":       spec.uuid.upper(),
+            "IconCustom": False,
+        },
+        "System":  _render_system(spec.system),
+        "QEMU":    _render_qemu(spec.qemu, use_hypervisor=spec.system.use_hypervisor),
+        "Input":   dict(_DEFAULT_INPUT),
+        "Sharing": dict(_DEFAULT_SHARING),
+        "Display": [_render_display(spec.display)],
+        "Drive":   [_render_drive(d) for d in spec.drives],
+        "Network": [_render_network(spec.network)],
+        "Serial":  [],
+        "Sound":   [],
+    }
+
+
+def render_plist_bytes(spec: BundleSpec) -> bytes:
+    """XML-plist bytes ready to write to config.plist."""
+    return plistlib.dumps(render_plist(spec), fmt=plistlib.FMT_XML, sort_keys=False)
 
 
 def _cmd_build(args: argparse.Namespace) -> int:

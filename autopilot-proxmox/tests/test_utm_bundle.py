@@ -102,3 +102,111 @@ def test_system_spec_defaults_are_arm64_virt_hvf():
     assert s.use_hypervisor is True
     assert s.memory_mib == 8192
     assert s.cpu_count == 4
+
+
+def _sample_win11_spec():
+    """Stable sample spec used by the renderer and golden-fixture tests.
+    A fixed MAC address keeps the golden bytes reproducible; drive
+    identifiers are intentionally deterministic for the same reason."""
+    from web import utm_bundle as ub
+    return ub.BundleSpec(
+        name="test-win11",
+        uuid="11111111-1111-1111-1111-111111111111",
+        system=ub.SystemSpec(),
+        qemu=ub.QemuSpec(),
+        drives=[
+            ub.DriveSpec(identifier="aaaa0001-0000-0000-0000-000000000000",
+                         image_type="CD", interface="USB",
+                         image_name="Win11_25H2_English_Arm64.iso"),
+            ub.DriveSpec(identifier="aaaa0002-0000-0000-0000-000000000000",
+                         image_type="Disk", interface="VirtIO",
+                         image_name="aaaa0002-0000-0000-0000-000000000000.qcow2"),
+            ub.DriveSpec(identifier="aaaa0003-0000-0000-0000-000000000000",
+                         image_type="CD", interface="USB",
+                         image_name="AUTOUNATTEND.iso"),
+            ub.DriveSpec(identifier="aaaa0004-0000-0000-0000-000000000000",
+                         image_type="CD", interface="USB",
+                         image_name="virtio-win.iso"),
+        ],
+        display=ub.DisplaySpec(),
+        network=ub.NetworkSpec(mac_address="02:AA:BB:CC:DD:01"),
+    )
+
+
+def test_render_plist_has_required_top_level_keys():
+    from web import utm_bundle as ub
+    d = ub.render_plist(_sample_win11_spec())
+    for key in ("ConfigurationVersion", "Backend", "Information",
+                "System", "QEMU", "Drive", "Display", "Network",
+                "Input", "Sharing"):
+        assert key in d, f"missing top-level key: {key}"
+    assert d["ConfigurationVersion"] == 4
+    assert d["Backend"] == "qemu"
+
+
+def test_render_plist_uppercases_uuids():
+    """UTM rejects mixed-case UUIDs; see commit 1eaa9d5."""
+    from web import utm_bundle as ub
+    d = ub.render_plist(_sample_win11_spec())
+    assert d["Information"]["UUID"] == "11111111-1111-1111-1111-111111111111".upper()
+    for drive in d["Drive"]:
+        assert drive["Identifier"] == drive["Identifier"].upper()
+
+
+def test_render_plist_preserves_drive_order():
+    from web import utm_bundle as ub
+    d = ub.render_plist(_sample_win11_spec())
+    assert [dr["ImageName"] for dr in d["Drive"]] == [
+        "Win11_25H2_English_Arm64.iso",
+        "AAAA0002-0000-0000-0000-000000000000.qcow2",
+        "AUTOUNATTEND.iso",
+        "virtio-win.iso",
+    ]
+
+
+def test_render_plist_emits_win11_invariants():
+    """Hypervisor lives under QEMU, not System — see UTM source
+    Configuration/UTMQemuConfigurationQEMU.swift."""
+    from web import utm_bundle as ub
+    d = ub.render_plist(_sample_win11_spec())
+    assert d["System"]["Architecture"] == "aarch64"
+    assert d["QEMU"]["Hypervisor"] is True
+    assert d["QEMU"]["UEFIBoot"] is True
+    assert d["QEMU"]["TPMDevice"] is True
+    assert d["QEMU"]["RTCLocalTime"] is True
+
+
+def test_render_plist_every_key_exists_in_contract():
+    """Contract-based assertion — every section key we emit must appear in
+    the extracted schema contract. If upstream UTM renames a key and we
+    regenerate the contract, this catches any renderer drift. Note: this
+    only catches *extra* keys; the E2E test catches missing required ones
+    (UTM decode fails on register)."""
+    from web import utm_bundle as ub
+    d = ub.render_plist(_sample_win11_spec())
+    contract = json.loads((FIXTURES / "utm_schema_contract_v4.json").read_text())
+
+    def _check(section_name: str, obj: dict, allowed: set[str]):
+        for emitted in obj.keys():
+            assert emitted in allowed, \
+                f"{section_name}: emitted key '{emitted}' not in UTM contract"
+
+    _check("Information", d["Information"],  set(contract["sections"]["Information"]))
+    _check("System",      d["System"],       set(contract["sections"]["System"]))
+    _check("QEMU",        d["QEMU"],         set(contract["sections"]["QEMU"]))
+    _check("Input",       d["Input"],        set(contract["sections"]["Input"]))
+    _check("Sharing",     d["Sharing"],      set(contract["sections"]["Sharing"]))
+    _check("Display",     d["Display"][0],   set(contract["sections"]["Display"]))
+    _check("Network",     d["Network"][0],   set(contract["sections"]["Network"]))
+    for drive in d["Drive"]:
+        _check("Drive",   drive,             set(contract["sections"]["Drive"]))
+
+
+def test_render_plist_returns_bytes_when_asked():
+    """render_plist_bytes() returns a plistlib-formatted XML plist."""
+    from web import utm_bundle as ub
+    data = ub.render_plist_bytes(_sample_win11_spec())
+    assert isinstance(data, bytes)
+    assert data.startswith(b'<?xml')
+    assert b'<plist version="1.0">' in data
+    assert b'<key>ConfigurationVersion</key>' in data
