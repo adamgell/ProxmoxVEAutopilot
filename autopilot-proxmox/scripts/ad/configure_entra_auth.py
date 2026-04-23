@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import requests
 
@@ -152,7 +153,7 @@ def main() -> int:
 
     # Load from vault by default so operators just need --redirect-uri.
     if not (args.tenant and args.client_id and args.client_secret):
-        sys.path.insert(0, "/app")
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         try:
             from web.app import _load_proxmox_config
         except ImportError:
