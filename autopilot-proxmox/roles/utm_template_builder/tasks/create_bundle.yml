@@ -80,6 +80,10 @@
                 cpu cores:{{ vm_cpu_cores | int }}, ¬
                 uefi:true, ¬
                 hypervisor:true, ¬
+{% if utm_enable_tpm_secure_boot | default(true) %}
+                tpm device:true, ¬
+                preloaded secure boot keys:true, ¬
+{% endif %}
                 drives:{ ¬
                     {removable:true}, ¬
                     {guest size:{{ (vm_disk_gb | int) * 1024 }}}, ¬

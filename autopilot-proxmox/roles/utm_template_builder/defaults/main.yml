@@ -15,3 +15,9 @@ utm_build_resume: false
 
 # Set to true to clobber an existing bundle at the destination path
 utm_overwrite_bundle: false
+
+# Enable TPM 2.0 + (implicit) Secure Boot for the new VM.
+# Requires a UTM build with the `tpm device` and `preloaded secure boot keys`
+# AppleScript properties (utmapp/UTM PR: feature/applescript-tpm-securebootkeys
+# or equivalent). Needed for Windows 11 ARM64.
+utm_enable_tpm_secure_boot: true
