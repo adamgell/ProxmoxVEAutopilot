@@ -1,0 +1,52 @@
+---
+# utm_template_builder/tasks/main.yml
+#
+# Orchestrates building a UTM template VM from a skeleton bundle and an
+# installer ISO.  Mirrors roles/proxmox_template_builder/tasks/main.yml
+# but targets the UTM hypervisor running on macOS/ARM64.
+#
+# Required inputs:
+#   vm_os_kind    — 'windows11' or 'windows_server'
+#   vm_name       — UTM display name + bundle directory stem
+#   utm_iso_name  — ISO filename inside utm_iso_dir
+#
+# Optional overrides (see defaults/main.yml):
+#   vm_cpu_cores, vm_memory_mb, vm_disk_gb,
+#   utm_build_wait_mode, utm_build_resume, utm_overwrite_bundle
+#
+# Two-phase execution:
+#   Phase 1 (first run, utm_build_resume=false):
+#     create_bundle → customize_plist → start_and_wait (halts for OOBE)
+#   Phase 2 (re-run with -e utm_build_resume=true):
+#     sysprep_finalize
+
+- name: "UTM template builder: validate required inputs"
+  ansible.builtin.assert:
+    that:
+      - vm_os_kind is defined
+      - vm_os_kind in ['windows11', 'windows_server']
+      - vm_name is defined and (vm_name | length) > 0
+      - utm_iso_name is defined and (utm_iso_name | length) > 0
+    fail_msg: >-
+      utm_template_builder requires vm_os_kind ('windows11' or 'windows_server'),
+      vm_name, and utm_iso_name. Check your playbook vars.
+
+# ── Phase 1: build and start ─────────────────────────────────────────────────
+
+- name: "UTM template builder: create bundle from skeleton"
+  ansible.builtin.include_tasks: create_bundle.yml
+  when: not (utm_build_resume | default(false) | bool)
+
+- name: "UTM template builder: patch config.plist with runtime values"
+  ansible.builtin.include_tasks: customize_plist.yml
+  when: not (utm_build_resume | default(false) | bool)
+
+- name: "UTM template builder: start VM and wait for operator (manual mode)"
+  ansible.builtin.include_tasks: start_and_wait.yml
+  when: not (utm_build_resume | default(false) | bool)
+
+# ── Phase 2: sysprep and finalise ────────────────────────────────────────────
+
+- name: "UTM template builder: sysprep and finalise template"
+  ansible.builtin.include_tasks: sysprep_finalize.yml
+  when: utm_build_resume | default(false) | bool

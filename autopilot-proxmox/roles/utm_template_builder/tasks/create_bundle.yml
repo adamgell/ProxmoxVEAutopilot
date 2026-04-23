@@ -1,0 +1,117 @@
+---
+# utm_template_builder/tasks/create_bundle.yml
+#
+# 1. Resolve and assert the skeleton bundle path and installer ISO exist.
+# 2. Copy the skeleton to UTM's Documents directory as {{ vm_name }}.utm.
+# 3. Generate four fresh UUIDs (bundle, cd, disk, answer-cd).
+# 4. Create a blank qcow2 system disk inside the bundle's Data/ directory.
+# 5. Copy the installer ISO into the bundle's Data/ directory.
+
+- name: "Create bundle: resolve skeleton path for '{{ vm_os_kind }}'"
+  ansible.builtin.set_fact:
+    _skeleton_stem: "{{ 'windows11-arm64' if vm_os_kind == 'windows11' else 'windows-server-arm64' }}"
+
+- name: "Create bundle: set full skeleton and destination paths"
+  ansible.builtin.set_fact:
+    _skeleton_path: "{{ utm_skeleton_dir }}/{{ _skeleton_stem }}.utm"
+    _bundle_dest: "{{ utm_documents_dir }}/{{ vm_name }}.utm"
+    _iso_src: "{{ utm_iso_dir }}/{{ utm_iso_name }}"
+
+- name: "Create bundle: assert skeleton exists"
+  ansible.builtin.assert:
+    that:
+      - _skeleton_path is directory
+    fail_msg: >-
+      Skeleton bundle not found at '{{ _skeleton_path }}'.
+      Ensure the assets/utm-templates/ skeletons have been committed and
+      utm_skeleton_dir is correct (current value: {{ utm_skeleton_dir }}).
+
+- name: "Create bundle: assert installer ISO exists"
+  ansible.builtin.assert:
+    that:
+      - _iso_src is file
+    fail_msg: >-
+      Installer ISO not found at '{{ _iso_src }}'.
+      Place the ISO in utm_iso_dir ({{ utm_iso_dir }}) and set
+      utm_iso_name to its filename.
+
+- name: "Create bundle: check whether destination bundle already exists"
+  ansible.builtin.stat:
+    path: "{{ _bundle_dest }}"
+  register: _bundle_dest_stat
+
+- name: "Create bundle: fail if destination exists and utm_overwrite_bundle is false"
+  ansible.builtin.fail:
+    msg: >-
+      Bundle '{{ _bundle_dest }}' already exists.
+      Delete it manually or set utm_overwrite_bundle=true to replace it.
+  when:
+    - _bundle_dest_stat.stat.exists
+    - not (utm_overwrite_bundle | default(false) | bool)
+
+- name: "Create bundle: remove existing bundle (utm_overwrite_bundle=true)"
+  ansible.builtin.file:
+    path: "{{ _bundle_dest }}"
+    state: absent
+  when:
+    - _bundle_dest_stat.stat.exists
+    - utm_overwrite_bundle | default(false) | bool
+
+- name: "Create bundle: copy skeleton to UTM Documents dir"
+  ansible.builtin.copy:
+    src: "{{ _skeleton_path }}/"
+    dest: "{{ _bundle_dest }}/"
+    mode: preserve
+
+- name: "Create bundle: generate bundle UUID"
+  ansible.builtin.command:
+    argv: [uuidgen]
+  register: _uuidgen_bundle
+  changed_when: false
+
+- name: "Create bundle: generate installer CD UUID"
+  ansible.builtin.command:
+    argv: [uuidgen]
+  register: _uuidgen_cd
+  changed_when: false
+
+- name: "Create bundle: generate system disk UUID"
+  ansible.builtin.command:
+    argv: [uuidgen]
+  register: _uuidgen_disk
+  changed_when: false
+
+- name: "Create bundle: generate answer-CD UUID"
+  ansible.builtin.command:
+    argv: [uuidgen]
+  register: _uuidgen_answer_cd
+  changed_when: false
+
+- name: "Create bundle: register UUID facts"
+  ansible.builtin.set_fact:
+    _bundle_uuid: "{{ _uuidgen_bundle.stdout | trim | lower }}"
+    _cd_uuid: "{{ _uuidgen_cd.stdout | trim | lower }}"
+    _disk_uuid: "{{ _uuidgen_disk.stdout | trim | lower }}"
+    _answer_cd_uuid: "{{ _uuidgen_answer_cd.stdout | trim | lower }}"
+    _plist_path: "{{ _bundle_dest }}/config.plist"
+    _data_dir: "{{ _bundle_dest }}/Data"
+    _disk_filename: "{{ _uuidgen_disk.stdout | trim | lower }}.qcow2"
+
+- name: "Create bundle: create blank qcow2 system disk"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_qemu_img_path }}"
+      - create
+      - -f
+      - qcow2
+      - "{{ _data_dir }}/{{ _disk_filename }}"
+      - "{{ vm_disk_gb }}G"
+  register: _qemu_img_result
+  failed_when: _qemu_img_result.rc != 0
+  changed_when: true
+
+- name: "Create bundle: copy installer ISO into bundle Data/"
+  ansible.builtin.copy:
+    src: "{{ _iso_src }}"
+    dest: "{{ _data_dir }}/{{ utm_iso_name }}"
+    mode: "0644"

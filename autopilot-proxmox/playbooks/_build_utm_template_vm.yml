@@ -1,0 +1,12 @@
+---
+# Per-VM task fragment — included by build_utm_template.yml loop.
+# Calls the utm_template_builder role with variables sourced from
+# the _utm_target loop item.
+
+- name: "Build UTM template '{{ _utm_target.vm_name }}'"
+  ansible.builtin.include_role:
+    name: utm_template_builder
+  vars:
+    vm_name: "{{ _utm_target.vm_name }}"
+    vm_os_kind: "{{ _utm_target.vm_os_kind }}"
+    utm_iso_name: "{{ _utm_target.utm_iso_name }}"

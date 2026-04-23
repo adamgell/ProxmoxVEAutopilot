@@ -1,0 +1,17 @@
+---
+# utm_template_builder defaults
+
+# VM hardware sizing
+vm_cpu_cores: 4
+vm_memory_mb: 8192
+vm_disk_gb: 80
+
+# Wait mode: 'manual' = operator drives OOBE, re-runs with utm_build_resume=true
+# Future: 'unattended' = polls for a sentinel file via utmctl exec
+utm_build_wait_mode: "manual"
+
+# Set to true when re-running the playbook after OOBE is complete
+utm_build_resume: false
+
+# Set to true to clobber an existing bundle at the destination path
+utm_overwrite_bundle: false

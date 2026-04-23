@@ -1,0 +1,29 @@
+---
+# Provision ad-hoc Windows VMs from ISO on the local macOS/ARM64 UTM host.
+# Creates one-off VMs that will NOT become templates.
+#
+# Loops over utm_iso_targets — a list of dicts, each with:
+#   vm_name      — UTM display name (also becomes the .utm bundle stem)
+#   vm_os_kind   — 'windows11' or 'windows_server'
+#   utm_iso_name — ISO filename inside utm_iso_dir
+#
+# Usage:
+#   ansible-playbook playbooks/provision_utm_iso.yml
+#
+# Example utm_iso_targets (set in vars or extra-vars):
+#   utm_iso_targets:
+#     - vm_name: my-windows-vm
+#       vm_os_kind: windows11
+#       utm_iso_name: "{{ utm_windows_iso_name }}"
+
+- name: Provision UTM VMs from ISO
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Provision each UTM ISO VM
+      ansible.builtin.include_tasks: _provision_utm_iso_vm.yml
+      loop: "{{ utm_iso_targets }}"
+      loop_control:
+        loop_var: _utm_target
+        label: "{{ _utm_target.vm_name }}"

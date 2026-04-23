@@ -1,0 +1,71 @@
+---
+# utm_vm_iso/tasks/main.yml
+#
+# Ad-hoc ISO VM role for UTM (macOS/ARM64).  Creates a single-use VM from
+# a skeleton bundle and installer ISO, then starts it immediately.
+# Mirrors roles/proxmox_vm_iso but for the UTM hypervisor.
+#
+# This is NOT a template builder — it creates a one-off VM that will NOT
+# be sysprepped or converted to a template.  Use utm_template_builder for
+# that workflow.
+#
+# Required inputs:
+#   vm_os_kind    — 'windows11' or 'windows_server'
+#   vm_name       — UTM display name + bundle directory stem
+#   utm_iso_name  — ISO filename inside utm_iso_dir
+#
+# Optional overrides (see defaults/main.yml):
+#   vm_cpu_cores, vm_memory_mb, vm_disk_gb, utm_overwrite_bundle
+
+- name: "UTM ISO VM: validate required inputs"
+  ansible.builtin.assert:
+    that:
+      - vm_os_kind is defined
+      - vm_os_kind in ['windows11', 'windows_server']
+      - vm_name is defined and (vm_name | length) > 0
+      - utm_iso_name is defined and (utm_iso_name | length) > 0
+    fail_msg: >-
+      utm_vm_iso requires vm_os_kind ('windows11' or 'windows_server'),
+      vm_name, and utm_iso_name.
+
+# Reuse create_bundle.yml from utm_template_builder to avoid duplication.
+- name: "UTM ISO VM: create bundle from skeleton"
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/../utm_template_builder/tasks/create_bundle.yml"
+
+# Reuse customize_plist.yml from utm_template_builder.
+- name: "UTM ISO VM: patch config.plist with runtime values"
+  ansible.builtin.include_tasks:
+    file: "{{ role_path }}/../utm_template_builder/tasks/customize_plist.yml"
+
+- name: "UTM ISO VM: start '{{ vm_name }}'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - start
+      - "{{ vm_name }}"
+      - --hide
+  register: _iso_start_result
+  failed_when: _iso_start_result.rc != 0
+  changed_when: true
+
+- name: "UTM ISO VM: poll utmctl status until 'started'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _iso_status_poll
+  retries: 30
+  delay: 5
+  until: _iso_status_poll.stdout | trim == 'started'
+  failed_when:
+    - _iso_status_poll.rc != 0
+    - _iso_status_poll.retries | default(0) >= 30
+  changed_when: false
+
+- name: "UTM ISO VM: report VM started"
+  ansible.builtin.debug:
+    msg: >-
+      VM '{{ vm_name }}' is running from ISO '{{ utm_iso_name }}'.
+      This is a one-off VM — not a template.

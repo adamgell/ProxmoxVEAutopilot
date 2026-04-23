@@ -1,0 +1,34 @@
+---
+# Build UTM template VMs on the local macOS/ARM64 host running UTM.
+#
+# Loops over utm_template_targets — a list of dicts, each with:
+#   vm_name      — UTM display name (also becomes the .utm bundle stem)
+#   vm_os_kind   — 'windows11' or 'windows_server'
+#   utm_iso_name — ISO filename inside utm_iso_dir
+#
+# Usage (first run — installs Windows and pauses for OOBE):
+#   ansible-playbook playbooks/build_utm_template.yml
+#
+# Usage (re-run after OOBE — runs sysprep and finalises):
+#   ansible-playbook playbooks/build_utm_template.yml -e utm_build_resume=true
+#
+# Example utm_template_targets (set in vars or extra-vars):
+#   utm_template_targets:
+#     - vm_name: win11-template
+#       vm_os_kind: windows11
+#       utm_iso_name: "{{ utm_windows_iso_name }}"
+#     - vm_name: winserver-template
+#       vm_os_kind: windows_server
+#       utm_iso_name: "{{ utm_windows_server_iso_name }}"
+
+- name: Build UTM template VMs
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Build each UTM template
+      ansible.builtin.include_tasks: _build_utm_template_vm.yml
+      loop: "{{ utm_template_targets }}"
+      loop_control:
+        loop_var: _utm_target
+        label: "{{ _utm_target.vm_name }}"
