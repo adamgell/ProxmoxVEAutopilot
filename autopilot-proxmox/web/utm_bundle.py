@@ -15,6 +15,7 @@ import random
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 
 UTM_CONFIGURATION_VERSION = 4
@@ -289,13 +290,17 @@ def write_bundle(
 
 
 DEFAULT_UTMCTL = "/Applications/UTM.app/Contents/MacOS/utmctl"
+OPEN_COMMAND = "/usr/bin/open"
 
 
 class UtmctlClient:
     """Thin subprocess wrapper around UTM's utmctl CLI."""
 
-    def __init__(self, utmctl: str = DEFAULT_UTMCTL) -> None:
+    def __init__(self,
+                 utmctl: str = DEFAULT_UTMCTL,
+                 open_command: str = OPEN_COMMAND) -> None:
         self.utmctl = utmctl
+        self.open_command = open_command
 
     def _run(self, *args: str, input_text: str | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -303,10 +308,39 @@ class UtmctlClient:
             input=input_text, capture_output=True, text=True, check=True,
         )
 
-    def register(self, bundle_path: pathlib.Path) -> str:
-        """Register a .utm bundle with UTM and return its assigned UUID."""
-        result = self._run("register", str(bundle_path))
-        return result.stdout.strip()
+    def register(self, bundle_path: pathlib.Path,
+                 poll_attempts: int = 30, poll_delay: float = 0.5) -> str:
+        """Register a .utm bundle with UTM and return its UUID.
+
+        UTM 4.7.5's utmctl has no `register` subcommand. Registration goes
+        through Launch Services via `open -a UTM <bundle>`; UTM picks the
+        bundle up asynchronously and it appears in `utmctl list` shortly
+        after. We poll list for up to ~15 s (30 × 0.5 s) looking for the
+        bundle stem as the VM name, then return the UUID UTM reports.
+
+        The UUID we return matches the one we wrote into the bundle's
+        config.plist via render_plist — UTM adopts the plist's UUID
+        rather than assigning a fresh one, which is what we want for
+        determinism.
+        """
+        subprocess.run(
+            [self.open_command, "-a", "UTM", str(bundle_path)],
+            check=True, capture_output=True, text=True,
+        )
+        bundle_name = pathlib.Path(bundle_path).stem
+        for _ in range(poll_attempts):
+            result = subprocess.run(
+                [self.utmctl, "list"], capture_output=True, text=True, check=False,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split(maxsplit=2)
+                if len(parts) == 3 and parts[2].strip() == bundle_name:
+                    return parts[0]
+            time.sleep(poll_delay)
+        raise RuntimeError(
+            f"UTM did not register bundle within {poll_attempts * poll_delay:.0f}s: "
+            f"{bundle_path}"
+        )
 
     def start(self, uuid: str) -> None:
         self._run("start", uuid)

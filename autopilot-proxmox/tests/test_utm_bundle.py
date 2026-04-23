@@ -294,19 +294,61 @@ def test_write_bundle_plist_matches_renderer(tmp_path):
 from unittest.mock import patch, MagicMock
 
 
-def test_utmctl_register_returns_uuid_from_stdout():
-    """`utmctl register <bundle>` prints the registered VM's UUID."""
+def test_utmctl_register_opens_bundle_and_finds_uuid_in_list():
+    """UTM 4.7.5's utmctl has no `register` subcommand — we register via
+    `open -a UTM <bundle>` and then poll `utmctl list` to find the UUID
+    UTM reports for that bundle name."""
     from web import utm_bundle as ub
-    fake = MagicMock(returncode=0, stdout="AAAA1111-2222-3333-4444-555555555555\n",
-                     stderr="")
-    with patch("web.utm_bundle.subprocess.run", return_value=fake) as run:
-        client = ub.UtmctlClient(utmctl="/Applications/UTM.app/Contents/MacOS/utmctl")
-        uuid = client.register(pathlib.Path("/tmp/x.utm"))
-    run.assert_called_once()
-    args, _ = run.call_args
-    assert args[0] == ["/Applications/UTM.app/Contents/MacOS/utmctl",
-                       "register", "/tmp/x.utm"]
-    assert uuid == "AAAA1111-2222-3333-4444-555555555555"
+
+    expected_uuid = "AAAA1111-2222-3333-4444-555555555555"
+    list_stdout = (
+        "UUID                                 Status   Name\n"
+        "11111111-2222-3333-4444-555555555555 stopped  other-vm\n"
+        f"{expected_uuid} stopped  smoke-vm\n"
+    )
+
+    def fake_run(argv, *args, **kwargs):
+        if argv[:2] == ["/usr/bin/open", "-a"]:
+            return MagicMock(returncode=0, stdout="", stderr="")
+        if argv == ["/Applications/UTM.app/Contents/MacOS/utmctl", "list"]:
+            return MagicMock(returncode=0, stdout=list_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess call: {argv}")
+
+    with patch("web.utm_bundle.subprocess.run", side_effect=fake_run) as run:
+        client = ub.UtmctlClient()
+        uuid = client.register(pathlib.Path("/tmp/smoke-vm.utm"))
+
+    # First call: open -a UTM <bundle>
+    assert run.call_args_list[0].args[0] == [
+        "/usr/bin/open", "-a", "UTM", "/tmp/smoke-vm.utm",
+    ]
+    # Second call: utmctl list (polling loop; succeeds on first poll here)
+    assert run.call_args_list[1].args[0] == [
+        "/Applications/UTM.app/Contents/MacOS/utmctl", "list",
+    ]
+    assert uuid == expected_uuid
+
+
+def test_utmctl_register_raises_when_bundle_never_appears():
+    """Register times out cleanly if `utmctl list` never shows the bundle."""
+    from web import utm_bundle as ub
+
+    def fake_run(argv, *args, **kwargs):
+        if argv[:2] == ["/usr/bin/open", "-a"]:
+            return MagicMock(returncode=0, stdout="", stderr="")
+        if argv[-1] == "list":
+            return MagicMock(returncode=0, stdout="UUID Status Name\n", stderr="")
+        raise AssertionError(f"unexpected subprocess call: {argv}")
+
+    # Use tiny sleep to keep the test fast, small attempt count.
+    with patch("web.utm_bundle.subprocess.run", side_effect=fake_run), \
+         patch("web.utm_bundle.time.sleep"):
+        import pytest as _pytest
+        with _pytest.raises(RuntimeError, match="did not register"):
+            ub.UtmctlClient().register(
+                pathlib.Path("/tmp/never-there.utm"),
+                poll_attempts=3, poll_delay=0.0,
+            )
 
 
 def test_utmctl_start_invokes_start_subcommand():
