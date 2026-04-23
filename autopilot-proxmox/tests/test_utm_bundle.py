@@ -46,3 +46,59 @@ def test_schema_contract_has_required_sections():
         assert enum_name in contract["enums"]
         assert isinstance(contract["enums"][enum_name], list)
         assert len(contract["enums"][enum_name]) > 0
+
+
+def test_bundle_spec_win11_template_has_four_drives():
+    """Win11 ARM64 template bundle has: installer CD (USB), system qcow2
+    (VirtIO), answer ISO CD (USB), virtio-win CD (USB) — in that order.
+    Order matters: UTM assigns bootindex=N by drive-array position.
+    Note: UTM's schema has no 'External' key — removable-ness is inferred
+    from ImageType=CD at decode time."""
+    from web import utm_bundle as ub
+    spec = ub.BundleSpec(
+        name="test-win11",
+        uuid="11111111-1111-1111-1111-111111111111",
+        system=ub.SystemSpec(),
+        qemu=ub.QemuSpec(),
+        drives=[
+            ub.DriveSpec(identifier="AAAA0001-0000-0000-0000-000000000000",
+                         image_type="CD", interface="USB",
+                         image_name="Win11_25H2_English_Arm64.iso"),
+            ub.DriveSpec(identifier="AAAA0002-0000-0000-0000-000000000000",
+                         image_type="Disk", interface="VirtIO",
+                         image_name="AAAA0002-0000-0000-0000-000000000000.qcow2"),
+            ub.DriveSpec(identifier="AAAA0003-0000-0000-0000-000000000000",
+                         image_type="CD", interface="USB",
+                         image_name="AUTOUNATTEND.iso"),
+            ub.DriveSpec(identifier="AAAA0004-0000-0000-0000-000000000000",
+                         image_type="CD", interface="USB",
+                         image_name="virtio-win.iso"),
+        ],
+        display=ub.DisplaySpec(),
+        network=ub.NetworkSpec(),
+    )
+    assert len(spec.drives) == 4
+    assert spec.drives[0].image_name.endswith(".iso")
+    assert spec.drives[1].image_type == "Disk"
+    assert spec.drives[1].interface == "VirtIO"
+
+
+def test_qemu_spec_defaults_for_windows():
+    """Windows 11 ARM64 requires TPM and wants local-time RTC; UEFI boot."""
+    from web import utm_bundle as ub
+    q = ub.QemuSpec()
+    assert q.uefi_boot is True
+    assert q.tpm_device is True
+    assert q.rtc_local_time is True
+    assert q.rng_device is True
+    assert q.balloon_device is False
+
+
+def test_system_spec_defaults_are_arm64_virt_hvf():
+    from web import utm_bundle as ub
+    s = ub.SystemSpec()
+    assert s.architecture == "aarch64"
+    assert s.target == "virt"
+    assert s.use_hypervisor is True
+    assert s.memory_mib == 8192
+    assert s.cpu_count == 4

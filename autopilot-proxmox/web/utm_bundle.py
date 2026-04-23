@@ -10,8 +10,67 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass, field
 
 UTM_CONFIGURATION_VERSION = 4
+
+
+@dataclass
+class SystemSpec:
+    architecture: str = "aarch64"
+    target: str = "virt"
+    memory_mib: int = 8192
+    cpu_count: int = 4
+    use_hypervisor: bool = True
+    jit_cache_size: int = 0
+
+
+@dataclass
+class QemuSpec:
+    uefi_boot: bool = True
+    tpm_device: bool = True
+    rtc_local_time: bool = True         # Windows expects local-time RTC
+    rng_device: bool = True
+    balloon_device: bool = False
+    debug_log: bool = False
+    additional_arguments: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DriveSpec:
+    identifier: str                     # uppercased UUID at render time
+    image_type: str                     # "CD" | "Disk" | "None"
+    interface: str                      # "USB" | "VirtIO" | "IDE" | "SCSI" | "NVMe"
+    interface_version: int = 1
+    read_only: bool = False
+    image_name: str | None = None       # filename inside bundle Data/
+    # UTM has no "External" key — removable-ness is derived from ImageType=CD.
+
+
+@dataclass
+class DisplaySpec:
+    hardware: str = "virtio-ramfb-gl"
+    dynamic_resolution: bool = True
+    native_resolution: bool = True
+    vga_ram_mib: int = 64
+
+
+@dataclass
+class NetworkSpec:
+    hardware: str = "virtio-net-pci"
+    mode: str = "shared"                # UTM shared NAT
+    mac_address: str | None = None
+
+
+@dataclass
+class BundleSpec:
+    name: str
+    uuid: str
+    system: SystemSpec
+    qemu: QemuSpec
+    drives: list[DriveSpec]
+    display: DisplaySpec
+    network: NetworkSpec
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
