@@ -22,6 +22,8 @@ All communication with guest VMs happens through the Proxmox REST API and QEMU g
 > running the web service natively on macOS (not in Docker) because
 > `utmctl` is a macOS-host binary. See
 > [`docs/UTM_MACOS_SETUP.md`](docs/UTM_MACOS_SETUP.md) for setup.
+> macOS operators can use `autopilot-proxmox/scripts/tui.sh` as an
+> interactive launcher (see docs/UTM_MACOS_SETUP.md).
 
 ## Prerequisites
 

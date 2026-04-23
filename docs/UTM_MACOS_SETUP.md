@@ -10,6 +10,22 @@ container. For the UTM hypervisor mode, the web service must run
 > Proxmox backend. Docker is only unsupported when `hypervisor_type`
 > is set to `utm`.
 
+## Interactive launcher (recommended)
+
+For a one-screen workflow, use the curses-based TUI that ships with
+the repo:
+
+```bash
+cd autopilot-proxmox
+./scripts/tui.sh
+```
+
+It starts/stops the `web`, `builder`, and `monitor` processes, tails
+each service's log, and defaults to port **5055** to sidestep the
+macOS AirPlay Receiver collision on :5000 (see Known issues below).
+It also preflights the venv, so a missing package surfaces as a
+banner instead of a mystery crash.
+
 ## Prerequisites
 
 | Component | Minimum | Install |
@@ -97,3 +113,10 @@ is the quickest way to confirm a template is wired correctly.
 - **Single hypervisor per process.** `hypervisor_type` is a global
   setting. Running Proxmox and UTM side-by-side needs two separate
   deployments.
+- **AirPlay Receiver owns :5000 on macOS.** Ventura+ binds Control
+  Center's AirPlay Receiver to port 5000, so `python -m web.entrypoint`
+  will either fail to bind or collide with AirTunes and return HTTP
+  403 to browsers. Two fixes: (a) disable **AirPlay Receiver** under
+  System Settings → General → AirDrop & Handoff, or (b) leave the TUI
+  default of 5055 (also set by `scripts/run_macos_native.sh` and
+  overridable via `AUTOPILOT_WEB_PORT`).
