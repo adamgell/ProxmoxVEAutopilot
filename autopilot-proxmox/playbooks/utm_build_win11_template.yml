@@ -83,12 +83,14 @@
         vm_os_kind: windows11
 
     - name: "Template build: create bundle from skeleton"
-      ansible.builtin.include_tasks:
-        file: "{{ playbook_dir }}/../roles/utm_template_builder/tasks/create_bundle.yml"
+      ansible.builtin.include_role:
+        name: utm_template_builder
+        tasks_from: create_bundle.yml
 
     - name: "Template build: patch config.plist"
-      ansible.builtin.include_tasks:
-        file: "{{ playbook_dir }}/../roles/utm_template_builder/tasks/customize_plist.yml"
+      ansible.builtin.include_role:
+        name: utm_template_builder
+        tasks_from: customize_plist.yml
 
     # ── 4. Copy answer ISO into bundle Data/ and attach as Drive 2 ─────────
 
