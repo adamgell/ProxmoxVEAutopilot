@@ -1,6 +1,7 @@
 """Custom Jinja2 filters for Proxmox SMBIOS configuration."""
 
 import base64
+import hashlib
 import os
 import uuid
 
@@ -200,9 +201,10 @@ class FilterModule:
             vmid_int = int(vmid)
         except (ValueError, TypeError):
             # UTM backend passes a string VM name as the identity seed.
-            # Use a stable hash so repeated calls with the same name
-            # produce the same disk_serial prefix.
-            vmid_int = abs(hash(str(vmid))) % 10**6
+            # Use a stable, PYTHONHASHSEED-independent hash so repeated
+            # calls with the same name always produce the same disk_serial
+            # prefix across processes and interpreter restarts.
+            vmid_int = int(hashlib.md5(str(vmid).encode()).hexdigest()[:8], 16) % 10**6
         vm_uuid = str(uuid.uuid4()).upper()
         uuid_hex = vm_uuid.replace("-", "")
         disk_serial = f"APHV{vmid_int:06d}{uuid_hex[:10]}"
