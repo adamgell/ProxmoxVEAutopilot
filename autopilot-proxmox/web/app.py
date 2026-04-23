@@ -104,14 +104,14 @@ SETTINGS_SCHEMA = [
     # all/vault.yml instead. Secret fields (type="secret") are rendered
     # as masked inputs, never echo their value to the browser, and
     # preserve the current value when the form submits blank.
-    {"section": "Hypervisor Backend", "fields": [
+    {"section": "Hypervisor Backend", "applies_to": "all", "fields": [
         {"key": "hypervisor_type", "label": "Hypervisor Type", "type": "text",
          "options": ["proxmox", "utm"],
          "labels": {"proxmox": "Proxmox VE (Linux/x86_64)",
                     "utm": "UTM + QEMU (macOS/ARM64)"},
-         "help": "Proxmox = standard Docker deployment. UTM requires running the web service natively on macOS — see docs/UTM_MACOS_SETUP.md."},
+         "help": "Proxmox = standard Docker deployment. UTM requires running the web service natively on macOS — see docs/UTM_MACOS_SETUP.md. Saving a new value reloads the page with the relevant settings sections."},
     ]},
-    {"section": "UTM (macOS/ARM64) Configuration", "fields": [
+    {"section": "UTM (macOS/ARM64) Configuration", "applies_to": "utm", "fields": [
         {"key": "utm_utmctl_path", "label": "utmctl Path", "type": "text",
          "help": "/Applications/UTM.app/Contents/MacOS/utmctl (ships with UTM)"},
         {"key": "utm_library_path", "label": "UTM Library Path", "type": "text",
@@ -137,23 +137,27 @@ SETTINGS_SCHEMA = [
         {"key": "utm_windows_server_iso_name", "label": "Windows Server ISO Filename", "type": "text",
          "help": "Filename (not path) of the Windows Server ARM64 ISO inside utm_iso_dir."},
     ]},
-    {"section": "Proxmox Connection", "fields": [
+    {"section": "Proxmox Connection", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
         {"key": "proxmox_port", "label": "Port", "type": "number"},
         {"key": "proxmox_node", "label": "Node", "type": "text"},
         {"key": "proxmox_validate_certs", "label": "Validate Certs", "type": "bool"},
     ]},
-    {"section": "Credentials (vault.yml)", "source": "vault", "fields": [
+    {"section": "Credentials (vault.yml)", "source": "vault", "applies_to": "all", "fields": [
         {"key": "vault_proxmox_api_token_id",
          "label": "Proxmox API Token ID", "type": "text",
+         "applies_to": "proxmox",
          "help": "e.g. autopilot@pve!ansible"},
         {"key": "vault_proxmox_api_token_secret",
-         "label": "Proxmox API Token Secret", "type": "secret"},
+         "label": "Proxmox API Token Secret", "type": "secret",
+         "applies_to": "proxmox"},
         {"key": "vault_proxmox_root_username",
          "label": "Proxmox Root Username", "type": "text",
+         "applies_to": "proxmox",
          "help": "Default: root@pam. Used only for the args PUT on VMs that need a chassis override."},
         {"key": "vault_proxmox_root_password",
          "label": "Proxmox Root Password", "type": "secret",
+         "applies_to": "proxmox",
          "help": "Required for chassis-type overrides. Fetched just-in-time as a /access/ticket per provision; never leaves the container."},
         {"key": "vault_entra_app_id",
          "label": "Entra App (client) ID", "type": "text"},
@@ -162,21 +166,21 @@ SETTINGS_SCHEMA = [
         {"key": "vault_entra_app_secret",
          "label": "Entra App Secret", "type": "secret"},
     ]},
-    {"section": "Storage & Networking", "fields": [
+    {"section": "Storage & Networking", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_storage", "label": "VM Storage", "type": "text"},
         {"key": "proxmox_iso_storage", "label": "ISO Storage", "type": "text"},
         {"key": "proxmox_bridge", "label": "Network Bridge", "type": "text"},
         {"key": "proxmox_vlan_tag", "label": "VLAN Tag", "type": "text"},
     ]},
-    {"section": "ISO Paths", "fields": [
+    {"section": "ISO Paths", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_windows_iso", "label": "Windows ISO", "type": "text"},
         {"key": "proxmox_virtio_iso", "label": "VirtIO ISO", "type": "text"},
         {"key": "proxmox_answer_iso", "label": "Answer ISO", "type": "text"},
     ]},
-    {"section": "Template", "fields": [
+    {"section": "Template", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_template_vmid", "label": "Template VMID", "type": "number"},
     ]},
-    {"section": "VM Defaults", "fields": [
+    {"section": "VM Defaults", "applies_to": "all", "fields": [
         {"key": "vm_cores", "label": "CPU Cores", "type": "number"},
         {"key": "vm_memory_mb", "label": "Memory (MB)", "type": "number"},
         {"key": "vm_disk_size_gb", "label": "Disk Size (GB)", "type": "number"},
@@ -193,14 +197,18 @@ SETTINGS_SCHEMA = [
         {"key": "autopilot_skip", "label": "Skip Autopilot Inject", "type": "bool"},
         {"key": "capture_hardware_hash", "label": "Capture Hash", "type": "bool"},
     ]},
-    {"section": "Timeouts", "fields": [
-        {"key": "guest_agent_timeout_seconds", "label": "Guest Agent Timeout (s)", "type": "number"},
-        {"key": "guest_agent_poll_interval_seconds", "label": "Guest Agent Poll (s)", "type": "number"},
+    {"section": "Timeouts", "applies_to": "all", "fields": [
+        {"key": "guest_agent_timeout_seconds", "label": "Guest Agent Timeout (s)", "type": "number",
+         "applies_to": "proxmox"},
+        {"key": "guest_agent_poll_interval_seconds", "label": "Guest Agent Poll (s)", "type": "number",
+         "applies_to": "proxmox"},
         {"key": "guest_exec_timeout_seconds", "label": "Guest Exec Timeout (s)", "type": "number"},
         {"key": "guest_exec_poll_interval_seconds", "label": "Guest Exec Poll (s)", "type": "number"},
         {"key": "hash_capture_timeout_seconds", "label": "Hash Capture Timeout (s)", "type": "number"},
-        {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number"},
-        {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number"},
+        {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number",
+         "applies_to": "proxmox"},
+        {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number",
+         "applies_to": "proxmox"},
     ]},
 ]
 
@@ -2169,11 +2177,18 @@ async def settings_page(request: Request, saved: str = ""):
     current_vars = _load_vars()
     vault_present = _vault_presence()
     options = _fetch_settings_options()
+    hv_type = (current_vars.get("hypervisor_type") or "proxmox").lower()
     sections = []
     for group in SETTINGS_SCHEMA:
+        group_applies = group.get("applies_to", "all")
+        if group_applies not in ("all", hv_type):
+            continue
         source = group.get("source", "vars")
         fields = []
         for f in group["fields"]:
+            field_applies = f.get("applies_to", "all")
+            if field_applies not in ("all", hv_type):
+                continue
             key = f["key"]
             if source == "vault":
                 # Secret-safe: never surface the actual value. The UI
@@ -2201,12 +2216,17 @@ async def settings_page(request: Request, saved: str = ""):
                 "options": field_options,
                 "labels": labels,
             })
+        if not fields:
+            # every field in this section was filtered out for the
+            # current hypervisor — skip the empty header entirely.
+            continue
         sections.append({"section": group["section"], "fields": fields,
                          "source": source})
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "sections": sections,
         "saved": saved == "1",
+        "hypervisor_type": hv_type,
     })
 
 
@@ -2258,11 +2278,23 @@ async def node_options(node: str):
 async def save_settings(request: Request):
     form = await request.form()
     current_vars = _load_vars()
+    # Honor the submitted hypervisor_type when filtering (so flipping
+    # backends + saving in one submit applies correctly), falling back
+    # to the on-disk value.
+    hv_type = (form.get("hypervisor_type")
+               or current_vars.get("hypervisor_type")
+               or "proxmox").lower()
     vars_updates: dict = {}
     vault_updates: dict = {}
     for group in SETTINGS_SCHEMA:
+        group_applies = group.get("applies_to", "all")
+        if group_applies not in ("all", hv_type):
+            continue
         source = group.get("source", "vars")
         for f in group["fields"]:
+            field_applies = f.get("applies_to", "all")
+            if field_applies not in ("all", hv_type):
+                continue
             key = f["key"]
             ftype = f["type"]
 
@@ -2281,8 +2313,15 @@ async def save_settings(request: Request):
             if isinstance(cur_val, str) and "{{" in str(cur_val):
                 continue
             if ftype == "bool":
-                vars_updates[key] = key in form
+                # Checkboxes: absent means unchecked only if the form
+                # was an actual settings submit. If the field isn't in
+                # the form at all (e.g. a partial AJAX save from the
+                # hypervisor switcher), leave it untouched.
+                if key in form or "_all_fields" in form:
+                    vars_updates[key] = key in form
             elif ftype == "number":
+                if key not in form:
+                    continue
                 raw = form.get(key, "")
                 if raw == "" or raw == "null":
                     vars_updates[key] = None
@@ -2292,6 +2331,8 @@ async def save_settings(request: Request):
                     except ValueError:
                         vars_updates[key] = raw
             else:
+                if key not in form:
+                    continue
                 val = form.get(key, "")
                 vars_updates[key] = val if val not in ("null", "") else None
 

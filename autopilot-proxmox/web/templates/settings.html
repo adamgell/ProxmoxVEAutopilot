@@ -15,6 +15,7 @@
 </p>
 
 <form method="POST" action="/api/settings" autocomplete="off">
+<input type="hidden" name="_all_fields" value="1">
 {% for group in sections %}
 <h3>{{ group.section }}</h3>
 <table>
@@ -78,6 +79,25 @@ function updateSelect(id, options, currentVal) {
     o.textContent = label;
     if (String(value) === String(currentVal)) o.selected = true;
     sel.appendChild(o);
+  });
+}
+
+var hvTypeSelect = document.getElementById('field_hypervisor_type');
+if (hvTypeSelect) {
+  var _hvInitial = hvTypeSelect.value;
+  hvTypeSelect.addEventListener('change', function() {
+    if (this.value === _hvInitial) return;
+    if (!confirm('Switch hypervisor to "' + this.value + '"? Unsaved changes on this page will be lost — the page reloads so only the relevant settings sections show.')) {
+      this.value = _hvInitial;
+      return;
+    }
+    // Persist just the hypervisor_type switch, then the GET reloads
+    // the settings page with the matching sections.
+    var fd = new FormData();
+    fd.append('hypervisor_type', this.value);
+    fetch('/api/settings', {method: 'POST', body: fd, redirect: 'follow'})
+      .then(function() { window.location.href = '/settings?saved=1'; })
+      .catch(function() { window.location.reload(); });
   });
 }
 
