@@ -146,6 +146,37 @@
       ansible.builtin.debug:
         msg: "UTM registered bundle with UUID {{ _utm_assigned_uuid }} (via AppleScript make)"
 
+    # UTM caches each VM's configuration in memory after `make`. Our subsequent
+    # plutil patches (Drive.0 + Drive.2 ImageName) only land on disk; without a
+    # restart UTM launches QEMU with empty CD drives (no `file.filename=`),
+    # which leaves EDK2 dropped at the UEFI shell with no bootable media.
+    # Quitting and relaunching UTM forces a fresh read of config.plist.
+    - name: "Template build: quit UTM so it re-reads patched config.plist"
+      ansible.builtin.command:
+        argv:
+          - osascript
+          - -e
+          - 'tell application "UTM" to quit'
+      changed_when: true
+
+    - name: "Template build: wait for UTM to fully exit"
+      ansible.builtin.wait_for:
+        timeout: 10
+      delegate_to: localhost
+
+    - name: "Template build: relaunch UTM"
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/open
+          - -a
+          - UTM
+      changed_when: true
+
+    - name: "Template build: wait for UTM to be ready"
+      ansible.builtin.wait_for:
+        timeout: 5
+      delegate_to: localhost
+
     - name: "Template build: verify VM appears in utmctl list"
       ansible.builtin.command:
         argv:
@@ -182,7 +213,42 @@
       failed_when: false
       changed_when: false
 
-    # ── 6. Poll for firstboot sentinel ──────────────────────────────────────
+    # ── 6a. Escape the EFI shell ────────────────────────────────────────────
+    #
+    # EDK2 on `qemu-aarch64 virt` doesn't auto-boot from removable USB CDs
+    # (no NVRAM Boot#### entry exists for them on first boot), so the firmware
+    # drops to the UEFI Shell. We script our way out by sending keystrokes via
+    # UTM AppleScript: switch to fs0:, exec `efi\boot\bootaa64.efi`, then spam
+    # spaces to acknowledge the "Press any key to boot from CD or DVD" prompt
+    # that the Windows ARM64 installer shows for ~5 seconds.
+
+    - name: "Template build: wait for EFI shell to be reached"
+      ansible.builtin.wait_for:
+        timeout: 12
+      delegate_to: localhost
+
+    - name: "Template build: send EFI shell boot sequence via AppleScript"
+      ansible.builtin.shell: |
+        /usr/bin/osascript <<OSA
+        tell application "UTM"
+            set vm to virtual machine id "{{ _utm_assigned_uuid }}"
+            input keystroke vm text "fs0:
+        "
+            delay 1
+            input keystroke vm text "efi\\\\boot\\\\bootaa64.efi
+        "
+            delay 1
+            repeat 30 times
+                input keystroke vm text " "
+                delay 0.3
+            end repeat
+        end tell
+        OSA
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    # ── 6b. Poll for firstboot sentinel ─────────────────────────────────────
     #
     # Windows Setup runs: WinPE → specialize → OOBE → AutoLogon →
     # FirstLogonCommands → firstboot.ps1 → writes sentinel.

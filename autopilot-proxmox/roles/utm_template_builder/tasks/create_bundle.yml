@@ -82,7 +82,11 @@
                 hypervisor:true, ¬
                 drives:{ ¬
                     {removable:true}, ¬
-                    {guest size:{{ (vm_disk_gb | int) * 1024 }}} ¬
+                    {guest size:{{ (vm_disk_gb | int) * 1024 }}}, ¬
+                    {removable:true} ¬
+                }, ¬
+                displays:{ ¬
+                    {hardware:"virtio-ramfb-gl", dynamic resolution:true} ¬
                 } ¬
             }}
         return id of newVM
@@ -126,11 +130,22 @@
   register: _drive1_id
   changed_when: false
 
+- name: "Create bundle: read answer-CD identifier from config.plist"
+  ansible.builtin.command:
+    argv:
+      - /usr/libexec/PlistBuddy
+      - -c
+      - "Print :Drive:2:Identifier"
+      - "{{ _plist_path }}"
+  register: _drive2_id
+  changed_when: false
+
 - name: "Create bundle: register drive UUID facts"
   ansible.builtin.set_fact:
     _cd_uuid: "{{ _drive0_id.stdout | trim }}"
     _disk_uuid: "{{ _drive1_id.stdout | trim }}"
     _disk_filename: "{{ _drive1_id.stdout | trim }}.qcow2"
+    _answer_cd_uuid: "{{ _drive2_id.stdout | trim }}"
 
 - name: "Create bundle: copy installer ISO into bundle Data/"
   ansible.builtin.copy:
