@@ -6,31 +6,31 @@
 # "proxmox" (default) → _proxmox_guest_exec.yml (Proxmox REST API + QEMU GA)
 # "utm"               → _utm_guest_exec.yml (SSH + PowerShell, macOS/ARM64)
 # Overridden at provision time by web/app.py via -e hypervisor_type=...
-hypervisor_type: "proxmox"
+hypervisor_type: utm
 
 # =============================================================================
 # UTM (macOS/ARM64) backend — used when hypervisor_type: utm
 # =============================================================================
 # utmctl ships with the UTM.app bundle on macOS; no separate install needed.
-utm_utmctl_path: "/Applications/UTM.app/Contents/MacOS/utmctl"
+utm_utmctl_path: /Applications/UTM.app/Contents/MacOS/utmctl
 # Scratch directory on the Windows guest used to stash stdout/stderr files
 # captured via `utmctl file pull` (since `utmctl exec` does not stream output
 # on Windows ARM64 — see upstream utmapp/UTM#5134).
-utm_exec_scratch_dir: "C:\\Users\\Public"
-utm_template_vm_name: ""
+utm_exec_scratch_dir: 'C:\Users\Public'
+utm_template_vm_name: null
 utm_iso_dir: "{{ lookup('env','HOME') }}/UTM-ISOs"
 utm_skeleton_dir: "{{ playbook_dir }}/../assets/utm-templates"
-utm_qemu_img_path: "/opt/homebrew/bin/qemu-img"
+utm_qemu_img_path: /opt/homebrew/bin/qemu-img
 utm_documents_dir: "{{ lookup('env','HOME') }}/Library/Containers/com.utmapp.UTM/Data/Documents"
-utm_windows_iso_name: ""
-utm_windows_server_iso_name: ""
+utm_windows_iso_name: null
+utm_windows_server_iso_name: null
 
 # =============================================================================
 # Proxmox connection
 # =============================================================================
-proxmox_host: "192.168.2.200"
+proxmox_host: 192.168.2.200
 proxmox_port: 8006
-proxmox_node: "pve2"
+proxmox_node: pve2
 proxmox_api_base: "https://{{ proxmox_host }}:{{ proxmox_port }}/api2/json"
 proxmox_validate_certs: false
 
@@ -49,9 +49,9 @@ proxmox_api_auth_header: "PVEAPIToken={{ vault_proxmox_api_token_id }}={{ vault_
 # =============================================================================
 # Storage and networking
 # =============================================================================
-proxmox_storage: "ssdpool"
-proxmox_iso_storage: "isos"
-proxmox_bridge: "vmbr0"
+proxmox_storage: ssdpool
+proxmox_iso_storage: isos
+proxmox_bridge: vmbr0
 proxmox_vlan_tag: null
 
 # =============================================================================
@@ -72,13 +72,13 @@ proxmox_template_vmid: 105
 vm_cores: 2
 vm_memory_mb: 4096
 vm_disk_size_gb: 64
-vm_ostype: "win11"
+vm_ostype: win11
 vm_count: 1
-vm_name_prefix: "autopilot"
+vm_name_prefix: autopilot
 vm_start_after_create: true
 
 # OEM profile key (from files/oem_profiles.yml), e.g. "lenovo-t14"
-vm_oem_profile: "generic-desktop"
+vm_oem_profile: generic-desktop
 vm_custom_serial: null
 vm_serial_prefix: null
 vm_group_tag: null
@@ -127,3 +127,6 @@ ubuntu_seed_iso: "isos:iso/ubuntu-seed.iso"
 # Per-clone cloud-init seed ISO filename pattern (the Ubuntu branch of the
 # clone playbook writes a per-VM ISO here, named with the VMID).
 ubuntu_per_vm_seed_pattern: "isos:iso/ubuntu-per-vm-{{ vmid }}.iso"
+utm_library_path: null
+utm_qemu_binary_path: null
+utm_uefi_firmware_path: null
