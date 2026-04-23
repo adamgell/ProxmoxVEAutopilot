@@ -82,6 +82,12 @@
         🗑 Delete
       </button>
 
+      <button class="btn-action btn-snap"
+        onclick="openSnapPanel('{{ vm.name }}', '{{ vm.uuid }}', '{{ vm.status }}')"
+        title="Manage qcow2 snapshots (requires VM stopped for create/restore/delete)">
+        📸 Snapshots
+      </button>
+
     </div>
   </td>
 </tr>
@@ -121,6 +127,41 @@
   border-color: var(--err-fg, #c0392b);
   color: var(--err-fg, #c0392b);
 }
+.btn-snap {
+  border-color: var(--accent, #0078d4);
+  color: var(--accent, #0078d4);
+}
+
+/* ── Snapshot panel overlay ── */
+#snap-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+#snap-overlay.open { display: flex; }
+#snap-panel {
+  background: var(--panel, #fff);
+  border: 1px solid var(--line, #ddd);
+  border-radius: 6px;
+  padding: 18px 22px;
+  width: min(560px, 96vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  color: var(--ink, #111);
+  font-size: 13px;
+}
+#snap-panel h3 { margin: 0 0 10px; font-size: 14px; }
+#snap-list { border-collapse: collapse; width: 100%; margin-bottom: 12px; font-size: 12px; }
+#snap-list th, #snap-list td { border: 1px solid var(--line, #ddd); padding: 3px 7px; text-align: left; }
+#snap-list th { background: var(--hover, #f0f0f0); }
+.snap-create-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.snap-create-row input { flex: 1; min-width: 120px; padding: 3px 6px; border: 1px solid var(--line, #ddd); border-radius: 3px; background: var(--panel, #fff); color: var(--ink, #111); font-size: 12px; }
+#snap-status { margin-top: 8px; font-size: 12px; min-height: 18px; }
+.snap-warn { color: var(--ms-yellow, #b8860b); }
 .badge-yellow {
   display: inline-block;
   padding: 1px 6px;
@@ -169,6 +210,162 @@ function confirmAction(action, vmName, message, btn) {
   if (!confirm(message)) return;
   vmAction(action, vmName, btn);
 }
+
+// ── Snapshot panel ─────────────────────────────────────────────────────────
+
+let _snapVmName = null;
+let _snapVmUuid = null;
+let _snapVmStatus = null;
+
+function openSnapPanel(vmName, vmUuid, vmStatus) {
+  _snapVmName = vmName;
+  _snapVmUuid = vmUuid;
+  _snapVmStatus = vmStatus;
+  document.getElementById('snap-panel-title').textContent = 'Snapshots — ' + vmName;
+  const stopped = vmStatus === 'stopped';
+  document.getElementById('snap-new-name').disabled = !stopped;
+  document.getElementById('snap-create-btn').disabled = !stopped;
+  if (!stopped) {
+    document.getElementById('snap-status').innerHTML =
+      '<span class="snap-warn">⚠ VM is ' + vmStatus + '. Stop it to create/restore/delete snapshots. Listing is always available.</span>';
+  } else {
+    document.getElementById('snap-status').textContent = '';
+  }
+  document.getElementById('snap-overlay').classList.add('open');
+  loadSnapshots();
+}
+
+function closeSnapPanel() {
+  document.getElementById('snap-overlay').classList.remove('open');
+  _snapVmName = null;
+}
+
+async function loadSnapshots() {
+  const tbody = document.getElementById('snap-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--ink-soft)">Loading…</td></tr>';
+  try {
+    const r = await fetch('/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots');
+    const data = await r.json();
+    if (!data.ok) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--err-fg,#c0392b)">' + (data.error || 'Error') + '</td></tr>';
+      return;
+    }
+    const snaps = data.snapshots || [];
+    if (!snaps.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--ink-soft)">No snapshots yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = snaps.map(s =>
+      '<tr>' +
+      '<td>' + escHtml(s.snapshot_id) + '</td>' +
+      '<td><strong>' + escHtml(s.tag) + '</strong></td>' +
+      '<td>' + escHtml(s.vm_size) + '</td>' +
+      '<td>' + escHtml(s.date) + '</td>' +
+      '<td style="white-space:nowrap">' +
+        '<button class="btn-action" ' + (_snapVmStatus !== 'stopped' ? 'disabled title="Stop VM first"' : '') +
+          ' onclick="restoreSnap(' + JSON.stringify(s.tag) + ')">↩ Restore</button> ' +
+        '<button class="btn-action btn-danger" ' + (_snapVmStatus !== 'stopped' ? 'disabled title="Stop VM first"' : '') +
+          ' onclick="deleteSnap(' + JSON.stringify(s.tag) + ')">✕ Delete</button>' +
+      '</td>' +
+      '</tr>'
+    ).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--err-fg,#c0392b)">Request failed: ' + e + '</td></tr>';
+  }
+}
+
+async function createSnap() {
+  const nameEl = document.getElementById('snap-new-name');
+  const snapName = nameEl.value.trim();
+  if (!snapName) { alert('Enter a snapshot name.'); return; }
+  const statusEl = document.getElementById('snap-status');
+  statusEl.textContent = 'Creating…';
+  try {
+    const r = await fetch('/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: snapName}),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      statusEl.textContent = '✓ Snapshot "' + snapName + '" created.';
+      nameEl.value = '';
+      loadSnapshots();
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Error: ' + escHtml(data.error || 'unknown') + '</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Request failed: ' + e + '</span>';
+  }
+}
+
+async function restoreSnap(snapName) {
+  if (!confirm('Restore snapshot "' + snapName + '"? The current disk state will be overwritten.')) return;
+  const statusEl = document.getElementById('snap-status');
+  statusEl.textContent = 'Restoring…';
+  try {
+    const r = await fetch(
+      '/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots/' + encodeURIComponent(snapName) + '/restore',
+      {method: 'POST'}
+    );
+    const data = await r.json();
+    if (data.ok) {
+      statusEl.textContent = '✓ Snapshot "' + snapName + '" restored.';
+      loadSnapshots();
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Error: ' + escHtml(data.error || 'unknown') + '</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Request failed: ' + e + '</span>';
+  }
+}
+
+async function deleteSnap(snapName) {
+  if (!confirm('Delete snapshot "' + snapName + '"? This cannot be undone.')) return;
+  const statusEl = document.getElementById('snap-status');
+  statusEl.textContent = 'Deleting…';
+  try {
+    const r = await fetch(
+      '/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots/' + encodeURIComponent(snapName),
+      {method: 'DELETE'}
+    );
+    const data = await r.json();
+    if (data.ok) {
+      statusEl.textContent = '✓ Snapshot "' + snapName + '" deleted.';
+      loadSnapshots();
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Error: ' + escHtml(data.error || 'unknown') + '</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Request failed: ' + e + '</span>';
+  }
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 </script>
+
+<!-- Snapshot panel overlay -->
+<div id="snap-overlay" onclick="if(event.target===this)closeSnapPanel()">
+  <div id="snap-panel">
+    <h3 id="snap-panel-title">Snapshots</h3>
+    <table id="snap-list">
+      <thead><tr><th>#</th><th>Name</th><th>Size</th><th>Date</th><th>Actions</th></tr></thead>
+      <tbody id="snap-tbody"><tr><td colspan="5">—</td></tr></tbody>
+    </table>
+    <div class="snap-create-row">
+      <input id="snap-new-name" type="text" placeholder="new-snapshot-name" maxlength="64"
+        pattern="[A-Za-z0-9._-]+" title="Alphanumeric, dots, dashes, underscores only">
+      <button id="snap-create-btn" class="btn-action btn-snap" onclick="createSnap()">+ Create</button>
+    </div>
+    <div id="snap-status"></div>
+    <div style="margin-top:14px;text-align:right;">
+      <button class="btn-action" onclick="closeSnapPanel()">Close</button>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
