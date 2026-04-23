@@ -1,0 +1,3 @@
+---
+# Default OEM profile key. Empty string = no profile (UUID-only SMBIOS1).
+vm_oem_profile: ""

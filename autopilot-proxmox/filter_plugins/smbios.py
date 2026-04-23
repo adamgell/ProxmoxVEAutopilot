@@ -191,9 +191,19 @@ class FilterModule:
         Returns a dict with:
           uuid: uppercase UUID4 string
           disk_serial: APHV{vmid:06d}{uuid_hex_prefix:10}
+
+        vmid may be a numeric string (Proxmox nextid) or an arbitrary
+        string (UTM VM name). Non-numeric values are hashed to produce
+        a stable 6-digit integer so the disk_serial format is unchanged.
         """
-        vmid = int(vmid)
+        try:
+            vmid_int = int(vmid)
+        except (ValueError, TypeError):
+            # UTM backend passes a string VM name as the identity seed.
+            # Use a stable hash so repeated calls with the same name
+            # produce the same disk_serial prefix.
+            vmid_int = abs(hash(str(vmid))) % 10**6
         vm_uuid = str(uuid.uuid4()).upper()
         uuid_hex = vm_uuid.replace("-", "")
-        disk_serial = f"APHV{vmid:06d}{uuid_hex[:10]}"
+        disk_serial = f"APHV{vmid_int:06d}{uuid_hex[:10]}"
         return {"uuid": vm_uuid, "disk_serial": disk_serial}
