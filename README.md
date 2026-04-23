@@ -174,4 +174,5 @@ Each profile sets SMBIOS type 1 fields and generates a manufacturer-appropriate 
 
 - **[docs/SETUP.md](docs/SETUP.md)** — detailed setup walkthrough with field-by-field configuration, unattended-install internals, and an air-gapped answer-ISO recipe. Includes the Ubuntu path (LinuxESP).
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — symptoms, causes, and fixes for common failures (Windows and Ubuntu).
+- **[docs/PYTHON_VERSIONS.md](docs/PYTHON_VERSIONS.md)** — Python version matrix: minimum supported, CI-tested versions, 3.13/3.14 concerns, and macOS pyenv/uv install guidance.
 - **[autopilot-proxmox/README.md](autopilot-proxmox/README.md)** — Ansible CLI usage, playbooks, and developer reference.
