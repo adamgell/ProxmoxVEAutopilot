@@ -169,10 +169,11 @@ def _do_sweep_tick(monitor_db_path: Path) -> None:
       1. Read settings via ``device_history_db.get_settings`` (same
          source the /monitoring/settings UI writes to).
       2. Skip when ``settings.enabled`` is false.
-      3. Build a live ``MonitorContext`` via ``web.app._build_live_monitor_context``
+      3. Skip entirely when ``hypervisor_type == utm`` — no Proxmox fleet.
+      4. Build a live ``MonitorContext`` via ``web.app._build_live_monitor_context``
          (PVE API + AD + Graph wiring).
-      4. Compute ``extra_in_scope_vmids`` from the sequences DB.
-      5. Call ``device_monitor.sweep(ctx, extra_in_scope_vmids=extra)``.
+      5. Compute ``extra_in_scope_vmids`` from the sequences DB.
+      6. Call ``device_monitor.sweep(ctx, extra_in_scope_vmids=extra)``.
     """
     from web import device_history_db, device_monitor
     try:
@@ -186,6 +187,10 @@ def _do_sweep_tick(monitor_db_path: Path) -> None:
     # Live wiring lives in web.app; import lazily so test-only calls
     # to monitor_main._run_loops don't drag FastAPI in.
     from web import app as web_app
+    if (web_app._load_vars().get("hypervisor_type") or "proxmox").lower() == "utm":
+        _log.debug("sweep skipped: hypervisor_type=utm (no Proxmox fleet to sweep)")
+        return
+
     try:
         ctx = web_app._build_live_monitor_context()
         extra = web_app._vm_provisioning_vmids()
