@@ -1,0 +1,12 @@
+---
+# UTM-specific: Write file to guest via SSH/SCP.
+# Stub — Phase 2 will implement SCP-based file transfer to Windows guest.
+#
+# Required variables (passed from dispatch hub):
+#   vm_vmid        - target VM name
+#   _guest_file    - full path inside the guest
+#   _guest_content - file content to write
+
+- name: "UTM guest_file_write not yet implemented (Phase 2)"
+  ansible.builtin.fail:
+    msg: "UTM backend implementation is scheduled for Phase 2. Use hypervisor_type=proxmox for now."

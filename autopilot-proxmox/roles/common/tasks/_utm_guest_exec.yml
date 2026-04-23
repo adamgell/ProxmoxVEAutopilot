@@ -1,0 +1,34 @@
+---
+# UTM-specific: Execute command via SSH + PowerShell remoting.
+#
+# This is the UTM backend implementation of guest_exec.yml dispatch.
+# Called from common/tasks/guest_exec.yml (the dispatch hub).
+#
+# Required variables (passed from dispatch hub):
+#   vm_vmid          - target VM name or ID (for SSH connection discovery)
+#   _exec_command    - list of command + args
+#
+# Required UTM vars (from playbook/settings):
+#   utm_ssh_key_path - path to private SSH key
+#   utm_ssh_user     - SSH username (default: Administrator)
+#   utm_ssh_port_base - base port for SSH tunneling
+#
+# Registers:
+#   _guest_exec_result  - exec result (success/failure status)
+#   _guest_exec_status  - final status (mirroring Proxmox structure)
+#
+# Implementation approach:
+# 1. Discover SSH port for this VM (port_base + vm_index)
+# 2. Execute command via SSH (PowerShell if on Windows)
+# 3. Capture stdout/stderr and exit code
+# 4. Return in format compatible with caller
+
+# TODO Phase 2: Implement SSH command execution
+# - Add SSH discovery task
+# - Add PowerShell command builder
+# - Add SSH execution with error handling
+# - Add return value normalization
+
+- name: "UTM guest_exec not yet implemented (Phase 2)"
+  fail:
+    msg: "UTM backend implementation is scheduled for Phase 2. Use Proxmox hypervisor_type for now."

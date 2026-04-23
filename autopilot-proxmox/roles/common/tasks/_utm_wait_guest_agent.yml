@@ -1,0 +1,9 @@
+---
+# UTM-specific: Wait for guest to become reachable (via SSH).
+# Stub — Phase 2 will implement SSH connectivity probing.
+#
+# Required variables: vm_vmid
+
+- name: "UTM wait_guest_agent not yet implemented (Phase 2)"
+  ansible.builtin.fail:
+    msg: "UTM backend implementation is scheduled for Phase 2. Use hypervisor_type=proxmox for now."

@@ -1,25 +1,9 @@
 ---
-# Wait for the QEMU guest agent to become responsive.
+# Dispatch hub for waiting on the guest agent to become responsive.
+# Routes to _{proxmox,utm}_wait_guest_agent.yml based on hypervisor_type.
+#
 # Required variables: vm_vmid
 # Optional overrides: guest_agent_timeout_seconds, guest_agent_poll_interval_seconds
 
-- name: "Wait for guest agent on VM {{ vm_vmid }}"
-  ansible.builtin.uri:
-    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/ping"
-    method: POST
-    headers:
-      Authorization: "{{ proxmox_api_auth_header }}"
-    validate_certs: "{{ proxmox_validate_certs }}"
-    status_code: [200]
-  register: _agent_ping
-  until: _agent_ping.status == 200
-  retries: "{{ (guest_agent_timeout_seconds | int / guest_agent_poll_interval_seconds | int) | int }}"
-  delay: "{{ guest_agent_poll_interval_seconds | int }}"
-  failed_when: false
-
-- name: Fail if guest agent did not respond
-  ansible.builtin.fail:
-    msg: >-
-      Guest agent on VM {{ vm_vmid }} did not respond within
-      {{ guest_agent_timeout_seconds }} seconds.
-  when: _agent_ping.status | default(0) != 200
+- name: "Wait for guest agent via {{ hypervisor_type | default('proxmox') }} backend"
+  ansible.builtin.include_tasks: "_{{ hypervisor_type | default('proxmox') }}_wait_guest_agent.yml"

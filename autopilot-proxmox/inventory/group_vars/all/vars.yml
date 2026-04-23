@@ -1,5 +1,14 @@
 ---
 # =============================================================================
+# Hypervisor backend
+# =============================================================================
+# Selects which backend roles/common/tasks/guest_exec.yml dispatches to.
+# "proxmox" (default) → _proxmox_guest_exec.yml (Proxmox REST API + QEMU GA)
+# "utm"               → _utm_guest_exec.yml (SSH + PowerShell, macOS/ARM64)
+# Overridden at provision time by web/app.py via -e hypervisor_type=...
+hypervisor_type: "proxmox"
+
+# =============================================================================
 # Proxmox connection
 # =============================================================================
 proxmox_host: "192.168.2.200"

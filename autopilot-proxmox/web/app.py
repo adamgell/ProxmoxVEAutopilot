@@ -103,6 +103,26 @@ SETTINGS_SCHEMA = [
     # all/vault.yml instead. Secret fields (type="secret") are rendered
     # as masked inputs, never echo their value to the browser, and
     # preserve the current value when the form submits blank.
+    {"section": "Hypervisor Backend", "fields": [
+        {"key": "hypervisor_type", "label": "Hypervisor Type", "type": "text",
+         "help": "proxmox (default) or utm"},
+    ]},
+    {"section": "UTM (macOS/ARM64) Configuration", "fields": [
+        {"key": "utm_library_path", "label": "UTM Library Path", "type": "text",
+         "help": "/Users/user/Library/Containers/com.utmapp.UTM/Data/Documents"},
+        {"key": "utm_qemu_binary_path", "label": "QEMU Binary Path", "type": "text",
+         "help": "/opt/homebrew/bin/qemu-system-aarch64"},
+        {"key": "utm_uefi_firmware_path", "label": "UEFI Firmware Path", "type": "text",
+         "help": "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"},
+        {"key": "utm_template_vm_name", "label": "Template VM Name", "type": "text",
+         "help": "Friendly name of the template VM in UTM (e.g., Windows11-Template-ARM64)"},
+        {"key": "utm_ssh_key_path", "label": "SSH Private Key Path", "type": "text",
+         "help": "/root/.ssh/id_rsa (for guest execution via SSH)"},
+        {"key": "utm_ssh_user", "label": "SSH Username", "type": "text",
+         "help": "Administrator (default for Windows)"},
+        {"key": "utm_ssh_port_base", "label": "SSH Port Base", "type": "number",
+         "help": "Base port for SSH tunneling (e.g., 2200 for first VM)"},
+    ]},
     {"section": "Proxmox Connection", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
         {"key": "proxmox_port", "label": "Port", "type": "number"},
@@ -646,6 +666,19 @@ def _init_jobs_db_and_migrate() -> None:
     )
     global _JOBS_READY
     _JOBS_READY = True
+
+
+@app.on_event("startup")
+def _ensure_hypervisor_type_default() -> None:
+    """Ensure hypervisor_type defaults to 'proxmox' if not already set.
+    
+    This migration runs at startup to support existing deployments
+    that predate the multi-hypervisor feature.
+    """
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") is None:
+        current_vars["hypervisor_type"] = "proxmox"
+        _save_vars({"hypervisor_type": "proxmox"})
 
 
 # Note: the periodic device-monitor sweep + keytab-refresh loop used
