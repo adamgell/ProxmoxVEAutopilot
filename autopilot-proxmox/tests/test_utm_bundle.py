@@ -11,24 +11,6 @@ import sys
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
-def test_cli_build_echoes_spec_on_stdout(tmp_path):
-    """The `build` CLI reads a spec JSON from stdin and echoes the UUID it
-    received on stdout as JSON. This proves the Ansible↔Python handoff shape
-    before any bundle-writing logic exists.
-    """
-    spec = {"name": "test", "uuid": "00000000-0000-0000-0000-000000000000"}
-    result = subprocess.run(
-        [sys.executable, "-m", "web.utm_bundle", "build",
-         "--spec", "-", "--out", str(tmp_path / "test.utm")],
-        input=json.dumps(spec),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    out = json.loads(result.stdout)
-    assert out["uuid"] == spec["uuid"]
-
-
 def test_schema_contract_has_required_sections():
     """The generated UTM schema contract lists PascalCase keys per section
     and known enum values. If upstream UTM renames a key we emit, the
@@ -351,3 +333,40 @@ def test_utmctl_delete_invokes_delete_subcommand():
         ub.UtmctlClient().delete("AAAA1111-2222-3333-4444-555555555555")
     args, _ = run.call_args
     assert "delete" in args[0]
+
+
+def test_cli_build_writes_bundle(tmp_path):
+    """Feed a full spec JSON to the CLI; bundle directory and files exist."""
+    efi_src = tmp_path / "efi.fd"; _touch(efi_src)
+    installer = tmp_path / "Win11.iso"; _touch(installer)
+    spec_payload = {
+        "name": "test-cli",
+        "uuid": "22222222-2222-2222-2222-222222222222",
+        "system": {},
+        "qemu": {},
+        "display": {},
+        "network": {},
+        "drives": [
+            {"identifier": "aaaa0001-0000-0000-0000-000000000000",
+             "image_type": "CD", "interface": "USB",
+             "image_name": "Win11.iso"},
+            {"identifier": "aaaa0002-0000-0000-0000-000000000000",
+             "image_type": "Disk", "interface": "VirtIO",
+             "image_name": "aaaa0002-0000-0000-0000-000000000000.qcow2"},
+        ],
+        "disk_size_gib": 5,
+        "efi_vars_source": str(efi_src),
+        "iso_sources": {"Win11.iso": str(installer)},
+        "register": False,  # don't hit real UTM
+    }
+    bundle = tmp_path / "test-cli.utm"
+    result = subprocess.run(
+        [sys.executable, "-m", "web.utm_bundle", "build",
+         "--spec", "-", "--out", str(bundle)],
+        input=json.dumps(spec_payload),
+        capture_output=True, text=True, check=True,
+    )
+    out = json.loads(result.stdout)
+    assert out["uuid"] == "22222222-2222-2222-2222-222222222222"
+    assert (bundle / "config.plist").is_file()
+    assert (bundle / "Data" / "Win11.iso").is_file()

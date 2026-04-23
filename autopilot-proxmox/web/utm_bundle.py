@@ -328,18 +328,49 @@ class UtmctlClient:
         self._run("delete", uuid)
 
 
+def _spec_from_payload(p: dict) -> BundleSpec:
+    """Construct a BundleSpec from a JSON-shaped payload. Unknown sub-dict
+    keys raise TypeError via dataclass(**). Missing sub-dicts get defaults."""
+    return BundleSpec(
+        name=p["name"],
+        uuid=p["uuid"],
+        system=SystemSpec(**p.get("system") or {}),
+        qemu=QemuSpec(**p.get("qemu") or {}),
+        display=DisplaySpec(**p.get("display") or {}),
+        network=NetworkSpec(**p.get("network") or {}),
+        drives=[DriveSpec(**d) for d in p["drives"]],
+    )
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
     """Read spec JSON from --spec (file path or '-' for stdin), write bundle
     to --out, print {"uuid": ..., "bundle_path": ..., "drive_uuids": [...]}
-    as JSON on stdout.
+    as JSON on stdout. Optionally register the bundle with UTM.
     """
     if args.spec == "-":
         raw = sys.stdin.read()
     else:
         with open(args.spec) as f:
             raw = f.read()
-    spec = json.loads(raw)
-    result = {"uuid": spec.get("uuid"), "bundle_path": args.out, "drive_uuids": []}
+    payload = json.loads(raw)
+    spec = _spec_from_payload(payload)
+
+    iso_sources = {name: pathlib.Path(path)
+                   for name, path in (payload.get("iso_sources") or {}).items()}
+
+    result = write_bundle(
+        spec,
+        bundle_path=pathlib.Path(args.out),
+        disk_size_gib=int(payload.get("disk_size_gib", 80)),
+        efi_vars_source=pathlib.Path(payload["efi_vars_source"]),
+        iso_sources=iso_sources,
+    )
+
+    if payload.get("register"):
+        client = UtmctlClient()
+        assigned = client.register(pathlib.Path(args.out))
+        result["registered_uuid"] = assigned
+
     json.dump(result, sys.stdout)
     return 0
 
