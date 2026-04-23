@@ -15,12 +15,17 @@ def _run_web() -> None:
     """Launch the FastAPI/uvicorn server (existing entrypoint).
 
     Port 5000 matches the Dockerfile EXPOSE and the single-container
-    compose port mapping — changing it would break every existing
-    deploy's reverse-proxy config.
+    compose port mapping — changing the default would break every
+    existing deploy's reverse-proxy config. On macOS, port 5000 is
+    owned by Control Center's AirPlay Receiver, so operators running
+    natively set AUTOPILOT_WEB_PORT (the TUI sets 5055 by default).
     """
+    import os
     import uvicorn
     from web.app import app
-    uvicorn.run(app, host="0.0.0.0", port=5000, log_level="info")
+    port = int(os.environ.get("AUTOPILOT_WEB_PORT", "5000"))
+    host = os.environ.get("AUTOPILOT_WEB_HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def _configure_logging() -> None:

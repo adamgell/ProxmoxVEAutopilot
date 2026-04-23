@@ -8,6 +8,9 @@
 #   MODE=builder ./scripts/run_macos_native.sh
 #   MODE=monitor ./scripts/run_macos_native.sh
 #
+# For an interactive launcher that manages web/builder/monitor together,
+# use ./scripts/tui.sh instead.
+#
 # See docs/UTM_MACOS_SETUP.md for first-time setup.
 
 set -euo pipefail
@@ -16,6 +19,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/.."
 
 MODE="${MODE:-web}"
+
+# macOS's Control Center binds AirPlay Receiver to :5000 by default on
+# Ventura+, which makes uvicorn's default bind fail (or worse: succeed
+# against AirTunes and return HTTP 403 to browsers). Pick a harmless
+# alternate port unless the operator has explicitly set one. Linux
+# operators using this script (rare) are unaffected.
+if [[ "${MODE}" == "web" && -z "${AUTOPILOT_WEB_PORT:-}" ]]; then
+  export AUTOPILOT_WEB_PORT=5055
+fi
+# Re-export in case it was already set externally — the child needs it.
+export AUTOPILOT_WEB_PORT="${AUTOPILOT_WEB_PORT:-}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this launcher is macOS-only (detected $(uname -s))" >&2
