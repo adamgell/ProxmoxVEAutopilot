@@ -144,6 +144,26 @@ SETTINGS_SCHEMA = [
         {"key": "utm_bridge_interface", "label": "Bridge Interface", "type": "text",
          "help": "macOS network interface to bridge to, e.g. en0 for Wi-Fi or Thunderbolt Ethernet. Only used when Network Mode = bridged. Leave empty to let UTM pick the default."},
     ]},
+    {"section": "UTM Answer ISO", "applies_to": "utm", "fields": [
+        {"key": "utm_answer_iso_enabled", "label": "Enable Answer ISO", "type": "bool",
+         "help": "When true, utm_vm_clone with template_mode=true will auto-generate an answer ISO and attach it before boot."},
+        {"key": "utm_answer_admin_user", "label": "Admin Username", "type": "text",
+         "help": "Local administrator account name created during unattended install. Default: Administrator."},
+        {"key": "utm_answer_locale", "label": "Locale", "type": "text",
+         "help": "Windows locale code, e.g. en-US, en-GB, fr-FR."},
+        {"key": "utm_answer_timezone", "label": "Timezone", "type": "text",
+         "help": "Windows timezone name. Run `tzutil /l` on Windows for valid values. Default: Pacific Standard Time."},
+        {"key": "utm_answer_windows_edition", "label": "Windows Edition", "type": "text",
+         "help": "Edition name to select from the ISO's install.wim. Must match exactly, e.g. 'Windows 11 Pro' or 'Windows 11 Enterprise'."},
+        {"key": "utm_answer_iso_dir", "label": "Answer ISO Output Directory", "type": "text",
+         "help": "Directory where generated answer ISOs are written. Default: output/answer-isos relative to repo root."},
+    ]},
+    {"section": "UTM Answer ISO Credentials", "source": "vault", "applies_to": "utm", "fields": [
+        {"key": "utm_answer_admin_pass", "label": "Admin Password", "type": "secret",
+         "help": "Password for the local administrator account. Required for unattended template builds."},
+        {"key": "utm_answer_product_key", "label": "Product Key", "type": "secret",
+         "help": "Optional Windows product key. Leave blank to use the ISO's built-in default edition."},
+    ]},
     {"section": "Proxmox Connection", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
         {"key": "proxmox_port", "label": "Port", "type": "number"},
@@ -3048,6 +3068,42 @@ async def utm_list_isos():
             })
 
     return {"iso_dir": str(iso_dir), "isos": isos}
+
+
+@app.post("/api/utm/answer-iso/preview")
+async def utm_answer_iso_preview(request: Request):
+    """Return rendered autounattend.xml for QA without building the ISO.
+
+    Accepts a JSON body with the same profile fields as ``build_answer_iso``:
+    ``hostname``, ``locale``, ``timezone``, ``admin_user``, ``admin_pass``,
+    ``org_name``, ``product_key``, ``windows_edition``, ``domain_join``,
+    ``firstboot_cmds``.
+
+    All fields are optional; omitted fields fall back to role defaults.
+    Omitting ``admin_pass`` renders the OOBE section without auto-logon
+    or a user-accounts block (safe for QA without exposing secrets).
+
+    Returns 409 when ``hypervisor_type != utm``.
+    Returns 200 with ``{"ok": true, "xml": "<rendered XML>"}`` on success.
+    """
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    try:
+        from web.answer_iso import render_arm64_unattend
+        xml = render_arm64_unattend(body)
+        return {"ok": True, "xml": xml}
+    except Exception as exc:
+        return JSONResponse(
+            {"ok": False, "error": f"render failed: {exc}"},
+            status_code=500,
+        )
 
 
 @app.get("/api/utm/vms")

@@ -132,3 +132,18 @@ utm_qemu_binary_path: null
 utm_uefi_firmware_path: null
 utm_network_mode: shared
 utm_bridge_interface: ""
+
+# =============================================================================
+# UTM Answer ISO (unattended Windows 11 ARM64 template builds)
+# =============================================================================
+# Enable answer-ISO generation in template_mode clone runs.
+utm_answer_iso_enabled: true
+# Local admin account name created during unattended install.
+utm_answer_admin_user: Administrator
+# Locale and timezone written into unattend.xml.
+utm_answer_locale: en-US
+utm_answer_timezone: Pacific Standard Time
+# Edition name that must match an entry in the ISO's install.wim.
+utm_answer_windows_edition: Windows 11 Pro
+# Output directory for generated answer ISOs.
+utm_answer_iso_dir: "{{ playbook_dir }}/../output/answer-isos"
