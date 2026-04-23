@@ -131,14 +131,62 @@
       changed_when: true
       when: _plutil_answer_replace.rc != 0
 
-    # ── 5. Start the VM ──────────────────────────────────────────────────────
+    # ── 5. Register with UTM (open triggers document registration) ─────────
 
-    - name: "Template build: start '{{ vm_name }}'"
+    - name: "Template build: snapshot utmctl VM list before registration"
+      ansible.builtin.command:
+        argv:
+          - "{{ utm_utmctl_path }}"
+          - list
+      register: _utmctl_before
+      changed_when: false
+
+    - name: "Template build: register bundle with UTM via open(1)"
+      ansible.builtin.command:
+        argv:
+          - open
+          - -a
+          - UTM
+          - "{{ utm_documents_dir }}/{{ vm_name }}.utm"
+      changed_when: true
+
+    - name: "Template build: poll until new bundle appears in utmctl list"
+      ansible.builtin.command:
+        argv:
+          - "{{ utm_utmctl_path }}"
+          - list
+      register: _utmctl_after
+      retries: 20
+      delay: 2
+      until: >-
+        (_utmctl_after.stdout_lines | length) >
+        (_utmctl_before.stdout_lines | length)
+      changed_when: false
+
+    - name: "Template build: extract newly-assigned UTM UUID"
+      ansible.builtin.set_fact:
+        _utm_assigned_uuid: >-
+          {{
+            (
+              (_utmctl_after.stdout_lines | map('regex_search', '^[0-9A-Fa-f-]{36}') | select('string') | list)
+              | difference(
+                  (_utmctl_before.stdout_lines | map('regex_search', '^[0-9A-Fa-f-]{36}') | select('string') | list)
+                )
+            ) | first
+          }}
+
+    - name: "Template build: report registered UUID"
+      ansible.builtin.debug:
+        msg: "UTM registered bundle with UUID {{ _utm_assigned_uuid }}"
+
+    # ── 6. Start the VM by its UTM-assigned UUID ───────────────────────────
+
+    - name: "Template build: start VM by UTM-assigned UUID"
       ansible.builtin.command:
         argv:
           - "{{ utm_utmctl_path }}"
           - start
-          - "{{ vm_name }}"
+          - "{{ _utm_assigned_uuid }}"
           - --hide
       register: _start_result
       failed_when: _start_result.rc != 0
@@ -149,7 +197,7 @@
         argv:
           - "{{ utm_utmctl_path }}"
           - status
-          - "{{ vm_name }}"
+          - "{{ _utm_assigned_uuid }}"
       register: _status_poll
       retries: 30
       delay: 5
@@ -172,7 +220,7 @@
         argv:
           - "{{ utm_utmctl_path }}"
           - exec
-          - "{{ vm_name }}"
+          - "{{ _utm_assigned_uuid }}"
           - --
           - powershell.exe
           - -Command
@@ -201,7 +249,7 @@
         argv:
           - "{{ utm_utmctl_path }}"
           - suspend
-          - "{{ vm_name }}"
+          - "{{ _utm_assigned_uuid }}"
       register: _suspend_result
       failed_when: _suspend_result.rc != 0
       changed_when: true
@@ -211,7 +259,7 @@
         argv:
           - "{{ utm_utmctl_path }}"
           - status
-          - "{{ vm_name }}"
+          - "{{ _utm_assigned_uuid }}"
       register: _post_suspend_status
       retries: 30
       delay: 5
