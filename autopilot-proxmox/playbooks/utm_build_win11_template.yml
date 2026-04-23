@@ -179,6 +179,42 @@
       ansible.builtin.debug:
         msg: "UTM registered bundle with UUID {{ _utm_assigned_uuid }}"
 
+    # Verify UTM's registry entry actually points at OUR bundle. UTM has been
+    # observed to silently alias a newly-registered bundle's path bookmark to
+    # an existing bundle's path (cause unknown; possibly NSFileCoordinator
+    # bookmark reuse). If that happens and the playbook proceeds, starting the
+    # VM will fight the aliased bundle's existing disk — and worse, a user who
+    # later "Delete"s the bogus registry entry via the UTM sidebar can delete
+    # the aliased (real) bundle's files. Fail fast with a clear error instead.
+
+    - name: "Template build: read registered Package.Path for assigned UUID"
+      ansible.builtin.command:
+        argv:
+          - defaults
+          - read
+          - com.utmapp.UTM
+          - "Registry.{{ _utm_assigned_uuid }}.Package.Path"
+      register: _utm_registered_path
+      changed_when: false
+      failed_when: _utm_registered_path.rc != 0
+
+    - name: "Template build: verify UTM registry entry points at our bundle"
+      ansible.builtin.assert:
+        that:
+          - (_utm_registered_path.stdout | trim) == (utm_documents_dir ~ '/' ~ vm_name ~ '.utm')
+        fail_msg: >-
+          UTM registered UUID {{ _utm_assigned_uuid }} but its Package.Path is
+          '{{ _utm_registered_path.stdout | trim }}', NOT our bundle at
+          '{{ utm_documents_dir }}/{{ vm_name }}.utm'. UTM aliased the new
+          registry entry to an existing bundle (known UTM bug). DO NOT delete
+          this registry entry via UTM's sidebar — it will delete the aliased
+          bundle's files. To recover: quit UTM, then run
+          `defaults delete com.utmapp.UTM Registry.{{ _utm_assigned_uuid }}`
+          and investigate why registration aliased (e.g., stale Finder alias
+          on the bundle path, Information.Name collision, or xattr bookmarks
+          on the skeleton).
+        success_msg: "UTM registry entry verified — UUID {{ _utm_assigned_uuid }} → {{ _utm_registered_path.stdout | trim }}"
+
     # ── 6. Start the VM by its UTM-assigned UUID ───────────────────────────
 
     - name: "Template build: start VM by UTM-assigned UUID"
