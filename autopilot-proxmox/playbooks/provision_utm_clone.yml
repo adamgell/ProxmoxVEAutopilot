@@ -1,0 +1,55 @@
+---
+# UTM provisioning playbook — minimal Phase 2 flow.
+#
+# Mirrors the intent of provision_clone.yml but targets UTM-managed VMs
+# instead of Proxmox. Runs entirely on localhost because utmctl talks
+# to the UTM.app running on the same macOS host.
+#
+# Required -e vars:
+#   vm_name               - friendly name for the new VM (must be unique)
+#   utm_template_vm_name  - source template (usually from settings/vars.yml)
+#   hypervisor_type=utm   - forces common/tasks/* dispatchers to UTM path
+#
+# Optional:
+#   vm_count (default 1)  - loop count; each VM gets "{{ vm_name }}-{{ idx }}"
+
+- name: Provision clone(s) via UTM on macOS
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  vars:
+    hypervisor_type: "utm"
+    vm_count: 1
+  tasks:
+    - name: "Pre-flight: verify utmctl exists"
+      ansible.builtin.stat:
+        path: "{{ utm_utmctl_path }}"
+      register: _utmctl_stat
+
+    - name: "Pre-flight: fail if utmctl is missing"
+      ansible.builtin.fail:
+        msg: >-
+          utmctl not found at {{ utm_utmctl_path }}. Install UTM.app
+          from https://mac.getutm.app/ or set utm_utmctl_path in
+          Settings / group_vars/all/vars.yml.
+      when: not _utmctl_stat.stat.exists
+
+    - name: "Pre-flight: list registered UTM VMs (for logs)"
+      ansible.builtin.command:
+        argv:
+          - "{{ utm_utmctl_path }}"
+          - list
+      register: _utm_list
+      changed_when: false
+
+    - name: "Pre-flight: show VM inventory"
+      ansible.builtin.debug:
+        var: _utm_list.stdout_lines
+
+    - name: "Provision {{ vm_count }} VM(s)"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/_provision_utm_clone_vm.yml"
+      loop: "{{ range(1, (vm_count | int) + 1) | list }}"
+      loop_control:
+        loop_var: _vm_index
+      vars:
+        vm_name: "{{ vm_name }}{{ '-' + (_vm_index | string) if (vm_count | int) > 1 else '' }}"

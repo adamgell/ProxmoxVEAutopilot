@@ -9,6 +9,17 @@
 hypervisor_type: "proxmox"
 
 # =============================================================================
+# UTM (macOS/ARM64) backend — used when hypervisor_type: utm
+# =============================================================================
+# utmctl ships with the UTM.app bundle on macOS; no separate install needed.
+utm_utmctl_path: "/Applications/UTM.app/Contents/MacOS/utmctl"
+# Scratch directory on the Windows guest used to stash stdout/stderr files
+# captured via `utmctl file pull` (since `utmctl exec` does not stream output
+# on Windows ARM64 — see upstream utmapp/UTM#5134).
+utm_exec_scratch_dir: "C:\\Users\\Public"
+utm_template_vm_name: ""
+
+# =============================================================================
 # Proxmox connection
 # =============================================================================
 proxmox_host: "192.168.2.200"

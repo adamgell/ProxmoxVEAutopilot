@@ -1,0 +1,45 @@
+---
+# Phase 2 smoke test — runs the UTM guest_exec dispatcher against a
+# live, user-specified VM. NOT wired into the web UI. Intended for
+# manual verification:
+#
+#   ansible-playbook -i inventory/hosts.yml playbooks/_test_utm_dispatch.yml \
+#     -e hypervisor_type=utm -e vm_vmid=Windows
+#
+# Requires UTM.app running on the macOS host and the named VM started.
+
+- name: UTM dispatcher smoke test
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    hypervisor_type: "utm"
+    vm_vmid: "Windows"
+    guest_agent_timeout_seconds: 30
+    guest_agent_poll_interval_seconds: 2
+    guest_exec_timeout_seconds: 30
+    guest_exec_poll_interval_seconds: 2
+  tasks:
+    - name: Wait for guest agent (dispatch → _utm_wait_guest_agent.yml)
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_guest_agent.yml"
+
+    - name: Write a test file (dispatch → _utm_guest_file_write.yml)
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/guest_file_write.yml"
+      vars:
+        _guest_file: 'C:\Users\Public\dispatch-test.txt'
+        _guest_content: "hello-from-ansible-dispatcher"
+
+    - name: Execute hostname (dispatch → _utm_guest_exec.yml)
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/guest_exec.yml"
+      vars:
+        _exec_command:
+          - "cmd.exe"
+          - "/c"
+          - "hostname"
+
+    - name: Show exec output (Proxmox-compatible shape)
+      ansible.builtin.debug:
+        msg:
+          exitcode: "{{ _guest_exec_status.json.data.exitcode }}"
+          stdout: "{{ _guest_exec_status.json.data['out-data'] }}"
+          stderr: "{{ _guest_exec_status.json.data['err-data'] }}"

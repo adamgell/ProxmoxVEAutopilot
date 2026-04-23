@@ -1,0 +1,26 @@
+---
+- name: "UTM clone: clone template '{{ utm_template_vm_name }}' as '{{ vm_name }}'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - clone
+      - "{{ utm_template_vm_name }}"
+      - --name
+      - "{{ vm_name }}"
+  register: _clone_result
+
+- name: "UTM clone: adopt vm_name as vm_vmid for downstream common tasks"
+  ansible.builtin.set_fact:
+    vm_vmid: "{{ vm_name }}"
+
+- name: "UTM clone: verify new VM shows up in `utmctl list`"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _clone_status
+  retries: 5
+  delay: 2
+  until: _clone_status.rc == 0
+  changed_when: false

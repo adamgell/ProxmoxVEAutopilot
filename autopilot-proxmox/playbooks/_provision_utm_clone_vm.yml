@@ -1,0 +1,13 @@
+---
+# Single-VM UTM provisioning, included per iteration from
+# provision_utm_clone.yml. Phase 2 scope: clone → boot → verify guest
+# agent → (optional) hash_capture. Autopilot inject is Phase 3.
+
+- name: "UTM: clone VM #{{ _vm_index }} as '{{ vm_name }}'"
+  ansible.builtin.include_role:
+    name: utm_vm_clone
+
+- name: "UTM: capture hardware hash from VM {{ vm_vmid }}"
+  ansible.builtin.include_role:
+    name: hash_capture
+  when: capture_hardware_hash | default(true) | bool

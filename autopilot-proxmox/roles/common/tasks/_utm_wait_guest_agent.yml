@@ -1,9 +1,33 @@
 ---
-# UTM-specific: Wait for guest to become reachable (via SSH).
-# Stub — Phase 2 will implement SSH connectivity probing.
+# UTM-specific: Wait for the guest to become reachable by probing the
+# SPICE/QEMU guest agent via `utmctl file push` (cheapest op that
+# round-trips through the agent). Called from common/tasks/wait_guest_agent.yml.
 #
 # Required variables: vm_vmid
+# Optional overrides: guest_agent_timeout_seconds, guest_agent_poll_interval_seconds
 
-- name: "UTM wait_guest_agent not yet implemented (Phase 2)"
+- name: "UTM wait: probe guest agent on VM {{ vm_vmid }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - file
+      - push
+      - "{{ vm_vmid }}"
+      - "{{ utm_exec_scratch_dir }}\\utm_ga_ping.txt"
+    stdin: "ping"
+    stdin_add_newline: false
+  register: _utm_agent_ping
+  until: _utm_agent_ping.rc == 0
+  retries: "{{ (guest_agent_timeout_seconds | int / guest_agent_poll_interval_seconds | int) | int }}"
+  delay: "{{ guest_agent_poll_interval_seconds | int }}"
+  failed_when: false
+  changed_when: false
+
+- name: "UTM wait: fail if guest agent did not respond"
   ansible.builtin.fail:
-    msg: "UTM backend implementation is scheduled for Phase 2. Use hypervisor_type=proxmox for now."
+    msg: >-
+      UTM guest agent on VM {{ vm_vmid }} did not respond within
+      {{ guest_agent_timeout_seconds }} seconds. Ensure the VM is
+      running, SPICE guest tools are installed inside the guest, and
+      the VM name matches `utmctl list`.
+  when: _utm_agent_ping.rc | default(1) != 0

@@ -1,34 +1,120 @@
 ---
-# UTM-specific: Execute command via SSH + PowerShell remoting.
-#
-# This is the UTM backend implementation of guest_exec.yml dispatch.
+# UTM-specific: Execute a command on the Windows guest via `utmctl exec`.
 # Called from common/tasks/guest_exec.yml (the dispatch hub).
 #
+# Because `utmctl exec` does NOT stream stdout/stderr on Windows ARM64
+# (the QEMU guest agent is not yet ported — upstream utmapp/UTM#5134,
+# SPICE guest agent lacks output-capture), we work around by wrapping
+# the command in `cmd.exe /c "<cmd> > <tmpfile> 2>&1"` and pulling the
+# output file back with `utmctl file pull`. The result is normalized
+# into the same shape Proxmox's guest_exec returns so callers can
+# continue to read `_guest_exec_status.json.data.exitcode` and
+# `_guest_exec_status.json.data['out-data']` without change.
+#
 # Required variables (passed from dispatch hub):
-#   vm_vmid          - target VM name or ID (for SSH connection discovery)
-#   _exec_command    - list of command + args
+#   vm_vmid         - UTM VM name or UUID (identifier utmctl accepts)
+#   _exec_command   - list of command + args, e.g. ["powershell.exe","-Command","Get-Date"]
 #
-# Required UTM vars (from playbook/settings):
-#   utm_ssh_key_path - path to private SSH key
-#   utm_ssh_user     - SSH username (default: Administrator)
-#   utm_ssh_port_base - base port for SSH tunneling
+# Required UTM vars (from group_vars or settings):
+#   utm_utmctl_path      - absolute path to utmctl (default from vars.yml)
+#   utm_exec_scratch_dir - writable guest dir for stdout/stderr capture
 #
-# Registers:
-#   _guest_exec_result  - exec result (success/failure status)
-#   _guest_exec_status  - final status (mirroring Proxmox structure)
-#
-# Implementation approach:
-# 1. Discover SSH port for this VM (port_base + vm_index)
-# 2. Execute command via SSH (PowerShell if on Windows)
-# 3. Capture stdout/stderr and exit code
-# 4. Return in format compatible with caller
+# Registers (Proxmox-compatible):
+#   _guest_exec_result  - .json.data.pid (synthetic; always 0 for utmctl)
+#   _guest_exec_status  - .json.data.{exited,exitcode,out-data,err-data}
 
-# TODO Phase 2: Implement SSH command execution
-# - Add SSH discovery task
-# - Add PowerShell command builder
-# - Add SSH execution with error handling
-# - Add return value normalization
+- name: "UTM guest_exec: allocate unique output path"
+  ansible.builtin.set_fact:
+    _utm_exec_tag: "utm_exec_{{ lookup('pipe', 'date +%s') }}_{{ 999999 | random }}"
 
-- name: "UTM guest_exec not yet implemented (Phase 2)"
-  fail:
-    msg: "UTM backend implementation is scheduled for Phase 2. Use Proxmox hypervisor_type for now."
+- name: "UTM guest_exec: build guest-side stdout/stderr paths"
+  ansible.builtin.set_fact:
+    _utm_exec_out_path: "{{ utm_exec_scratch_dir }}\\{{ _utm_exec_tag }}.out"
+    _utm_exec_err_path: "{{ utm_exec_scratch_dir }}\\{{ _utm_exec_tag }}.err"
+
+- name: "UTM guest_exec: assemble cmd.exe wrapper (redirect stdout/stderr to files)"
+  ansible.builtin.set_fact:
+    # Windows cmd.exe does NOT understand POSIX single-quoting (what
+    # Jinja's `quote` filter emits), so we join tokens with spaces and
+    # wrap any token containing whitespace in double quotes — which is
+    # the native cmd.exe convention. The caller is responsible for
+    # ensuring individual tokens don't contain stray double quotes.
+    _utm_exec_inner: >-
+      {{ _exec_command
+         | map('regex_replace', '^(.*\\s.*)$', '"\\1"')
+         | list | join(' ') }}
+
+- name: "UTM guest_exec: final wrapped command string"
+  ansible.builtin.set_fact:
+    # NOTE: no double-quotes around the redirect paths. When Ansible
+    # passes this as a single argv element to utmctl, utmctl forwards
+    # it to Windows which reconstructs a command line — extra "..."
+    # get escaped/stripped inconsistently. The scratch dir is always
+    # whitespace-free (see utm_exec_scratch_dir default), so bare paths
+    # are both safer and sufficient.
+    _utm_exec_wrapped: >-
+      {{ _utm_exec_inner }} > {{ _utm_exec_out_path }} 2> {{ _utm_exec_err_path }}
+
+- name: "UTM guest_exec: run command on VM {{ vm_vmid }} via utmctl"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - exec
+      - "{{ vm_vmid }}"
+      - --cmd
+      - "cmd.exe"
+      - "/c"
+      - "{{ _utm_exec_wrapped }}"
+  register: _utm_exec_run
+  # utmctl returns the guest process's exit code; don't fail the task
+  # on non-zero — we want to surface it via _guest_exec_status like Proxmox.
+  failed_when: false
+
+- name: "UTM guest_exec: pull stdout from guest"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - file
+      - pull
+      - "{{ vm_vmid }}"
+      - "{{ _utm_exec_out_path }}"
+  register: _utm_exec_stdout
+  failed_when: false
+
+- name: "UTM guest_exec: pull stderr from guest"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - file
+      - pull
+      - "{{ vm_vmid }}"
+      - "{{ _utm_exec_err_path }}"
+  register: _utm_exec_stderr
+  failed_when: false
+
+- name: "UTM guest_exec: clean up scratch files on guest"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - exec
+      - "{{ vm_vmid }}"
+      - --cmd
+      - "cmd.exe"
+      - "/c"
+      - 'del {{ _utm_exec_out_path }} {{ _utm_exec_err_path }} 2>nul'
+  failed_when: false
+  changed_when: false
+
+- name: "UTM guest_exec: normalize result into Proxmox-compatible shape"
+  ansible.builtin.set_fact:
+    _guest_exec_result:
+      json:
+        data:
+          pid: 0
+    _guest_exec_status:
+      json:
+        data:
+          exited: true
+          exitcode: "{{ _utm_exec_run.rc | int }}"
+          out-data: "{{ _utm_exec_stdout.stdout | default('') }}"
+          err-data: "{{ _utm_exec_stderr.stdout | default('') }}"

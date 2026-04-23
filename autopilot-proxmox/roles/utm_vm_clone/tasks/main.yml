@@ -1,0 +1,33 @@
+---
+# Orchestrator: clone a VM from a UTM template and bring it to a ready
+# state. Mirrors roles/proxmox_vm_clone/tasks/main.yml but uses utmctl.
+#
+# Required inputs:
+#   utm_template_vm_name - source template registered in UTM
+#   vm_name              - target VM friendly name (must be unique)
+#
+# Exports:
+#   vm_vmid = vm_name (so common/tasks/* work backend-agnostically)
+#
+# NOTE (Phase 2 scope): OEM profile / SMBIOS / chassis-type overrides
+# are NOT yet applied for UTM clones. `utmctl clone` does not expose
+# these knobs; post-clone config.plist editing is deferred. The initial
+# focus is "clone + boot + guest-exec" so hash_capture works end-to-end.
+
+- name: "UTM clone: sanity-check required inputs"
+  ansible.builtin.assert:
+    that:
+      - utm_template_vm_name is defined and (utm_template_vm_name | length) > 0
+      - vm_name is defined and (vm_name | length) > 0
+    fail_msg: >-
+      utm_vm_clone requires utm_template_vm_name and vm_name. Configure
+      the template via Settings → UTM (macOS/ARM64) Configuration.
+
+- name: "UTM clone: perform the clone"
+  ansible.builtin.include_tasks: clone_vm.yml
+
+- name: "UTM clone: start the new VM"
+  ansible.builtin.include_tasks: start_vm.yml
+
+- name: "UTM clone: wait for guest agent (dispatches via hypervisor_type=utm)"
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
