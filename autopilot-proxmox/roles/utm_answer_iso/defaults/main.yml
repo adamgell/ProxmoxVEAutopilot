@@ -1,0 +1,32 @@
+---
+# utm_answer_iso role defaults
+#
+# All fields mirror the SETTINGS_SCHEMA keys so Ansible playbooks can
+# override them via -e or group_vars without redefining defaults here.
+
+# Whether to generate an answer ISO at all.
+utm_answer_iso_enabled: true
+
+# Local admin account name created by the answer ISO.
+utm_answer_admin_user: Administrator
+
+# Admin password — set via vault (utm_answer_admin_pass) or -e override.
+# Left empty here so the role fails loudly if called without it.
+utm_answer_admin_pass: ""
+
+# Windows locale code (e.g. en-US, en-GB, fr-FR).
+utm_answer_locale: en-US
+
+# Windows timezone name (use `tzutil /l` on Windows for valid values).
+utm_answer_timezone: Pacific Standard Time
+
+# Optional Windows product key. Leave empty to use the ISO's default
+# edition (usually Windows 11 Pro on retail ARM64 ISOs).
+utm_answer_product_key: ""
+
+# Windows edition name to select from the ISO's install.wim.
+# Common values: "Windows 11 Pro", "Windows 11 Enterprise".
+utm_answer_windows_edition: Windows 11 Pro
+
+# Output directory for generated ISOs (mirrors hash_output_dir pattern).
+utm_answer_iso_dir: "{{ playbook_dir }}/../output/answer-isos"

@@ -1,0 +1,71 @@
+---
+# utm_answer_iso/tasks/main.yml
+#
+# Generate a Windows 11 ARM64 answer ISO (volume label: AUTOUNATTEND).
+#
+# Caller requirements:
+#   utm_answer_admin_pass MUST be set (via vault or -e override).
+#   oem_profile_resolver MUST have run so _oem_profile / vm_vmid facts
+#   are available (the role uses them to populate org_name and hostname).
+#
+# Exported facts (set after this role completes):
+#   utm_answer_iso_path  - absolute path to the generated .iso file.
+#
+# Profile → OEM fact mapping:
+#   hostname   ← vm_name (overridable via utm_answer_hostname)
+#   org_name   ← _oem_profile.manufacturer  (empty string when no profile)
+#   locale     ← utm_answer_locale     (default: en-US)
+#   timezone   ← utm_answer_timezone   (default: Pacific Standard Time)
+#   admin_user ← utm_answer_admin_user (default: Administrator)
+#   admin_pass ← utm_answer_admin_pass (from vault — required)
+
+- name: "Answer ISO: assert admin password is set"
+  ansible.builtin.assert:
+    that:
+      - utm_answer_admin_pass is defined
+      - (utm_answer_admin_pass | length) > 0
+    fail_msg: >-
+      utm_answer_iso requires utm_answer_admin_pass.
+      Set it in inventory/group_vars/all/vault.yml or pass via -e.
+
+- name: "Answer ISO: ensure output directory exists"
+  ansible.builtin.file:
+    path: "{{ utm_answer_iso_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: "Answer ISO: build profile dict from OEM + settings facts"
+  ansible.builtin.set_fact:
+    _answer_iso_profile:
+      hostname: "{{ utm_answer_hostname | default(vm_name) }}"
+      locale: "{{ utm_answer_locale }}"
+      timezone: "{{ utm_answer_timezone }}"
+      admin_user: "{{ utm_answer_admin_user }}"
+      admin_pass: "{{ utm_answer_admin_pass }}"
+      org_name: "{{ _oem_profile.manufacturer | default('') }}"
+      product_key: "{{ utm_answer_product_key | default('') }}"
+      windows_edition: "{{ utm_answer_windows_edition }}"
+
+- name: "Answer ISO: generate ISO via answer_iso.py"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../web/answer_iso.py"
+      - --vm-name
+      - "{{ vm_name }}"
+      - --output-dir
+      - "{{ utm_answer_iso_dir }}"
+      - --profile-json
+      - "{{ _answer_iso_profile | to_json }}"
+  register: _answer_iso_build
+  changed_when: true
+
+- name: "Answer ISO: register ISO path fact"
+  ansible.builtin.set_fact:
+    utm_answer_iso_path: "{{ _answer_iso_build.stdout | trim }}"
+
+- name: "Answer ISO: confirm ISO was created"
+  ansible.builtin.stat:
+    path: "{{ utm_answer_iso_path }}"
+  register: _iso_stat
+  failed_when: not _iso_stat.stat.exists

@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- ================================================================
+       Windows PE — disk partitioning and image selection
+       (ARM64: no VirtIO driver loading; Windows 11 ARM64 includes
+       built-in virtio-net / virtio-blk drivers)
+       ================================================================ -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>{{ locale }}</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>{{ locale }}</InputLocale>
+      <SystemLocale>{{ locale }}</SystemLocale>
+      <UILanguage>{{ locale }}</UILanguage>
+      <UserLocale>{{ locale }}</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+
+      <!-- GPT/UEFI disk layout.
+           EFI (300 MB) → MSR (16 MB) → Recovery (1 GB) → Windows (rest).
+           Recovery is before Windows so C: is the last partition —
+           future disk expansions extend C: without moving Recovery. -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Size>300</Size>
+              <Type>EFI</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Size>16</Size>
+              <Type>MSR</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Size>1000</Size>
+              <Type>Primary</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>4</Order>
+              <Extend>true</Extend>
+              <Type>Primary</Type>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Recovery</Label>
+              <TypeID>DE94BBA4-06D1-4D40-A16A-BFD50179D6AC</TypeID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>4</Order>
+              <PartitionID>4</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>{{ windows_edition }}</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>4</PartitionID>
+          </InstallTo>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+{% if product_key %}
+        <ProductKey>
+          <Key>{{ product_key | xml_escape }}</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+{% endif %}
+      </UserData>
+
+    </component>
+
+  </settings>
+
+  <!-- ================================================================
+       Specialize — machine identity
+       ================================================================ -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <ComputerName>{{ hostname | xml_escape }}</ComputerName>
+      <TimeZone>{{ timezone | xml_escape }}</TimeZone>
+{% if org_name %}
+      <RegisteredOrganization>{{ org_name | xml_escape }}</RegisteredOrganization>
+{% endif %}
+    </component>
+{% if domain_join and domain_join.get('domain') %}
+
+    <component name="Microsoft-Windows-UnattendedJoin"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <Identification>
+        <JoinDomain>{{ domain_join.domain | xml_escape }}</JoinDomain>
+{% if domain_join.get('ou') %}
+        <MachineObjectOU>{{ domain_join.ou | xml_escape }}</MachineObjectOU>
+{% endif %}
+{% if domain_join.get('username') and domain_join.get('password') %}
+        <Credentials>
+          <Domain>{{ domain_join.domain | xml_escape }}</Domain>
+          <Username>{{ domain_join.username | xml_escape }}</Username>
+          <Password>{{ domain_join.password | xml_escape }}</Password>
+        </Credentials>
+{% endif %}
+      </Identification>
+    </component>
+{% endif %}
+  </settings>
+
+  <!-- ================================================================
+       OOBE — skip prompts, create local admin, run firstboot payload
+       ================================================================ -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+
+      <!-- Skip all OOBE screens for unattended template build. -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <NetworkLocation>Work</NetworkLocation>
+      </OOBE>
+
+{% if admin_pass %}
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ admin_pass | xml_escape }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+{% if admin_user != 'Administrator' %}
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>{{ admin_user | xml_escape }}</Name>
+            <DisplayName>{{ admin_user | xml_escape }}</DisplayName>
+            <Password>
+              <Value>{{ admin_pass | xml_escape }}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+            <Group>Administrators</Group>
+          </LocalAccount>
+        </LocalAccounts>
+{% endif %}
+      </UserAccounts>
+
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>{{ admin_user | xml_escape }}</Username>
+        <Password>
+          <Value>{{ admin_pass | xml_escape }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <LogonCount>1</LogonCount>
+      </AutoLogon>
+{% endif %}
+
+      <FirstLogonCommands>
+        <!-- Enable RDP so operators can inspect the template if needed. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine>
+          <Description>Enable Remote Desktop</Description>
+        </SynchronousCommand>
+        <!-- Run the autopilot firstboot payload (staged via $OEM$). -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -File C:\autopilot\firstboot.ps1</CommandLine>
+          <Description>Run Autopilot firstboot configuration</Description>
+        </SynchronousCommand>
+{% for cmd in firstboot_cmds %}
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ loop.index + 2 }}</Order>
+          <CommandLine>{{ cmd | xml_escape }}</CommandLine>
+          <Description>Custom firstboot command {{ loop.index }}</Description>
+        </SynchronousCommand>
+{% endfor %}
+      </FirstLogonCommands>
+
+    </component>
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <InputLocale>{{ locale }}</InputLocale>
+      <SystemLocale>{{ locale }}</SystemLocale>
+      <UILanguage>{{ locale }}</UILanguage>
+      <UserLocale>{{ locale }}</UserLocale>
+    </component>
+
+  </settings>
+</unattend>
