@@ -303,6 +303,92 @@
   color: var(--ms-blue-dark);
   text-decoration: underline;
 }
+
+/* --- UTM host + VM cards ----------------------------------------- */
+.utm-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 800px) {
+  .utm-row { grid-template-columns: 1fr; }
+}
+.utm-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+.utm-metric {
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+.utm-metric-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.utm-metric-value {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pressure-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.pressure-normal   { background: var(--ok-bg);   color: var(--ok-fg); }
+.pressure-warning  { background: var(--warn-bg);  color: var(--warn-fg); }
+.pressure-critical { background: var(--bad-bg);   color: var(--bad-fg); }
+
+.utm-vm-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.utm-vm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--neutral-bg);
+  color: var(--neutral-fg);
+}
+.utm-vm-pill.running  { background: var(--ok-bg);   color: var(--ok-fg); }
+.utm-vm-pill.stopped  { background: var(--surface-muted); color: var(--ink-muted); }
+.utm-vm-pill.suspended { background: var(--warn-bg); color: var(--warn-fg); }
+.utm-vm-pill.paused   { background: var(--warn-bg);  color: var(--warn-fg); }
+
+.utm-card-error {
+  font-size: 12px;
+  color: var(--bad-fg);
+  margin-top: 8px;
+}
+.utm-loading {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  padding: 8px 0;
+}
 </style>
 
 <h1>Dashboard</h1>
@@ -357,6 +443,61 @@
     </div>
   </div>
 </section>
+
+{% if hypervisor_type == "utm" %}
+<!-- UTM Module: macOS host + VM health cards -->
+<section class="dash-module utm-row" id="utm-health-section">
+  <div class="card-panel" id="utm-host-card">
+    <h3>macOS host</h3>
+    <div class="utm-loading" id="utm-host-loading">Loading…</div>
+    <div id="utm-host-body" hidden>
+      <div class="utm-metric-grid">
+        <div class="utm-metric">
+          <div class="utm-metric-label">CPU cores</div>
+          <div class="utm-metric-value" id="utm-cpu-cores">—</div>
+        </div>
+        <div class="utm-metric">
+          <div class="utm-metric-label">Load avg (1m)</div>
+          <div class="utm-metric-value" id="utm-load">—</div>
+        </div>
+        <div class="utm-metric">
+          <div class="utm-metric-label">RAM used / total</div>
+          <div class="utm-metric-value" id="utm-ram">—</div>
+        </div>
+        <div class="utm-metric">
+          <div class="utm-metric-label">Uptime</div>
+          <div class="utm-metric-value" id="utm-uptime">—</div>
+        </div>
+        <div class="utm-metric">
+          <div class="utm-metric-label">Disk (Documents)</div>
+          <div class="utm-metric-value" id="utm-disk-docs">—</div>
+        </div>
+        <div class="utm-metric">
+          <div class="utm-metric-label">Disk (root)</div>
+          <div class="utm-metric-value" id="utm-disk-root">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="utm-card-error" id="utm-host-error" hidden></div>
+  </div>
+
+  <div class="card-panel" id="utm-vms-card">
+    <h3>UTM VMs</h3>
+    <div class="utm-loading" id="utm-vms-loading">Loading…</div>
+    <div id="utm-vms-body" hidden>
+      <div class="fleet-total">
+        <span class="fleet-total-num" id="utm-vm-total">—</span>
+        <span class="live-label">virtual machines</span>
+      </div>
+      <div class="utm-vm-pill-row" id="utm-vm-pills"></div>
+      <div style="margin-top:12px; font-size:12px;">
+        <a href="/vms">View all VMs →</a>
+      </div>
+    </div>
+    <div class="utm-card-error" id="utm-vms-error" hidden></div>
+  </div>
+</section>
+{% endif %}
 
 <!-- Module 3: Launchpad -->
 <section class="dash-module">
@@ -586,6 +727,119 @@
   setInterval(refreshServices, 10000);
   setInterval(refreshLive, 5000);
   setInterval(refreshFleet, 30000);
+
+{% if hypervisor_type == "utm" %}
+  // ---------------- UTM host + VM cards ------
+  function fmtBytes(b) {
+    if (b == null || isNaN(b)) return "—";
+    var gb = b / (1024 * 1024 * 1024);
+    if (gb >= 1) return gb.toFixed(1) + " GB";
+    var mb = b / (1024 * 1024);
+    return mb.toFixed(0) + " MB";
+  }
+  function fmtUptime(s) {
+    if (!s || isNaN(s)) return "—";
+    var d = Math.floor(s / 86400);
+    var h = Math.floor((s % 86400) / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    if (d) return d + "d " + h + "h";
+    if (h) return h + "h " + m + "m";
+    return m + "m";
+  }
+  function renderUtmHost(data) {
+    var loading = document.getElementById("utm-host-loading");
+    var body    = document.getElementById("utm-host-body");
+    var errEl   = document.getElementById("utm-host-error");
+    if (!data || !data.ok) {
+      loading.hidden = true;
+      body.hidden    = true;
+      errEl.textContent = (data && data.error) ? "Error: " + data.error : "Unavailable";
+      errEl.hidden = false;
+      return;
+    }
+    var host = data.host || {};
+    var cpu  = host.cpu  || {};
+    var mem  = host.memory || {};
+    var dDocs = host.disk_documents || {};
+    var dRoot  = host.disk_root || {};
+
+    document.getElementById("utm-cpu-cores").textContent =
+      cpu.cores != null ? cpu.cores + " cores" : "—";
+    document.getElementById("utm-load").textContent =
+      cpu.load_1m != null ? cpu.load_1m.toFixed(2) : "—";
+
+    var ramText = "—";
+    if (mem.used_bytes != null && mem.total_bytes != null) {
+      ramText = fmtBytes(mem.used_bytes) + " / " + fmtBytes(mem.total_bytes);
+    }
+    var pressureClass = "pressure-" + (mem.pressure || "normal");
+    document.getElementById("utm-ram").innerHTML =
+      escapeHtml(ramText) +
+      (mem.pressure ? '<span class="pressure-badge ' + pressureClass + '">' +
+        escapeHtml(mem.pressure) + '</span>' : "");
+
+    document.getElementById("utm-uptime").textContent = fmtUptime(host.uptime_s);
+    document.getElementById("utm-disk-docs").textContent =
+      dDocs.pct_used != null
+        ? fmtBytes(dDocs.used_bytes) + " / " + fmtBytes(dDocs.total_bytes) +
+          " (" + dDocs.pct_used.toFixed(0) + "%)"
+        : "—";
+    document.getElementById("utm-disk-root").textContent =
+      dRoot.pct_used != null
+        ? fmtBytes(dRoot.used_bytes) + " / " + fmtBytes(dRoot.total_bytes) +
+          " (" + dRoot.pct_used.toFixed(0) + "%)"
+        : "—";
+
+    loading.hidden = true;
+    body.hidden    = false;
+    errEl.hidden   = true;
+  }
+  function renderUtmVms(data) {
+    var loading = document.getElementById("utm-vms-loading");
+    var body    = document.getElementById("utm-vms-body");
+    var errEl   = document.getElementById("utm-vms-error");
+    if (!data || !data.ok) {
+      loading.hidden = true;
+      body.hidden    = true;
+      errEl.textContent = (data && data.error) ? "Error: " + data.error : "Unavailable";
+      errEl.hidden = false;
+      return;
+    }
+    var vms = data.vms || {};
+    document.getElementById("utm-vm-total").textContent =
+      vms.total != null && vms.total >= 0 ? vms.total : "—";
+
+    var pills = [
+      {label: "running",   count: vms.running,   cls: "running"},
+      {label: "stopped",   count: vms.stopped,   cls: "stopped"},
+      {label: "suspended", count: vms.suspended, cls: "suspended"},
+      {label: "paused",    count: vms.paused,    cls: "paused"},
+    ];
+    var html = "";
+    pills.forEach(function(p) {
+      if (p.count != null && p.count >= 0) {
+        html += '<span class="utm-vm-pill ' + p.cls + '">' +
+          escapeHtml(String(p.count)) + " " + escapeHtml(p.label) + "</span>";
+      }
+    });
+    document.getElementById("utm-vm-pills").innerHTML = html;
+    loading.hidden = false;  // keep hidden; body will show
+    loading.hidden = true;
+    body.hidden    = false;
+    errEl.hidden   = true;
+  }
+  function refreshUtm() {
+    safeFetch("/api/utm/host-summary").then(function(data) {
+      renderUtmHost(data);
+      renderUtmVms(data);
+    }).catch(function(err) {
+      renderUtmHost({ok: false, error: String(err)});
+      renderUtmVms({ok: false, error: String(err)});
+    });
+  }
+  refreshUtm();
+  setInterval(refreshUtm, 30000);
+{% endif %}
 })();
 </script>
 {% endblock %}

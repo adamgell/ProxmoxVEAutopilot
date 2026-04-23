@@ -1827,10 +1827,12 @@ async def home(request: Request):
     # numbers (no flash of "…").
     jobs = job_manager.list_jobs()
     running = [j for j in jobs if j.get("status") == "running"]
+    current_vars = _load_vars()
     return templates.TemplateResponse("home.html", {
         "request": request,
         "initial_running_count": len(running),
         "initial_queued_count": 0,
+        "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
     })
 
 
@@ -3379,6 +3381,54 @@ async def utm_open_in_app(name: str):
         return {"ok": False, "error": str(exc)}
 
     return {"ok": True, "bundle": str(bundle)}
+
+
+@app.get("/api/utm/host-summary")
+async def utm_host_summary():
+    """Return macOS host + VM health for the UTM dashboard card.
+
+    Returns 200 in all cases (including partial failures).
+    Returns 409 when hypervisor_type != utm.
+    """
+    cv = _load_vars()
+    c = _utm_check(cv)
+    if c:
+        return c
+
+    from web import utm_host_metrics, utm_vm_metrics
+
+    utm_docs_dir = cv.get("utm_documents_dir") or cv.get("utm_library_path") or \
+        "~/Library/Containers/com.utmapp.UTM/Data/Documents"
+
+    try:
+        host = utm_host_metrics.get_cached_host_summary(utm_docs_dir)
+        ok_host = True
+        host_err = None
+    except Exception as exc:
+        host = {}
+        ok_host = False
+        host_err = str(exc)
+
+    try:
+        vms = utm_vm_metrics.vm_summary()
+        ok_vms = "error" not in vms
+        vm_err = vms.pop("error", None)
+    except Exception as exc:
+        vms = {}
+        ok_vms = False
+        vm_err = str(exc)
+
+    ok = ok_host and ok_vms
+    result: dict = {
+        "ok": ok,
+        "hypervisor_type": "utm",
+        "host": host,
+        "vms": vms,
+    }
+    if not ok:
+        errors = [e for e in [host_err, vm_err] if e]
+        result["error"] = "; ".join(errors) if errors else "unknown error"
+    return result
 
 
 @app.get("/api/vms/{vmid}/console")
