@@ -12,6 +12,7 @@ import json
 import pathlib
 import plistlib
 import random
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -228,6 +229,63 @@ def create_qcow2(dest: pathlib.Path, virtual_size_gib: int,
         [qemu_img, "create", "-f", "qcow2", str(dest), f"{virtual_size_gib}G"],
         check=True, capture_output=True, text=True,
     )
+
+
+def write_bundle(
+    spec: BundleSpec,
+    bundle_path: pathlib.Path,
+    disk_size_gib: int,
+    efi_vars_source: pathlib.Path,
+    iso_sources: dict[str, pathlib.Path],
+    qemu_img: str = "qemu-img",
+) -> dict:
+    """Create a fully-populated .utm bundle directory.
+
+    Args:
+        spec: the BundleSpec describing the VM.
+        bundle_path: absolute path to the .utm directory to create.
+        disk_size_gib: virtual size of the system qcow2.
+        efi_vars_source: file to copy into Data/efi_vars.fd (unmodified at
+            this stage; Task 15 will optionally rewrite this).
+        iso_sources: maps the drive's image_name (e.g. "Win11.iso") to the
+            file on disk to copy into Data/. Drives whose image_name is
+            None or missing from this map are skipped — useful for the
+            system disk (no ISO) and during tests.
+        qemu_img: qemu-img binary path.
+
+    Returns a dict {"uuid", "bundle_path", "drive_uuids"}.
+    """
+    bundle_path = pathlib.Path(bundle_path).resolve()
+    data_dir = bundle_path / "Data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. config.plist
+    (bundle_path / "config.plist").write_bytes(render_plist_bytes(spec))
+
+    # 2. system disk (first drive with ImageType=Disk)
+    for drive in spec.drives:
+        if drive.image_type == "Disk":
+            disk_name = drive.identifier.upper() + ".qcow2"
+            create_qcow2(data_dir / disk_name, disk_size_gib, qemu_img=qemu_img)
+            break
+
+    # 3. EFI vars
+    shutil.copyfile(efi_vars_source, data_dir / "efi_vars.fd")
+
+    # 4. ISOs
+    for drive in spec.drives:
+        if drive.image_type != "CD" or drive.image_name is None:
+            continue
+        src = iso_sources.get(drive.image_name)
+        if src is None:
+            continue  # caller chose not to supply this ISO
+        shutil.copyfile(src, data_dir / drive.image_name)
+
+    return {
+        "uuid": spec.uuid.upper(),
+        "bundle_path": str(bundle_path),
+        "drive_uuids": [d.identifier.upper() for d in spec.drives],
+    }
 
 
 def _cmd_build(args: argparse.Namespace) -> int:

@@ -244,3 +244,66 @@ def test_create_qcow2_writes_file_of_expected_size(tmp_path):
     meta = json.loads(info.stdout)
     assert meta["virtual-size"] == 10 * 1024 ** 3
     assert meta["format"] == "qcow2"
+
+
+def _touch(path, size=1024):
+    """Create a dummy file of the given byte size."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"\x00" * size)
+
+
+def test_write_bundle_creates_expected_layout(tmp_path):
+    from web import utm_bundle as ub
+
+    # Stage fake ISOs and an efi_vars.fd source
+    iso_dir = tmp_path / "isos"
+    installer_iso = iso_dir / "Win11.iso"
+    answer_iso    = iso_dir / "AUTOUNATTEND.iso"
+    virtio_iso    = iso_dir / "virtio-win.iso"
+    _touch(installer_iso)
+    _touch(answer_iso)
+    _touch(virtio_iso)
+    efi_src = tmp_path / "efi-source.fd"
+    _touch(efi_src)
+
+    spec = _sample_win11_spec()
+    bundle = tmp_path / "test-win11.utm"
+
+    result = ub.write_bundle(
+        spec,
+        bundle_path=bundle,
+        disk_size_gib=10,
+        efi_vars_source=efi_src,
+        iso_sources={
+            "Win11_25H2_English_Arm64.iso": installer_iso,
+            "AUTOUNATTEND.iso":             answer_iso,
+            "virtio-win.iso":               virtio_iso,
+        },
+    )
+
+    assert (bundle / "config.plist").is_file()
+    assert (bundle / "Data").is_dir()
+    assert (bundle / "Data" / "Win11_25H2_English_Arm64.iso").is_file()
+    assert (bundle / "Data" / "AUTOUNATTEND.iso").is_file()
+    assert (bundle / "Data" / "virtio-win.iso").is_file()
+    assert (bundle / "Data" / "efi_vars.fd").is_file()
+    # System disk uses the VirtIO drive's identifier as filename
+    disk_filename = spec.drives[1].identifier.upper() + ".qcow2"
+    assert (bundle / "Data" / disk_filename).is_file()
+
+    # Return summary
+    assert result["uuid"] == spec.uuid.upper()
+    assert pathlib.Path(result["bundle_path"]) == bundle
+    assert set(result["drive_uuids"]) == {d.identifier.upper() for d in spec.drives}
+
+
+def test_write_bundle_plist_matches_renderer(tmp_path):
+    """Bytes written to config.plist match render_plist_bytes exactly."""
+    from web import utm_bundle as ub
+    efi_src = tmp_path / "efi.fd"; _touch(efi_src)
+    spec = _sample_win11_spec()
+    bundle = tmp_path / "b.utm"
+    ub.write_bundle(spec, bundle_path=bundle, disk_size_gib=10,
+                    efi_vars_source=efi_src, iso_sources={})
+    assert (bundle / "config.plist").read_bytes() == ub.render_plist_bytes(spec)
