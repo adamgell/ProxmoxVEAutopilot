@@ -123,7 +123,7 @@ def test_render_plist_has_required_top_level_keys():
                 "Input", "Sharing"):
         assert key in d, f"missing top-level key: {key}"
     assert d["ConfigurationVersion"] == 4
-    assert d["Backend"] == "qemu"
+    assert d["Backend"] == "QEMU"  # UTMBackend rawValue; UTM rejects any other case
 
 
 def test_render_plist_uppercases_uuids():

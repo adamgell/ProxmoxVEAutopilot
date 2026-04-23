@@ -64,7 +64,7 @@ class DisplaySpec:
 @dataclass
 class NetworkSpec:
     hardware: str = "virtio-net-pci"
-    mode: str = "shared"                # UTM shared NAT
+    mode: str = "Shared"                # UTM shared-NAT (QEMUNetworkMode rawValue)
     mac_address: str | None = None
 
 
@@ -194,7 +194,9 @@ def render_plist(spec: BundleSpec) -> dict:
     this to plistlib.dumps or inspect it in tests."""
     return {
         "ConfigurationVersion": UTM_CONFIGURATION_VERSION,
-        "Backend": "qemu",
+        # UTMBackend enum rawValue is "QEMU" (UTMConfiguration.swift). UTM's
+        # root decode throws UTMConfigurationError.invalidBackend on mismatch.
+        "Backend": "QEMU",
         "Information": {
             "Name":       spec.name,
             "UUID":       spec.uuid.upper(),

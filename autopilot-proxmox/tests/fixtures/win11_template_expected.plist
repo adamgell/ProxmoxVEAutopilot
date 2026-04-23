@@ -5,7 +5,7 @@
 	<key>ConfigurationVersion</key>
 	<integer>4</integer>
 	<key>Backend</key>
-	<string>qemu</string>
+	<string>QEMU</string>
 	<key>Information</key>
 	<dict>
 		<key>Name</key>
@@ -155,7 +155,7 @@
 	<array>
 		<dict>
 			<key>Mode</key>
-			<string>shared</string>
+			<string>Shared</string>
 			<key>Hardware</key>
 			<string>virtio-net-pci</string>
 			<key>MacAddress</key>
