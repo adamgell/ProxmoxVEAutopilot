@@ -2434,6 +2434,23 @@ async def api_vms_refresh():
 
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request, error: str = ""):
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") == "utm":
+        from web import utm_cli
+        utm_vms: list[dict] = []
+        utm_error = ""
+        try:
+            utm_vms = utm_cli.list_vms()
+        except RuntimeError as exc:
+            utm_error = str(exc)
+        return templates.TemplateResponse("utm_vms.html", {
+            "request": request,
+            "vms": utm_vms,
+            "error": utm_error,
+            "utmctl_path": utm_cli.utmctl_path(),
+            "library_path": str(utm_cli.utm_library_path()),
+        })
+
     cache, cache_age = await _get_vms_payload()
     vms = list(cache["data"] or [])
     vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}

@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}UTM VMs — Proxmox VE Autopilot{% endblock %}
+{% block content %}
+
+<h2>UTM Virtual Machines
+  <button type="button" onclick="location.reload();"
+    style="font-size:11px;padding:1px 6px;background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer;margin-left:10px;">
+    ↻ Refresh
+  </button>
+</h2>
+
+<p style="font-size:12px;color:var(--ink-muted);margin-bottom:14px;">
+  <strong>utmctl:</strong> <code>{{ utmctl_path }}</code> &nbsp;·&nbsp;
+  <strong>Library:</strong> <code>{{ library_path }}</code>
+</p>
+
+{% if error %}
+<p style="background:var(--bad-bg,#fff0f0);border:1px solid var(--err-fg,#c0392b);padding:8px;color:var(--err-fg,#c0392b);border-radius:4px;">
+  {{ error }}
+</p>
+{% endif %}
+
+{% if vms %}
+<table id="utm-vms-table">
+<thead>
+<tr>
+  <th>Name</th>
+  <th>UUID</th>
+  <th>Status</th>
+  <th>IPs</th>
+  <th>Actions</th>
+</tr>
+</thead>
+<tbody>
+{% for vm in vms %}
+<tr id="row-{{ loop.index }}">
+  <td><strong>{{ vm.name or '—' }}</strong></td>
+  <td><code title="{{ vm.uuid }}" style="font-size:11px;">{{ vm.uuid[:8] }}…</code></td>
+  <td>
+    {% if vm.status == 'started' %}
+      <span class="badge badge-green">{{ vm.status }}</span>
+    {% elif vm.status in ('paused', 'suspended') %}
+      <span class="badge badge-yellow" style="background:var(--ms-yellow,#FFB900);color:#333;">{{ vm.status }}</span>
+    {% else %}
+      <span class="badge badge-gray">{{ vm.status }}</span>
+    {% endif %}
+  </td>
+  <td class="ip-cell" data-vm="{{ vm.name }}" data-uuid="{{ vm.uuid }}">
+    <span class="ip-loading" style="color:var(--ink-soft);">…</span>
+  </td>
+  <td>
+    <div class="actions-cell" style="display:flex;gap:4px;flex-wrap:wrap;">
+
+      <button class="btn-action" onclick="vmAction('start','{{ vm.name }}',this)"
+        {% if vm.status == 'started' %}disabled title="Already running"{% endif %}>
+        ▶ Start
+      </button>
+
+      <button class="btn-action" onclick="vmAction('suspend','{{ vm.name }}',this)"
+        {% if vm.status == 'stopped' %}disabled title="VM is stopped"{% endif %}>
+        ⏸ Suspend
+      </button>
+
+      <button class="btn-action" onclick="vmAction('stop','{{ vm.name }}',this)"
+        {% if vm.status == 'stopped' %}disabled title="Already stopped"{% endif %}>
+        ⏹ Stop
+      </button>
+
+      <button class="btn-action btn-warn"
+        onclick="confirmAction('force-stop','{{ vm.name }}','Force-stop will SIGTERM the QEMU process. Continue?',this)"
+        {% if vm.status == 'stopped' %}disabled title="Already stopped"{% endif %}>
+        ⚡ Force
+      </button>
+
+      <button class="btn-action" onclick="vmAction('open-in-app','{{ vm.name }}',this)">
+        🖥 Open
+      </button>
+
+      <button class="btn-action btn-danger"
+        onclick="confirmAction('delete','{{ vm.name }}','Delete VM &quot;{{ vm.name }}&quot; and its .utm bundle from disk? This cannot be undone.',this)"
+        {% if vm.status != 'stopped' %}disabled title="Stop the VM before deleting"{% endif %}>
+        🗑 Delete
+      </button>
+
+    </div>
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% else %}
+<div style="padding:40px;text-align:center;color:var(--ink-soft);">
+  <p style="font-size:18px;">No UTM VMs found.</p>
+  <p>Build one from the <a href="/template">Template</a> page.</p>
+</div>
+{% endif %}
+
+<style>
+.btn-action {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+  background: var(--panel);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.btn-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-action:hover:not(:disabled) {
+  background: var(--hover);
+}
+.btn-warn {
+  border-color: var(--ms-yellow, #FFB900);
+}
+.btn-danger {
+  border-color: var(--err-fg, #c0392b);
+  color: var(--err-fg, #c0392b);
+}
+.badge-yellow {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: #fffbe6;
+  color: #7a6000;
+  border: 1px solid #ffe066;
+}
+</style>
+
+<script>
+document.querySelectorAll('.ip-cell').forEach(cell => {
+  const vm = cell.dataset.vm || cell.dataset.uuid;
+  fetch('/api/utm/vms/' + encodeURIComponent(vm) + '/ip')
+    .then(r => r.json())
+    .then(data => {
+      const ips = data.ips || [];
+      cell.innerHTML = ips.length
+        ? ips.map(ip => '<code style="font-size:11px;">' + ip + '</code>').join('<br>')
+        : '<span style="color:var(--ink-soft);">—</span>';
+    })
+    .catch(() => { cell.innerHTML = '<span style="color:var(--ink-soft);">—</span>'; });
+});
+
+async function vmAction(action, vmName, btn) {
+  btn.disabled = true;
+  btn.textContent = '⌛';
+  try {
+    const r = await fetch('/api/utm/vms/' + encodeURIComponent(vmName) + '/' + action,
+      { method: action === 'open-in-app' ? 'POST' : 'POST' });
+    const data = await r.json();
+    if (data.ok) {
+      location.reload();
+    } else {
+      alert('Error: ' + (data.error || JSON.stringify(data)));
+      location.reload();
+    }
+  } catch(e) {
+    alert('Request failed: ' + e);
+    location.reload();
+  }
+}
+
+function confirmAction(action, vmName, message, btn) {
+  if (!confirm(message)) return;
+  vmAction(action, vmName, btn);
+}
+</script>
+
+{% endblock %}
