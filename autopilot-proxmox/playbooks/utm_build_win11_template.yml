@@ -82,15 +82,10 @@
       ansible.builtin.set_fact:
         vm_os_kind: windows11
 
-    - name: "Template build: create bundle from skeleton"
+    - name: "Template build: render bundle via web.utm_bundle and register with UTM"
       ansible.builtin.include_role:
         name: utm_template_builder
-        tasks_from: create_bundle.yml
-
-    - name: "Template build: patch config.plist"
-      ansible.builtin.include_role:
-        name: utm_template_builder
-        tasks_from: customize_plist.yml
+        tasks_from: render_bundle.yml
 
     # ── 4. Copy answer ISO into bundle Data/ and attach as Drive 2 ─────────
 
@@ -130,6 +125,33 @@
       failed_when: _plutil_result.rc != 0
       changed_when: true
       when: _plutil_answer_replace.rc != 0
+
+    - name: "Template build: attach virtio-win ISO as Drive 3 ImageName"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -replace
+          - Drive.3.ImageName
+          - -string
+          - "{{ utm_virtio_win_iso_name | default('virtio-win.iso') }}"
+          - "{{ _plist_path }}"
+      register: _plutil_virtio_replace
+      failed_when: false
+      changed_when: _plutil_virtio_replace.rc == 0
+
+    - name: "Template build: insert Drive.3.ImageName if key was absent"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -insert
+          - Drive.3.ImageName
+          - -string
+          - "{{ utm_virtio_win_iso_name | default('virtio-win.iso') }}"
+          - "{{ _plist_path }}"
+      register: _plutil_virtio_insert
+      failed_when: _plutil_virtio_insert.rc != 0
+      changed_when: true
+      when: _plutil_virtio_replace.rc != 0
 
     # ── 5. VM is already registered by AppleScript `make` — skip open(1) ──
     #

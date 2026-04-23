@@ -16,7 +16,7 @@
 #
 # Two-phase execution:
 #   Phase 1 (first run, utm_build_resume=false):
-#     create_bundle → customize_plist → start_and_wait (halts for OOBE)
+#     render_bundle → start_and_wait (halts for OOBE)
 #   Phase 2 (re-run with -e utm_build_resume=true):
 #     sysprep_finalize
 
@@ -33,12 +33,8 @@
 
 # ── Phase 1: build and start ─────────────────────────────────────────────────
 
-- name: "UTM template builder: create bundle from skeleton"
-  ansible.builtin.include_tasks: create_bundle.yml
-  when: not (utm_build_resume | default(false) | bool)
-
-- name: "UTM template builder: patch config.plist with runtime values"
-  ansible.builtin.include_tasks: customize_plist.yml
+- name: "UTM template builder: render bundle and register with UTM"
+  ansible.builtin.include_tasks: render_bundle.yml
   when: not (utm_build_resume | default(false) | bool)
 
 - name: "UTM template builder: start VM and wait for operator (manual mode)"

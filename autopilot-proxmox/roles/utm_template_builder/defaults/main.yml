@@ -21,3 +21,4 @@ utm_overwrite_bundle: false
 # AppleScript properties (utmapp/UTM PR: feature/applescript-tpm-securebootkeys
 # or equivalent). Needed for Windows 11 ARM64.
 utm_enable_tpm_secure_boot: true
+utm_virtio_win_iso_name: virtio-win.iso
