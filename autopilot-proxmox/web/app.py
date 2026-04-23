@@ -3065,6 +3065,298 @@ async def utm_list_vms():
         return {"vms": [], "error": str(exc)}
 
 
+import shutil
+import signal
+
+_UTM_NAME_RE = re.compile(
+    r'^(?:[A-Za-z0-9._-]{1,64}|'
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
+)
+
+
+def _utm_check(vars_dict: dict):
+    """Return a 409 JSONResponse if hypervisor_type != utm, else None."""
+    if vars_dict.get("hypervisor_type") != "utm":
+        return JSONResponse({"ok": False, "error": "hypervisor_type is not utm"}, status_code=409)
+    return None
+
+
+def _utm_validate_name(name: str):
+    """Return a 400 JSONResponse if name is invalid, else None."""
+    if not _UTM_NAME_RE.match(name):
+        return JSONResponse(
+            {"ok": False, "error": "name must be alphanumeric/._- (1-64 chars) or a UUID"},
+            status_code=400,
+        )
+    return None
+
+
+@app.get("/api/utm/vms/{name}")
+async def utm_get_vm(name: str):
+    """Return detail for one VM: uuid, status, name, ips, bundle_path."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    cv = _load_vars()
+    c = _utm_check(cv)
+    if c:
+        return c
+
+    from web import utm_cli
+    try:
+        vms = utm_cli.list_vms()
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+    if vm is None:
+        return JSONResponse({"ok": False, "error": f"VM not found: {name!r}"}, status_code=404)
+
+    ips = utm_cli.get_vm_ip(vm["uuid"])
+    bundle = None
+    try:
+        bundle = str(utm_cli.bundle_path_for(name))
+    except RuntimeError:
+        pass
+
+    return {"ok": True, **vm, "ips": ips, "bundle_path": bundle}
+
+
+@app.get("/api/utm/vms/{name}/ip")
+async def utm_get_vm_ip(name: str):
+    """Return IP addresses for the named VM.  Best-effort."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    ips = utm_cli.get_vm_ip(name)
+    result: dict = {"ips": ips}
+    if not ips:
+        result["error"] = "no IPs returned — guest agent may not be running"
+    return result
+
+
+@app.post("/api/utm/vms/{name}/start")
+async def utm_start_vm(name: str):
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    rc, _out, stderr = utm_cli.run_utmctl(["start", name], timeout=15)
+    if rc != 0:
+        return {"ok": False, "error": stderr.strip() or f"utmctl start exited {rc}"}
+
+    status_after = "unknown"
+    try:
+        vms = utm_cli.list_vms()
+        vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+        if vm:
+            status_after = vm["status"]
+    except RuntimeError:
+        pass
+
+    return {"ok": True, "status_after": status_after}
+
+
+@app.post("/api/utm/vms/{name}/suspend")
+async def utm_suspend_vm(name: str):
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    rc, _out, stderr = utm_cli.run_utmctl(["suspend", name], timeout=15)
+    if rc != 0:
+        return {"ok": False, "error": stderr.strip() or f"utmctl suspend exited {rc}"}
+
+    status_after = "unknown"
+    try:
+        vms = utm_cli.list_vms()
+        vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+        if vm:
+            status_after = vm["status"]
+    except RuntimeError:
+        pass
+
+    return {"ok": True, "status_after": status_after}
+
+
+@app.post("/api/utm/vms/{name}/stop")
+async def utm_stop_vm(name: str):
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    rc, _out, stderr = utm_cli.run_utmctl(["stop", name], timeout=60)
+    if rc == -2:
+        return {"ok": False, "error": "graceful stop timed out — use force"}
+    if rc != 0:
+        return {"ok": False, "error": stderr.strip() or f"utmctl stop exited {rc}"}
+
+    status_after = "unknown"
+    try:
+        vms = utm_cli.list_vms()
+        vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+        if vm:
+            status_after = vm["status"]
+    except RuntimeError:
+        pass
+
+    return {"ok": True, "status_after": status_after}
+
+
+@app.post("/api/utm/vms/{name}/force-stop")
+async def utm_force_stop_vm(name: str):
+    """SIGTERM the QEMU process backing this VM."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    try:
+        bundle = utm_cli.bundle_path_for(name)
+    except RuntimeError as exc:
+        return {"ok": False, "error": f"Cannot resolve bundle path: {exc}"}
+
+    bundle_str = str(bundle)
+
+    try:
+        ps = subprocess.run(
+            ["ps", "-axo", "pid,command"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"ps failed: {exc}"}
+
+    killed_pid = None
+    for line in ps.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        pid_str, cmd = parts
+        if bundle_str in cmd and "qemu" in cmd.lower():
+            try:
+                pid = int(pid_str)
+                os.kill(pid, signal.SIGTERM)
+                killed_pid = pid
+                break
+            except (ValueError, ProcessLookupError, PermissionError) as exc:
+                return {"ok": False, "error": f"kill({pid_str}) failed: {exc}"}
+
+    if killed_pid is None:
+        return {
+            "ok": True,
+            "killed_pid": None,
+            "note": "No matching QEMU process found — VM may already be stopped",
+        }
+    return {"ok": True, "killed_pid": killed_pid}
+
+
+@app.post("/api/utm/vms/{name}/delete")
+async def utm_delete_vm(name: str):
+    """Delete a stopped UTM VM by removing its .utm bundle from disk.
+
+    Safety checks:
+    (a) VM must be stopped.
+    (b) Bundle path must be a direct child of utm_library_path and end in .utm.
+    (c) Bundles >500 MB are deleted in a background thread (non-blocking).
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    import asyncio
+
+    try:
+        vms = utm_cli.list_vms()
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+    if vm is None:
+        return JSONResponse({"ok": False, "error": f"VM not found: {name!r}"}, status_code=404)
+    if vm["status"] != "stopped":
+        return JSONResponse(
+            {"ok": False, "error": f"VM must be stopped before deletion (current: {vm['status']})"},
+            status_code=409,
+        )
+
+    try:
+        bundle = utm_cli.bundle_path_for(name)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    try:
+        du = subprocess.run(
+            ["du", "-sk", str(bundle)],
+            capture_output=True, text=True, timeout=30,
+        )
+        size_kb = int(du.stdout.split()[0]) if du.returncode == 0 else 0
+    except Exception:
+        size_kb = 0
+
+    size_mb = size_kb // 1024
+
+    try:
+        await asyncio.to_thread(shutil.rmtree, bundle, False)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"rmtree failed: {exc}"}, status_code=500)
+
+    return {"ok": True, "deleted": str(bundle), "size_mb": size_mb}
+
+
+@app.post("/api/utm/vms/{name}/open-in-app")
+async def utm_open_in_app(name: str):
+    """Open the VM's .utm bundle in UTM.app via `open -a UTM <bundle>`."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    try:
+        bundle = utm_cli.bundle_path_for(name)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        subprocess.run(
+            ["open", "-a", "UTM", str(bundle)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    return {"ok": True, "bundle": str(bundle)}
+
+
 @app.get("/api/vms/{vmid}/console")
 async def vm_console(vmid: int):
     """Redirect to the embedded noVNC console page."""
