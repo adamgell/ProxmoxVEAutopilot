@@ -288,6 +288,46 @@ def write_bundle(
     }
 
 
+DEFAULT_UTMCTL = "/Applications/UTM.app/Contents/MacOS/utmctl"
+
+
+class UtmctlClient:
+    """Thin subprocess wrapper around UTM's utmctl CLI."""
+
+    def __init__(self, utmctl: str = DEFAULT_UTMCTL) -> None:
+        self.utmctl = utmctl
+
+    def _run(self, *args: str, input_text: str | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [self.utmctl, *args],
+            input=input_text, capture_output=True, text=True, check=True,
+        )
+
+    def register(self, bundle_path: pathlib.Path) -> str:
+        """Register a .utm bundle with UTM and return its assigned UUID."""
+        result = self._run("register", str(bundle_path))
+        return result.stdout.strip()
+
+    def start(self, uuid: str) -> None:
+        self._run("start", uuid)
+
+    def stop(self, uuid: str, force: bool = False) -> None:
+        args = ("stop", uuid, "--force") if force else ("stop", uuid)
+        self._run(*args)
+
+    def status(self, uuid: str) -> str:
+        """Returns UTM's status string ('started', 'stopped', 'paused', ...)."""
+        return self._run("status", uuid).stdout.strip()
+
+    def exec(self, uuid: str, cmd: list[str]) -> subprocess.CompletedProcess:
+        """Run a command inside the guest via utmctl exec. Caller inspects
+        returncode and stdout/stderr. No retry; caller handles flaps."""
+        return self._run("exec", uuid, "--", *cmd)
+
+    def delete(self, uuid: str) -> None:
+        self._run("delete", uuid)
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
     """Read spec JSON from --spec (file path or '-' for stdin), write bundle
     to --out, print {"uuid": ..., "bundle_path": ..., "drive_uuids": [...]}

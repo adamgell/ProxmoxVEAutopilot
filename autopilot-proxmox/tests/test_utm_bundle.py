@@ -307,3 +307,47 @@ def test_write_bundle_plist_matches_renderer(tmp_path):
     ub.write_bundle(spec, bundle_path=bundle, disk_size_gib=10,
                     efi_vars_source=efi_src, iso_sources={})
     assert (bundle / "config.plist").read_bytes() == ub.render_plist_bytes(spec)
+
+
+from unittest.mock import patch, MagicMock
+
+
+def test_utmctl_register_returns_uuid_from_stdout():
+    """`utmctl register <bundle>` prints the registered VM's UUID."""
+    from web import utm_bundle as ub
+    fake = MagicMock(returncode=0, stdout="AAAA1111-2222-3333-4444-555555555555\n",
+                     stderr="")
+    with patch("web.utm_bundle.subprocess.run", return_value=fake) as run:
+        client = ub.UtmctlClient(utmctl="/Applications/UTM.app/Contents/MacOS/utmctl")
+        uuid = client.register(pathlib.Path("/tmp/x.utm"))
+    run.assert_called_once()
+    args, _ = run.call_args
+    assert args[0] == ["/Applications/UTM.app/Contents/MacOS/utmctl",
+                       "register", "/tmp/x.utm"]
+    assert uuid == "AAAA1111-2222-3333-4444-555555555555"
+
+
+def test_utmctl_start_invokes_start_subcommand():
+    from web import utm_bundle as ub
+    fake = MagicMock(returncode=0, stdout="", stderr="")
+    with patch("web.utm_bundle.subprocess.run", return_value=fake) as run:
+        ub.UtmctlClient().start("AAAA1111-2222-3333-4444-555555555555")
+    args, _ = run.call_args
+    assert args[0][-2:] == ["start", "AAAA1111-2222-3333-4444-555555555555"]
+
+
+def test_utmctl_status_returns_state_string():
+    from web import utm_bundle as ub
+    fake = MagicMock(returncode=0, stdout="started\n", stderr="")
+    with patch("web.utm_bundle.subprocess.run", return_value=fake):
+        state = ub.UtmctlClient().status("AAAA1111-2222-3333-4444-555555555555")
+    assert state == "started"
+
+
+def test_utmctl_delete_invokes_delete_subcommand():
+    from web import utm_bundle as ub
+    fake = MagicMock(returncode=0, stdout="", stderr="")
+    with patch("web.utm_bundle.subprocess.run", return_value=fake) as run:
+        ub.UtmctlClient().delete("AAAA1111-2222-3333-4444-555555555555")
+    args, _ = run.call_args
+    assert "delete" in args[0]
