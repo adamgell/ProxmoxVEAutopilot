@@ -227,3 +227,20 @@ def test_render_plist_bytes_matches_golden_fixture():
         "    python -m web.utm_bundle _regenerate_golden_fixture\n"
         "and commit with a PR comment explaining why."
     )
+
+
+def test_create_qcow2_writes_file_of_expected_size(tmp_path):
+    """qemu-img create -f qcow2 <path> <size>G produces a qcow2 file. The
+    file on disk is small (~200 KB) because qcow2 is sparse; the *virtual*
+    size is what we assert."""
+    from web import utm_bundle as ub
+    disk = tmp_path / "test.qcow2"
+    ub.create_qcow2(disk, virtual_size_gib=10)
+    assert disk.is_file()
+    info = subprocess.run(
+        ["qemu-img", "info", "--output=json", str(disk)],
+        capture_output=True, text=True, check=True,
+    )
+    meta = json.loads(info.stdout)
+    assert meta["virtual-size"] == 10 * 1024 ** 3
+    assert meta["format"] == "qcow2"

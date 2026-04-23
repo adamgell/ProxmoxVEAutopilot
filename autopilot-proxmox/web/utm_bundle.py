@@ -12,6 +12,7 @@ import json
 import pathlib
 import plistlib
 import random
+import subprocess
 import sys
 from dataclasses import dataclass, field
 
@@ -212,6 +213,21 @@ def render_plist(spec: BundleSpec) -> dict:
 def render_plist_bytes(spec: BundleSpec) -> bytes:
     """XML-plist bytes ready to write to config.plist."""
     return plistlib.dumps(render_plist(spec), fmt=plistlib.FMT_XML, sort_keys=False)
+
+
+def create_qcow2(dest: pathlib.Path, virtual_size_gib: int,
+                 qemu_img: str = "qemu-img") -> None:
+    """Create a sparse qcow2 at `dest` with the given virtual size.
+
+    Uses the qemu-img on PATH by default. UTM.app ships one at
+    `/Applications/UTM.app/Contents/MacOS/qemu-img` — callers can override
+    via the `qemu_img` arg when a specific binary is required.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [qemu_img, "create", "-f", "qcow2", str(dest), f"{virtual_size_gib}G"],
+        check=True, capture_output=True, text=True,
+    )
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
