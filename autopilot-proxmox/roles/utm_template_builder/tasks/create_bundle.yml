@@ -89,13 +89,13 @@
 
 - name: "Create bundle: register UUID facts"
   ansible.builtin.set_fact:
-    _bundle_uuid: "{{ _uuidgen_bundle.stdout | trim | lower }}"
-    _cd_uuid: "{{ _uuidgen_cd.stdout | trim | lower }}"
-    _disk_uuid: "{{ _uuidgen_disk.stdout | trim | lower }}"
-    _answer_cd_uuid: "{{ _uuidgen_answer_cd.stdout | trim | lower }}"
+    _bundle_uuid: "{{ _uuidgen_bundle.stdout | trim | upper }}"
+    _cd_uuid: "{{ _uuidgen_cd.stdout | trim | upper }}"
+    _disk_uuid: "{{ _uuidgen_disk.stdout | trim | upper }}"
+    _answer_cd_uuid: "{{ _uuidgen_answer_cd.stdout | trim | upper }}"
     _plist_path: "{{ _bundle_dest }}/config.plist"
     _data_dir: "{{ _bundle_dest }}/Data"
-    _disk_filename: "{{ _uuidgen_disk.stdout | trim | lower }}.qcow2"
+    _disk_filename: "{{ _uuidgen_disk.stdout | trim | upper }}.qcow2"
 
 - name: "Create bundle: create blank qcow2 system disk"
   ansible.builtin.command:
