@@ -45,17 +45,22 @@ def _configure_logging() -> None:
 
 
 def _paths_from_env() -> tuple[str, str]:
-    """Resolve output + jobs dirs from env, defaulting to container paths.
+    """Resolve output + jobs dirs from env, defaulting to repo-relative paths.
 
     Docker keeps /app/output and /app/jobs as volumes; macOS-native
     operators (UTM backend) set AUTOPILOT_OUTPUT_DIR / AUTOPILOT_JOBS_DIR
     to repo-local paths (e.g. ./output, ./jobs) because "/" is
     read-only for non-root. The scripts/tui.sh and run_macos_native.sh
     wrappers set these automatically.
+
+    Defaults are computed via web.paths so they resolve correctly in
+    both Docker (/app/output) and native-macOS (repo/output) without
+    any env-var wiring.
     """
     import os
-    out = os.environ.get("AUTOPILOT_OUTPUT_DIR", "/app/output")
-    jobs = os.environ.get("AUTOPILOT_JOBS_DIR", "/app/jobs")
+    from web.paths import REPO_ROOT as _root
+    out = os.environ.get("AUTOPILOT_OUTPUT_DIR", str(_root / "output"))
+    jobs = os.environ.get("AUTOPILOT_JOBS_DIR", str(_root / "jobs"))
     return out, jobs
 
 

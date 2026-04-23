@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 
 from web import jobs_db, service_health
+from web.paths import JOBS_DIR as _JOBS_DIR, OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT
 
 _log = logging.getLogger("web.builder")
 
@@ -30,12 +31,12 @@ def _worker_id(output_dir: Path | None = None) -> str:
     restarts preserve identity for the health UI. Uses O_CREAT|O_EXCL
     to survive any (pathological) simultaneous-start race.
 
-    `output_dir` defaults to /app/output (the container volume) so
-    existing callers keep their behavior; macOS-native runs pass the
-    repo-local output path.
+    `output_dir` defaults to ``OUTPUT_DIR`` (repo-relative on macOS,
+    ``/app/output`` inside Docker) so callers that omit the argument
+    work correctly in both environments.
     """
     hostname = os.uname().nodename
-    base = Path(output_dir) if output_dir is not None else Path("/app/output")
+    base = Path(output_dir) if output_dir is not None else _OUTPUT_DIR
     path = base / f"worker-id.{hostname}"
     try:
         return path.read_text().strip()
@@ -56,15 +57,13 @@ def _worker_id(output_dir: Path | None = None) -> str:
 
 
 def _version_sha() -> str:
-    # /app/VERSION is the container copy; fall back to repo root for
-    # native runs (macOS/UTM path) so the health UI still shows a sha.
-    for candidate in (Path("/app/VERSION"),
-                      Path(__file__).resolve().parent.parent / "VERSION"):
-        try:
-            if candidate.exists():
-                return candidate.read_text().strip()[:7] or "unknown"
-        except Exception:
-            continue
+    # REPO_ROOT/VERSION works for both Docker (/app/VERSION) and native macOS.
+    try:
+        candidate = REPO_ROOT / "VERSION"
+        if candidate.exists():
+            return candidate.read_text().strip()[:7] or "unknown"
+    except Exception:
+        pass
     return "unknown"
 
 
@@ -159,9 +158,9 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
         log_file.close()
 
 
-def run_builder(*, jobs_dir: Path | str = "/app/jobs",
-                db_path: Path | str = "/app/output/jobs.db",
-                monitor_db_path: Path | str = "/app/output/device_monitor.db",
+def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
+                db_path: Path | str = _OUTPUT_DIR / "jobs.db",
+                monitor_db_path: Path | str = _OUTPUT_DIR / "device_monitor.db",
                 worker_id: str | None = None,
                 stop_event: threading.Event | None = None,
                 poll_interval_seconds: float = 2.0,
