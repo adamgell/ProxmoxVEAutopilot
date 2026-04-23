@@ -1411,7 +1411,11 @@ def _spec_from_payload(p: dict) -> BundleSpec:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    raw = sys.stdin.read() if args.spec == "-" else open(args.spec).read()
+    if args.spec == "-":
+        raw = sys.stdin.read()
+    else:
+        with open(args.spec) as f:
+            raw = f.read()
     payload = json.loads(raw)
     spec = _spec_from_payload(payload)
 
