@@ -107,7 +107,53 @@ def _log_file(mode: str) -> Path:
     return STATE_DIR / f"{mode}.log"
 
 
+def _proc_command(pid: int) -> str:
+    """Return the command line of `pid` via `ps`, or empty string.
+
+    Used to distinguish a legitimately-ours entrypoint process from a
+    PID that was recycled by the OS (a common source of the EPERM
+    from killpg). Empty string means the PID isn't alive or we can't
+    see it — callers treat that as "not ours".
+    """
+    try:
+        res = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return res.stdout.strip()
+
+
+def _is_our_process(pid: int, mode: str) -> bool:
+    """Does `pid` look like a web.entrypoint <mode> we launched?
+
+    Checks both the command line (`python -m web.entrypoint <mode>`)
+    and that the process still exists. Uvicorn rewrites argv to
+    `uvicorn` on some platforms; fall back to just the module name
+    in that case.
+    """
+    if not _pid_alive(pid):
+        return False
+    cmd = _proc_command(pid)
+    if not cmd:
+        return False
+    if "web.entrypoint" in cmd and mode in cmd.split():
+        return True
+    # uvicorn rename fallback: just the mode name is ambiguous, but
+    # combined with web.entrypoint being the parent module path we
+    # accept it.
+    return "web.entrypoint" in cmd
+
+
 def _read_pid(mode: str) -> int | None:
+    """Return a live-and-ours PID for `mode`, else None.
+
+    If the pidfile points at a PID that's alive but isn't our
+    entrypoint process (the OS recycled the PID), treat it as stale
+    and return None. This prevents _stop() from SIGTERM'ing a random
+    user process and getting EPERM.
+    """
     p = _pid_file(mode)
     if not p.exists():
         return None
@@ -115,7 +161,9 @@ def _read_pid(mode: str) -> int | None:
         pid = int(p.read_text().strip())
     except (ValueError, OSError):
         return None
-    return pid if _pid_alive(pid) else None
+    if _is_our_process(pid, mode):
+        return pid
+    return None
 
 
 def _pid_alive(pid: int) -> bool:
@@ -129,13 +177,94 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _clear_stale_pid(mode: str) -> None:
-    """Remove a PID file whose process is gone so status reflects reality."""
+    """Remove a PID file whose process is gone or isn't ours anymore."""
     p = _pid_file(mode)
-    if p.exists() and _read_pid(mode) is None:
+    if not p.exists():
+        return
+    if _read_pid(mode) is None:
         try:
             p.unlink()
         except OSError:
             pass
+
+
+def _find_orphans() -> dict[str, list[int]]:
+    """Find web.entrypoint processes owned by us but not in our pidfiles.
+
+    Happens when the TUI is killed hard (SIGKILL, terminal closed
+    before quit), or when a prior smoke test left a daemonized child
+    behind. Reported per-mode so the status line + Reset action can
+    do the right thing.
+    """
+    try:
+        res = subprocess.run(
+            ["pgrep", "-fu", str(os.getuid()), "web.entrypoint"],
+            capture_output=True, text=True, timeout=3,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {m: [] for m in MODES}
+
+    known = {m: _read_pid(m) for m in MODES}
+    orphans: dict[str, list[int]] = {m: [] for m in MODES}
+    for line in res.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        cmd = _proc_command(pid)
+        if not cmd or "web.entrypoint" not in cmd:
+            continue
+        for m in MODES:
+            if m in cmd.split() and known.get(m) != pid:
+                orphans[m].append(pid)
+                break
+    return orphans
+
+
+def _reset_state() -> tuple[bool, str]:
+    """Blow away orphans, pidfiles, and logs so the TUI starts from clean.
+
+    SIGTERM first, SIGKILL the holdouts after 1s. Does NOT touch the
+    .venv, output/, jobs/, or the actual database files — only TUI
+    bookkeeping and any unmanaged entrypoint children we can find.
+    """
+    killed = 0
+    orphans = _find_orphans()
+    for mode_orphans in orphans.values():
+        for pid in mode_orphans:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    # Also sweep known pidfiles in case _read_pid considered them
+    # ours but the user wants a hard reset regardless.
+    for m in MODES:
+        pid = _read_pid(m)
+        if pid is not None:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+                killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    time.sleep(1)
+    for mode_orphans in _find_orphans().values():
+        for pid in mode_orphans:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    for m in MODES:
+        _pid_file(m).unlink(missing_ok=True)
+        # Truncate (don't delete) logs so tail viewer doesn't error.
+        try:
+            _log_file(m).write_bytes(b"")
+        except OSError:
+            pass
+    return True, f"reset complete ({killed} process(es) signaled)"
 
 
 def _start(mode: str) -> tuple[bool, str]:
@@ -228,7 +357,22 @@ def _start(mode: str) -> tuple[bool, str]:
 def _stop(mode: str) -> tuple[bool, str]:
     pid = _read_pid(mode)
     if pid is None:
+        # Either never ran, already exited, or (most common on
+        # macOS after a hard-kill) the pidfile points at a recycled
+        # PID that belongs to some other program. _read_pid already
+        # filtered that out; _clear_stale_pid removes the file.
         _clear_stale_pid(mode)
+        # Orphan sweep: maybe an earlier TUI session launched the
+        # process and crashed before writing the pidfile. Kill it
+        # too so Start All doesn't trip over a lock-holder.
+        orphans = _find_orphans().get(mode, [])
+        for op in orphans:
+            try:
+                os.kill(op, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if orphans:
+            return True, f"{mode} not tracked but killed {len(orphans)} orphan(s)"
         return False, f"{mode} not running"
     try:
         # SIGTERM the whole process group so uvicorn's worker/reload
@@ -238,18 +382,29 @@ def _stop(mode: str) -> tuple[bool, str]:
     except ProcessLookupError:
         _pid_file(mode).unlink(missing_ok=True)
         return True, f"{mode} already exited"
-    except PermissionError as e:
-        return False, f"stop {mode}: {e}"
+    except PermissionError:
+        # getpgid() might not equal pid if something unexpected
+        # happened (e.g. pidfile from a different invocation style).
+        # Fall back to SIGTERM on the single pid.
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError) as e2:
+            _pid_file(mode).unlink(missing_ok=True)
+            return False, f"stop {mode}: {e2} (pidfile cleared)"
 
     for _ in range(30):
         if not _pid_alive(pid):
             break
         time.sleep(0.1)
     else:
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        for sig in (signal.SIGKILL,):
+            try:
+                os.killpg(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    os.kill(pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
 
     _pid_file(mode).unlink(missing_ok=True)
     return True, f"stopped {mode}"
@@ -294,6 +449,7 @@ MENU_ITEMS = [
     ("Tail monitor log",    lambda: ("tail", "monitor")),
     ("Change web port…",    lambda: ("change_port", None)),
     ("Install/update requirements", lambda: ("pip_install", None)),
+    ("Reset state (kill orphans + clear pidfiles)", lambda: _reset_state()),
     ("Quit",                lambda: ("quit", None)),
 ]
 
@@ -354,7 +510,25 @@ def _draw_main(stdscr, sel: int, status: str, missing_deps: list[str]) -> None:
                    deps_label, max(0, w - 4 - len(f"Web port: {WEB_PORT}    Deps: ")),
                    deps_attr)
 
-    menu_top = env_y + 2
+    # Orphan warning: if pgrep found web.entrypoint processes that
+    # aren't in our pidfiles (e.g. leftover from a prior session), a
+    # red line prompts the user to run Reset state so Start All
+    # doesn't fail on the singleton lock.
+    orphans = _find_orphans()
+    total_orphans = sum(len(v) for v in orphans.values())
+    if total_orphans:
+        orphan_y = env_y + 1
+        detail = ", ".join(
+            f"{m}:{len(v)}" for m, v in orphans.items() if v
+        )
+        stdscr.addnstr(
+            orphan_y, 4,
+            f"⚠ {total_orphans} orphan(s) detected ({detail}) — run 'Reset state'",
+            w - 4, curses.color_pair(2),
+        )
+        menu_top = orphan_y + 2
+    else:
+        menu_top = env_y + 2
     stdscr.addnstr(menu_top - 1, 2, "Actions (↑/↓ select, Enter run, q quit):", w - 2, curses.A_UNDERLINE)
     for i, (label, _) in enumerate(MENU_ITEMS):
         y = menu_top + i
@@ -523,8 +697,21 @@ def _main(stdscr) -> None:
 
 def main() -> None:
     # Housekeeping: drop stale pidfiles so the first paint is accurate.
+    # Orphan adoption: if we find exactly one orphan per mode and no
+    # tracked pidfile, adopt it (write its pid) so the status panel
+    # reflects reality and Stop works on it. Multiple orphans per
+    # mode require manual Reset to avoid guessing which is the real
+    # one.
     for m in MODES:
         _clear_stale_pid(m)
+    initial_orphans = _find_orphans()
+    for m in MODES:
+        orphans = initial_orphans.get(m, [])
+        if len(orphans) == 1 and _read_pid(m) is None:
+            try:
+                _pid_file(m).write_text(str(orphans[0]))
+            except OSError:
+                pass
     try:
         curses.wrapper(_main)
     except KeyboardInterrupt:
