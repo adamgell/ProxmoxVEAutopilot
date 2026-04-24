@@ -132,8 +132,6 @@
 
       <UserData>
         <AcceptEula>true</AcceptEula>
-        <FullName>{{ _oem_profile.organization | default('Administrator') | xml_escape }}</FullName>
-        <Organization>{{ _oem_profile.organization | default('') | xml_escape }}</Organization>
         <!-- ProductKey must always be emitted so Setup does not prompt.
              With an empty Key + WillShowUI=Never, Setup uses the edition
              selected via ImageInstall/InstallFrom/MetaData (/IMAGE/NAME).
