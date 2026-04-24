@@ -132,12 +132,18 @@
 
       <UserData>
         <AcceptEula>true</AcceptEula>
-{% if product_key %}
+        <FullName>{{ _oem_profile.organization | default('Administrator') | xml_escape }}</FullName>
+        <Organization>{{ _oem_profile.organization | default('') | xml_escape }}</Organization>
+        <!-- ProductKey must always be emitted so Setup does not prompt.
+             With an empty Key + WillShowUI=Never, Setup uses the edition
+             selected via ImageInstall/InstallFrom/MetaData (/IMAGE/NAME).
+             Supply a real key via `-e product_key=...` when activation is
+             required; generic KMS client setup keys work to pick an
+             edition without activating. -->
         <ProductKey>
-          <Key>{{ product_key | xml_escape }}</Key>
-          <WillShowUI>OnError</WillShowUI>
+          <Key>{{ (product_key | default('')) | xml_escape }}</Key>
+          <WillShowUI>Never</WillShowUI>
         </ProductKey>
-{% endif %}
       </UserData>
 
     </component>
