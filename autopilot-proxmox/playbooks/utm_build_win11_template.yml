@@ -277,61 +277,41 @@
     # Total time: typically 15-30 minutes on Apple Silicon (M-series).
     # Retry budget: utm_template_poll_retries × utm_template_poll_delay seconds.
 
+    # ── 6b. Poll for VM self-shutdown (no QGA on ARM64 Windows) ────────────
+    #
+    # firstboot.ps1 calls `shutdown /s /t 5` after writing the sentinel.
+    # UTM transitions the VM to `stopped` once Windows halts, which we can
+    # observe via `utmctl status` without a guest agent. This replaces the
+    # old `utmctl exec powershell Test-Path ...` poll — exec requires QGA,
+    # and there is no ARM64 Windows QGA in Fedora virtio-win or UTM's
+    # guest-tools installer as of 2026-04.
     - name: >-
-        Template build: poll for firstboot sentinel
-        C:\autopilot\autopilot-firstboot.done
-        (max {{ utm_template_poll_retries * utm_template_poll_delay // 60 }} min)
-      ansible.builtin.command:
-        argv:
-          - "{{ utm_utmctl_path }}"
-          - exec
-          - "{{ _utm_assigned_uuid }}"
-          - --
-          - powershell.exe
-          - -Command
-          - "if (Test-Path 'C:\\autopilot\\autopilot-firstboot.done') { 'SENTINEL_FOUND' } else { 'SENTINEL_MISSING' }"
-      register: _sentinel_poll
-      retries: "{{ utm_template_poll_retries }}"
-      delay: "{{ utm_template_poll_delay }}"
-      until: "'SENTINEL_FOUND' in (_sentinel_poll.stdout | default(''))"
-      failed_when: >-
-        _sentinel_poll.attempts | default(1) > utm_template_poll_retries
-        and 'SENTINEL_FOUND' not in (_sentinel_poll.stdout | default(''))
-      changed_when: false
-
-    - name: "Template build: confirm sentinel detected"
-      ansible.builtin.debug:
-        msg: >-
-          Sentinel detected after {{ _sentinel_poll.attempts | default(1) }}
-          poll attempt(s) (~{{
-            (_sentinel_poll.attempts | default(1) | int) * (utm_template_poll_delay | int)
-          }} s elapsed). Proceeding to suspend.
-
-    # ── 7. Suspend VM and write marker ──────────────────────────────────────
-
-    - name: "Template build: suspend '{{ vm_name }}'"
-      ansible.builtin.command:
-        argv:
-          - "{{ utm_utmctl_path }}"
-          - suspend
-          - "{{ _utm_assigned_uuid }}"
-      register: _suspend_result
-      failed_when: _suspend_result.rc != 0
-      changed_when: true
-
-    - name: "Template build: wait for VM to reach suspended/stopped"
+        Template build: poll for VM to shut down (firstboot self-halt,
+        max {{ utm_template_poll_retries * utm_template_poll_delay // 60 }} min)
       ansible.builtin.command:
         argv:
           - "{{ utm_utmctl_path }}"
           - status
           - "{{ _utm_assigned_uuid }}"
-      register: _post_suspend_status
-      retries: 30
-      delay: 5
-      until: >-
-        _post_suspend_status.stdout | trim in ['suspended', 'stopped', 'paused']
-      failed_when: false
+      register: _shutdown_poll
+      retries: "{{ utm_template_poll_retries }}"
+      delay: "{{ utm_template_poll_delay }}"
+      until: "_shutdown_poll.stdout | default('') | trim in ['stopped', 'suspended', 'paused']"
+      failed_when: >-
+        _shutdown_poll.attempts | default(1) > utm_template_poll_retries
+        and _shutdown_poll.stdout | default('') | trim not in ['stopped', 'suspended', 'paused']
       changed_when: false
+
+    - name: "Template build: confirm VM reached stopped state"
+      ansible.builtin.debug:
+        msg: >-
+          VM reached '{{ _shutdown_poll.stdout | trim }}' after
+          {{ _shutdown_poll.attempts | default(1) }} poll attempt(s)
+          (~{{
+            (_shutdown_poll.attempts | default(1) | int) * (utm_template_poll_delay | int)
+          }}s elapsed). Firstboot payload finished.
+
+    # ── 7. Write template-ready marker (VM is already stopped) ──────────────
 
     - name: "Template build: set bundle path fact"
       ansible.builtin.set_fact:

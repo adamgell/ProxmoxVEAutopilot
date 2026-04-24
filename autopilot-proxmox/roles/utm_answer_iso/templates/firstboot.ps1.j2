@@ -140,3 +140,16 @@ try {
 }
 
 Write-Log 'autopilot-firstboot: done'
+
+# ---------------------------------------------------------------------------
+# 5. Shut down — signals the playbook that firstboot finished.
+#     We can't rely on utmctl exec because no ARM64 QEMU Guest Agent exists
+#     (virtio-win.iso and UTM guest tools ship x86/x64 QGA only), so the
+#     host polls `utmctl status` for `stopped` instead of exec'ing into the
+#     guest. A clean `shutdown /s /t 5` gives logs 5 seconds to flush before
+#     Windows halts and UTM reports the VM as stopped.
+# ---------------------------------------------------------------------------
+Write-Log 'Requesting clean shutdown (5s grace)'
+Start-Process -FilePath 'shutdown.exe' `
+    -ArgumentList '/s', '/t', '5', '/d', 'p:4:1', '/c', 'autopilot-firstboot complete' `
+    -NoNewWindow -Wait
