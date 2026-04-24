@@ -114,8 +114,10 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    **Prerequisite** (already wired): the MSI is user-mode only and
    opens `\\.\Global\org.qemu.guest_agent.0`, which requires the
    virtio-serial kernel driver (`vioser.sys`) to be loaded first —
-   covered by the `vioser\w11\ARM64` entries added to the
-   `DriverPaths` block in `unattend.xml.j2`.
+   covered by the `vioserial\w11\ARM64` entries (the directory is
+   `vioserial` on the virtio-win ISO; the files inside it are
+   `vioser.sys/.inf/.cat`) added to the `DriverPaths` block in
+   `unattend.xml.j2`.
 
    **Known UTM gotcha**: `utmctl exec` fails with OSStatus -2700 on
    UTM 4.7.5 even when the QGA channel is up — this is a UTM harness
