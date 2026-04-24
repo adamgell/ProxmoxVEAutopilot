@@ -122,21 +122,21 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 
 ## Known unresolved
 
-- `autounattend.xml` does not yet set `DriverPaths` for the virtio CD,
-  so Setup currently requires manual "Load driver" at the disk picker.
-  See todo `utm-autounattend-driverpaths`.
 - The abandoned UTM fork lives at `~/src/UTM`, branch
   `feature/applescript-tpm-securebootkeys`, commit `884e75c`. Kept
   only for reference; do not rebuild over `/Applications/UTM.app`.
 
-## Active tasks (session SQL snapshot 2026-04-23)
+## Active tasks (session snapshot 2026-04-24)
 
 | id | status | title |
 | --- | --- | --- |
-| utm-e2e-win11-template | blocked | End-to-end Win11 template test (original block — now mostly resolved by plist TPM/SB + virtio CD) |
-| utm-virtio-cd-plumbing | in_progress | Fix virtio-win Drive.3 ImageName plumbing (role default not in play scope) |
-| utm-driver-load-verify | in_progress | Verify user-driven driver load on current VM (86F1B7AA-…) |
-| utm-autounattend-driverpaths | pending | Add `DriverPaths` for virtio-win to `autounattend.xml` |
+| utm-e2e-win11-template | resolved | End-to-end Win11 template test — green in T14 run 8 autonomously; T17 acc-1 green with one manual keystroke nudge |
+| utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
+| utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
+| utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
+| utm-efi-vars-nvram-boot-entry | pending | Replace the 5-line keystroke EFI-shell escape with a `virt-fw-vars`-baked Boot0000 / BootOrder in `efi_vars.fd` (eliminates the osascript fallback entirely) |
+| utm-phase2-sysprep-no-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec`. Replace with a FirstLogonCommand that runs `sysprep /oobe /generalize /shutdown` (there is no ARM64 Windows QGA — see gotcha #6) |
+| utm-firstboot-shutdown-reliability | pending | T17 acc-2 regressed — Setup+OOBE completed but the scheduled-task shutdown did not fire. Commit `6b28b98` adds `$LASTEXITCODE` check + `/SD` date; unverified without a fresh E2E |
 | utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone → autopilot inject → hash capture → Intune) |
 | utm-tui-plugin-research | pending | Investigate TUI/UTM plugin surface |
 | utm-upstream-utmctl-create | pending | Upstream `utmctl create` subcommand PR to utmapp/UTM |
