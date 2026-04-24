@@ -4,7 +4,7 @@
     Autopilot firstboot payload for Windows 11 ARM64 UTM template builds.
 
 .DESCRIPTION
-    Staged under $OEM$\$1\autopilot\ on the answer ISO → copied to
+    Staged under $OEM$\$1\autopilot\ on the answer ISO -> copied to
     C:\autopilot\ by Windows text-mode setup.  Runs as a FirstLogonCommand
     (Order 2) in autounattend.xml.
 
@@ -46,7 +46,7 @@ if (-not (Test-Path $AutopilotDir)) {
 Write-Log 'autopilot-firstboot: start'
 
 # ---------------------------------------------------------------------------
-# 1. WinRM over HTTPS — self-signed certificate
+# 1. WinRM over HTTPS - self-signed certificate
 # ---------------------------------------------------------------------------
 try {
     Write-Log 'Configuring WinRM HTTPS ...'
@@ -109,7 +109,7 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Hash-capture hook — write stub script that Ansible replaces later
+# 3. Hash-capture hook - write stub script that Ansible replaces later
 # ---------------------------------------------------------------------------
 try {
     $HashCaptureHook = "$AutopilotDir\hash_capture_hook.ps1"
@@ -118,7 +118,7 @@ try {
 # Autopilot hardware-hash capture hook.
 # This stub is replaced by the Ansible hash_capture role during
 # the first full provisioning run.
-Write-Host 'hash_capture_hook: stub — run Ansible autopilot_inject to populate.'
+Write-Host 'hash_capture_hook: stub - run Ansible autopilot_inject to populate.'
 '@ | Set-Content -Path $HashCaptureHook -Encoding UTF8
     }
     Write-Log 'Hash-capture hook stub written.'
@@ -127,7 +127,7 @@ Write-Host 'hash_capture_hook: stub — run Ansible autopilot_inject to populate
 }
 
 # ---------------------------------------------------------------------------
-# 4. Write sentinel — signals playbook polling loop that firstboot finished
+# 4. Write sentinel - signals playbook polling loop that firstboot finished
 # ---------------------------------------------------------------------------
 try {
     $Timestamp = (Get-Date -Format 'o')
@@ -142,11 +142,11 @@ try {
 Write-Log 'autopilot-firstboot: done'
 
 # ---------------------------------------------------------------------------
-# 5a. Install QEMU Guest Agent (ARM64) — optional, skip if missing
+# 5a. Install QEMU Guest Agent (ARM64) - optional, skip if missing
 #     The MSI is staged to C:\autopilot\qemu-ga-aarch64.msi by the
 #     FirstLogonCommand Order 1 that copies $OEM$\$1\* from the
 #     autounattend ISO. It registers the QEMU-GA service Start=Automatic
-#     and opens \\.\Global\org.qemu.guest_agent.0 — but only once the
+#     and opens \\.\Global\org.qemu.guest_agent.0 - but only once the
 #     virtio-serial (vioser) kernel driver is loaded, which happens via
 #     the autounattend DriverPaths. msiexec returns 0 on success or 3010
 #     if a reboot is needed (we shut down immediately after anyway).
@@ -162,7 +162,7 @@ if (Test-Path $QgaMsi) {
         if ($proc.ExitCode -eq 0) {
             Write-Log 'QEMU GA installed (exit 0).'
         } elseif ($proc.ExitCode -eq 3010) {
-            Write-Log 'QEMU GA installed (exit 3010, reboot required — fine).'
+            Write-Log 'QEMU GA installed (exit 3010, reboot required - fine).'
         } else {
             Write-Log "WARNING: msiexec returned $($proc.ExitCode); see qemu-ga-install.log"
         }
@@ -170,11 +170,11 @@ if (Test-Path $QgaMsi) {
         Write-Log "WARNING: QEMU GA install threw: $_"
     }
 } else {
-    Write-Log "QEMU GA MSI not present at $QgaMsi — skipping install."
+    Write-Log "QEMU GA MSI not present at $QgaMsi - skipping install."
 }
 
 # ---------------------------------------------------------------------------
-# 5b. Install UTM Guest Tools (Spice vdagent + dynamic resolution) —
+# 5b. Install UTM Guest Tools (Spice vdagent + dynamic resolution) -
 #     optional, skip if the NSIS installer wasn't staged. NSIS supports
 #     /S for silent install; exit code 0 is success, anything else is a
 #     WARNING (the UX features are additive, not load-bearing).
@@ -195,11 +195,11 @@ if (Test-Path $UtmTools) {
         Write-Log "WARNING: UTM Guest Tools install threw: $_"
     }
 } else {
-    Write-Log "UTM Guest Tools installer not present at $UtmTools — skipping."
+    Write-Log "UTM Guest Tools installer not present at $UtmTools - skipping."
 }
 
 # ---------------------------------------------------------------------------
-# 5. Schedule shutdown via Task Scheduler — FirstLogonCommand orchestration
+# 5. Schedule shutdown via Task Scheduler - FirstLogonCommand orchestration
 #     swallows direct Stop-Computer/shutdown.exe calls (observed on two
 #     previous runs: desktop visible, LogonCount decremented, VM never
 #     halted). A one-shot scheduled task running as SYSTEM with 3 minutes
@@ -210,7 +210,7 @@ if (Test-Path $UtmTools) {
 try {
     # Compute both time and date from the same instant. Passing /SD in
     # addition to /ST makes schtasks correct across midnight boundaries
-    # — the HH:mm from (Get-Date).AddMinutes(3) alone would land today's
+    # - the HH:mm from (Get-Date).AddMinutes(3) alone would land today's
     # schedule if firstboot runs at 23:58, so the task would silently
     # fire ~24 hours late.
     $shutdownWhen = (Get-Date).AddMinutes(3)
@@ -226,7 +226,7 @@ try {
         /RU SYSTEM `
         /RL HIGHEST `
         /F 2>&1 | ForEach-Object { Write-Log "schtasks: $_" }
-    # External executables set $LASTEXITCODE, not exceptions — a failed
+    # External executables set $LASTEXITCODE, not exceptions - a failed
     # schtasks call would NOT be caught by try/catch above. Check the
     # exit code explicitly and fail loudly. Without this, acc-2-style
     # regressions (schtasks silently failing, VM never halting, poll

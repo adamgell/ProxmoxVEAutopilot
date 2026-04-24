@@ -159,8 +159,12 @@ def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
     )
     oem_dir = staging_dir / "$OEM$" / "$1" / "autopilot"
     oem_dir.mkdir(parents=True, exist_ok=True)
+    # utf-8-sig writes a BOM. Windows PowerShell 5.1 (which FirstLogonCommand
+    # invokes) treats a BOM-less .ps1 as ANSI/OEM codepage, so any UTF-8
+    # multi-byte chars (em-dashes, arrows) mis-decode and the parser throws
+    # MissingEndCurlyBrace on unrelated lines. The BOM forces UTF-8 decoding.
     (oem_dir / "firstboot.ps1").write_text(
-        render_firstboot_ps1(profile), encoding="utf-8"
+        render_firstboot_ps1(profile), encoding="utf-8-sig"
     )
 
     _stage_optional_asset(

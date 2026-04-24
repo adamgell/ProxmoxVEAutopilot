@@ -2,7 +2,7 @@
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
   <!-- ================================================================
-       Windows PE — disk partitioning and image selection.
+       Windows PE - disk partitioning and image selection.
        DriverPaths belt-and-braces for the VirtIO system disk: paths
        cover drive letters D:/E:/F: so Setup finds viostor on whatever
        letter the virtio-win CD gets assigned. Setup silently skips
@@ -71,8 +71,8 @@
                publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
 
       <!-- GPT/UEFI disk layout.
-           EFI (300 MB) → MSR (16 MB) → Recovery (1 GB) → Windows (rest).
-           Recovery is before Windows so C: is the last partition —
+           EFI (300 MB) -> MSR (16 MB) -> Recovery (1 GB) -> Windows (rest).
+           Recovery is before Windows so C: is the last partition -
            future disk expansions extend C: without moving Recovery. -->
       <DiskConfiguration>
         <Disk wcm:action="add">
@@ -162,7 +162,7 @@
   </settings>
 
   <!-- ================================================================
-       Specialize — machine identity
+       Specialize - machine identity
        ================================================================ -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -199,7 +199,7 @@
   </settings>
 
   <!-- ================================================================
-       OOBE — skip prompts, create local admin, run firstboot payload
+       OOBE - skip prompts, create local admin, run firstboot payload
        ================================================================ -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -256,7 +256,7 @@
              lives on the Windows installer media; ours is a separate CD,
              so we manually find the autounattend drive letter (any FS
              drive containing autounattend.xml at its root) and copy the
-             tree into C:\. Idempotent — skips cleanly if C:\autopilot
+             tree into C:\. Idempotent - skips cleanly if C:\autopilot
              already exists. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
