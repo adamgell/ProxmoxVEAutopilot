@@ -101,15 +101,25 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    `utm_boot_fallback_keystrokes: true`. The structural fix (write a
    Boot0000 + BootOrder into `efi_vars.fd` via `virt-fw-vars`) is
    tracked as follow-up `utm-efi-vars-nvram-boot-entry`.
-6. **ARM64 Windows QGA — available via sibling repo**. Fedora's
-   virtio-win pack still ships x86/x64 qemu-ga MSIs only, and utmapp's
-   guest-tools still ships ARM64 Spice vdagent but no QGA. The gap is
-   filled by `adamgell/qemu-ga-aarch64-msi` (QGA 11.0.0, MSYS2
-   `clangarm64` build, WiX-packaged). That MSI is bundled at
-   `autopilot-proxmox/assets/qemu-ga-aarch64-win/qemu-ga-aarch64.msi`
-   and gets staged into `$OEM$\$1\autopilot\` by `answer_iso.py` for
-   `firstboot.ps1` to `msiexec /i ... /quiet /norestart` into the
-   guest.
+6. **ARM64 Windows QGA + UTM Guest Tools — both bundled**. Fedora's
+   virtio-win pack still ships x86/x64 qemu-ga MSIs only. UTM's
+   guest-tools ships ARM64 Spice vdagent but no QGA. We bundle both:
+
+   - **QGA** — `adamgell/qemu-ga-aarch64-msi` (QGA 11.0.0, MSYS2
+     `clangarm64`, WiX-packaged) at
+     `autopilot-proxmox/assets/qemu-ga-aarch64-win/qemu-ga-aarch64.msi`.
+     Provides host-to-guest orchestration: `utmctl ip-address`,
+     QMP/QGA JSON-RPC, etc.
+   - **UTM Guest Tools** — `utm-guest-tools-0.1.271.exe` at
+     `autopilot-proxmox/assets/utm-guest-tools-win/`. NSIS installer
+     that deploys Spice vdagent (clipboard + dynamic-resolution
+     resize), spice-webdavd (folder sharing), and a few extras.
+
+   Both are staged into `$OEM$\$1\autopilot\` by `answer_iso.py` and
+   installed by `firstboot.ps1` — QGA via `msiexec /i /quiet
+   /norestart` (step 5a), guest tools via NSIS `/S` (step 5b).
+   Disable either by setting `qemu_ga_msi_path` or
+   `utm_guest_tools_exe_path` to an empty string in the profile.
 
    **Prerequisite** (already wired): the MSI is user-mode only and
    opens `\\.\Global\org.qemu.guest_agent.0`, which requires the
@@ -155,7 +165,8 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
 | utm-efi-vars-nvram-boot-entry | pending | Replace the 5-line keystroke EFI-shell escape with a `virt-fw-vars`-baked Boot0000 / BootOrder in `efi_vars.fd` (eliminates the osascript fallback entirely) |
-| utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. vioser DriverPaths covers the kernel-mode prereq. See issue #30 |
+| utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
+| utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
 | utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |
 | utm-firstboot-shutdown-reliability | pending | T17 acc-2 regressed — Setup+OOBE completed but the scheduled-task shutdown did not fire. Commits `6b28b98` (`$LASTEXITCODE` + `/SD`) and `e738077` (QGA install pre-shutdown) harden the path; unverified without a fresh E2E |
 | utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone → autopilot inject → hash capture → Intune) |
