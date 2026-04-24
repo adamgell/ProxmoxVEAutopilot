@@ -151,16 +151,32 @@ Write-Log 'autopilot-firstboot: done'
 #     playbook poll exits.
 # ---------------------------------------------------------------------------
 try {
-    $shutdownAt = (Get-Date).AddMinutes(3).ToString('HH:mm')
-    Write-Log "Scheduling one-shot shutdown task at $shutdownAt (3 min grace)"
+    # Compute both time and date from the same instant. Passing /SD in
+    # addition to /ST makes schtasks correct across midnight boundaries
+    # — the HH:mm from (Get-Date).AddMinutes(3) alone would land today's
+    # schedule if firstboot runs at 23:58, so the task would silently
+    # fire ~24 hours late.
+    $shutdownWhen = (Get-Date).AddMinutes(3)
+    $shutdownAt   = $shutdownWhen.ToString('HH:mm')
+    $shutdownDate = $shutdownWhen.ToString('MM/dd/yyyy')
+    Write-Log "Scheduling one-shot shutdown task at $shutdownDate $shutdownAt (3 min grace)"
     & schtasks.exe /Create `
         /TN 'AutopilotFirstbootShutdown' `
         /TR 'shutdown.exe /s /t 0 /f' `
         /SC ONCE `
         /ST $shutdownAt `
+        /SD $shutdownDate `
         /RU SYSTEM `
         /RL HIGHEST `
         /F 2>&1 | ForEach-Object { Write-Log "schtasks: $_" }
+    # External executables set $LASTEXITCODE, not exceptions — a failed
+    # schtasks call would NOT be caught by try/catch above. Check the
+    # exit code explicitly and fail loudly. Without this, acc-2-style
+    # regressions (schtasks silently failing, VM never halting, poll
+    # times out at 45 min) slip through.
+    if ($LASTEXITCODE -ne 0) {
+        throw "schtasks.exe exited with code $LASTEXITCODE"
+    }
     Write-Log 'Scheduled-task shutdown armed.'
 } catch {
     Write-Log "ERROR: failed to schedule shutdown: $_"
