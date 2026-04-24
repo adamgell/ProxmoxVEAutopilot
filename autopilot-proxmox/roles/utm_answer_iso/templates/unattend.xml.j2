@@ -238,21 +238,33 @@
 {% endif %}
 
       <FirstLogonCommands>
-        <!-- Enable RDP so operators can inspect the template if needed. -->
+        <!-- Stage the $OEM$\$1\ tree from the autounattend ISO to C:\.
+             Windows Setup only auto-processes $OEM$ when the answer file
+             lives on the Windows installer media; ours is a separate CD,
+             so we manually find the autounattend drive letter (any FS
+             drive containing autounattend.xml at its root) and copy the
+             tree into C:\. Idempotent — skips cleanly if C:\autopilot
+             already exists. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path 'C:\autopilot')) { $d = Get-PSDrive -PSProvider FileSystem | Where-Object { Test-Path (Join-Path $_.Root 'autounattend.xml') } | Select-Object -First 1 -ExpandProperty Root; if ($d) { Copy-Item -Path (Join-Path $d '$OEM$\$1\*') -Destination 'C:\' -Recurse -Force } }"</CommandLine>
+          <Description>Stage $OEM$ tree from autounattend ISO</Description>
+        </SynchronousCommand>
+        <!-- Enable RDP so operators can inspect the template if needed. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
           <CommandLine>powershell.exe -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine>
           <Description>Enable Remote Desktop</Description>
         </SynchronousCommand>
-        <!-- Run the autopilot firstboot payload (staged via $OEM$). -->
+        <!-- Run the autopilot firstboot payload (now present after Order 1). -->
         <SynchronousCommand wcm:action="add">
-          <Order>2</Order>
+          <Order>3</Order>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -File C:\autopilot\firstboot.ps1</CommandLine>
           <Description>Run Autopilot firstboot configuration</Description>
         </SynchronousCommand>
 {% for cmd in firstboot_cmds %}
         <SynchronousCommand wcm:action="add">
-          <Order>{{ loop.index + 2 }}</Order>
+          <Order>{{ loop.index + 3 }}</Order>
           <CommandLine>{{ cmd | xml_escape }}</CommandLine>
           <Description>Custom firstboot command {{ loop.index }}</Description>
         </SynchronousCommand>
