@@ -136,8 +136,14 @@
     # utm_boot_fallback_keystrokes=true so it can be disabled without edits.
 
     - name: "Template build: wait for EFI shell to be reached"
+      # 18s instead of 12: AAVMF POST (~8s) + startup.nsh countdown (~5s) +
+      # buffer. Shorter waits race the countdown and the first character
+      # of our command gets absorbed as "any key skips startup.nsh",
+      # leaving the shell with a truncated command (observed: sent `fs0:`
+      # → shell saw `s0:` → "not recognized as an internal or external
+      # command").
       ansible.builtin.wait_for:
-        timeout: 12
+        timeout: 18
       delegate_to: localhost
       when: utm_boot_fallback_keystrokes | default(true) | bool
 
@@ -145,13 +151,19 @@
       # Four backslashes in YAML → AppleScript sees `\\` → single `\`,
       # giving the EDK2 shell `fs0:\efi\boot\bootaa64.efi`. `key code 36`
       # is not in UTM's AppleScript dialect (that's System Events); the
-      # original working form embeds a literal newline inside the text
-      # string, which UTM's `input keystroke` sends as Return. After Enter
-      # is pressed, a single space ack's "Press any key to boot from CD".
+      # working form embeds a literal newline inside the text string,
+      # which UTM's `input keystroke` sends as Return.
+      #
+      # Leading dummy space+newline ack's "Press ESC to skip startup.nsh"
+      # unambiguously before the real command is typed — protects against
+      # any residual timing race past the 18s wait.
       ansible.builtin.shell: |
         /usr/bin/osascript <<OSA
         tell application "UTM"
             set vm to virtual machine id "{{ _utm_assigned_uuid }}"
+            input keystroke vm text "
+        "
+            delay 1
             input keystroke vm text "fs0:\\\\efi\\\\boot\\\\bootaa64.efi
         "
             delay 2
