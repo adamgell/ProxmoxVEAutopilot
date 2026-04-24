@@ -8,7 +8,7 @@ can pick up without re-deriving context.
 
 Sub-project 1's foundation is in place and 95% of the goal is met:
 
-- T1–T13 green: Python library (`web/utm_bundle.py`) builds valid
+- T1-T13 green: Python library (`web/utm_bundle.py`) builds valid
   ConfigurationVersion-4 plists, lays out `.utm` bundles, wraps
   `qemu-img` and `utmctl`, with a golden fixture + schema contract
   extractor + Tier 1 drift CI script. 20 unit tests pass.
@@ -21,29 +21,29 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
 - T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
   playbook stripped of plutil patches, quit-relaunch dance, and the
   30-line keystroke block (shrunk to 5 lines).
-- T17 partial: acceptance run 1 (win11-acc-1) green with a mid-run
-  manual keystroke recovery (triggered by a keystroke-block bug that
-  was fixed after). Acceptance run 2 (win11-acc-2) regressed — Setup
-  and OOBE completed, but firstboot's scheduled-task shutdown never
-  fired (VM stayed `started` for full 45-min poll budget). Cause not
-  yet pinned down; suspects: `Get-PSDrive`-based `$OEM$` stage fails
-  on some runs (non-deterministic drive-letter assignment), OR
-  `schtasks /RU SYSTEM` fails silently from FirstLogonCommand context.
-
-Known reliable shape for manually reproducing the spec's green state:
-run with `-e utm_boot_fallback_keystrokes=false` if/when the
-`virt-fw-vars` fix lands, AND add an explicit sanity check after the
-OEM staging FLC (e.g., `Test-Path C:\autopilot\firstboot.ps1` in a
-new Order 1.5 that fails the setup loudly). Those are the obvious
-next fixes; out of scope for this session's context budget.
+- T17 resolved: acc-1 and acc-2 both reached `stopped` autonomously
+  with the current firstboot pipeline. The acc-2 regression was root-
+  caused on 2026-04-24: firstboot.ps1 was being written UTF-8 without
+  a BOM, and Windows PowerShell 5.1 (which FirstLogonCommand invokes)
+  defaults to the system ANSI codepage on a BOM-less .ps1. When the
+  QGA + UTM Guest Tools install blocks added em-dash characters to
+  firstboot.ps1.j2, PS 5.1 mis-decoded the multi-byte UTF-8 bytes and
+  threw `MissingEndCurlyBrace` at unrelated lines. FLC's
+  `powershell.exe -File C:\autopilot\firstboot.ps1` exited non-zero
+  before any code ran, so no firstboot.log, no scheduled shutdown
+  task, VM never halted. Fix in commit `23ee992`: answer_iso.py writes
+  firstboot.ps1 with `encoding="utf-8-sig"` (explicit BOM), em-dashes
+  purged from all Windows-bound template files, regression tests added
+  in `test_answer_iso_encoding.py`. acc-2 re-run reached `stopped`
+  after 128 poll attempts (~21 min, well inside the 45-min budget).
 
 See follow-ups: `utm-efi-vars-nvram-boot-entry`,
-`utm-phase2-sysprep-no-qga`, `utm-firstboot-shutdown-reliability`.
+`utm-phase2-sysprep-via-qga`, `utm-qga-arm64-service-start-1920`.
 
 ## Final architecture (sub-project 1 complete)
 
 - **Hypervisor**: official signed `/Applications/UTM.app` release.
-  Do **not** run a locally-built UTM fork — it loses the restricted
+  Do **not** run a locally-built UTM fork - it loses the restricted
   `com.apple.vm.networking` entitlement. Ad-hoc codesigning silently
   drops these; macOS denies vmnet at runtime.
 - **Automation**: `autopilot-proxmox/web/utm_bundle.py` (Python library
@@ -63,7 +63,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
   qemu.hasTPMDevice`, so TPMDevice=true is enough.
 - **Four drives** (USB CD installer, VirtIO system disk, USB CD answer
   ISO, USB CD virtio-win for viostor). All four ImageName fields are
-  set by the renderer — no post-hoc plutil patching.
+  set by the renderer - no post-hoc plutil patching.
 - **Answer ISO + `$OEM$\$1\`**: Windows Setup only processes the `$OEM$`
   folder when the answer file lives on the installer media; ours is a
   separate CD, so a FirstLogonCommand Order 1 scans FS drives for one
@@ -75,7 +75,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
   or `shutdown.exe` calls inside the FirstLogonCommand orchestrator
   get swallowed; the scheduled task fires outside that context. No
   ARM64 QEMU Guest Agent exists (virtio-win + utmapp guest-tools ship
-  x86/x64 QGA only), so the playbook can't use `utmctl exec` — it polls
+  x86/x64 QGA only), so the playbook can't use `utmctl exec` - it polls
   `utmctl status` for `stopped` instead.
 
 ## Critical gotchas
@@ -101,36 +101,36 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    `utm_boot_fallback_keystrokes: true`. The structural fix (write a
    Boot0000 + BootOrder into `efi_vars.fd` via `virt-fw-vars`) is
    tracked as follow-up `utm-efi-vars-nvram-boot-entry`.
-6. **ARM64 Windows QGA + UTM Guest Tools — both bundled**. Fedora's
+6. **ARM64 Windows QGA + UTM Guest Tools - both bundled**. Fedora's
    virtio-win pack still ships x86/x64 qemu-ga MSIs only. UTM's
    guest-tools ships ARM64 Spice vdagent but no QGA. We bundle both:
 
-   - **QGA** — `adamgell/qemu-ga-aarch64-msi` (QGA 11.0.0, MSYS2
+   - **QGA** - `adamgell/qemu-ga-aarch64-msi` (QGA 11.0.0, MSYS2
      `clangarm64`, WiX-packaged) at
      `autopilot-proxmox/assets/qemu-ga-aarch64-win/qemu-ga-aarch64.msi`.
      Provides host-to-guest orchestration: `utmctl ip-address`,
      QMP/QGA JSON-RPC, etc.
-   - **UTM Guest Tools** — `utm-guest-tools-0.1.271.exe` at
+   - **UTM Guest Tools** - `utm-guest-tools-0.1.271.exe` at
      `autopilot-proxmox/assets/utm-guest-tools-win/`. NSIS installer
      that deploys Spice vdagent (clipboard + dynamic-resolution
      resize), spice-webdavd (folder sharing), and a few extras.
 
    Both are staged into `$OEM$\$1\autopilot\` by `answer_iso.py` and
-   installed by `firstboot.ps1` — QGA via `msiexec /i /quiet
+   installed by `firstboot.ps1` - QGA via `msiexec /i /quiet
    /norestart` (step 5a), guest tools via NSIS `/S` (step 5b).
    Disable either by setting `qemu_ga_msi_path` or
    `utm_guest_tools_exe_path` to an empty string in the profile.
 
    **Prerequisite** (already wired): the MSI is user-mode only and
    opens `\\.\Global\org.qemu.guest_agent.0`, which requires the
-   virtio-serial kernel driver (`vioser.sys`) to be loaded first —
+   virtio-serial kernel driver (`vioser.sys`) to be loaded first -
    covered by the `vioserial\w11\ARM64` entries (the directory is
    `vioserial` on the virtio-win ISO; the files inside it are
    `vioser.sys/.inf/.cat`) added to the `DriverPaths` block in
    `unattend.xml.j2`.
 
    **Known UTM gotcha**: `utmctl exec` fails with OSStatus -2700 on
-   UTM 4.7.5 even when the QGA channel is up — this is a UTM harness
+   UTM 4.7.5 even when the QGA channel is up - this is a UTM harness
    issue, not a QGA one. `utmctl ip-address <uuid>` works against the
    same channel and is useful as a "VM is fully booted + QGA is up"
    sanity check from the host.
@@ -140,6 +140,19 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    QMP/QGA JSON-RPC call or a FirstLogonCommand that runs
    `sysprep /oobe /generalize /shutdown` directly (which works today,
    with or without QGA, since it doesn't need host-side exec).
+
+7. **FirstLogonCommand runs Windows PowerShell 5.1, which needs a
+   UTF-8 BOM on .ps1 files**. FLC invokes `powershell.exe` (5.1), not
+   `pwsh.exe` (7). PS 5.1 reads a BOM-less .ps1 as the system ANSI /
+   OEM codepage, not UTF-8. Any multi-byte char (em-dash, en-dash,
+   arrow, smart quote) mis-decodes and the parser throws
+   `MissingEndCurlyBrace` on unrelated lines. FLC's `-File` invocation
+   then exits non-zero silently: no log, no side effects, no task.
+   Two defenses in place: `answer_iso.py` writes firstboot.ps1 with
+   `encoding="utf-8-sig"` (BOM), and `test_answer_iso_encoding.py`
+   forbids em/en-dashes, arrows, and smart quotes in the Windows-
+   bound template files (`firstboot.ps1.j2`, `unattend.xml.j2`,
+   `autounattend.xml[.j2]`). Repo rule: no em-dashes anywhere, ever.
 
 ## Key files
 
@@ -160,7 +173,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 
 | id | status | title |
 | --- | --- | --- |
-| utm-e2e-win11-template | resolved | End-to-end Win11 template test — green in T14 run 8 autonomously; T17 acc-1 green with one manual keystroke nudge |
+| utm-e2e-win11-template | resolved | End-to-end Win11 template test. T14 run 8 green autonomously. T17 acc-1 (post BOM fix, manual patch) and acc-2 (post BOM fix, fully automated) both reached `stopped` state. |
 | utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
@@ -168,8 +181,9 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
 | utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |
-| utm-firstboot-shutdown-reliability | pending | T17 acc-2 regressed — Setup+OOBE completed but the scheduled-task shutdown did not fire. Commits `6b28b98` (`$LASTEXITCODE` + `/SD`) and `e738077` (QGA install pre-shutdown) harden the path; unverified without a fresh E2E |
-| utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone → autopilot inject → hash capture → Intune) |
+| utm-firstboot-shutdown-reliability | resolved | Root cause was firstboot.ps1 written UTF-8 without BOM; PS 5.1 mis-parsed the multi-byte em-dashes and FLC exited before scheduling shutdown. Fix `23ee992`: BOM-writing + em-dash purge + regression tests. acc-2 re-run reached `stopped` autonomously after ~21 min (128 poll attempts). |
+| utm-qga-arm64-service-start-1920 | pending | QGA MSI installs files + registers service, but `QEMU-GA` service fails to start within the 4-min MSI timeout (MSI Error 1920 -> rollback -> exit 1603). Treated as WARNING in firstboot.ps1, so doesn't derail the build, but QGA is non-functional. Suspect: virtio-serial endpoint `\\.\Global\org.qemu.guest_agent.0` not live yet, or vioserial PNP binding race. Full verbose log at `C:\autopilot\qemu-ga-install.log`. |
+| utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone -> autopilot inject -> hash capture -> Intune) |
 | utm-tui-plugin-research | pending | Investigate TUI/UTM plugin surface |
 | utm-upstream-utmctl-create | pending | Upstream `utmctl create` subcommand PR to utmapp/UTM |
 
