@@ -101,15 +101,33 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    `utm_boot_fallback_keystrokes: true`. The structural fix (write a
    Boot0000 + BootOrder into `efi_vars.fd` via `virt-fw-vars`) is
    tracked as follow-up `utm-efi-vars-nvram-boot-entry`.
-6. **No ARM64 Windows QGA**. Fedora's virtio-win pack ships x86/x64
-   qemu-ga MSIs only; utmapp's guest-tools ships ARM64 Spice vdagent
-   but no QGA. Any "inside the guest" orchestration that today goes
-   through `utmctl exec` needs an alternative signal (shutdown, serial
-   port, shared volume). Phase 2 sysprep (`sysprep_finalize.yml`)
-   still uses `utmctl exec` and is thus gated behind Phase 2 — if
-   Phase 2 becomes load-bearing, switch it to a FirstLogonCommand
-   that runs `sysprep /oobe /generalize /shutdown` directly. Tracked
-   as follow-up `utm-phase2-sysprep-no-qga`.
+6. **ARM64 Windows QGA — available via sibling repo**. Fedora's
+   virtio-win pack still ships x86/x64 qemu-ga MSIs only, and utmapp's
+   guest-tools still ships ARM64 Spice vdagent but no QGA. The gap is
+   filled by `adamgell/qemu-ga-aarch64-msi` (QGA 11.0.0, MSYS2
+   `clangarm64` build, WiX-packaged). That MSI is bundled at
+   `autopilot-proxmox/assets/qemu-ga-aarch64-win/qemu-ga-aarch64.msi`
+   and gets staged into `$OEM$\$1\autopilot\` by `answer_iso.py` for
+   `firstboot.ps1` to `msiexec /i ... /quiet /norestart` into the
+   guest.
+
+   **Prerequisite** (already wired): the MSI is user-mode only and
+   opens `\\.\Global\org.qemu.guest_agent.0`, which requires the
+   virtio-serial kernel driver (`vioser.sys`) to be loaded first —
+   covered by the `vioser\w11\ARM64` entries added to the
+   `DriverPaths` block in `unattend.xml.j2`.
+
+   **Known UTM gotcha**: `utmctl exec` fails with OSStatus -2700 on
+   UTM 4.7.5 even when the QGA channel is up — this is a UTM harness
+   issue, not a QGA one. `utmctl ip-address <uuid>` works against the
+   same channel and is useful as a "VM is fully booted + QGA is up"
+   sanity check from the host.
+
+   Sysprep in `sysprep_finalize.yml` still uses `utmctl exec` today;
+   `utm-phase2-sysprep-via-qga` tracks the switch to either a direct
+   QMP/QGA JSON-RPC call or a FirstLogonCommand that runs
+   `sysprep /oobe /generalize /shutdown` directly (which works today,
+   with or without QGA, since it doesn't need host-side exec).
 
 ## Key files
 
