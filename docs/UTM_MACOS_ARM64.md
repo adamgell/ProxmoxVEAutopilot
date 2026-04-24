@@ -153,8 +153,9 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
 | utm-efi-vars-nvram-boot-entry | pending | Replace the 5-line keystroke EFI-shell escape with a `virt-fw-vars`-baked Boot0000 / BootOrder in `efi_vars.fd` (eliminates the osascript fallback entirely) |
-| utm-phase2-sysprep-no-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec`. Replace with a FirstLogonCommand that runs `sysprep /oobe /generalize /shutdown` (there is no ARM64 Windows QGA — see gotcha #6) |
-| utm-firstboot-shutdown-reliability | pending | T17 acc-2 regressed — Setup+OOBE completed but the scheduled-task shutdown did not fire. Commit `6b28b98` adds `$LASTEXITCODE` check + `/SD` date; unverified without a fresh E2E |
+| utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. vioser DriverPaths covers the kernel-mode prereq. See issue #30 |
+| utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |
+| utm-firstboot-shutdown-reliability | pending | T17 acc-2 regressed — Setup+OOBE completed but the scheduled-task shutdown did not fire. Commits `6b28b98` (`$LASTEXITCODE` + `/SD`) and `e738077` (QGA install pre-shutdown) harden the path; unverified without a fresh E2E |
 | utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone → autopilot inject → hash capture → Intune) |
 | utm-tui-plugin-research | pending | Investigate TUI/UTM plugin surface |
 | utm-upstream-utmctl-create | pending | Upstream `utmctl create` subcommand PR to utmapp/UTM |
