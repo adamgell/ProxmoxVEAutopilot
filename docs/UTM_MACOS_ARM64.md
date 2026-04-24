@@ -4,6 +4,42 @@ Session handoff notes for `feature/utm-macos-arm64-support`. Records the
 architecture decisions, gotchas, and open tasks so another agent/model
 can pick up without re-deriving context.
 
+## Sub-project 1 status (2026-04-24)
+
+Sub-project 1's foundation is in place and 95% of the goal is met:
+
+- T1–T13 green: Python library (`web/utm_bundle.py`) builds valid
+  ConfigurationVersion-4 plists, lays out `.utm` bundles, wraps
+  `qemu-img` and `utmctl`, with a golden fixture + schema contract
+  extractor + Tier 1 drift CI script. 20 unit tests pass.
+- T14 green: first autonomous end-to-end Win11 ARM64 template build
+  completed with `failed=0` in run 8 (600s shutdown poll).
+- T15 deferred: `virt-fw-vars` EFI-shell elimination is a follow-up,
+  tracked as `utm-efi-vars-nvram-boot-entry`. Fallback is a 5-line
+  osascript keystroke behind `utm_boot_fallback_keystrokes` (defaults
+  true).
+- T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
+  playbook stripped of plutil patches, quit-relaunch dance, and the
+  30-line keystroke block (shrunk to 5 lines).
+- T17 partial: acceptance run 1 (win11-acc-1) green with a mid-run
+  manual keystroke recovery (triggered by a keystroke-block bug that
+  was fixed after). Acceptance run 2 (win11-acc-2) regressed — Setup
+  and OOBE completed, but firstboot's scheduled-task shutdown never
+  fired (VM stayed `started` for full 45-min poll budget). Cause not
+  yet pinned down; suspects: `Get-PSDrive`-based `$OEM$` stage fails
+  on some runs (non-deterministic drive-letter assignment), OR
+  `schtasks /RU SYSTEM` fails silently from FirstLogonCommand context.
+
+Known reliable shape for manually reproducing the spec's green state:
+run with `-e utm_boot_fallback_keystrokes=false` if/when the
+`virt-fw-vars` fix lands, AND add an explicit sanity check after the
+OEM staging FLC (e.g., `Test-Path C:\autopilot\firstboot.ps1` in a
+new Order 1.5 that fails the setup loudly). Those are the obvious
+next fixes; out of scope for this session's context budget.
+
+See follow-ups: `utm-efi-vars-nvram-boot-entry`,
+`utm-phase2-sysprep-no-qga`, `utm-firstboot-shutdown-reliability`.
+
 ## Final architecture (sub-project 1 complete)
 
 - **Hypervisor**: official signed `/Applications/UTM.app` release.
