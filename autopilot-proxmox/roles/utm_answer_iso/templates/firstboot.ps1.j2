@@ -142,20 +142,27 @@ try {
 Write-Log 'autopilot-firstboot: done'
 
 # ---------------------------------------------------------------------------
-# 5. Shut down — signals the playbook that firstboot finished.
-#     We can't rely on utmctl exec because no ARM64 QEMU Guest Agent exists
-#     (virtio-win.iso and UTM guest tools ship x86/x64 QGA only), so the
-#     host polls `utmctl status` for `stopped` instead of exec'ing into the
-#     guest. Use the PowerShell-native Stop-Computer -Force rather than
-#     wrapping shutdown.exe with Start-Process; the latter silently failed
-#     on a previous run (desktop stayed live, VM never halted).
+# 5. Schedule shutdown via Task Scheduler — FirstLogonCommand orchestration
+#     swallows direct Stop-Computer/shutdown.exe calls (observed on two
+#     previous runs: desktop visible, LogonCount decremented, VM never
+#     halted). A one-shot scheduled task running as SYSTEM with 3 minutes
+#     of grace lets OOBE finalize cleanly, then fires shutdown outside the
+#     FLC context. UTM sees the VM transition to `stopped`; the host-side
+#     playbook poll exits.
 # ---------------------------------------------------------------------------
 try {
-    Write-Log 'Requesting shutdown via Stop-Computer -Force'
-    # Flush the log explicitly since Stop-Computer does not return.
-    Start-Sleep -Seconds 1
-    Stop-Computer -Force
+    $shutdownAt = (Get-Date).AddMinutes(3).ToString('HH:mm')
+    Write-Log "Scheduling one-shot shutdown task at $shutdownAt (3 min grace)"
+    & schtasks.exe /Create `
+        /TN 'AutopilotFirstbootShutdown' `
+        /TR 'shutdown.exe /s /t 0 /f' `
+        /SC ONCE `
+        /ST $shutdownAt `
+        /RU SYSTEM `
+        /RL HIGHEST `
+        /F 2>&1 | ForEach-Object { Write-Log "schtasks: $_" }
+    Write-Log 'Scheduled-task shutdown armed.'
 } catch {
-    Write-Log "ERROR: Stop-Computer failed: $_  — falling back to shutdown.exe"
-    & shutdown.exe /s /t 0 /f
+    Write-Log "ERROR: failed to schedule shutdown: $_"
+    exit 1
 }
