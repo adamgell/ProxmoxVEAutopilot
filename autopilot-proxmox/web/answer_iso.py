@@ -101,6 +101,12 @@ def render_firstboot_ps1(profile: dict) -> str:
     return template.render(**_build_template_context(profile))
 
 
+_QEMU_GA_MSI_DEFAULT = (
+    Path(__file__).resolve().parent.parent
+    / "assets" / "qemu-ga-aarch64-win" / "qemu-ga-aarch64.msi"
+)
+
+
 def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
     """Populate *staging_dir* with ISO contents.
 
@@ -111,11 +117,18 @@ def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
         └── $OEM$/
             └── $1/
                 └── autopilot/
-                    └── firstboot.ps1
+                    ├── firstboot.ps1
+                    └── qemu-ga-aarch64.msi   (optional)
 
-    Windows Setup copies ``$OEM$\\$1\\`` to ``C:\\`` during text-mode
-    setup, so ``autopilot\\firstboot.ps1`` lands at
-    ``C:\\autopilot\\firstboot.ps1`` automatically.
+    Note: Windows Setup's built-in ``$OEM$\\$1\\`` auto-copy only fires
+    when autounattend.xml is on the installer media. Since our
+    autounattend is on a separate CD, the FirstLogonCommand Order 1
+    in ``unattend.xml.j2`` scans drives for autounattend.xml and
+    ``Copy-Item``s the $OEM$ tree into ``C:\\`` before
+    ``firstboot.ps1`` runs.
+
+    ``qemu_ga_msi_path`` in the profile overrides the default; set to
+    an empty string or ``null`` to skip the MSI entirely.
     """
     (staging_dir / "autounattend.xml").write_text(
         render_arm64_unattend(profile), encoding="utf-8"
@@ -125,6 +138,16 @@ def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
     (oem_dir / "firstboot.ps1").write_text(
         render_firstboot_ps1(profile), encoding="utf-8"
     )
+
+    msi_path_str = profile.get("qemu_ga_msi_path", str(_QEMU_GA_MSI_DEFAULT))
+    if msi_path_str:
+        msi_src = Path(msi_path_str).expanduser()
+        if msi_src.is_file():
+            shutil.copyfile(msi_src, oem_dir / "qemu-ga-aarch64.msi")
+        # Silently skip when the path is set but the file is missing —
+        # callers that explicitly disable the MSI set the field to "" or
+        # drop it; missing-file warnings would fire too often during
+        # unit tests where the asset isn't present.
 
 
 def build_answer_iso(vm_name: str, profile: dict, output_dir: Path) -> Path:

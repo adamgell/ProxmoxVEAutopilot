@@ -142,6 +142,38 @@ try {
 Write-Log 'autopilot-firstboot: done'
 
 # ---------------------------------------------------------------------------
+# 5a. Install QEMU Guest Agent (ARM64) — optional, skip if missing
+#     The MSI is staged to C:\autopilot\qemu-ga-aarch64.msi by the
+#     FirstLogonCommand Order 1 that copies $OEM$\$1\* from the
+#     autounattend ISO. It registers the QEMU-GA service Start=Automatic
+#     and opens \\.\Global\org.qemu.guest_agent.0 — but only once the
+#     virtio-serial (vioser) kernel driver is loaded, which happens via
+#     the autounattend DriverPaths. msiexec returns 0 on success or 3010
+#     if a reboot is needed (we shut down immediately after anyway).
+# ---------------------------------------------------------------------------
+$QgaMsi = "$AutopilotDir\qemu-ga-aarch64.msi"
+if (Test-Path $QgaMsi) {
+    try {
+        Write-Log "Installing QEMU Guest Agent (ARM64) from $QgaMsi"
+        $proc = Start-Process -FilePath 'msiexec.exe' `
+            -ArgumentList '/i', $QgaMsi, '/quiet', '/norestart', `
+                          '/L*v', "$AutopilotDir\qemu-ga-install.log" `
+            -NoNewWindow -Wait -PassThru
+        if ($proc.ExitCode -eq 0) {
+            Write-Log 'QEMU GA installed (exit 0).'
+        } elseif ($proc.ExitCode -eq 3010) {
+            Write-Log 'QEMU GA installed (exit 3010, reboot required — fine).'
+        } else {
+            Write-Log "WARNING: msiexec returned $($proc.ExitCode); see qemu-ga-install.log"
+        }
+    } catch {
+        Write-Log "WARNING: QEMU GA install threw: $_"
+    }
+} else {
+    Write-Log "QEMU GA MSI not present at $QgaMsi — skipping install."
+}
+
+# ---------------------------------------------------------------------------
 # 5. Schedule shutdown via Task Scheduler — FirstLogonCommand orchestration
 #     swallows direct Stop-Computer/shutdown.exe calls (observed on two
 #     previous runs: desktop visible, LogonCount decremented, VM never
