@@ -35,6 +35,19 @@
         <PathAndCredentials wcm:action="add" wcm:keyValue="6">
           <Path>F:\NetKVM\w11\ARM64</Path>
         </PathAndCredentials>
+        <!-- vioser (virtio-serial) provides the QEMU GA channel device
+             \\.\Global\org.qemu.guest_agent.0 that qemu-ga-aarch64.msi
+             opens at service start. Without it the QEMU-GA service sits
+             in StartPending forever even when the MSI installs cleanly. -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7">
+          <Path>D:\vioser\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="8">
+          <Path>E:\vioser\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="9">
+          <Path>F:\vioser\w11\ARM64</Path>
+        </PathAndCredentials>
       </DriverPaths>
     </component>
 
