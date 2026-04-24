@@ -142,11 +142,15 @@
       when: utm_boot_fallback_keystrokes | default(true) | bool
 
     - name: "Template build: escape EFI shell via AppleScript (fallback)"
+      # Four backslashes in YAML — two survive bash's un-quoted heredoc,
+      # then AppleScript collapses `\\` to a single `\`, producing the
+      # Windows-style path fs0:\efi\boot\bootaa64.efi that EDK2's shell
+      # expects. Anything less than four trips "unknown token" in AS.
       ansible.builtin.shell: |
         /usr/bin/osascript <<OSA
         tell application "UTM"
             set vm to virtual machine id "{{ _utm_assigned_uuid }}"
-            input keystroke vm text "fs0:\\efi\\boot\\bootaa64.efi"
+            input keystroke vm text "fs0:\\\\efi\\\\boot\\\\bootaa64.efi"
             key code 36
             delay 2
             input keystroke vm text " "
