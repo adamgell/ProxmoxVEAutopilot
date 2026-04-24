@@ -146,10 +146,16 @@ Write-Log 'autopilot-firstboot: done'
 #     We can't rely on utmctl exec because no ARM64 QEMU Guest Agent exists
 #     (virtio-win.iso and UTM guest tools ship x86/x64 QGA only), so the
 #     host polls `utmctl status` for `stopped` instead of exec'ing into the
-#     guest. A clean `shutdown /s /t 5` gives logs 5 seconds to flush before
-#     Windows halts and UTM reports the VM as stopped.
+#     guest. Use the PowerShell-native Stop-Computer -Force rather than
+#     wrapping shutdown.exe with Start-Process; the latter silently failed
+#     on a previous run (desktop stayed live, VM never halted).
 # ---------------------------------------------------------------------------
-Write-Log 'Requesting clean shutdown (5s grace)'
-Start-Process -FilePath 'shutdown.exe' `
-    -ArgumentList '/s', '/t', '5', '/d', 'p:4:1', '/c', 'autopilot-firstboot complete' `
-    -NoNewWindow -Wait
+try {
+    Write-Log 'Requesting shutdown via Stop-Computer -Force'
+    # Flush the log explicitly since Stop-Computer does not return.
+    Start-Sleep -Seconds 1
+    Stop-Computer -Force
+} catch {
+    Write-Log "ERROR: Stop-Computer failed: $_  — falling back to shutdown.exe"
+    & shutdown.exe /s /t 0 /f
+}
