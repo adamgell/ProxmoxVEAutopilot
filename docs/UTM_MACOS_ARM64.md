@@ -4,55 +4,76 @@ Session handoff notes for `feature/utm-macos-arm64-support`. Records the
 architecture decisions, gotchas, and open tasks so another agent/model
 can pick up without re-deriving context.
 
-## Final architecture
+## Final architecture (sub-project 1 complete)
 
 - **Hypervisor**: official signed `/Applications/UTM.app` release.
   Do **not** run a locally-built UTM fork — it loses the restricted
-  `com.apple.vm.networking` entitlement (needed for Shared/Host/Bridged
-  networking) and `com.apple.vm.device-access`. Ad-hoc codesigning
-  silently drops these; macOS denies vmnet at runtime.
-- **Automation**: Ansible role `utm_template_builder` drives UTM via
-  AppleScript (`osascript`) + direct `config.plist` edits (`plutil`,
-  `PlistBuddy`).
-- **TPM 2.0 + Secure Boot (aarch64)**: patched post-bundle-creation —
-  *no UTM fork required*.
-  - `plutil -replace QEMU.TPMDevice -bool YES config.plist`
-  - Replace `Data/efi_vars.fd` with UTM's bundled
-    `/Applications/UTM.app/Contents/Resources/qemu/edk2-arm-secure-vars.fd`
-    (preloaded MS UEFI CA keys).
-  - UTM derives Secure Boot on aarch64 from
-    `arch.hasSecureBootSupport && target.hasSecureBootSupport &&
-    qemu.hasTPMDevice`, so TPMDevice=true is enough.
-- **virtio-win ISO as a 4th CD drive** (required because Win11 ARM64
-  Setup ships no virtio-blk driver):
-  - Bundle gets a 4th `{removable:true}` drive via the AppleScript
-    `make` call in `roles/utm_template_builder/tasks/create_bundle.yml`.
-  - Playbook sets `Drive.3.ImageName = virtio-win.iso` via `plutil`.
-  - ISO expected at `{{ utm_iso_dir }}/virtio-win.iso`
-    (Fedora's `latest-virtio/virtio-win.iso`, contains
-    `viostor/w11/ARM64/` and `NetKVM/w11/ARM64/`).
+  `com.apple.vm.networking` entitlement. Ad-hoc codesigning silently
+  drops these; macOS denies vmnet at runtime.
+- **Automation**: `autopilot-proxmox/web/utm_bundle.py` (Python library
+  + `python -m web.utm_bundle build` CLI) generates `config.plist` in
+  one shot from a Jinja-free dataclass tree via `plistlib.dumps`. No
+  `plutil`, no `PlistBuddy`, no AppleScript `make`. The Ansible role
+  `utm_template_builder` is a thin wrapper that builds a spec JSON,
+  pipes it to the CLI, then starts the VM via `utmctl`.
+- **Bundle registration**: `/usr/bin/open -a UTM <bundle>` via
+  `UtmctlClient.register` in the Python library. UTM's `utmctl` has no
+  `register` subcommand; Launch Services does the work, then the
+  library polls `utmctl list` for the bundle name.
+- **TPM 2.0 + Secure Boot (aarch64)**: set at render time in the plist
+  (`QEMU.TPMDevice=true`, `efi_vars.fd` copied from UTM's
+  `edk2-arm-secure-vars.fd`). UTM derives Secure Boot on aarch64 from
+  `arch.hasSecureBootSupport && target.hasSecureBootSupport &&
+  qemu.hasTPMDevice`, so TPMDevice=true is enough.
+- **Four drives** (USB CD installer, VirtIO system disk, USB CD answer
+  ISO, USB CD virtio-win for viostor). All four ImageName fields are
+  set by the renderer — no post-hoc plutil patching.
+- **Answer ISO + `$OEM$\$1\`**: Windows Setup only processes the `$OEM$`
+  folder when the answer file lives on the installer media; ours is a
+  separate CD, so a FirstLogonCommand Order 1 scans FS drives for one
+  containing `autounattend.xml`, then `Copy-Item`s `$OEM$\$1\*` into
+  `C:\`. That's what makes `C:\autopilot\firstboot.ps1` exist at all.
+- **Firstboot self-shutdown**: `firstboot.ps1` schedules a one-shot
+  Task Scheduler job (`schtasks /SC ONCE /RU SYSTEM /RL HIGHEST`) that
+  runs `shutdown /s /t 0 /f` 3 minutes after OOBE. Direct Stop-Computer
+  or `shutdown.exe` calls inside the FirstLogonCommand orchestrator
+  get swallowed; the scheduled task fires outside that context. No
+  ARM64 QEMU Guest Agent exists (virtio-win + utmapp guest-tools ship
+  x86/x64 QGA only), so the playbook can't use `utmctl exec` — it polls
+  `utmctl status` for `stopped` instead.
 
 ## Critical gotchas
 
-1. **Role defaults don't leak to play scope**. Playbook-level tasks do
-   not see `roles/*/defaults/main.yml`. Inline
-   `{{ utm_virtio_win_iso_name | default('virtio-win.iso') }}` in any
-   playbook task, or pass `-e`.
-2. **Sandboxed Documents dir**. Official UTM stores VMs under
-   `~/Library/Containers/com.utmapp.UTM/Data/Documents/`. Pass
-   `-e utm_documents_dir=$HOME/Library/Containers/com.utmapp.UTM/Data/Documents`.
-3. **UTM AppleScript is insert-only for drives**. No `update`/`eject`
-   verb to swap CD media on a running VM. All drive sources must be
-   set at bundle creation (via `make` + `plutil` patch) before start.
-4. **`ImageName` ignored by `make`**. AppleScript `make` builds the
-   Drive entries but does not honor the `image name` argument; set it
-   afterward with `plutil -replace Drive.N.ImageName`.
-5. **`com.apple.vm.networking` is Apple-restricted**. Self-serve
-   developer accounts cannot grant it. Shared/Host/Bridged networking
-   only works with the signed release build.
-6. **EFI boot order**. UTM's default boot order for ARM64 Win11 often
-   drops to the EFI shell. Playbook sends keystrokes
-   `fs0:` then `efi\boot\bootaa64.efi` plus a "press any key" mash.
+1. **Sandboxed Documents dir**. Official UTM stores VMs under
+   `~/Library/Containers/com.utmapp.UTM/Data/Documents/`. Inventory
+   default already points there; override via
+   `-e utm_documents_dir=...` only if needed.
+2. **UTM enum casing is strict**. `UTMBackend` rawValue is `"QEMU"`
+   (not `"qemu"`); `QEMUNetworkMode.shared` rawValue is `"Shared"`.
+   Lower-case values produce `UTMConfigurationError.invalidBackend`
+   and "Cannot import this VM" popups.
+3. **`Display.VgaRamMib` must be absent for `virtio-ramfb-gl`**. UTM
+   always appends `vgamem_mb=<val>` to the `-device` arg when the key
+   is present; QEMU rejects it for virtio-ramfb-gl. Make the renderer
+   omit the key when unset.
+4. **`com.apple.vm.networking` is Apple-restricted**. Self-serve dev
+   accounts can't grant it. Shared/Host/Bridged networking only works
+   with the signed release build.
+5. **EFI shell drop (aarch64 virt + USB CD)**. AAVMF doesn't auto-add
+   removable USB CDs to BootOrder on first boot. Today we work around
+   it with a 5-line `osascript input keystroke` fallback, gated on
+   `utm_boot_fallback_keystrokes: true`. The structural fix (write a
+   Boot0000 + BootOrder into `efi_vars.fd` via `virt-fw-vars`) is
+   tracked as follow-up `utm-efi-vars-nvram-boot-entry`.
+6. **No ARM64 Windows QGA**. Fedora's virtio-win pack ships x86/x64
+   qemu-ga MSIs only; utmapp's guest-tools ships ARM64 Spice vdagent
+   but no QGA. Any "inside the guest" orchestration that today goes
+   through `utmctl exec` needs an alternative signal (shutdown, serial
+   port, shared volume). Phase 2 sysprep (`sysprep_finalize.yml`)
+   still uses `utmctl exec` and is thus gated behind Phase 2 — if
+   Phase 2 becomes load-bearing, switch it to a FirstLogonCommand
+   that runs `sysprep /oobe /generalize /shutdown` directly. Tracked
+   as follow-up `utm-phase2-sysprep-no-qga`.
 
 ## Key files
 
