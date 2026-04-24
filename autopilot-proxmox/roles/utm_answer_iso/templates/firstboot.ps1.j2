@@ -174,6 +174,31 @@ if (Test-Path $QgaMsi) {
 }
 
 # ---------------------------------------------------------------------------
+# 5b. Install UTM Guest Tools (Spice vdagent + dynamic resolution) —
+#     optional, skip if the NSIS installer wasn't staged. NSIS supports
+#     /S for silent install; exit code 0 is success, anything else is a
+#     WARNING (the UX features are additive, not load-bearing).
+# ---------------------------------------------------------------------------
+$UtmTools = "$AutopilotDir\utm-guest-tools.exe"
+if (Test-Path $UtmTools) {
+    try {
+        Write-Log "Installing UTM Guest Tools from $UtmTools"
+        $proc = Start-Process -FilePath $UtmTools `
+            -ArgumentList '/S' `
+            -NoNewWindow -Wait -PassThru
+        if ($proc.ExitCode -eq 0) {
+            Write-Log 'UTM Guest Tools installed (exit 0).'
+        } else {
+            Write-Log "WARNING: UTM Guest Tools installer returned $($proc.ExitCode)"
+        }
+    } catch {
+        Write-Log "WARNING: UTM Guest Tools install threw: $_"
+    }
+} else {
+    Write-Log "UTM Guest Tools installer not present at $UtmTools — skipping."
+}
+
+# ---------------------------------------------------------------------------
 # 5. Schedule shutdown via Task Scheduler — FirstLogonCommand orchestration
 #     swallows direct Stop-Computer/shutdown.exe calls (observed on two
 #     previous runs: desktop visible, LogonCount decremented, VM never

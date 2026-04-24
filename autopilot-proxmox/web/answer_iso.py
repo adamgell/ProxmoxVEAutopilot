@@ -106,6 +106,28 @@ _QEMU_GA_MSI_DEFAULT = (
     / "assets" / "qemu-ga-aarch64-win" / "qemu-ga-aarch64.msi"
 )
 
+_UTM_GUEST_TOOLS_DEFAULT = (
+    Path(__file__).resolve().parent.parent
+    / "assets" / "utm-guest-tools-win" / "utm-guest-tools-0.1.271.exe"
+)
+
+
+def _stage_optional_asset(oem_dir: Path, profile_key: str, default_path: Path,
+                          profile: dict, staged_name: str) -> None:
+    """Copy an optional asset into ``oem_dir`` under *staged_name*.
+
+    The asset source is taken from ``profile[profile_key]`` (empty string
+    or ``null`` disables), falling back to ``default_path``. Missing
+    files are silently skipped — test envs and callers that disable the
+    asset both benefit from not warning.
+    """
+    src_str = profile.get(profile_key, str(default_path))
+    if not src_str:
+        return
+    src = Path(src_str).expanduser()
+    if src.is_file():
+        shutil.copyfile(src, oem_dir / staged_name)
+
 
 def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
     """Populate *staging_dir* with ISO contents.
@@ -118,7 +140,8 @@ def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
             └── $1/
                 └── autopilot/
                     ├── firstboot.ps1
-                    └── qemu-ga-aarch64.msi   (optional)
+                    ├── qemu-ga-aarch64.msi               (optional)
+                    └── utm-guest-tools-0.1.271.exe       (optional)
 
     Note: Windows Setup's built-in ``$OEM$\\$1\\`` auto-copy only fires
     when autounattend.xml is on the installer media. Since our
@@ -127,8 +150,9 @@ def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
     ``Copy-Item``s the $OEM$ tree into ``C:\\`` before
     ``firstboot.ps1`` runs.
 
-    ``qemu_ga_msi_path`` in the profile overrides the default; set to
-    an empty string or ``null`` to skip the MSI entirely.
+    Profile overrides (set to empty string or drop the key to skip):
+      - ``qemu_ga_msi_path``            → QEMU GA MSI
+      - ``utm_guest_tools_exe_path``    → UTM guest tools NSIS installer
     """
     (staging_dir / "autounattend.xml").write_text(
         render_arm64_unattend(profile), encoding="utf-8"
@@ -139,15 +163,14 @@ def stage_answer_iso_files(staging_dir: Path, profile: dict) -> None:
         render_firstboot_ps1(profile), encoding="utf-8"
     )
 
-    msi_path_str = profile.get("qemu_ga_msi_path", str(_QEMU_GA_MSI_DEFAULT))
-    if msi_path_str:
-        msi_src = Path(msi_path_str).expanduser()
-        if msi_src.is_file():
-            shutil.copyfile(msi_src, oem_dir / "qemu-ga-aarch64.msi")
-        # Silently skip when the path is set but the file is missing —
-        # callers that explicitly disable the MSI set the field to "" or
-        # drop it; missing-file warnings would fire too often during
-        # unit tests where the asset isn't present.
+    _stage_optional_asset(
+        oem_dir, "qemu_ga_msi_path", _QEMU_GA_MSI_DEFAULT,
+        profile, "qemu-ga-aarch64.msi",
+    )
+    _stage_optional_asset(
+        oem_dir, "utm_guest_tools_exe_path", _UTM_GUEST_TOOLS_DEFAULT,
+        profile, "utm-guest-tools.exe",
+    )
 
 
 def build_answer_iso(vm_name: str, profile: dict, output_dir: Path) -> Path:
