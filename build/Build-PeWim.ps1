@@ -253,8 +253,8 @@ try {
             isoSize           = (Get-Item $finalIso).Length
         }
         Write-ArtifactSidecar -Path $finalJson -Properties $sidecar
-        Move-Item -Path $logTempPath -Destination $finalLog -Force
         Log 'Info' "Wrote sidecar $finalJson"
+        Move-Item -Path $logTempPath -Destination $finalLog -Force
 
         Write-Host "BUILD OK"
         Write-Host "WIM:     $finalWim"
