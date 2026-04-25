@@ -14,10 +14,15 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
   extractor + Tier 1 drift CI script. 20 unit tests pass.
 - T14 green: first autonomous end-to-end Win11 ARM64 template build
   completed with `failed=0` in run 8 (600s shutdown poll).
-- T15 deferred: `virt-fw-vars` EFI-shell elimination is a follow-up,
-  tracked as `utm-efi-vars-nvram-boot-entry`. Fallback is a 5-line
-  osascript keystroke behind `utm_boot_fallback_keystrokes` (defaults
-  true).
+- T15 resolved: `virt-fw-vars` EFI-shell elimination landed in
+  `utm-efi-vars-nvram-boot-entry`. `web.utm_bundle.prepare_efi_vars`
+  uses the `virt-firmware` Python API to bake `Boot0000 =
+  FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into
+  the per-bundle `efi_vars.fd` after copying UTM's
+  `edk2-arm-secure-vars.fd` over it. AAVMF now boots straight into
+  the autounattend ISO without keystrokes. The legacy 5-line
+  osascript escape is kept behind `utm_boot_fallback_keystrokes` but
+  default is now `false` -- opt-in only.
 - T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
   playbook stripped of plutil patches, quit-relaunch dance, and the
   30-line keystroke block (shrunk to 5 lines).
@@ -50,8 +55,8 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
        (~15 min, ~6 min faster than acc-2 because the false-failure
        1603 path shortens once the service actually reaches RUNNING).
 
-See follow-ups: `utm-efi-vars-nvram-boot-entry`,
-`utm-phase2-sysprep-via-qga`, `utm-qga-msi-install-start-cosmetic-1603`.
+See follow-ups: `utm-phase2-sysprep-via-qga`,
+`utm-qga-msi-install-start-cosmetic-1603`.
 
 ## Final architecture (sub-project 1 complete)
 
@@ -108,12 +113,19 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 4. **`com.apple.vm.networking` is Apple-restricted**. Self-serve dev
    accounts can't grant it. Shared/Host/Bridged networking only works
    with the signed release build.
-5. **EFI shell drop (aarch64 virt + USB CD)**. AAVMF doesn't auto-add
-   removable USB CDs to BootOrder on first boot. Today we work around
-   it with a 5-line `osascript input keystroke` fallback, gated on
-   `utm_boot_fallback_keystrokes: true`. The structural fix (write a
-   Boot0000 + BootOrder into `efi_vars.fd` via `virt-fw-vars`) is
-   tracked as follow-up `utm-efi-vars-nvram-boot-entry`.
+5. **EFI shell drop (aarch64 virt + USB CD)** -- resolved. AAVMF does
+   not auto-add removable USB CDs to BootOrder on first boot. Resolved
+   via `web.utm_bundle.prepare_efi_vars`, which uses the
+   `virt-firmware` Python API to bake `Boot0000 =
+   FilePath(\efi\boot\bootaa64.efi)` and `BootOrder = 0x0000, ...` into
+   the per-bundle `efi_vars.fd` after copying UTM's seed
+   `edk2-arm-secure-vars.fd` over it. AAVMF BDS treats a FilePath-only
+   device path as "try this file on every connected filesystem", so
+   the entry matches the autounattend ISO whichever USB slot UTM puts
+   it in. The legacy 5-line `osascript input keystroke` escape is kept
+   as an opt-in fallback (`utm_boot_fallback_keystrokes: false` by
+   default) for hosts without virt-firmware on the orchestrator
+   Python.
 6. **ARM64 Windows QGA + UTM Guest Tools - both bundled**. Fedora's
    virtio-win pack still ships x86/x64 qemu-ga MSIs only. UTM's
    guest-tools ships ARM64 Spice vdagent but no QGA. We bundle both:
@@ -208,7 +220,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | `autopilot-proxmox/roles/utm_template_builder/defaults/main.yml` | Role defaults: `utm_enable_tpm_secure_boot: true`, `utm_virtio_win_iso_name: virtio-win.iso`. |
 | `autopilot-proxmox/roles/utm_template_builder/tasks/create_bundle.yml` | AppleScript `make` (4 drives, inc. virtio removable), PlistBuddy reads of drive UUIDs, copies virtio-win ISO into `Data/`. |
 | `autopilot-proxmox/roles/utm_template_builder/tasks/customize_plist.yml` | `Drive.0.ImageName` (installer), `QEMU.TPMDevice=true`, replaces `efi_vars.fd` with `edk2-arm-secure-vars.fd`. |
-| `autopilot-proxmox/playbooks/utm_build_win11_template.yml` | Orchestrates build. Sets `Drive.3.ImageName`, sends EFI shell keys, polls `C:\autopilot\autopilot-firstboot.done` (45 min timeout). |
+| `autopilot-proxmox/playbooks/utm_build_win11_template.yml` | Orchestrates build. Sets `Drive.3.ImageName`, polls `C:\autopilot\autopilot-firstboot.done` (45 min timeout). EFI-shell keystroke fallback retained but gated `utm_boot_fallback_keystrokes: false` by default; primary path is the `prepare_efi_vars`-baked Boot0000. |
 
 ## Known unresolved
 
@@ -224,7 +236,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
-| utm-efi-vars-nvram-boot-entry | pending | Replace the 5-line keystroke EFI-shell escape with a `virt-fw-vars`-baked Boot0000 / BootOrder in `efi_vars.fd` (eliminates the osascript fallback entirely) |
+| utm-efi-vars-nvram-boot-entry | resolved | `web.utm_bundle.prepare_efi_vars` bakes `Boot0000 = FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into the per-bundle `efi_vars.fd` via `virt-firmware`. `utm_boot_fallback_keystrokes` default flipped to `false`; legacy keystroke escape is now opt-in only. Test: `test_prepare_efi_vars_writes_boot0000_entry`. |
 | utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
 | utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |

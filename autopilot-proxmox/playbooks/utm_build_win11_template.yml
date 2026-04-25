@@ -127,13 +127,16 @@
 
     # ── 6a. EFI shell fallback (only when utm_boot_fallback_keystrokes=true)
     #
-    # EDK2 on `qemu-aarch64 virt` doesn't auto-create NVRAM Boot#### entries
-    # for removable USB CDs on first boot, so the firmware drops to the UEFI
-    # Shell. The cleanest fix (pre-populating efi_vars.fd via virt-fw-vars)
-    # is deferred as follow-up `utm-efi-vars-nvram-boot-entry`. Until it
-    # lands, this 5-line osascript step types the boot path and acknowledges
-    # the "Press any key to boot from CD" prompt. Gated on the role default
-    # utm_boot_fallback_keystrokes=true so it can be disabled without edits.
+    # EDK2 on `qemu-aarch64 virt` does not auto-create NVRAM Boot####
+    # entries for removable USB CDs on first boot, so without help the
+    # firmware drops to the UEFI Shell. The structural fix landed in
+    # `utm-efi-vars-nvram-boot-entry`: web.utm_bundle.prepare_efi_vars
+    # now bakes Boot0000 + BootOrder=0000 into the per-bundle
+    # efi_vars.fd at render time via virt-fw-vars, so AAVMF boots
+    # straight into the autounattend ISO. The legacy 5-line osascript
+    # keystroke step below is kept as an opt-in fallback (default off,
+    # via `utm_boot_fallback_keystrokes: false`) for hosts where
+    # virt-firmware is unavailable.
 
     - name: "Template build: wait for EFI shell to be reached"
       # 18s instead of 12: AAVMF POST (~8s) + startup.nsh countdown (~5s) +
@@ -145,7 +148,7 @@
       ansible.builtin.wait_for:
         timeout: 18
       delegate_to: localhost
-      when: utm_boot_fallback_keystrokes | default(true) | bool
+      when: utm_boot_fallback_keystrokes | default(false) | bool
 
     - name: "Template build: escape EFI shell via AppleScript (fallback)"
       # Four backslashes in YAML → AppleScript sees `\\` → single `\`,
@@ -173,7 +176,7 @@
       args:
         executable: /bin/bash
       changed_when: true
-      when: utm_boot_fallback_keystrokes | default(true) | bool
+      when: utm_boot_fallback_keystrokes | default(false) | bool
 
     # ── 6b. Poll for firstboot sentinel ─────────────────────────────────────
     #

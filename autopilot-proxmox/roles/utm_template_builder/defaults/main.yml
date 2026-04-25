@@ -24,8 +24,10 @@ utm_enable_tpm_secure_boot: true
 utm_virtio_win_iso_name: virtio-win.iso
 
 # EFI-shell escape fallback: type the installer EFI loader path via
-# osascript `input keystroke`. Needed while AAVMF on qemu-aarch64 virt
-# drops to the UEFI shell for removable USB CDs. A `virt-fw-vars`-based
-# pre-populated Boot0000 would remove this; tracked in docs/UTM_MACOS_ARM64.md
-# as follow-up `utm-efi-vars-nvram-boot-entry`.
-utm_boot_fallback_keystrokes: true
+# osascript `input keystroke`. Default off as of `utm-efi-vars-nvram-boot-entry`:
+# `web.utm_bundle.prepare_efi_vars` now pre-bakes Boot0000 +
+# BootOrder=0000 into the per-bundle efi_vars.fd via virt-fw-vars, so
+# AAVMF boots straight into the autounattend ISO and never lands in
+# the EFI shell. Flip to true to re-enable the legacy keystroke escape
+# (e.g. when virt-firmware is unavailable on the orchestrator host).
+utm_boot_fallback_keystrokes: false

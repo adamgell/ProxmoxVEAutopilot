@@ -377,6 +377,70 @@ def test_utmctl_delete_invokes_delete_subcommand():
     assert "delete" in args[0]
 
 
+_UTM_STOCK_VARS = pathlib.Path(
+    "/Applications/UTM.app/Contents/Resources/qemu/edk2-arm-secure-vars.fd"
+)
+
+
+def test_prepare_efi_vars_writes_boot0000_entry(tmp_path):
+    """prepare_efi_vars() bakes a Boot0000 + BootOrder entry into a copy
+    of UTM's stock edk2-arm-secure-vars.fd so AAVMF boots straight into
+    the autounattend ISO instead of dropping to the EFI shell.
+
+    Skipped on hosts without UTM installed (CI, contributor laptops). The
+    helper itself is exercised by the bundle integration test below; this
+    test specifically asserts the post-write varstore contains the
+    expected NVRAM variables (Boot0000 with our FilePath, BootOrder
+    starting with 0x0000)."""
+    import pytest as _pytest
+    if not _UTM_STOCK_VARS.is_file():
+        _pytest.skip("UTM not installed; no stock edk2-arm-secure-vars.fd")
+    try:
+        from virt.firmware.varstore import autodetect  # noqa: F401
+    except ImportError:
+        _pytest.skip("virt-firmware not installed")
+
+    from web import utm_bundle as ub
+    seed = tmp_path / "efi_vars.fd"
+    import shutil as _shutil
+    _shutil.copyfile(_UTM_STOCK_VARS, seed)
+
+    ok = ub.prepare_efi_vars(seed)
+    assert ok is True
+
+    # Re-read the modified varstore and assert Boot0000 + BootOrder shape.
+    from virt.firmware.varstore import autodetect as _ad
+    varstore = _ad.open_varstore(str(seed))
+    assert varstore is not None
+    varlist = varstore.get_varlist()
+
+    boot0000 = varlist.get("Boot0000")
+    assert boot0000 is not None, "Boot0000 not present after prepare_efi_vars"
+    boot0000_repr = boot0000.fmt_boot_entry()
+    assert "bootaa64.efi" in boot0000_repr.lower(), (
+        f"Boot0000 devpath does not target bootaa64.efi: {boot0000_repr}"
+    )
+
+    boot_order = varlist.get("BootOrder")
+    assert boot_order is not None, "BootOrder missing after prepare_efi_vars"
+    raw = bytes(boot_order.data)
+    assert len(raw) >= 2, "BootOrder has no entries"
+    first_index = int.from_bytes(raw[:2], "little")
+    assert first_index == 0x0000, (
+        f"BootOrder must start with 0x0000 (our entry), got 0x{first_index:04X}"
+    )
+
+
+def test_prepare_efi_vars_returns_false_on_invalid_stub(tmp_path):
+    """A 1024-byte zero blob is not a real EDK2 varstore; helper returns
+    False rather than raising so write_bundle can fall back gracefully
+    (legacy keystroke path) without crashing the orchestrator."""
+    from web import utm_bundle as ub
+    stub = tmp_path / "stub.fd"
+    stub.write_bytes(b"\x00" * 1024)
+    assert ub.prepare_efi_vars(stub) is False
+
+
 def test_cli_build_writes_bundle(tmp_path):
     """Feed a full spec JSON to the CLI; bundle directory and files exist."""
     efi_src = tmp_path / "efi.fd"; _touch(efi_src)
