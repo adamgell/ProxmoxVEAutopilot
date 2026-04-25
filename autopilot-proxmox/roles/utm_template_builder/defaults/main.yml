@@ -1,0 +1,31 @@
+---
+# utm_template_builder defaults
+
+# VM hardware sizing
+vm_cpu_cores: 4
+vm_memory_mb: 8192
+vm_disk_gb: 80
+
+# Wait mode: 'manual' = operator drives OOBE, re-runs with utm_build_resume=true
+# Future: 'unattended' = polls for a sentinel file via utmctl exec
+utm_build_wait_mode: "manual"
+
+# Set to true when re-running the playbook after OOBE is complete
+utm_build_resume: false
+
+# Set to true to clobber an existing bundle at the destination path
+utm_overwrite_bundle: false
+
+# Enable TPM 2.0 + (implicit) Secure Boot for the new VM.
+# Requires a UTM build with the `tpm device` and `preloaded secure boot keys`
+# AppleScript properties (utmapp/UTM PR: feature/applescript-tpm-securebootkeys
+# or equivalent). Needed for Windows 11 ARM64.
+utm_enable_tpm_secure_boot: true
+utm_virtio_win_iso_name: virtio-win.iso
+
+# EFI-shell escape fallback: type the installer EFI loader path via
+# osascript `input keystroke`. Needed while AAVMF on qemu-aarch64 virt
+# drops to the UEFI shell for removable USB CDs. A `virt-fw-vars`-based
+# pre-populated Boot0000 would remove this; tracked in docs/UTM_MACOS_ARM64.md
+# as follow-up `utm-efi-vars-nvram-boot-entry`.
+utm_boot_fallback_keystrokes: true

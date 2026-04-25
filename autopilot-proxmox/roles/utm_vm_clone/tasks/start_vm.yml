@@ -1,0 +1,25 @@
+---
+- name: "UTM start: boot VM '{{ vm_name }}'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - start
+      - "{{ vm_name }}"
+      - --hide
+  register: _start_result
+  changed_when: true
+  retries: 5
+  delay: 3
+  until: _start_result.rc == 0
+
+- name: "UTM start: poll status until 'started'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _status_poll
+  retries: "{{ (guest_agent_timeout_seconds | int / guest_agent_poll_interval_seconds | int) | int }}"
+  delay: "{{ guest_agent_poll_interval_seconds | int }}"
+  until: _status_poll.stdout | trim == 'started'
+  changed_when: false

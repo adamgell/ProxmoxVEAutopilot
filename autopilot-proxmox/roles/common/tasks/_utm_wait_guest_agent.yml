@@ -1,0 +1,90 @@
+---
+# UTM-specific: Wait for the guest to become fully reachable. We probe
+# BOTH channels because on Windows ARM64 they come up independently:
+#   - SPICE file channel (utmctl file push) — ready within seconds
+#   - utmctl exec channel — needs another ~30-60s after boot for the
+#     guest-side agent service to start accepting commands
+# Using only the file-push probe reports "agent ready" too early and
+# downstream `utmctl exec` calls fail with OSStatus -2700 "The QEMU
+# guest agent is not running or not installed on the guest."
+#
+# Required variables: vm_vmid
+# Optional overrides: guest_agent_timeout_seconds, guest_agent_poll_interval_seconds
+
+- name: "UTM wait: probe SPICE file channel on VM {{ vm_vmid }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - file
+      - push
+      - "{{ vm_vmid }}"
+      - "{{ utm_exec_scratch_dir }}\\utm_ga_ping.txt"
+    stdin: "ping"
+    stdin_add_newline: false
+  register: _utm_agent_file_ping
+  until:
+    - _utm_agent_file_ping.rc == 0
+    - (_utm_agent_file_ping.stderr | default('') | length) == 0
+  retries: "{{ (guest_agent_timeout_seconds | int / guest_agent_poll_interval_seconds | int) | int }}"
+  delay: "{{ guest_agent_poll_interval_seconds | int }}"
+  failed_when: false
+  changed_when: false
+
+- name: "UTM wait: probe exec+redirect channel on VM {{ vm_vmid }} (real guest_exec shape)"
+  # The `utmctl exec "exit 0"` channel comes up earlier than the
+  # exec-with-stdout-redirect channel we actually use for guest_exec
+  # (on Windows ARM64 they're serviced by different SPICE ports).
+  # Probe with the same shape `_utm_guest_exec.yml` uses: write a
+  # known sentinel to a scratch file, then pull it back and verify
+  # the content round-trips. This is the only reliable ready-signal.
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - exec
+      - "{{ vm_vmid }}"
+      - --cmd
+      - "cmd.exe"
+      - "/c"
+      - "echo utm-ready > {{ utm_exec_scratch_dir }}\\utm_ga_exec_ping.txt"
+  register: _utm_agent_exec_ping
+  until:
+    - _utm_agent_exec_ping.rc == 0
+    - (_utm_agent_exec_ping.stderr | default('') | length) == 0
+  retries: "{{ (guest_agent_timeout_seconds | int / guest_agent_poll_interval_seconds | int) | int }}"
+  delay: "{{ guest_agent_poll_interval_seconds | int }}"
+  failed_when: false
+  changed_when: false
+
+- name: "UTM wait: verify sentinel round-trip via file pull"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - file
+      - pull
+      - "{{ vm_vmid }}"
+      - "{{ utm_exec_scratch_dir }}\\utm_ga_exec_ping.txt"
+  register: _utm_agent_exec_verify
+  until:
+    - _utm_agent_exec_verify.rc == 0
+    - "'utm-ready' in (_utm_agent_exec_verify.stdout | default(''))"
+  retries: "{{ (guest_agent_timeout_seconds | int / guest_agent_poll_interval_seconds | int) | int }}"
+  delay: "{{ guest_agent_poll_interval_seconds | int }}"
+  failed_when: false
+  changed_when: false
+
+- name: "UTM wait: fail if guest agent did not respond"
+  ansible.builtin.fail:
+    msg: >-
+      UTM guest agent on VM {{ vm_vmid }} did not respond within
+      {{ guest_agent_timeout_seconds }} seconds. Ensure the VM is
+      running, SPICE guest tools are installed inside the guest, and
+      the VM name matches `utmctl list`.
+      file-push rc={{ _utm_agent_file_ping.rc | default(-1) }} err={{ _utm_agent_file_ping.stderr | default('') }}
+      exec     rc={{ _utm_agent_exec_ping.rc | default(-1) }} err={{ _utm_agent_exec_ping.stderr | default('') }}
+  when: >-
+    (_utm_agent_file_ping.rc | default(1)) != 0
+    or ((_utm_agent_file_ping.stderr | default('')) | length) > 0
+    or (_utm_agent_exec_ping.rc | default(1)) != 0
+    or ((_utm_agent_exec_ping.stderr | default('')) | length) > 0
+    or (_utm_agent_exec_verify.rc | default(1)) != 0
+    or 'utm-ready' not in (_utm_agent_exec_verify.stdout | default(''))

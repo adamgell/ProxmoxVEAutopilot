@@ -1,0 +1,169 @@
+{
+  "ConfigurationVersion": 4,
+  "enums": {
+    "QEMUArchitecture": [
+      "alpha",
+      "arm",
+      "aarch64",
+      "avr",
+      "hppa",
+      "i386",
+      "loongarch64",
+      "m68k",
+      "microblaze",
+      "microblazeel",
+      "mips",
+      "mipsel",
+      "mips64",
+      "mips64el",
+      "or1k",
+      "ppc",
+      "ppc64",
+      "riscv32",
+      "riscv64",
+      "rx",
+      "s390x",
+      "sh4",
+      "sh4eb",
+      "sparc",
+      "sparc64",
+      "tricore",
+      "x86_64",
+      "xtensa",
+      "xtensaeb"
+    ],
+    "QEMUDriveImageType": [
+      "None",
+      "Disk",
+      "CD",
+      "BIOS",
+      "LinuxKernel",
+      "LinuxInitrd",
+      "LinuxDTB"
+    ],
+    "QEMUDriveInterface": [
+      "None",
+      "IDE",
+      "SCSI",
+      "SD",
+      "MTD",
+      "Floppy",
+      "PFlash",
+      "VirtIO",
+      "NVMe",
+      "USB"
+    ],
+    "QEMUNetworkMode": [
+      "Emulated",
+      "Shared",
+      "Host",
+      "Bridged"
+    ]
+  },
+  "generated_from": "/Users/Adam.Gell/src/UTM",
+  "sections": {
+    "Display": [
+      "Hardware",
+      "VgaRamMib",
+      "DynamicResolution",
+      "UpscalingFilter",
+      "DownscalingFilter",
+      "NativeResolution"
+    ],
+    "Drive": [
+      "ImageName",
+      "ImageType",
+      "Interface",
+      "InterfaceVersion",
+      "Identifier",
+      "ReadOnly"
+    ],
+    "Information": [
+      "Name",
+      "Icon",
+      "IconCustom",
+      "Notes",
+      "UUID"
+    ],
+    "Input": [
+      "UsbBusSupport",
+      "UsbSharing",
+      "MaximumUsbShare"
+    ],
+    "Network": [
+      "Mode",
+      "Hardware",
+      "MacAddress",
+      "IsolateFromHost",
+      "PortForward",
+      "BridgeInterface",
+      "VlanGuestAddress",
+      "VlanGuestAddressIPv6",
+      "VlanHostAddress",
+      "VlanHostAddressIPv6",
+      "VlanDhcpStartAddress",
+      "VlanDhcpEndAddress",
+      "VlanDhcpDomain",
+      "VlanDnsServerAddress",
+      "VlanDnsServerAddressIPv6",
+      "VlanDnsSearchDomain",
+      "HostNetUuid"
+    ],
+    "QEMU": [
+      "DebugLog",
+      "UEFIBoot",
+      "RNGDevice",
+      "BalloonDevice",
+      "TPMDevice",
+      "Hypervisor",
+      "TSO",
+      "RTCLocalTime",
+      "PS2Controller",
+      "MachinePropertyOverride",
+      "AdditionalArguments"
+    ],
+    "Root": [
+      "Information",
+      "System",
+      "QEMU",
+      "Input",
+      "Sharing",
+      "Display",
+      "Drive",
+      "Network",
+      "Serial",
+      "Sound",
+      "Backend",
+      "ConfigurationVersion"
+    ],
+    "Serial": [
+      "Mode",
+      "Target",
+      "Terminal",
+      "Hardware",
+      "TcpHostAddress",
+      "TcpPort",
+      "WaitForConnection",
+      "RemoteConnectionAllowed"
+    ],
+    "Sharing": [
+      "DirectoryShareMode",
+      "DirectoryShareReadOnly",
+      "ClipboardSharing"
+    ],
+    "Sound": [
+      "Hardware"
+    ],
+    "System": [
+      "Architecture",
+      "Target",
+      "CPU",
+      "CPUFlagsAdd",
+      "CPUFlagsRemove",
+      "CPUCount",
+      "ForceMulticore",
+      "MemorySize",
+      "JITCacheSize"
+    ]
+  }
+}

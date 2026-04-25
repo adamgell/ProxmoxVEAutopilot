@@ -1,0 +1,72 @@
+---
+# Shared OEM profile loader + SMBIOS1 identity factory.
+#
+# Caller MUST set vm_vmid before including this role. For Proxmox it is
+# the numeric nextid string; for UTM it is the VM name string.
+# generate_vm_identity handles both via hash-based fallback for strings.
+#
+# Exported facts:
+#   _oem_data        - full oem_profiles.yml contents
+#   _oem_profile     - resolved profile dict (undefined when no profile)
+#   _vm_identity     - {uuid: str, disk_serial: str}
+#   _vm_serial       - generated or custom serial string
+#   _smbios1_string  - Proxmox smbios1 value (base64 fields + uuid)
+#
+# On chassis_type: when _oem_profile.chassis_type is defined, a warning
+# is logged noting that each backend handles it differently:
+#   Proxmox 9  - requires a separate SMBIOS binary file (proxmox_vm_clone)
+#   UTM/QEMU   - injects -smbios type=3,type=N via utm_vm_smbios_override
+
+- name: Load OEM profiles
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../files/oem_profiles.yml"
+    name: _oem_data
+
+- name: Resolve OEM profile
+  when: vm_oem_profile is defined and vm_oem_profile | default('') | length > 0
+  block:
+    - name: Look up selected OEM profile
+      ansible.builtin.set_fact:
+        _oem_profile: "{{ _oem_data.oem_profiles[vm_oem_profile] }}"
+
+    - name: Note chassis type handling per backend
+      ansible.builtin.debug:
+        msg: >-
+          OEM profile '{{ vm_oem_profile }}' defines chassis_type
+          {{ _oem_profile.chassis_type }}. Proxmox: handled via per-VM
+          SMBIOS binary file in proxmox_vm_clone (smbios2 not yet in
+          Proxmox 9 API). UTM: injected as QEMU -smbios type=3,type=N
+          by utm_vm_smbios_override.
+      when: _oem_profile.chassis_type is defined
+
+- name: Generate VM identity (UUID + disk serial)
+  ansible.builtin.set_fact:
+    _vm_identity: "{{ vm_vmid | generate_vm_identity }}"
+
+- name: Generate serial number
+  ansible.builtin.set_fact:
+    _vm_serial: >-
+      {{ (_oem_profile.manufacturer | default(''))
+         | generate_serial_number(custom_serial=vm_custom_serial | default(None),
+                                  prefix=vm_serial_prefix | default(None)) }}
+
+- name: Build SMBIOS1 string
+  ansible.builtin.set_fact:
+    _smbios1_string: >-
+      {{ {
+           'manufacturer': _oem_profile.manufacturer | default(''),
+           'product': _oem_profile.product | default(''),
+           'family': _oem_profile.family | default(''),
+           'serial': _vm_serial,
+           'sku': _oem_profile.sku | default(''),
+           'uuid': _vm_identity.uuid
+         } | proxmox_smbios1 }}
+  when: _oem_profile is defined or _vm_identity.uuid is defined
+
+- name: Set SMBIOS1 to UUID-only when no OEM profile
+  ansible.builtin.set_fact:
+    _smbios1_string: "uuid={{ _vm_identity.uuid }}"
+  when:
+    - _oem_profile is not defined
+    - _vm_identity.uuid is defined
+    - _smbios1_string is not defined

@@ -17,6 +17,14 @@ Proxmox VE Autopilot creates Windows VMs that appear as real OEM hardware to Win
 
 All communication with guest VMs happens through the Proxmox REST API and QEMU guest agent — no WinRM, no SSH, no network access to the guest required.
 
+> **Also supported (experimental): UTM + QEMU on macOS ARM64.**
+> Run Windows ARM64 VMs on Apple Silicon using UTM.app. Requires
+> running the web service natively on macOS (not in Docker) because
+> `utmctl` is a macOS-host binary. See
+> [`docs/UTM_MACOS_SETUP.md`](docs/UTM_MACOS_SETUP.md) for setup.
+> macOS operators can use `autopilot-proxmox/scripts/tui.sh` as an
+> interactive launcher (see docs/UTM_MACOS_SETUP.md).
+
 ## Prerequisites
 
 | Component       | Requirement                                          |
@@ -166,4 +174,5 @@ Each profile sets SMBIOS type 1 fields and generates a manufacturer-appropriate 
 
 - **[docs/SETUP.md](docs/SETUP.md)** — detailed setup walkthrough with field-by-field configuration, unattended-install internals, and an air-gapped answer-ISO recipe. Includes the Ubuntu path (LinuxESP).
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — symptoms, causes, and fixes for common failures (Windows and Ubuntu).
+- **[docs/PYTHON_VERSIONS.md](docs/PYTHON_VERSIONS.md)** — Python version matrix: minimum supported, CI-tested versions, 3.13/3.14 concerns, and macOS pyenv/uv install guidance.
 - **[autopilot-proxmox/README.md](autopilot-proxmox/README.md)** — Ansible CLI usage, playbooks, and developer reference.

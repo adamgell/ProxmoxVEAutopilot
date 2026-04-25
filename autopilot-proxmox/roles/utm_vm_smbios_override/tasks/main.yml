@@ -1,0 +1,122 @@
+---
+# Post-clone QEMU SMBIOS injection for UTM bundles.
+#
+# Reads facts from oem_profile_resolver (_oem_profile, _vm_serial,
+# _vm_identity) and injects -smbios type=1,... (and optionally
+# type=3,...) into QEMU.AdditionalArguments in the cloned bundle's
+# config.plist via plutil.
+#
+# Required inputs:
+#   vm_name       - cloned VM name (bundle = utm_documents_dir/vm_name.utm)
+#   _vm_identity  - {uuid: str, disk_serial: str} from oem_profile_resolver
+#   _vm_serial    - serial string from oem_profile_resolver
+#   _oem_profile  - (optional) OEM dict from oem_profile_resolver
+#
+# QEMU.AdditionalArguments shape (verified vs. windows11-arm64.utm and
+# windows-server-arm64.utm skeleton bundles - both have an empty
+# <array/> for AdditionalArguments). The array holds plain strings,
+# NOT dict objects. plutil -insert ... -string is therefore correct.
+#
+# Idempotency: before appending, we convert the plist to xml1 and check
+# whether any entry containing "type=1," already exists in the args.
+# If found, the entire injection block is skipped. Tradeoff: if the OEM
+# profile changes, a re-clone is required to pick up the new values.
+# This is acceptable for Phase 7; a future phase can add a -replace path.
+#
+# Chassis type: if _oem_profile.chassis_type is defined, a second pair
+# of args (-smbios / type=3,type=N) is also appended. Unlike Proxmox,
+# QEMU ARM64 honors -smbios type=3 via CLI, so no binary SMBIOS file
+# is needed.
+
+- name: "UTM SMBIOS: set config.plist path"
+  ansible.builtin.set_fact:
+    _config_plist: "{{ utm_documents_dir }}/{{ vm_name }}.utm/config.plist"
+
+- name: "UTM SMBIOS: build -smbios type=1 value string"
+  ansible.builtin.set_fact:
+    _smbios_type1_val: >-
+      {{ 'type=1'
+         ~ (',manufacturer=' + _oem_profile.manufacturer
+            if (_oem_profile is defined and _oem_profile.manufacturer | default('') | length > 0)
+            else '')
+         ~ (',product=' + _oem_profile.product
+            if (_oem_profile is defined and _oem_profile.product | default('') | length > 0)
+            else '')
+         ~ (',family=' + _oem_profile.family
+            if (_oem_profile is defined and _oem_profile.family | default('') | length > 0)
+            else '')
+         ~ (',serial=' + _vm_serial
+            if _vm_serial | default('') | length > 0
+            else '')
+         ~ (',uuid=' + _vm_identity.uuid
+            if _vm_identity.uuid | default('') | length > 0
+            else '') }}
+
+- name: "UTM SMBIOS: read current plist as XML (idempotency check)"
+  ansible.builtin.command:
+    argv:
+      - plutil
+      - -convert
+      - xml1
+      - -o
+      - "-"
+      - "{{ _config_plist }}"
+  register: _plist_xml
+  changed_when: false
+
+- name: "UTM SMBIOS: check for pre-existing type=1 injection"
+  ansible.builtin.set_fact:
+    _smbios_already_injected: "{{ 'type=1,' in _plist_xml.stdout }}"
+
+- name: "UTM SMBIOS: inject AdditionalArguments"
+  when: not _smbios_already_injected
+  block:
+    - name: "UTM SMBIOS: append -smbios flag"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -insert
+          - "QEMU.AdditionalArguments.-1"
+          - -string
+          - "-smbios"
+          - "{{ _config_plist }}"
+      changed_when: true
+
+    - name: "UTM SMBIOS: append type=1 value"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -insert
+          - "QEMU.AdditionalArguments.-1"
+          - -string
+          - "{{ _smbios_type1_val }}"
+          - "{{ _config_plist }}"
+      changed_when: true
+
+    - name: "UTM SMBIOS: append -smbios flag for type=3 chassis"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -insert
+          - "QEMU.AdditionalArguments.-1"
+          - -string
+          - "-smbios"
+          - "{{ _config_plist }}"
+      changed_when: true
+      when:
+        - _oem_profile is defined
+        - _oem_profile.chassis_type is defined
+
+    - name: "UTM SMBIOS: append type=3 chassis value"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -insert
+          - "QEMU.AdditionalArguments.-1"
+          - -string
+          - "type=3,type={{ _oem_profile.chassis_type }}"
+          - "{{ _config_plist }}"
+      changed_when: true
+      when:
+        - _oem_profile is defined
+        - _oem_profile.chassis_type is defined

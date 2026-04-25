@@ -21,16 +21,23 @@ import uuid
 from pathlib import Path
 
 from web import jobs_db, service_health
+from web.paths import JOBS_DIR as _JOBS_DIR, OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT
 
 _log = logging.getLogger("web.builder")
 
 
-def _worker_id() -> str:
-    """Persist a uuid under /app/output/worker-id.<hostname> so compose
+def _worker_id(output_dir: Path | None = None) -> str:
+    """Persist a uuid under <output_dir>/worker-id.<hostname> so compose
     restarts preserve identity for the health UI. Uses O_CREAT|O_EXCL
-    to survive any (pathological) simultaneous-start race."""
+    to survive any (pathological) simultaneous-start race.
+
+    `output_dir` defaults to ``OUTPUT_DIR`` (repo-relative on macOS,
+    ``/app/output`` inside Docker) so callers that omit the argument
+    work correctly in both environments.
+    """
     hostname = os.uname().nodename
-    path = Path("/app/output") / f"worker-id.{hostname}"
+    base = Path(output_dir) if output_dir is not None else _OUTPUT_DIR
+    path = base / f"worker-id.{hostname}"
     try:
         return path.read_text().strip()
     except FileNotFoundError:
@@ -50,8 +57,14 @@ def _worker_id() -> str:
 
 
 def _version_sha() -> str:
-    path = Path("/app/VERSION")
-    return path.read_text().strip()[:7] if path.exists() else "unknown"
+    # REPO_ROOT/VERSION works for both Docker (/app/VERSION) and native macOS.
+    try:
+        candidate = REPO_ROOT / "VERSION"
+        if candidate.exists():
+            return candidate.read_text().strip()[:7] or "unknown"
+    except Exception:
+        pass
+    return "unknown"
 
 
 def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
@@ -145,9 +158,9 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
         log_file.close()
 
 
-def run_builder(*, jobs_dir: Path | str = "/app/jobs",
-                db_path: Path | str = "/app/output/jobs.db",
-                monitor_db_path: Path | str = "/app/output/device_monitor.db",
+def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
+                db_path: Path | str = _OUTPUT_DIR / "jobs.db",
+                monitor_db_path: Path | str = _OUTPUT_DIR / "device_monitor.db",
                 worker_id: str | None = None,
                 stop_event: threading.Event | None = None,
                 poll_interval_seconds: float = 2.0,
@@ -158,7 +171,7 @@ def run_builder(*, jobs_dir: Path | str = "/app/jobs",
     monitor_db_path = Path(monitor_db_path)
 
     if worker_id is None:
-        worker_id = _worker_id()
+        worker_id = _worker_id(output_dir=db_path.parent)
     stop_event = stop_event or _install_signal_handlers()
     version = _version_sha()
 

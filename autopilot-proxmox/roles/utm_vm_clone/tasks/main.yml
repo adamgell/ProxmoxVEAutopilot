@@ -1,0 +1,170 @@
+---
+# Orchestrator: clone a VM from a UTM template and bring it to a ready
+# state. Mirrors roles/proxmox_vm_clone/tasks/main.yml but uses utmctl.
+#
+# Required inputs:
+#   utm_template_vm_name - source template registered in UTM
+#   vm_name              - target VM friendly name (must be unique)
+#
+# Optional inputs:
+#   template_mode  - bool (default: false). When true, behaves as an
+#                    unattended template *build* rather than a clone:
+#                      • auto-generates an answer ISO (utm_answer_iso role)
+#                      • attaches it as Drive.2 before first boot
+#                      • gates role completion on the firstboot sentinel
+#                        C:\autopilot\autopilot-firstboot.done
+#                    When false (default), preserves the existing clone
+#                    behaviour (SMBIOS override -> network override -> boot
+#                    -> wait for guest agent).
+#
+# Exports:
+#   vm_vmid = vm_name (so common/tasks/* work backend-agnostically)
+#
+# See docs/UTM_ANSWER_ISO.md for sentinel protocol and flow diagrams.
+
+- name: "UTM clone: sanity-check required inputs"
+  ansible.builtin.assert:
+    that:
+      - utm_template_vm_name is defined and (utm_template_vm_name | length) > 0
+      - vm_name is defined and (vm_name | length) > 0
+    fail_msg: >-
+      utm_vm_clone requires utm_template_vm_name and vm_name. Configure
+      the template via Settings -> UTM (macOS/ARM64) Configuration.
+
+- name: "UTM clone: perform the clone"
+  ansible.builtin.include_tasks: clone_vm.yml
+
+- name: "UTM clone: verify cloned VM is stopped before editing plist"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _status_check
+  failed_when: "'stopped' not in _status_check.stdout"
+  changed_when: false
+
+- name: "UTM clone: set vm_vmid for OEM resolver (UTM uses vm_name as identity seed)"
+  ansible.builtin.set_fact:
+    vm_vmid: "{{ vm_name }}"
+
+- name: "UTM clone: resolve OEM profile + identity"
+  ansible.builtin.include_role:
+    name: oem_profile_resolver
+
+# ── template_mode=true path ─────────────────────────────────────────────────
+# Generate answer ISO, attach as Drive.2, start, poll for sentinel.
+# SMBIOS + network overrides and guest-agent wait are skipped - the
+# firstboot.ps1 payload handles WinRM setup instead.
+
+- name: "UTM clone [template_mode]: generate answer ISO"
+  ansible.builtin.include_role:
+    name: utm_answer_iso
+  when: template_mode | default(false) | bool
+
+- name: "UTM clone [template_mode]: copy answer ISO into bundle Data/"
+  ansible.builtin.copy:
+    src: "{{ utm_answer_iso_path }}"
+    dest: >-
+      {{ utm_documents_dir }}/{{ vm_name }}.utm/Data/{{ utm_answer_iso_path | basename }}
+    mode: "0644"
+  when: template_mode | default(false) | bool
+
+- name: "UTM clone [template_mode]: attach answer ISO as Drive.2 (replace)"
+  ansible.builtin.command:
+    argv:
+      - plutil
+      - -replace
+      - Drive.2.ImageName
+      - -string
+      - "{{ utm_answer_iso_path | basename }}"
+      - "{{ utm_documents_dir }}/{{ vm_name }}.utm/config.plist"
+  register: _plutil_answer_replace
+  failed_when: false
+  changed_when: _plutil_answer_replace.rc == 0
+  when: template_mode | default(false) | bool
+
+- name: "UTM clone [template_mode]: attach answer ISO as Drive.2 (insert fallback)"
+  ansible.builtin.command:
+    argv:
+      - plutil
+      - -insert
+      - Drive.2.ImageName
+      - -string
+      - "{{ utm_answer_iso_path | basename }}"
+      - "{{ utm_documents_dir }}/{{ vm_name }}.utm/config.plist"
+  register: _plutil_result
+  failed_when: _plutil_result.rc != 0
+  changed_when: true
+  when:
+    - template_mode | default(false) | bool
+    - _plutil_answer_replace.rc != 0
+
+# ── template_mode=false path ────────────────────────────────────────────────
+# Standard clone: apply SMBIOS + network overrides, then boot normally.
+
+- name: "UTM clone: apply SMBIOS overrides to bundle"
+  ansible.builtin.include_role:
+    name: utm_vm_smbios_override
+  when: not (template_mode | default(false) | bool)
+
+- name: "UTM clone: apply network overrides to bundle"
+  ansible.builtin.include_role:
+    name: utm_vm_network_override
+  when: not (template_mode | default(false) | bool)
+
+# ── boot (both paths) ───────────────────────────────────────────────────────
+
+- name: "UTM clone: start the new VM"
+  ansible.builtin.include_tasks: start_vm.yml
+
+# ── template_mode=true: poll for firstboot sentinel ─────────────────────────
+
+- name: >-
+    UTM clone [template_mode]: poll for sentinel
+    C:\autopilot\autopilot-firstboot.done
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - exec
+      - "{{ vm_name }}"
+      - --
+      - powershell.exe
+      - -Command
+      - "if (Test-Path 'C:\\autopilot\\autopilot-firstboot.done') { 'SENTINEL_FOUND' } else { 'SENTINEL_MISSING' }"
+  register: _sentinel_poll
+  retries: 270   # 270 × 10 s = 45 min
+  delay: 10
+  until: "'SENTINEL_FOUND' in (_sentinel_poll.stdout | default(''))"
+  failed_when: >-
+    _sentinel_poll.attempts | default(1) > 270
+    and 'SENTINEL_FOUND' not in (_sentinel_poll.stdout | default(''))
+  changed_when: false
+  when: template_mode | default(false) | bool
+
+- name: "UTM clone [template_mode]: suspend VM after firstboot completes"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - suspend
+      - "{{ vm_name }}"
+  register: _suspend_result
+  failed_when: _suspend_result.rc != 0
+  changed_when: true
+  when: template_mode | default(false) | bool
+
+- name: "UTM clone [template_mode]: write autopilot-template.ready marker"
+  ansible.builtin.copy:
+    content: |
+      autopilot-template.ready
+      vm_name={{ vm_name }}
+      sentinel_polls={{ _sentinel_poll.attempts | default('n/a') }}
+    dest: "{{ utm_documents_dir }}/{{ vm_name }}.utm/autopilot-template.ready"
+    mode: "0644"
+  when: template_mode | default(false) | bool
+
+# ── template_mode=false: standard guest-agent wait ──────────────────────────
+
+- name: "UTM clone: wait for guest agent (dispatches via hypervisor_type=utm)"
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
+  when: not (template_mode | default(false) | bool)

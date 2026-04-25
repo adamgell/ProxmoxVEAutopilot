@@ -1,0 +1,241 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    Autopilot firstboot payload for Windows 11 ARM64 UTM template builds.
+
+.DESCRIPTION
+    Staged under $OEM$\$1\autopilot\ on the answer ISO -> copied to
+    C:\autopilot\ by Windows text-mode setup.  Runs as a FirstLogonCommand
+    (Order 2) in autounattend.xml.
+
+    This script:
+      1. Creates C:\autopilot\ if it doesn't already exist.
+      2. Enables WinRM over HTTPS with a self-signed certificate.
+      3. Opens firewall port 5986 (WinRM HTTPS).
+      4. Installs the hash-capture hook (autopilot\hash_capture_hook.ps1).
+      5. Writes the sentinel file C:\autopilot\autopilot-firstboot.done.
+         The utm_build_win11_template.yml playbook polls for this file
+         via `utmctl exec` to know when firstboot has finished.
+
+    Variables below are injected by Jinja2 at ISO-build time.
+    Literal single quotes inside PowerShell strings are PS-escaped via
+    the sequence_compiler._ps_escape convention ('' inside single-quoted
+    strings).
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$AutopilotDir = 'C:\autopilot'
+$SentinelFile = "$AutopilotDir\autopilot-firstboot.done"
+$LogFile      = "$AutopilotDir\firstboot.log"
+
+function Write-Log {
+    param([string]$Message)
+    $ts = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    "$ts  $Message" | Tee-Object -FilePath $LogFile -Append | Out-Null
+    Write-Host "$ts  $Message"
+}
+
+# ---------------------------------------------------------------------------
+# 0. Ensure autopilot directory exists
+# ---------------------------------------------------------------------------
+if (-not (Test-Path $AutopilotDir)) {
+    New-Item -ItemType Directory -Path $AutopilotDir -Force | Out-Null
+}
+Write-Log 'autopilot-firstboot: start'
+
+# ---------------------------------------------------------------------------
+# 1. WinRM over HTTPS - self-signed certificate
+# ---------------------------------------------------------------------------
+try {
+    Write-Log 'Configuring WinRM HTTPS ...'
+
+    # Generate a self-signed cert valid for 10 years.
+    $Hostname = $env:COMPUTERNAME
+    $Cert = New-SelfSignedCertificate `
+        -DnsName $Hostname `
+        -CertStoreLocation 'Cert:\LocalMachine\My' `
+        -NotAfter (Get-Date).AddYears(10) `
+        -KeyUsage DigitalSignature, KeyEncipherment `
+        -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.1')
+
+    $CertThumbprint = $Cert.Thumbprint
+
+    # Remove any existing HTTPS listener, then create a new one.
+    Get-ChildItem WSMan:\localhost\Listener | Where-Object {
+        $_.Keys -contains 'Transport=HTTPS'
+    } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    New-Item -Path WSMan:\localhost\Listener `
+        -Transport HTTPS `
+        -Address '*' `
+        -CertificateThumbprint $CertThumbprint `
+        -Force | Out-Null
+
+    # Enable WinRM service.
+    Set-Service -Name WinRM -StartupType Automatic
+    Start-Service -Name WinRM -ErrorAction SilentlyContinue
+
+    # Allow unencrypted + basic auth on localhost (needed for Ansible
+    # when using local_connection; tighten this in production).
+    Set-Item -Path 'WSMan:\localhost\Service\Auth\Basic' -Value $true
+    Set-Item -Path 'WSMan:\localhost\Service\AllowUnencrypted' -Value $false
+
+    Write-Log "WinRM HTTPS listener created (cert thumbprint: $CertThumbprint)"
+} catch {
+    Write-Log "WARNING: WinRM HTTPS configuration failed: $_"
+}
+
+# ---------------------------------------------------------------------------
+# 2. Open firewall port 5986 (WinRM HTTPS)
+# ---------------------------------------------------------------------------
+try {
+    Write-Log 'Opening firewall port 5986 (WinRM HTTPS) ...'
+    $RuleName = 'AutopilotWinRMHTTPS'
+    if (-not (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule `
+            -Name        $RuleName `
+            -DisplayName 'Autopilot WinRM HTTPS (5986)' `
+            -Direction   Inbound `
+            -Protocol    TCP `
+            -LocalPort   5986 `
+            -Action      Allow `
+            -Profile     Any | Out-Null
+    }
+    Write-Log 'Firewall rule created/verified.'
+} catch {
+    Write-Log "WARNING: firewall rule creation failed: $_"
+}
+
+# ---------------------------------------------------------------------------
+# 3. Hash-capture hook - write stub script that Ansible replaces later
+# ---------------------------------------------------------------------------
+try {
+    $HashCaptureHook = "$AutopilotDir\hash_capture_hook.ps1"
+    if (-not (Test-Path $HashCaptureHook)) {
+        @'
+# Autopilot hardware-hash capture hook.
+# This stub is replaced by the Ansible hash_capture role during
+# the first full provisioning run.
+Write-Host 'hash_capture_hook: stub - run Ansible autopilot_inject to populate.'
+'@ | Set-Content -Path $HashCaptureHook -Encoding UTF8
+    }
+    Write-Log 'Hash-capture hook stub written.'
+} catch {
+    Write-Log "WARNING: hash-capture hook write failed: $_"
+}
+
+# ---------------------------------------------------------------------------
+# 4. Write sentinel - signals playbook polling loop that firstboot finished
+# ---------------------------------------------------------------------------
+try {
+    $Timestamp = (Get-Date -Format 'o')
+    "autopilot-firstboot completed at $Timestamp`n" |
+        Set-Content -Path $SentinelFile -Encoding UTF8
+    Write-Log "Sentinel written: $SentinelFile"
+} catch {
+    Write-Log "ERROR: failed to write sentinel: $_"
+    exit 1
+}
+
+Write-Log 'autopilot-firstboot: done'
+
+# ---------------------------------------------------------------------------
+# 5a. Install QEMU Guest Agent (ARM64) - optional, skip if missing
+#     The MSI is staged to C:\autopilot\qemu-ga-aarch64.msi by the
+#     FirstLogonCommand Order 1 that copies $OEM$\$1\* from the
+#     autounattend ISO. It registers the QEMU-GA service Start=Automatic
+#     and opens \\.\Global\org.qemu.guest_agent.0 - but only once the
+#     virtio-serial (vioser) kernel driver is loaded, which happens via
+#     the autounattend DriverPaths. msiexec returns 0 on success or 3010
+#     if a reboot is needed (we shut down immediately after anyway).
+# ---------------------------------------------------------------------------
+$QgaMsi = "$AutopilotDir\qemu-ga-aarch64.msi"
+if (Test-Path $QgaMsi) {
+    try {
+        Write-Log "Installing QEMU Guest Agent (ARM64) from $QgaMsi"
+        $proc = Start-Process -FilePath 'msiexec.exe' `
+            -ArgumentList '/i', $QgaMsi, '/quiet', '/norestart', `
+                          '/L*v', "$AutopilotDir\qemu-ga-install.log" `
+            -NoNewWindow -Wait -PassThru
+        if ($proc.ExitCode -eq 0) {
+            Write-Log 'QEMU GA installed (exit 0).'
+        } elseif ($proc.ExitCode -eq 3010) {
+            Write-Log 'QEMU GA installed (exit 3010, reboot required - fine).'
+        } else {
+            Write-Log "WARNING: msiexec returned $($proc.ExitCode); see qemu-ga-install.log"
+        }
+    } catch {
+        Write-Log "WARNING: QEMU GA install threw: $_"
+    }
+} else {
+    Write-Log "QEMU GA MSI not present at $QgaMsi - skipping install."
+}
+
+# ---------------------------------------------------------------------------
+# 5b. Install UTM Guest Tools (Spice vdagent + dynamic resolution) -
+#     optional, skip if the NSIS installer wasn't staged. NSIS supports
+#     /S for silent install; exit code 0 is success, anything else is a
+#     WARNING (the UX features are additive, not load-bearing).
+# ---------------------------------------------------------------------------
+$UtmTools = "$AutopilotDir\utm-guest-tools.exe"
+if (Test-Path $UtmTools) {
+    try {
+        Write-Log "Installing UTM Guest Tools from $UtmTools"
+        $proc = Start-Process -FilePath $UtmTools `
+            -ArgumentList '/S' `
+            -NoNewWindow -Wait -PassThru
+        if ($proc.ExitCode -eq 0) {
+            Write-Log 'UTM Guest Tools installed (exit 0).'
+        } else {
+            Write-Log "WARNING: UTM Guest Tools installer returned $($proc.ExitCode)"
+        }
+    } catch {
+        Write-Log "WARNING: UTM Guest Tools install threw: $_"
+    }
+} else {
+    Write-Log "UTM Guest Tools installer not present at $UtmTools - skipping."
+}
+
+# ---------------------------------------------------------------------------
+# 5. Schedule shutdown via Task Scheduler - FirstLogonCommand orchestration
+#     swallows direct Stop-Computer/shutdown.exe calls (observed on two
+#     previous runs: desktop visible, LogonCount decremented, VM never
+#     halted). A one-shot scheduled task running as SYSTEM with 3 minutes
+#     of grace lets OOBE finalize cleanly, then fires shutdown outside the
+#     FLC context. UTM sees the VM transition to `stopped`; the host-side
+#     playbook poll exits.
+# ---------------------------------------------------------------------------
+try {
+    # Compute both time and date from the same instant. Passing /SD in
+    # addition to /ST makes schtasks correct across midnight boundaries
+    # - the HH:mm from (Get-Date).AddMinutes(3) alone would land today's
+    # schedule if firstboot runs at 23:58, so the task would silently
+    # fire ~24 hours late.
+    $shutdownWhen = (Get-Date).AddMinutes(3)
+    $shutdownAt   = $shutdownWhen.ToString('HH:mm')
+    $shutdownDate = $shutdownWhen.ToString('MM/dd/yyyy')
+    Write-Log "Scheduling one-shot shutdown task at $shutdownDate $shutdownAt (3 min grace)"
+    & schtasks.exe /Create `
+        /TN 'AutopilotFirstbootShutdown' `
+        /TR 'shutdown.exe /s /t 0 /f' `
+        /SC ONCE `
+        /ST $shutdownAt `
+        /SD $shutdownDate `
+        /RU SYSTEM `
+        /RL HIGHEST `
+        /F 2>&1 | ForEach-Object { Write-Log "schtasks: $_" }
+    # External executables set $LASTEXITCODE, not exceptions - a failed
+    # schtasks call would NOT be caught by try/catch above. Check the
+    # exit code explicitly and fail loudly. Without this, acc-2-style
+    # regressions (schtasks silently failing, VM never halting, poll
+    # times out at 45 min) slip through.
+    if ($LASTEXITCODE -ne 0) {
+        throw "schtasks.exe exited with code $LASTEXITCODE"
+    }
+    Write-Log 'Scheduled-task shutdown armed.'
+} catch {
+    Write-Log "ERROR: failed to schedule shutdown: $_"
+    exit 1
+}

@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import sqlite3
+import subprocess
 import time
 import urllib3
 from datetime import datetime, timezone
@@ -103,23 +104,90 @@ SETTINGS_SCHEMA = [
     # all/vault.yml instead. Secret fields (type="secret") are rendered
     # as masked inputs, never echo their value to the browser, and
     # preserve the current value when the form submits blank.
-    {"section": "Proxmox Connection", "fields": [
+    {"section": "Hypervisor Backend", "applies_to": "all", "fields": [
+        {"key": "hypervisor_type", "label": "Hypervisor Type", "type": "text",
+         "options": ["proxmox", "utm"],
+         "labels": {"proxmox": "Proxmox VE (Linux/x86_64)",
+                    "utm": "UTM + QEMU (macOS/ARM64)"},
+         "help": "Proxmox = standard Docker deployment. UTM requires running the web service natively on macOS — see docs/UTM_MACOS_SETUP.md. Saving a new value reloads the page with the relevant settings sections."},
+    ]},
+    {"section": "UTM (macOS/ARM64) Configuration", "applies_to": "utm", "fields": [
+        {"key": "utm_utmctl_path", "label": "utmctl Path", "type": "text",
+         "help": "/Applications/UTM.app/Contents/MacOS/utmctl (ships with UTM)"},
+        {"key": "utm_library_path", "label": "UTM Library Path", "type": "text",
+         "help": "~/Library/Containers/com.utmapp.UTM/Data/Documents"},
+        {"key": "utm_qemu_binary_path", "label": "QEMU Binary Path", "type": "text",
+         "help": "/opt/homebrew/bin/qemu-system-aarch64 (only needed for direct QEMU operations)"},
+        {"key": "utm_uefi_firmware_path", "label": "UEFI Firmware Path", "type": "text",
+         "help": "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"},
+        {"key": "utm_template_vm_name", "label": "Template VM Name", "type": "text",
+         "help": "Name or UUID of the Windows template VM registered in UTM (e.g., Windows11-Template-ARM64)"},
+        {"key": "utm_exec_scratch_dir", "label": "Guest Scratch Directory", "type": "text",
+         "help": "C:\\\\Users\\\\Public (writable path on guest used for exec output capture)"},
+        {"key": "utm_iso_dir", "label": "ISO Directory", "type": "text",
+         "help": "Host directory where Windows ARM64 installer ISOs live. Operator populates this manually."},
+        {"key": "utm_skeleton_dir", "label": "Skeleton Bundle Directory", "type": "text",
+         "help": "Where the repo-provided .utm skeleton bundles are stored. Usually leave at default."},
+        {"key": "utm_qemu_img_path", "label": "qemu-img Path", "type": "text",
+         "help": "Path to qemu-img. Install via `brew install qemu` if missing."},
+        {"key": "utm_documents_dir", "label": "UTM Library Documents Dir", "type": "text",
+         "help": "Where UTM.app stores its VM bundles."},
+        {"key": "utm_windows_iso_name", "label": "Windows 11 ISO Filename", "type": "text",
+         "help": "Filename (not path) of the Windows 11 ARM64 ISO inside utm_iso_dir."},
+        {"key": "utm_windows_server_iso_name", "label": "Windows Server ISO Filename", "type": "text",
+         "help": "Filename (not path) of the Windows Server ARM64 ISO inside utm_iso_dir."},
+        {"key": "utm_network_mode", "label": "Network Mode", "type": "text",
+         "options": ["shared", "bridged", "host"],
+         "labels": {"shared": "Shared (NAT)", "bridged": "Bridged (LAN-visible)",
+                    "host": "Host-Only"},
+         "help": "Shared = macOS NAT (default, works everywhere). Bridged gets the VM its own LAN IP (required for Autopilot OOBE discovery on some networks). Host-Only = isolated subnet with the host."},
+        {"key": "utm_bridge_interface", "label": "Bridge Interface", "type": "text",
+         "help": "macOS network interface to bridge to, e.g. en0 for Wi-Fi or Thunderbolt Ethernet. Only used when Network Mode = bridged. Leave empty to let UTM pick the default."},
+        {"key": "utm_snapshot_auto_before_sequence", "label": "Auto-Snapshot Before Sequence", "type": "bool",
+         "applies_to": "utm",
+         "help": "Reserved for future use: automatically create a qcow2 snapshot before running a sequence on a UTM VM. Requires the VM to be stopped. Not yet invoked — see TODO in roles/utm_vm_clone/README.md."},
+    ]},
+    {"section": "UTM Answer ISO", "applies_to": "utm", "fields": [
+        {"key": "utm_answer_iso_enabled", "label": "Enable Answer ISO", "type": "bool",
+         "help": "When true, utm_vm_clone with template_mode=true will auto-generate an answer ISO and attach it before boot."},
+        {"key": "utm_answer_admin_user", "label": "Admin Username", "type": "text",
+         "help": "Local administrator account name created during unattended install. Default: Administrator."},
+        {"key": "utm_answer_locale", "label": "Locale", "type": "text",
+         "help": "Windows locale code, e.g. en-US, en-GB, fr-FR."},
+        {"key": "utm_answer_timezone", "label": "Timezone", "type": "text",
+         "help": "Windows timezone name. Run `tzutil /l` on Windows for valid values. Default: Pacific Standard Time."},
+        {"key": "utm_answer_windows_edition", "label": "Windows Edition", "type": "text",
+         "help": "Edition name to select from the ISO's install.wim. Must match exactly, e.g. 'Windows 11 Pro' or 'Windows 11 Enterprise'."},
+        {"key": "utm_answer_iso_dir", "label": "Answer ISO Output Directory", "type": "text",
+         "help": "Directory where generated answer ISOs are written. Default: output/answer-isos relative to repo root."},
+    ]},
+    {"section": "UTM Answer ISO Credentials", "source": "vault", "applies_to": "utm", "fields": [
+        {"key": "utm_answer_admin_pass", "label": "Admin Password", "type": "secret",
+         "help": "Password for the local administrator account. Required for unattended template builds."},
+        {"key": "utm_answer_product_key", "label": "Product Key", "type": "secret",
+         "help": "Optional Windows product key. Leave blank to use the ISO's built-in default edition."},
+    ]},
+    {"section": "Proxmox Connection", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_host", "label": "Host", "type": "text"},
         {"key": "proxmox_port", "label": "Port", "type": "number"},
         {"key": "proxmox_node", "label": "Node", "type": "text"},
         {"key": "proxmox_validate_certs", "label": "Validate Certs", "type": "bool"},
     ]},
-    {"section": "Credentials (vault.yml)", "source": "vault", "fields": [
+    {"section": "Credentials (vault.yml)", "source": "vault", "applies_to": "all", "fields": [
         {"key": "vault_proxmox_api_token_id",
          "label": "Proxmox API Token ID", "type": "text",
+         "applies_to": "proxmox",
          "help": "e.g. autopilot@pve!ansible"},
         {"key": "vault_proxmox_api_token_secret",
-         "label": "Proxmox API Token Secret", "type": "secret"},
+         "label": "Proxmox API Token Secret", "type": "secret",
+         "applies_to": "proxmox"},
         {"key": "vault_proxmox_root_username",
          "label": "Proxmox Root Username", "type": "text",
+         "applies_to": "proxmox",
          "help": "Default: root@pam. Used only for the args PUT on VMs that need a chassis override."},
         {"key": "vault_proxmox_root_password",
          "label": "Proxmox Root Password", "type": "secret",
+         "applies_to": "proxmox",
          "help": "Required for chassis-type overrides. Fetched just-in-time as a /access/ticket per provision; never leaves the container."},
         {"key": "vault_entra_app_id",
          "label": "Entra App (client) ID", "type": "text"},
@@ -128,21 +196,21 @@ SETTINGS_SCHEMA = [
         {"key": "vault_entra_app_secret",
          "label": "Entra App Secret", "type": "secret"},
     ]},
-    {"section": "Storage & Networking", "fields": [
+    {"section": "Storage & Networking", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_storage", "label": "VM Storage", "type": "text"},
         {"key": "proxmox_iso_storage", "label": "ISO Storage", "type": "text"},
         {"key": "proxmox_bridge", "label": "Network Bridge", "type": "text"},
         {"key": "proxmox_vlan_tag", "label": "VLAN Tag", "type": "text"},
     ]},
-    {"section": "ISO Paths", "fields": [
+    {"section": "ISO Paths", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_windows_iso", "label": "Windows ISO", "type": "text"},
         {"key": "proxmox_virtio_iso", "label": "VirtIO ISO", "type": "text"},
         {"key": "proxmox_answer_iso", "label": "Answer ISO", "type": "text"},
     ]},
-    {"section": "Template", "fields": [
+    {"section": "Template", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_template_vmid", "label": "Template VMID", "type": "number"},
     ]},
-    {"section": "VM Defaults", "fields": [
+    {"section": "VM Defaults", "applies_to": "all", "fields": [
         {"key": "vm_cores", "label": "CPU Cores", "type": "number"},
         {"key": "vm_memory_mb", "label": "Memory (MB)", "type": "number"},
         {"key": "vm_disk_size_gb", "label": "Disk Size (GB)", "type": "number"},
@@ -159,14 +227,18 @@ SETTINGS_SCHEMA = [
         {"key": "autopilot_skip", "label": "Skip Autopilot Inject", "type": "bool"},
         {"key": "capture_hardware_hash", "label": "Capture Hash", "type": "bool"},
     ]},
-    {"section": "Timeouts", "fields": [
-        {"key": "guest_agent_timeout_seconds", "label": "Guest Agent Timeout (s)", "type": "number"},
-        {"key": "guest_agent_poll_interval_seconds", "label": "Guest Agent Poll (s)", "type": "number"},
+    {"section": "Timeouts", "applies_to": "all", "fields": [
+        {"key": "guest_agent_timeout_seconds", "label": "Guest Agent Timeout (s)", "type": "number",
+         "applies_to": "proxmox"},
+        {"key": "guest_agent_poll_interval_seconds", "label": "Guest Agent Poll (s)", "type": "number",
+         "applies_to": "proxmox"},
         {"key": "guest_exec_timeout_seconds", "label": "Guest Exec Timeout (s)", "type": "number"},
         {"key": "guest_exec_poll_interval_seconds", "label": "Guest Exec Poll (s)", "type": "number"},
         {"key": "hash_capture_timeout_seconds", "label": "Hash Capture Timeout (s)", "type": "number"},
-        {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number"},
-        {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number"},
+        {"key": "task_poll_retries", "label": "Task Poll Retries", "type": "number",
+         "applies_to": "proxmox"},
+        {"key": "task_poll_delay_seconds", "label": "Task Poll Delay (s)", "type": "number",
+         "applies_to": "proxmox"},
     ]},
 ]
 
@@ -273,7 +345,16 @@ def _format_yaml_value(value):
         or ':' in s or '#' in s or ',' in s
         or s.lower() in ('true', 'false', 'yes', 'no', 'null', 'on', 'off')
     )
-    return f'"{s}"' if needs_quotes else s
+    if not needs_quotes:
+        return s
+    # Prefer single quotes when the string contains backslashes — double-quoted
+    # YAML processes escape sequences (`\U`, `\n`, etc.), which would mangle
+    # Windows paths like 'C:\Users\Public' on save. Single-quoted scalars are
+    # literal except for ' -> '' doubling.
+    if '\\' in s and "'" not in s:
+        return "'" + s + "'"
+    # Fall back to double-quoted with backslash + double-quote escaped.
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def _save_yaml_file(path: Path, updates: dict) -> None:
@@ -354,14 +435,22 @@ def _load_or_create_session_secret() -> str:
 
 def _auth_config() -> dict:
     cfg = _load_proxmox_config()
+    # Env override wins over the vault setting so a single production
+    # vault.yml can be shared across prod + local dev without the
+    # local instance redirecting into production after login. Local
+    # dev / macOS-native sets AUTOPILOT_AUTH_REDIRECT_URI to the
+    # http://localhost:<port>/auth/callback registered against the
+    # same Entra app as an additional Redirect URI.
+    env_redirect = os.environ.get("AUTOPILOT_AUTH_REDIRECT_URI")
+    redirect_uri = env_redirect or cfg.get(
+        "auth_redirect_uri",
+        "https://autopilot.gell.one/auth/callback",
+    )
     return {
         "tenant_id": cfg.get("vault_entra_tenant_id", ""),
         "client_id": cfg.get("vault_entra_app_id", ""),
         "client_secret": cfg.get("vault_entra_app_secret", ""),
-        "redirect_uri": cfg.get(
-            "auth_redirect_uri",
-            "https://autopilot.gell.one/auth/callback",
-        ),
+        "redirect_uri": redirect_uri,
         "admin_group_id": cfg.get("vault_entra_admin_group_id") or None,
     }
 
@@ -646,6 +735,19 @@ def _init_jobs_db_and_migrate() -> None:
     )
     global _JOBS_READY
     _JOBS_READY = True
+
+
+@app.on_event("startup")
+def _ensure_hypervisor_type_default() -> None:
+    """Ensure hypervisor_type defaults to 'proxmox' if not already set.
+    
+    This migration runs at startup to support existing deployments
+    that predate the multi-hypervisor feature.
+    """
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") is None:
+        current_vars["hypervisor_type"] = "proxmox"
+        _save_vars({"hypervisor_type": "proxmox"})
 
 
 # Note: the periodic device-monitor sweep + keytab-refresh loop used
@@ -1748,10 +1850,12 @@ async def home(request: Request):
     # numbers (no flash of "…").
     jobs = job_manager.list_jobs()
     running = [j for j in jobs if j.get("status") == "running"]
+    current_vars = _load_vars()
     return templates.TemplateResponse("home.html", {
         "request": request,
         "initial_running_count": len(running),
         "initial_queued_count": 0,
+        "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
     })
 
 
@@ -1796,10 +1900,13 @@ async def provision_page(request: Request):
 async def template_page(request: Request):
     all_seqs = sequences_db.list_sequences(SEQUENCES_DB)
     ubuntu_sequences = [s for s in all_seqs if s.get("target_os") == "ubuntu"]
+    current_vars = _load_vars()
     return templates.TemplateResponse("template.html", {
         "request": request,
         "profiles": load_oem_profiles(),
         "ubuntu_sequences": ubuntu_sequences,
+        "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
+        "utm_iso_dir": current_vars.get("utm_iso_dir", "~/UTM-ISOs"),
     })
 
 
@@ -2102,11 +2209,18 @@ async def settings_page(request: Request, saved: str = ""):
     current_vars = _load_vars()
     vault_present = _vault_presence()
     options = _fetch_settings_options()
+    hv_type = (current_vars.get("hypervisor_type") or "proxmox").lower()
     sections = []
     for group in SETTINGS_SCHEMA:
+        group_applies = group.get("applies_to", "all")
+        if group_applies not in ("all", hv_type):
+            continue
         source = group.get("source", "vars")
         fields = []
         for f in group["fields"]:
+            field_applies = f.get("applies_to", "all")
+            if field_applies not in ("all", hv_type):
+                continue
             key = f["key"]
             if source == "vault":
                 # Secret-safe: never surface the actual value. The UI
@@ -2134,12 +2248,17 @@ async def settings_page(request: Request, saved: str = ""):
                 "options": field_options,
                 "labels": labels,
             })
+        if not fields:
+            # every field in this section was filtered out for the
+            # current hypervisor — skip the empty header entirely.
+            continue
         sections.append({"section": group["section"], "fields": fields,
                          "source": source})
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "sections": sections,
         "saved": saved == "1",
+        "hypervisor_type": hv_type,
     })
 
 
@@ -2191,11 +2310,23 @@ async def node_options(node: str):
 async def save_settings(request: Request):
     form = await request.form()
     current_vars = _load_vars()
+    # Honor the submitted hypervisor_type when filtering (so flipping
+    # backends + saving in one submit applies correctly), falling back
+    # to the on-disk value.
+    hv_type = (form.get("hypervisor_type")
+               or current_vars.get("hypervisor_type")
+               or "proxmox").lower()
     vars_updates: dict = {}
     vault_updates: dict = {}
     for group in SETTINGS_SCHEMA:
+        group_applies = group.get("applies_to", "all")
+        if group_applies not in ("all", hv_type):
+            continue
         source = group.get("source", "vars")
         for f in group["fields"]:
+            field_applies = f.get("applies_to", "all")
+            if field_applies not in ("all", hv_type):
+                continue
             key = f["key"]
             ftype = f["type"]
 
@@ -2214,8 +2345,15 @@ async def save_settings(request: Request):
             if isinstance(cur_val, str) and "{{" in str(cur_val):
                 continue
             if ftype == "bool":
-                vars_updates[key] = key in form
+                # Checkboxes: absent means unchecked only if the form
+                # was an actual settings submit. If the field isn't in
+                # the form at all (e.g. a partial AJAX save from the
+                # hypervisor switcher), leave it untouched.
+                if key in form or "_all_fields" in form:
+                    vars_updates[key] = key in form
             elif ftype == "number":
+                if key not in form:
+                    continue
                 raw = form.get(key, "")
                 if raw == "" or raw == "null":
                     vars_updates[key] = None
@@ -2225,6 +2363,8 @@ async def save_settings(request: Request):
                     except ValueError:
                         vars_updates[key] = raw
             else:
+                if key not in form:
+                    continue
                 val = form.get(key, "")
                 vars_updates[key] = val if val not in ("null", "") else None
 
@@ -2326,6 +2466,23 @@ async def api_vms_refresh():
 
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request, error: str = ""):
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") == "utm":
+        from web import utm_cli
+        utm_vms: list[dict] = []
+        utm_error = ""
+        try:
+            utm_vms = utm_cli.list_vms()
+        except RuntimeError as exc:
+            utm_error = str(exc)
+        return templates.TemplateResponse("utm_vms.html", {
+            "request": request,
+            "vms": utm_vms,
+            "error": utm_error,
+            "utmctl_path": utm_cli.utmctl_path(),
+            "library_path": str(utm_cli.utm_library_path()),
+        })
+
     cache, cache_age = await _get_vms_payload()
     vms = list(cache["data"] or [])
     vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
@@ -2727,9 +2884,26 @@ async def start_provision(
 
 @app.post("/api/jobs/template")
 async def start_template(
-    profile: str = Form(...),
+    request: Request,
+    profile: str = Form(""),
     pause_before_sysprep: str = Form(""),
+    vm_os_kind: str = Form(""),
+    vm_name: str = Form(""),
+    utm_iso_name: str = Form(""),
+    vm_cpu_cores: str = Form("4"),
+    vm_memory_mb: str = Form("8192"),
+    vm_disk_gb: str = Form("80"),
 ):
+    if _load_vars().get("hypervisor_type") == "utm":
+        return await _enqueue_utm_template_job(
+            vm_os_kind=vm_os_kind,
+            vm_name=vm_name,
+            utm_iso_name=utm_iso_name,
+            vm_cpu_cores=vm_cpu_cores,
+            vm_memory_mb=vm_memory_mb,
+            vm_disk_gb=vm_disk_gb,
+        )
+
     profile = _sanitize_input(profile)
     cmd = [
         "ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml"),
@@ -2753,6 +2927,73 @@ async def start_template(
         args["pause_enabled"] = True
 
     job = job_manager.start("build_template", cmd, args=args)
+    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+
+
+async def _enqueue_utm_template_job(
+    *,
+    vm_os_kind: str,
+    vm_name: str,
+    utm_iso_name: str,
+    vm_cpu_cores: str,
+    vm_memory_mb: str,
+    vm_disk_gb: str,
+):
+    """Validate inputs and enqueue a UTM template-build job."""
+    import re as _re
+
+    valid_os_kinds = {"windows11", "windows_server"}
+    if vm_os_kind not in valid_os_kinds:
+        return JSONResponse(
+            {"ok": False, "error": f"vm_os_kind must be one of {sorted(valid_os_kinds)}"},
+            status_code=400,
+        )
+
+    if not _re.match(r'^[a-zA-Z0-9_-]{1,64}$', vm_name):
+        return JSONResponse(
+            {"ok": False, "error": "vm_name must match ^[a-zA-Z0-9_-]{1,64}$"},
+            status_code=400,
+        )
+
+    current_vars = _load_vars()
+    iso_dir_raw = current_vars.get("utm_iso_dir", "~/UTM-ISOs")
+    iso_dir = Path(os.path.expanduser(iso_dir_raw)).resolve()
+    iso_path = (iso_dir / utm_iso_name).resolve()
+
+    if not str(iso_path).startswith(str(iso_dir)):
+        return JSONResponse({"ok": False, "error": "Path traversal detected in utm_iso_name"}, status_code=400)
+
+    if not iso_path.is_file():
+        return JSONResponse(
+            {"ok": False, "error": f"ISO file not found: {utm_iso_name} (looked in {iso_dir})"},
+            status_code=400,
+        )
+
+    try:
+        cpu_cores = int(vm_cpu_cores)
+        memory_mb = int(vm_memory_mb)
+        disk_gb = int(vm_disk_gb)
+    except (ValueError, TypeError):
+        return JSONResponse({"ok": False, "error": "cpu_cores, memory_mb, and disk_gb must be integers"}, status_code=400)
+
+    cmd = [
+        "ansible-playbook", str(PLAYBOOK_DIR / "build_utm_template.yml"),
+        "-e", f"vm_name={vm_name}",
+        "-e", f"vm_os_kind={vm_os_kind}",
+        "-e", f"utm_iso_name={utm_iso_name}",
+        "-e", f"vm_cpu_cores={cpu_cores}",
+        "-e", f"vm_memory_mb={memory_mb}",
+        "-e", f"vm_disk_gb={disk_gb}",
+    ]
+    args = {
+        "vm_name": vm_name,
+        "vm_os_kind": vm_os_kind,
+        "utm_iso_name": utm_iso_name,
+        "vm_cpu_cores": cpu_cores,
+        "vm_memory_mb": memory_mb,
+        "vm_disk_gb": disk_gb,
+    }
+    job = job_manager.start("build_utm_template", cmd, args=args)
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
@@ -2780,6 +3021,11 @@ async def build_ubuntu_template(sequence_id: int):
     """Kick off the Ubuntu template build playbook for the given sequence.
     Returns a JSON payload with the launched job id; the UI redirects to
     /jobs/{job_id} client-side."""
+    if _load_vars().get("hypervisor_type") == "utm":
+        return JSONResponse(
+            {"ok": False, "error": "Ubuntu UTM templates not yet supported"},
+            status_code=400,
+        )
     seq = sequences_db.get_sequence(SEQUENCES_DB, sequence_id)
     if seq is None or seq.get("target_os") != "ubuntu":
         return JSONResponse(
@@ -2794,6 +3040,592 @@ async def build_ubuntu_template(sequence_id: int):
     args = {"target_os": "ubuntu", "sequence_id": sequence_id}
     job = job_manager.start("build_template_ubuntu", cmd, args=args)
     return {"ok": True, "job_id": job["id"]}
+
+
+@app.get("/api/utm/isos")
+async def utm_list_isos():
+    """List Windows ARM64 ISOs in the configured utm_iso_dir.
+    Returns 200 in all cases; uses a 'warning' field if the directory is absent."""
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") != "utm":
+        return {"iso_dir": "", "isos": [], "note": "hypervisor_type is not utm"}
+
+    iso_dir_raw = current_vars.get("utm_iso_dir", "~/UTM-ISOs")
+    iso_dir = Path(os.path.expanduser(iso_dir_raw)).resolve()
+
+    if not iso_dir.exists():
+        return {
+            "iso_dir": str(iso_dir),
+            "isos": [],
+            "warning": f"Directory not found — create it or update utm_iso_dir: {iso_dir}",
+        }
+
+    isos = []
+    for entry in sorted(iso_dir.iterdir()):
+        if entry.is_file() and entry.suffix.lower() == ".iso":
+            stat = entry.stat()
+            isos.append({
+                "name": entry.name,
+                "size_bytes": stat.st_size,
+                "mtime": int(stat.st_mtime),
+            })
+
+    return {"iso_dir": str(iso_dir), "isos": isos}
+
+
+@app.post("/api/utm/answer-iso/preview")
+async def utm_answer_iso_preview(request: Request):
+    """Return rendered autounattend.xml for QA without building the ISO.
+
+    Accepts a JSON body with the same profile fields as ``build_answer_iso``:
+    ``hostname``, ``locale``, ``timezone``, ``admin_user``, ``admin_pass``,
+    ``org_name``, ``product_key``, ``windows_edition``, ``domain_join``,
+    ``firstboot_cmds``.
+
+    All fields are optional; omitted fields fall back to role defaults.
+    Omitting ``admin_pass`` renders the OOBE section without auto-logon
+    or a user-accounts block (safe for QA without exposing secrets).
+
+    Returns 409 when ``hypervisor_type != utm``.
+    Returns 200 with ``{"ok": true, "xml": "<rendered XML>"}`` on success.
+    """
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    try:
+        from web.answer_iso import render_arm64_unattend
+        xml = render_arm64_unattend(body)
+        return {"ok": True, "xml": xml}
+    except Exception as exc:
+        return JSONResponse(
+            {"ok": False, "error": f"render failed: {exc}"},
+            status_code=500,
+        )
+
+
+@app.get("/api/utm/vms")
+async def utm_list_vms():
+    """List UTM VMs by running `utmctl list`.
+    Returns 200 in all cases; uses an 'error' field on failure."""
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") != "utm":
+        return {"vms": [], "note": "hypervisor_type is not utm"}
+
+    utmctl = current_vars.get("utm_utmctl_path", "/Applications/UTM.app/Contents/MacOS/utmctl")
+    try:
+        result = subprocess.run(
+            [utmctl, "list"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return {"vms": [], "error": result.stderr.strip() or f"utmctl exited {result.returncode}"}
+
+        vms = []
+        lines = result.stdout.splitlines()
+        for line in lines[1:]:  # skip header row
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 2)
+            if len(parts) >= 3:
+                vms.append({"uuid": parts[0], "status": parts[1], "name": parts[2]})
+            elif len(parts) == 2:
+                vms.append({"uuid": parts[0], "status": parts[1], "name": ""})
+
+        return {"vms": vms}
+
+    except subprocess.TimeoutExpired:
+        return {"vms": [], "error": "utmctl list timed out"}
+    except FileNotFoundError:
+        return {"vms": [], "error": f"utmctl not found at {utmctl}"}
+    except Exception as exc:
+        return {"vms": [], "error": str(exc)}
+
+
+import shutil
+import signal
+
+_UTM_NAME_RE = re.compile(
+    r'^(?:[A-Za-z0-9._-]{1,64}|'
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
+)
+
+
+def _utm_check(vars_dict: dict):
+    """Return a 409 JSONResponse if hypervisor_type != utm, else None."""
+    if vars_dict.get("hypervisor_type") != "utm":
+        return JSONResponse({"ok": False, "error": "hypervisor_type is not utm"}, status_code=409)
+    return None
+
+
+def _utm_validate_name(name: str):
+    """Return a 400 JSONResponse if name is invalid, else None."""
+    if not _UTM_NAME_RE.match(name):
+        return JSONResponse(
+            {"ok": False, "error": "name must be alphanumeric/._- (1-64 chars) or a UUID"},
+            status_code=400,
+        )
+    return None
+
+
+@app.get("/api/utm/vms/{name}")
+async def utm_get_vm(name: str):
+    """Return detail for one VM: uuid, status, name, ips, bundle_path."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    cv = _load_vars()
+    c = _utm_check(cv)
+    if c:
+        return c
+
+    from web import utm_cli
+    try:
+        vms = utm_cli.list_vms()
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+    if vm is None:
+        return JSONResponse({"ok": False, "error": f"VM not found: {name!r}"}, status_code=404)
+
+    ips = utm_cli.get_vm_ip(vm["uuid"])
+    bundle = None
+    try:
+        bundle = str(utm_cli.bundle_path_for(name))
+    except RuntimeError:
+        pass
+
+    return {"ok": True, **vm, "ips": ips, "bundle_path": bundle}
+
+
+@app.get("/api/utm/vms/{name}/ip")
+async def utm_get_vm_ip(name: str):
+    """Return IP addresses for the named VM.  Best-effort."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    ips = utm_cli.get_vm_ip(name)
+    result: dict = {"ips": ips}
+    if not ips:
+        result["error"] = "no IPs returned — guest agent may not be running"
+    return result
+
+
+@app.post("/api/utm/vms/{name}/start")
+async def utm_start_vm(name: str):
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    rc, _out, stderr = utm_cli.run_utmctl(["start", name], timeout=15)
+    if rc != 0:
+        return {"ok": False, "error": stderr.strip() or f"utmctl start exited {rc}"}
+
+    status_after = "unknown"
+    try:
+        vms = utm_cli.list_vms()
+        vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+        if vm:
+            status_after = vm["status"]
+    except RuntimeError:
+        pass
+
+    return {"ok": True, "status_after": status_after}
+
+
+@app.post("/api/utm/vms/{name}/suspend")
+async def utm_suspend_vm(name: str):
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    rc, _out, stderr = utm_cli.run_utmctl(["suspend", name], timeout=15)
+    if rc != 0:
+        return {"ok": False, "error": stderr.strip() or f"utmctl suspend exited {rc}"}
+
+    status_after = "unknown"
+    try:
+        vms = utm_cli.list_vms()
+        vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+        if vm:
+            status_after = vm["status"]
+    except RuntimeError:
+        pass
+
+    return {"ok": True, "status_after": status_after}
+
+
+@app.post("/api/utm/vms/{name}/stop")
+async def utm_stop_vm(name: str):
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    rc, _out, stderr = utm_cli.run_utmctl(["stop", name], timeout=60)
+    if rc == -2:
+        return {"ok": False, "error": "graceful stop timed out — use force"}
+    if rc != 0:
+        return {"ok": False, "error": stderr.strip() or f"utmctl stop exited {rc}"}
+
+    status_after = "unknown"
+    try:
+        vms = utm_cli.list_vms()
+        vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+        if vm:
+            status_after = vm["status"]
+    except RuntimeError:
+        pass
+
+    return {"ok": True, "status_after": status_after}
+
+
+@app.post("/api/utm/vms/{name}/force-stop")
+async def utm_force_stop_vm(name: str):
+    """SIGTERM the QEMU process backing this VM."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    try:
+        bundle = utm_cli.bundle_path_for(name)
+    except RuntimeError as exc:
+        return {"ok": False, "error": f"Cannot resolve bundle path: {exc}"}
+
+    bundle_str = str(bundle)
+
+    try:
+        ps = subprocess.run(
+            ["ps", "-axo", "pid,command"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"ps failed: {exc}"}
+
+    killed_pid = None
+    for line in ps.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        pid_str, cmd = parts
+        if bundle_str in cmd and "qemu" in cmd.lower():
+            try:
+                pid = int(pid_str)
+                os.kill(pid, signal.SIGTERM)
+                killed_pid = pid
+                break
+            except (ValueError, ProcessLookupError, PermissionError) as exc:
+                return {"ok": False, "error": f"kill({pid_str}) failed: {exc}"}
+
+    if killed_pid is None:
+        return {
+            "ok": True,
+            "killed_pid": None,
+            "note": "No matching QEMU process found — VM may already be stopped",
+        }
+    return {"ok": True, "killed_pid": killed_pid}
+
+
+@app.post("/api/utm/vms/{name}/delete")
+async def utm_delete_vm(name: str):
+    """Delete a stopped UTM VM by removing its .utm bundle from disk.
+
+    Safety checks:
+    (a) VM must be stopped.
+    (b) Bundle path must be a direct child of utm_library_path and end in .utm.
+    (c) Bundles >500 MB are deleted in a background thread (non-blocking).
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    import asyncio
+
+    try:
+        vms = utm_cli.list_vms()
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    vm = next((m for m in vms if m["uuid"] == name or m["name"] == name), None)
+    if vm is None:
+        return JSONResponse({"ok": False, "error": f"VM not found: {name!r}"}, status_code=404)
+    if vm["status"] != "stopped":
+        return JSONResponse(
+            {"ok": False, "error": f"VM must be stopped before deletion (current: {vm['status']})"},
+            status_code=409,
+        )
+
+    try:
+        bundle = utm_cli.bundle_path_for(name)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    try:
+        du = subprocess.run(
+            ["du", "-sk", str(bundle)],
+            capture_output=True, text=True, timeout=30,
+        )
+        size_kb = int(du.stdout.split()[0]) if du.returncode == 0 else 0
+    except Exception:
+        size_kb = 0
+
+    size_mb = size_kb // 1024
+
+    try:
+        await asyncio.to_thread(shutil.rmtree, bundle, False)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"rmtree failed: {exc}"}, status_code=500)
+
+    return {"ok": True, "deleted": str(bundle), "size_mb": size_mb}
+
+
+@app.post("/api/utm/vms/{name}/open-in-app")
+async def utm_open_in_app(name: str):
+    """Open the VM's .utm bundle in UTM.app via `open -a UTM <bundle>`."""
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_cli
+    try:
+        bundle = utm_cli.bundle_path_for(name)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        subprocess.run(
+            ["open", "-a", "UTM", str(bundle)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    return {"ok": True, "bundle": str(bundle)}
+
+
+# ---------------------------------------------------------------------------
+# UTM snapshot endpoints  (Phase 9 — qemu-img snapshot)
+# ---------------------------------------------------------------------------
+
+_SNAP_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _snap_validate_name(name: str):
+    """Return a 400 JSONResponse if the snapshot name is invalid, else None."""
+    if not _SNAP_NAME_RE.match(name):
+        return JSONResponse(
+            {"ok": False, "error": "Snapshot name must be 1–64 alphanumeric/._- characters"},
+            status_code=400,
+        )
+    return None
+
+
+@app.get("/api/utm/vms/{name}/snapshots")
+async def utm_list_snapshots(name: str):
+    """List qcow2 internal snapshots for a UTM VM.
+
+    Uses qemu-img -l -U so it works on any VM state (including started).
+    Returns 409 when hypervisor_type != utm.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_snapshots
+    try:
+        snaps = utm_snapshots.list_snapshots(name)
+        return {"ok": True, "snapshots": snaps}
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/utm/vms/{name}/snapshots")
+async def utm_create_snapshot(name: str, request: Request):
+    """Create a named qcow2 snapshot.  VM must be stopped.
+
+    Body: ``{"name": "snap-name", "description": "optional"}``
+    Returns 409 when hypervisor_type != utm or VM is not stopped.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    snap_name = (body.get("name") or "").strip()
+    if not snap_name:
+        return JSONResponse(
+            {"ok": False, "error": "Request body must include a non-empty 'name' field"},
+            status_code=400,
+        )
+    sv = _snap_validate_name(snap_name)
+    if sv:
+        return sv
+
+    description = (body.get("description") or "").strip()
+
+    from web import utm_snapshots
+    try:
+        result = utm_snapshots.create_snapshot(name, snap_name, description)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        status = 409 if "must be stopped" in msg else 500
+        return JSONResponse({"ok": False, "error": msg}, status_code=status)
+
+
+@app.post("/api/utm/vms/{name}/snapshots/{snap_name}/restore")
+async def utm_restore_snapshot(name: str, snap_name: str):
+    """Restore (apply) a named qcow2 snapshot.  VM must be stopped.
+
+    Returns 409 when hypervisor_type != utm or VM is not stopped.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    sv = _snap_validate_name(snap_name)
+    if sv:
+        return sv
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_snapshots
+    try:
+        result = utm_snapshots.restore_snapshot(name, snap_name)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        status = 409 if "must be stopped" in msg else 500
+        return JSONResponse({"ok": False, "error": msg}, status_code=status)
+
+
+@app.delete("/api/utm/vms/{name}/snapshots/{snap_name}")
+async def utm_delete_snapshot(name: str, snap_name: str):
+    """Delete a named qcow2 snapshot.  VM must be stopped.
+
+    Returns 409 when hypervisor_type != utm or VM is not stopped.
+    """
+    v = _utm_validate_name(name)
+    if v:
+        return v
+    sv = _snap_validate_name(snap_name)
+    if sv:
+        return sv
+    c = _utm_check(_load_vars())
+    if c:
+        return c
+
+    from web import utm_snapshots
+    try:
+        result = utm_snapshots.delete_snapshot(name, snap_name)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        status = 409 if "must be stopped" in msg else 500
+        return JSONResponse({"ok": False, "error": msg}, status_code=status)
+
+
+@app.get("/api/utm/host-summary")
+async def utm_host_summary():
+    """Return macOS host + VM health for the UTM dashboard card.
+
+    Returns 200 in all cases (including partial failures).
+    Returns 409 when hypervisor_type != utm.
+    """
+    cv = _load_vars()
+    c = _utm_check(cv)
+    if c:
+        return c
+
+    from web import utm_host_metrics, utm_vm_metrics
+
+    utm_docs_dir = cv.get("utm_documents_dir") or cv.get("utm_library_path") or \
+        "~/Library/Containers/com.utmapp.UTM/Data/Documents"
+
+    try:
+        host = utm_host_metrics.get_cached_host_summary(utm_docs_dir)
+        ok_host = True
+        host_err = None
+    except Exception as exc:
+        host = {}
+        ok_host = False
+        host_err = str(exc)
+
+    try:
+        vms = utm_vm_metrics.vm_summary()
+        ok_vms = "error" not in vms
+        vm_err = vms.pop("error", None)
+    except Exception as exc:
+        vms = {}
+        ok_vms = False
+        vm_err = str(exc)
+
+    ok = ok_host and ok_vms
+    result: dict = {
+        "ok": ok,
+        "hypervisor_type": "utm",
+        "host": host,
+        "vms": vms,
+    }
+    if not ok:
+        errors = [e for e in [host_err, vm_err] if e]
+        result["error"] = "; ".join(errors) if errors else "unknown error"
+    return result
 
 
 @app.get("/api/vms/{vmid}/console")

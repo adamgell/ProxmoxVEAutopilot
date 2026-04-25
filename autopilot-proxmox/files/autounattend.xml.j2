@@ -2,7 +2,7 @@
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
   <!-- ================================================================
-       Windows PE — disk partitioning, driver loading, image selection
+       Windows PE - disk partitioning, driver loading, image selection
        ================================================================ -->
   <settings pass="windowsPE">
 
@@ -27,7 +27,7 @@
       <!-- GPT/UEFI disk layout.
            Recovery partition is placed BEFORE Windows (C:) so C: is always
            the last partition on disk. That way future Proxmox disk
-           expansions land free space directly adjacent to C: — no need to
+           expansions land free space directly adjacent to C: - no need to
            move Recovery out of the way. -->
       <DiskConfiguration>
         <Disk wcm:action="add">
@@ -83,7 +83,7 @@
         </Disk>
       </DiskConfiguration>
 
-      <!-- Select Windows 11 Enterprise — install to partition 4 (last),
+      <!-- Select Windows 11 Enterprise - install to partition 4 (last),
            leaving partition 3 as the pre-staged recovery partition. -->
       <ImageInstall>
         <OSImage>
@@ -162,7 +162,7 @@
   </settings>
 
   <!-- ================================================================
-       Specialize — machine identity
+       Specialize - machine identity
        ================================================================ -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -174,8 +174,8 @@
     </component>
 
     <!-- Install QEMU Guest Agent from the VirtIO ISO during specialize.
-         This runs as SYSTEM before OOBE starts — NO AutoLogon required
-         — so the clone has a working GA by the time Ansible's
+         This runs as SYSTEM before OOBE starts - NO AutoLogon required
+         - so the clone has a working GA by the time Ansible's
          hash_capture / autopilot_inject tasks try to reach it via
          `qm guest exec`. Previously the MSI install was in
          FirstLogonCommands, which only fire when AutoLogon is set;
@@ -207,7 +207,7 @@
   </settings>
 
   <!-- ================================================================
-       OOBE — skip all prompts, create admin, install guest agent
+       OOBE - skip all prompts, create admin, install guest agent
        ================================================================ -->
   <settings pass="oobeSystem">
 
@@ -216,13 +216,13 @@
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
                publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
 
-      <!-- OOBE on clones is INTERACTIVE — start at the Region screen.
+      <!-- OOBE on clones is INTERACTIVE - start at the Region screen.
            The original autounattend.xml had Hide* flags here that
            auto-completed every OOBE screen (region, keyboard, network,
            account, EULA, privacy) so a clone booted straight into the
            Administrator desktop. That's correct for template *install*
            (where the operator isn't sitting in front of it) but wrong
-           for clones — Autopilot enrollment + hash-capture workflows
+           for clones - Autopilot enrollment + hash-capture workflows
            rely on OOBE staying open so the operator (or end user) can
            drive it. With AutoLogon also disabled by default in the
            renderer, removing these flags lets OOBE display every
@@ -260,7 +260,7 @@
     <!-- International-Core in oobeSystem auto-fills the Region/Keyboard
          answers, skipping the very first OOBE screens. Removed for
          clones so OOBE stops at the Region selection screen. The
-         WinPE-pass International-Core component above is kept — that
+         WinPE-pass International-Core component above is kept - that
          one applies during template *install*, not clone OOBE, so it
          doesn't affect runtime OOBE behavior. -->
 

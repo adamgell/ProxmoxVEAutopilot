@@ -1,0 +1,72 @@
+---
+# utm_template_builder/tasks/sysprep_finalize.yml
+#
+# Phase 2 — runs after the operator has completed OOBE and re-run the
+# playbook with -e utm_build_resume=true.
+#
+# 1. Runs Windows Sysprep (/generalize /oobe /shutdown) via utmctl exec.
+# 2. Polls utmctl status until the VM reaches 'stopped'.
+# 3. Emits the "template ready" message.
+
+- name: "Sysprep: verify VM is reachable — {{ vm_name }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _pre_sysprep_status
+  failed_when: _pre_sysprep_status.rc != 0
+  changed_when: false
+
+- name: "Sysprep: fail if VM is not running (status must be 'started')"
+  ansible.builtin.fail:
+    msg: >-
+      VM '{{ vm_name }}' is not in 'started' state
+      (got: '{{ _pre_sysprep_status.stdout | trim }}').
+      Boot the VM first or confirm utm_build_resume=true is correct.
+  when: _pre_sysprep_status.stdout | trim != 'started'
+
+- name: "Sysprep: invoke Windows Sysprep via utmctl exec"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - exec
+      - "{{ vm_name }}"
+      - --
+      - C:\Windows\System32\Sysprep\sysprep.exe
+      - /generalize
+      - /oobe
+      - /shutdown
+  register: _sysprep_result
+  failed_when: _sysprep_result.rc != 0
+  changed_when: true
+
+- name: "Sysprep: poll utmctl status until VM reaches 'stopped'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _sysprep_status_poll
+  retries: 60
+  delay: 10
+  until: _sysprep_status_poll.stdout | trim == 'stopped'
+  failed_when:
+    - _sysprep_status_poll.rc != 0
+    - _sysprep_status_poll.retries | default(0) >= 60
+  changed_when: false
+
+- name: "Sysprep: template finalisation complete"
+  ansible.builtin.debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+      ║  UTM TEMPLATE READY                                                  ║
+      ╠══════════════════════════════════════════════════════════════════════╣
+      ║  Sysprep completed. VM '{{ vm_name }}' is stopped and generalised.  ║
+      ║                                                                      ║
+      ║  Set the following in Settings → UTM Configuration:                 ║
+      ║    utm_template_vm_name: {{ vm_name }}                              ║
+      ║                                                                      ║
+      ║  You can now use provision_utm_iso.yml or build clones with         ║
+      ║  utm_vm_clone.                                                       ║
+      ╚══════════════════════════════════════════════════════════════════════╝

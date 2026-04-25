@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- ================================================================
+       Windows PE - disk partitioning and image selection.
+       DriverPaths belt-and-braces for the VirtIO system disk: paths
+       cover drive letters D:/E:/F: so Setup finds viostor on whatever
+       letter the virtio-win CD gets assigned. Setup silently skips
+       nonexistent paths, so listing all three is safe even when Win11
+       ARM64 already has the driver in boot.wim.
+       ================================================================ -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <DriverPaths>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+          <Path>D:\viostor\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+          <Path>E:\viostor\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3">
+          <Path>F:\viostor\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4">
+          <Path>D:\NetKVM\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5">
+          <Path>E:\NetKVM\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6">
+          <Path>F:\NetKVM\w11\ARM64</Path>
+        </PathAndCredentials>
+        <!-- vioser (virtio-serial) provides the QEMU GA channel device
+             \\.\Global\org.qemu.guest_agent.0 that qemu-ga-aarch64.msi
+             opens at service start. Without it the QEMU-GA service sits
+             in StartPending forever even when the MSI installs cleanly. -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7">
+          <Path>D:\vioserial\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="8">
+          <Path>E:\vioserial\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="9">
+          <Path>F:\vioserial\w11\ARM64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+    </component>
+
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>{{ locale }}</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>{{ locale }}</InputLocale>
+      <SystemLocale>{{ locale }}</SystemLocale>
+      <UILanguage>{{ locale }}</UILanguage>
+      <UserLocale>{{ locale }}</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+
+      <!-- GPT/UEFI disk layout.
+           EFI (300 MB) -> MSR (16 MB) -> Recovery (1 GB) -> Windows (rest).
+           Recovery is before Windows so C: is the last partition -
+           future disk expansions extend C: without moving Recovery. -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Size>300</Size>
+              <Type>EFI</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Size>16</Size>
+              <Type>MSR</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Size>1000</Size>
+              <Type>Primary</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>4</Order>
+              <Extend>true</Extend>
+              <Type>Primary</Type>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Recovery</Label>
+              <TypeID>DE94BBA4-06D1-4D40-A16A-BFD50179D6AC</TypeID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>4</Order>
+              <PartitionID>4</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>{{ windows_edition }}</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>4</PartitionID>
+          </InstallTo>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <!-- ProductKey must always be emitted so Setup does not prompt.
+             With an empty Key + WillShowUI=Never, Setup uses the edition
+             selected via ImageInstall/InstallFrom/MetaData (/IMAGE/NAME).
+             Supply a real key via `-e product_key=...` when activation is
+             required; generic KMS client setup keys work to pick an
+             edition without activating. -->
+        <ProductKey>
+          <Key>{{ (product_key | default('')) | xml_escape }}</Key>
+          <WillShowUI>Never</WillShowUI>
+        </ProductKey>
+      </UserData>
+
+    </component>
+
+  </settings>
+
+  <!-- ================================================================
+       offlineServicing - stage non-boot-critical virtio drivers into
+       the installed OS driver store before first boot.
+
+       WinPE's PnpCustomizationsWinPE only makes drivers available to
+       Setup's WinPE environment (for disk + NIC discovery during
+       install). It does not persist them into the installed OS driver
+       store. For any virtio device that is NOT required to boot
+       (vioserial, viorng, vioinput, etc.), the driver must be added
+       via Microsoft-Windows-PnpCustomizationsNonWinPE in either the
+       offlineServicing or auditSystem pass. offlineServicing is
+       canonical for non-boot-critical drivers: it runs inside WinPE's
+       servicing context against the offline image, so drive letters
+       match windowsPE (D:/E:/F: multi-path guard covers CD assignment
+       order), and PnP auto-installs at first boot.
+
+       Without vioserial staged here, qemu-ga-aarch64.msi's
+       ServiceControl StartServices hangs on CreateFile for
+       \\.\Global\org.qemu.guest_agent.0 until the 4-min SCM start
+       timeout fires, returning MSI Error 1920 + exit 1603.
+
+       Docs:
+         https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-pnpcustomizationsnonwinpe
+         https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/how-configuration-passes-work
+       ================================================================ -->
+  <settings pass="offlineServicing">
+    <component name="Microsoft-Windows-PnpCustomizationsNonWinPE"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <DriverPaths>
+        <!-- vioserial: provides \\.\Global\org.qemu.guest_agent.0 for
+             the QEMU-GA service. Required for qemu-ga-aarch64.msi. -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+          <Path>D:\vioserial\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+          <Path>E:\vioserial\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3">
+          <Path>F:\vioserial\w11\ARM64</Path>
+        </PathAndCredentials>
+        <!-- viorng: QEMU.RNGDevice=true in our UTM spec exposes a
+             virtio-rng-pci device. Without this driver it shows up as
+             Unknown Device in Device Manager. -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4">
+          <Path>D:\viorng\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5">
+          <Path>E:\viorng\w11\ARM64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6">
+          <Path>F:\viorng\w11\ARM64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+    </component>
+  </settings>
+
+  <!-- ================================================================
+       Specialize - machine identity
+       ================================================================ -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <ComputerName>{{ hostname | xml_escape }}</ComputerName>
+      <TimeZone>{{ timezone | xml_escape }}</TimeZone>
+{% if org_name %}
+      <RegisteredOrganization>{{ org_name | xml_escape }}</RegisteredOrganization>
+{% endif %}
+    </component>
+{% if domain_join and domain_join.get('domain') %}
+
+    <component name="Microsoft-Windows-UnattendedJoin"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <Identification>
+        <JoinDomain>{{ domain_join.domain | xml_escape }}</JoinDomain>
+{% if domain_join.get('ou') %}
+        <MachineObjectOU>{{ domain_join.ou | xml_escape }}</MachineObjectOU>
+{% endif %}
+{% if domain_join.get('username') and domain_join.get('password') %}
+        <Credentials>
+          <Domain>{{ domain_join.domain | xml_escape }}</Domain>
+          <Username>{{ domain_join.username | xml_escape }}</Username>
+          <Password>{{ domain_join.password | xml_escape }}</Password>
+        </Credentials>
+{% endif %}
+      </Identification>
+    </component>
+{% endif %}
+  </settings>
+
+  <!-- ================================================================
+       OOBE - skip prompts, create local admin, run firstboot payload
+       ================================================================ -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+
+      <!-- Skip all OOBE screens for unattended template build. -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <NetworkLocation>Work</NetworkLocation>
+      </OOBE>
+
+{% if admin_pass %}
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ admin_pass | xml_escape }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+{% if admin_user != 'Administrator' %}
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>{{ admin_user | xml_escape }}</Name>
+            <DisplayName>{{ admin_user | xml_escape }}</DisplayName>
+            <Password>
+              <Value>{{ admin_pass | xml_escape }}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+            <Group>Administrators</Group>
+          </LocalAccount>
+        </LocalAccounts>
+{% endif %}
+      </UserAccounts>
+
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>{{ admin_user | xml_escape }}</Username>
+        <Password>
+          <Value>{{ admin_pass | xml_escape }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <LogonCount>1</LogonCount>
+      </AutoLogon>
+{% endif %}
+
+      <FirstLogonCommands>
+        <!-- Stage the $OEM$\$1\ tree from the autounattend ISO to C:\.
+             Windows Setup only auto-processes $OEM$ when the answer file
+             lives on the Windows installer media; ours is a separate CD,
+             so we manually find the autounattend drive letter (any FS
+             drive containing autounattend.xml at its root) and copy the
+             tree into C:\. Idempotent - skips cleanly if C:\autopilot
+             already exists. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path 'C:\autopilot')) { $d = Get-PSDrive -PSProvider FileSystem | Where-Object { Test-Path (Join-Path $_.Root 'autounattend.xml') } | Select-Object -First 1 -ExpandProperty Root; if ($d) { Copy-Item -Path (Join-Path $d '$OEM$\$1\*') -Destination 'C:\' -Recurse -Force } }"</CommandLine>
+          <Description>Stage $OEM$ tree from autounattend ISO</Description>
+        </SynchronousCommand>
+        <!-- Enable RDP so operators can inspect the template if needed. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell.exe -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine>
+          <Description>Enable Remote Desktop</Description>
+        </SynchronousCommand>
+        <!-- Run the autopilot firstboot payload (now present after Order 1). -->
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -File C:\autopilot\firstboot.ps1</CommandLine>
+          <Description>Run Autopilot firstboot configuration</Description>
+        </SynchronousCommand>
+{% for cmd in firstboot_cmds %}
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ loop.index + 3 }}</Order>
+          <CommandLine>{{ cmd | xml_escape }}</CommandLine>
+          <Description>Custom firstboot command {{ loop.index }}</Description>
+        </SynchronousCommand>
+{% endfor %}
+      </FirstLogonCommands>
+
+    </component>
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="arm64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <InputLocale>{{ locale }}</InputLocale>
+      <SystemLocale>{{ locale }}</SystemLocale>
+      <UILanguage>{{ locale }}</UILanguage>
+      <UserLocale>{{ locale }}</UserLocale>
+    </component>
+
+  </settings>
+</unattend>

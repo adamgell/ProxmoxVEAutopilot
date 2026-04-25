@@ -1,0 +1,241 @@
+---
+# utm_build_win11_template.yml
+#
+# Unattended Windows 11 ARM64 template builder for UTM (macOS/ARM64).
+#
+# This playbook performs a fully automated Windows 11 ARM64 installation:
+#   1. Generate an answer ISO (AUTOUNATTEND label) with firstboot.ps1.
+#   2. Create the VM bundle from the skeleton + installer ISO.
+#   3. Copy the answer ISO into the bundle's Data/ directory.
+#   4. Attach the answer ISO as Drive 2 in config.plist.
+#   5. Start the VM — Windows Setup picks up autounattend.xml automatically.
+#   6. Poll via `utmctl exec` until firstboot.ps1 writes the sentinel file
+#      C:\autopilot\autopilot-firstboot.done (timeout: 45 minutes).
+#   7. Suspend the VM and write the marker file {bundle}/autopilot-template.ready.
+#
+# Required variables (set in group_vars or via -e):
+#   vm_name              — UTM display name / bundle stem for the new template
+#   utm_iso_name         — Windows 11 ARM64 installer ISO filename in utm_iso_dir
+#   utm_answer_admin_pass — Administrator password (from vault)
+#
+# Optional overrides:
+#   utm_answer_admin_user    — default: Administrator
+#   utm_answer_locale        — default: en-US
+#   utm_answer_timezone      — default: Pacific Standard Time
+#   utm_answer_windows_edition — default: Windows 11 Pro
+#   vm_oem_profile           — OEM profile key (populates org_name in unattend)
+#   utm_overwrite_bundle     — default: false (set true to replace existing bundle)
+#   utm_template_poll_retries — sentinel poll retries (default: 270 = 45 min at 10s)
+#   utm_template_poll_delay  — sentinel poll delay in seconds (default: 10)
+#
+# Usage:
+#   ansible-playbook playbooks/utm_build_win11_template.yml \
+#       -e vm_name=win11-arm64-template \
+#       -e utm_iso_name=Win11_25H2_English_Arm64.iso
+#
+# The resulting bundle will be ready for cloning via utm_vm_clone once
+# the marker file {bundle}/autopilot-template.ready is present.
+
+- name: Build Windows 11 ARM64 UTM template (unattended)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    utm_template_poll_retries: 270   # 270 × 10 s = 45 minutes
+    utm_template_poll_delay: 10
+
+  tasks:
+
+    # ── 0. Input validation ─────────────────────────────────────────────────
+
+    - name: "Template build: assert required inputs"
+      ansible.builtin.assert:
+        that:
+          - vm_name is defined and (vm_name | length) > 0
+          - utm_iso_name is defined and (utm_iso_name | length) > 0
+          - utm_answer_admin_pass is defined and (utm_answer_admin_pass | length) > 0
+        fail_msg: >-
+          utm_build_win11_template requires vm_name, utm_iso_name, and
+          utm_answer_admin_pass.  Set utm_answer_admin_pass in
+          inventory/group_vars/all/vault.yml or pass via -e.
+
+    # ── 1. Resolve OEM profile (provides _oem_profile.manufacturer) ─────────
+
+    - name: "Template build: set vm_vmid for OEM resolver"
+      ansible.builtin.set_fact:
+        vm_vmid: "{{ vm_name }}"
+
+    - name: "Template build: resolve OEM profile + identity"
+      ansible.builtin.include_role:
+        name: oem_profile_resolver
+
+    # ── 2. Generate answer ISO ───────────────────────────────────────────────
+
+    - name: "Template build: generate answer ISO via utm_answer_iso role"
+      ansible.builtin.include_role:
+        name: utm_answer_iso
+      # utm_answer_iso_path fact is exported by the role.
+
+    # ── 3. Create VM bundle from skeleton ───────────────────────────────────
+
+    - name: "Template build: set vm_os_kind for bundle creation"
+      ansible.builtin.set_fact:
+        vm_os_kind: windows11
+
+    - name: "Template build: render bundle via web.utm_bundle and register with UTM"
+      ansible.builtin.include_role:
+        name: utm_template_builder
+        tasks_from: render_bundle.yml
+
+    # ── 4. Adopt bundle UUID from render_bundle ────────────────────────────
+    #
+    # render_bundle.yml has already:
+    #  - written config.plist (including Drive.2 and Drive.3 ImageName)
+    #  - copied installer + AUTOUNATTEND + virtio-win ISOs into bundle Data/
+    #  - registered the bundle with UTM via `open -a UTM`
+    # All we need downstream is the VM UUID.
+
+    - name: "Template build: adopt bundle UUID from render_bundle"
+      ansible.builtin.set_fact:
+        _utm_assigned_uuid: "{{ _bundle_uuid }}"
+
+    # ── 5. Start the VM ────────────────────────────────────────────────────
+
+    - name: "Template build: start VM by UUID"
+      ansible.builtin.command:
+        argv:
+          - "{{ utm_utmctl_path }}"
+          - start
+          - "{{ _utm_assigned_uuid }}"
+          - --hide
+      register: _start_result
+      failed_when: _start_result.rc != 0
+      changed_when: true
+
+    - name: "Template build: wait for VM to reach 'started' status"
+      ansible.builtin.command:
+        argv:
+          - "{{ utm_utmctl_path }}"
+          - status
+          - "{{ _utm_assigned_uuid }}"
+      register: _status_poll
+      retries: 30
+      delay: 5
+      until: _status_poll.stdout | trim == 'started'
+      failed_when: false
+      changed_when: false
+
+    # ── 6a. EFI shell fallback (only when utm_boot_fallback_keystrokes=true)
+    #
+    # EDK2 on `qemu-aarch64 virt` doesn't auto-create NVRAM Boot#### entries
+    # for removable USB CDs on first boot, so the firmware drops to the UEFI
+    # Shell. The cleanest fix (pre-populating efi_vars.fd via virt-fw-vars)
+    # is deferred as follow-up `utm-efi-vars-nvram-boot-entry`. Until it
+    # lands, this 5-line osascript step types the boot path and acknowledges
+    # the "Press any key to boot from CD" prompt. Gated on the role default
+    # utm_boot_fallback_keystrokes=true so it can be disabled without edits.
+
+    - name: "Template build: wait for EFI shell to be reached"
+      # 18s instead of 12: AAVMF POST (~8s) + startup.nsh countdown (~5s) +
+      # buffer. Shorter waits race the countdown and the first character
+      # of our command gets absorbed as "any key skips startup.nsh",
+      # leaving the shell with a truncated command (observed: sent `fs0:`
+      # → shell saw `s0:` → "not recognized as an internal or external
+      # command").
+      ansible.builtin.wait_for:
+        timeout: 18
+      delegate_to: localhost
+      when: utm_boot_fallback_keystrokes | default(true) | bool
+
+    - name: "Template build: escape EFI shell via AppleScript (fallback)"
+      # Four backslashes in YAML → AppleScript sees `\\` → single `\`,
+      # giving the EDK2 shell `fs0:\efi\boot\bootaa64.efi`. `key code 36`
+      # is not in UTM's AppleScript dialect (that's System Events); the
+      # working form embeds a literal newline inside the text string,
+      # which UTM's `input keystroke` sends as Return.
+      #
+      # Leading dummy space+newline ack's "Press ESC to skip startup.nsh"
+      # unambiguously before the real command is typed — protects against
+      # any residual timing race past the 18s wait.
+      ansible.builtin.shell: |
+        /usr/bin/osascript <<OSA
+        tell application "UTM"
+            set vm to virtual machine id "{{ _utm_assigned_uuid }}"
+            input keystroke vm text "
+        "
+            delay 1
+            input keystroke vm text "fs0:\\\\efi\\\\boot\\\\bootaa64.efi
+        "
+            delay 2
+            input keystroke vm text " "
+        end tell
+        OSA
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: utm_boot_fallback_keystrokes | default(true) | bool
+
+    # ── 6b. Poll for firstboot sentinel ─────────────────────────────────────
+    #
+    # Windows Setup runs: WinPE → specialize → OOBE → AutoLogon →
+    # FirstLogonCommands → firstboot.ps1 → writes sentinel.
+    # Total time: typically 15-30 minutes on Apple Silicon (M-series).
+    # Retry budget: utm_template_poll_retries × utm_template_poll_delay seconds.
+
+    # ── 6b. Poll for VM self-shutdown (no QGA on ARM64 Windows) ────────────
+    #
+    # firstboot.ps1 calls `shutdown /s /t 5` after writing the sentinel.
+    # UTM transitions the VM to `stopped` once Windows halts, which we can
+    # observe via `utmctl status` without a guest agent. This replaces the
+    # old `utmctl exec powershell Test-Path ...` poll — exec requires QGA,
+    # and there is no ARM64 Windows QGA in Fedora virtio-win or UTM's
+    # guest-tools installer as of 2026-04.
+    - name: >-
+        Template build: poll for VM to shut down (firstboot self-halt,
+        max {{ utm_template_poll_retries * utm_template_poll_delay // 60 }} min)
+      ansible.builtin.command:
+        argv:
+          - "{{ utm_utmctl_path }}"
+          - status
+          - "{{ _utm_assigned_uuid }}"
+      register: _shutdown_poll
+      retries: "{{ utm_template_poll_retries }}"
+      delay: "{{ utm_template_poll_delay }}"
+      until: "_shutdown_poll.stdout | default('') | trim in ['stopped', 'suspended', 'paused']"
+      failed_when: >-
+        _shutdown_poll.attempts | default(1) > utm_template_poll_retries
+        and _shutdown_poll.stdout | default('') | trim not in ['stopped', 'suspended', 'paused']
+      changed_when: false
+
+    - name: "Template build: confirm VM reached stopped state"
+      ansible.builtin.debug:
+        msg: >-
+          VM reached '{{ _shutdown_poll.stdout | trim }}' after
+          {{ _shutdown_poll.attempts | default(1) }} poll attempt(s)
+          (~{{
+            (_shutdown_poll.attempts | default(1) | int) * (utm_template_poll_delay | int)
+          }}s elapsed). Firstboot payload finished.
+
+    # ── 7. Write template-ready marker (VM is already stopped) ──────────────
+
+    - name: "Template build: set bundle path fact"
+      ansible.builtin.set_fact:
+        _template_bundle_path: "{{ utm_documents_dir }}/{{ vm_name }}.utm"
+
+    - name: "Template build: write autopilot-template.ready marker"
+      ansible.builtin.copy:
+        content: |
+          autopilot-template.ready
+          vm_name={{ vm_name }}
+          built_at={{ ansible_date_time.iso8601 | default('unknown') }}
+          sentinel_polls={{ _sentinel_poll.attempts | default('unknown') }}
+        dest: "{{ _template_bundle_path }}/autopilot-template.ready"
+        mode: "0644"
+
+    - name: "Template build: success summary"
+      ansible.builtin.debug:
+        msg: >-
+          Template '{{ vm_name }}' is ready.
+          Bundle: {{ _template_bundle_path }}
+          Marker: {{ _template_bundle_path }}/autopilot-template.ready
+          Use utm_template_vm_name={{ vm_name }} in Settings to clone from it.

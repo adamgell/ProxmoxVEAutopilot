@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from web import jobs_db, service_health
+from web.paths import OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT as _REPO_ROOT
 
 _log = logging.getLogger("web.monitor_main")
 
@@ -41,9 +42,9 @@ def _acquire_singleton_lock(path: Path) -> int | None:
         return None
 
 
-def run_monitor(*, lock_path: Path | str = "/app/output/monitor.lock",
-                monitor_db_path: Path | str = "/app/output/device_monitor.db",
-                jobs_db_path: Path | str = "/app/output/jobs.db",
+def run_monitor(*, lock_path: Path | str = _OUTPUT_DIR / "monitor.lock",
+                monitor_db_path: Path | str = _OUTPUT_DIR / "device_monitor.db",
+                jobs_db_path: Path | str = _OUTPUT_DIR / "jobs.db",
                 stop_event: threading.Event | None = None) -> None:
     lock_path = Path(lock_path)
     monitor_db_path = Path(monitor_db_path)
@@ -169,10 +170,11 @@ def _do_sweep_tick(monitor_db_path: Path) -> None:
       1. Read settings via ``device_history_db.get_settings`` (same
          source the /monitoring/settings UI writes to).
       2. Skip when ``settings.enabled`` is false.
-      3. Build a live ``MonitorContext`` via ``web.app._build_live_monitor_context``
+      3. Skip entirely when ``hypervisor_type == utm`` — no Proxmox fleet.
+      4. Build a live ``MonitorContext`` via ``web.app._build_live_monitor_context``
          (PVE API + AD + Graph wiring).
-      4. Compute ``extra_in_scope_vmids`` from the sequences DB.
-      5. Call ``device_monitor.sweep(ctx, extra_in_scope_vmids=extra)``.
+      5. Compute ``extra_in_scope_vmids`` from the sequences DB.
+      6. Call ``device_monitor.sweep(ctx, extra_in_scope_vmids=extra)``.
     """
     from web import device_history_db, device_monitor
     try:
@@ -186,6 +188,10 @@ def _do_sweep_tick(monitor_db_path: Path) -> None:
     # Live wiring lives in web.app; import lazily so test-only calls
     # to monitor_main._run_loops don't drag FastAPI in.
     from web import app as web_app
+    if (web_app._load_vars().get("hypervisor_type") or "proxmox").lower() == "utm":
+        _log.debug("sweep skipped: hypervisor_type=utm (no Proxmox fleet to sweep)")
+        return
+
     try:
         ctx = web_app._build_live_monitor_context()
         extra = web_app._vm_provisioning_vmids()
@@ -212,11 +218,10 @@ def _do_keytab_tick(monitor_db_path: Path) -> None:
 
 def _version_sha() -> str:
     """Best-effort running version SHA, matches web's footer build."""
-    for candidate in (Path("/app/VERSION"),
-                      Path(__file__).resolve().parent.parent / "VERSION"):
-        try:
-            if candidate.exists():
-                return candidate.read_text().strip().splitlines()[0][:7] or "unknown"
-        except Exception:
-            continue
+    try:
+        candidate = _REPO_ROOT / "VERSION"
+        if candidate.exists():
+            return candidate.read_text().strip().splitlines()[0][:7] or "unknown"
+    except Exception:
+        pass
     return "unknown"

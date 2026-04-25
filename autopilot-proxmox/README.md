@@ -2,6 +2,8 @@
 
 See the [root README](../README.md) for full documentation, setup instructions, and usage examples.
 
+For macOS/ARM64 (UTM backend) setup and template-building instructions, see [docs/UTM_MACOS_SETUP.md](../docs/UTM_MACOS_SETUP.md).
+
 ## Playbooks
 
 | Playbook | Purpose | Key Variables |

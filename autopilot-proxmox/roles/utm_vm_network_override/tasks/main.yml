@@ -1,0 +1,91 @@
+---
+# Post-clone network mode override for UTM bundles.
+#
+# Edits the cloned bundle's config.plist via plutil to set
+# Network[0].Mode and (if Bridged) Network[0].BridgeInterface.
+#
+# Required inputs:
+#   vm_name              - cloned VM name (bundle = utm_documents_dir/vm_name.utm)
+#   utm_network_mode     - "shared" | "bridged" | "host"  (default: "shared")
+#   utm_bridge_interface - macOS interface name (e.g. "en0"), only for bridged
+#
+# UTM config.plist Network structure (verified vs. windows11-arm64.utm skeleton):
+#   Network:
+#     - Hardware: virtio-net-pci
+#       IsolateFromHost: false
+#       Mode: Shared            <- plutil capitalized values: Shared/Bridged/HostOnly
+#       PortForward: []
+# BridgeInterface is not present by default; we insert it when needed.
+#
+# Idempotency: Mode is always overwritten (-replace on an existing key is safe).
+# BridgeInterface: attempt -replace first; fall back to -insert if key absent.
+# The whole block is a no-op if Network[0] doesn't exist (fresh clone without
+# a network device configured).
+
+- name: "UTM network override: set config.plist path"
+  ansible.builtin.set_fact:
+    _config_plist: "{{ utm_documents_dir }}/{{ vm_name }}.utm/config.plist"
+
+- name: "UTM network override: verify Network[0] exists"
+  ansible.builtin.command:
+    argv:
+      - plutil
+      - -extract
+      - "Network.0"
+      - raw
+      - "{{ _config_plist }}"
+  register: _net_check
+  failed_when: false
+  changed_when: false
+
+- name: "UTM network override: apply changes"
+  when: _net_check.rc == 0
+  block:
+    - name: "UTM network override: resolve plutil Mode value"
+      ansible.builtin.set_fact:
+        _utm_mode_val: >-
+          {{ {'shared': 'Shared', 'bridged': 'Bridged', 'host': 'HostOnly'}
+             [utm_network_mode | default('shared')] }}
+
+    - name: "UTM network override: set Network[0].Mode"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -replace
+          - "Network.0.Mode"
+          - -string
+          - "{{ _utm_mode_val }}"
+          - "{{ _config_plist }}"
+      changed_when: true
+
+    - name: "UTM network override: replace Network[0].BridgeInterface (if exists)"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -replace
+          - "Network.0.BridgeInterface"
+          - -string
+          - "{{ utm_bridge_interface }}"
+          - "{{ _config_plist }}"
+      register: _bridge_replace
+      failed_when: false
+      changed_when: _bridge_replace.rc == 0
+      when:
+        - utm_network_mode | default('shared') == 'bridged'
+        - utm_bridge_interface | default('') | length > 0
+
+    - name: "UTM network override: insert Network[0].BridgeInterface (if not present)"
+      ansible.builtin.command:
+        argv:
+          - plutil
+          - -insert
+          - "Network.0.BridgeInterface"
+          - -string
+          - "{{ utm_bridge_interface }}"
+          - "{{ _config_plist }}"
+      changed_when: true
+      when:
+        - utm_network_mode | default('shared') == 'bridged'
+        - utm_bridge_interface | default('') | length > 0
+        - _bridge_replace is defined
+        - _bridge_replace.rc != 0

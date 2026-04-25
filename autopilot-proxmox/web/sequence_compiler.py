@@ -269,26 +269,31 @@ def _handle_install_module(params: dict, out: CompiledSequence,
     #   3. Repository trust — without it, Install-Module prompts for
     #      confirmation and silently hangs inside FLC (no stdin).
     # Single-quote literals for PS strings so they survive XML's
-    # whitespace handling unchanged.
+    # whitespace handling unchanged.  All user-supplied values are
+    # passed through _ps_escape so an embedded single quote doesn't
+    # produce invalid PowerShell syntax.
+    r = _ps_escape(repository)
+    m = _ps_escape(module)
+    s = _ps_escape(scope)
     lines = [
         "[Net.ServicePointManager]::SecurityProtocol = "
         "[Net.ServicePointManager]::SecurityProtocol -bor "
         "[Net.SecurityProtocolType]::Tls12",
-        f"if ((Get-PSRepository -Name '{repository}' -ErrorAction SilentlyContinue)"
+        f"if ((Get-PSRepository -Name '{r}' -ErrorAction SilentlyContinue)"
         f".InstallationPolicy -ne 'Trusted') {{ "
-        f"Set-PSRepository -Name '{repository}' -InstallationPolicy Trusted }}",
+        f"Set-PSRepository -Name '{r}' -InstallationPolicy Trusted }}",
         "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { "
         "Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null }",
     ]
     install_args = [
-        f"-Name '{module}'",
-        f"-Repository '{repository}'",
-        f"-Scope '{scope}'",
+        f"-Name '{m}'",
+        f"-Repository '{r}'",
+        f"-Scope '{s}'",
         "-Force",
         "-AllowClobber",
     ]
     if version:
-        install_args.append(f"-RequiredVersion '{version}'")
+        install_args.append(f"-RequiredVersion '{_ps_escape(version)}'")
     lines.append("Install-Module " + " ".join(install_args))
     script = "; ".join(lines)
     encoded = _encode_ps_command(script)

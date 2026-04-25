@@ -1,0 +1,27 @@
+---
+# UTM-specific: Write a file into the guest via `utmctl file push`.
+# Called from common/tasks/guest_file_write.yml (the dispatch hub).
+#
+# `utmctl file push` reads the file contents from stdin, so we feed
+# `_guest_content` through the shell's stdin. No base64 gymnastics
+# needed because utmctl handles binary-safe streaming itself.
+#
+# Required variables (passed from dispatch hub):
+#   vm_vmid        - UTM VM name or UUID
+#   _guest_file    - destination path inside the guest (Windows path)
+#   _guest_content - file content to write (string)
+#
+# Required UTM vars:
+#   utm_utmctl_path - absolute path to utmctl
+
+- name: "UTM file_write: push file to VM {{ vm_vmid }} at {{ _guest_file }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - file
+      - push
+      - "{{ vm_vmid }}"
+      - "{{ _guest_file }}"
+    stdin: "{{ _guest_content }}"
+    stdin_add_newline: false
+  changed_when: true

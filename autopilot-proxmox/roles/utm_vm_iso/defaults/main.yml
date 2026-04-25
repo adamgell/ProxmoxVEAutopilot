@@ -1,0 +1,9 @@
+---
+# utm_vm_iso defaults — mirrors utm_template_builder sizing defaults
+
+vm_cpu_cores: 4
+vm_memory_mb: 8192
+vm_disk_gb: 80
+
+# ISO VMs are always started immediately; no template-build pause/resume cycle
+utm_overwrite_bundle: false

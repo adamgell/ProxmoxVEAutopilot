@@ -1,0 +1,60 @@
+---
+# utm_template_builder/tasks/start_and_wait.yml
+#
+# Starts the newly created UTM VM and either:
+#   manual mode   — prints operator instructions and halts the playbook.
+#                   Re-run with -e utm_build_resume=true after OOBE.
+#   unattended mode — (future) polls for a sentinel file via utmctl exec.
+
+- name: "Start and wait: start VM in UTM — {{ vm_name }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - start
+      - "{{ vm_name }}"
+      - --hide
+  register: _start_result
+  failed_when: _start_result.rc != 0
+  changed_when: true
+
+- name: "Start and wait: poll utmctl status until 'started'"
+  ansible.builtin.command:
+    argv:
+      - "{{ utm_utmctl_path }}"
+      - status
+      - "{{ vm_name }}"
+  register: _status_poll
+  retries: 30
+  delay: 5
+  until: _status_poll.stdout | trim == 'started'
+  failed_when:
+    - _status_poll.rc != 0
+    - _status_poll.retries | default(0) >= 30
+  changed_when: false
+
+- name: "Start and wait: print operator instructions (manual mode)"
+  ansible.builtin.debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+      ║  UTM TEMPLATE BUILD — OPERATOR ACTION REQUIRED                      ║
+      ╠══════════════════════════════════════════════════════════════════════╣
+      ║  VM '{{ vm_name }}' is running.                                     ║
+      ║                                                                      ║
+      ║  1. Open UTM on this Mac and complete the Windows OOBE /            ║
+      ║     installer for '{{ vm_name }}'.                                  ║
+      ║  2. Once Windows has fully booted to the desktop and is ready       ║
+      ║     for sysprep, come back here and re-run the playbook with:       ║
+      ║                                                                      ║
+      ║     ansible-playbook playbooks/build_utm_template.yml \             ║
+      ║       -e utm_build_resume=true                                      ║
+      ║                                                                      ║
+      ║  Do NOT shut down the VM manually — sysprep will do that.           ║
+      ╚══════════════════════════════════════════════════════════════════════╝
+  when: utm_build_wait_mode | default('manual') == 'manual'
+
+- name: "Start and wait: halt playbook — awaiting operator resume (manual mode)"
+  ansible.builtin.fail:
+    msg: >-
+      Playbook intentionally halted. Complete the Windows OOBE in UTM,
+      then re-run with: -e utm_build_resume=true
+  when: utm_build_wait_mode | default('manual') == 'manual'

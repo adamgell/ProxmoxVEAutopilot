@@ -19,24 +19,39 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Validate template VMID is set
+    - name: "Validate template is set (Proxmox = VMID, UTM = VM name)"
       ansible.builtin.assert:
         that:
-          - proxmox_template_vmid is defined
-          - proxmox_template_vmid | int > 0
-        fail_msg: "proxmox_template_vmid must be set. Use -e proxmox_template_vmid=<vmid> or set it in vars.yml."
+          - (hypervisor_type | default('proxmox')) != 'proxmox' or (proxmox_template_vmid is defined and (proxmox_template_vmid | int) > 0)
+          - (hypervisor_type | default('proxmox')) != 'utm' or (utm_template_vm_name is defined and (utm_template_vm_name | length) > 0)
+        fail_msg: >-
+          For hypervisor_type=proxmox set proxmox_template_vmid; for
+          hypervisor_type=utm set utm_template_vm_name (via -e or Settings).
 
   tasks:
+    - name: Provision each VM (UTM branch)
+      ansible.builtin.include_tasks: _provision_utm_clone_vm.yml
+      loop: "{{ range(1, (vm_count | int) + 1) | list }}"
+      loop_control:
+        loop_var: _vm_index
+      vars:
+        vm_name: "{{ vm_name | default(utm_template_vm_name ~ '-clone') }}{{ '-' + (_vm_index | string) if (vm_count | int) > 1 else '' }}"
+      when: (hypervisor_type | default('proxmox')) == 'utm'
+
     - name: Provision each VM (Windows branch)
       ansible.builtin.include_tasks: _provision_clone_vm.yml
       loop: "{{ range(1, (vm_count | int) + 1) | list }}"
       loop_control:
         loop_var: _vm_index
-      when: target_os | default('windows') == 'windows'
+      when:
+        - (hypervisor_type | default('proxmox')) == 'proxmox'
+        - target_os | default('windows') == 'windows'
 
     - name: Provision each VM (Ubuntu branch)
       ansible.builtin.include_tasks: _provision_ubuntu_clone.yml
       loop: "{{ range(1, (vm_count | int) + 1) | list }}"
       loop_control:
         loop_var: _vm_index
-      when: target_os | default('windows') == 'ubuntu'
+      when:
+        - (hypervisor_type | default('proxmox')) == 'proxmox'
+        - target_os | default('windows') == 'ubuntu'

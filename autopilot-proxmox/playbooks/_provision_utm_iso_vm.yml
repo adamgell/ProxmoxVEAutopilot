@@ -1,0 +1,12 @@
+---
+# Per-VM task fragment — included by provision_utm_iso.yml loop.
+# Calls the utm_vm_iso role with variables sourced from the _utm_target
+# loop item.
+
+- name: "Provision UTM ISO VM '{{ _utm_target.vm_name }}'"
+  ansible.builtin.include_role:
+    name: utm_vm_iso
+  vars:
+    vm_name: "{{ _utm_target.vm_name }}"
+    vm_os_kind: "{{ _utm_target.vm_os_kind }}"
+    utm_iso_name: "{{ _utm_target.utm_iso_name }}"

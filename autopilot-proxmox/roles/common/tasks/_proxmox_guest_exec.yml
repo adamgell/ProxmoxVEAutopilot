@@ -1,0 +1,42 @@
+---
+# Proxmox-specific: Execute command via QEMU guest agent.
+# 
+# This is the Proxmox backend implementation of guest_exec.yml dispatch.
+# Called from common/tasks/guest_exec.yml (the dispatch hub).
+#
+# Required variables (passed from dispatch hub):
+#   vm_vmid          - target Proxmox VMID
+#   _exec_command    - list of command + args
+#
+# Required Proxmox vars (from playbook):
+#   proxmox_api_base - REST API URL
+#   proxmox_node     - Proxmox node name
+#   proxmox_api_auth_header - Bearer token
+#
+# Registers:
+#   _guest_exec_result  - the exec POST response (contains .json.data.pid)
+#   _guest_exec_status  - the final exec-status response
+
+- name: "Execute command in guest VM {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/exec"
+    method: POST
+    body_format: json
+    body:
+      command: "{{ _exec_command }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _guest_exec_result
+
+- name: "Poll exec status until completion on VM {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/agent/exec-status?pid={{ _guest_exec_result.json.data.pid }}"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+  register: _guest_exec_status
+  until: _guest_exec_status.json.data.exited | default(false) | bool
+  retries: "{{ ((_exec_timeout | default(guest_exec_timeout_seconds) | int) / (_exec_poll | default(guest_exec_poll_interval_seconds) | int)) | int }}"
+  delay: "{{ _exec_poll | default(guest_exec_poll_interval_seconds) | int }}"

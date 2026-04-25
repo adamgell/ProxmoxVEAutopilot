@@ -41,7 +41,10 @@ DEFAULT_GMSA_DN = os.environ.get(
     "KEYTAB_GMSA_DN",
     "CN=svc-apmon,CN=Managed Service Accounts,DC=home,DC=gell,DC=one",
 )
-DEFAULT_OUTPUT = os.environ.get("KEYTAB_PATH", "/app/secrets/krb5.keytab")
+DEFAULT_OUTPUT = os.environ.get(
+    "KEYTAB_PATH",
+    str(Path(__file__).resolve().parents[2] / "secrets" / "krb5.keytab"),
+)
 
 # Kerberos enctype numbers (IANA / RFC 3961/3962).
 ENCTYPE_AES256_CTS_HMAC_SHA1_96 = 18
