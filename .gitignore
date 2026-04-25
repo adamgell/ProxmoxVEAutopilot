@@ -23,3 +23,6 @@ var/artifacts/store/
 var/artifacts/cache/
 var/artifacts/staging/
 !var/artifacts/.gitkeep
+
+# Pester test output (emitted by Invoke-Pester -CI in the working directory)
+testResults.xml
