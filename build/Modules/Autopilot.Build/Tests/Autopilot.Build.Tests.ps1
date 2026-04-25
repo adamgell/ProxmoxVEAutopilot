@@ -50,3 +50,30 @@ Describe 'Write-CmTraceLog' {
         Test-Path $script:tmpLog | Should -BeTrue
     }
 }
+
+Describe 'Get-FileSha256' {
+    It 'returns sha256 of a known string ("hello world\n" → b94d27...)' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "sha256-test-$([guid]::NewGuid())"
+        try {
+            [System.IO.File]::WriteAllBytes($tmp, [byte[]](0x68,0x65,0x6c,0x6c,0x6f,0x20,0x77,0x6f,0x72,0x6c,0x64,0x0a))
+            (Get-FileSha256 -Path $tmp) | Should -Be 'a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447'
+        } finally {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'returns lowercase hex' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "sha256-test-$([guid]::NewGuid())"
+        try {
+            'x' | Set-Content -Path $tmp -NoNewline -Encoding ascii
+            $h = Get-FileSha256 -Path $tmp
+            $h | Should -MatchExactly '^[0-9a-f]{64}$'
+        } finally {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'throws on missing file' {
+        { Get-FileSha256 -Path '/no/such/path/abc.bin' } | Should -Throw
+    }
+}
