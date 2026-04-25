@@ -1,0 +1,12 @@
+{
+  "buildHost":       "buildhost",
+  "buildHostUser":   "Administrator",
+  "buildRootRemote": "C:/BuildRoot",
+
+  "windowsIsoPath":  "C:/BuildRoot/inputs/windows/Win11_24H2_ARM64.iso",
+  "virtioIsoPath":   "C:/BuildRoot/inputs/virtio/virtio-win-0.1.266.iso",
+  "edition":         "Windows 11 Enterprise",
+  "architecture":    "arm64",
+  "drivers":         ["vioserial", "viostor", "vioscsi", "NetKVM", "balloon", "vioinput"],
+  "outputDir":       "C:/BuildRoot/outputs"
+}
