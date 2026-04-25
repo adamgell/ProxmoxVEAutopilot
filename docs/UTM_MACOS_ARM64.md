@@ -21,24 +21,37 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
 - T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
   playbook stripped of plutil patches, quit-relaunch dance, and the
   30-line keystroke block (shrunk to 5 lines).
-- T17 resolved: acc-1 and acc-2 both reached `stopped` autonomously
-  with the current firstboot pipeline. The acc-2 regression was root-
-  caused on 2026-04-24: firstboot.ps1 was being written UTF-8 without
-  a BOM, and Windows PowerShell 5.1 (which FirstLogonCommand invokes)
-  defaults to the system ANSI codepage on a BOM-less .ps1. When the
-  QGA + UTM Guest Tools install blocks added em-dash characters to
-  firstboot.ps1.j2, PS 5.1 mis-decoded the multi-byte UTF-8 bytes and
-  threw `MissingEndCurlyBrace` at unrelated lines. FLC's
-  `powershell.exe -File C:\autopilot\firstboot.ps1` exited non-zero
-  before any code ran, so no firstboot.log, no scheduled shutdown
-  task, VM never halted. Fix in commit `23ee992`: answer_iso.py writes
-  firstboot.ps1 with `encoding="utf-8-sig"` (explicit BOM), em-dashes
-  purged from all Windows-bound template files, regression tests added
-  in `test_answer_iso_encoding.py`. acc-2 re-run reached `stopped`
-  after 128 poll attempts (~21 min, well inside the 45-min budget).
+- T17 resolved (3-in-a-row spec bar met): acc-1, acc-2, and acc-3 all
+  reached `stopped` autonomously with the current firstboot pipeline.
+  Two root-cause fixes landed in this session:
+    1. acc-2 regression cause was firstboot.ps1 written UTF-8 without
+       a BOM. Windows PowerShell 5.1 (which FirstLogonCommand invokes)
+       defaults to the system ANSI codepage on a BOM-less .ps1. The
+       new QGA + UTM Guest Tools install blocks added em-dash chars to
+       firstboot.ps1.j2; PS 5.1 mis-decoded the multi-byte UTF-8 bytes
+       and threw `MissingEndCurlyBrace` at unrelated lines. FLC's
+       `powershell.exe -File C:\autopilot\firstboot.ps1` exited
+       non-zero before any code ran, so no firstboot.log, no scheduled
+       shutdown task, VM never halted. Fix `23ee992`: answer_iso.py
+       writes firstboot.ps1 with `encoding="utf-8-sig"` (explicit BOM),
+       em-dashes purged from all Windows-bound template files,
+       regression tests in `test_answer_iso_encoding.py`. acc-2 re-run
+       stopped after 128 poll attempts (~21 min).
+    2. ARM64 QGA prerequisite: `Microsoft-Windows-PnpCustomizationsWinPE`
+       only injects drivers into Setup's WinPE environment, not into
+       the OS driver store. vioserial therefore did not persist into
+       the installed Windows even though it was listed in DriverPaths.
+       Fix `d192deb`: added `Microsoft-Windows-PnpCustomizationsNonWinPE`
+       in the offlineServicing pass with vioserial + viorng paths. acc-3
+       run verified end-to-end: setupact.log shows DISM imported
+       `vioser.inf` to the offline driver store; first boot saw
+       `VirtIO Serial Driver` Status=OK and `sc.exe query QEMU-GA`
+       reported STATE=4 RUNNING. acc-3 stopped after 88 poll attempts
+       (~15 min, ~6 min faster than acc-2 because the false-failure
+       1603 path shortens once the service actually reaches RUNNING).
 
 See follow-ups: `utm-efi-vars-nvram-boot-entry`,
-`utm-phase2-sysprep-via-qga`, `utm-qga-arm64-service-start-1920`.
+`utm-phase2-sysprep-via-qga`, `utm-qga-msi-install-start-cosmetic-1603`.
 
 ## Final architecture (sub-project 1 complete)
 
@@ -154,6 +167,40 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    bound template files (`firstboot.ps1.j2`, `unattend.xml.j2`,
    `autounattend.xml[.j2]`). Repo rule: no em-dashes anywhere, ever.
 
+8. **PnpCustomizationsWinPE does not persist drivers to the OS driver
+   store**. The windowsPE pass `Microsoft-Windows-PnpCustomizationsWinPE`
+   only stages drivers into Setup's WinPE environment for boot-time
+   discovery of disks + NICs. Non-boot-critical drivers (vioserial,
+   viorng, vioinput, etc.) are NOT carried forward into the installed
+   OS. Symptom seen on acc-2: stock Win11 ARM64 installs to a UTM VM,
+   but `Get-PnpDevice` shows `VirtIO Serial Driver` missing and
+   qemu-ga-aarch64.msi's QEMU-GA service blocks indefinitely on
+   CreateFile for `\\.\Global\org.qemu.guest_agent.0`. Fix is the
+   `Microsoft-Windows-PnpCustomizationsNonWinPE` block under
+   `<settings pass="offlineServicing">` in `unattend.xml.j2`. It runs
+   inside WinPE's servicing context against the offline image (drive
+   letters match windowsPE so the D:/E:/F: multi-path guard works) and
+   stages the INF into the OS driver store via DISM. PnP auto-installs
+   at first boot. See `https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/how-configuration-passes-work`.
+
+9. **QGA MSI (adamgell/qemu-ga-aarch64-msi v11.0.0-1) returns 1603
+   even on a fully successful install**. The WiX has
+   `<ServiceControl Start="install" Wait="yes" />` which tells MSI to
+   synchronously start the service at install time. qemu-ga.exe takes
+   ~110-130s to bind to the virtio-serial endpoint and reach
+   SERVICE_RUNNING (because the host-side org.qemu.guest_agent.0
+   chardev is not active until just after first boot). MSI's wait
+   expires before that, MSI marks "Error 1920 service failed to start"
+   and rolls back the product registration, but the service binaries
+   are open at that point so they survive. Net post-install state on
+   acc-3: `sc.exe query QEMU-GA` -> RUNNING, vioserial bound, full
+   QGA functionality, but MSI exit 1603 leaks up to firstboot.ps1 as
+   a WARNING. Workaround: firstboot.ps1 already treats MSI non-zero
+   on QGA as a warning and continues (template still builds). Real
+   fix is upstream in the QGA MSI repo: drop `Start="install"` so MSI
+   does not synchronously wait at install time. Tracked as
+   `utm-qga-msi-install-start-cosmetic-1603`.
+
 ## Key files
 
 | Path | Purpose |
@@ -173,7 +220,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 
 | id | status | title |
 | --- | --- | --- |
-| utm-e2e-win11-template | resolved | End-to-end Win11 template test. T14 run 8 green autonomously. T17 acc-1 (post BOM fix, manual patch) and acc-2 (post BOM fix, fully automated) both reached `stopped` state. |
+| utm-e2e-win11-template | resolved | End-to-end Win11 template test. T14 run 8 green autonomously. T17 acc-1 (post BOM fix, manual patch), acc-2 (post BOM fix, automated, ~21 min), and acc-3 (post offlineServicing fix, automated, ~15 min) all reached `stopped` state. 3-in-a-row spec bar met. |
 | utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
@@ -182,7 +229,8 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
 | utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |
 | utm-firstboot-shutdown-reliability | resolved | Root cause was firstboot.ps1 written UTF-8 without BOM; PS 5.1 mis-parsed the multi-byte em-dashes and FLC exited before scheduling shutdown. Fix `23ee992`: BOM-writing + em-dash purge + regression tests. acc-2 re-run reached `stopped` autonomously after ~21 min (128 poll attempts). |
-| utm-qga-arm64-service-start-1920 | pending | QGA MSI installs files + registers service, but `QEMU-GA` service fails to start within the 4-min MSI timeout (MSI Error 1920 -> rollback -> exit 1603). Treated as WARNING in firstboot.ps1, so doesn't derail the build, but QGA is non-functional. Suspect: virtio-serial endpoint `\\.\Global\org.qemu.guest_agent.0` not live yet, or vioserial PNP binding race. Full verbose log at `C:\autopilot\qemu-ga-install.log`. |
+| utm-qga-arm64-driver-store-staging | resolved | vioserial driver now staged into OS driver store via `Microsoft-Windows-PnpCustomizationsNonWinPE` in the offlineServicing pass (commit `d192deb`). Verified on acc-3: setupact.log line 5507 logs DISM importing `vioser.inf` to the offline driver store; post-install `pnputil /enum-drivers` shows oem0/oem6 (vioser.inf), `Get-PnpDevice` shows `VirtIO Serial Driver` OK, `sc.exe query QEMU-GA` reports RUNNING. |
+| utm-qga-msi-install-start-cosmetic-1603 | pending | QGA MSI returns 1603 even though the QEMU-GA service ends up registered, auto-start, and RUNNING post-install. Cause: `<ServiceControl Start="install" Wait="yes" />` in the WiX (`adamgell/qemu-ga-aarch64-msi/build/wix/qemu-ga.wxs`) makes MSI synchronously start the service at install time. qemu-ga.exe takes ~110-130s to bind to the virtio-serial endpoint and reach SERVICE_RUNNING; MSI's wait expires earlier and rolls back the product registration, but the service binaries are already in use and survive. Net result is a misleading WARNING in our firstboot logs. Fix is in the QGA MSI repo: drop `Start="install"` so MSI does not synchronously wait at install time; service still auto-starts on next boot. Tracking the rebuild + asset bump separately. |
 | utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone -> autopilot inject -> hash capture -> Intune) |
 | utm-tui-plugin-research | pending | Investigate TUI/UTM plugin surface |
 | utm-upstream-utmctl-create | pending | Upstream `utmctl create` subcommand PR to utmapp/UTM |
