@@ -15,14 +15,20 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
 - T14 green: first autonomous end-to-end Win11 ARM64 template build
   completed with `failed=0` in run 8 (600s shutdown poll).
 - T15 resolved: `virt-fw-vars` EFI-shell elimination landed in
-  `utm-efi-vars-nvram-boot-entry`. `web.utm_bundle.prepare_efi_vars`
-  uses the `virt-firmware` Python API to bake `Boot0000 =
-  FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into
-  the per-bundle `efi_vars.fd` after copying UTM's
-  `edk2-arm-secure-vars.fd` over it. AAVMF now boots straight into
-  the autounattend ISO without keystrokes. The legacy 5-line
-  osascript escape is kept behind `utm_boot_fallback_keystrokes` but
-  default is now `false` -- opt-in only.
+  `utm-efi-vars-nvram-boot-entry` after a two-iteration spike.
+  `web.utm_bundle.prepare_efi_vars` uses the `virt-firmware` Python API
+  to bake a Boot0000 entry plus `BootOrder = 0x0000, ...` into the
+  per-bundle `efi_vars.fd` after copying UTM's
+  `edk2-arm-secure-vars.fd`. The first attempt used a FilePath-only
+  device path and AAVMF rejected it on UTM 4.7.5 (acc-4 dropped to EFI
+  shell, post-mortem dump confirmed Boot0000 was written and at the
+  head of BootOrder but skipped at boot). Working device path is
+  `USB-CLASS(any/any/0x08/0x06/0x50) -> FilePath(\efi\boot\bootaa64.efi)
+  -> END`. The USB Class wildcard matches any QEMU `usb-storage`
+  device regardless of UTM's bus topology; no need to know which
+  USB port the autounattend ISO landed on. Legacy 5-line osascript
+  escape kept behind `utm_boot_fallback_keystrokes` but default is
+  now `false` - opt-in only.
 - T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
   playbook stripped of plutil patches, quit-relaunch dance, and the
   30-line keystroke block (shrunk to 5 lines).
@@ -240,6 +246,37 @@ folded into `utm-upstream-utmctl-create`.)
    does not synchronously wait at install time. Tracked as
    `utm-qga-msi-install-start-cosmetic-1603`.
 
+10. **EDK2 BDS rejects orphan FilePath load options**. AAVMF builds
+    on top of EDK2 BDS, which uses `BdsExpandShortFormDevicePath` to
+    resolve a Boot#### load option's device path against the live
+    handle list. UEFI 2.10 sec 3.5.1.1 says short-form (FilePath-only)
+    is permitted but AAVMF's `MdeModulePkg/Universal/Bds` does NOT
+    implement the "match this file across every connected media
+    handle" semantics; it requires the device path to begin with a
+    Hardware/ACPI/Messaging node that names a discoverable device.
+    Symptom seen on acc-4: Boot0000 was written with
+    `MEDIA_DEVICE_PATH(0x04)/MEDIA_FILEPATH_DP(0x04, "\efi\boot\bootaa64.efi")
+    -> END`, BootOrder put it first, but BDS skipped it as
+    unresolvable and fell through to the existing default Boot0001-
+    Boot0007 entries (stale ACPI/PCI/USB topology that does not match
+    UTM's actual virtual hardware), eventually landing on Boot0004
+    (EFI Internal Shell). Fix is to prefix the FilePath with a USB
+    Class wildcard:
+
+        USB-CLASS(VID=any, PID=any, class=0x08, sub=0x06, proto=0x50)
+            -> FilePath(\efi\boot\bootaa64.efi)
+            -> END
+
+    The USB Class node is 11 bytes per UEFI sec 10.3.5.10 and matches
+    any USB Mass-Storage / SCSI-Transparent / Bulk-Only device, which
+    is the descriptor combo QEMU's `usb-storage` always reports
+    regardless of the underlying media type (CD vs. disk is in the
+    SCSI INQUIRY response, not the USB class). AAVMF expands the
+    wildcard against the live handle list and finds whichever USB CD
+    has the named ESP file. Implemented in
+    `web.utm_bundle.prepare_efi_vars` via virt-firmware's
+    `DevicePathElem` primitives.
+
 ## Key files
 
 | Path | Purpose |
@@ -263,7 +300,7 @@ folded into `utm-upstream-utmctl-create`.)
 | utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
-| utm-efi-vars-nvram-boot-entry | resolved | `web.utm_bundle.prepare_efi_vars` bakes `Boot0000 = FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into the per-bundle `efi_vars.fd` via `virt-firmware`. `utm_boot_fallback_keystrokes` default flipped to `false`; legacy keystroke escape is now opt-in only. Test: `test_prepare_efi_vars_writes_boot0000_entry`. |
+| utm-efi-vars-nvram-boot-entry | resolved | `web.utm_bundle.prepare_efi_vars` bakes `Boot0000 = USB-CLASS(0x08/0x06/0x50) -> FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into the per-bundle `efi_vars.fd` via `virt-firmware`. The USB Class wildcard matches any QEMU usb-storage CD-ROM regardless of bus topology. The earlier FilePath-only form was rejected by AAVMF (acc-4 verified) - the new gotcha #10 covers why. `utm_boot_fallback_keystrokes` default flipped to `false`; legacy keystroke escape is now opt-in. Test: `test_prepare_efi_vars_writes_boot0000_entry` (asserts USB Class node + class triplet). |
 | utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
 | utm-phase2-sysprep-via-qga | resolved | Side-stepped via FirstLogonCommand: `unattend.xml.j2` appends a SynchronousCommand at Order 100 running `%WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml` when `sysprep_finalize=true` is set in the answer-iso profile (or `utm_answer_sysprep_finalize=true` on the role). `firstboot.ps1`'s scheduled-task shutdown is Jinja-gated off in that mode to avoid racing sysprep. Host-side waits via `utmctl status` for `stopped`. No host-to-guest exec channel needed - eliminates the OSStatus -2700 dependency. Sysprep_finalize.yml refactored to a wait-for-stopped poll. Test: `test_clone_unattend_invokes_sysprep_finalize_via_flc`. Commit: `<sysprep-flc>` |
