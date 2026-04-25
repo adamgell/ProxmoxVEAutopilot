@@ -3,30 +3,44 @@
 # remaster_win11_noprompt.sh
 #
 # One-shot re-master of a Windows 11 ARM64 install ISO that swaps the
-# bootloader for Microsoft's no-prompt deployment variants. The output
-# ISO boots Setup directly with no "Press any key to boot from CD or
-# DVD..." countdown and no BootMgr keypress at all.
+# El Torito UEFI boot image for Microsoft's `efisys_noprompt.bin`,
+# producing an ISO that boots Setup directly with no "Press any key
+# to boot from CD or DVD..." countdown.
 #
-# Why this exists: UTM 4.7.5's AAVMF either (a) drops to the EDK2 EFI
-# shell on first boot because USB-CLASS Boot#### expansion does not
-# work, then the keystroke fallback types the loader path manually, OR
-# (b) auto-launches `\efi\boot\bootaa64.efi` via UEFI removable-media
-# fallback. Both paths land at Microsoft's BootMgr, which on the stock
-# Win11 install media chains through `cdboot.efi` (10s "Press any key"
-# countdown) before booting Setup. Replacing the boot files with the
-# `_noprompt` siblings Microsoft already ships at
-# `\efi\microsoft\boot\` skips the countdown entirely.
+# How Microsoft makes a no-prompt ISO (per 2Pint DeployR's PEPrep.ps1
+# and the Windows ADK docs): they pass `efisys_noprompt.bin` (instead
+# of `efisys.bin`) as the El Torito UEFI boot sector when running
+# `oscdimg.exe`. That swap is the *only* difference between a stock
+# install ISO and a no-prompt install ISO.
+#
+# This script does the equivalent without rebuilding the whole ISO:
+# locate the byte range AAVMF actually reads when booting via El
+# Torito UEFI (load_lba pulled from the El Torito Boot Catalog), and
+# overwrite it in place with `efisys_noprompt.bin`.
+#
+# Why we don't touch `\efi\boot\bootaa64.efi`: on Win11 ARM64 install
+# media that file is `bootmgfw.efi` (Boot Manager, ~3 MiB), not
+# `cdboot.efi`. BootMgr alone never shows the "Press any key" prompt;
+# the prompt only comes from `cdboot.efi`, which lives inside the
+# El Torito FAT image. Replacing bootmgfw.efi was a previous error
+# in this script.
+#
+# Why we don't touch the UDF-visible `\efi\microsoft\boot\efisys.bin`:
+# AAVMF reads from the El Torito Boot Catalog's load_lba, not from
+# the UDF tree. The UDF copy is reachable via mount -t udf but is
+# never executed at boot. (Patching it does nothing, which is how the
+# previous version of this script appeared to "succeed" while still
+# producing a prompt.)
 #
 # Usage:
 #   ./remaster_win11_noprompt.sh <input.iso> [output.iso]
 #
-# Default output is the input path with `_noprompt` inserted before
-# the .iso extension. Idempotent: skips re-mastering if the output is
-# newer than the input AND already exists.
+# Default output path inserts `_noprompt` before the .iso extension.
+# Idempotent: skips re-mastering when the output already has the
+# no-prompt boot image at the El Torito LBA.
 #
 # Requirements:
-#   - macOS with hdiutil (preinstalled)
-#   - xorriso (auto-installed via Homebrew if missing)
+#   - python3 with pycdlib (auto-installed via pip if missing)
 #
 # Tested against Microsoft's `Win11_25H2_English_Arm64_v2.iso`.
 
@@ -41,105 +55,175 @@ if [[ ! -f "$INPUT_ISO" ]]; then
     exit 2
 fi
 
-# Idempotency: if output exists and is newer than input, skip.
+if ! python3 -c "import pycdlib" >/dev/null 2>&1; then
+    echo "pycdlib not found; installing via pip3..."
+    pip3 install --user pycdlib
+fi
+
+echo "==> Probing source ISO layout (El Torito + efisys_noprompt extents)"
+PROBE_OUT="$(python3 - "$INPUT_ISO" <<'PYEOF'
+import struct
+import sys
+
+import pycdlib
+
+iso_path = sys.argv[1]
+
+# Boot Record Volume Descriptor lives at LBA 17. Pull boot catalog LBA.
+with open(iso_path, 'rb') as f:
+    f.seek(17 * 2048)
+    brvd = f.read(2048)
+    if brvd[0:7] != b'\x00CD001\x01':
+        sys.exit('ISO has no Boot Record Volume Descriptor at LBA 17')
+    cat_lba = struct.unpack('<I', brvd[71:75])[0]
+
+    # Read boot catalog. Validation Entry [0..32) + Initial/Default
+    # Entry [32..64). El Torito Initial Entry layout:
+    #   byte  0 : 0x88 = bootable, 0x00 = not bootable
+    #   byte  1 : boot media (0 = no emulation)
+    #   bytes 6-7 : sector count (in 512-byte virtual sectors)
+    #   bytes 8-11: load_lba (in 2048-byte ISO sectors)
+    f.seek(cat_lba * 2048)
+    cat = f.read(64)
+    if cat[0] != 0x01 or cat[1] != 0xEF:
+        sys.exit('boot catalog validation entry missing or non-EFI '
+                 f'(type=0x{cat[0]:02x} platform=0x{cat[1]:02x})')
+    boot_entry = cat[32:64]
+    if boot_entry[0] != 0x88:
+        sys.exit('UEFI boot entry is not bootable (Initial Entry indicator != 0x88)')
+    sector_count_512 = struct.unpack('<H', boot_entry[6:8])[0]
+    load_lba = struct.unpack('<I', boot_entry[8:12])[0]
+    boot_image_bytes = sector_count_512 * 512
+
+# Locate efisys_noprompt.bin in the UDF tree to grab its byte content
+iso = pycdlib.PyCdlib()
+iso.open(iso_path)
+part_start = iso.udf_main_descs.partitions[0].part_start_location
+
+def file_extent(udf_path):
+    rec = iso.get_record(udf_path=udf_path)
+    ad = rec.alloc_descs[0]
+    return ad.log_block_num, rec.get_data_length()
+
+np_lbn, np_len = file_extent('/efi/microsoft/boot/efisys_noprompt.bin')
+iso.close()
+
+print(f'PART_START={part_start}')
+print(f'EL_TORITO_LBA={load_lba}')
+print(f'EL_TORITO_LEN={boot_image_bytes}')
+print(f'EFISYS_NP_LBN={np_lbn}')
+print(f'EFISYS_NP_LEN={np_len}')
+PYEOF
+)"
+
+# Variables surfaced: PART_START, EL_TORITO_LBA, EL_TORITO_LEN,
+# EFISYS_NP_LBN, EFISYS_NP_LEN
+eval "$PROBE_OUT"
+
+EL_TORITO_OFF=$(( EL_TORITO_LBA * 2048 ))
+EFISYS_NP_OFF=$(( (PART_START + EFISYS_NP_LBN) * 2048 ))
+
+echo "    El Torito UEFI boot image:"
+echo "      LBA               : $EL_TORITO_LBA"
+echo "      byte offset       : $EL_TORITO_OFF (0x$(printf '%x' $EL_TORITO_OFF))"
+echo "      length            : $EL_TORITO_LEN bytes"
+echo "    efisys_noprompt.bin (source data):"
+echo "      partition start   : $PART_START"
+echo "      log block number  : $EFISYS_NP_LBN"
+echo "      byte offset       : $EFISYS_NP_OFF (0x$(printf '%x' $EFISYS_NP_OFF))"
+echo "      length            : $EFISYS_NP_LEN bytes"
+
+if [[ "$EFISYS_NP_LEN" != "$EL_TORITO_LEN" ]]; then
+    echo "ERROR: efisys_noprompt.bin ($EFISYS_NP_LEN) and El Torito boot image ($EL_TORITO_LEN) must match in size for in-place swap" >&2
+    exit 6
+fi
+
+# Idempotency: hash the El Torito boot image in input vs in any
+# existing output. If they already differ AND the output's image
+# matches the source's efisys_noprompt.bin, we're done.
 if [[ -f "$OUTPUT_ISO" && "$OUTPUT_ISO" -nt "$INPUT_ISO" ]]; then
-    echo "ALREADY DONE: $OUTPUT_ISO is newer than $INPUT_ISO; skipping re-master."
-    echo "Delete the output ISO to force a rebuild."
-    exit 0
+    echo "==> Output ISO exists and is newer than input; verifying patch..."
+    if python3 - "$INPUT_ISO" "$OUTPUT_ISO" "$EL_TORITO_OFF" "$EL_TORITO_LEN" "$EFISYS_NP_OFF" <<'PYEOF'
+import hashlib
+import sys
+
+src_iso, dst_iso, el_off, el_len, np_off = sys.argv[1:6]
+el_off, el_len, np_off = int(el_off), int(el_len), int(np_off)
+
+def hash_range(p, off, length):
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        f.seek(off)
+        h.update(f.read(length))
+    return h.hexdigest()
+
+src_np = hash_range(src_iso, np_off, el_len)   # source efisys_noprompt
+dst_el = hash_range(dst_iso, el_off, el_len)   # output El Torito image
+sys.exit(0 if src_np == dst_el else 1)
+PYEOF
+    then
+        echo "ALREADY DONE: $OUTPUT_ISO El Torito image matches efisys_noprompt.bin; skipping."
+        echo "Delete the output ISO to force a rebuild."
+        exit 0
+    else
+        echo "    output exists but El Torito image is NOT patched; rebuilding."
+    fi
 fi
 
-if ! command -v xorriso >/dev/null 2>&1; then
-    echo "xorriso not found; installing via Homebrew..."
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "ERROR: Homebrew not installed. Install brew first or install xorriso manually." >&2
-        exit 3
-    fi
-    brew install xorriso
-fi
-
-# Stage the ISO to a writable directory. We need ~8 GiB free for a
-# Win11 ARM64 ISO. Use a temp dir on the same volume as the output to
-# minimize copy churn at xorriso time.
-STAGE_BASE="$(dirname "$OUTPUT_ISO")"
-STAGE_DIR="$(mktemp -d "${STAGE_BASE}/win11-noprompt-stage.XXXXXX")"
-MOUNT_POINT=""
-
-cleanup() {
-    if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
-        hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true
-    fi
-    rm -rf "$STAGE_DIR"
-}
+echo "==> Copying $INPUT_ISO -> $OUTPUT_ISO"
+TMP_ISO="${OUTPUT_ISO}.tmp.$$"
+cleanup() { rm -f "$TMP_ISO"; }
 trap cleanup EXIT
+cp "$INPUT_ISO" "$TMP_ISO"
 
-echo "==> Mounting $INPUT_ISO read-only"
-MOUNT_INFO="$(hdiutil attach -nobrowse -readonly -plist "$INPUT_ISO")"
-MOUNT_POINT="$(echo "$MOUNT_INFO" | sed -n 's|.*<string>\(/Volumes/[^<]*\)</string>.*|\1|p' | head -1)"
-if [[ -z "$MOUNT_POINT" || ! -d "$MOUNT_POINT" ]]; then
-    echo "ERROR: failed to mount $INPUT_ISO" >&2
-    exit 4
-fi
+echo "==> Patching El Torito UEFI boot image with efisys_noprompt.bin"
+python3 - "$TMP_ISO" "$EL_TORITO_OFF" "$EL_TORITO_LEN" "$EFISYS_NP_OFF" <<'PYEOF'
+import sys
 
-# Capture the volume label so the re-mastered ISO carries it forward.
-# Setup auto-detects answer media partly by ID; preserving the label
-# avoids surprising downstream tooling that filters by it.
-VOL_LABEL="$(basename "$MOUNT_POINT")"
-echo "    volume label: $VOL_LABEL"
+iso, el_off, el_len, np_off = sys.argv[1:5]
+el_off, el_len, np_off = int(el_off), int(el_len), int(np_off)
 
-echo "==> Staging ISO contents to $STAGE_DIR"
-# rsync preserves mode + symlinks; CD-ROMs are plain files but rsync
-# is faster than cp -R for large trees and gives a progress indicator.
-rsync -a --info=progress2 "$MOUNT_POINT/" "$STAGE_DIR/"
+with open(iso, 'r+b') as f:
+    f.seek(np_off)
+    payload = f.read(el_len)
+    if payload[:2] != b'\xeb\x3c':
+        sys.exit('source efisys_noprompt.bin missing FAT boot signature 0xEB 0x3C')
 
-echo "==> Verifying _noprompt boot files are present"
-NOPROMPT_CDBOOT="$STAGE_DIR/efi/microsoft/boot/cdboot_noprompt.efi"
-NOPROMPT_EFISYS="$STAGE_DIR/efi/microsoft/boot/efisys_noprompt.bin"
-TARGET_BOOTAA64="$STAGE_DIR/efi/boot/bootaa64.efi"
-TARGET_EFISYS="$STAGE_DIR/efi/microsoft/boot/efisys.bin"
+    f.seek(el_off)
+    existing = f.read(el_len)
+    if existing[:2] != b'\xeb\x3c':
+        sys.exit('El Torito target missing FAT boot signature; LBA computation wrong')
 
-for f in "$NOPROMPT_CDBOOT" "$NOPROMPT_EFISYS" "$TARGET_BOOTAA64" "$TARGET_EFISYS"; do
-    if [[ ! -f "$f" ]]; then
-        echo "ERROR: expected file missing in source ISO: ${f#$STAGE_DIR/}" >&2
-        echo "       (this script targets Microsoft Win11 ARM64 install ISOs)" >&2
-        exit 5
-    fi
-done
+    f.seek(el_off)
+    f.write(payload)
 
-echo "==> Swapping bootloaders"
-# 1. UEFI removable-media fallback path: \efi\boot\bootaa64.efi.
-#    Replace with cdboot_noprompt.efi so AAVMF auto-launching this
-#    file does not show the prompt.
-chmod u+w "$TARGET_BOOTAA64"
-cp -f "$NOPROMPT_CDBOOT" "$TARGET_BOOTAA64"
+print('OK: El Torito UEFI boot image overwritten')
+PYEOF
 
-# 2. El Torito UEFI boot image: \efi\microsoft\boot\efisys.bin.
-#    Replace with efisys_noprompt.bin so any El Torito path also
-#    skips the prompt.
-chmod u+w "$TARGET_EFISYS"
-cp -f "$NOPROMPT_EFISYS" "$TARGET_EFISYS"
+echo "==> Verifying patch"
+python3 - "$TMP_ISO" "$EL_TORITO_OFF" "$EL_TORITO_LEN" "$EFISYS_NP_OFF" <<'PYEOF'
+import hashlib
+import sys
 
-echo "    bootaa64.efi: $(shasum -a 256 "$TARGET_BOOTAA64" | cut -d' ' -f1)"
-echo "    efisys.bin  : $(shasum -a 256 "$TARGET_EFISYS"   | cut -d' ' -f1)"
+iso, el_off, el_len, np_off = sys.argv[1:5]
+el_off, el_len, np_off = int(el_off), int(el_len), int(np_off)
 
-echo "==> Repacking ISO with xorriso"
-# UEFI-only El Torito layout matching what Microsoft's mediacreator
-# emits for Win11 ARM64 install media. The `-no-emul-boot` flag plus
-# -eltorito-platform 0xef makes the image a UEFI boot entry; the
-# system area / GPT bits keep it bootable on real hardware too.
-xorriso \
-    -as mkisofs \
-    -iso-level 4 \
-    -V "$VOL_LABEL" \
-    -udf \
-    -allow-limited-size \
-    -no-emul-boot \
-    -eltorito-platform efi \
-    -eltorito-boot efi/microsoft/boot/efisys.bin \
-    -boot-load-size 8 \
-    -no-emul-boot \
-    -isohybrid-gpt-basdat \
-    -o "$OUTPUT_ISO" \
-    "$STAGE_DIR"
+def sha(off):
+    with open(iso, 'rb') as f:
+        f.seek(off)
+        return hashlib.sha256(f.read(el_len)).hexdigest()
+
+el_sha = sha(el_off)
+np_sha = sha(np_off)
+print(f'  El Torito @ 0x{el_off:x}      sha256={el_sha}')
+print(f'  efisys_noprompt @ 0x{np_off:x} sha256={np_sha}')
+if el_sha != np_sha:
+    sys.exit('FAIL: El Torito image hash != efisys_noprompt.bin hash')
+print('OK: El Torito image == efisys_noprompt.bin')
+PYEOF
+
+mv "$TMP_ISO" "$OUTPUT_ISO"
+trap - EXIT
 
 echo "==> Done"
 echo "    output : $OUTPUT_ISO"
