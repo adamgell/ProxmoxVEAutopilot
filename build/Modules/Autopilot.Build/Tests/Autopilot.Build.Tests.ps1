@@ -122,3 +122,39 @@ Describe 'New-BuildLock' {
         $content.owner | Should -Be 'Reclaimer'
     }
 }
+
+Describe 'Write-ArtifactSidecar' {
+    BeforeEach {
+        $script:sidecarPath = Join-Path ([System.IO.Path]::GetTempPath()) "sidecar-test-$([guid]::NewGuid()).json"
+    }
+    AfterEach {
+        if (Test-Path $script:sidecarPath) { Remove-Item $script:sidecarPath -Force }
+    }
+
+    It 'writes a JSON file with required keys' {
+        Write-ArtifactSidecar -Path $script:sidecarPath -Properties @{
+            kind = 'install-wim'
+            sha256 = 'a' * 64
+            size = 1234
+            extra = @{ buildHost = 'buildhost' }
+        }
+        $obj = Get-Content $script:sidecarPath -Raw | ConvertFrom-Json
+        $obj.kind   | Should -Be 'install-wim'
+        $obj.sha256 | Should -Be ('a' * 64)
+        $obj.size   | Should -Be 1234
+        $obj.extra.buildHost | Should -Be 'buildhost'
+    }
+
+    It 'pretty-prints (indented) JSON' {
+        Write-ArtifactSidecar -Path $script:sidecarPath -Properties @{
+            kind = 'pe-wim'; sha256 = 'b' * 64; size = 0
+        }
+        $raw = Get-Content $script:sidecarPath -Raw
+        $raw | Should -Match "`n  "
+    }
+
+    It 'throws if Properties lacks required keys' {
+        { Write-ArtifactSidecar -Path $script:sidecarPath -Properties @{ kind = 'install-wim' } } |
+            Should -Throw -ExpectedMessage '*required*'
+    }
+}
