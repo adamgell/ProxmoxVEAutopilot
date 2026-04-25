@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "orchestratorUrl": "__ORCHESTRATOR_URL__",
+  "networkTimeoutSec": 60,
+  "manifestRetries": 3,
+  "manifestRetryBackoffSec": 5,
+  "checkinRetries": 2,
+  "debug": false
+}
