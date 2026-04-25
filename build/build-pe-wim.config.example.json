@@ -1,0 +1,15 @@
+{
+  "buildHost":         "buildhost",
+  "buildHostUser":     "Administrator",
+  "buildRootRemote":   "C:/BuildRoot",
+
+  "adkRoot":           "C:/Program Files (x86)/Windows Kits/10",
+  "architecture":      "arm64",
+  "virtioIsoPath":     "C:/BuildRoot/inputs/virtio/virtio-win-0.1.266.iso",
+  "drivers":           ["vioserial", "viostor", "vioscsi", "NetKVM", "balloon", "vioinput"],
+  "pwsh7Zip":          "C:/BuildRoot/inputs/runtime/PowerShell-7.4.6-win-arm64.zip",
+  "dotnetRuntimeZip":  "C:/BuildRoot/inputs/runtime/dotnet-runtime-8.0.10-win-arm64.zip",
+  "payloadDir":        "C:/BuildRoot/src/build/pe-payload",
+  "orchestratorUrl":   "http://autopilot.local:5000",
+  "outputDir":         "C:/BuildRoot/outputs"
+}
