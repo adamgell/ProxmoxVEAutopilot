@@ -417,8 +417,12 @@ def test_prepare_efi_vars_writes_boot0000_entry(tmp_path):
     boot0000 = varlist.get("Boot0000")
     assert boot0000 is not None, "Boot0000 not present after prepare_efi_vars"
     boot0000_repr = boot0000.fmt_boot_entry()
-    assert "bootaa64.efi" in boot0000_repr.lower(), (
-        f"Boot0000 devpath does not target bootaa64.efi: {boot0000_repr}"
+    # Default boot target is cdboot_noprompt.efi (no "Press any key to
+    # boot from CD" prompt), not bootaa64.efi (which chains through
+    # BootMgr's prompt). Both files exist on the Win11 ARM64 install
+    # ISO under their respective standard paths.
+    assert "cdboot_noprompt.efi" in boot0000_repr.lower(), (
+        f"Boot0000 devpath does not target cdboot_noprompt.efi: {boot0000_repr}"
     )
 
     # The device path must start with a USB Class wildcard node, not an

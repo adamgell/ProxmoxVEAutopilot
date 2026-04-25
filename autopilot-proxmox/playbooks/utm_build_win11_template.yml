@@ -152,10 +152,18 @@
 
     - name: "Template build: escape EFI shell via AppleScript (fallback)"
       # Four backslashes in YAML -> AppleScript sees `\\` -> single `\`,
-      # giving the EDK2 shell `fs0:\efi\boot\bootaa64.efi`. `key code 36`
-      # is not in UTM's AppleScript dialect (that's System Events); the
-      # working form embeds a literal newline inside the text string,
-      # which UTM's `input keystroke` sends as Return.
+      # giving the EDK2 shell `fs0:\efi\microsoft\boot\cdboot_noprompt.efi`.
+      # `key code 36` is not in UTM's AppleScript dialect (that's System
+      # Events); the working form embeds a literal newline inside the
+      # text string, which UTM's `input keystroke` sends as Return.
+      #
+      # Why cdboot_noprompt.efi and not bootaa64.efi: bootaa64.efi chains
+      # through Windows BootMgr's "Press any key to boot from CD or DVD..."
+      # countdown, requiring a second keystroke to actually proceed.
+      # cdboot_noprompt.efi is Microsoft's OEM/deployment-mode CD boot
+      # loader (shipped right next to cdboot.efi on the install ISO at
+      # \efi\microsoft\boot\) that skips the prompt entirely - same
+      # downstream Setup behaviour, no key needed.
       #
       # Leading dummy space+newline ack's "Press ESC to skip startup.nsh"
       # unambiguously before the real command is typed - protects against
@@ -167,10 +175,8 @@
             input keystroke vm text "
         "
             delay 1
-            input keystroke vm text "fs0:\\\\efi\\\\boot\\\\bootaa64.efi
+            input keystroke vm text "fs0:\\\\efi\\\\microsoft\\\\boot\\\\cdboot_noprompt.efi
         "
-            delay 2
-            input keystroke vm text " "
         end tell
         OSA
       args:

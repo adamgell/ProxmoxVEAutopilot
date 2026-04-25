@@ -14,21 +14,30 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
   extractor + Tier 1 drift CI script. 20 unit tests pass.
 - T14 green: first autonomous end-to-end Win11 ARM64 template build
   completed with `failed=0` in run 8 (600s shutdown poll).
-- T15 resolved: `virt-fw-vars` EFI-shell elimination landed in
-  `utm-efi-vars-nvram-boot-entry` after a two-iteration spike.
-  `web.utm_bundle.prepare_efi_vars` uses the `virt-firmware` Python API
-  to bake a Boot0000 entry plus `BootOrder = 0x0000, ...` into the
-  per-bundle `efi_vars.fd` after copying UTM's
-  `edk2-arm-secure-vars.fd`. The first attempt used a FilePath-only
-  device path and AAVMF rejected it on UTM 4.7.5 (acc-4 dropped to EFI
-  shell, post-mortem dump confirmed Boot0000 was written and at the
-  head of BootOrder but skipped at boot). Working device path is
-  `USB-CLASS(any/any/0x08/0x06/0x50) -> FilePath(\efi\boot\bootaa64.efi)
-  -> END`. The USB Class wildcard matches any QEMU `usb-storage`
-  device regardless of UTM's bus topology; no need to know which
-  USB port the autounattend ISO landed on. Legacy 5-line osascript
-  escape kept behind `utm_boot_fallback_keystrokes` but default is
-  now `false` - opt-in only.
+- T15 partial: `virt-fw-vars` EFI-shell elimination is implemented in
+  `web.utm_bundle.prepare_efi_vars` (USB-CLASS+FilePath Boot0000 +
+  BootOrder via virt-firmware) but is NOT yet sufficient to eliminate
+  the keystroke fallback on UTM 4.7.5. Two acc runs verified:
+    1. The first FilePath-only device path was rejected by AAVMF's
+       BdsExpandShortFormDevicePath (acc-4). Replaced with a USB Class
+       wildcard prefix (`USB-CLASS(any/any/0x08/0x06/0x50) ->
+       FilePath(\efi\boot\bootaa64.efi) -> END`) which AAVMF should
+       expand against any USB Mass-Storage / SCSI-Transparent /
+       Bulk-Only device regardless of bus topology. Encoding verified
+       byte-for-byte in `test_prepare_efi_vars_writes_boot0000_entry`.
+    2. Even with a properly-encoded Boot0000, the keystroke fallback
+       still solves a second hands-off blocker (acc-5): once AAVMF
+       auto-launches `bootaa64.efi`, Windows BootMgr displays
+       "Press any key to boot from CD or DVD..." with a ~10 s
+       countdown. No keypress and BootMgr exits, AAVMF moves on.
+       The existing keystroke fallback handles BOTH transitions
+       (typing the loader path + sending the CD prompt key) in one
+       sequence; the original spike only addressed #1.
+  Net: `utm_boot_fallback_keystrokes` default is back to `true` for
+  reliability. The EFI vars baking ships and runs in `write_bundle`
+  (harmless when keystroke is also on; would let us trim keystrokes
+  to just the BootMgr CD-prompt key once we add a "send SPACE at
+  boot + ~30 s" companion task). See gotcha #10 + #11.
 - T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
   playbook stripped of plutil patches, quit-relaunch dance, and the
   30-line keystroke block (shrunk to 5 lines).
@@ -271,11 +280,29 @@ folded into `utm-upstream-utmctl-create`.)
     any USB Mass-Storage / SCSI-Transparent / Bulk-Only device, which
     is the descriptor combo QEMU's `usb-storage` always reports
     regardless of the underlying media type (CD vs. disk is in the
-    SCSI INQUIRY response, not the USB class). AAVMF expands the
-    wildcard against the live handle list and finds whichever USB CD
-    has the named ESP file. Implemented in
+    SCSI INQUIRY response, not the USB class). AAVMF should expand
+    the wildcard against the live handle list and find whichever USB
+    CD has the named ESP file. Implemented in
     `web.utm_bundle.prepare_efi_vars` via virt-firmware's
-    `DevicePathElem` primitives.
+    `DevicePathElem` primitives. **Caveat:** acc-5 still landed in
+    EFI shell on UTM 4.7.5 even with the USB-CLASS form, suggesting
+    AAVMF in this build may not implement BmExpandUsbDevicePath or
+    requires additional encoding tweaks. The keystroke fallback
+    remains the reliable path for now.
+
+11. **Windows BootMgr "Press any key to boot from CD or DVD..."
+    countdown**. Once `\efi\boot\bootaa64.efi` runs (whether via
+    AAVMF auto-launch or via manual EFI-shell typing), it chains
+    into `bootmgr.efi` which displays this prompt with a ~10-second
+    countdown. No keypress means BootMgr exits and the firmware
+    moves on to the next BootOrder entry, dropping us back to
+    EFI shell or worse. Eliminating only the EFI-shell drop is
+    therefore not enough for hands-off; the keystroke fallback must
+    also send a key during the BootMgr CD prompt window. The current
+    osascript fallback's third keystroke (a SPACE after delay 2)
+    handles this; if/when we trim the EFI-shell-escape portion,
+    keep the SPACE keystroke around. Tracked under the
+    `utm-efi-vars-nvram-boot-entry` partial-resolution row.
 
 ## Key files
 
@@ -300,7 +327,7 @@ folded into `utm-upstream-utmctl-create`.)
 | utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
-| utm-efi-vars-nvram-boot-entry | resolved | `web.utm_bundle.prepare_efi_vars` bakes `Boot0000 = USB-CLASS(0x08/0x06/0x50) -> FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into the per-bundle `efi_vars.fd` via `virt-firmware`. The USB Class wildcard matches any QEMU usb-storage CD-ROM regardless of bus topology. The earlier FilePath-only form was rejected by AAVMF (acc-4 verified) - the new gotcha #10 covers why. `utm_boot_fallback_keystrokes` default flipped to `false`; legacy keystroke escape is now opt-in. Test: `test_prepare_efi_vars_writes_boot0000_entry` (asserts USB Class node + class triplet). |
+| utm-efi-vars-nvram-boot-entry | partial | `web.utm_bundle.prepare_efi_vars` bakes a USB-CLASS+FilePath Boot0000 entry but on UTM 4.7.5 AAVMF this only solves the EFI-shell-drop blocker; the keystroke fallback is still needed for the BootMgr "Press any key to boot from CD or DVD" prompt that follows. Default `utm_boot_fallback_keystrokes: true` retained. To fully eliminate keystrokes a follow-up needs to (a) verify the USB-CLASS Boot0000 actually expands at boot (acc-5 still landed in EFI shell, suggesting AAVMF's BDS may not implement BmExpandUsbDevicePath, OR a node-encoding tweak is needed), and (b) add a partial-keystroke task that ONLY sends the SPACE for the BootMgr CD prompt once AAVMF is auto-launching bootaa64.efi. See gotcha #10. |
 | utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
 | utm-phase2-sysprep-via-qga | resolved | Side-stepped via FirstLogonCommand: `unattend.xml.j2` appends a SynchronousCommand at Order 100 running `%WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml` when `sysprep_finalize=true` is set in the answer-iso profile (or `utm_answer_sysprep_finalize=true` on the role). `firstboot.ps1`'s scheduled-task shutdown is Jinja-gated off in that mode to avoid racing sysprep. Host-side waits via `utmctl status` for `stopped`. No host-to-guest exec channel needed - eliminates the OSStatus -2700 dependency. Sysprep_finalize.yml refactored to a wait-for-stopped poll. Test: `test_clone_unattend_invokes_sysprep_finalize_via_flc`. Commit: `<sysprep-flc>` |

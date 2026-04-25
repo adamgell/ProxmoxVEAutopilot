@@ -279,7 +279,7 @@ def _build_usb_class_dp_node():
 
 def prepare_efi_vars(
     efi_vars_path: pathlib.Path,
-    boot_filepath: str = "\\efi\\boot\\bootaa64.efi",
+    boot_filepath: str = "\\efi\\microsoft\\boot\\cdboot_noprompt.efi",
     title: str = "autounattend",
 ) -> bool:
     """Add a Boot0000 + BootOrder=0000 entry to an EDK2 NVRAM varstore so

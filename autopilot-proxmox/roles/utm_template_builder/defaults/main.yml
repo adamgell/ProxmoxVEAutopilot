@@ -24,13 +24,20 @@ utm_enable_tpm_secure_boot: true
 utm_virtio_win_iso_name: virtio-win.iso
 
 # EFI-shell escape fallback: type the installer EFI loader path via
-# osascript `input keystroke`. Default off as of `utm-efi-vars-nvram-boot-entry`:
-# `web.utm_bundle.prepare_efi_vars` now pre-bakes Boot0000 +
-# BootOrder=0000 into the per-bundle efi_vars.fd via virt-fw-vars, so
-# AAVMF boots straight into the autounattend ISO and never lands in
-# the EFI shell. Flip to true to re-enable the legacy keystroke escape
-# (e.g. when virt-firmware is unavailable on the orchestrator host).
-utm_boot_fallback_keystrokes: false
+# osascript `input keystroke`. The keystroke sequence handles two
+# distinct first-boot prompts on UTM 4.7.5:
+#   1. AAVMF lands in the EDK2 EFI shell because no Boot#### entry
+#      resolves to a bootable image.
+#   2. Once `\efi\boot\bootaa64.efi` runs, Windows BootMgr displays
+#      "Press any key to boot from CD or DVD..." with a ~10 s countdown.
+#      Without a keypress, BootMgr exits and AAVMF moves on.
+# `web.utm_bundle.prepare_efi_vars` solves problem #1 (USB-CLASS+FilePath
+# Boot0000) but does NOT eliminate problem #2, so the keystroke
+# fallback stays on by default until we have a "send space at +30 s"
+# companion that handles BootMgr's CD prompt. Tracked under
+# `utm-efi-vars-nvram-boot-entry`. See gotcha #10 in
+# docs/UTM_MACOS_ARM64.md for the full history.
+utm_boot_fallback_keystrokes: true
 
 # Sysprep finalize via FirstLogonCommand. Forwarded to utm_answer_iso
 # when the calling playbook plumbs it through. When true, the answer
