@@ -5,7 +5,7 @@
     Author            = 'ProxmoxVEAutopilot'
     Description       = 'Build-pipeline helpers for Autopilot WIM construction.'
     PowerShellVersion = '7.0'
-    FunctionsToExport = @()
+    FunctionsToExport = '*'
     CmdletsToExport   = @()
     VariablesToExport = @()
     AliasesToExport   = @()
