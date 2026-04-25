@@ -17,3 +17,9 @@ docs/superpowers/
 
 # Superpowers worktrees (subagent-driven-development isolated workspaces)
 .worktrees/
+
+# Artifact store contents — large binary blobs, never committed
+var/artifacts/store/
+var/artifacts/cache/
+var/artifacts/staging/
+!var/artifacts/.gitkeep
