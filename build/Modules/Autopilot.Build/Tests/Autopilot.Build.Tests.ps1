@@ -77,3 +77,48 @@ Describe 'Get-FileSha256' {
         { Get-FileSha256 -Path '/no/such/path/abc.bin' } | Should -Throw
     }
 }
+
+Describe 'New-BuildLock' {
+    BeforeEach {
+        $script:lockDir = Join-Path ([System.IO.Path]::GetTempPath()) "buildlock-test-$([guid]::NewGuid())"
+        New-Item -ItemType Directory -Path $script:lockDir | Out-Null
+        $script:lockPath = Join-Path $script:lockDir '.build.lock'
+    }
+    AfterEach {
+        if (Test-Path $script:lockDir) { Remove-Item $script:lockDir -Recurse -Force }
+    }
+
+    It 'acquires when no lock file exists' {
+        $lock = New-BuildLock -Path $script:lockPath -Owner 'TestScript'
+        Test-Path $script:lockPath | Should -BeTrue
+        $lock | Should -Not -BeNullOrEmpty
+    }
+
+    It 'records owner and PID in the lock file' {
+        $null = New-BuildLock -Path $script:lockPath -Owner 'TestScript'
+        $content = Get-Content $script:lockPath -Raw | ConvertFrom-Json
+        $content.owner | Should -Be 'TestScript'
+        $content.pid | Should -Be $PID
+    }
+
+    It 'releases via the returned object''s Release() method' {
+        $lock = New-BuildLock -Path $script:lockPath -Owner 'TestScript'
+        Test-Path $script:lockPath | Should -BeTrue
+        $lock.Release()
+        Test-Path $script:lockPath | Should -BeFalse
+    }
+
+    It 'throws when the lock is held by a live PID' {
+        $null = New-BuildLock -Path $script:lockPath -Owner 'First'
+        { New-BuildLock -Path $script:lockPath -Owner 'Second' } | Should -Throw -ExpectedMessage '*held*'
+    }
+
+    It 'reclaims when the recorded PID is dead' {
+        @{ owner = 'GhostScript'; pid = 999999; acquiredAt = (Get-Date).ToString('o') } |
+            ConvertTo-Json | Set-Content -Path $script:lockPath
+        $lock = New-BuildLock -Path $script:lockPath -Owner 'Reclaimer'
+        $lock | Should -Not -BeNullOrEmpty
+        $content = Get-Content $script:lockPath -Raw | ConvertFrom-Json
+        $content.owner | Should -Be 'Reclaimer'
+    }
+}
