@@ -5,14 +5,14 @@
 # it with UTM. Replaces create_bundle.yml + customize_plist.yml.
 #
 # Required facts (set by the calling playbook / parent role):
-#   vm_name            — UTM display name and bundle directory stem
-#   utm_iso_name       — installer ISO filename inside utm_iso_dir
-#   utm_iso_dir        — directory containing installer ISOs
-#   utm_documents_dir  — sandbox Documents dir where UTM stores bundles
-#   utm_answer_iso_path — absolute path to AUTOUNATTEND.iso (from utm_answer_iso role)
-#   utm_virtio_win_iso_name — filename of virtio-win ISO
-#   utm_app_path       — UTM.app bundle path (default /Applications/UTM.app)
-#   vm_cpu_cores, vm_memory_mb, vm_disk_gb — sizing
+#   vm_name            - UTM display name and bundle directory stem
+#   utm_iso_name       - installer ISO filename inside utm_iso_dir
+#   utm_iso_dir        - directory containing installer ISOs
+#   utm_documents_dir  - sandbox Documents dir where UTM stores bundles
+#   utm_answer_iso_path - absolute path to AUTOUNATTEND.iso (from utm_answer_iso role)
+#   utm_virtio_win_iso_name - filename of virtio-win ISO
+#   utm_app_path       - UTM.app bundle path (default /Applications/UTM.app)
+#   vm_cpu_cores, vm_memory_mb, vm_disk_gb - sizing
 #
 # Exports facts for downstream tasks:
 #   _bundle_uuid, _bundle_dest, _plist_path, _data_dir, _cd_uuid, _disk_uuid,
@@ -21,11 +21,11 @@
 - name: "Render bundle: resolve paths and generate UUIDs"
   ansible.builtin.set_fact:
     _bundle_dest: "{{ utm_documents_dir }}/{{ vm_name }}.utm"
-    # macOS `uuidgen` produces uppercase UUIDs — feeding them straight into
+    # macOS `uuidgen` produces uppercase UUIDs - feeding them straight into
     # the spec is correct (UTM requires uppercase Identifier / UUID fields).
-    _vm_uuid:            "{{ lookup('pipe', 'uuidgen') }}"
-    _cd_uuid_gen:        "{{ lookup('pipe', 'uuidgen') }}"
-    _disk_uuid_gen:      "{{ lookup('pipe', 'uuidgen') }}"
+    _vm_uuid: "{{ lookup('pipe', 'uuidgen') }}"
+    _cd_uuid_gen: "{{ lookup('pipe', 'uuidgen') }}"
+    _disk_uuid_gen: "{{ lookup('pipe', 'uuidgen') }}"
     _answer_cd_uuid_gen: "{{ lookup('pipe', 'uuidgen') }}"
     _virtio_cd_uuid_gen: "{{ lookup('pipe', 'uuidgen') }}"
 
@@ -51,26 +51,26 @@
       uuid: "{{ _vm_uuid }}"
       system:
         memory_mib: "{{ vm_memory_mb | int }}"
-        cpu_count:  "{{ vm_cpu_cores | int }}"
+        cpu_count: "{{ vm_cpu_cores | int }}"
       qemu: {}
       display: {}
       network: {}
       drives:
         - identifier: "{{ _cd_uuid_gen }}"
           image_type: "CD"
-          interface:  "USB"
+          interface: "USB"
           image_name: "{{ utm_iso_name }}"
         - identifier: "{{ _disk_uuid_gen }}"
           image_type: "Disk"
-          interface:  "VirtIO"
+          interface: "VirtIO"
           image_name: "{{ _disk_uuid_gen }}.qcow2"
         - identifier: "{{ _answer_cd_uuid_gen }}"
           image_type: "CD"
-          interface:  "USB"
+          interface: "USB"
           image_name: "AUTOUNATTEND.iso"
         - identifier: "{{ _virtio_cd_uuid_gen }}"
           image_type: "CD"
-          interface:  "USB"
+          interface: "USB"
           image_name: "{{ utm_virtio_win_iso_name | default('virtio-win.iso') }}"
       disk_size_gib: "{{ vm_disk_gb | int }}"
       efi_vars_source: >-
@@ -135,11 +135,11 @@
 
 - name: "Render bundle: export facts for downstream tasks"
   ansible.builtin.set_fact:
-    _bundle_uuid:     "{{ _utm_build_json.registered_uuid | default(_utm_build_json.uuid) }}"
-    _plist_path:      "{{ _bundle_dest }}/config.plist"
-    _data_dir:        "{{ _bundle_dest }}/Data"
-    _cd_uuid:         "{{ _cd_uuid_gen | upper }}"
-    _disk_uuid:       "{{ _disk_uuid_gen | upper }}"
-    _disk_filename:   "{{ _disk_uuid_gen | upper }}.qcow2"
-    _answer_cd_uuid:  "{{ _answer_cd_uuid_gen | upper }}"
-    _virtio_cd_uuid:  "{{ _virtio_cd_uuid_gen | upper }}"
+    _bundle_uuid: "{{ _utm_build_json.registered_uuid | default(_utm_build_json.uuid) }}"
+    _plist_path: "{{ _bundle_dest }}/config.plist"
+    _data_dir: "{{ _bundle_dest }}/Data"
+    _cd_uuid: "{{ _cd_uuid_gen | upper }}"
+    _disk_uuid: "{{ _disk_uuid_gen | upper }}"
+    _disk_filename: "{{ _disk_uuid_gen | upper }}.qcow2"
+    _answer_cd_uuid: "{{ _answer_cd_uuid_gen | upper }}"
+    _virtio_cd_uuid: "{{ _virtio_cd_uuid_gen | upper }}"

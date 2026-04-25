@@ -56,6 +56,7 @@
           - -string
           - "{{ _utm_mode_val }}"
           - "{{ _config_plist }}"
+      changed_when: true
 
     - name: "UTM network override: replace Network[0].BridgeInterface (if exists)"
       ansible.builtin.command:
@@ -82,6 +83,7 @@
           - -string
           - "{{ utm_bridge_interface }}"
           - "{{ _config_plist }}"
+      changed_when: true
       when:
         - utm_network_mode | default('shared') == 'bridged'
         - utm_bridge_interface | default('') | length > 0

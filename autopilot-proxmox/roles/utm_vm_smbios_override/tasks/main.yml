@@ -13,7 +13,7 @@
 #   _oem_profile  - (optional) OEM dict from oem_profile_resolver
 #
 # QEMU.AdditionalArguments shape (verified vs. windows11-arm64.utm and
-# windows-server-arm64.utm skeleton bundles — both have an empty
+# windows-server-arm64.utm skeleton bundles - both have an empty
 # <array/> for AdditionalArguments). The array holds plain strings,
 # NOT dict objects. plutil -insert ... -string is therefore correct.
 #
@@ -80,6 +80,7 @@
           - -string
           - "-smbios"
           - "{{ _config_plist }}"
+      changed_when: true
 
     - name: "UTM SMBIOS: append type=1 value"
       ansible.builtin.command:
@@ -90,6 +91,7 @@
           - -string
           - "{{ _smbios_type1_val }}"
           - "{{ _config_plist }}"
+      changed_when: true
 
     - name: "UTM SMBIOS: append -smbios flag for type=3 chassis"
       ansible.builtin.command:
@@ -100,6 +102,7 @@
           - -string
           - "-smbios"
           - "{{ _config_plist }}"
+      changed_when: true
       when:
         - _oem_profile is defined
         - _oem_profile.chassis_type is defined
@@ -113,6 +116,7 @@
           - -string
           - "type=3,type={{ _oem_profile.chassis_type }}"
           - "{{ _config_plist }}"
+      changed_when: true
       when:
         - _oem_profile is defined
         - _oem_profile.chassis_type is defined

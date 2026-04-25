@@ -1,5 +1,5 @@
 ---
-- name: "UTM clone: clone template '{{ utm_template_vm_name }}' as '{{ vm_name }}'"
+- name: "UTM clone: clone template (source '{{ utm_template_vm_name }}', dest '{{ vm_name }}')"
   ansible.builtin.command:
     argv:
       - "{{ utm_utmctl_path }}"
@@ -9,11 +9,12 @@
       - "{{ vm_name }}"
   register: _clone_result
   # utmctl returns rc=0 even on semantic errors (e.g. "source VM must
-  # be stopped" — OSStatus -2700). The real signal is on stderr. Any
+  # be stopped", OSStatus -2700). The real signal is on stderr. Any
   # non-empty stderr means something went wrong.
   failed_when:
     - _clone_result.rc != 0
       or (_clone_result.stderr | default('') | length) > 0
+  changed_when: _clone_result.rc == 0
 
 - name: "UTM clone: adopt vm_name as vm_vmid for downstream common tasks"
   ansible.builtin.set_fact:

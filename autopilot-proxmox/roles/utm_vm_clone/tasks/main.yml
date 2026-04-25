@@ -14,8 +14,8 @@
 #                      • gates role completion on the firstboot sentinel
 #                        C:\autopilot\autopilot-firstboot.done
 #                    When false (default), preserves the existing clone
-#                    behaviour (SMBIOS override → network override → boot
-#                    → wait for guest agent).
+#                    behaviour (SMBIOS override -> network override -> boot
+#                    -> wait for guest agent).
 #
 # Exports:
 #   vm_vmid = vm_name (so common/tasks/* work backend-agnostically)
@@ -29,7 +29,7 @@
       - vm_name is defined and (vm_name | length) > 0
     fail_msg: >-
       utm_vm_clone requires utm_template_vm_name and vm_name. Configure
-      the template via Settings → UTM (macOS/ARM64) Configuration.
+      the template via Settings -> UTM (macOS/ARM64) Configuration.
 
 - name: "UTM clone: perform the clone"
   ansible.builtin.include_tasks: clone_vm.yml
@@ -54,7 +54,7 @@
 
 # ── template_mode=true path ─────────────────────────────────────────────────
 # Generate answer ISO, attach as Drive.2, start, poll for sentinel.
-# SMBIOS + network overrides and guest-agent wait are skipped — the
+# SMBIOS + network overrides and guest-agent wait are skipped - the
 # firstboot.ps1 payload handles WinRM setup instead.
 
 - name: "UTM clone [template_mode]: generate answer ISO"
@@ -168,4 +168,3 @@
 - name: "UTM clone: wait for guest agent (dispatches via hypervisor_type=utm)"
   ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
   when: not (template_mode | default(false) | bool)
-
