@@ -291,18 +291,34 @@ folded into `utm-upstream-utmctl-create`.)
     remains the reliable path for now.
 
 11. **Windows BootMgr "Press any key to boot from CD or DVD..."
-    countdown**. Once `\efi\boot\bootaa64.efi` runs (whether via
-    AAVMF auto-launch or via manual EFI-shell typing), it chains
-    into `bootmgr.efi` which displays this prompt with a ~10-second
-    countdown. No keypress means BootMgr exits and the firmware
-    moves on to the next BootOrder entry, dropping us back to
-    EFI shell or worse. Eliminating only the EFI-shell drop is
-    therefore not enough for hands-off; the keystroke fallback must
-    also send a key during the BootMgr CD prompt window. The current
-    osascript fallback's third keystroke (a SPACE after delay 2)
-    handles this; if/when we trim the EFI-shell-escape portion,
-    keep the SPACE keystroke around. Tracked under the
-    `utm-efi-vars-nvram-boot-entry` partial-resolution row.
+    countdown**. The stock Win11 install ISO ships
+    `\efi\boot\bootaa64.efi` as the standard removable-media bootloader
+    AND a `_noprompt` variant at `\efi\microsoft\boot\cdboot_noprompt.efi`
+    intended for OEM / deployment scenarios. Microsoft also ships
+    `efisys_noprompt.bin` as the El Torito UEFI boot image without
+    the prompt. Three resolution paths, in increasing order of
+    permanence:
+
+    a. **Type `cdboot_noprompt.efi` at the EFI shell** (current
+       keystroke fallback default - already wired up in
+       `utm_build_win11_template.yml`). Loads the no-prompt loader
+       from the existing ISO; no ISO modification needed; one keystroke.
+    b. **Bake a Boot#### entry pointing at
+       `\efi\microsoft\boot\cdboot_noprompt.efi`** (current
+       `prepare_efi_vars` default target). Only takes effect if AAVMF's
+       BDS expands the USB-CLASS prefix on this build (acc-5 still
+       dropped to EFI shell, suggesting it does not on UTM 4.7.5).
+    c. **Re-master the ISO so `\efi\boot\bootaa64.efi` is the
+       no-prompt loader**. Runs once via
+       `autopilot-proxmox/scripts/remaster_win11_noprompt.sh`,
+       produces a new `*_noprompt.iso` with both the UEFI fallback
+       path and the El Torito boot image swapped to the no-prompt
+       variants. After that, no keystroke is ever needed for the
+       BootMgr prompt - the prompt simply does not exist on the
+       re-mastered ISO. Re-run the script for each new Win11 ISO
+       Microsoft ships.
+
+    Tracked under `utm-efi-vars-nvram-boot-entry`.
 
 ## Key files
 
