@@ -3,35 +3,41 @@
 # remaster_win11_noprompt.sh
 #
 # One-shot re-master of a Windows 11 ARM64 install ISO that swaps the
-# bootloader for Microsoft's no-prompt deployment variants. The output
-# ISO boots Setup directly with no "Press any key to boot from CD or
-# DVD..." countdown and no BootMgr keypress at all.
+# El Torito UEFI boot image for Microsoft's `efisys_noprompt.bin`,
+# producing an ISO that boots Setup directly with no "Press any key
+# to boot from CD or DVD..." countdown.
 #
-# Why this exists: UTM 4.7.5's AAVMF either (a) drops to the EDK2 EFI
-# shell on first boot because USB-CLASS Boot#### expansion does not
-# work, then the keystroke fallback types the loader path manually, OR
-# (b) auto-launches `\efi\boot\bootaa64.efi` via UEFI removable-media
-# fallback. Both paths land at Microsoft's BootMgr, which on the stock
-# Win11 install media chains through `cdboot.efi` (10s "Press any key"
-# countdown) before booting Setup. Replacing the boot files with the
-# `_noprompt` siblings Microsoft already ships at
-# `\efi\microsoft\boot\` skips the countdown entirely.
+# How Microsoft makes a no-prompt ISO (per 2Pint DeployR's PEPrep.ps1
+# and the Windows ADK docs): they pass `efisys_noprompt.bin` (instead
+# of `efisys.bin`) as the El Torito UEFI boot sector when running
+# `oscdimg.exe`. That swap is the *only* difference between a stock
+# install ISO and a no-prompt install ISO.
 #
-# Why byte-patch instead of unpack/repack: Win11 ARM64 install media is
-# UDF-only with install.wim >4 GiB. macOS hdiutil makehybrid lacks the
-# `-eltorito-platform 0xef` flag needed for UEFI El Torito; xorriso
-# 1.5.8's `-as mkisofs` emulator rejects `-udf`. Both repack paths
-# fail in different ways. The reliable approach is to copy the ISO
-# byte-for-byte and overwrite just the two boot file extents in place,
-# leaving the UDF/ISO9660 directory structure and the El Torito boot
-# catalog untouched.
+# This script does the equivalent without rebuilding the whole ISO:
+# locate the byte range AAVMF actually reads when booting via El
+# Torito UEFI (load_lba pulled from the El Torito Boot Catalog), and
+# overwrite it in place with `efisys_noprompt.bin`.
+#
+# Why we don't touch `\efi\boot\bootaa64.efi`: on Win11 ARM64 install
+# media that file is `bootmgfw.efi` (Boot Manager, ~3 MiB), not
+# `cdboot.efi`. BootMgr alone never shows the "Press any key" prompt;
+# the prompt only comes from `cdboot.efi`, which lives inside the
+# El Torito FAT image. Replacing bootmgfw.efi was a previous error
+# in this script.
+#
+# Why we don't touch the UDF-visible `\efi\microsoft\boot\efisys.bin`:
+# AAVMF reads from the El Torito Boot Catalog's load_lba, not from
+# the UDF tree. The UDF copy is reachable via mount -t udf but is
+# never executed at boot. (Patching it does nothing, which is how the
+# previous version of this script appeared to "succeed" while still
+# producing a prompt.)
 #
 # Usage:
 #   ./remaster_win11_noprompt.sh <input.iso> [output.iso]
 #
-# Default output is the input path with `_noprompt` inserted before
-# the .iso extension. Idempotent: skips re-mastering if the output is
-# newer than the input AND already exists.
+# Default output path inserts `_noprompt` before the .iso extension.
+# Idempotent: skips re-mastering when the output already has the
+# no-prompt boot image at the El Torito LBA.
 #
 # Requirements:
 #   - python3 with pycdlib (auto-installed via pip if missing)
@@ -49,175 +55,171 @@ if [[ ! -f "$INPUT_ISO" ]]; then
     exit 2
 fi
 
-# Idempotency: if output exists and is newer than input AND has a
-# patched bootaa64.efi, skip. The byte-patch test below catches the
-# case where a prior failed run left an unpatched copy at the output.
-if [[ -f "$OUTPUT_ISO" && "$OUTPUT_ISO" -nt "$INPUT_ISO" ]]; then
-    echo "==> Output ISO exists and is newer than input; verifying patch..."
-    if python3 - "$OUTPUT_ISO" <<'PYEOF'
-import sys
-import pycdlib
-
-iso = pycdlib.PyCdlib()
-iso.open(sys.argv[1])
-part_start = iso.udf_main_descs.partitions[0].part_start_location
-rec = iso.get_record(udf_path='/efi/boot/bootaa64.efi')
-ad = rec.alloc_descs[0]
-off = (part_start + ad.log_block_num) * 2048
-iso.close()
-with open(sys.argv[1], 'rb') as f:
-    f.seek(off)
-    head = f.read(96)
-# cdboot_noprompt.efi has a "CDBOOT_N" or similar marker in the PE
-# header's debug/version strings. Cheaper signal: cdboot_noprompt.efi
-# (~968 KiB) is much smaller than bootaa64.efi (~3 MiB), so the
-# slot's tail bytes will be 0x00 padding when patched.
-with open(sys.argv[1], 'rb') as f:
-    f.seek(off + 968096)  # one byte past end of cdboot_noprompt
-    tail = f.read(64)
-patched = head[:2] == b'MZ' and tail == b'\x00' * 64
-sys.exit(0 if patched else 1)
-PYEOF
-    then
-        echo "ALREADY DONE: $OUTPUT_ISO is patched; skipping re-master."
-        echo "Delete the output ISO to force a rebuild."
-        exit 0
-    else
-        echo "    output exists but is NOT patched; rebuilding."
-    fi
-fi
-
 if ! python3 -c "import pycdlib" >/dev/null 2>&1; then
     echo "pycdlib not found; installing via pip3..."
     pip3 install --user pycdlib
 fi
 
-echo "==> Probing source ISO layout"
+echo "==> Probing source ISO layout (El Torito + efisys_noprompt extents)"
 PROBE_OUT="$(python3 - "$INPUT_ISO" <<'PYEOF'
+import struct
 import sys
+
 import pycdlib
 
+iso_path = sys.argv[1]
+
+# Boot Record Volume Descriptor lives at LBA 17. Pull boot catalog LBA.
+with open(iso_path, 'rb') as f:
+    f.seek(17 * 2048)
+    brvd = f.read(2048)
+    if brvd[0:7] != b'\x00CD001\x01':
+        sys.exit('ISO has no Boot Record Volume Descriptor at LBA 17')
+    cat_lba = struct.unpack('<I', brvd[71:75])[0]
+
+    # Read boot catalog. Validation Entry [0..32) + Initial/Default
+    # Entry [32..64). El Torito Initial Entry layout:
+    #   byte  0 : 0x88 = bootable, 0x00 = not bootable
+    #   byte  1 : boot media (0 = no emulation)
+    #   bytes 6-7 : sector count (in 512-byte virtual sectors)
+    #   bytes 8-11: load_lba (in 2048-byte ISO sectors)
+    f.seek(cat_lba * 2048)
+    cat = f.read(64)
+    if cat[0] != 0x01 or cat[1] != 0xEF:
+        sys.exit('boot catalog validation entry missing or non-EFI '
+                 f'(type=0x{cat[0]:02x} platform=0x{cat[1]:02x})')
+    boot_entry = cat[32:64]
+    if boot_entry[0] != 0x88:
+        sys.exit('UEFI boot entry is not bootable (Initial Entry indicator != 0x88)')
+    sector_count_512 = struct.unpack('<H', boot_entry[6:8])[0]
+    load_lba = struct.unpack('<I', boot_entry[8:12])[0]
+    boot_image_bytes = sector_count_512 * 512
+
+# Locate efisys_noprompt.bin in the UDF tree to grab its byte content
 iso = pycdlib.PyCdlib()
-iso.open(sys.argv[1])
+iso.open(iso_path)
 part_start = iso.udf_main_descs.partitions[0].part_start_location
 
-def probe(path):
-    rec = iso.get_record(udf_path=path)
+def file_extent(udf_path):
+    rec = iso.get_record(udf_path=udf_path)
     ad = rec.alloc_descs[0]
     return ad.log_block_num, rec.get_data_length()
 
-paths = {
-    'BOOTAA64':  '/efi/boot/bootaa64.efi',
-    'EFISYS':    '/efi/microsoft/boot/efisys.bin',
-    'CDBOOT_NP': '/efi/microsoft/boot/cdboot_noprompt.efi',
-    'EFISYS_NP': '/efi/microsoft/boot/efisys_noprompt.bin',
-}
-print(f'PART_START={part_start}')
-for key, path in paths.items():
-    lbn, length = probe(path)
-    print(f'{key}_LBN={lbn}')
-    print(f'{key}_LEN={length}')
+np_lbn, np_len = file_extent('/efi/microsoft/boot/efisys_noprompt.bin')
 iso.close()
+
+print(f'PART_START={part_start}')
+print(f'EL_TORITO_LBA={load_lba}')
+print(f'EL_TORITO_LEN={boot_image_bytes}')
+print(f'EFISYS_NP_LBN={np_lbn}')
+print(f'EFISYS_NP_LEN={np_len}')
 PYEOF
 )"
 
-# Surface variables: BOOTAA64_LBN, BOOTAA64_LEN, EFISYS_LBN, EFISYS_LEN,
-# CDBOOT_NP_LBN, CDBOOT_NP_LEN, EFISYS_NP_LBN, EFISYS_NP_LEN, PART_START
+# Variables surfaced: PART_START, EL_TORITO_LBA, EL_TORITO_LEN,
+# EFISYS_NP_LBN, EFISYS_NP_LEN
 eval "$PROBE_OUT"
 
-echo "    partition start LBA: $PART_START"
-echo "    bootaa64.efi        : LBN=$BOOTAA64_LBN  size=$BOOTAA64_LEN"
-echo "    efisys.bin          : LBN=$EFISYS_LBN  size=$EFISYS_LEN"
-echo "    cdboot_noprompt.efi : LBN=$CDBOOT_NP_LBN  size=$CDBOOT_NP_LEN"
-echo "    efisys_noprompt.bin : LBN=$EFISYS_NP_LBN  size=$EFISYS_NP_LEN"
+EL_TORITO_OFF=$(( EL_TORITO_LBA * 2048 ))
+EFISYS_NP_OFF=$(( (PART_START + EFISYS_NP_LBN) * 2048 ))
 
-if [[ "$EFISYS_NP_LEN" != "$EFISYS_LEN" ]]; then
-    echo "ERROR: efisys_noprompt.bin ($EFISYS_NP_LEN) and efisys.bin ($EFISYS_LEN) must be the same size for in-place swap" >&2
+echo "    El Torito UEFI boot image:"
+echo "      LBA               : $EL_TORITO_LBA"
+echo "      byte offset       : $EL_TORITO_OFF (0x$(printf '%x' $EL_TORITO_OFF))"
+echo "      length            : $EL_TORITO_LEN bytes"
+echo "    efisys_noprompt.bin (source data):"
+echo "      partition start   : $PART_START"
+echo "      log block number  : $EFISYS_NP_LBN"
+echo "      byte offset       : $EFISYS_NP_OFF (0x$(printf '%x' $EFISYS_NP_OFF))"
+echo "      length            : $EFISYS_NP_LEN bytes"
+
+if [[ "$EFISYS_NP_LEN" != "$EL_TORITO_LEN" ]]; then
+    echo "ERROR: efisys_noprompt.bin ($EFISYS_NP_LEN) and El Torito boot image ($EL_TORITO_LEN) must match in size for in-place swap" >&2
     exit 6
 fi
-if (( CDBOOT_NP_LEN > BOOTAA64_LEN )); then
-    echo "ERROR: cdboot_noprompt.efi ($CDBOOT_NP_LEN) larger than bootaa64.efi slot ($BOOTAA64_LEN); cannot patch in place" >&2
-    exit 7
+
+# Idempotency: hash the El Torito boot image in input vs in any
+# existing output. If they already differ AND the output's image
+# matches the source's efisys_noprompt.bin, we're done.
+if [[ -f "$OUTPUT_ISO" && "$OUTPUT_ISO" -nt "$INPUT_ISO" ]]; then
+    echo "==> Output ISO exists and is newer than input; verifying patch..."
+    if python3 - "$INPUT_ISO" "$OUTPUT_ISO" "$EL_TORITO_OFF" "$EL_TORITO_LEN" "$EFISYS_NP_OFF" <<'PYEOF'
+import hashlib
+import sys
+
+src_iso, dst_iso, el_off, el_len, np_off = sys.argv[1:6]
+el_off, el_len, np_off = int(el_off), int(el_len), int(np_off)
+
+def hash_range(p, off, length):
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        f.seek(off)
+        h.update(f.read(length))
+    return h.hexdigest()
+
+src_np = hash_range(src_iso, np_off, el_len)   # source efisys_noprompt
+dst_el = hash_range(dst_iso, el_off, el_len)   # output El Torito image
+sys.exit(0 if src_np == dst_el else 1)
+PYEOF
+    then
+        echo "ALREADY DONE: $OUTPUT_ISO El Torito image matches efisys_noprompt.bin; skipping."
+        echo "Delete the output ISO to force a rebuild."
+        exit 0
+    else
+        echo "    output exists but El Torito image is NOT patched; rebuilding."
+    fi
 fi
 
 echo "==> Copying $INPUT_ISO -> $OUTPUT_ISO"
 TMP_ISO="${OUTPUT_ISO}.tmp.$$"
-cleanup() {
-    rm -f "$TMP_ISO"
-}
+cleanup() { rm -f "$TMP_ISO"; }
 trap cleanup EXIT
 cp "$INPUT_ISO" "$TMP_ISO"
 
-echo "==> Patching boot file extents in place"
-SECTOR=2048
-SRC_CDBOOT_OFF=$(( (PART_START + CDBOOT_NP_LBN) * SECTOR ))
-SRC_EFISYS_NP_OFF=$(( (PART_START + EFISYS_NP_LBN) * SECTOR ))
-DST_BOOTAA64_OFF=$(( (PART_START + BOOTAA64_LBN) * SECTOR ))
-DST_EFISYS_OFF=$(( (PART_START + EFISYS_LBN) * SECTOR ))
-
-python3 - <<PYEOF
+echo "==> Patching El Torito UEFI boot image with efisys_noprompt.bin"
+python3 - "$TMP_ISO" "$EL_TORITO_OFF" "$EL_TORITO_LEN" "$EFISYS_NP_OFF" <<'PYEOF'
 import sys
-ISO = "$TMP_ISO"
-SRC_CDBOOT_OFF = $SRC_CDBOOT_OFF
-SRC_EFISYS_NP_OFF = $SRC_EFISYS_NP_OFF
-DST_BOOTAA64_OFF = $DST_BOOTAA64_OFF
-DST_EFISYS_OFF = $DST_EFISYS_OFF
-CDBOOT_NP_LEN = $CDBOOT_NP_LEN
-EFISYS_NP_LEN = $EFISYS_NP_LEN
-BOOTAA64_LEN = $BOOTAA64_LEN
 
-with open(ISO, 'r+b') as f:
-    f.seek(SRC_CDBOOT_OFF)
-    cdboot = f.read(CDBOOT_NP_LEN)
-    if cdboot[:2] != b'MZ':
-        sys.exit('source cdboot_noprompt.efi missing MZ header; ISO layout unexpected')
-    f.seek(SRC_EFISYS_NP_OFF)
-    efisys_np = f.read(EFISYS_NP_LEN)
-    if efisys_np[:2] != b'\xeb\x3c':
-        sys.exit('source efisys_noprompt.bin missing FAT boot signature; ISO layout unexpected')
+iso, el_off, el_len, np_off = sys.argv[1:5]
+el_off, el_len, np_off = int(el_off), int(el_len), int(np_off)
 
-    # Pad cdboot_noprompt.efi to bootaa64.efi slot size with NUL.
-    # PE loaders ignore trailing bytes past the headers' SizeOfImage.
-    padded = cdboot + b'\x00' * (BOOTAA64_LEN - CDBOOT_NP_LEN)
-    f.seek(DST_BOOTAA64_OFF)
-    f.write(padded)
+with open(iso, 'r+b') as f:
+    f.seek(np_off)
+    payload = f.read(el_len)
+    if payload[:2] != b'\xeb\x3c':
+        sys.exit('source efisys_noprompt.bin missing FAT boot signature 0xEB 0x3C')
 
-    # efisys.bin and efisys_noprompt.bin are byte-equal in size, so
-    # this is a clean overlay with no padding needed.
-    f.seek(DST_EFISYS_OFF)
-    f.write(efisys_np)
+    f.seek(el_off)
+    existing = f.read(el_len)
+    if existing[:2] != b'\xeb\x3c':
+        sys.exit('El Torito target missing FAT boot signature; LBA computation wrong')
 
-print('OK: patched bootaa64.efi and efisys.bin in place')
+    f.seek(el_off)
+    f.write(payload)
+
+print('OK: El Torito UEFI boot image overwritten')
 PYEOF
 
 echo "==> Verifying patch"
-python3 - "$TMP_ISO" <<'PYEOF'
+python3 - "$TMP_ISO" "$EL_TORITO_OFF" "$EL_TORITO_LEN" "$EFISYS_NP_OFF" <<'PYEOF'
+import hashlib
 import sys
-import pycdlib
 
-iso = pycdlib.PyCdlib()
-iso.open(sys.argv[1])
-part_start = iso.udf_main_descs.partitions[0].part_start_location
+iso, el_off, el_len, np_off = sys.argv[1:5]
+el_off, el_len, np_off = int(el_off), int(el_len), int(np_off)
 
-def head(path, n=8):
-    rec = iso.get_record(udf_path=path)
-    ad = rec.alloc_descs[0]
-    off = (part_start + ad.log_block_num) * 2048
-    with open(sys.argv[1], 'rb') as f:
+def sha(off):
+    with open(iso, 'rb') as f:
         f.seek(off)
-        return f.read(n)
+        return hashlib.sha256(f.read(el_len)).hexdigest()
 
-# Both bootaa64.efi (now cdboot_noprompt.efi data) and
-# cdboot_noprompt.efi proper start with MZ. Quick sanity check.
-b = head('/efi/boot/bootaa64.efi')
-e = head('/efi/microsoft/boot/efisys.bin')
-iso.close()
-if b[:2] != b'MZ':
-    sys.exit(f'bootaa64.efi missing MZ after patch: {b!r}')
-if e[:2] != b'\xeb\x3c':
-    sys.exit(f'efisys.bin missing FAT signature after patch: {e!r}')
-print(f'  bootaa64.efi head: {b.hex()}')
-print(f'  efisys.bin   head: {e.hex()}')
+el_sha = sha(el_off)
+np_sha = sha(np_off)
+print(f'  El Torito @ 0x{el_off:x}      sha256={el_sha}')
+print(f'  efisys_noprompt @ 0x{np_off:x} sha256={np_sha}')
+if el_sha != np_sha:
+    sys.exit('FAIL: El Torito image hash != efisys_noprompt.bin hash')
+print('OK: El Torito image == efisys_noprompt.bin')
 PYEOF
 
 mv "$TMP_ISO" "$OUTPUT_ISO"
