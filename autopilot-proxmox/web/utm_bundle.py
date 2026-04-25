@@ -51,7 +51,7 @@ class DriveSpec:
     interface_version: int = 1
     read_only: bool = False
     image_name: str | None = None       # filename inside bundle Data/
-    # UTM has no "External" key — removable-ness is derived from ImageType=CD.
+    # UTM has no "External" key - removable-ness is derived from ImageType=CD.
 
 
 @dataclass
@@ -86,7 +86,7 @@ class BundleSpec:
 
 
 # Baked-in defaults. Keys and value formats are pulled directly from UTM's
-# Codable definitions (Configuration/UTMQemuConfiguration*.swift) — they are
+# Codable definitions (Configuration/UTMQemuConfiguration*.swift) - they are
 # NOT guesses. If upstream renames any of these, the Tier 2 contract test
 # will fail, forcing an explicit bump here.
 _DEFAULT_INPUT = {
@@ -113,7 +113,7 @@ def _random_mac() -> str:
 
 
 def _render_system(s: SystemSpec) -> dict:
-    # System does NOT own Hypervisor — that lives in QEMU. See
+    # System does NOT own Hypervisor - that lives in QEMU. See
     # UTMQemuConfigurationSystem.swift / UTMQemuConfigurationQEMU.swift.
     return {
         "Architecture":   s.architecture,
@@ -147,7 +147,7 @@ def _render_qemu(q: QemuSpec, use_hypervisor: bool) -> dict:
 
 def _render_drive(d: DriveSpec) -> dict:
     # UTM's Drive schema keys: Identifier, ImageType, Interface,
-    # InterfaceVersion, ReadOnly, ImageName. There is NO "External" key —
+    # InterfaceVersion, ReadOnly, ImageName. There is NO "External" key -
     # `isExternal` is inferred at decode time from whether ImageName is
     # present. We still emit ImageName for removable CDs because that's
     # how UTM learns which ISO to mount in the slot (the existing code
@@ -231,7 +231,7 @@ def create_qcow2(dest: pathlib.Path, virtual_size_gib: int,
     """Create a sparse qcow2 at `dest` with the given virtual size.
 
     Uses the qemu-img on PATH by default. UTM.app ships one at
-    `/Applications/UTM.app/Contents/MacOS/qemu-img` — callers can override
+    `/Applications/UTM.app/Contents/MacOS/qemu-img` - callers can override
     via the `qemu_img` arg when a specific binary is required.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -241,22 +241,62 @@ def create_qcow2(dest: pathlib.Path, virtual_size_gib: int,
     )
 
 
+def _build_usb_class_dp_node():
+    """Construct a USB Class device-path node that wildcard-matches any
+    USB Mass Storage / SCSI Transparent / Bulk-Only Transport device.
+
+    UEFI 2.10 sec 10.3.5.10 USB Class Device Path:
+        Type     = 0x03 (Messaging Device Path)
+        SubType  = 0x0F (USB Class)
+        Length   = 0x000A (10 bytes total node)
+        VendorId  = 0xFFFF (any)
+        ProductId = 0xFFFF (any)
+        DeviceClass    = 0x08 (Mass Storage)
+        DeviceSubClass = 0x06 (SCSI Transparent Command Set)
+        DeviceProtocol = 0x50 (Bulk-Only Transport)
+
+    QEMU's `usb-storage` device with either disk or CD media is reported
+    as 0x08/0x06/0x50 at the USB descriptor level (the disk-vs-CD
+    distinction is in the SCSI INQUIRY response, not the USB class), so
+    this single match covers every USB CD UTM staples on to the bundle
+    regardless of bus topology. AAVMF's BDS expands the wildcard against
+    the live device handle list at boot time, so we do not need to know
+    UTM's QEMU `-device` ordering ahead of time.
+
+    Returns a configured `DevicePathElem`.
+    """
+    from virt.firmware.efi import devpath
+    elem = devpath.DevicePathElem()
+    elem.devtype = 0x03   # Messaging Device Path
+    elem.subtype = 0x0F   # USB Class
+    elem.data = struct.pack(
+        "<HHBBB",
+        0xFFFF, 0xFFFF,    # vendor / product wildcard
+        0x08, 0x06, 0x50,  # mass-storage / SCSI-transparent / bulk-only
+    )
+    return elem
+
+
 def prepare_efi_vars(
     efi_vars_path: pathlib.Path,
-    boot_filepath: str = "\\efi\\boot\\bootaa64.efi",
+    boot_filepath: str = "\\efi\\microsoft\\boot\\cdboot_noprompt.efi",
     title: str = "autounattend",
 ) -> bool:
     """Add a Boot0000 + BootOrder=0000 entry to an EDK2 NVRAM varstore so
     AAVMF boots straight into the autounattend ISO instead of dropping to
     the EFI shell on first start.
 
-    The boot entry uses a FilePath-only device path
-    (`FilePath(\\efi\\boot\\bootaa64.efi)` by default), which AAVMF's BDS
-    resolves against every connected media handle: it finds the file on
-    whichever removable USB CD has it. This is the same shape the EDK2
-    "default boot" code synthesises on first boot for removable media,
-    just baked in ahead of time so we don't need to rely on UTM's
-    AppleScript `input keystroke` fallback.
+    The boot entry's device path is `USB-CLASS(any/any/MassStorage/SCSI/
+    Bulk) -> FilePath(\\efi\\boot\\bootaa64.efi) -> END`. AAVMF resolves
+    the USB Class node against every USB device matching the class
+    descriptor (which covers every UTM USB CD regardless of bus
+    topology), then loads the named EFI image from the ESP on the
+    matched device. The earlier orphan-FilePath form failed on UTM
+    4.7.5: AAVMF's BdsExpandShortFormDevicePath rejects a load option
+    whose path starts at MEDIA without a preceding device handle,
+    iterates BootOrder past it, finds only stale ACPI/PCI/USB topology
+    entries that do not match UTM's actual layout, and drops to EFI
+    shell.
 
     Args:
         efi_vars_path: path to the per-bundle `efi_vars.fd`. Modified in
@@ -292,14 +332,16 @@ def prepare_efi_vars(
         return False
     varlist = varstore.get_varlist()
 
-    # Build the FilePath-only device path. AAVMF BDS treats a single
-    # FilePath node as "try this file on every connected filesystem",
-    # which is exactly the behaviour we want for a removable USB CD
-    # whose volume GUID is not known until QEMU enumerates it.
-    bpath = devpath.DevicePath.filepath(boot_filepath)
+    # Build the device path: USB Class wildcard, then FilePath, then
+    # END is auto-appended at serialisation by virt-firmware.
+    bpath = devpath.DevicePath()
+    bpath.append(_build_usb_class_dp_node())
+    fp_elem = devpath.DevicePathElem()
+    fp_elem.set_filepath(boot_filepath)
+    bpath.append(fp_elem)
 
     # Use index 0x0000 deterministically. add_boot_entry() picks the
-    # first free slot, but the stock UTM seed has Boot0000-Boot0004
+    # first free slot, but the stock UTM seed has Boot0000-Boot0007
     # already populated by EDK2 defaults (UiApp, UEFI QEMU USB
     # HARDDRIVE, Misc Device, EFI Shell). We *replace* Boot0000 with
     # our entry so we don't depend on slot ordering.
@@ -428,7 +470,7 @@ class UtmctlClient:
         bundle stem as the VM name, then return the UUID UTM reports.
 
         The UUID we return matches the one we wrote into the bundle's
-        config.plist via render_plist — UTM adopts the plist's UUID
+        config.plist via render_plist - UTM adopts the plist's UUID
         rather than assigning a fresh one, which is what we want for
         determinism.
         """

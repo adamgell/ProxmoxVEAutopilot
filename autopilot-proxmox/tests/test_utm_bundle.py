@@ -1,4 +1,4 @@
-"""Tests for web.utm_bundle — UTM .utm bundle generator and runtime control.
+"""Tests for web.utm_bundle - UTM .utm bundle generator and runtime control.
 
 Spec: docs/superpowers/specs/2026-04-23-utm-native-lifecycle-foundation-design.md
 """
@@ -32,9 +32,9 @@ def test_schema_contract_has_required_sections():
 
 def test_bundle_spec_win11_template_has_four_drives():
     """Win11 ARM64 template bundle has: installer CD (USB), system qcow2
-    (VirtIO), answer ISO CD (USB), virtio-win CD (USB) — in that order.
+    (VirtIO), answer ISO CD (USB), virtio-win CD (USB) - in that order.
     Order matters: UTM assigns bootindex=N by drive-array position.
-    Note: UTM's schema has no 'External' key — removable-ness is inferred
+    Note: UTM's schema has no 'External' key - removable-ness is inferred
     from ImageType=CD at decode time."""
     from web import utm_bundle as ub
     spec = ub.BundleSpec(
@@ -147,7 +147,7 @@ def test_render_plist_preserves_drive_order():
 
 
 def test_render_plist_emits_win11_invariants():
-    """Hypervisor lives under QEMU, not System — see UTM source
+    """Hypervisor lives under QEMU, not System - see UTM source
     Configuration/UTMQemuConfigurationQEMU.swift."""
     from web import utm_bundle as ub
     d = ub.render_plist(_sample_win11_spec())
@@ -159,7 +159,7 @@ def test_render_plist_emits_win11_invariants():
 
 
 def test_render_plist_every_key_exists_in_contract():
-    """Contract-based assertion — every section key we emit must appear in
+    """Contract-based assertion - every section key we emit must appear in
     the extracted schema contract. If upstream UTM renames a key and we
     regenerate the contract, this catches any renderer drift. Note: this
     only catches *extra* keys; the E2E test catches missing required ones
@@ -195,7 +195,7 @@ def test_render_plist_returns_bytes_when_asked():
 
 
 def test_render_plist_bytes_matches_golden_fixture():
-    """Snapshot test — ensures we don't accidentally shift the plist bytes
+    """Snapshot test - ensures we don't accidentally shift the plist bytes
     without noticing. Regenerate with:
         python -m web.utm_bundle _regenerate_golden_fixture
     (committed with a PR comment explaining the intentional change).
@@ -295,7 +295,7 @@ from unittest.mock import patch, MagicMock
 
 
 def test_utmctl_register_opens_bundle_and_finds_uuid_in_list():
-    """UTM 4.7.5's utmctl has no `register` subcommand — we register via
+    """UTM 4.7.5's utmctl has no `register` subcommand - we register via
     `open -a UTM <bundle>` and then poll `utmctl list` to find the UUID
     UTM reports for that bundle name."""
     from web import utm_bundle as ub
@@ -417,8 +417,55 @@ def test_prepare_efi_vars_writes_boot0000_entry(tmp_path):
     boot0000 = varlist.get("Boot0000")
     assert boot0000 is not None, "Boot0000 not present after prepare_efi_vars"
     boot0000_repr = boot0000.fmt_boot_entry()
-    assert "bootaa64.efi" in boot0000_repr.lower(), (
-        f"Boot0000 devpath does not target bootaa64.efi: {boot0000_repr}"
+    # Default boot target is cdboot_noprompt.efi (no "Press any key to
+    # boot from CD" prompt), not bootaa64.efi (which chains through
+    # BootMgr's prompt). Both files exist on the Win11 ARM64 install
+    # ISO under their respective standard paths.
+    assert "cdboot_noprompt.efi" in boot0000_repr.lower(), (
+        f"Boot0000 devpath does not target cdboot_noprompt.efi: {boot0000_repr}"
+    )
+
+    # The device path must start with a USB Class wildcard node, not an
+    # orphan FilePath. AAVMF rejects orphan-FilePath load options
+    # (verified empirically on UTM 4.7.5: VM drops to EFI shell because
+    # BdsExpandShortFormDevicePath cannot resolve a path that begins at
+    # MEDIA without a preceding device handle). The USB Class node has
+    # type=0x03 (Messaging), subtype=0x0F (USB Class), 11 bytes total.
+    import struct as _struct
+    raw_lo = bytes(boot0000.data)
+    _attrs, fp_len = _struct.unpack_from("<IH", raw_lo, 0)
+    # Skip past the 4-byte attrs + 2-byte fp_len + UCS-16 description
+    _i = 6
+    while True:
+        _ch = _struct.unpack_from("<H", raw_lo, _i)[0]
+        _i += 2
+        if _ch == 0:
+            break
+    fpl = raw_lo[_i:_i + fp_len]
+    first_node_type, first_node_subtype, first_node_len = (
+        _struct.unpack_from("<BBH", fpl, 0)
+    )
+    assert (first_node_type, first_node_subtype) == (0x03, 0x0F), (
+        f"Boot0000 first node must be USB-CLASS (0x03/0x0F), got "
+        f"0x{first_node_type:02x}/0x{first_node_subtype:02x}. AAVMF will "
+        f"reject orphan FilePath device paths."
+    )
+    assert first_node_len == 11, (
+        f"USB Class node must be 11 bytes per UEFI 2.10 sec 10.3.5.10, "
+        f"got {first_node_len}"
+    )
+    # Body: VendorId(2) ProductId(2) DeviceClass(1) SubClass(1) Protocol(1).
+    vid, pid, dev_class, dev_sub, dev_proto = _struct.unpack_from(
+        "<HHBBB", fpl, 4
+    )
+    assert (vid, pid) == (0xFFFF, 0xFFFF), (
+        f"USB Class wildcard requires VID/PID = 0xFFFF/0xFFFF, got "
+        f"0x{vid:04x}/0x{pid:04x}"
+    )
+    assert (dev_class, dev_sub, dev_proto) == (0x08, 0x06, 0x50), (
+        f"USB Class must be Mass-Storage / SCSI-Transparent / Bulk-Only "
+        f"(0x08/0x06/0x50) to match QEMU usb-storage devices, got "
+        f"0x{dev_class:02x}/0x{dev_sub:02x}/0x{dev_proto:02x}"
     )
 
     boot_order = varlist.get("BootOrder")
