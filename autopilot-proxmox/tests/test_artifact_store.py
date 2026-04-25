@@ -80,3 +80,28 @@ def test_lookup_returns_record(tmp_path):
 def test_lookup_returns_none_for_unknown(tmp_path):
     store = ArtifactStore(tmp_path)
     assert store.lookup("0" * 64) is None
+
+
+def test_register_recovers_from_deleted_store_file(tmp_path):
+    store = ArtifactStore(tmp_path)
+    src = tmp_path / "src.wim"
+    src.write_bytes(b"recover me")
+    sha = hashlib.sha256(b"recover me").hexdigest()
+    sidecar = _make_sidecar(sha, len(b"recover me"))
+
+    # First register: file lands in store/.
+    record = store.register(src, sidecar, extension="wim")
+    stored = tmp_path / record.relative_path
+    assert stored.exists()
+
+    # Operator deletes the store file (e.g., to free space).
+    stored.unlink()
+    assert not stored.exists()
+
+    # Re-register should restore the file.
+    record2 = store.register(src, sidecar, extension="wim")
+    assert stored.exists()
+    assert record2.sha256 == sha
+
+    # Index should still be a single row (no duplicate).
+    assert len(store.list_artifacts()) == 1

@@ -78,6 +78,11 @@ class ArtifactStore:
 
         existing = self.lookup(actual_sha)
         if existing is not None:
+            expected_path = self.root / existing.relative_path
+            if expected_path.exists():
+                return existing
+            # File missing on disk — re-copy from src_path to restore it.
+            shutil.copy2(src_path, expected_path)
             return existing
 
         rel = f"store/{actual_sha}.{extension.lstrip('.')}"
