@@ -1,11 +1,26 @@
 ---
 # Single-VM UTM provisioning, included per iteration from
-# provision_utm_clone.yml. Phase 2 scope: clone → boot → verify guest
-# agent → (optional) hash_capture. Autopilot inject is Phase 3.
+# provision_utm_clone.yml. Scope: clone -> boot -> verify guest agent
+# -> (optional) autopilot inject -> (optional) hash_capture. Mirrors
+# the Proxmox sibling _provision_clone_vm.yml; the hypervisor split
+# is handled by the dispatchers in roles/common/tasks/.
 
 - name: "UTM: clone VM #{{ _vm_index }} as '{{ vm_name }}'"
   ansible.builtin.include_role:
     name: utm_vm_clone
+
+# autopilot_inject is hypervisor-agnostic; it pushes
+# AutopilotConfigurationFile.json to C:\Windows\Provisioning\Autopilot\
+# via the dispatched guest_file_write task. utm_vm_clone has already
+# waited for the guest agent, so the inject step has a live channel
+# to talk to.
+- name: "UTM: inject Autopilot config into VM {{ vm_vmid }}"
+  ansible.builtin.include_role:
+    name: autopilot_inject
+  when: >-
+    (autopilot_enabled is defined and (autopilot_enabled | bool))
+    or
+    (autopilot_enabled is not defined and not (autopilot_skip | default(false) | bool))
 
 - name: "UTM: capture hardware hash from VM {{ vm_vmid }}"
   ansible.builtin.include_role:
