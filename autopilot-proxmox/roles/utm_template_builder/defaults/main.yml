@@ -24,8 +24,24 @@ utm_enable_tpm_secure_boot: true
 utm_virtio_win_iso_name: virtio-win.iso
 
 # EFI-shell escape fallback: type the installer EFI loader path via
-# osascript `input keystroke`. Needed while AAVMF on qemu-aarch64 virt
-# drops to the UEFI shell for removable USB CDs. A `virt-fw-vars`-based
-# pre-populated Boot0000 would remove this; tracked in docs/UTM_MACOS_ARM64.md
-# as follow-up `utm-efi-vars-nvram-boot-entry`.
-utm_boot_fallback_keystrokes: true
+# osascript `input keystroke`. Default off as of `utm-efi-vars-nvram-boot-entry`:
+# `web.utm_bundle.prepare_efi_vars` now pre-bakes Boot0000 +
+# BootOrder=0000 into the per-bundle efi_vars.fd via virt-fw-vars, so
+# AAVMF boots straight into the autounattend ISO and never lands in
+# the EFI shell. Flip to true to re-enable the legacy keystroke escape
+# (e.g. when virt-firmware is unavailable on the orchestrator host).
+utm_boot_fallback_keystrokes: false
+
+# Sysprep finalize via FirstLogonCommand. Forwarded to utm_answer_iso
+# when the calling playbook plumbs it through. When true, the answer
+# ISO's autounattend appends a FLC (Order 100) that runs
+#   sysprep /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml
+# at the end of OOBE. The VM self-shuts when sysprep finishes, and
+# sysprep_finalize.yml's `wait for stopped` poll picks that up as the
+# success signal. Side-steps UTM 4.7.5's broken `utmctl exec`
+# (OSStatus -2700). Tracked under utm-phase2-sysprep-via-qga. Note that
+# Ansible role defaults do not auto-merge into sibling include_role
+# scopes - playbooks that include utm_answer_iso directly must set
+# utm_answer_sysprep_finalize themselves (or use this role's
+# orchestrator entrypoint).
+utm_answer_sysprep_finalize: true

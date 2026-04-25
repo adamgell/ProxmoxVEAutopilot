@@ -341,6 +341,28 @@
           <Description>Custom firstboot command {{ loop.index }}</Description>
         </SynchronousCommand>
 {% endfor %}
+{% if sysprep_finalize %}
+        <!-- Sysprep finalize via FirstLogonCommand.
+             Side-steps the UTM 4.7.5 `utmctl exec` OSStatus -2700 bug
+             (utm-phase2-sysprep-via-qga) by running sysprep directly
+             from inside the guest at the end of OOBE. /generalize wipes
+             machine-specific state, /oobe re-arms the OOBE pass for the
+             next boot (i.e. for clones), /shutdown halts the VM so the
+             host-side `utmctl status` poll observes the transition to
+             `stopped` as the completion signal, and /unattend: keeps
+             the autopilot answer file in play across the regeneralize.
+             The path C:\Windows\Panther\unattend.xml is where Setup
+             cached our autounattend during install and is the
+             documented Microsoft location for next-boot answer files;
+             sysprep /generalize itself rewrites that file in place, so
+             passing it explicitly is the supported pattern. Order 100
+             so any firstboot_cmds entries (Order 4..N) finish first. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>100</Order>
+          <CommandLine>%WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml</CommandLine>
+          <Description>Sysprep generalize + shutdown (FLC finalize)</Description>
+        </SynchronousCommand>
+{% endif %}
       </FirstLogonCommands>
 
     </component>

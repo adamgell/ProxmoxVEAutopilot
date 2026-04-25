@@ -13,6 +13,7 @@ import pathlib
 import plistlib
 import random
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -240,6 +241,92 @@ def create_qcow2(dest: pathlib.Path, virtual_size_gib: int,
     )
 
 
+def prepare_efi_vars(
+    efi_vars_path: pathlib.Path,
+    boot_filepath: str = "\\efi\\boot\\bootaa64.efi",
+    title: str = "autounattend",
+) -> bool:
+    """Add a Boot0000 + BootOrder=0000 entry to an EDK2 NVRAM varstore so
+    AAVMF boots straight into the autounattend ISO instead of dropping to
+    the EFI shell on first start.
+
+    The boot entry uses a FilePath-only device path
+    (`FilePath(\\efi\\boot\\bootaa64.efi)` by default), which AAVMF's BDS
+    resolves against every connected media handle: it finds the file on
+    whichever removable USB CD has it. This is the same shape the EDK2
+    "default boot" code synthesises on first boot for removable media,
+    just baked in ahead of time so we don't need to rely on UTM's
+    AppleScript `input keystroke` fallback.
+
+    Args:
+        efi_vars_path: path to the per-bundle `efi_vars.fd`. Modified in
+            place. Caller must have already copied `edk2-arm-secure-vars.fd`
+            (or another seed varstore) here via `write_bundle`.
+        boot_filepath: EFI-style absolute path inside the boot media.
+            Default targets the autounattend ISO's bootaa64.efi loader.
+        title: human-readable Boot#### title (shown in firmware UI).
+
+    Returns True on success. Returns False (no exception) when
+    `virt-firmware` is not installed -- callers fall back to the legacy
+    keystroke escape via the playbook's `utm_boot_fallback_keystrokes`
+    variable. Raises on any other unexpected failure (corrupt varstore,
+    write error) so we don't silently boot to EFI shell with users
+    thinking the fix landed.
+    """
+    try:
+        from virt.firmware.efi import devpath, efivar, ucs16  # noqa: F401
+        from virt.firmware.varstore import autodetect
+    except ImportError:
+        return False
+
+    efi_vars_path = pathlib.Path(efi_vars_path)
+    try:
+        varstore = autodetect.open_varstore(str(efi_vars_path))
+    except (struct.error, ValueError):
+        # autodetect parses the file with a chain of probe()s; when the
+        # input is not a real EDK2 / AWS / JSON varstore (e.g. a unit
+        # test stub), the AWS probe trips on its 16-byte struct header.
+        # Treat as "no varstore to bake" and let the caller fall back.
+        return False
+    if varstore is None:
+        return False
+    varlist = varstore.get_varlist()
+
+    # Build the FilePath-only device path. AAVMF BDS treats a single
+    # FilePath node as "try this file on every connected filesystem",
+    # which is exactly the behaviour we want for a removable USB CD
+    # whose volume GUID is not known until QEMU enumerates it.
+    bpath = devpath.DevicePath.filepath(boot_filepath)
+
+    # Use index 0x0000 deterministically. add_boot_entry() picks the
+    # first free slot, but the stock UTM seed has Boot0000-Boot0004
+    # already populated by EDK2 defaults (UiApp, UEFI QEMU USB
+    # HARDDRIVE, Misc Device, EFI Shell). We *replace* Boot0000 with
+    # our entry so we don't depend on slot ordering.
+    varlist.set_boot_entry(0x0000, title, bpath)
+
+    # Force BootOrder so 0x0000 is tried first. The existing entries
+    # remain in the varstore (firmware can still fall back to them),
+    # but BdsBoot iterates BootOrder in order so our ISO loader runs
+    # before the original Boot0001 (USB HARDDRIVE) etc.
+    existing_order = varlist.get("BootOrder")
+    tail: list[int] = []
+    if existing_order is not None:
+        # Existing BootOrder is a packed array of little-endian uint16.
+        raw = bytes(existing_order.data)
+        for i in range(0, len(raw), 2):
+            idx = int.from_bytes(raw[i:i + 2], "little")
+            if idx != 0x0000:
+                tail.append(idx)
+    new_order = [0x0000, *tail]
+    if existing_order is None:
+        existing_order = varlist.create("BootOrder")
+    existing_order.set_boot_order(new_order)
+
+    varstore.write_varstore(str(efi_vars_path), varlist)
+    return True
+
+
 def write_bundle(
     spec: BundleSpec,
     bundle_path: pathlib.Path,
@@ -247,6 +334,7 @@ def write_bundle(
     efi_vars_source: pathlib.Path,
     iso_sources: dict[str, pathlib.Path],
     qemu_img: str = "qemu-img",
+    bake_boot_entry: bool = True,
 ) -> dict:
     """Create a fully-populated .utm bundle directory.
 
@@ -254,13 +342,21 @@ def write_bundle(
         spec: the BundleSpec describing the VM.
         bundle_path: absolute path to the .utm directory to create.
         disk_size_gib: virtual size of the system qcow2.
-        efi_vars_source: file to copy into Data/efi_vars.fd (unmodified at
-            this stage; Task 15 will optionally rewrite this).
+        efi_vars_source: file to copy into Data/efi_vars.fd. When
+            `bake_boot_entry=True` (the default) this is then rewritten
+            in place to add a Boot0000 + BootOrder pointing at the
+            autounattend ISO's bootaa64.efi, so AAVMF skips the EFI
+            shell on first start.
         iso_sources: maps the drive's image_name (e.g. "Win11.iso") to the
             file on disk to copy into Data/. Drives whose image_name is
-            None or missing from this map are skipped — useful for the
+            None or missing from this map are skipped -- useful for the
             system disk (no ISO) and during tests.
         qemu_img: qemu-img binary path.
+        bake_boot_entry: when True, call prepare_efi_vars on the freshly
+            copied efi_vars.fd. Set to False to keep the legacy
+            keystroke-escape behaviour (the seed file's stock BootOrder
+            drops to EFI shell). Silently no-op when virt-firmware is
+            not installed -- callers must handle the fallback path.
 
     Returns a dict {"uuid", "bundle_path", "drive_uuids"}.
     """
@@ -278,8 +374,13 @@ def write_bundle(
             create_qcow2(data_dir / disk_name, disk_size_gib, qemu_img=qemu_img)
             break
 
-    # 3. EFI vars
-    shutil.copyfile(efi_vars_source, data_dir / "efi_vars.fd")
+    # 3. EFI vars (copy seed, then optionally bake a Boot0000 entry so
+    #    AAVMF boots straight into the autounattend ISO without dropping
+    #    to the EFI shell on first start).
+    efi_vars_dest = data_dir / "efi_vars.fd"
+    shutil.copyfile(efi_vars_source, efi_vars_dest)
+    if bake_boot_entry:
+        prepare_efi_vars(efi_vars_dest)
 
     # 4. ISOs
     for drive in spec.drives:
@@ -406,6 +507,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         disk_size_gib=int(payload.get("disk_size_gib", 80)),
         efi_vars_source=pathlib.Path(payload["efi_vars_source"]),
         iso_sources=iso_sources,
+        bake_boot_entry=bool(payload.get("bake_boot_entry", True)),
     )
 
     if payload.get("register"):

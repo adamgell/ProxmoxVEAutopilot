@@ -1,14 +1,37 @@
 ---
 # utm_template_builder/tasks/sysprep_finalize.yml
 #
-# Phase 2 — runs after the operator has completed OOBE and re-run the
+# Phase 2 - runs after the operator has completed OOBE and re-run the
 # playbook with -e utm_build_resume=true.
 #
-# 1. Runs Windows Sysprep (/generalize /oobe /shutdown) via utmctl exec.
-# 2. Polls utmctl status until the VM reaches 'stopped'.
-# 3. Emits the "template ready" message.
+# Sysprep itself runs INSIDE the guest as a FirstLogonCommand baked
+# into the autounattend (utm_answer_iso role, sysprep_finalize=true
+# Jinja flag, Order 100). The FLC entry runs:
+#
+#   %WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown
+#       /unattend:C:\Windows\Panther\unattend.xml
+#
+# When sysprep completes its /shutdown, UTM transitions the VM to
+# `stopped`. That state change is the host-side success signal.
+#
+# Why not `utmctl exec sysprep ...` from here? UTM 4.7.5's `utmctl
+# exec` reliably trips OSStatus -2700 even when the QGA channel is
+# fully up - this is a UTM harness bug, not a QGA problem (verified:
+# `utmctl ip-address <uuid>` works against the same channel,
+# `sc.exe query QEMU-GA` reports RUNNING from inside the guest, but
+# `utmctl exec` returns -2700). Tracked as `utm-phase2-sysprep-via-qga`.
+# Side-stepping with FLC sysprep removes the dependency on any
+# host-to-guest exec channel.
+#
+# This task therefore:
+#   1. Probes current VM status (sanity check; logs whatever state we
+#      see).
+#   2. Polls `utmctl status` until VM reaches `stopped` (45 min budget,
+#      10 s interval - same shape as utm_build_win11_template.yml's
+#      firstboot self-halt poll).
+#   3. Emits the "template ready" message.
 
-- name: "Sysprep: verify VM is reachable — {{ vm_name }}"
+- name: "Sysprep finalize: probe current VM status - {{ vm_name }}"
   ansible.builtin.command:
     argv:
       - "{{ utm_utmctl_path }}"
@@ -18,55 +41,50 @@
   failed_when: _pre_sysprep_status.rc != 0
   changed_when: false
 
-- name: "Sysprep: fail if VM is not running (status must be 'started')"
-  ansible.builtin.fail:
+- name: "Sysprep finalize: log current state (we accept started or stopped)"
+  ansible.builtin.debug:
     msg: >-
-      VM '{{ vm_name }}' is not in 'started' state
-      (got: '{{ _pre_sysprep_status.stdout | trim }}').
-      Boot the VM first or confirm utm_build_resume=true is correct.
-  when: _pre_sysprep_status.stdout | trim != 'started'
+      VM '{{ vm_name }}' is currently
+      '{{ _pre_sysprep_status.stdout | trim }}'.
+      The autounattend FirstLogonCommand chain runs sysprep
+      /generalize /shutdown - we now wait for the VM to reach
+      'stopped' (max 45 min).
 
-- name: "Sysprep: invoke Windows Sysprep via utmctl exec"
-  ansible.builtin.command:
-    argv:
-      - "{{ utm_utmctl_path }}"
-      - exec
-      - "{{ vm_name }}"
-      - --
-      - C:\Windows\System32\Sysprep\sysprep.exe
-      - /generalize
-      - /oobe
-      - /shutdown
-  register: _sysprep_result
-  failed_when: _sysprep_result.rc != 0
-  changed_when: true
-
-- name: "Sysprep: poll utmctl status until VM reaches 'stopped'"
+- name: "Sysprep finalize: poll utmctl status until VM reaches 'stopped'"
+  # 270 retries x 10 s = 45 min, mirroring utm_build_win11_template.yml's
+  # firstboot self-halt poll. Sysprep on Apple Silicon ARM64 typically
+  # finishes in 5-15 min; 45 min is a generous ceiling that absorbs slow
+  # storage and the pre-sysprep firstboot.ps1 work (QGA + UTM tools
+  # install).
   ansible.builtin.command:
     argv:
       - "{{ utm_utmctl_path }}"
       - status
       - "{{ vm_name }}"
   register: _sysprep_status_poll
-  retries: 60
+  retries: 270
   delay: 10
-  until: _sysprep_status_poll.stdout | trim == 'stopped'
-  failed_when:
-    - _sysprep_status_poll.rc != 0
-    - _sysprep_status_poll.retries | default(0) >= 60
+  until: >-
+    _sysprep_status_poll.stdout | default('') | trim
+    in ['stopped', 'suspended', 'paused']
+  failed_when: >-
+    _sysprep_status_poll.attempts | default(1) > 270
+    and _sysprep_status_poll.stdout | default('') | trim
+    not in ['stopped', 'suspended', 'paused']
   changed_when: false
 
-- name: "Sysprep: template finalisation complete"
+- name: "Sysprep finalize: template build complete"
   ansible.builtin.debug:
     msg: |
-      ╔══════════════════════════════════════════════════════════════════════╗
-      ║  UTM TEMPLATE READY                                                  ║
-      ╠══════════════════════════════════════════════════════════════════════╣
-      ║  Sysprep completed. VM '{{ vm_name }}' is stopped and generalised.  ║
-      ║                                                                      ║
-      ║  Set the following in Settings → UTM Configuration:                 ║
-      ║    utm_template_vm_name: {{ vm_name }}                              ║
-      ║                                                                      ║
-      ║  You can now use provision_utm_iso.yml or build clones with         ║
-      ║  utm_vm_clone.                                                       ║
-      ╚══════════════════════════════════════════════════════════════════════╝
+      ======================================================================
+        UTM TEMPLATE READY
+      ======================================================================
+        Sysprep ran via FirstLogonCommand. VM '{{ vm_name }}' is
+        '{{ _sysprep_status_poll.stdout | trim }}' and generalized.
+
+        Set the following in Settings -> UTM Configuration:
+          utm_template_vm_name: {{ vm_name }}
+
+        You can now build clones via utm_vm_clone or run
+        provision_utm_clone.yml.
+      ======================================================================

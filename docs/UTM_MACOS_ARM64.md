@@ -14,10 +14,15 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
   extractor + Tier 1 drift CI script. 20 unit tests pass.
 - T14 green: first autonomous end-to-end Win11 ARM64 template build
   completed with `failed=0` in run 8 (600s shutdown poll).
-- T15 deferred: `virt-fw-vars` EFI-shell elimination is a follow-up,
-  tracked as `utm-efi-vars-nvram-boot-entry`. Fallback is a 5-line
-  osascript keystroke behind `utm_boot_fallback_keystrokes` (defaults
-  true).
+- T15 resolved: `virt-fw-vars` EFI-shell elimination landed in
+  `utm-efi-vars-nvram-boot-entry`. `web.utm_bundle.prepare_efi_vars`
+  uses the `virt-firmware` Python API to bake `Boot0000 =
+  FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into
+  the per-bundle `efi_vars.fd` after copying UTM's
+  `edk2-arm-secure-vars.fd` over it. AAVMF now boots straight into
+  the autounattend ISO without keystrokes. The legacy 5-line
+  osascript escape is kept behind `utm_boot_fallback_keystrokes` but
+  default is now `false` -- opt-in only.
 - T16 green: `create_bundle.yml` and `customize_plist.yml` deleted;
   playbook stripped of plutil patches, quit-relaunch dance, and the
   30-line keystroke block (shrunk to 5 lines).
@@ -50,8 +55,15 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
        (~15 min, ~6 min faster than acc-2 because the false-failure
        1603 path shortens once the service actually reaches RUNNING).
 
-See follow-ups: `utm-efi-vars-nvram-boot-entry`,
-`utm-phase2-sysprep-via-qga`, `utm-qga-msi-install-start-cosmetic-1603`.
+See follow-ups: `utm-qga-msi-install-start-cosmetic-1603`,
+`utm-e2e-sequence-full` (runbook at `docs/UTM_E2E_RUNBOOK.md`).
+(`utm-efi-vars-nvram-boot-entry` resolved - Boot0000 + BootOrder are
+now baked into `efi_vars.fd` via virt-fw-vars at bundle-render time;
+osascript keystroke fallback flipped to opt-in. `utm-phase2-sysprep-via-qga`
+resolved - sysprep now runs as a FirstLogonCommand inside the guest,
+see "Sysprep finalize via FirstLogonCommand" below. `utm-tui-plugin-research`
+resolved - no useful plugin surface beyond AppleScript + App Intents,
+folded into `utm-upstream-utmctl-create`.)
 
 ## Final architecture (sub-project 1 complete)
 
@@ -90,6 +102,26 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
   ARM64 QEMU Guest Agent exists (virtio-win + utmapp guest-tools ship
   x86/x64 QGA only), so the playbook can't use `utmctl exec` - it polls
   `utmctl status` for `stopped` instead.
+- **Sysprep finalize via FirstLogonCommand**: when the calling
+  playbook sets `sysprep_finalize=true` in the answer-iso profile (or
+  passes `utm_answer_sysprep_finalize=true` to the role), the rendered
+  `unattend.xml.j2` appends a SynchronousCommand at Order 100 that
+  runs:
+
+      %WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown
+          /unattend:C:\Windows\Panther\unattend.xml
+
+  Sysprep handles the shutdown itself, so `firstboot.ps1`'s scheduled-
+  task shutdown is suppressed (Jinja-gated on the same flag) to avoid
+  racing sysprep mid-generalize. The host-side `utmctl status` poll
+  observes the transition to `stopped` as the success signal, exactly
+  the same shape as the firstboot self-halt flow. `/unattend:` keeps
+  the autopilot answer file in play across the regeneralize so the
+  post-sysprep boot still has the cached configuration. This is the
+  Microsoft-blessed pattern for templating Windows and side-steps the
+  UTM 4.7.5 `utmctl exec` OSStatus -2700 bug entirely - no host-to-
+  guest exec channel is needed at any point. Implemented in commit
+  `<sysprep-flc>` (resolves `utm-phase2-sysprep-via-qga`).
 
 ## Critical gotchas
 
@@ -108,12 +140,19 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 4. **`com.apple.vm.networking` is Apple-restricted**. Self-serve dev
    accounts can't grant it. Shared/Host/Bridged networking only works
    with the signed release build.
-5. **EFI shell drop (aarch64 virt + USB CD)**. AAVMF doesn't auto-add
-   removable USB CDs to BootOrder on first boot. Today we work around
-   it with a 5-line `osascript input keystroke` fallback, gated on
-   `utm_boot_fallback_keystrokes: true`. The structural fix (write a
-   Boot0000 + BootOrder into `efi_vars.fd` via `virt-fw-vars`) is
-   tracked as follow-up `utm-efi-vars-nvram-boot-entry`.
+5. **EFI shell drop (aarch64 virt + USB CD)** -- resolved. AAVMF does
+   not auto-add removable USB CDs to BootOrder on first boot. Resolved
+   via `web.utm_bundle.prepare_efi_vars`, which uses the
+   `virt-firmware` Python API to bake `Boot0000 =
+   FilePath(\efi\boot\bootaa64.efi)` and `BootOrder = 0x0000, ...` into
+   the per-bundle `efi_vars.fd` after copying UTM's seed
+   `edk2-arm-secure-vars.fd` over it. AAVMF BDS treats a FilePath-only
+   device path as "try this file on every connected filesystem", so
+   the entry matches the autounattend ISO whichever USB slot UTM puts
+   it in. The legacy 5-line `osascript input keystroke` escape is kept
+   as an opt-in fallback (`utm_boot_fallback_keystrokes: false` by
+   default) for hosts without virt-firmware on the orchestrator
+   Python.
 6. **ARM64 Windows QGA + UTM Guest Tools - both bundled**. Fedora's
    virtio-win pack still ships x86/x64 qemu-ga MSIs only. UTM's
    guest-tools ships ARM64 Spice vdagent but no QGA. We bundle both:
@@ -142,17 +181,17 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
    `vioser.sys/.inf/.cat`) added to the `DriverPaths` block in
    `unattend.xml.j2`.
 
-   **Known UTM gotcha**: `utmctl exec` fails with OSStatus -2700 on
-   UTM 4.7.5 even when the QGA channel is up - this is a UTM harness
-   issue, not a QGA one. `utmctl ip-address <uuid>` works against the
-   same channel and is useful as a "VM is fully booted + QGA is up"
-   sanity check from the host.
-
-   Sysprep in `sysprep_finalize.yml` still uses `utmctl exec` today;
-   `utm-phase2-sysprep-via-qga` tracks the switch to either a direct
-   QMP/QGA JSON-RPC call or a FirstLogonCommand that runs
-   `sysprep /oobe /generalize /shutdown` directly (which works today,
-   with or without QGA, since it doesn't need host-side exec).
+   **Known UTM annoyance (downgraded from blocker)**: `utmctl exec`
+   fails with OSStatus -2700 on UTM 4.7.5 even when the QGA channel is
+   up - this is a UTM harness issue, not a QGA one. `utmctl ip-address
+   <uuid>` works against the same channel and is useful as a "VM is
+   fully booted + QGA is up" sanity check from the host. Since the
+   sysprep flow no longer relies on `utmctl exec` (see "Sysprep
+   finalize via FirstLogonCommand" below and
+   `utm-phase2-sysprep-via-qga` resolved), this is now an annoyance,
+   not a blocker - we still avoid `utmctl exec` for any host-to-guest
+   orchestration on critical paths and prefer `utmctl status` plus
+   in-guest FLC chains as the bridge.
 
 7. **FirstLogonCommand runs Windows PowerShell 5.1, which needs a
    UTF-8 BOM on .ps1 files**. FLC invokes `powershell.exe` (5.1), not
@@ -208,7 +247,7 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | `autopilot-proxmox/roles/utm_template_builder/defaults/main.yml` | Role defaults: `utm_enable_tpm_secure_boot: true`, `utm_virtio_win_iso_name: virtio-win.iso`. |
 | `autopilot-proxmox/roles/utm_template_builder/tasks/create_bundle.yml` | AppleScript `make` (4 drives, inc. virtio removable), PlistBuddy reads of drive UUIDs, copies virtio-win ISO into `Data/`. |
 | `autopilot-proxmox/roles/utm_template_builder/tasks/customize_plist.yml` | `Drive.0.ImageName` (installer), `QEMU.TPMDevice=true`, replaces `efi_vars.fd` with `edk2-arm-secure-vars.fd`. |
-| `autopilot-proxmox/playbooks/utm_build_win11_template.yml` | Orchestrates build. Sets `Drive.3.ImageName`, sends EFI shell keys, polls `C:\autopilot\autopilot-firstboot.done` (45 min timeout). |
+| `autopilot-proxmox/playbooks/utm_build_win11_template.yml` | Orchestrates build. Sets `Drive.3.ImageName`, polls `C:\autopilot\autopilot-firstboot.done` (45 min timeout). EFI-shell keystroke fallback retained but gated `utm_boot_fallback_keystrokes: false` by default; primary path is the `prepare_efi_vars`-baked Boot0000. |
 
 ## Known unresolved
 
@@ -224,16 +263,17 @@ See follow-ups: `utm-efi-vars-nvram-boot-entry`,
 | utm-virtio-cd-plumbing | resolved | Drive.3 ImageName now set by render_bundle.yml + utm_bundle.py (no plutil) |
 | utm-driver-load-verify | resolved | `DriverPaths` in autounattend.xml ARM64 PnpCustomizationsWinPE covers D/E/F for viostor + NetKVM |
 | utm-autounattend-driverpaths | resolved | Landed in commit `d58eb10` |
-| utm-efi-vars-nvram-boot-entry | pending | Replace the 5-line keystroke EFI-shell escape with a `virt-fw-vars`-baked Boot0000 / BootOrder in `efi_vars.fd` (eliminates the osascript fallback entirely) |
+| utm-efi-vars-nvram-boot-entry | resolved | `web.utm_bundle.prepare_efi_vars` bakes `Boot0000 = FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into the per-bundle `efi_vars.fd` via `virt-firmware`. `utm_boot_fallback_keystrokes` default flipped to `false`; legacy keystroke escape is now opt-in only. Test: `test_prepare_efi_vars_writes_boot0000_entry`. |
 | utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
-| utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |
+| utm-phase2-sysprep-via-qga | resolved | Side-stepped via FirstLogonCommand: `unattend.xml.j2` appends a SynchronousCommand at Order 100 running `%WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml` when `sysprep_finalize=true` is set in the answer-iso profile (or `utm_answer_sysprep_finalize=true` on the role). `firstboot.ps1`'s scheduled-task shutdown is Jinja-gated off in that mode to avoid racing sysprep. Host-side waits via `utmctl status` for `stopped`. No host-to-guest exec channel needed - eliminates the OSStatus -2700 dependency. Sysprep_finalize.yml refactored to a wait-for-stopped poll. Test: `test_clone_unattend_invokes_sysprep_finalize_via_flc`. Commit: `<sysprep-flc>` |
 | utm-firstboot-shutdown-reliability | resolved | Root cause was firstboot.ps1 written UTF-8 without BOM; PS 5.1 mis-parsed the multi-byte em-dashes and FLC exited before scheduling shutdown. Fix `23ee992`: BOM-writing + em-dash purge + regression tests. acc-2 re-run reached `stopped` autonomously after ~21 min (128 poll attempts). |
 | utm-qga-arm64-driver-store-staging | resolved | vioserial driver now staged into OS driver store via `Microsoft-Windows-PnpCustomizationsNonWinPE` in the offlineServicing pass (commit `d192deb`). Verified on acc-3: setupact.log line 5507 logs DISM importing `vioser.inf` to the offline driver store; post-install `pnputil /enum-drivers` shows oem0/oem6 (vioser.inf), `Get-PnpDevice` shows `VirtIO Serial Driver` OK, `sc.exe query QEMU-GA` reports RUNNING. |
 | utm-qga-msi-install-start-cosmetic-1603 | pending | QGA MSI returns 1603 even though the QEMU-GA service ends up registered, auto-start, and RUNNING post-install. Cause: `<ServiceControl Start="install" Wait="yes" />` in the WiX (`adamgell/qemu-ga-aarch64-msi/build/wix/qemu-ga.wxs`) makes MSI synchronously start the service at install time. qemu-ga.exe takes ~110-130s to bind to the virtio-serial endpoint and reach SERVICE_RUNNING; MSI's wait expires earlier and rolls back the product registration, but the service binaries are already in use and survive. Net result is a misleading WARNING in our firstboot logs. Fix is in the QGA MSI repo: drop `Start="install"` so MSI does not synchronously wait at install time; service still auto-starts on next boot. Tracking the rebuild + asset bump separately. |
-| utm-e2e-sequence-full | pending | Full sequence E2E on UTM (clone -> autopilot inject -> hash capture -> Intune) |
-| utm-tui-plugin-research | pending | Investigate TUI/UTM plugin surface |
-| utm-upstream-utmctl-create | pending | Upstream `utmctl create` subcommand PR to utmapp/UTM |
+| utm-e2e-sequence-full | pending (YELLOW + 3 RED gaps) | Runbook + gap analysis at `docs/UTM_E2E_RUNBOOK.md`. Blocked on RED-1 (`_provision_utm_clone_vm.yml` does not include `autopilot_inject`), RED-2 (placeholder `AutopilotConfigurationFile.json`), RED-3 (`sysprep_finalize.yml` OSStatus -2700). |
+| utm-tui-plugin-research | resolved (close, fold into utmctl-create) | Verified: no plugin loader, no JS bridge, no TUI fork, `utm://` URL scheme is launcher-only. Real surfaces are AppleScript (`UTM.sdef` exposes `make`, `update configuration`, `import`, `input keystroke`) plus newer App Intents (added in UTM 4.7.5). For our use case, AppleScript is a sideways move from `utm_bundle.py`. Real `utmctl` gaps worth tracking: create, update config, import/export, input keystroke, snapshot. Folded into `utm-upstream-utmctl-create`. |
+| utm-upstream-utmctl-create | pr-draft-ready | Local branch `feature/utmctl-create` @ `3801938` in `~/repo/utmapp-utm`, +213 lines to `utmctl/UTMCtl.swift` only (no Xcode project changes). Uses NSAppleScript to dispatch UTM's existing `make` Apple Event - the bundle-creation machinery already lives behind UTM's AppleScript dictionary; only the typed Swift method shim is missing. Spec format passes through to `UTMScriptingConfigImpl.updateConfiguration(from:)` so v4 schema is the contract. PR description at `~/PR-utmctl-create.md`. Awaits Xcode build verify before filing upstream. |
+| utm-e2e-sequence-redblockers | pending | RED-1 from `utm-e2e-sequence-full`: `_provision_utm_clone_vm.yml` does not include `autopilot_inject` (the role itself is hypervisor-agnostic, just not wired). Plus RED-2: `AutopilotConfigurationFile.json` is the placeholder. Both block driving the E2E runbook against a real Intune tenant. |
 
 ## Handy one-liners
 
