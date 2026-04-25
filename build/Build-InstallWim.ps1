@@ -56,18 +56,18 @@ try {
     if (Test-Path $logTempPath) { Remove-Item $logTempPath -Force }
     Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Build start. edition=$($config.edition) arch=$arch"
 
-    # ---- Mount ISOs ----
-    Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Mounting Windows ISO: $($config.windowsIsoPath)"
-    $winMount = Mount-DiskImage -ImagePath $config.windowsIsoPath -PassThru
-    $winLetter = ($winMount | Get-Volume).DriveLetter
-    Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Windows ISO mounted at ${winLetter}:"
-
-    Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Mounting virtio ISO: $($config.virtioIsoPath)"
-    $virtioMount = Mount-DiskImage -ImagePath $config.virtioIsoPath -PassThru
-    $virtioLetter = ($virtioMount | Get-Volume).DriveLetter
-    Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "virtio ISO mounted at ${virtioLetter}:"
-
     try {
+        # ---- Mount ISOs ----
+        Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Mounting Windows ISO: $($config.windowsIsoPath)"
+        $winMount = Mount-DiskImage -ImagePath $config.windowsIsoPath -PassThru
+        $winLetter = ($winMount | Get-Volume).DriveLetter
+        Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Windows ISO mounted at ${winLetter}:"
+
+        Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Mounting virtio ISO: $($config.virtioIsoPath)"
+        $virtioMount = Mount-DiskImage -ImagePath $config.virtioIsoPath -PassThru
+        $virtioLetter = ($virtioMount | Get-Volume).DriveLetter
+        Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "virtio ISO mounted at ${virtioLetter}:"
+
         # ---- Locate install.wim and edition index ----
         $srcWim = "${winLetter}:\sources\install.wim"
         if (-not (Test-Path $srcWim)) { throw "install.wim not found at $srcWim" }
