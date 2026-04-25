@@ -1,5 +1,5 @@
 ---
-- name: "UTM clone source then dest, runtime: {{ utm_template_vm_name }} {{ vm_name }}"
+- name: "UTM clone: create new VM named {{ vm_name }}"
   ansible.builtin.command:
     argv:
       - "{{ utm_utmctl_path }}"
