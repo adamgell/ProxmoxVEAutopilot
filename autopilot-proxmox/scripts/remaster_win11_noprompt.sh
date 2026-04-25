@@ -17,6 +17,15 @@
 # `_noprompt` siblings Microsoft already ships at
 # `\efi\microsoft\boot\` skips the countdown entirely.
 #
+# Why byte-patch instead of unpack/repack: Win11 ARM64 install media is
+# UDF-only with install.wim >4 GiB. macOS hdiutil makehybrid lacks the
+# `-eltorito-platform 0xef` flag needed for UEFI El Torito; xorriso
+# 1.5.8's `-as mkisofs` emulator rejects `-udf`. Both repack paths
+# fail in different ways. The reliable approach is to copy the ISO
+# byte-for-byte and overwrite just the two boot file extents in place,
+# leaving the UDF/ISO9660 directory structure and the El Torito boot
+# catalog untouched.
+#
 # Usage:
 #   ./remaster_win11_noprompt.sh <input.iso> [output.iso]
 #
@@ -25,8 +34,7 @@
 # newer than the input AND already exists.
 #
 # Requirements:
-#   - macOS with hdiutil (preinstalled)
-#   - xorriso (auto-installed via Homebrew if missing)
+#   - python3 with pycdlib (auto-installed via pip if missing)
 #
 # Tested against Microsoft's `Win11_25H2_English_Arm64_v2.iso`.
 
@@ -41,105 +49,179 @@ if [[ ! -f "$INPUT_ISO" ]]; then
     exit 2
 fi
 
-# Idempotency: if output exists and is newer than input, skip.
+# Idempotency: if output exists and is newer than input AND has a
+# patched bootaa64.efi, skip. The byte-patch test below catches the
+# case where a prior failed run left an unpatched copy at the output.
 if [[ -f "$OUTPUT_ISO" && "$OUTPUT_ISO" -nt "$INPUT_ISO" ]]; then
-    echo "ALREADY DONE: $OUTPUT_ISO is newer than $INPUT_ISO; skipping re-master."
-    echo "Delete the output ISO to force a rebuild."
-    exit 0
-fi
+    echo "==> Output ISO exists and is newer than input; verifying patch..."
+    if python3 - "$OUTPUT_ISO" <<'PYEOF'
+import sys
+import pycdlib
 
-if ! command -v xorriso >/dev/null 2>&1; then
-    echo "xorriso not found; installing via Homebrew..."
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "ERROR: Homebrew not installed. Install brew first or install xorriso manually." >&2
-        exit 3
+iso = pycdlib.PyCdlib()
+iso.open(sys.argv[1])
+part_start = iso.udf_main_descs.partitions[0].part_start_location
+rec = iso.get_record(udf_path='/efi/boot/bootaa64.efi')
+ad = rec.alloc_descs[0]
+off = (part_start + ad.log_block_num) * 2048
+iso.close()
+with open(sys.argv[1], 'rb') as f:
+    f.seek(off)
+    head = f.read(96)
+# cdboot_noprompt.efi has a "CDBOOT_N" or similar marker in the PE
+# header's debug/version strings. Cheaper signal: cdboot_noprompt.efi
+# (~968 KiB) is much smaller than bootaa64.efi (~3 MiB), so the
+# slot's tail bytes will be 0x00 padding when patched.
+with open(sys.argv[1], 'rb') as f:
+    f.seek(off + 968096)  # one byte past end of cdboot_noprompt
+    tail = f.read(64)
+patched = head[:2] == b'MZ' and tail == b'\x00' * 64
+sys.exit(0 if patched else 1)
+PYEOF
+    then
+        echo "ALREADY DONE: $OUTPUT_ISO is patched; skipping re-master."
+        echo "Delete the output ISO to force a rebuild."
+        exit 0
+    else
+        echo "    output exists but is NOT patched; rebuilding."
     fi
-    brew install xorriso
 fi
 
-# Stage the ISO to a writable directory. We need ~8 GiB free for a
-# Win11 ARM64 ISO. Use a temp dir on the same volume as the output to
-# minimize copy churn at xorriso time.
-STAGE_BASE="$(dirname "$OUTPUT_ISO")"
-STAGE_DIR="$(mktemp -d "${STAGE_BASE}/win11-noprompt-stage.XXXXXX")"
-MOUNT_POINT=""
+if ! python3 -c "import pycdlib" >/dev/null 2>&1; then
+    echo "pycdlib not found; installing via pip3..."
+    pip3 install --user pycdlib
+fi
 
+echo "==> Probing source ISO layout"
+PROBE_OUT="$(python3 - "$INPUT_ISO" <<'PYEOF'
+import sys
+import pycdlib
+
+iso = pycdlib.PyCdlib()
+iso.open(sys.argv[1])
+part_start = iso.udf_main_descs.partitions[0].part_start_location
+
+def probe(path):
+    rec = iso.get_record(udf_path=path)
+    ad = rec.alloc_descs[0]
+    return ad.log_block_num, rec.get_data_length()
+
+paths = {
+    'BOOTAA64':  '/efi/boot/bootaa64.efi',
+    'EFISYS':    '/efi/microsoft/boot/efisys.bin',
+    'CDBOOT_NP': '/efi/microsoft/boot/cdboot_noprompt.efi',
+    'EFISYS_NP': '/efi/microsoft/boot/efisys_noprompt.bin',
+}
+print(f'PART_START={part_start}')
+for key, path in paths.items():
+    lbn, length = probe(path)
+    print(f'{key}_LBN={lbn}')
+    print(f'{key}_LEN={length}')
+iso.close()
+PYEOF
+)"
+
+# Surface variables: BOOTAA64_LBN, BOOTAA64_LEN, EFISYS_LBN, EFISYS_LEN,
+# CDBOOT_NP_LBN, CDBOOT_NP_LEN, EFISYS_NP_LBN, EFISYS_NP_LEN, PART_START
+eval "$PROBE_OUT"
+
+echo "    partition start LBA: $PART_START"
+echo "    bootaa64.efi        : LBN=$BOOTAA64_LBN  size=$BOOTAA64_LEN"
+echo "    efisys.bin          : LBN=$EFISYS_LBN  size=$EFISYS_LEN"
+echo "    cdboot_noprompt.efi : LBN=$CDBOOT_NP_LBN  size=$CDBOOT_NP_LEN"
+echo "    efisys_noprompt.bin : LBN=$EFISYS_NP_LBN  size=$EFISYS_NP_LEN"
+
+if [[ "$EFISYS_NP_LEN" != "$EFISYS_LEN" ]]; then
+    echo "ERROR: efisys_noprompt.bin ($EFISYS_NP_LEN) and efisys.bin ($EFISYS_LEN) must be the same size for in-place swap" >&2
+    exit 6
+fi
+if (( CDBOOT_NP_LEN > BOOTAA64_LEN )); then
+    echo "ERROR: cdboot_noprompt.efi ($CDBOOT_NP_LEN) larger than bootaa64.efi slot ($BOOTAA64_LEN); cannot patch in place" >&2
+    exit 7
+fi
+
+echo "==> Copying $INPUT_ISO -> $OUTPUT_ISO"
+TMP_ISO="${OUTPUT_ISO}.tmp.$$"
 cleanup() {
-    if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
-        hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true
-    fi
-    rm -rf "$STAGE_DIR"
+    rm -f "$TMP_ISO"
 }
 trap cleanup EXIT
+cp "$INPUT_ISO" "$TMP_ISO"
 
-echo "==> Mounting $INPUT_ISO read-only"
-MOUNT_INFO="$(hdiutil attach -nobrowse -readonly -plist "$INPUT_ISO")"
-MOUNT_POINT="$(echo "$MOUNT_INFO" | sed -n 's|.*<string>\(/Volumes/[^<]*\)</string>.*|\1|p' | head -1)"
-if [[ -z "$MOUNT_POINT" || ! -d "$MOUNT_POINT" ]]; then
-    echo "ERROR: failed to mount $INPUT_ISO" >&2
-    exit 4
-fi
+echo "==> Patching boot file extents in place"
+SECTOR=2048
+SRC_CDBOOT_OFF=$(( (PART_START + CDBOOT_NP_LBN) * SECTOR ))
+SRC_EFISYS_NP_OFF=$(( (PART_START + EFISYS_NP_LBN) * SECTOR ))
+DST_BOOTAA64_OFF=$(( (PART_START + BOOTAA64_LBN) * SECTOR ))
+DST_EFISYS_OFF=$(( (PART_START + EFISYS_LBN) * SECTOR ))
 
-# Capture the volume label so the re-mastered ISO carries it forward.
-# Setup auto-detects answer media partly by ID; preserving the label
-# avoids surprising downstream tooling that filters by it.
-VOL_LABEL="$(basename "$MOUNT_POINT")"
-echo "    volume label: $VOL_LABEL"
+python3 - <<PYEOF
+import sys
+ISO = "$TMP_ISO"
+SRC_CDBOOT_OFF = $SRC_CDBOOT_OFF
+SRC_EFISYS_NP_OFF = $SRC_EFISYS_NP_OFF
+DST_BOOTAA64_OFF = $DST_BOOTAA64_OFF
+DST_EFISYS_OFF = $DST_EFISYS_OFF
+CDBOOT_NP_LEN = $CDBOOT_NP_LEN
+EFISYS_NP_LEN = $EFISYS_NP_LEN
+BOOTAA64_LEN = $BOOTAA64_LEN
 
-echo "==> Staging ISO contents to $STAGE_DIR"
-# rsync preserves mode + symlinks; CD-ROMs are plain files but rsync
-# is faster than cp -R for large trees and gives a progress indicator.
-rsync -a --info=progress2 "$MOUNT_POINT/" "$STAGE_DIR/"
+with open(ISO, 'r+b') as f:
+    f.seek(SRC_CDBOOT_OFF)
+    cdboot = f.read(CDBOOT_NP_LEN)
+    if cdboot[:2] != b'MZ':
+        sys.exit('source cdboot_noprompt.efi missing MZ header; ISO layout unexpected')
+    f.seek(SRC_EFISYS_NP_OFF)
+    efisys_np = f.read(EFISYS_NP_LEN)
+    if efisys_np[:2] != b'\xeb\x3c':
+        sys.exit('source efisys_noprompt.bin missing FAT boot signature; ISO layout unexpected')
 
-echo "==> Verifying _noprompt boot files are present"
-NOPROMPT_CDBOOT="$STAGE_DIR/efi/microsoft/boot/cdboot_noprompt.efi"
-NOPROMPT_EFISYS="$STAGE_DIR/efi/microsoft/boot/efisys_noprompt.bin"
-TARGET_BOOTAA64="$STAGE_DIR/efi/boot/bootaa64.efi"
-TARGET_EFISYS="$STAGE_DIR/efi/microsoft/boot/efisys.bin"
+    # Pad cdboot_noprompt.efi to bootaa64.efi slot size with NUL.
+    # PE loaders ignore trailing bytes past the headers' SizeOfImage.
+    padded = cdboot + b'\x00' * (BOOTAA64_LEN - CDBOOT_NP_LEN)
+    f.seek(DST_BOOTAA64_OFF)
+    f.write(padded)
 
-for f in "$NOPROMPT_CDBOOT" "$NOPROMPT_EFISYS" "$TARGET_BOOTAA64" "$TARGET_EFISYS"; do
-    if [[ ! -f "$f" ]]; then
-        echo "ERROR: expected file missing in source ISO: ${f#$STAGE_DIR/}" >&2
-        echo "       (this script targets Microsoft Win11 ARM64 install ISOs)" >&2
-        exit 5
-    fi
-done
+    # efisys.bin and efisys_noprompt.bin are byte-equal in size, so
+    # this is a clean overlay with no padding needed.
+    f.seek(DST_EFISYS_OFF)
+    f.write(efisys_np)
 
-echo "==> Swapping bootloaders"
-# 1. UEFI removable-media fallback path: \efi\boot\bootaa64.efi.
-#    Replace with cdboot_noprompt.efi so AAVMF auto-launching this
-#    file does not show the prompt.
-chmod u+w "$TARGET_BOOTAA64"
-cp -f "$NOPROMPT_CDBOOT" "$TARGET_BOOTAA64"
+print('OK: patched bootaa64.efi and efisys.bin in place')
+PYEOF
 
-# 2. El Torito UEFI boot image: \efi\microsoft\boot\efisys.bin.
-#    Replace with efisys_noprompt.bin so any El Torito path also
-#    skips the prompt.
-chmod u+w "$TARGET_EFISYS"
-cp -f "$NOPROMPT_EFISYS" "$TARGET_EFISYS"
+echo "==> Verifying patch"
+python3 - "$TMP_ISO" <<'PYEOF'
+import sys
+import pycdlib
 
-echo "    bootaa64.efi: $(shasum -a 256 "$TARGET_BOOTAA64" | cut -d' ' -f1)"
-echo "    efisys.bin  : $(shasum -a 256 "$TARGET_EFISYS"   | cut -d' ' -f1)"
+iso = pycdlib.PyCdlib()
+iso.open(sys.argv[1])
+part_start = iso.udf_main_descs.partitions[0].part_start_location
 
-echo "==> Repacking ISO with xorriso"
-# UEFI-only El Torito layout matching what Microsoft's mediacreator
-# emits for Win11 ARM64 install media. The `-no-emul-boot` flag plus
-# -eltorito-platform 0xef makes the image a UEFI boot entry; the
-# system area / GPT bits keep it bootable on real hardware too.
-xorriso \
-    -as mkisofs \
-    -iso-level 4 \
-    -V "$VOL_LABEL" \
-    -udf \
-    -allow-limited-size \
-    -no-emul-boot \
-    -eltorito-platform efi \
-    -eltorito-boot efi/microsoft/boot/efisys.bin \
-    -boot-load-size 8 \
-    -no-emul-boot \
-    -isohybrid-gpt-basdat \
-    -o "$OUTPUT_ISO" \
-    "$STAGE_DIR"
+def head(path, n=8):
+    rec = iso.get_record(udf_path=path)
+    ad = rec.alloc_descs[0]
+    off = (part_start + ad.log_block_num) * 2048
+    with open(sys.argv[1], 'rb') as f:
+        f.seek(off)
+        return f.read(n)
+
+# Both bootaa64.efi (now cdboot_noprompt.efi data) and
+# cdboot_noprompt.efi proper start with MZ. Quick sanity check.
+b = head('/efi/boot/bootaa64.efi')
+e = head('/efi/microsoft/boot/efisys.bin')
+iso.close()
+if b[:2] != b'MZ':
+    sys.exit(f'bootaa64.efi missing MZ after patch: {b!r}')
+if e[:2] != b'\xeb\x3c':
+    sys.exit(f'efisys.bin missing FAT signature after patch: {e!r}')
+print(f'  bootaa64.efi head: {b.hex()}')
+print(f'  efisys.bin   head: {e.hex()}')
+PYEOF
+
+mv "$TMP_ISO" "$OUTPUT_ISO"
+trap - EXIT
 
 echo "==> Done"
 echo "    output : $OUTPUT_ISO"
