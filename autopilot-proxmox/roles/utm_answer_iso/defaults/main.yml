@@ -30,3 +30,16 @@ utm_answer_windows_edition: Windows 11 Pro
 
 # Output directory for generated ISOs (mirrors hash_output_dir pattern).
 utm_answer_iso_dir: "{{ playbook_dir }}/../output/answer-isos"
+
+# sysprep_finalize: when true, the rendered unattend appends a
+# FirstLogonCommand (Order 100) that runs
+#   sysprep /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml
+# from inside the guest. This side-steps UTM 4.7.5's broken
+# `utmctl exec` (OSStatus -2700) when finalising a template - sysprep
+# self-shuts the VM, and the host-side `utmctl status` poll observes
+# the transition to `stopped` as the success signal. Set this true when
+# building a template VM that will be cloned (it is the Microsoft-blessed
+# pattern for Windows templating) and false on per-clone unattend ISOs
+# where the goal is to preserve the cloned state. Tracked under
+# utm-phase2-sysprep-via-qga.
+utm_answer_sysprep_finalize: false

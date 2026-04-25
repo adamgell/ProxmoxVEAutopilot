@@ -198,6 +198,15 @@ if (Test-Path $UtmTools) {
     Write-Log "UTM Guest Tools installer not present at $UtmTools - skipping."
 }
 
+{% if sysprep_finalize_skip_scheduled_shutdown %}
+# ---------------------------------------------------------------------------
+# 5. Scheduled shutdown SUPPRESSED - sysprep finalize via FLC Order 100
+#     handles the shutdown for us. See unattend.xml.j2 sysprep_finalize
+#     block. Arming the schtasks one-shot here would race sysprep and
+#     potentially halt the VM mid-generalize.
+# ---------------------------------------------------------------------------
+Write-Log 'Scheduled-shutdown suppressed (sysprep_finalize=true; FLC Order 100 handles shutdown).'
+{% else %}
 # ---------------------------------------------------------------------------
 # 5. Schedule shutdown via Task Scheduler - FirstLogonCommand orchestration
 #     swallows direct Stop-Computer/shutdown.exe calls (observed on two
@@ -239,3 +248,4 @@ try {
     Write-Log "ERROR: failed to schedule shutdown: $_"
     exit 1
 }
+{% endif %}

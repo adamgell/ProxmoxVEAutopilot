@@ -74,6 +74,30 @@ def _build_template_context(profile: dict) -> dict:
         "windows_edition": profile.get("windows_edition") or "Windows 11 Pro",
         "domain_join": profile.get("domain_join") or {},
         "firstboot_cmds": profile.get("firstboot_cmds") or [],
+        # sysprep_finalize: when truthy, the rendered unattend appends a
+        # FirstLogonCommand (Order 100) that runs
+        # `sysprep /oobe /generalize /shutdown /unattend:...`. Used by
+        # the UTM ARM64 template builder to side-step UTM 4.7.5's
+        # broken `utmctl exec` (OSStatus -2700) - sysprep self-shuts the
+        # VM and the host-side `utmctl status` poll observes the
+        # transition to `stopped` as the completion signal. Default
+        # false preserves the legacy "operator-driven OOBE" build path
+        # (firstboot.ps1 schedules its own shutdown).
+        "sysprep_finalize": bool(profile.get("sysprep_finalize", False)),
+        # sysprep_finalize_skip_scheduled_shutdown: when truthy AND
+        # sysprep_finalize is also truthy, firstboot.ps1 suppresses the
+        # one-shot `schtasks /Create ... shutdown.exe /s` it would
+        # otherwise arm at the end of step 5. With sysprep handling
+        # the shutdown via FLC Order 100, the schtasks shutdown would
+        # race sysprep and potentially halt the VM mid-generalize.
+        # Defaults to follow sysprep_finalize so the common case
+        # "Just Works".
+        "sysprep_finalize_skip_scheduled_shutdown": bool(
+            profile.get(
+                "sysprep_finalize_skip_scheduled_shutdown",
+                profile.get("sysprep_finalize", False),
+            )
+        ),
     }
 
 

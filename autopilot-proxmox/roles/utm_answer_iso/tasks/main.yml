@@ -45,6 +45,13 @@
       org_name: "{{ _oem_profile.manufacturer | default('') }}"
       product_key: "{{ utm_answer_product_key | default('') }}"
       windows_edition: "{{ utm_answer_windows_edition }}"
+      # sysprep_finalize: opt-in. When true, the rendered unattend
+      # appends a FirstLogonCommand (Order 100) that runs sysprep
+      # /generalize /shutdown - the side-step around UTM 4.7.5's
+      # broken `utmctl exec` (utm-phase2-sysprep-via-qga). Default
+      # false preserves legacy operator-driven OOBE behaviour
+      # (firstboot.ps1 schedules its own shutdown).
+      sysprep_finalize: "{{ utm_answer_sysprep_finalize | default(false) | bool }}"
 
 - name: "Answer ISO: generate ISO via answer_iso.py"
   ansible.builtin.command:

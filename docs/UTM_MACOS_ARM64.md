@@ -55,8 +55,15 @@ Sub-project 1's foundation is in place and 95% of the goal is met:
        (~15 min, ~6 min faster than acc-2 because the false-failure
        1603 path shortens once the service actually reaches RUNNING).
 
-See follow-ups: `utm-phase2-sysprep-via-qga`,
-`utm-qga-msi-install-start-cosmetic-1603`.
+See follow-ups: `utm-qga-msi-install-start-cosmetic-1603`,
+`utm-e2e-sequence-full` (runbook at `docs/UTM_E2E_RUNBOOK.md`).
+(`utm-efi-vars-nvram-boot-entry` resolved - Boot0000 + BootOrder are
+now baked into `efi_vars.fd` via virt-fw-vars at bundle-render time;
+osascript keystroke fallback flipped to opt-in. `utm-phase2-sysprep-via-qga`
+resolved - sysprep now runs as a FirstLogonCommand inside the guest,
+see "Sysprep finalize via FirstLogonCommand" below. `utm-tui-plugin-research`
+resolved - no useful plugin surface beyond AppleScript + App Intents,
+folded into `utm-upstream-utmctl-create`.)
 
 ## Final architecture (sub-project 1 complete)
 
@@ -95,6 +102,26 @@ See follow-ups: `utm-phase2-sysprep-via-qga`,
   ARM64 QEMU Guest Agent exists (virtio-win + utmapp guest-tools ship
   x86/x64 QGA only), so the playbook can't use `utmctl exec` - it polls
   `utmctl status` for `stopped` instead.
+- **Sysprep finalize via FirstLogonCommand**: when the calling
+  playbook sets `sysprep_finalize=true` in the answer-iso profile (or
+  passes `utm_answer_sysprep_finalize=true` to the role), the rendered
+  `unattend.xml.j2` appends a SynchronousCommand at Order 100 that
+  runs:
+
+      %WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown
+          /unattend:C:\Windows\Panther\unattend.xml
+
+  Sysprep handles the shutdown itself, so `firstboot.ps1`'s scheduled-
+  task shutdown is suppressed (Jinja-gated on the same flag) to avoid
+  racing sysprep mid-generalize. The host-side `utmctl status` poll
+  observes the transition to `stopped` as the success signal, exactly
+  the same shape as the firstboot self-halt flow. `/unattend:` keeps
+  the autopilot answer file in play across the regeneralize so the
+  post-sysprep boot still has the cached configuration. This is the
+  Microsoft-blessed pattern for templating Windows and side-steps the
+  UTM 4.7.5 `utmctl exec` OSStatus -2700 bug entirely - no host-to-
+  guest exec channel is needed at any point. Implemented in commit
+  `<sysprep-flc>` (resolves `utm-phase2-sysprep-via-qga`).
 
 ## Critical gotchas
 
@@ -154,17 +181,17 @@ See follow-ups: `utm-phase2-sysprep-via-qga`,
    `vioser.sys/.inf/.cat`) added to the `DriverPaths` block in
    `unattend.xml.j2`.
 
-   **Known UTM gotcha**: `utmctl exec` fails with OSStatus -2700 on
-   UTM 4.7.5 even when the QGA channel is up - this is a UTM harness
-   issue, not a QGA one. `utmctl ip-address <uuid>` works against the
-   same channel and is useful as a "VM is fully booted + QGA is up"
-   sanity check from the host.
-
-   Sysprep in `sysprep_finalize.yml` still uses `utmctl exec` today;
-   `utm-phase2-sysprep-via-qga` tracks the switch to either a direct
-   QMP/QGA JSON-RPC call or a FirstLogonCommand that runs
-   `sysprep /oobe /generalize /shutdown` directly (which works today,
-   with or without QGA, since it doesn't need host-side exec).
+   **Known UTM annoyance (downgraded from blocker)**: `utmctl exec`
+   fails with OSStatus -2700 on UTM 4.7.5 even when the QGA channel is
+   up - this is a UTM harness issue, not a QGA one. `utmctl ip-address
+   <uuid>` works against the same channel and is useful as a "VM is
+   fully booted + QGA is up" sanity check from the host. Since the
+   sysprep flow no longer relies on `utmctl exec` (see "Sysprep
+   finalize via FirstLogonCommand" below and
+   `utm-phase2-sysprep-via-qga` resolved), this is now an annoyance,
+   not a blocker - we still avoid `utmctl exec` for any host-to-guest
+   orchestration on critical paths and prefer `utmctl status` plus
+   in-guest FLC chains as the bridge.
 
 7. **FirstLogonCommand runs Windows PowerShell 5.1, which needs a
    UTF-8 BOM on .ps1 files**. FLC invokes `powershell.exe` (5.1), not
@@ -239,7 +266,7 @@ See follow-ups: `utm-phase2-sysprep-via-qga`,
 | utm-efi-vars-nvram-boot-entry | resolved | `web.utm_bundle.prepare_efi_vars` bakes `Boot0000 = FilePath(\efi\boot\bootaa64.efi)` + `BootOrder = 0x0000, ...` into the per-bundle `efi_vars.fd` via `virt-firmware`. `utm_boot_fallback_keystrokes` default flipped to `false`; legacy keystroke escape is now opt-in only. Test: `test_prepare_efi_vars_writes_boot0000_entry`. |
 | utm-qga-arm64-msi-wiring | resolved | `adamgell/qemu-ga-aarch64-msi` v11.0.0-1 bundled at `assets/qemu-ga-aarch64-win/`, staged via `$OEM$`, installed by `firstboot.ps1` step 5a. `vioserial` DriverPaths covers the kernel-mode prereq. See issue #30 |
 | utm-guest-tools-wiring | resolved | UTM Guest Tools 0.1.271 bundled at `assets/utm-guest-tools-win/`, staged via `$OEM$`, installed silently (`/S`) by `firstboot.ps1` step 5b. Adds Spice vdagent for clipboard + dynamic-resolution resize |
-| utm-phase2-sysprep-via-qga | pending | `sysprep_finalize.yml` still uses `utmctl exec` which trips OSStatus -2700 on UTM 4.7.5 even with QGA installed. Options: wait for UTM fix, go direct via QMP/QGA JSON-RPC, or side-step via a FirstLogonCommand `sysprep /oobe /generalize /shutdown` |
+| utm-phase2-sysprep-via-qga | resolved | Side-stepped via FirstLogonCommand: `unattend.xml.j2` appends a SynchronousCommand at Order 100 running `%WINDIR%\System32\Sysprep\sysprep.exe /oobe /generalize /shutdown /unattend:C:\Windows\Panther\unattend.xml` when `sysprep_finalize=true` is set in the answer-iso profile (or `utm_answer_sysprep_finalize=true` on the role). `firstboot.ps1`'s scheduled-task shutdown is Jinja-gated off in that mode to avoid racing sysprep. Host-side waits via `utmctl status` for `stopped`. No host-to-guest exec channel needed - eliminates the OSStatus -2700 dependency. Sysprep_finalize.yml refactored to a wait-for-stopped poll. Test: `test_clone_unattend_invokes_sysprep_finalize_via_flc`. Commit: `<sysprep-flc>` |
 | utm-firstboot-shutdown-reliability | resolved | Root cause was firstboot.ps1 written UTF-8 without BOM; PS 5.1 mis-parsed the multi-byte em-dashes and FLC exited before scheduling shutdown. Fix `23ee992`: BOM-writing + em-dash purge + regression tests. acc-2 re-run reached `stopped` autonomously after ~21 min (128 poll attempts). |
 | utm-qga-arm64-driver-store-staging | resolved | vioserial driver now staged into OS driver store via `Microsoft-Windows-PnpCustomizationsNonWinPE` in the offlineServicing pass (commit `d192deb`). Verified on acc-3: setupact.log line 5507 logs DISM importing `vioser.inf` to the offline driver store; post-install `pnputil /enum-drivers` shows oem0/oem6 (vioser.inf), `Get-PnpDevice` shows `VirtIO Serial Driver` OK, `sc.exe query QEMU-GA` reports RUNNING. |
 | utm-qga-msi-install-start-cosmetic-1603 | pending | QGA MSI returns 1603 even though the QEMU-GA service ends up registered, auto-start, and RUNNING post-install. Cause: `<ServiceControl Start="install" Wait="yes" />` in the WiX (`adamgell/qemu-ga-aarch64-msi/build/wix/qemu-ga.wxs`) makes MSI synchronously start the service at install time. qemu-ga.exe takes ~110-130s to bind to the virtio-serial endpoint and reach SERVICE_RUNNING; MSI's wait expires earlier and rolls back the product registration, but the service binaries are already in use and survive. Net result is a misleading WARNING in our firstboot logs. Fix is in the QGA MSI repo: drop `Start="install"` so MSI does not synchronously wait at install time; service still auto-starts on next boot. Tracking the rebuild + asset bump separately. |

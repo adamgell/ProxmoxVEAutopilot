@@ -97,6 +97,77 @@ def test_unattend_stages_vioserial_driver_for_qga() -> None:
     )
 
 
+def test_clone_unattend_invokes_sysprep_finalize_via_flc() -> None:
+    """Sysprep-via-FLC: with sysprep_finalize=true, the rendered unattend
+    must include a FirstLogonCommand that runs sysprep with /generalize
+    /shutdown /unattend:.
+
+    This is the side-step around UTM 4.7.5's broken `utmctl exec`
+    (OSStatus -2700) - sysprep runs from inside the guest as the last
+    FLC, /shutdown halts the VM, and the host-side `utmctl status` poll
+    observes the transition to `stopped` as the success signal. Tracked
+    as utm-phase2-sysprep-via-qga.
+    """
+    from web.answer_iso import render_arm64_unattend
+
+    rendered = render_arm64_unattend({
+        "admin_user": "Administrator",
+        "admin_pass": "P@ssw0rd!",
+        "locale": "en-US",
+        "timezone": "Pacific Standard Time",
+        "windows_edition": "Windows 11 Pro",
+        "vm_name": "test-vm",
+        "sysprep_finalize": True,
+    })
+
+    # Locate the FirstLogonCommands block - sysprep_finalize must land
+    # there, not in RunSynchronous or another pass, because /generalize
+    # is only valid post-OOBE-completion.
+    root = ET.fromstring(rendered)
+    ns = {"u": "urn:schemas-microsoft-com:unattend"}
+
+    flcs = root.findall(
+        "u:settings[@pass='oobeSystem']"
+        "/u:component"
+        "/u:FirstLogonCommands"
+        "/u:SynchronousCommand", ns,
+    )
+    assert flcs, "No FirstLogonCommands found in oobeSystem pass"
+
+    flc_lines = [(c.findtext("u:CommandLine", "", ns) or "") for c in flcs]
+    flc_blob = "\n".join(flc_lines)
+    assert any("Sysprep\\sysprep.exe" in line for line in flc_lines), (
+        "FirstLogonCommands missing Sysprep\\sysprep.exe entry; got:\n"
+        + flc_blob
+    )
+    assert "/generalize" in flc_blob, (
+        f"FLC sysprep entry missing /generalize; got:\n{flc_blob}"
+    )
+    assert "/shutdown" in flc_blob, (
+        f"FLC sysprep entry missing /shutdown; got:\n{flc_blob}"
+    )
+    assert "/unattend:" in flc_blob, (
+        "FLC sysprep entry missing /unattend: argument - without it, "
+        "the post-sysprep boot loses the autopilot answer file. Got:\n"
+        + flc_blob
+    )
+
+    # Default (sysprep_finalize unset / false) must NOT include the
+    # sysprep FLC - existing legacy operator-driven OOBE builds rely
+    # on firstboot.ps1's scheduled-task shutdown, not sysprep.
+    rendered_default = render_arm64_unattend({
+        "admin_user": "Administrator",
+        "admin_pass": "P@ssw0rd!",
+        "locale": "en-US",
+        "timezone": "Pacific Standard Time",
+        "windows_edition": "Windows 11 Pro",
+        "vm_name": "test-vm",
+    })
+    assert "Sysprep\\sysprep.exe" not in rendered_default, (
+        "sysprep FLC leaked into default render (sysprep_finalize=false)"
+    )
+
+
 def test_rendered_firstboot_ps1_has_utf8_bom() -> None:
     from web.answer_iso import stage_answer_iso_files
 
