@@ -66,9 +66,11 @@ Check "BuildRoot\inputs\runtime has .NET 8 runtime zip" {
     @(Get-ChildItem -Path (Join-Path $BuildRoot 'inputs\runtime') -Filter 'dotnet-runtime-*-win-*.zip' -ErrorAction SilentlyContinue).Count -gt 0
 } "Download .NET 8 runtime zip and place in $BuildRoot\inputs\runtime"
 
-Check 'OpenSSH server installed' {
-    (Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*').State -eq 'Installed'
-} 'Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0'
+Check 'OpenSSH server present (built-in or standalone)' {
+    # Either path is fine — the standalone Win32-OpenSSH installer lands in C:\Program Files\OpenSSH\;
+    # the Optional-Feature install lands in C:\Windows\System32\OpenSSH\.
+    (Test-Path 'C:\Windows\System32\OpenSSH\sshd.exe') -or (Test-Path 'C:\Program Files\OpenSSH\sshd.exe')
+} 'Install via Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 OR via the standalone Win32-OpenSSH MSI from https://github.com/PowerShell/Win32-OpenSSH/releases'
 Check 'OpenSSH server running' {
     (Get-Service -Name sshd -ErrorAction SilentlyContinue).Status -eq 'Running'
 } 'Start-Service sshd; Set-Service sshd -StartupType Automatic'
@@ -77,10 +79,14 @@ Check 'OpenSSH default shell is pwsh 7' {
 } "New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value 'C:\Program Files\PowerShell\7\pwsh.exe' -PropertyType String -Force"
 
 if ($WorkDriveLetter) {
-    Check "Work drive ${WorkDriveLetter}: is Dev Drive (ReFS, trusted)" {
+    # NTFS is the right file system for the work directory: DISM offline servicing
+    # (Add-WindowsPackage on the mounted PE WIM) fails on ReFS Dev Drives with Win32
+    # error 1812 (CDismCore::CacheImageSession). Inputs/outputs can live on a Dev
+    # Drive for perf, but `lockPath` (and therefore `workDir`) must point at NTFS.
+    Check "Work drive ${WorkDriveLetter}: is NTFS (DISM offline servicing requires NTFS, not ReFS)" {
         $vol = Get-Volume -DriveLetter $WorkDriveLetter -ErrorAction SilentlyContinue
-        $vol -and $vol.FileSystem -eq 'ReFS' -and (fsutil devdrv query "${WorkDriveLetter}:" 2>$null | Select-String -Quiet 'Trusted: Yes')
-    } 'Format a Dev Drive (Settings → System → Storage → Disks & volumes → Create dev drive). fsutil devdrv setfiltered to mark trusted.'
+        $vol -and $vol.FileSystem -eq 'NTFS'
+    } "Either format ${WorkDriveLetter}: as NTFS, or set lockPath in build-pe-wim.config.json to a path on an NTFS volume (e.g. C:\\BuildRoot\\work\\.build.lock) and Add-MpPreference -ExclusionPath that path."
 }
 
 Write-Host ('=' * 70)
