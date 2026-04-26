@@ -197,3 +197,62 @@ Describe 'Invoke-InjectDriverStep' {
         $r.LogTail | Should -Match '^injected driver'
     }
 }
+
+Describe 'Invoke-SetRegistryStep' {
+    BeforeAll {
+        if (-not (Get-Command reg.exe -ErrorAction SilentlyContinue)) {
+            function global:reg.exe { param() }
+        }
+        $script:regCalls = @()
+        Mock -ModuleName Autopilot.PESteps reg.exe {
+            $script:regCalls += ,$args
+            $global:LASTEXITCODE = 0
+        }
+        Mock -ModuleName Autopilot.PESteps New-Item { }
+        Mock -ModuleName Autopilot.PESteps New-ItemProperty { }
+    }
+
+    BeforeEach { $script:regCalls = @() }
+
+    It 'load + set + unload SYSTEM hive' {
+        $keys = @(
+            @{ path = 'Setup'; name = 'ComputerName'; type = 'REG_SZ'; value = 'PC-42' }
+        )
+        $r = Invoke-SetRegistryStep -Hive 'SYSTEM' -Target 'W:' -Keys $keys
+        $r.LogTail | Should -Match 'set 1 keys in SYSTEM'
+
+        $loadInvoked = $false
+        $unloadInvoked = $false
+        foreach ($call in $script:regCalls) {
+            if ($call -contains 'load') { $loadInvoked = $true }
+            if ($call -contains 'unload') { $unloadInvoked = $true }
+        }
+        $loadInvoked | Should -BeTrue
+        $unloadInvoked | Should -BeTrue
+    }
+
+    It 'unloads even when set fails' {
+        Mock -ModuleName Autopilot.PESteps New-ItemProperty { throw 'fake-set-error' }
+        $script:regCalls = @()
+        try {
+            Invoke-SetRegistryStep -Hive 'SOFTWARE' -Target 'W:' -Keys @(
+                @{ path = 'p'; name = 'n'; type = 'REG_SZ'; value = 'v' }
+            )
+        } catch { }
+        $unloadCalled = $script:regCalls | Where-Object { $_ -contains 'unload' }
+        $unloadCalled | Should -Not -BeNullOrEmpty
+    }
+}
+
+Describe 'Invoke-ScheduleTaskStep' {
+    BeforeAll {
+        Mock -ModuleName Autopilot.PESteps New-Item { }
+        Mock -ModuleName Autopilot.PESteps Set-Content { }
+        Mock -ModuleName Autopilot.PESteps Test-Path { return $true }
+    }
+
+    It 'writes the task XML to <target>\Windows\System32\Tasks\<name>' {
+        $r = Invoke-ScheduleTaskStep -Target 'W:' -Name 'AutopilotKick' -TaskXml '<Task/>'
+        $r.LogTail | Should -Match 'Tasks\\AutopilotKick'
+    }
+}
