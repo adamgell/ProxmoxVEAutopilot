@@ -399,6 +399,9 @@ def _save_vault(updates):
     _save_yaml_file(VAULT_PATH, updates)
 
 app = FastAPI(title="Proxmox VE Autopilot")
+# WinPE-driven OSD orchestrator API (spec: docs/specs/2026-04-25-winpe-osd-pipeline-design.md §7)
+from web.winpe_routes import router as winpe_router  # noqa: E402
+app.include_router(winpe_router)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
