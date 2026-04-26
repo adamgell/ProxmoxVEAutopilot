@@ -17,6 +17,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
 from web.artifact_store import ArtifactStore
+from web.winpe_manifest_renderer import render_manifest, RendererError
+from web.winpe_targets_db import UnknownVmError, WinpeTargetsDb
 
 
 router = APIRouter(prefix="/winpe", tags=["winpe"])
@@ -29,6 +31,30 @@ def _artifact_root() -> Path:
     and Docker; var/artifacts lives one level up at the repo root.
     """
     return Path.cwd().parent / "var" / "artifacts"
+
+
+@router.get("/manifest/{vm_uuid}")
+def get_manifest(vm_uuid: str) -> JSONResponse:
+    """Render the per-VM task manifest. 404 if unknown; 503 if install.wim missing."""
+    root = _artifact_root()
+    db = WinpeTargetsDb(root / "index.db")
+    target = db.lookup(vm_uuid)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"unknown vm_uuid: {vm_uuid}")
+
+    store = ArtifactStore(root)
+    try:
+        manifest = render_manifest(target, store)
+    except RendererError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    try:
+        db.touch_last_manifest_at(vm_uuid)
+    except UnknownVmError:
+        # Race: target was deleted between lookup and touch. Manifest is still valid.
+        pass
+
+    return JSONResponse(content=manifest)
 
 
 @router.get("/content/{sha256}")
