@@ -42,7 +42,7 @@ scp -r "$REPO_ROOT/build/pe-payload/." "${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DI
 # --- 2. ssh + run Build-PeWim.ps1 with config on stdin ---
 echo ">> ssh build host: pwsh Build-PeWim.ps1"
 SCRIPT_REMOTE="${BUILD_ROOT}/src/build/Build-PeWim.ps1"
-BUILD_OUTPUT=$(echo "$BUILD_CONFIG_JSON" | ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -File '${SCRIPT_REMOTE}' -ConfigJson -")
+BUILD_OUTPUT=$(echo "$BUILD_CONFIG_JSON" | ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -ExecutionPolicy Bypass -File '${SCRIPT_REMOTE}' -ConfigJson -")
 
 echo "$BUILD_OUTPUT"
 

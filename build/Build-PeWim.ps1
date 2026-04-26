@@ -35,11 +35,14 @@ Import-Module (Join-Path $PSScriptRoot 'Modules\Autopilot.Build\Autopilot.Build.
 # ---- Parse config ----
 $rawJson = if ($ConfigJson -eq '-') { [Console]::In.ReadToEnd() } else { Get-Content -LiteralPath $ConfigJson -Raw }
 $config = $rawJson | ConvertFrom-Json
+# Note: $config.PSObject.Properties.Match('x') is unreliable in pwsh 7.6+ — it
+# returns an empty-but-truthy result for absent properties. Use -contains.
+$configKeys = @($config.PSObject.Properties.Name)
 foreach ($key in @('adkRoot','architecture','virtioIsoPath','drivers','pwsh7Zip','dotnetRuntimeZip','payloadDir','orchestratorUrl','outputDir')) {
-    if (-not $config.PSObject.Properties.Match($key)) { throw "Build config missing required field: $key" }
+    if ($configKeys -notcontains $key) { throw "Build config missing required field: $key" }
 }
 
-$lockPath = if ($config.PSObject.Properties.Match('lockPath')) { $config.lockPath } else { 'C:\BuildRoot\work\.build.lock' }
+$lockPath = if ($configKeys -contains 'lockPath') { $config.lockPath } else { 'C:\BuildRoot\work\.build.lock' }
 $workDir  = Split-Path -Parent $lockPath
 if (-not (Test-Path $workDir)) { New-Item -ItemType Directory -Path $workDir -Force | Out-Null }
 
@@ -122,8 +125,8 @@ try {
 
         # ---- Phase 4b: OpenSSH server (optional; for in-PE remote debugging) ----
         $includeSsh = $false
-        if ($config.PSObject.Properties.Match('opensshZip')) {
-            if (-not $config.PSObject.Properties.Match('opensshAuthorizedKey')) {
+        if ($configKeys -contains 'opensshZip') {
+            if ($configKeys -notcontains 'opensshAuthorizedKey') {
                 throw "opensshZip provided but opensshAuthorizedKey missing — refusing to ship a PE with SSH server but no authorized key."
             }
             if (-not (Test-Path $config.opensshZip)) {

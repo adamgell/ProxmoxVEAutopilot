@@ -3,6 +3,10 @@
 #
 # Usage:  tools/build-install-wim.sh [<config.json>]
 #         (default: build/build-install-wim.config.json)
+#
+# Requires: ssh, scp (macOS defaults), python3, jq.
+# Build host: pwsh runs with -ExecutionPolicy Bypass because Build-InstallWim.ps1
+# imports the unsigned Autopilot.Build module.
 
 set -euo pipefail
 
@@ -26,7 +30,7 @@ BUILD_CONFIG_JSON=$(jq 'del(.buildHost, .buildHostUser, .buildRootRemote)' "$CON
 
 echo ">> ssh build host: pwsh Build-InstallWim.ps1"
 SCRIPT_REMOTE="${BUILD_ROOT}/src/build/Build-InstallWim.ps1"
-BUILD_OUTPUT=$(echo "$BUILD_CONFIG_JSON" | ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -File '${SCRIPT_REMOTE}' -ConfigJson -")
+BUILD_OUTPUT=$(echo "$BUILD_CONFIG_JSON" | ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -ExecutionPolicy Bypass -File '${SCRIPT_REMOTE}' -ConfigJson -")
 
 echo "$BUILD_OUTPUT"
 
