@@ -105,3 +105,29 @@ def test_register_recovers_from_deleted_store_file(tmp_path):
 
     # Index should still be a single row (no duplicate).
     assert len(store.list_artifacts()) == 1
+
+
+def test_cache_blob_hashes_writes_indexes(tmp_path):
+    store = ArtifactStore(tmp_path)
+    content = b"<?xml version='1.0'?><unattend>per-VM xml</unattend>"
+    record = store.cache_blob(
+        content,
+        kind=ArtifactKind.UNATTEND_XML,
+        extension="xml",
+    )
+    assert record.kind is ArtifactKind.UNATTEND_XML
+    assert record.relative_path == f"cache/{record.sha256}.xml"
+    assert (tmp_path / record.relative_path).read_bytes() == content
+    # Round-trips through lookup like any registered artifact:
+    looked_up = store.lookup(record.sha256)
+    assert looked_up is not None
+    assert looked_up.relative_path == record.relative_path
+
+
+def test_cache_blob_idempotent_on_identical_content(tmp_path):
+    store = ArtifactStore(tmp_path)
+    content = b"identical-bytes"
+    r1 = store.cache_blob(content, kind=ArtifactKind.STAGE_ZIP, extension="zip")
+    r2 = store.cache_blob(content, kind=ArtifactKind.STAGE_ZIP, extension="zip")
+    assert r1.sha256 == r2.sha256
+    assert len(store.list_artifacts()) == 1

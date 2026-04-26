@@ -108,6 +108,47 @@ class ArtifactStore:
             last_served_at=None,
         )
 
+    def cache_blob(self, content: bytes, *, kind: ArtifactKind, extension: str) -> ArtifactRecord:
+        """Stash an orchestrator-rendered per-VM blob in cache/, indexed alongside
+        registered build artifacts so /winpe/content/<sha> serves both uniformly.
+
+        Idempotent on content sha — a second call with identical bytes returns
+        the existing record without rewriting the file.
+        """
+        import hashlib
+        sha = hashlib.sha256(content).hexdigest()
+
+        existing = self.lookup(sha)
+        if existing is not None:
+            # File on disk may also exist — preserve it; otherwise re-write.
+            expected_path = self.root / existing.relative_path
+            if not expected_path.exists():
+                expected_path.parent.mkdir(parents=True, exist_ok=True)
+                expected_path.write_bytes(content)
+            return existing
+
+        rel = f"cache/{sha}.{extension.lstrip('.')}"
+        dest = self.root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+
+        registered_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO artifacts (sha256, kind, size, relative_path, metadata_json, registered_at, last_served_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                (sha, kind.value, len(content), rel, json.dumps({"source": "cache_blob"}), registered_at),
+            )
+        return ArtifactRecord(
+            sha256=sha,
+            kind=kind,
+            size=len(content),
+            relative_path=rel,
+            metadata={"source": "cache_blob"},
+            registered_at=registered_at,
+            last_served_at=None,
+        )
+
     def lookup(self, sha256: str) -> ArtifactRecord | None:
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
