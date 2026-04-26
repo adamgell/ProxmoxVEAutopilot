@@ -10,7 +10,7 @@ function Invoke-SetRegistryStep {
     param(
         [Parameter(Mandatory)] [ValidateSet('SYSTEM','SOFTWARE','DEFAULT')] [string] $Hive,
         [Parameter(Mandatory)] [string] $Target,
-        [Parameter(Mandatory)] [hashtable[]] $Keys
+        [Parameter(Mandatory)] [object[]] $Keys
     )
 
     $hivePath = switch ($Hive) {

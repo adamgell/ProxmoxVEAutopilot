@@ -1,24 +1,29 @@
 function Invoke-BcdbootStep {
-    <#
-    .SYNOPSIS
-        Make the target volume bootable. Equivalent to:
-            bcdboot W:\Windows /s S: /f UEFI
-    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)] [string] $Windows,
         [Parameter(Mandatory)] [string] $Esp
     )
-    # Build the Windows path manually with a backslash: Join-Path throws on macOS
-    # for Windows-style drive letters, and [System.IO.Path]::Combine uses the
-    # platform separator (forward-slash on macOS).  Explicit string concatenation
-    # is the only cross-platform approach that always produces 'W:\Windows'.
     $winPath = "${Windows}\Windows"
     Write-Host "BcdbootStep: bcdboot $winPath /s $Esp /f UEFI"
     bcdboot $winPath /s $Esp /f UEFI | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "BcdbootStep: bcdboot exited with code $LASTEXITCODE"
     }
-    return [pscustomobject]@{ LogTail = "bcdboot $winPath /s $Esp /f UEFI ok"; Extra = @{ windows = $Windows; esp = $Esp } }
+
+    # QEMU AAVMF (ARM64 UEFI) doesn't always honour NVRAM boot entries;
+    # ensure the EFI fallback path exists so the firmware can discover it.
+    $fallbackDir = "${Esp}\EFI\BOOT"
+    if (-not (Test-Path $fallbackDir)) { New-Item -ItemType Directory -Path $fallbackDir -Force | Out-Null }
+    $src = "${Esp}\EFI\Microsoft\Boot\bootmgfw.efi"
+    $dst = "${fallbackDir}\BOOTAA64.EFI"
+    if (Test-Path $src) {
+        Copy-Item -Path $src -Destination $dst -Force
+        Write-Host "BcdbootStep: copied fallback $dst"
+    } else {
+        Write-Host "BcdbootStep: WARNING - $src not found, fallback not created"
+    }
+
+    return [pscustomobject]@{ LogTail = "bcdboot $winPath /s $Esp /f UEFI ok + fallback"; Extra = @{ windows = $Windows; esp = $Esp } }
 }

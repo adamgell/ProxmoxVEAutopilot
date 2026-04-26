@@ -284,11 +284,22 @@ Subsystem sftp sftp-server.exe
         Set-Content -LiteralPath $unattendOut -Value $unattendRendered -Encoding utf8
         Remove-Item -Path $unattendTpl -Force  # template stays out of the WIM
 
-        # winpeshl.ini → System32
-        Copy-Item -Path (Join-Path $payloadTarget 'winpeshl.ini') -Destination (Join-Path $peMount 'Windows\System32\winpeshl.ini') -Force
-        Remove-Item -Path (Join-Path $payloadTarget 'winpeshl.ini') -Force  # not needed in payload tree post-build
+        # Remove winpeshl.ini from payload — use startnet.cmd instead
+        $winpeshlPayload = Join-Path $payloadTarget 'winpeshl.ini'
+        if (Test-Path $winpeshlPayload) { Remove-Item $winpeshlPayload -Force }
+        # Delete any winpeshl.ini in System32 so WinPE uses default flow (cmd /k startnet.cmd)
+        $winpeshlSys32 = Join-Path $peMount 'Windows\System32\winpeshl.ini'
+        if (Test-Path $winpeshlSys32) { Remove-Item $winpeshlSys32 -Force }
 
-        Log 'Info' "Staged payload at X:\autopilot and rendered unattend.xml"
+        # startnet.cmd: wpeinit, then spawn a NEW maximized window for the bootstrap
+        # so it appears on top of the WinPE desktop instead of behind it
+        $startnetPath = Join-Path $peMount 'Windows\System32\startnet.cmd'
+        @(
+            'wpeinit'
+            'start /max "Autopilot" cmd.exe /k X:\autopilot\start.cmd'
+        ) | Set-Content -Path $startnetPath -Encoding ascii
+
+        Log 'Info' "Staged payload at X:\autopilot, rendered unattend.xml, wrote startnet.cmd"
 
         # ---- Phase 8: Dismount + commit ----
         Dismount-WindowsImage -Path $peMount -Save | Out-Null

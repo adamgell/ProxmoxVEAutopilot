@@ -33,9 +33,7 @@ if (Test-Path 'X:\autopilot\Bootstrap.json') {
 Write-Host ''
 Write-Host 'Network state:'
 try {
-    Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object IPAddress -ne '127.0.0.1' |
-        Format-Table InterfaceAlias, IPAddress, PrefixLength -AutoSize | Out-Host
+    ipconfig | Out-Host
 } catch {
     Write-Host "  <error: $_>"
 }

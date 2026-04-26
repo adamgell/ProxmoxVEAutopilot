@@ -2,8 +2,7 @@ function Wait-PeNetwork {
     <#
     .SYNOPSIS
         Block until PE has a non-APIPA IPv4 address. Calls wpeutil InitializeNetwork
-        on each retry to work around Plan 1 KNOWN-ISSUES #1 (NetKVM driver doesn't
-        bind in time for wpeinit's first network init).
+        on each retry to work around NetKVM driver not binding in time for wpeinit.
 
     .OUTPUTS
         The first non-APIPA IPv4 address found.
@@ -17,13 +16,17 @@ function Wait-PeNetwork {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        wpeutil InitializeNetwork | Out-Null
+        wpeutil InitializeNetwork 2>$null | Out-Null
 
-        $ipv4 = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-            Where-Object IPAddress -notlike '169.254.*' |
-            Where-Object IPAddress -ne '127.0.0.1')
-        if ($ipv4.Count -gt 0) {
-            return $ipv4[0].IPAddress
+        # Parse ipconfig — Get-NetIPAddress isn't available in WinPE
+        $output = ipconfig 2>$null
+        foreach ($line in $output) {
+            if ($line -match 'IPv4 Address.*:\s*([\d\.]+)') {
+                $ip = $Matches[1]
+                if ($ip -notlike '169.254.*' -and $ip -ne '127.0.0.1') {
+                    return $ip
+                }
+            }
         }
         if ($PollIntervalSeconds -gt 0) {
             Start-Sleep -Seconds $PollIntervalSeconds

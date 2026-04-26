@@ -26,7 +26,7 @@ function Invoke-PartitionStep {
     $esp = New-Partition -DiskNumber 0 -Size 260MB -GptType '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}'
     Format-Volume -Partition $esp -FileSystem FAT32 -NewFileSystemLabel 'EFI' -Confirm:$false | Out-Null
 
-    Add-PartitionAccessPath -DiskNumber 0 -PartitionNumber $esp.PartitionNumber -AssignDriveLetter
+    Set-Partition -DiskNumber 0 -PartitionNumber $esp.PartitionNumber -NewDriveLetter 'S'
     $esp = Get-Partition -DiskNumber 0 -PartitionNumber $esp.PartitionNumber
 
     # MSR: 16 MB

@@ -4,7 +4,7 @@ function Invoke-WriteUnattendStep {
     param(
         [Parameter(Mandatory)] [string] $OrchestratorUrl,
         [Parameter(Mandatory)] [string] $Sha256,
-        [Parameter(Mandatory)] [int] $Size,
+        [Parameter(Mandatory)] [long] $Size,
         [Parameter(Mandatory)] [string] $Target
     )
     $parent = Split-Path -Parent $Target

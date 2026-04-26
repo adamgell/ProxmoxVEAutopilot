@@ -41,8 +41,8 @@ if ($DryRunForTesting) {
     Import-Module (Join-Path $localModules 'Autopilot.PESteps' 'Autopilot.PESteps.psd1') -Force
     Import-Module (Join-Path $localModules 'Autopilot.PETransport' 'Autopilot.PETransport.psd1') -Force
 } else {
-    Import-Module Autopilot.PETransport -Force
-    Import-Module Autopilot.PESteps -Force
+    Import-Module Autopilot.PETransport -Force -ErrorAction Stop -Verbose
+    Import-Module Autopilot.PESteps -Force -ErrorAction Stop -Verbose
 }
 
 
@@ -114,6 +114,14 @@ if ($DryRunForTesting) { return }
 
 
 # ---- Real PE boot path ----
+
+# Guard: if a previous run already laid down Windows, don't re-partition.
+if (Test-Path 'W:\Windows\System32\ntoskrnl.exe') {
+    Write-Host 'Windows already installed on W: — skipping bootstrap (remove boot media and reboot).'
+    Write-Host 'Run: wpeutil reboot'
+    return
+}
+
 $transcript = 'X:\Windows\Temp\autopilot-pe.log'
 Start-Transcript -Path $transcript -Append -Force | Out-Null
 

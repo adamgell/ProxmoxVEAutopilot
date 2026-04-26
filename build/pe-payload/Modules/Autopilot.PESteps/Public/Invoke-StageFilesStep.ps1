@@ -4,7 +4,7 @@ function Invoke-StageFilesStep {
     param(
         [Parameter(Mandatory)] [string] $OrchestratorUrl,
         [Parameter(Mandatory)] [string] $Sha256,
-        [Parameter(Mandatory)] [int] $Size,
+        [Parameter(Mandatory)] [long] $Size,
         [Parameter(Mandatory)] [string] $Target
     )
     $tmp = "X:\Windows\Temp\stage-$Sha256.zip"
