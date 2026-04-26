@@ -132,3 +132,55 @@ def test_content_404_for_unknown_sha(isolated_artifact_root):
     client = TestClient(app)
     resp = client.get("/winpe/content/" + "f" * 64)
     assert resp.status_code == 404
+
+
+def test_checkin_persists_and_returns_204(isolated_artifact_root):
+    from web.app import app
+    from web.winpe_checkin_db import WinpeCheckinDb
+
+    client = TestClient(app)
+    payload = {
+        "vmUuid": "aaaa-bbbb",
+        "stepId": "apply",
+        "status": "ok",
+        "timestamp": "2026-04-25T22:00:00Z",
+        "durationSec": 84.5,
+        "logTail": "applied install.wim → W:\\",
+        "errorMessage": None,
+        "extra": {"esp": "S:", "windows": "W:"},
+    }
+    resp = client.post("/winpe/checkin", json=payload)
+    assert resp.status_code == 204
+    assert resp.content == b""
+
+    db = WinpeCheckinDb(isolated_artifact_root / "checkins.db")
+    rows = db.list_for_vm("aaaa-bbbb")
+    assert len(rows) == 1
+    assert rows[0].step_id == "apply"
+    assert rows[0].duration_sec == 84.5
+    assert rows[0].extra == {"esp": "S:", "windows": "W:"}
+
+
+def test_checkin_validates_required_fields(isolated_artifact_root):
+    from web.app import app
+    client = TestClient(app)
+    # Missing vmUuid
+    resp = client.post("/winpe/checkin", json={"stepId": "x", "status": "ok"})
+    assert resp.status_code == 422  # FastAPI's Pydantic-validation default
+
+
+def test_checkin_idempotent_on_retry(isolated_artifact_root):
+    """PE retries POST after a transient network error — duplicate writes don't accumulate."""
+    from web.app import app
+    from web.winpe_checkin_db import WinpeCheckinDb
+
+    client = TestClient(app)
+    payload = {
+        "vmUuid": "u-retry", "stepId": "p", "status": "ok",
+        "timestamp": "2026-04-25T22:00:00Z", "durationSec": 1.0,
+        "logTail": "", "errorMessage": None, "extra": {},
+    }
+    client.post("/winpe/checkin", json=payload)
+    client.post("/winpe/checkin", json=payload)
+    db = WinpeCheckinDb(isolated_artifact_root / "checkins.db")
+    assert len(db.list_for_vm("u-retry")) == 1

@@ -14,11 +14,24 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from web.artifact_store import ArtifactStore
+from web.winpe_checkin_db import Checkin, WinpeCheckinDb
 from web.winpe_manifest_renderer import render_manifest, RendererError
 from web.winpe_targets_db import UnknownVmError, WinpeTargetsDb
+
+
+class _CheckinIn(BaseModel):
+    vmUuid: str
+    stepId: str
+    status: str = Field(pattern=r"^(starting|ok|error)$")
+    timestamp: str
+    durationSec: float = 0.0
+    logTail: str = ""
+    errorMessage: str | None = None
+    extra: dict = Field(default_factory=dict)
 
 
 router = APIRouter(prefix="/winpe", tags=["winpe"])
@@ -77,3 +90,21 @@ def get_content(sha256: str) -> FileResponse:
         media_type="application/octet-stream",
         filename=abs_path.name,
     )
+
+
+@router.post("/checkin", status_code=204, response_model=None, response_class=Response)
+def post_checkin(payload: _CheckinIn) -> None:
+    root = _artifact_root()
+    root.mkdir(parents=True, exist_ok=True)
+    db = WinpeCheckinDb(root / "checkins.db")
+    db.record(Checkin(
+        vm_uuid=payload.vmUuid,
+        step_id=payload.stepId,
+        status=payload.status,
+        timestamp=payload.timestamp,
+        duration_sec=payload.durationSec,
+        log_tail=payload.logTail,
+        error_message=payload.errorMessage,
+        extra=payload.extra,
+    ))
+    return None
