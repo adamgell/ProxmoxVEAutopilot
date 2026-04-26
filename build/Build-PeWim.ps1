@@ -187,7 +187,22 @@ Subsystem sftp sftp-server.exe
 
             # Administrators-group authorized keys (PE login lands as SYSTEM/Administrators).
             Set-Content -LiteralPath (Join-Path $sshDataDir 'administrators_authorized_keys') -Value $config.opensshAuthorizedKey -Encoding utf8
-            Log 'Info' 'Staged sshd_config, host keys, and administrators_authorized_keys'
+
+            # Lock down ACLs on private host keys + authorized_keys. sshd refuses to start if
+            # private keys are readable by BUILTIN\Users (which is the default inherited ACL
+            # for files under \ProgramData\). Strip inheritance and grant only SYSTEM +
+            # Administrators full control. icacls operates on the offline file inside the
+            # mounted WIM; the ACL persists when DISM saves the image.
+            $sshAclTargets = @(
+                (Join-Path $sshDataDir 'ssh_host_rsa_key'),
+                (Join-Path $sshDataDir 'ssh_host_ecdsa_key'),
+                (Join-Path $sshDataDir 'ssh_host_ed25519_key'),
+                (Join-Path $sshDataDir 'administrators_authorized_keys')
+            )
+            foreach ($target in $sshAclTargets) {
+                cmd.exe /c "icacls `"$target`" /inheritance:r /grant `"SYSTEM:F`" `"BUILTIN\Administrators:F`" >nul 2>&1"
+            }
+            Log 'Info' 'Staged sshd_config, host keys, administrators_authorized_keys (ACLs locked to SYSTEM+Administrators)'
         }
 
         # ---- Phase 5: Strip PS 5.1 binaries (DeployR pattern) ----
