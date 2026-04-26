@@ -34,6 +34,15 @@ class _CheckinIn(BaseModel):
     extra: dict = Field(default_factory=dict)
 
 
+class _HwidIn(BaseModel):
+    vmUuid: str
+    serial: str = ""
+    hardwareHash: str = ""
+    manufacturer: str = ""
+    model: str = ""
+    timestamp: str = ""
+
+
 router = APIRouter(prefix="/winpe", tags=["winpe"])
 
 
@@ -107,4 +116,31 @@ def post_checkin(payload: _CheckinIn) -> None:
         error_message=payload.errorMessage,
         extra=payload.extra,
     ))
+    return None
+
+
+@router.post("/hwid", status_code=204, response_model=None, response_class=Response)
+def post_hwid(payload: _HwidIn) -> None:
+    """Receive Autopilot hardware hash from a freshly-deployed machine."""
+    import json, sqlite3
+    root = _artifact_root()
+    root.mkdir(parents=True, exist_ok=True)
+    db_path = root / "hwid.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS hwid (
+            vm_uuid TEXT PRIMARY KEY,
+            serial TEXT NOT NULL,
+            hardware_hash TEXT NOT NULL,
+            manufacturer TEXT NOT NULL,
+            model TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            raw_json TEXT NOT NULL
+        )""")
+        conn.execute(
+            "INSERT OR REPLACE INTO hwid (vm_uuid, serial, hardware_hash, manufacturer, model, timestamp, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (payload.vmUuid, payload.serial, payload.hardwareHash,
+             payload.manufacturer, payload.model, payload.timestamp,
+             json.dumps(payload.model_dump())),
+        )
     return None

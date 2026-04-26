@@ -154,6 +154,13 @@ try {
 
     Invoke-BootstrapManifest -Manifest $manifest -OrchestratorUrl $config.orchestratorUrl -VmUuid $identity.Uuid
 
+    # Stage payload files to target so first-boot scripts can reach the orchestrator
+    $targetPayload = 'W:\autopilot'
+    if (-not (Test-Path $targetPayload)) { New-Item -ItemType Directory -Path $targetPayload -Force | Out-Null }
+    Copy-Item 'X:\autopilot\Bootstrap.json' "$targetPayload\" -Force
+    Copy-Item 'X:\autopilot\Collect-HardwareHash.ps1' "$targetPayload\" -Force -ErrorAction SilentlyContinue
+    Write-Host "Staged first-boot payload to $targetPayload"
+
     Write-Host 'Bootstrap complete.'
 } catch {
     Write-Host "Bootstrap FAILED: $_" -ForegroundColor Red
