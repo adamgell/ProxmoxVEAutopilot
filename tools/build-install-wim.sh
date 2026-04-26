@@ -37,6 +37,11 @@ echo "$BUILD_OUTPUT"
 WIM_REMOTE=$(echo "$BUILD_OUTPUT"     | awk -F'[[:space:]]+' '/^WIM:/     {print $2}')
 SIDECAR_REMOTE=$(echo "$BUILD_OUTPUT" | awk -F'[[:space:]]+' '/^Sidecar:/ {print $2}')
 LOG_REMOTE=$(echo "$BUILD_OUTPUT"     | awk -F'[[:space:]]+' '/^Log:/     {print $2}')
+# Convert Windows backslash paths to forward slashes — scp's sftp transport mangles
+# backslashes between bash shell quoting and the remote sftp helper.
+WIM_REMOTE="${WIM_REMOTE//\\//}"
+SIDECAR_REMOTE="${SIDECAR_REMOTE//\\//}"
+LOG_REMOTE="${LOG_REMOTE//\\//}"
 
 if [[ -z "$WIM_REMOTE" || -z "$SIDECAR_REMOTE" ]]; then
     echo "Build failed or output unparsable." >&2
