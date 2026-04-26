@@ -127,3 +127,73 @@ Describe 'Invoke-PartitionStep' {
         { Invoke-PartitionStep -Layout 'novel-experimental' } | Should -Throw -ExpectedMessage '*layout*'
     }
 }
+
+Describe 'Invoke-ApplyWimStep' {
+    BeforeAll {
+        if (-not (Get-Command Expand-WindowsImage -ErrorAction SilentlyContinue)) {
+            function global:Expand-WindowsImage { param() }
+        }
+        Mock -ModuleName Autopilot.PESteps Get-PeContent {
+            param($OrchestratorUrl, $Sha256, $OutPath)
+            'fake wim bytes' | Set-Content -LiteralPath $OutPath
+        }
+        Mock -ModuleName Autopilot.PESteps Expand-WindowsImage { }
+        Mock -ModuleName Autopilot.PESteps Remove-Item { }
+    }
+
+    It 'fetches by sha and applies to target' {
+        $r = Invoke-ApplyWimStep -OrchestratorUrl 'http://o:5000' -Sha256 ('a'*64) -Size 1024 -Target 'W:'
+        $r.LogTail | Should -Match '^applied wim'
+    }
+}
+
+Describe 'Invoke-StageFilesStep' {
+    BeforeAll {
+        Mock -ModuleName Autopilot.PESteps Get-PeContent {
+            param($OrchestratorUrl, $Sha256, $OutPath)
+            'fake zip' | Set-Content -LiteralPath $OutPath
+        }
+        Mock -ModuleName Autopilot.PESteps Expand-Archive { }
+        Mock -ModuleName Autopilot.PESteps Remove-Item { }
+    }
+
+    It 'fetches zip and extracts to target' {
+        $r = Invoke-StageFilesStep -OrchestratorUrl 'http://o:5000' -Sha256 ('b'*64) -Size 100 -Target 'W:\Program Files\Autopilot'
+        $r.LogTail | Should -Match '^staged'
+    }
+}
+
+Describe 'Invoke-WriteUnattendStep' {
+    BeforeAll {
+        Mock -ModuleName Autopilot.PESteps Get-PeContent {
+            param($OrchestratorUrl, $Sha256, $OutPath)
+            '<unattend/>' | Set-Content -LiteralPath $OutPath
+        }
+        Mock -ModuleName Autopilot.PESteps New-Item { }
+    }
+
+    It 'fetches unattend.xml and places at target' {
+        $r = Invoke-WriteUnattendStep -OrchestratorUrl 'http://o:5000' -Sha256 ('c'*64) -Size 50 -Target 'W:\Windows\Panther\unattend.xml'
+        $r.LogTail | Should -Match 'Panther'
+    }
+}
+
+Describe 'Invoke-InjectDriverStep' {
+    BeforeAll {
+        if (-not (Get-Command Add-WindowsDriver -ErrorAction SilentlyContinue)) {
+            function global:Add-WindowsDriver { param() }
+        }
+        Mock -ModuleName Autopilot.PESteps Get-PeContent {
+            param($OrchestratorUrl, $Sha256, $OutPath)
+            'fake driver zip' | Set-Content -LiteralPath $OutPath
+        }
+        Mock -ModuleName Autopilot.PESteps Expand-Archive { }
+        Mock -ModuleName Autopilot.PESteps Add-WindowsDriver { }
+        Mock -ModuleName Autopilot.PESteps Remove-Item { }
+    }
+
+    It 'fetches driver bundle and Add-WindowsDrivers it into target' {
+        $r = Invoke-InjectDriverStep -OrchestratorUrl 'http://o:5000' -Sha256 ('d'*64) -Size 5000 -Target 'W:'
+        $r.LogTail | Should -Match '^injected driver'
+    }
+}
