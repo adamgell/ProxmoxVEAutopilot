@@ -4,7 +4,10 @@
 # Usage:  tools/build-pe-wim.sh [<config.json>]
 #         (default: build/build-pe-wim.config.json)
 #
-# Requires: ssh, rsync, scp (macOS defaults), python3, jq.
+# Requires: ssh, scp (macOS defaults), python3, jq.
+# Build host: OpenSSH (Windows) is fine — does NOT need rsync. We use ssh+scp
+# because Win32-OpenSSH ships scp but not rsync, and pwsh-as-default-shell breaks
+# rsync's remote-helper invocation.
 
 set -euo pipefail
 
@@ -16,7 +19,7 @@ if [[ ! -f "$CONFIG" ]]; then
     echo "(copy build/build-pe-wim.config.example.json to build/build-pe-wim.config.json and edit)" >&2
     exit 1
 fi
-for tool in ssh rsync scp jq python3; do
+for tool in ssh scp jq python3; do
     command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
 
@@ -30,12 +33,11 @@ ARCH=$(jq -r '.architecture' "$CONFIG")
 # --- Convert the config to one Build-PeWim.ps1 will accept (drop dev-Mac-only fields) ---
 BUILD_CONFIG_JSON=$(jq 'del(.buildHost, .buildHostUser, .buildRootRemote)' "$CONFIG")
 
-# --- 1. rsync the PE payload tree to the build host ---
-echo ">> rsync PE payload → ${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}"
-# rsync -e ssh requires forward-slash paths on the SSH side; OpenSSH on Windows handles them.
-rsync -av --delete --exclude '.gitkeep' \
-    "$REPO_ROOT/build/pe-payload/" \
-    "${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}/"
+# --- 1. Sync the PE payload tree to the build host (ssh + scp; not rsync — see header) ---
+echo ">> push PE payload → ${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}"
+# Clean the remote payload dir, recreate empty, then scp our local copy in.
+ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -Command \"if (Test-Path '${PAYLOAD_DIR_REMOTE}') { Remove-Item '${PAYLOAD_DIR_REMOTE}' -Recurse -Force }; New-Item -ItemType Directory -Path '${PAYLOAD_DIR_REMOTE}' -Force | Out-Null\""
+scp -r "$REPO_ROOT/build/pe-payload/." "${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}/"
 
 # --- 2. ssh + run Build-PeWim.ps1 with config on stdin ---
 echo ">> ssh build host: pwsh Build-PeWim.ps1"
@@ -45,10 +47,17 @@ BUILD_OUTPUT=$(echo "$BUILD_CONFIG_JSON" | ssh "${BUILD_USER}@${BUILD_HOST}" "pw
 echo "$BUILD_OUTPUT"
 
 # Parse output: lines "WIM: ...", "ISO: ...", "Sidecar: ...", "Log: ..." appear on success.
+# Build-PeWim.ps1 prints Windows paths with backslashes (e.g. E:\BuildRoot\outputs\...);
+# scp on macOS mangles those when they reach the remote sftp helper, so convert to forward
+# slashes (Windows accepts both) before passing to scp.
 WIM_REMOTE=$(echo "$BUILD_OUTPUT"     | awk -F'[[:space:]]+' '/^WIM:/     {print $2}')
 ISO_REMOTE=$(echo "$BUILD_OUTPUT"     | awk -F'[[:space:]]+' '/^ISO:/     {print $2}')
 SIDECAR_REMOTE=$(echo "$BUILD_OUTPUT" | awk -F'[[:space:]]+' '/^Sidecar:/ {print $2}')
 LOG_REMOTE=$(echo "$BUILD_OUTPUT"     | awk -F'[[:space:]]+' '/^Log:/     {print $2}')
+WIM_REMOTE="${WIM_REMOTE//\\//}"
+ISO_REMOTE="${ISO_REMOTE//\\//}"
+SIDECAR_REMOTE="${SIDECAR_REMOTE//\\//}"
+LOG_REMOTE="${LOG_REMOTE//\\//}"
 
 if [[ -z "$WIM_REMOTE" || -z "$SIDECAR_REMOTE" ]]; then
     echo "Build failed or output unparsable." >&2
