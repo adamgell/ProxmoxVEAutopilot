@@ -122,3 +122,114 @@ Describe 'Initialize-SshHostKeys' {
         }
     }
 }
+
+Describe 'Invoke-Manifest' {
+    BeforeAll {
+        Mock -ModuleName Autopilot.PETransport Invoke-RestMethod {
+            return @{
+                version = 1
+                vmUuid = 'uuid-x'
+                onError = 'halt'
+                steps = @(
+                    @{ id = 'p1'; type = 'partition'; layout = 'uefi-standard' }
+                )
+            }
+        }
+    }
+
+    It 'fetches manifest by uuid and returns the parsed object' {
+        $manifest = Invoke-Manifest -OrchestratorUrl 'http://orch:5000' -VmUuid 'uuid-x'
+        $manifest.version | Should -Be 1
+        $manifest.vmUuid | Should -Be 'uuid-x'
+        $manifest.steps[0].type | Should -Be 'partition'
+    }
+
+    It 'sends to GET /winpe/manifest/<uuid>' {
+        Mock -ModuleName Autopilot.PETransport Invoke-RestMethod {
+            $script:capturedUri = $Uri
+            return @{ steps = @() }
+        }
+        Invoke-Manifest -OrchestratorUrl 'http://orch:5000' -VmUuid 'abc-123'
+        $script:capturedUri | Should -Be 'http://orch:5000/winpe/manifest/abc-123'
+    }
+}
+
+Describe 'Get-PeContent' {
+    BeforeAll {
+        $script:payload = [System.Text.Encoding]::UTF8.GetBytes('hello world')
+        $script:expectedSha = (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($script:payload)) -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        Mock -ModuleName Autopilot.PETransport Invoke-WebRequest {
+            param($Uri, $OutFile, $UseBasicParsing)
+            [System.IO.File]::WriteAllBytes($OutFile, $script:payload)
+        }
+    }
+
+    It 'fetches and validates sha256' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "pecontent-$([guid]::NewGuid())"
+        try {
+            Get-PeContent -OrchestratorUrl 'http://orch:5000' -Sha256 $script:expectedSha -OutPath $tmp
+            (Get-Content $tmp -Raw -Encoding utf8).Trim() | Should -Be 'hello world'
+        } finally {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'throws on sha mismatch and deletes the bad file' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "pecontent-$([guid]::NewGuid())"
+        try {
+            { Get-PeContent -OrchestratorUrl 'http://orch:5000' -Sha256 ('0' * 64) -OutPath $tmp } |
+                Should -Throw -ExpectedMessage '*sha256 mismatch*'
+            Test-Path $tmp | Should -BeFalse
+        } finally {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'sends to GET /winpe/content/<sha>' {
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "pecontent-$([guid]::NewGuid())"
+        $script:capturedUri = $null
+        Mock -ModuleName Autopilot.PETransport Invoke-WebRequest {
+            $script:capturedUri = $Uri
+            [System.IO.File]::WriteAllBytes($OutFile, $script:payload)
+        }
+        try {
+            Get-PeContent -OrchestratorUrl 'http://orch:5000' -Sha256 $script:expectedSha -OutPath $tmp
+            $script:capturedUri | Should -Be "http://orch:5000/winpe/content/$($script:expectedSha)"
+        } finally {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Send-Checkin' {
+    BeforeAll {
+        $script:capturedBody = $null
+        $script:capturedUri = $null
+        Mock -ModuleName Autopilot.PETransport Invoke-RestMethod {
+            $script:capturedUri = $Uri
+            $script:capturedBody = $Body
+        }
+    }
+
+    It 'POSTs to /winpe/checkin with the right field names (camelCase)' {
+        Send-Checkin -OrchestratorUrl 'http://orch:5000' -VmUuid 'u' -StepId 's' -Status 'ok' `
+            -Timestamp '2026-04-25T22:00:00Z' -DurationSec 1.5 -LogTail 'log line' `
+            -ErrorMessage $null -Extra @{ k = 'v' }
+        $script:capturedUri | Should -Be 'http://orch:5000/winpe/checkin'
+        $body = $script:capturedBody | ConvertFrom-Json
+        $body.vmUuid | Should -Be 'u'
+        $body.stepId | Should -Be 's'
+        $body.status | Should -Be 'ok'
+        $body.durationSec | Should -Be 1.5
+        $body.logTail | Should -Be 'log line'
+        $body.extra.k | Should -Be 'v'
+    }
+
+    It 'does not throw on transient transport failure' {
+        Mock -ModuleName Autopilot.PETransport Invoke-RestMethod { throw 'connection refused' }
+        { Send-Checkin -OrchestratorUrl 'http://orch:5000' -VmUuid 'u' -StepId 's' -Status 'ok' `
+            -Timestamp '2026-04-25T22:00:00Z' -DurationSec 1.0 -LogTail '' `
+            -ErrorMessage $null -Extra @{} } | Should -Not -Throw
+    }
+}
