@@ -169,6 +169,33 @@ Invoke-WebRequest -OutFile 'D:\BuildRoot\inputs\runtime\PowerShell-7.4.6-win-arm
 ```
 Versions don't have to match what's printed above — pick the latest LTS. Just keep the filename pattern `PowerShell-*-win-<arch>.zip` and `dotnet-runtime-*-win-<arch>.zip`.
 
+**16b. (Optional) Stage Win32-OpenSSH for in-PE remote debugging.** When this zip is configured in the build config, the resulting PE WIM ships with an SSH server that auto-starts on boot — you can SSH directly into the booted PE as Administrator (key auth, port 22) and watch the bootstrap interactively. Hugely useful when something fails inside PE and the placeholder Bootstrap drops to a debug shell. The build keys you authorize at build time are baked into the WIM.
+
+Download from <https://github.com/PowerShell/Win32-OpenSSH/releases> (latest `OpenSSH-Win64-*.zip` for amd64 PE builds; `OpenSSH-Win64arm64-*.zip` for arm64). Stage in the same `inputs\runtime\` dir:
+
+```powershell
+# Replace the version with whatever's the latest release on the GitHub page
+$ver = 'v9.8.1.0p1-Beta'
+Invoke-WebRequest -OutFile "D:\BuildRoot\inputs\runtime\OpenSSH-Win64-$ver.zip" `
+  "https://github.com/PowerShell/Win32-OpenSSH/releases/download/$ver/OpenSSH-Win64.zip"
+Invoke-WebRequest -OutFile "D:\BuildRoot\inputs\runtime\OpenSSH-Win64arm64-$ver.zip" `
+  "https://github.com/PowerShell/Win32-OpenSSH/releases/download/$ver/OpenSSH-Win64arm64.zip"
+```
+
+To enable in a build, add two fields to your `build/build-pe-wim.config.json`:
+
+```json
+{
+  …existing fields…
+  "opensshZip":           "C:/BuildRoot/inputs/runtime/OpenSSH-Win64-v9.8.1.0p1-Beta.zip",
+  "opensshAuthorizedKey": "ssh-ed25519 AAAAC3Nz… you@your-mac"
+}
+```
+
+Both fields are required if either is set. The authorized key is the public key (single line; the contents of `~/.ssh/id_ed25519.pub` from your Mac) that grants Administrator login to the PE. After PE boots, `ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new Administrator@<pe-vm-ip>` lands you in cmd.exe (PE's default shell); from there `pwsh` gets you to PowerShell 7.
+
+Host keys are ephemeral (regenerated per build, baked into the WIM). Each new PE WIM has different host keys — first SSH connect from your Mac will TOFU-add the new fingerprint via `accept-new`.
+
 **17.** Clone the repo to `D:\BuildRoot\src\` (`git for Windows` if not yet installed: `winget install Git.Git`):
 ```powershell
 cd D:\BuildRoot\src

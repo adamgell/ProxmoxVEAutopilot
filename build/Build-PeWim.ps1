@@ -2,12 +2,20 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Build winpe-autopilot-<arch>-<sha>.{wim,iso}: ADK winpe.wim + packages + drivers + pwsh7 + .NET 8 + payload.
+    Build winpe-autopilot-<arch>-<sha>.{wim,iso}: ADK winpe.wim + packages + drivers + pwsh7 + .NET 8 + payload + (optional) OpenSSH.
 
 .DESCRIPTION
     Reads a build-config JSON from -ConfigJson (a path) or - (stdin).
     Required fields: adkRoot, architecture, virtioIsoPath, drivers, pwsh7Zip,
                      dotnetRuntimeZip, payloadDir, orchestratorUrl, outputDir.
+    Optional fields: lockPath, opensshZip, opensshAuthorizedKey.
+
+    If `opensshZip` is set, the build also injects Win32-OpenSSH into the PE WIM
+    at `\Program Files\OpenSSH\`, registers the `sshd` service for auto-start
+    (LocalSystem, port 22), bakes ephemeral host keys, and stages the value of
+    `opensshAuthorizedKey` into `\ProgramData\ssh\administrators_authorized_keys`.
+    Once the resulting PE boots, you can SSH to it as Administrator using the
+    matching private key for live debugging of the bootstrap.
 
     Produces in outputDir:
         winpe-autopilot-<arch>-<sha>.wim
@@ -112,6 +120,73 @@ try {
         if (-not $dotnetVersion) { throw "Could not discover .NET 8 version from extracted runtime." }
         Log 'Info' ".NET runtime version discovered: $dotnetVersion"
 
+        # ---- Phase 4b: OpenSSH server (optional; for in-PE remote debugging) ----
+        $includeSsh = $false
+        if ($config.PSObject.Properties.Match('opensshZip')) {
+            if (-not $config.PSObject.Properties.Match('opensshAuthorizedKey')) {
+                throw "opensshZip provided but opensshAuthorizedKey missing — refusing to ship a PE with SSH server but no authorized key."
+            }
+            if (-not (Test-Path $config.opensshZip)) {
+                throw "opensshZip path not found: $($config.opensshZip)"
+            }
+            $includeSsh = $true
+
+            $sshTarget = Join-Path $peMount 'Program Files\OpenSSH'
+            New-Item -ItemType Directory -Path $sshTarget -Force | Out-Null
+
+            # Microsoft's Win32-OpenSSH zips put binaries in a single subdir like 'OpenSSH-Win64'.
+            # Extract to a temp dir and flatten that single subdir into $sshTarget.
+            $sshExtractTmp = Join-Path $workDir "ssh-extract-$arch"
+            if (Test-Path $sshExtractTmp) { Remove-Item $sshExtractTmp -Recurse -Force }
+            New-Item -ItemType Directory -Path $sshExtractTmp -Force | Out-Null
+            Expand-Archive -Path $config.opensshZip -DestinationPath $sshExtractTmp -Force
+            $sshExtractedRoots = @(Get-ChildItem $sshExtractTmp)
+            if ($sshExtractedRoots.Count -eq 1 -and $sshExtractedRoots[0].PSIsContainer) {
+                Copy-Item -Path (Join-Path $sshExtractedRoots[0].FullName '*') -Destination $sshTarget -Recurse -Force
+            } else {
+                Copy-Item -Path (Join-Path $sshExtractTmp '*') -Destination $sshTarget -Recurse -Force
+            }
+            Remove-Item $sshExtractTmp -Recurse -Force
+            Log 'Info' "Extracted OpenSSH → $sshTarget"
+
+            $sshKeygen = Join-Path $sshTarget 'ssh-keygen.exe'
+            if (-not (Test-Path $sshKeygen)) { throw "ssh-keygen.exe not found at $sshKeygen — verify opensshZip is a valid Win32-OpenSSH release zip." }
+
+            # Generate ephemeral host keys (each WIM gets its own; PE is single-use anyway).
+            $hostKeyTmp = Join-Path $workDir "ssh-hostkeys-$arch"
+            if (Test-Path $hostKeyTmp) { Remove-Item $hostKeyTmp -Recurse -Force }
+            New-Item -ItemType Directory -Path $hostKeyTmp -Force | Out-Null
+            foreach ($keyType in @('rsa','ecdsa','ed25519')) {
+                $keyPath = Join-Path $hostKeyTmp "ssh_host_${keyType}_key"
+                # Empty passphrase: '' is passed as a single empty arg to ssh-keygen.
+                & $sshKeygen -q -t $keyType -f $keyPath -N ''
+                if (-not (Test-Path $keyPath)) { throw "ssh-keygen failed to produce $keyPath" }
+            }
+
+            # Stage host keys + sshd_config + administrators_authorized_keys
+            # at \ProgramData\ssh\ (= X:\ProgramData\ssh\ at PE runtime).
+            $sshDataDir = Join-Path $peMount 'ProgramData\ssh'
+            New-Item -ItemType Directory -Path $sshDataDir -Force | Out-Null
+            Copy-Item -Path "$hostKeyTmp\*" -Destination $sshDataDir -Force
+            Remove-Item $hostKeyTmp -Recurse -Force
+
+            # Minimal sshd_config: pubkey-only, sftp enabled (so `scp` works).
+            $sshdConfig = @"
+HostKey __PROGRAMDATA__/ssh/ssh_host_rsa_key
+HostKey __PROGRAMDATA__/ssh/ssh_host_ecdsa_key
+HostKey __PROGRAMDATA__/ssh/ssh_host_ed25519_key
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+Subsystem sftp sftp-server.exe
+"@
+            Set-Content -LiteralPath (Join-Path $sshDataDir 'sshd_config') -Value $sshdConfig -Encoding utf8
+
+            # Administrators-group authorized keys (PE login lands as SYSTEM/Administrators).
+            Set-Content -LiteralPath (Join-Path $sshDataDir 'administrators_authorized_keys') -Value $config.opensshAuthorizedKey -Encoding utf8
+            Log 'Info' 'Staged sshd_config, host keys, and administrators_authorized_keys'
+        }
+
         # ---- Phase 5: Strip PS 5.1 binaries (DeployR pattern) ----
         $ps51Path = Join-Path $peMount 'Windows\System32\WindowsPowerShell\v1.0'
         if (Test-Path $ps51Path) {
@@ -151,6 +226,21 @@ try {
             $tcpKey = 'HKLM:\PESystem\ControlSet001\Services\Tcpip\Parameters'
             New-ItemProperty -Path $tcpKey -Name TcpTimedWaitDelay -PropertyType DWord -Value 30 -Force | Out-Null
             New-ItemProperty -Path $tcpKey -Name MaxUserPort       -PropertyType DWord -Value 65534 -Force | Out-Null
+
+            if ($includeSsh) {
+                # Auto-start sshd. Type=16 (SERVICE_WIN32_OWN_PROCESS), Start=2 (SERVICE_AUTO_START),
+                # ErrorControl=1 (SERVICE_ERROR_NORMAL). LocalSystem so PE-as-SYSTEM logins work.
+                $sshdSvc = 'HKLM:\PESystem\ControlSet001\Services\sshd'
+                New-Item -Path $sshdSvc -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name Type         -PropertyType DWord        -Value 16 -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name Start        -PropertyType DWord        -Value 2  -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name ErrorControl -PropertyType DWord        -Value 1  -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name ImagePath    -PropertyType ExpandString -Value '"X:\Program Files\OpenSSH\sshd.exe"' -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name ObjectName   -PropertyType String       -Value 'LocalSystem' -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name DisplayName  -PropertyType String       -Value 'OpenSSH Server' -Force | Out-Null
+                New-ItemProperty -Path $sshdSvc -Name Description  -PropertyType String       -Value 'PE-side OpenSSH for live debugging.' -Force | Out-Null
+                Log 'Info' 'Registered sshd service (auto-start) in offline SYSTEM hive'
+            }
 
             Log 'Info' "Applied offline registry edits"
         } finally {
@@ -251,6 +341,8 @@ try {
             isoPath           = $finalIso
             isoSha256         = (Get-FileSha256 -Path $finalIso)
             isoSize           = (Get-Item $finalIso).Length
+            opensshIncluded   = $includeSsh
+            opensshZipSha     = if ($includeSsh) { (Get-FileSha256 -Path $config.opensshZip) } else { $null }
         }
         Write-ArtifactSidecar -Path $finalJson -Properties $sidecar
         Log 'Info' "Wrote sidecar $finalJson"

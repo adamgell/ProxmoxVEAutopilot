@@ -11,5 +11,9 @@
   "dotnetRuntimeZip":  "C:/BuildRoot/inputs/runtime/dotnet-runtime-8.0.10-win-arm64.zip",
   "payloadDir":        "C:/BuildRoot/src/build/pe-payload",
   "orchestratorUrl":   "http://autopilot.local:5000",
-  "outputDir":         "C:/BuildRoot/outputs"
+  "outputDir":         "C:/BuildRoot/outputs",
+
+  "_comment_openssh":      "Optional. If set, injects Win32-OpenSSH server into the PE WIM and authorizes the matching key for SSH-as-Administrator. Both fields required together.",
+  "opensshZip":            "C:/BuildRoot/inputs/runtime/OpenSSH-Win64-v9.8.1.0p1-Beta.zip",
+  "opensshAuthorizedKey":  "ssh-ed25519 AAAA…replace-with-your-public-key… you@your-mac"
 }
