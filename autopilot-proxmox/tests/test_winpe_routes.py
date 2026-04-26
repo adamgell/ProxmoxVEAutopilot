@@ -104,3 +104,31 @@ def test_manifest_request_touches_last_manifest_at(isolated_artifact_root):
     client = TestClient(app)
     client.get("/winpe/manifest/touchme")
     assert db.lookup("touchme").last_manifest_at is not None
+
+
+def test_content_streams_install_wim_bytes(isolated_artifact_root):
+    from web.app import app
+    install_sha = _seed_install_wim(isolated_artifact_root, content=b"\x01\x02\x03 binary blob")
+    client = TestClient(app)
+    resp = client.get(f"/winpe/content/{install_sha}")
+    assert resp.status_code == 200
+    assert resp.content == b"\x01\x02\x03 binary blob"
+    assert resp.headers["content-type"] == "application/octet-stream"
+
+
+def test_content_410_when_indexed_but_file_missing(isolated_artifact_root):
+    from web.app import app
+    install_sha = _seed_install_wim(isolated_artifact_root)
+    # Delete the underlying file but leave the index row.
+    (isolated_artifact_root / "store" / f"{install_sha}.wim").unlink()
+    client = TestClient(app)
+    resp = client.get(f"/winpe/content/{install_sha}")
+    assert resp.status_code == 410
+    assert "missing" in resp.json()["detail"].lower()
+
+
+def test_content_404_for_unknown_sha(isolated_artifact_root):
+    from web.app import app
+    client = TestClient(app)
+    resp = client.get("/winpe/content/" + "f" * 64)
+    assert resp.status_code == 404
