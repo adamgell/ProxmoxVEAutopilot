@@ -14,3 +14,21 @@ docs/superpowers/
 
 # Session artifacts from Claude Code superpowers tooling
 .superpowers/
+
+# Superpowers worktrees (subagent-driven-development isolated workspaces)
+.worktrees/
+
+# Artifact store contents — large binary blobs, never committed
+var/artifacts/store/
+var/artifacts/cache/
+var/artifacts/staging/
+var/artifacts/index.db
+!var/artifacts/.gitkeep
+
+# User-local build configs (each developer points at their own build host).
+# The *.config.example.json files stay tracked as templates.
+build/build-pe-wim.config.json
+build/build-install-wim.config.json
+
+# Pester test output (emitted by Invoke-Pester -CI in the working directory)
+testResults.xml
