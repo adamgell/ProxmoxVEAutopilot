@@ -32,3 +32,9 @@ build/build-install-wim.config.json
 
 # Pester test output (emitted by Invoke-Pester -CI in the working directory)
 testResults.xml
+
+# .NET build artifacts
+build/launcher/bin/
+build/launcher/obj/
+build/launcher-tests/bin/
+build/launcher-tests/obj/
