@@ -11,9 +11,9 @@ $ErrorActionPreference = 'Stop'
 $logPath = "$env:SystemDrive\Windows\Temp\autopilot-hwid.log"
 Start-Transcript -Path $logPath -Force | Out-Null
 
-# Wait for network to be fully up — at first login, networking may still be initializing
-Write-Host "Waiting 120 seconds for network to stabilize..."
-Start-Sleep -Seconds 120
+# Brief wait for network — Audit Mode boots with networking enabled
+Write-Host "Waiting 15 seconds for network..."
+Start-Sleep -Seconds 15
 
 try {
     $configPath = "$env:SystemDrive\autopilot\Bootstrap.json"
