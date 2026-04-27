@@ -38,6 +38,7 @@ echo ">> push PE payload + build script → ${BUILD_USER}@${BUILD_HOST}:${BUILD_
 ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -Command \"if (Test-Path '${PAYLOAD_DIR_REMOTE}') { Remove-Item '${PAYLOAD_DIR_REMOTE}' -Recurse -Force }; New-Item -ItemType Directory -Path '${PAYLOAD_DIR_REMOTE}' -Force | Out-Null\""
 scp -r "$REPO_ROOT/build/pe-payload/." "${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}/"
 scp "$REPO_ROOT/build/Build-PeWim.ps1" "${BUILD_USER}@${BUILD_HOST}:${BUILD_ROOT}/src/build/Build-PeWim.ps1"
+scp -r "$REPO_ROOT/build/launcher/." "${BUILD_USER}@${BUILD_HOST}:${BUILD_ROOT}/src/build/launcher/"
 
 # --- 2. ssh + run Build-PeWim.ps1 with config on stdin ---
 echo ">> ssh build host: pwsh Build-PeWim.ps1"

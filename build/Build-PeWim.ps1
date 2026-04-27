@@ -205,6 +205,20 @@ Subsystem sftp sftp-server.exe
             Log 'Info' 'Staged sshd_config, host keys, administrators_authorized_keys (ACLs locked to SYSTEM+Administrators)'
         }
 
+        # ---- Phase 4c: Build launcher ----
+        $launcherSrc = Join-Path (Split-Path $config.payloadDir) 'launcher'
+        if (Test-Path $launcherSrc) {
+            $launcherOut = Join-Path $workDir 'launcher-publish'
+            if (Test-Path $launcherOut) { Remove-Item $launcherOut -Recurse -Force }
+            Log 'Info' "Building launcher from $launcherSrc"
+            & dotnet publish $launcherSrc -c Release -r win-arm64 --no-self-contained -o $launcherOut 2>&1 | ForEach-Object { Log 'Info' "dotnet: $_" }
+            if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+            Copy-Item (Join-Path $launcherOut '*') -Destination (Join-Path $config.payloadDir '.') -Force -Recurse
+            Log 'Info' "Launcher built and staged"
+        } else {
+            Log 'Warning' "Launcher source not found at $launcherSrc — skipping"
+        }
+
         # ---- Phase 5: Strip PS 5.1 binaries (DeployR pattern) ----
         $ps51Path = Join-Path $peMount 'Windows\System32\WindowsPowerShell\v1.0'
         if (Test-Path $ps51Path) {
@@ -284,23 +298,18 @@ Subsystem sftp sftp-server.exe
         Set-Content -LiteralPath $unattendOut -Value $unattendRendered -Encoding utf8
         Remove-Item -Path $unattendTpl -Force  # template stays out of the WIM
 
-        # Remove winpeshl.ini from payload — use startnet.cmd instead
+        # Remove winpeshl.ini from payload if present
         $winpeshlPayload = Join-Path $payloadTarget 'winpeshl.ini'
         if (Test-Path $winpeshlPayload) { Remove-Item $winpeshlPayload -Force }
-        # Delete any winpeshl.ini in System32 so WinPE uses default flow (cmd /k startnet.cmd)
-        $winpeshlSys32 = Join-Path $peMount 'Windows\System32\winpeshl.ini'
-        if (Test-Path $winpeshlSys32) { Remove-Item $winpeshlSys32 -Force }
 
-        # startnet.cmd: wpeinit then pwsh Bootstrap.ps1 directly (no intermediary)
-        $startnetPath = Join-Path $peMount 'Windows\System32\startnet.cmd'
+        # Write winpeshl.ini to System32 — launches launcher.exe directly
+        $winpeshlPath = Join-Path $peMount 'Windows\System32\winpeshl.ini'
         @(
-            'wpeinit'
-            'echo [Autopilot] Starting bootstrap...'
-            '"X:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -File X:\autopilot\Bootstrap.ps1'
-            'echo [Autopilot] Bootstrap exited with code %ERRORLEVEL%'
-        ) | Set-Content -Path $startnetPath -Encoding ascii
+            '[LaunchApps]'
+            'X:\autopilot\launcher.exe'
+        ) | Set-Content -Path $winpeshlPath -Encoding ascii
 
-        Log 'Info' "Staged payload at X:\autopilot, rendered unattend.xml, wrote startnet.cmd"
+        Log 'Info' "Staged payload at X:\autopilot, rendered unattend.xml, wrote winpeshl.ini"
 
         # ---- Phase 8: Dismount + commit ----
         Dismount-WindowsImage -Path $peMount -Save | Out-Null
