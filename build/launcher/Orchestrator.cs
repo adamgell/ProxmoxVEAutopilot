@@ -59,7 +59,7 @@ public sealed class Orchestrator : IDisposable
         }
 
         file.Position = 0;
-        var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, ct));
+        var hash = Convert.ToHexString(await SHA256.HashDataAsync(file, ct)).ToLowerInvariant();
         if (hash != sha256)
         {
             file.Close();
