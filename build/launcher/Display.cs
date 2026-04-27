@@ -129,11 +129,13 @@ public static class Display
 
     public static void RenderBoot(
         int activePhase, string? uuid, string? vendor, string? model,
-        string? ip, string? hostname, string? server, string statusMessage)
+        string? ip, string? hostname, string? server, string statusMessage,
+        string title = "Autopilot PE Bootstrap", string[]? phases = null)
     {
+        phases ??= BootPhases;
         try { Console.SetCursorPosition(0, 0); } catch { }
         TopBorder();
-        Line("Autopilot PE Bootstrap");
+        Line(title);
         Separator();
         Line($"UUID:    {uuid ?? "..."}");
         Line($"Vendor:  {vendor ?? "..."} │ Model: {model ?? "..."}");
@@ -141,12 +143,12 @@ public static class Display
         Line($"Server:  {server ?? "..."}");
         Separator();
 
-        for (var i = 0; i < BootPhases.Length; i++)
+        for (var i = 0; i < phases.Length; i++)
         {
             var icon = i < activePhase ? StepIcon(StepState.Done)
                      : i == activePhase ? StepIcon(StepState.Active)
                      : StepIcon(StepState.Pending);
-            Line($"{icon} {BootPhases[i],-18}");
+            Line($"{icon} {phases[i],-18}");
         }
 
         Separator();

@@ -66,13 +66,8 @@ _UNATTEND_TEMPLATE = r"""<?xml version="1.0" encoding="utf-8"?>
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\autopilot\Collect-HardwareHash.ps1</Path>
-          <Description>Collect Autopilot hardware hash</Description>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <Path>C:\Windows\System32\Sysprep\sysprep.exe /oobe /shutdown</Path>
-          <Description>Reseal to OOBE for Autopilot enrollment</Description>
+          <Path>C:\autopilot\launcher.exe --audit</Path>
+          <Description>Collect hardware hash and sysprep to OOBE</Description>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>

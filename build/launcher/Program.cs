@@ -4,6 +4,14 @@ using System.Text.Json;
 using Autopilot.Launcher;
 using Autopilot.Launcher.Models;
 
+// Route: --audit mode runs the post-deploy hash collection + sysprep flow
+if (args.Contains("--audit"))
+{
+    var auditConfig = args.SkipWhile(a => a != "--config").Skip(1).FirstOrDefault()
+        ?? @"C:\autopilot\Bootstrap.json";
+    return await AuditMode.RunAsync(auditConfig);
+}
+
 // Phase 0: Window setup
 try
 {
@@ -273,9 +281,12 @@ try
 {
     Directory.CreateDirectory(@"W:\autopilot");
     File.Copy(configPath, @"W:\autopilot\Bootstrap.json", overwrite: true);
-    var hwidScript = @"X:\autopilot\Collect-HardwareHash.ps1";
-    if (File.Exists(hwidScript))
-        File.Copy(hwidScript, @"W:\autopilot\Collect-HardwareHash.ps1", overwrite: true);
+    // Stage launcher.exe + launcher.dll for audit mode
+    foreach (var name in new[] { "launcher.exe", "launcher.dll" })
+    {
+        var src = Path.Combine(@"X:\autopilot", name);
+        if (File.Exists(src)) File.Copy(src, Path.Combine(@"W:\autopilot", name), overwrite: true);
+    }
     var agentSrc = @"X:\autopilot\agent";
     if (Directory.Exists(agentSrc))
     {
