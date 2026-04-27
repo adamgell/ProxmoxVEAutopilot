@@ -234,6 +234,21 @@ try
     var hwidScript = @"X:\autopilot\Collect-HardwareHash.ps1";
     if (File.Exists(hwidScript))
         File.Copy(hwidScript, @"W:\autopilot\Collect-HardwareHash.ps1", overwrite: true);
+    // Stage agent if present
+    var agentSrc = @"X:\autopilot\agent";
+    if (Directory.Exists(agentSrc))
+    {
+        var agentDst = @"W:\autopilot\agent";
+        Directory.CreateDirectory(agentDst);
+        foreach (var f in Directory.GetFiles(agentSrc, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(agentSrc, f);
+            var dst = Path.Combine(agentDst, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            File.Copy(f, dst, overwrite: true);
+        }
+        Log($"Staged agent to {agentDst}");
+    }
     Log("Staged payload to W:\\autopilot\\");
 }
 catch (Exception ex) { Log($"Staging warning: {ex.Message}"); }
