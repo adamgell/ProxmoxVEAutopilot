@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "2DOwZKp7FNc=",
+  "success": true,
+  "projectFilePath": "/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/winpe-pe-bootstrap/build/launcher/Launcher.csproj",
+  "expectedPackageFiles": [
+    "/Users/Adam.Gell/.nuget/packages/system.codedom/9.0.0/system.codedom.9.0.0.nupkg.sha512",
+    "/Users/Adam.Gell/.nuget/packages/system.management/9.0.0/system.management.9.0.0.nupkg.sha512",
+    "/Users/Adam.Gell/.nuget/packages/microsoft.netcore.app.host.win-arm64/10.0.7/microsoft.netcore.app.host.win-arm64.10.0.7.nupkg.sha512"
+  ],
+  "logs": []
+}
