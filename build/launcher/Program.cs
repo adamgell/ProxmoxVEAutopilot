@@ -55,19 +55,39 @@ string? vmUuid = null;
 // Heartbeat callback — called from within blocking loops (wpeinit poll, network wait, pwsh wait, download)
 async Task SendHeartbeat()
 {
+    Log($"[HB] SendHeartbeat called. orchestrator={orchestrator != null} vmUuid={vmUuid}");
     if (orchestrator != null && vmUuid != null)
-        await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
+    {
+        try
+        {
+            await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
+            Log($"[HB] SendHeartbeatAsync returned OK");
+        }
+        catch (Exception ex)
+        {
+            Log($"[HB] SendHeartbeatAsync THREW: {ex}");
+        }
+    }
 }
 
 async Task PhaseCheckin(string phase, string status)
 {
+    Log($"[PC] PhaseCheckin({phase}, {status}) orchestrator={orchestrator != null} vmUuid={vmUuid}");
     if (orchestrator == null || vmUuid == null) return;
-    await orchestrator.SendCheckinAsync(new CheckinPayload
+    try
     {
-        VmUuid = vmUuid, StepId = phase,
-        Status = status, Timestamp = DateTime.UtcNow.ToString("o"),
-        LogTail = bootStatus,
-    });
+        await orchestrator.SendCheckinAsync(new CheckinPayload
+        {
+            VmUuid = vmUuid, StepId = phase,
+            Status = status, Timestamp = DateTime.UtcNow.ToString("o"),
+            LogTail = bootStatus,
+        });
+        Log($"[PC] PhaseCheckin({phase}, {status}) returned OK");
+    }
+    catch (Exception ex)
+    {
+        Log($"[PC] PhaseCheckin THREW: {ex}");
+    }
 }
 
 try { Console.Clear(); } catch { }
@@ -81,7 +101,14 @@ Log(bootStatus);
 var existingDrive = Guard.FindExistingWindows();
 if (existingDrive != null)
 {
-    Log($"Windows found on {existingDrive} — shutting down PE.");
+    Log($"Windows found on {existingDrive} — copying log and shutting down PE.");
+    // Save transcript to the Windows partition before shutdown
+    try
+    {
+        transcript?.Flush();
+        File.Copy(logPath, $@"{existingDrive}\autopilot\autopilot-pe.log", overwrite: true);
+    }
+    catch { }
     Display.ShowGuardShutdown(existingDrive);
     Guard.Shutdown();
     return 0;
@@ -112,7 +139,7 @@ if (!File.Exists(configPath))
 var config = JsonSerializer.Deserialize<BootstrapConfig>(File.ReadAllText(configPath))!;
 bServer = config.OrchestratorUrl;
 Log($"Orchestrator: {config.OrchestratorUrl}");
-orchestrator = new Orchestrator(config.OrchestratorUrl);
+orchestrator = new Orchestrator(config.OrchestratorUrl, Log);
 
 // Get identity early (WMI works without network) so heartbeats have vmUuid
 var identity = Identity.GetSmbios();
@@ -333,6 +360,8 @@ try
         Log($"Staged OpenSSH to {opensshDst}");
     }
     Log("Staged payload to W:\\autopilot\\");
+    // Save transcript to W: so it survives reboot
+    try { transcript?.Flush(); File.Copy(logPath, @"W:\autopilot\autopilot-pe.log", overwrite: true); } catch { }
 }
 catch (Exception ex) { Log($"Staging warning: {ex.Message}"); }
 await PhaseCheckin("staging", "ok");

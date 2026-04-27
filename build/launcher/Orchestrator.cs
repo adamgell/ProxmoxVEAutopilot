@@ -11,11 +11,15 @@ public sealed class Orchestrator : IDisposable
     private readonly string _baseUrl;
     internal string? _heartbeatVmUuid;
     internal string? _heartbeatPhase;
+    private Action<string>? _log;
 
-    public Orchestrator(string baseUrl)
+    public Orchestrator(string baseUrl, Action<string>? log = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
+        _log = log;
     }
+
+    public void SetLog(Action<string> log) => _log = log;
 
     public void SetHeartbeatContext(string vmUuid, string phase)
     {
@@ -89,14 +93,20 @@ public sealed class Orchestrator : IDisposable
         try
         {
             var json = JsonSerializer.Serialize(checkin);
+            _log?.Invoke($"[HTTP] POST {_baseUrl}/winpe/checkin step={checkin.StepId} status={checkin.Status} bodyLen={json.Length}");
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            await _http.PostAsync($"{_baseUrl}/winpe/checkin", content);
+            var resp = await _http.PostAsync($"{_baseUrl}/winpe/checkin", content);
+            _log?.Invoke($"[HTTP] POST response: {(int)resp.StatusCode} {resp.StatusCode}");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _log?.Invoke($"[HTTP] POST FAILED: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     public async Task SendHeartbeatAsync(string vmUuid, string phase, string detail = "")
     {
+        _log?.Invoke($"[HTTP] SendHeartbeatAsync vmUuid={vmUuid} phase={phase}");
         await SendCheckinAsync(new CheckinPayload
         {
             VmUuid = vmUuid,
