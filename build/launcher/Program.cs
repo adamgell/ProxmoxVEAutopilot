@@ -1,4 +1,3 @@
-// build/launcher/Program.cs
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -26,10 +25,11 @@ var logPath = @"X:\Windows\Temp\autopilot-pe.log";
 StreamWriter? transcript = null;
 try { transcript = new StreamWriter(logPath, append: true) { AutoFlush = true }; } catch { }
 
-// Boot-phase display state — shown from the very first frame
+// Boot-phase display state
 string? bUuid = null, bVendor = null, bModel = null, bIp = null, bHost = null, bServer = null;
 var bootPhase = 0;
 var bootStatus = "Starting...";
+var currentPhase = "boot";
 
 void BootRedraw()
 {
@@ -41,10 +41,31 @@ void Log(string msg)
     transcript?.WriteLine($"[{DateTime.UtcNow:o}] {msg}");
 }
 
+// Heartbeat timer — fires every 1000ms once orchestrator is available
+Orchestrator? orchestrator = null;
+string? vmUuid = null;
+var heartbeatTimer = new Timer(_ =>
+{
+    if (orchestrator == null || vmUuid == null) return;
+    orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus).ConfigureAwait(false);
+}, null, Timeout.Infinite, Timeout.Infinite);
+
+async Task PhaseCheckin(string phase, string status)
+{
+    if (orchestrator == null || vmUuid == null) return;
+    await orchestrator.SendCheckinAsync(new CheckinPayload
+    {
+        VmUuid = vmUuid, StepId = phase,
+        Status = status, Timestamp = DateTime.UtcNow.ToString("o"),
+        LogTail = bootStatus,
+    });
+}
+
 Console.Clear();
 BootRedraw();
 
 // Phase 0: Guard
+currentPhase = "guard";
 bootStatus = "Checking for existing Windows installation...";
 BootRedraw();
 Log(bootStatus);
@@ -59,13 +80,15 @@ if (existingDrive != null)
 bootPhase = 1;
 
 // Phase 1: wpeinit
+currentPhase = "wpeinit";
 bootStatus = "Running wpeinit (initializing hardware)...";
 BootRedraw();
 Log(bootStatus);
 WpeInit.RunWpeInit(s => { bootStatus = s; BootRedraw(); Log(s); });
 bootPhase = 2;
 
-// Phase 2: Config
+// Phase 2: Config — create orchestrator early so heartbeats can fire
+currentPhase = "config";
 bootStatus = "Loading config...";
 BootRedraw();
 var configPath = args.Length > 0 ? args[0] : @"X:\autopilot\Bootstrap.json";
@@ -80,11 +103,14 @@ if (!File.Exists(configPath))
 var config = JsonSerializer.Deserialize<BootstrapConfig>(File.ReadAllText(configPath))!;
 bServer = config.OrchestratorUrl;
 Log($"Orchestrator: {config.OrchestratorUrl}");
+orchestrator = new Orchestrator(config.OrchestratorUrl);
 bootPhase = 3;
 
-// Phase 3: Network
+// Phase 3: Network — heartbeats start once we have an IP
+currentPhase = "network";
 bootStatus = "Waiting for network...";
 BootRedraw();
+await PhaseCheckin("network", "starting");
 string ip;
 try
 {
@@ -105,9 +131,11 @@ catch (TimeoutException ex)
     Console.ReadLine();
     return 1;
 }
+await PhaseCheckin("network", "ok");
 bootPhase = 4;
 
-// Phase 4: Identity
+// Phase 4: Identity — start heartbeat timer now that we have network + orchestrator
+currentPhase = "identity";
 bootStatus = "Identifying machine...";
 BootRedraw();
 var identity = Identity.GetSmbios();
@@ -116,13 +144,20 @@ bUuid = identity.Uuid;
 bVendor = identity.Vendor;
 bModel = identity.Model;
 bHost = hostname;
+vmUuid = identity.Uuid;
 Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
+
+// Start 1000ms heartbeat
+heartbeatTimer.Change(0, 1000);
+
+await PhaseCheckin("identity", "ok");
 bootPhase = 5;
 
 // Phase 5: Manifest
+currentPhase = "manifest";
 bootStatus = "Fetching manifest...";
 BootRedraw();
-using var orchestrator = new Orchestrator(config.OrchestratorUrl);
+await PhaseCheckin("manifest", "starting");
 Manifest manifest;
 try
 {
@@ -138,6 +173,7 @@ catch (Exception ex)
     Console.ReadLine();
     return 1;
 }
+await PhaseCheckin("manifest", "ok");
 
 // Phase 6: Execute steps
 var runner = new StepRunner(orchestrator, identity.Uuid);
@@ -162,14 +198,15 @@ for (var i = 0; i < manifest.Steps.Count; i++)
     states[i] = StepState.Active;
     dlPercent = null;
     dlBytes = null;
+    currentPhase = $"step:{step.Id}";
     statusMsg = $"{Display.StepTypeName(step.Type)}...";
+    bootStatus = statusMsg;
     Redraw();
 
-    var ts = DateTime.UtcNow.ToString("o");
     await orchestrator.SendCheckinAsync(new CheckinPayload
     {
         VmUuid = identity.Uuid, StepId = step.Id,
-        Status = "starting", Timestamp = ts,
+        Status = "starting", Timestamp = DateTime.UtcNow.ToString("o"),
     });
 
     var sw = Stopwatch.StartNew();
@@ -187,6 +224,7 @@ for (var i = 0; i < manifest.Steps.Count; i++)
         elapsed[i] = sw.Elapsed;
         states[i] = StepState.Done;
         statusMsg = $"{Display.StepTypeName(step.Type)} done ({Display.FormatDuration(sw.Elapsed)})";
+        bootStatus = statusMsg;
         Redraw();
 
         await orchestrator.SendCheckinAsync(new CheckinPayload
@@ -202,6 +240,7 @@ for (var i = 0; i < manifest.Steps.Count; i++)
         elapsed[i] = sw.Elapsed;
         states[i] = StepState.Error;
         statusMsg = $"FAILED: {step.Id} — {ex.Message}";
+        bootStatus = statusMsg;
         Redraw();
 
         await orchestrator.SendCheckinAsync(new CheckinPayload
@@ -224,9 +263,12 @@ for (var i = 0; i < manifest.Steps.Count; i++)
 }
 
 // Phase 7: Stage payload
+currentPhase = "staging";
+bootStatus = "Staging payload...";
 Log("Staging first-boot payload to W:\\autopilot\\...");
-statusMsg = "Staging payload...";
+statusMsg = bootStatus;
 Redraw();
+await PhaseCheckin("staging", "starting");
 try
 {
     Directory.CreateDirectory(@"W:\autopilot");
@@ -234,7 +276,6 @@ try
     var hwidScript = @"X:\autopilot\Collect-HardwareHash.ps1";
     if (File.Exists(hwidScript))
         File.Copy(hwidScript, @"W:\autopilot\Collect-HardwareHash.ps1", overwrite: true);
-    // Stage agent if present
     var agentSrc = @"X:\autopilot\agent";
     if (Directory.Exists(agentSrc))
     {
@@ -252,17 +293,22 @@ try
     Log("Staged payload to W:\\autopilot\\");
 }
 catch (Exception ex) { Log($"Staging warning: {ex.Message}"); }
+await PhaseCheckin("staging", "ok");
 
 // Phase 8: Reboot
+currentPhase = "reboot";
+bootStatus = "Rebooting into Windows...";
 Log("Rebooting...");
-statusMsg = "Rebooting into Windows...";
+statusMsg = bootStatus;
 Redraw();
+await PhaseCheckin("reboot", "starting");
+heartbeatTimer.Change(Timeout.Infinite, Timeout.Infinite);
 Thread.Sleep(2000);
 Process.Start(new ProcessStartInfo { FileName = "wpeutil", Arguments = "reboot", UseShellExecute = false });
 transcript?.Dispose();
+orchestrator.Dispose();
 return 0;
 
-// P/Invoke for window maximize
 [DllImport("kernel32.dll")]
 static extern IntPtr GetConsoleWindow();
 

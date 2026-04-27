@@ -79,5 +79,18 @@ public sealed class Orchestrator : IDisposable
         catch { }
     }
 
+    public async Task SendHeartbeatAsync(string vmUuid, string phase, string detail = "")
+    {
+        await SendCheckinAsync(new CheckinPayload
+        {
+            VmUuid = vmUuid,
+            StepId = "heartbeat",
+            Status = "ok",
+            Timestamp = DateTime.UtcNow.ToString("o"),
+            LogTail = detail,
+            Extra = new Dictionary<string, object> { ["phase"] = phase },
+        });
+    }
+
     public void Dispose() => _http.Dispose();
 }
