@@ -43,6 +43,19 @@ _UNATTEND_TEMPLATE = r"""<?xml version="1.0" encoding="utf-8"?>
       <ComputerName>__COMPUTER_NAME__</ComputerName>
       <TimeZone>__TIMEZONE__</TimeZone>
     </component>
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="__ARCH__"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>powershell.exe -NoProfile -Command "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Set-Service sshd -StartupType Automatic; Start-Service sshd"</Path>
+          <Description>Install and start OpenSSH Server</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
   </settings>
   <settings pass="auditUser">
     <component name="Microsoft-Windows-Deployment"
