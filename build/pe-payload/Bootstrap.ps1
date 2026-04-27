@@ -116,10 +116,20 @@ if ($DryRunForTesting) { return }
 # ---- Real PE boot path ----
 
 # Guard: if a previous run already laid down Windows, don't re-partition.
-if (Test-Path 'W:\Windows\System32\ntoskrnl.exe') {
-    Write-Host 'Windows already installed on W: — skipping bootstrap (remove boot media and reboot).'
-    Write-Host 'Run: wpeutil reboot'
-    return
+# Drive letters don't persist across PE reboots. Use WMI (no StorageWMI pkg needed).
+$vols = Get-CimInstance Win32_Volume -ErrorAction SilentlyContinue |
+    Where-Object { $_.Label -eq 'Windows' -and $_.DriveType -eq 3 }
+foreach ($vol in $vols) {
+    $letter = if ($vol.DriveLetter) { $vol.DriveLetter } else {
+        # No letter assigned — mount it temporarily
+        $vol | Set-CimInstance -Property @{ DriveLetter = 'W:' } -ErrorAction SilentlyContinue
+        'W:'
+    }
+    if (Test-Path "$letter\Windows\System32\ntoskrnl.exe") {
+        Write-Host "Windows already installed on $letter — shutting down PE."
+        wpeutil shutdown
+        return
+    }
 }
 
 $transcript = 'X:\Windows\Temp\autopilot-pe.log'

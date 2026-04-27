@@ -291,12 +291,13 @@ Subsystem sftp sftp-server.exe
         $winpeshlSys32 = Join-Path $peMount 'Windows\System32\winpeshl.ini'
         if (Test-Path $winpeshlSys32) { Remove-Item $winpeshlSys32 -Force }
 
-        # startnet.cmd: wpeinit, then spawn a NEW maximized window for the bootstrap
-        # so it appears on top of the WinPE desktop instead of behind it
+        # startnet.cmd: wpeinit then pwsh Bootstrap.ps1 directly (no intermediary)
         $startnetPath = Join-Path $peMount 'Windows\System32\startnet.cmd'
         @(
             'wpeinit'
-            'start /max "Autopilot" cmd.exe /k X:\autopilot\start.cmd'
+            'echo [Autopilot] Starting bootstrap...'
+            '"X:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -File X:\autopilot\Bootstrap.ps1'
+            'echo [Autopilot] Bootstrap exited with code %ERRORLEVEL%'
         ) | Set-Content -Path $startnetPath -Encoding ascii
 
         Log 'Info' "Staged payload at X:\autopilot, rendered unattend.xml, wrote startnet.cmd"

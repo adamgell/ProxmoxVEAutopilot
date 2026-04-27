@@ -33,11 +33,11 @@ ARCH=$(jq -r '.architecture' "$CONFIG")
 # --- Convert the config to one Build-PeWim.ps1 will accept (drop dev-Mac-only fields) ---
 BUILD_CONFIG_JSON=$(jq 'del(.buildHost, .buildHostUser, .buildRootRemote)' "$CONFIG")
 
-# --- 1. Sync the PE payload tree to the build host (ssh + scp; not rsync — see header) ---
-echo ">> push PE payload → ${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}"
-# Clean the remote payload dir, recreate empty, then scp our local copy in.
+# --- 1. Sync the PE payload + build script to the build host ---
+echo ">> push PE payload + build script → ${BUILD_USER}@${BUILD_HOST}:${BUILD_ROOT}/src/build/"
 ssh "${BUILD_USER}@${BUILD_HOST}" "pwsh -NoProfile -Command \"if (Test-Path '${PAYLOAD_DIR_REMOTE}') { Remove-Item '${PAYLOAD_DIR_REMOTE}' -Recurse -Force }; New-Item -ItemType Directory -Path '${PAYLOAD_DIR_REMOTE}' -Force | Out-Null\""
 scp -r "$REPO_ROOT/build/pe-payload/." "${BUILD_USER}@${BUILD_HOST}:${PAYLOAD_DIR_REMOTE}/"
+scp "$REPO_ROOT/build/Build-PeWim.ps1" "${BUILD_USER}@${BUILD_HOST}:${BUILD_ROOT}/src/build/Build-PeWim.ps1"
 
 # --- 2. ssh + run Build-PeWim.ps1 with config on stdin ---
 echo ">> ssh build host: pwsh Build-PeWim.ps1"
