@@ -171,7 +171,9 @@ try {
     Copy-Item 'X:\autopilot\Collect-HardwareHash.ps1' "$targetPayload\" -Force -ErrorAction SilentlyContinue
     Write-Host "Staged first-boot payload to $targetPayload"
 
-    Write-Host 'Bootstrap complete.'
+    # Now reboot (deferred from the manifest's reboot step)
+    Write-Host 'Rebooting...'
+    wpeutil reboot
 } catch {
     Write-Host "Bootstrap FAILED: $_" -ForegroundColor Red
     & 'X:\autopilot\Debug.ps1'

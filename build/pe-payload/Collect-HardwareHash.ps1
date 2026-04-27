@@ -11,6 +11,10 @@ $ErrorActionPreference = 'Stop'
 $logPath = "$env:SystemDrive\Windows\Temp\autopilot-hwid.log"
 Start-Transcript -Path $logPath -Force | Out-Null
 
+# Wait for network to be fully up — at first login, networking may still be initializing
+Write-Host "Waiting 120 seconds for network to stabilize..."
+Start-Sleep -Seconds 120
+
 try {
     $configPath = "$env:SystemDrive\autopilot\Bootstrap.json"
     $orchestratorUrl = $null
@@ -59,14 +63,18 @@ try {
             timestamp    = $timestamp
         } | ConvertTo-Json
 
-        try {
-            $null = Invoke-RestMethod -Uri "$orchestratorUrl/winpe/hwid" `
-                -Method POST -ContentType 'application/json' -Body $body `
-                -TimeoutSec 15
-            Write-Host "POSTed hardware hash to $orchestratorUrl/winpe/hwid"
-            $posted = $true
-        } catch {
-            Write-Host "POST failed (will write local CSV): $_"
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                $null = Invoke-RestMethod -Uri "$orchestratorUrl/winpe/hwid" `
+                    -Method POST -ContentType 'application/json' -Body $body `
+                    -TimeoutSec 30
+                Write-Host "POSTed hardware hash to $orchestratorUrl/winpe/hwid"
+                $posted = $true
+                break
+            } catch {
+                Write-Host "POST attempt $attempt failed: $_"
+                if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
+            }
         }
     }
 
