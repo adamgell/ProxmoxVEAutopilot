@@ -164,8 +164,8 @@ bHost = hostname;
 vmUuid = identity.Uuid;
 Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
 
-// Start 1000ms heartbeat
-heartbeatTimer.Change(0, 1000);
+// Start 1000ms heartbeat (due=1000 so heartbeatTimer is assigned before first tick)
+heartbeatTimer.Change(1000, Timeout.Infinite);
 
 await PhaseCheckin("identity", "ok");
 bootPhase = 5;

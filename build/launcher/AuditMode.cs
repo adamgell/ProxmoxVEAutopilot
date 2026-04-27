@@ -121,7 +121,7 @@ public static class AuditMode
 
         // Start heartbeat now that we have identity + orchestrator
         if (orchestrator != null && vmUuid != null)
-            heartbeatTimer.Change(0, 1000);
+            heartbeatTimer.Change(1000, Timeout.Infinite);
         await Checkin("audit-identity", "ok", $"UUID={vmUuid} vendor={manufacturer}");
 
         // Phase 2: Collect hardware hash
