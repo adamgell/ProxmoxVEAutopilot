@@ -307,6 +307,21 @@ try
         var src = Path.Combine(@"X:\autopilot", name);
         if (File.Exists(src)) File.Copy(src, Path.Combine(@"W:\autopilot", name), overwrite: true);
     }
+    // Stage .NET runtime for audit mode (installed Windows doesn't have it)
+    var dotnetSrc = @"X:\Program Files\dotnet";
+    if (Directory.Exists(dotnetSrc))
+    {
+        var dotnetDst = @"W:\autopilot\dotnet";
+        Directory.CreateDirectory(dotnetDst);
+        foreach (var f in Directory.GetFiles(dotnetSrc, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(dotnetSrc, f);
+            var dst = Path.Combine(dotnetDst, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            File.Copy(f, dst, overwrite: true);
+        }
+        Log($"Staged .NET runtime to {dotnetDst}");
+    }
     var agentSrc = @"X:\autopilot\agent";
     if (Directory.Exists(agentSrc))
     {

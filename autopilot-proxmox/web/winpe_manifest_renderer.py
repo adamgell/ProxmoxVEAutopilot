@@ -66,7 +66,7 @@ _UNATTEND_TEMPLATE = r"""<?xml version="1.0" encoding="utf-8"?>
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Path>C:\autopilot\launcher.exe --audit</Path>
+          <Path>C:\autopilot\dotnet\dotnet.exe C:\autopilot\launcher.dll --audit</Path>
           <Description>Collect hardware hash and sysprep to OOBE</Description>
         </RunSynchronousCommand>
       </RunSynchronous>
