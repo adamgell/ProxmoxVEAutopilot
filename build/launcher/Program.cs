@@ -52,29 +52,11 @@ void Log(string msg)
 // Heartbeat timer — fires every 1000ms once orchestrator is available
 Orchestrator? orchestrator = null;
 string? vmUuid = null;
-// Heartbeat via background Task (Timer + async void is unreliable in top-level statements)
-var heartbeatCts = new CancellationTokenSource();
-Task? heartbeatTask = null;
-
-void StartHeartbeat()
+// Heartbeat callback — called from within blocking loops (wpeinit poll, network wait, pwsh wait, download)
+async Task SendHeartbeat()
 {
-    heartbeatTask = Task.Run(async () =>
-    {
-        while (!heartbeatCts.Token.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(1000, heartbeatCts.Token);
-                if (orchestrator != null && vmUuid != null)
-                {
-                    Log($"[heartbeat] phase={currentPhase}");
-                    await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
-                }
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex) { Log($"[heartbeat error] {ex.Message}"); }
-        }
-    }, heartbeatCts.Token);
+    if (orchestrator != null && vmUuid != null)
+        await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
 }
 
 async Task PhaseCheckin(string phase, string status)
@@ -111,7 +93,7 @@ currentPhase = "wpeinit";
 bootStatus = "Running wpeinit (initializing hardware)...";
 BootRedraw();
 Log(bootStatus);
-WpeInit.RunWpeInit(s => { bootStatus = s; BootRedraw(); Log(s); });
+await WpeInit.RunWpeInitAsync(s => { bootStatus = s; BootRedraw(); Log(s); });
 bootPhase = 2;
 
 // Phase 2: Config — create orchestrator early so heartbeats can fire
@@ -141,7 +123,7 @@ await PhaseCheckin("network", "starting");
 string ip;
 try
 {
-    ip = WpeInit.WaitForNetwork(config.NetworkTimeoutSec, s =>
+    ip = await WpeInit.WaitForNetworkAsync(config.NetworkTimeoutSec, s =>
     {
         bootStatus = s;
         BootRedraw();
@@ -174,7 +156,7 @@ bHost = hostname;
 vmUuid = identity.Uuid;
 Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
 
-StartHeartbeat();
+await SendHeartbeat();
 
 await PhaseCheckin("identity", "ok");
 bootPhase = 5;
@@ -204,6 +186,10 @@ await PhaseCheckin("manifest", "ok");
 // Phase 6: Execute steps
 orchestrator.SetHeartbeatContext(identity.Uuid, "steps");
 var runner = new StepRunner(orchestrator, identity.Uuid);
+runner.SetHeartbeat(async () =>
+{
+    await orchestrator.SendHeartbeatAsync(identity.Uuid, currentPhase, bootStatus);
+});
 var states = new StepState[manifest.Steps.Count];
 var elapsed = new TimeSpan[manifest.Steps.Count];
 Array.Fill(states, StepState.Pending);
@@ -363,8 +349,7 @@ Log("Rebooting...");
 statusMsg = bootStatus;
 Redraw();
 await PhaseCheckin("reboot", "starting");
-heartbeatCts.Cancel();
-if (heartbeatTask != null) try { await heartbeatTask; } catch { }
+await SendHeartbeat();
 Process.Start(new ProcessStartInfo { FileName = "wpeutil", Arguments = "reboot", UseShellExecute = false });
 transcript?.Dispose();
 orchestrator.Dispose();

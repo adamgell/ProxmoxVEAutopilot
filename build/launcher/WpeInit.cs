@@ -20,8 +20,7 @@ public static partial class WpeInit
         return null;
     }
 
-    // Bug 8 fix: don't redirect stdout (causes deadlock if wpeinit fills 4KB pipe buffer)
-    public static void RunWpeInit(Action<string> onStatus)
+    public static async Task RunWpeInitAsync(Action<string> onStatus, Func<Task>? onHeartbeat = null)
     {
         onStatus("Running wpeinit...");
         using var p = Process.Start(new ProcessStartInfo
@@ -29,27 +28,39 @@ public static partial class WpeInit
             FileName = "wpeinit",
             UseShellExecute = false,
         });
-        p?.WaitForExit();
+        if (p != null)
+        {
+            var elapsed = 0;
+            while (!p.WaitForExit(1000))
+            {
+                elapsed++;
+                onStatus($"Running wpeinit... ({elapsed}s)");
+                if (onHeartbeat != null) await onHeartbeat();
+            }
+        }
         onStatus("wpeinit complete.");
+        if (onHeartbeat != null) await onHeartbeat();
     }
 
-    public static string WaitForNetwork(int timeoutSeconds, Action<string> onStatus)
+    public static async Task<string> WaitForNetworkAsync(int timeoutSeconds, Action<string> onStatus, Func<Task>? onHeartbeat = null)
     {
         var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        var attempt = 0;
         while (DateTime.UtcNow < deadline)
         {
-            onStatus("Initializing network...");
+            attempt++;
+            onStatus($"Initializing network... (attempt {attempt})");
+            if (onHeartbeat != null) await onHeartbeat();
             RunProcess("wpeutil", "InitializeNetwork");
             var output = CaptureProcess("ipconfig");
             var ip = ParseFirstNonApipaIp(output);
             if (ip != null)
                 return ip;
-            Thread.Sleep(3000);
+            await Task.Delay(3000);
         }
         throw new TimeoutException($"No non-APIPA IPv4 address after {timeoutSeconds}s");
     }
 
-    // Bug 9 fix: don't redirect stdout/stderr if not reading them
     private static void RunProcess(string fileName, string args)
     {
         try

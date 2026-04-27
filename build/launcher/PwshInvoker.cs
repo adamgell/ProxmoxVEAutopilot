@@ -10,10 +10,9 @@ public static class PwshInvoker
     private const string PwshPath = @"X:\Program Files\PowerShell\7\pwsh.exe";
     private const string ModulePath = @"X:\autopilot\Modules";
 
-    public static PwshResult Invoke(string command, int timeoutMs = 600_000)
+    public static async Task<PwshResult> InvokeAsync(string command, Func<Task>? onHeartbeat = null, int timeoutMs = 600_000)
     {
         var fullCommand = $"$env:PSModulePath = '{ModulePath};' + $env:PSModulePath; {command}";
-        // Use -EncodedCommand to avoid escaping issues with quotes, $, backticks
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(fullCommand));
         var psi = new ProcessStartInfo
         {
@@ -36,12 +35,22 @@ public static class PwshInvoker
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
 
-        if (!p.WaitForExit(timeoutMs))
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (!p.WaitForExit(1000))
         {
-            p.Kill(entireProcessTree: true);
-            throw new TimeoutException($"pwsh command timed out after {timeoutMs}ms");
+            if (DateTime.UtcNow > deadline)
+            {
+                p.Kill(entireProcessTree: true);
+                throw new TimeoutException($"pwsh command timed out after {timeoutMs}ms");
+            }
+            if (onHeartbeat != null) await onHeartbeat();
         }
 
         return new PwshResult(p.ExitCode, stdout.ToString(), stderr.ToString());
+    }
+
+    public static PwshResult Invoke(string command, int timeoutMs = 600_000)
+    {
+        return InvokeAsync(command, null, timeoutMs).GetAwaiter().GetResult();
     }
 }

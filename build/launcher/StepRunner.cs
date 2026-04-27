@@ -1,4 +1,3 @@
-// build/launcher/StepRunner.cs
 using System.Diagnostics;
 using System.Text.Json;
 using Autopilot.Launcher.Models;
@@ -9,6 +8,7 @@ public sealed class StepRunner
 {
     private readonly Orchestrator _orchestrator;
     private readonly string _vmUuid;
+    private Func<Task>? _onHeartbeat;
 
     public StepRunner(Orchestrator orchestrator, string vmUuid)
     {
@@ -16,20 +16,22 @@ public sealed class StepRunner
         _vmUuid = vmUuid;
     }
 
+    public void SetHeartbeat(Func<Task> onHeartbeat) => _onHeartbeat = onHeartbeat;
+
     public async Task<(string LogTail, Dictionary<string, object> Extra)> ExecuteStepAsync(
         Step step, Action<long, long> onDownloadProgress)
     {
         return step.Type switch
         {
             "log"           => ExecuteLog(step),
-            "partition"     => ExecutePwshStep("Invoke-PartitionStep", $"-Layout '{step.Layout}'"),
+            "partition"     => await ExecutePwshStepAsync("Invoke-PartitionStep", $"-Layout '{step.Layout}'"),
             "apply-wim"     => await ExecuteApplyWimAsync(step, onDownloadProgress),
             "write-unattend"=> await ExecuteWriteContentAsync(step, onDownloadProgress),
             "stage-files"   => await ExecuteWriteContentAsync(step, onDownloadProgress),
-            "set-registry"  => ExecuteSetRegistry(step),
-            "bcdboot"       => ExecutePwshStep("Invoke-BcdbootStep", $"-Windows '{step.Windows}' -Esp '{step.Esp}'"),
+            "set-registry"  => await ExecuteSetRegistryAsync(step),
+            "bcdboot"       => await ExecutePwshStepAsync("Invoke-BcdbootStep", $"-Windows '{step.Windows}' -Esp '{step.Esp}'"),
             "inject-driver" => await ExecuteInjectDriverAsync(step, onDownloadProgress),
-            "schedule-task" => ExecuteScheduleTask(step),
+            "schedule-task" => await ExecuteScheduleTaskAsync(step),
             "reboot"        => (LogTail: "reboot deferred", Extra: new Dictionary<string, object> { ["deferred"] = true }),
             "shutdown"      => ExecuteShutdown(),
             _ => throw new InvalidOperationException($"Unknown step type: {step.Type}"),
@@ -52,8 +54,9 @@ public sealed class StepRunner
 
         await _orchestrator.DownloadContentAsync(sha, tmpPath, step.Content.Size, onProgress);
 
-        var result = PwshInvoker.Invoke(
-            $"Expand-WindowsImage -ImagePath '{tmpPath}' -Index {index} -ApplyPath '{target}' -ErrorAction Stop");
+        var result = await PwshInvoker.InvokeAsync(
+            $"Expand-WindowsImage -ImagePath '{tmpPath}' -Index {index} -ApplyPath '{target}' -ErrorAction Stop",
+            _onHeartbeat);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Expand-WindowsImage failed: {result.Stderr}");
 
@@ -79,12 +82,13 @@ public sealed class StepRunner
             new Dictionary<string, object> { ["target"] = target });
     }
 
-    private static (string, Dictionary<string, object>) ExecuteSetRegistry(Step step)
+    private async Task<(string, Dictionary<string, object>)> ExecuteSetRegistryAsync(Step step)
     {
         var keysJson = step.Keys?.GetRawText() ?? "[]";
         var escaped = keysJson.Replace("'", "''");
-        var result = PwshInvoker.Invoke(
-            $"Import-Module Autopilot.PESteps; Invoke-SetRegistryStep -Hive '{step.Hive}' -Target '{step.Target}' -Keys ('{escaped}' | ConvertFrom-Json)");
+        var result = await PwshInvoker.InvokeAsync(
+            $"Import-Module Autopilot.PESteps; Invoke-SetRegistryStep -Hive '{step.Hive}' -Target '{step.Target}' -Keys ('{escaped}' | ConvertFrom-Json)",
+            _onHeartbeat);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"SetRegistryStep failed: {result.Stderr}");
 
@@ -102,9 +106,10 @@ public sealed class StepRunner
 
         await _orchestrator.DownloadContentAsync(sha, tmpZip, step.Content.Size, onProgress);
 
-        var result = PwshInvoker.Invoke(
+        var result = await PwshInvoker.InvokeAsync(
             $"Expand-Archive -Path '{tmpZip}' -DestinationPath '{tmpDir}' -Force; " +
-            $"Add-WindowsDriver -Path '{target}' -Driver '{tmpDir}' -Recurse -ForceUnsigned");
+            $"Add-WindowsDriver -Path '{target}' -Driver '{tmpDir}' -Recurse -ForceUnsigned",
+            _onHeartbeat);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"InjectDriverStep failed: {result.Stderr}");
 
@@ -114,10 +119,11 @@ public sealed class StepRunner
             new Dictionary<string, object> { ["target"] = target });
     }
 
-    private static (string, Dictionary<string, object>) ExecuteScheduleTask(Step step)
+    private async Task<(string, Dictionary<string, object>)> ExecuteScheduleTaskAsync(Step step)
     {
-        var result = PwshInvoker.Invoke(
-            $"Import-Module Autopilot.PESteps; Invoke-ScheduleTaskStep -Target '{step.Target}' -Name '{step.Name}' -TaskXml '{step.TaskXml?.Replace("'", "''")}'");
+        var result = await PwshInvoker.InvokeAsync(
+            $"Import-Module Autopilot.PESteps; Invoke-ScheduleTaskStep -Target '{step.Target}' -Name '{step.Name}' -TaskXml '{step.TaskXml?.Replace("'", "''")}'",
+            _onHeartbeat);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"ScheduleTaskStep failed: {result.Stderr}");
 
@@ -125,9 +131,9 @@ public sealed class StepRunner
             new Dictionary<string, object> { ["task"] = step.Name! });
     }
 
-    private static (string, Dictionary<string, object>) ExecutePwshStep(string cmdlet, string args)
+    private async Task<(string, Dictionary<string, object>)> ExecutePwshStepAsync(string cmdlet, string args)
     {
-        var result = PwshInvoker.Invoke($"Import-Module Autopilot.PESteps; {cmdlet} {args}");
+        var result = await PwshInvoker.InvokeAsync($"Import-Module Autopilot.PESteps; {cmdlet} {args}", _onHeartbeat);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"{cmdlet} failed: {result.Stderr}");
         return (result.Stdout.Trim(), new());
