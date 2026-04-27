@@ -174,10 +174,13 @@ def get_dashboard_targets() -> JSONResponse:
     hdb = root / "hwid.db"
     hwids = {}
     if hdb.exists():
-        with sqlite3.connect(hdb) as conn:
-            conn.row_factory = sqlite3.Row
-            for row in conn.execute("SELECT * FROM hwid").fetchall():
-                hwids[row["vm_uuid"]] = dict(row)
+        try:
+            with sqlite3.connect(hdb) as conn:
+                conn.row_factory = sqlite3.Row
+                for row in conn.execute("SELECT * FROM hwid").fetchall():
+                    hwids[row["vm_uuid"]] = dict(row)
+        except sqlite3.OperationalError:
+            pass
 
     for t in targets:
         h = hwids.get(t["vmUuid"])
