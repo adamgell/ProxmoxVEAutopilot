@@ -128,7 +128,8 @@ def post_checkin(payload: _CheckinIn) -> None:
 
 @router.get("/dashboard/events/{vm_uuid}")
 def get_dashboard_events(vm_uuid: str, since: str = "") -> JSONResponse:
-    """Recent checkins for the dev dashboard. Polls every 1s from the UI."""
+    """Recent checkins for the dev dashboard. Polls every 1s from the UI.
+    Only returns events from the latest deployment run (since the last p1|starting)."""
     import sqlite3
     root = _artifact_root()
     db_path = root / "checkins.db"
@@ -137,12 +138,21 @@ def get_dashboard_events(vm_uuid: str, since: str = "") -> JSONResponse:
 
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
+        # Find the start of the latest run (most recent p1|starting)
+        latest_run = conn.execute(
+            "SELECT timestamp FROM winpe_checkins WHERE vm_uuid = ? AND step_id = 'p1' AND status = 'starting' "
+            "ORDER BY rowid DESC LIMIT 1", (vm_uuid,)
+        ).fetchone()
+        run_start = latest_run["timestamp"] if latest_run else ""
+
         query = "SELECT step_id, status, timestamp, duration_sec, log_tail, error_message, extra_json FROM winpe_checkins WHERE vm_uuid = ?"
         params: list = [vm_uuid]
-        if since:
-            query += " AND timestamp > ?"
-            params.append(since)
-        query += " ORDER BY rowid DESC LIMIT 100"
+        # Use the later of: run_start or caller's since param
+        effective_since = max(run_start, since) if since else run_start
+        if effective_since:
+            query += " AND timestamp >= ?"
+            params.append(effective_since)
+        query += " ORDER BY rowid DESC LIMIT 200"
         rows = conn.execute(query, params).fetchall()
 
     events = [dict(r) for r in reversed(rows)]
