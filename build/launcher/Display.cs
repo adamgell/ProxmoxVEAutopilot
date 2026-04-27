@@ -82,7 +82,7 @@ public static class Display
         TimeSpan[] elapsed, int? downloadPercent,
         long? downloadedBytes, string statusMessage)
     {
-        Console.SetCursorPosition(0, 0);
+        try { Console.SetCursorPosition(0, 0); } catch { }
         TopBorder();
         Line("Autopilot PE Bootstrap");
         Separator();
@@ -133,7 +133,7 @@ public static class Display
         string title = "Autopilot PE Bootstrap", string[]? phases = null)
     {
         phases ??= BootPhases;
-        try { Console.SetCursorPosition(0, 0); } catch { }
+        try { Console.SetCursorPosition(0, 0); } catch { Console.WriteLine(); }
         TopBorder();
         Line(title);
         Separator();
