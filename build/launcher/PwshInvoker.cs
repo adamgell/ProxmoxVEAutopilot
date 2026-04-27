@@ -13,10 +13,12 @@ public static class PwshInvoker
     public static PwshResult Invoke(string command, int timeoutMs = 600_000)
     {
         var fullCommand = $"$env:PSModulePath = '{ModulePath};' + $env:PSModulePath; {command}";
+        // Use -EncodedCommand to avoid escaping issues with quotes, $, backticks
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(fullCommand));
         var psi = new ProcessStartInfo
         {
             FileName = PwshPath,
-            Arguments = $"-NoProfile -NonInteractive -Command \"{fullCommand.Replace("\"", "\\\"")}\"",
+            Arguments = $"-NoProfile -NonInteractive -EncodedCommand {encoded}",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

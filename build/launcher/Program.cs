@@ -52,10 +52,19 @@ void Log(string msg)
 // Heartbeat timer — fires every 1000ms once orchestrator is available
 Orchestrator? orchestrator = null;
 string? vmUuid = null;
-var heartbeatTimer = new Timer(_ =>
+Timer? heartbeatTimer = null;
+heartbeatTimer = new Timer(async _ =>
 {
-    if (orchestrator == null || vmUuid == null) return;
-    orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus).ConfigureAwait(false);
+    try
+    {
+        if (orchestrator == null || vmUuid == null) return;
+        await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
+    }
+    catch { }
+    finally
+    {
+        try { heartbeatTimer?.Change(1000, Timeout.Infinite); } catch { }
+    }
 }, null, Timeout.Infinite, Timeout.Infinite);
 
 async Task PhaseCheckin(string phase, string status)
@@ -314,7 +323,8 @@ statusMsg = bootStatus;
 Redraw();
 await PhaseCheckin("reboot", "starting");
 heartbeatTimer.Change(Timeout.Infinite, Timeout.Infinite);
-Thread.Sleep(2000);
+await Task.Delay(1500);
+heartbeatTimer.Dispose();
 Process.Start(new ProcessStartInfo { FileName = "wpeutil", Arguments = "reboot", UseShellExecute = false });
 transcript?.Dispose();
 orchestrator.Dispose();

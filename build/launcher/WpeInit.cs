@@ -20,14 +20,14 @@ public static partial class WpeInit
         return null;
     }
 
+    // Bug 8 fix: don't redirect stdout (causes deadlock if wpeinit fills 4KB pipe buffer)
     public static void RunWpeInit(Action<string> onStatus)
     {
         onStatus("Running wpeinit...");
-        var p = Process.Start(new ProcessStartInfo
+        using var p = Process.Start(new ProcessStartInfo
         {
             FileName = "wpeinit",
             UseShellExecute = false,
-            RedirectStandardOutput = true,
         });
         p?.WaitForExit();
         onStatus("wpeinit complete.");
@@ -49,18 +49,18 @@ public static partial class WpeInit
         throw new TimeoutException($"No non-APIPA IPv4 address after {timeoutSeconds}s");
     }
 
+    // Bug 9 fix: don't redirect stdout/stderr if not reading them
     private static void RunProcess(string fileName, string args)
     {
         try
         {
-            Process.Start(new ProcessStartInfo
+            using var p = Process.Start(new ProcessStartInfo
             {
                 FileName = fileName,
                 Arguments = args,
                 UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            })?.WaitForExit(15_000);
+            });
+            p?.WaitForExit(15_000);
         }
         catch { }
     }
@@ -69,7 +69,7 @@ public static partial class WpeInit
     {
         try
         {
-            var p = Process.Start(new ProcessStartInfo
+            using var p = Process.Start(new ProcessStartInfo
             {
                 FileName = fileName,
                 UseShellExecute = false,

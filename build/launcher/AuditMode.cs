@@ -37,12 +37,20 @@ public static class AuditMode
         var phase = 0;
         var status = "Starting audit mode...";
 
-        // 1000ms heartbeat
-        var heartbeatTimer = new Timer(_ =>
+        // 1000ms heartbeat — one-shot re-arm to prevent concurrent pile-up
+        Timer? heartbeatTimer = null;
+        heartbeatTimer = new Timer(async _ =>
         {
-            if (orchestrator == null || vmUuid == null) return;
-            orchestrator.SendHeartbeatAsync(vmUuid, $"audit:{Phases[Math.Min(phase, Phases.Length - 1)]}", status)
-                .ConfigureAwait(false);
+            try
+            {
+                if (orchestrator == null || vmUuid == null) return;
+                await orchestrator.SendHeartbeatAsync(vmUuid, $"audit:{Phases[Math.Min(phase, Phases.Length - 1)]}", status);
+            }
+            catch { }
+            finally
+            {
+                try { heartbeatTimer?.Change(1000, Timeout.Infinite); } catch { }
+            }
         }, null, Timeout.Infinite, Timeout.Infinite);
 
         void Redraw() => Display.RenderBoot(phase, vmUuid, null, null, null, null,
@@ -172,12 +180,13 @@ public static class AuditMode
                 vmUuid, serial, hardwareHash, manufacturer, model, timestamp
             });
 
+            using var hwidClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
             for (var attempt = 1; attempt <= 5; attempt++)
             {
                 try
                 {
                     using var content = new StringContent(body, Encoding.UTF8, "application/json");
-                    var resp = await new HttpClient { Timeout = TimeSpan.FromSeconds(30) }
+                    var resp = await hwidClient
                         .PostAsync($"{config!.OrchestratorUrl.TrimEnd('/')}/winpe/hwid", content);
                     resp.EnsureSuccessStatusCode();
                     posted = true;

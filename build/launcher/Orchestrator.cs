@@ -58,6 +58,7 @@ public sealed class Orchestrator : IDisposable
             onProgress(totalRead, expectedSize);
         }
 
+        await file.FlushAsync(ct);
         file.Position = 0;
         var hash = Convert.ToHexString(await SHA256.HashDataAsync(file, ct)).ToLowerInvariant();
         if (hash != sha256)
