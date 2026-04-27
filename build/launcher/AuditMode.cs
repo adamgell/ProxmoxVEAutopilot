@@ -37,21 +37,26 @@ public static class AuditMode
         var phase = 0;
         var status = "Starting audit mode...";
 
-        // 1000ms heartbeat — one-shot re-arm to prevent concurrent pile-up
-        Timer? heartbeatTimer = null;
-        heartbeatTimer = new Timer(async _ =>
+        var heartbeatCts = new CancellationTokenSource();
+        Task? heartbeatTask = null;
+
+        void StartHeartbeat()
         {
-            try
+            heartbeatTask = Task.Run(async () =>
             {
-                if (orchestrator == null || vmUuid == null) return;
-                await orchestrator.SendHeartbeatAsync(vmUuid, $"audit:{Phases[Math.Min(phase, Phases.Length - 1)]}", status);
-            }
-            catch { }
-            finally
-            {
-                try { heartbeatTimer?.Change(1000, Timeout.Infinite); } catch { }
-            }
-        }, null, Timeout.Infinite, Timeout.Infinite);
+                while (!heartbeatCts.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Task.Delay(1000, heartbeatCts.Token);
+                        if (orchestrator != null && vmUuid != null)
+                            await orchestrator.SendHeartbeatAsync(vmUuid, $"audit:{Phases[Math.Min(phase, Phases.Length - 1)]}", status);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { }
+                }
+            }, heartbeatCts.Token);
+        }
 
         void Redraw() => Display.RenderBoot(phase, vmUuid, null, null, null, null,
             config?.OrchestratorUrl, status, "Autopilot Audit Mode", Phases);
@@ -121,7 +126,7 @@ public static class AuditMode
 
         // Start heartbeat now that we have identity + orchestrator
         if (orchestrator != null && vmUuid != null)
-            heartbeatTimer.Change(1000, Timeout.Infinite);
+            StartHeartbeat();
         await Checkin("audit-identity", "ok", $"UUID={vmUuid} vendor={manufacturer}");
 
         // Phase 2: Collect hardware hash
@@ -226,7 +231,8 @@ public static class AuditMode
 
         // Phase 5: Sysprep
         await Checkin("audit-sysprep", "starting", "Running sysprep /oobe /shutdown...");
-        heartbeatTimer.Change(Timeout.Infinite, Timeout.Infinite);
+        heartbeatCts.Cancel();
+        if (heartbeatTask != null) try { await heartbeatTask; } catch { }
         status = "Running sysprep /oobe /shutdown...";
         Redraw();
         Log(status);

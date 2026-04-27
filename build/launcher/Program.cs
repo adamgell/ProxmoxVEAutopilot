@@ -52,20 +52,27 @@ void Log(string msg)
 // Heartbeat timer — fires every 1000ms once orchestrator is available
 Orchestrator? orchestrator = null;
 string? vmUuid = null;
-Timer? heartbeatTimer = null;
-heartbeatTimer = new Timer(async _ =>
+// Heartbeat via background Task (Timer + async void is unreliable in top-level statements)
+var heartbeatCts = new CancellationTokenSource();
+Task? heartbeatTask = null;
+
+void StartHeartbeat()
 {
-    try
+    heartbeatTask = Task.Run(async () =>
     {
-        if (orchestrator == null || vmUuid == null) return;
-        await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
-    }
-    catch { }
-    finally
-    {
-        try { heartbeatTimer?.Change(1000, Timeout.Infinite); } catch { }
-    }
-}, null, Timeout.Infinite, Timeout.Infinite);
+        while (!heartbeatCts.Token.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(1000, heartbeatCts.Token);
+                if (orchestrator != null && vmUuid != null)
+                    await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
+            }
+            catch (OperationCanceledException) { break; }
+            catch { }
+        }
+    }, heartbeatCts.Token);
+}
 
 async Task PhaseCheckin(string phase, string status)
 {
@@ -164,8 +171,7 @@ bHost = hostname;
 vmUuid = identity.Uuid;
 Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
 
-// Start 1000ms heartbeat (due=1000 so heartbeatTimer is assigned before first tick)
-heartbeatTimer.Change(1000, Timeout.Infinite);
+StartHeartbeat();
 
 await PhaseCheckin("identity", "ok");
 bootPhase = 5;
@@ -322,9 +328,8 @@ Log("Rebooting...");
 statusMsg = bootStatus;
 Redraw();
 await PhaseCheckin("reboot", "starting");
-heartbeatTimer.Change(Timeout.Infinite, Timeout.Infinite);
-await Task.Delay(1500);
-heartbeatTimer.Dispose();
+heartbeatCts.Cancel();
+if (heartbeatTask != null) try { await heartbeatTask; } catch { }
 Process.Start(new ProcessStartInfo { FileName = "wpeutil", Arguments = "reboot", UseShellExecute = false });
 transcript?.Dispose();
 orchestrator.Dispose();
