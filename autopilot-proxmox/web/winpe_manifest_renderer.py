@@ -51,8 +51,8 @@ _UNATTEND_TEMPLATE = r"""<?xml version="1.0" encoding="utf-8"?>
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Path>powershell.exe -NoProfile -Command "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Set-Service sshd -StartupType Automatic; Start-Service sshd"</Path>
-          <Description>Install and start OpenSSH Server</Description>
+          <Path>powershell.exe -NoProfile -Command "if (Test-Path C:\autopilot\openssh\install-sshd.ps1) { &amp; C:\autopilot\openssh\install-sshd.ps1; Set-Service sshd -StartupType Automatic; Start-Service sshd }"</Path>
+          <Description>Install OpenSSH Server from staged zip</Description>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>

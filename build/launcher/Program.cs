@@ -321,6 +321,21 @@ try
         }
         Log($"Staged agent to {agentDst}");
     }
+    // Stage OpenSSH from PE if present (zip or extracted dir)
+    var opensshSrc = @"X:\Program Files\OpenSSH";
+    if (Directory.Exists(opensshSrc))
+    {
+        var opensshDst = @"W:\autopilot\openssh";
+        Directory.CreateDirectory(opensshDst);
+        foreach (var f in Directory.GetFiles(opensshSrc, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(opensshSrc, f);
+            var dst = Path.Combine(opensshDst, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            File.Copy(f, dst, overwrite: true);
+        }
+        Log($"Staged OpenSSH to {opensshDst}");
+    }
     Log("Staged payload to W:\\autopilot\\");
 }
 catch (Exception ex) { Log($"Staging warning: {ex.Message}"); }
