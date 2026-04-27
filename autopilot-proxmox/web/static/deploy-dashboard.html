@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autopilot Deploy Dashboard</title>
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3; --dim: #8b949e; --green: #3fb950; --red: #f85149; --blue: #58a6ff; --yellow: #d29922; --orange: #db6d28; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; padding: 20px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+  .targets { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  .target-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-width: 300px; flex: 1; max-width: 500px; cursor: pointer; transition: border-color 0.15s; }
+  .target-card:hover, .target-card.active { border-color: var(--blue); }
+  .target-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .target-card .uuid { font-family: monospace; font-size: 12px; color: var(--dim); }
+  .target-card .status { margin-top: 8px; font-size: 12px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-yellow { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .badge-red { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-blue { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .badge-dim { background: rgba(139,148,158,0.15); color: var(--dim); }
+
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+  .heartbeat { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .heartbeat .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .dot-red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .dot-dim { background: var(--dim); }
+
+  .steps { display: flex; flex-direction: column; gap: 4px; }
+  .step { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+  .step .icon { width: 20px; text-align: center; }
+  .step .name { width: 160px; }
+  .step .dur { width: 60px; text-align: right; color: var(--dim); }
+  .step .detail { flex: 1; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step-active { background: rgba(88,166,255,0.08); }
+  .step-done .icon { color: var(--green); }
+  .step-error .icon { color: var(--red); }
+  .step-active .icon { color: var(--blue); }
+  .step-pending .icon { color: var(--dim); }
+
+  .events { max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+  .event { padding: 3px 8px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; }
+  .event .ts { color: var(--dim); min-width: 90px; }
+  .event .sid { color: var(--blue); min-width: 100px; }
+  .event .st { min-width: 60px; }
+  .event .msg { color: var(--dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .empty { color: var(--dim); text-align: center; padding: 40px; }
+  #connection { position: fixed; top: 8px; right: 16px; font-size: 11px; }
+</style>
+</head>
+<body>
+<h1>Autopilot Deploy Dashboard</h1>
+<div id="connection"></div>
+
+<div id="targets" class="targets">
+  <div class="empty" style="width:100%">Loading targets...</div>
+</div>
+
+<div id="detail" style="display:none">
+  <div class="panel">
+    <h2>Heartbeat</h2>
+    <div class="heartbeat">
+      <div id="hb-dot" class="dot dot-dim"></div>
+      <span id="hb-phase">—</span>
+      <span id="hb-ago" style="color:var(--dim); margin-left:auto; font-size:12px">—</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Steps</h2>
+    <div id="steps" class="steps">
+      <div class="empty">Waiting for manifest...</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Event Log</h2>
+    <div id="events" class="events">
+      <div class="empty">No events yet</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let selectedUuid = null;
+let pollInterval = null;
+let lastEventTs = '';
+
+async function fetchTargets() {
+  try {
+    const r = await fetch(`${API}/winpe/dashboard/targets`);
+    const d = await r.json();
+    renderTargets(d.targets);
+  } catch (e) {
+    document.getElementById('connection').innerHTML = `<span class="badge badge-red">offline</span>`;
+  }
+}
+
+function renderTargets(targets) {
+  const el = document.getElementById('targets');
+  if (!targets.length) { el.innerHTML = '<div class="empty">No targets registered</div>'; return; }
+  el.innerHTML = targets.map(t => {
+    const active = t.vmUuid === selectedUuid ? 'active' : '';
+    const hwid = t.hwid?.collected ? `<span class="badge badge-green">hash ${t.hwid.hashLen}ch</span>` : `<span class="badge badge-dim">no hash</span>`;
+    return `<div class="target-card ${active}" onclick="selectTarget('${t.vmUuid}')">
+      <h3>${t.params?.computer_name || t.vmUuid.slice(0,8)}</h3>
+      <div class="uuid">${t.vmUuid}</div>
+      <div class="status">${hwid}</div>
+    </div>`;
+  }).join('');
+
+  if (!selectedUuid && targets.length) selectTarget(targets[0].vmUuid);
+}
+
+function selectTarget(uuid) {
+  selectedUuid = uuid;
+  document.getElementById('detail').style.display = 'block';
+  document.getElementById('steps').innerHTML = '<div class="empty">Loading...</div>';
+  document.getElementById('events').innerHTML = '';
+  lastEventTs = '';
+  fetchTargets();
+  pollEvents();
+}
+
+async function pollEvents() {
+  if (!selectedUuid) return;
+  try {
+    const url = `${API}/winpe/dashboard/events/${selectedUuid}` + (lastEventTs ? `?since=${lastEventTs}` : '');
+    const r = await fetch(url);
+    const d = await r.json();
+    document.getElementById('connection').innerHTML = `<span class="badge badge-green">live</span>`;
+    renderHeartbeat(d.heartbeat);
+    renderEvents(d.events);
+    renderSteps(d.events);
+    if (d.events.length) lastEventTs = d.events[d.events.length - 1].timestamp;
+  } catch (e) {
+    document.getElementById('connection').innerHTML = `<span class="badge badge-red">offline</span>`;
+  }
+}
+
+function renderHeartbeat(hb) {
+  const dot = document.getElementById('hb-dot');
+  const phase = document.getElementById('hb-phase');
+  const ago = document.getElementById('hb-ago');
+  if (!hb) { dot.className = 'dot dot-dim'; phase.textContent = 'No heartbeat'; ago.textContent = ''; return; }
+
+  const extra = JSON.parse(hb.extra_json || '{}');
+  const secAgo = (Date.now() - new Date(hb.timestamp + 'Z').getTime()) / 1000;
+  dot.className = secAgo < 5 ? 'dot dot-green' : secAgo < 15 ? 'dot dot-yellow' : 'dot dot-red';
+  phase.textContent = extra.phase || hb.log_tail || '—';
+  ago.textContent = secAgo < 60 ? `${Math.round(secAgo)}s ago` : `${Math.round(secAgo/60)}m ago`;
+}
+
+function renderSteps(events) {
+  const stepMap = new Map();
+  for (const e of events) {
+    if (e.step_id === 'heartbeat') continue;
+    if (!stepMap.has(e.step_id)) stepMap.set(e.step_id, { id: e.step_id, status: e.status, duration: e.duration_sec, log: e.log_tail, error: e.error_message });
+    else {
+      const s = stepMap.get(e.step_id);
+      s.status = e.status;
+      if (e.duration_sec > 0) s.duration = e.duration_sec;
+      if (e.log_tail) s.log = e.log_tail;
+      if (e.error_message) s.error = e.error_message;
+    }
+  }
+
+  const el = document.getElementById('steps');
+  if (!stepMap.size) return;
+
+  el.innerHTML = [...stepMap.values()].map(s => {
+    const cls = s.status === 'ok' ? 'step-done' : s.status === 'error' ? 'step-error' : s.status === 'starting' ? 'step-active' : 'step-pending';
+    const icon = s.status === 'ok' ? '✓' : s.status === 'error' ? '✗' : s.status === 'starting' ? '▸' : '·';
+    const dur = s.duration > 0 ? (s.duration >= 60 ? `${Math.floor(s.duration/60)}:${String(Math.round(s.duration%60)).padStart(2,'0')}` : `${Math.round(s.duration)}s`) : '';
+    const detail = s.error || s.log || '';
+    return `<div class="step ${cls}"><span class="icon">${icon}</span><span class="name">${s.id}</span><span class="dur">${dur}</span><span class="detail" title="${detail}">${detail}</span></div>`;
+  }).join('');
+}
+
+function renderEvents(events) {
+  const el = document.getElementById('events');
+  const nonHb = events.filter(e => e.step_id !== 'heartbeat');
+  if (!nonHb.length && !el.children.length) return;
+
+  for (const e of nonHb) {
+    const div = document.createElement('div');
+    div.className = 'event';
+    const ts = e.timestamp.split('T')[1]?.slice(0,8) || '';
+    const stColor = e.status === 'ok' ? 'var(--green)' : e.status === 'error' ? 'var(--red)' : 'var(--blue)';
+    div.innerHTML = `<span class="ts">${ts}</span><span class="sid">${e.step_id}</span><span class="st" style="color:${stColor}">${e.status}</span><span class="msg">${e.log_tail || e.error_message || ''}</span>`;
+    el.appendChild(div);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+fetchTargets();
+setInterval(fetchTargets, 10000);
+setInterval(pollEvents, 1000);
+</script>
+</body>
+</html>

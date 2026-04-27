@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from web.artifact_store import ArtifactStore
@@ -44,6 +44,13 @@ class _HwidIn(BaseModel):
 
 
 router = APIRouter(prefix="/winpe", tags=["winpe"])
+
+
+@router.get("/deploy", response_class=HTMLResponse)
+def deploy_dashboard() -> HTMLResponse:
+    """Dev dashboard for monitoring deployments."""
+    html_path = Path(__file__).parent / "static" / "deploy-dashboard.html"
+    return HTMLResponse(content=html_path.read_text())
 
 
 def _artifact_root() -> Path:
@@ -117,6 +124,66 @@ def post_checkin(payload: _CheckinIn) -> None:
         extra=payload.extra,
     ))
     return None
+
+
+@router.get("/dashboard/events/{vm_uuid}")
+def get_dashboard_events(vm_uuid: str, since: str = "") -> JSONResponse:
+    """Recent checkins for the dev dashboard. Polls every 1s from the UI."""
+    import sqlite3
+    root = _artifact_root()
+    db_path = root / "checkins.db"
+    if not db_path.exists():
+        return JSONResponse(content={"events": [], "heartbeat": None})
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        query = "SELECT step_id, status, timestamp, duration_sec, log_tail, error_message, extra_json FROM winpe_checkins WHERE vm_uuid = ?"
+        params: list = [vm_uuid]
+        if since:
+            query += " AND timestamp > ?"
+            params.append(since)
+        query += " ORDER BY rowid DESC LIMIT 100"
+        rows = conn.execute(query, params).fetchall()
+
+    events = [dict(r) for r in reversed(rows)]
+    heartbeat = None
+    for e in reversed(events):
+        if e["step_id"] == "heartbeat":
+            heartbeat = e
+    non_hb = [e for e in events if e["step_id"] != "heartbeat"]
+    return JSONResponse(content={"events": non_hb, "heartbeat": heartbeat})
+
+
+@router.get("/dashboard/targets")
+def get_dashboard_targets() -> JSONResponse:
+    """List all registered targets with their latest status."""
+    import sqlite3, json
+    root = _artifact_root()
+    targets = []
+
+    # Targets
+    tdb = root / "index.db"
+    if tdb.exists():
+        db = WinpeTargetsDb(tdb)
+        for uuid in db.list_uuids():
+            t = db.lookup(uuid)
+            if t:
+                targets.append({"vmUuid": t.vm_uuid, "label": t.template_id, "params": t.params})
+
+    # Hwid status
+    hdb = root / "hwid.db"
+    hwids = {}
+    if hdb.exists():
+        with sqlite3.connect(hdb) as conn:
+            conn.row_factory = sqlite3.Row
+            for row in conn.execute("SELECT * FROM hwid").fetchall():
+                hwids[row["vm_uuid"]] = dict(row)
+
+    for t in targets:
+        h = hwids.get(t["vmUuid"])
+        t["hwid"] = {"collected": bool(h), "hashLen": len(h["hardware_hash"]) if h else 0} if h else None
+
+    return JSONResponse(content={"targets": targets})
 
 
 @router.post("/hwid", status_code=204, response_model=None, response_class=Response)
