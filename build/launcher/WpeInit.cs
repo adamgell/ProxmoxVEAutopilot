@@ -23,20 +23,27 @@ public static partial class WpeInit
     public static async Task RunWpeInitAsync(Action<string> onStatus, Func<Task>? onHeartbeat = null)
     {
         onStatus("Running wpeinit...");
-        using var p = Process.Start(new ProcessStartInfo
+        try
         {
-            FileName = "wpeinit",
-            UseShellExecute = false,
-        });
-        if (p != null)
-        {
-            var elapsed = 0;
-            while (!p.WaitForExit(1000))
+            using var p = Process.Start(new ProcessStartInfo
             {
-                elapsed++;
-                onStatus($"Running wpeinit... ({elapsed}s)");
-                if (onHeartbeat != null) await onHeartbeat();
+                FileName = "wpeinit",
+                UseShellExecute = false,
+            });
+            if (p != null)
+            {
+                var elapsed = 0;
+                while (!p.WaitForExit(1000))
+                {
+                    elapsed++;
+                    onStatus($"Running wpeinit... ({elapsed}s)");
+                    if (onHeartbeat != null) await onHeartbeat();
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            onStatus($"wpeinit skipped: {ex.Message}");
         }
         onStatus("wpeinit complete.");
         if (onHeartbeat != null) await onHeartbeat();

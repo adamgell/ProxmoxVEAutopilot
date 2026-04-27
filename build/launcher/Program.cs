@@ -70,7 +70,7 @@ async Task PhaseCheckin(string phase, string status)
     });
 }
 
-Console.Clear();
+try { Console.Clear(); } catch { }
 BootRedraw();
 
 // Phase 0: Guard
@@ -197,7 +197,7 @@ void Redraw() => Display.RenderFull(
     ip, hostname, config.OrchestratorUrl,
     manifest.Steps, states, elapsed, dlPercent, dlBytes, statusMsg);
 
-Console.Clear();
+try { Console.Clear(); } catch { }
 Redraw();
 
 for (var i = 0; i < manifest.Steps.Count; i++)
