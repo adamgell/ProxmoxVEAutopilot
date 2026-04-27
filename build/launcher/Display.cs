@@ -117,6 +117,43 @@ public static class Display
         BottomBorder();
     }
 
+    private static readonly string[] BootPhases =
+    [
+        "Guard check",
+        "Initialize hardware",
+        "Load config",
+        "Wait for network",
+        "Identify machine",
+        "Fetch manifest",
+    ];
+
+    public static void RenderBoot(
+        int activePhase, string? uuid, string? vendor, string? model,
+        string? ip, string? hostname, string? server, string statusMessage)
+    {
+        try { Console.SetCursorPosition(0, 0); } catch { }
+        TopBorder();
+        Line("Autopilot PE Bootstrap");
+        Separator();
+        Line($"UUID:    {uuid ?? "..."}");
+        Line($"Vendor:  {vendor ?? "..."} │ Model: {model ?? "..."}");
+        Line($"IP:      {ip ?? "..."} │ Host: {hostname ?? "..."}");
+        Line($"Server:  {server ?? "..."}");
+        Separator();
+
+        for (var i = 0; i < BootPhases.Length; i++)
+        {
+            var icon = i < activePhase ? StepIcon(StepState.Done)
+                     : i == activePhase ? StepIcon(StepState.Active)
+                     : StepIcon(StepState.Pending);
+            Line($"{icon} {BootPhases[i],-18}");
+        }
+
+        Separator();
+        Line(statusMessage);
+        BottomBorder();
+    }
+
     public static void ShowGuardShutdown(string driveLetter)
     {
         Console.Clear();

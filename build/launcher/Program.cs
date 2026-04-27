@@ -26,14 +26,28 @@ var logPath = @"X:\Windows\Temp\autopilot-pe.log";
 StreamWriter? transcript = null;
 try { transcript = new StreamWriter(logPath, append: true) { AutoFlush = true }; } catch { }
 
+// Boot-phase display state — shown from the very first frame
+string? bUuid = null, bVendor = null, bModel = null, bIp = null, bHost = null, bServer = null;
+var bootPhase = 0;
+var bootStatus = "Starting...";
+
+void BootRedraw()
+{
+    Display.RenderBoot(bootPhase, bUuid, bVendor, bModel, bIp, bHost, bServer, bootStatus);
+}
+
 void Log(string msg)
 {
     transcript?.WriteLine($"[{DateTime.UtcNow:o}] {msg}");
-    Display.ShowPhase(msg);
 }
 
-// Phase 1: Guard
-Log("Checking for existing Windows installation...");
+Console.Clear();
+BootRedraw();
+
+// Phase 0: Guard
+bootStatus = "Checking for existing Windows installation...";
+BootRedraw();
+Log(bootStatus);
 var existingDrive = Guard.FindExistingWindows();
 if (existingDrive != null)
 {
@@ -42,46 +56,73 @@ if (existingDrive != null)
     Guard.Shutdown();
     return 0;
 }
+bootPhase = 1;
 
-// Phase 2: wpeinit
-WpeInit.RunWpeInit(Log);
+// Phase 1: wpeinit
+bootStatus = "Running wpeinit (initializing hardware)...";
+BootRedraw();
+Log(bootStatus);
+WpeInit.RunWpeInit(s => { bootStatus = s; BootRedraw(); Log(s); });
+bootPhase = 2;
 
-// Phase 3: Config
+// Phase 2: Config
+bootStatus = "Loading config...";
+BootRedraw();
 var configPath = args.Length > 0 ? args[0] : @"X:\autopilot\Bootstrap.json";
 if (!File.Exists(configPath))
 {
-    Log($"Config not found: {configPath}");
-    Display.ShowError($"Config not found: {configPath}");
+    bootStatus = $"ERROR: Config not found: {configPath}";
+    BootRedraw();
+    Log(bootStatus);
     Console.ReadLine();
     return 1;
 }
 var config = JsonSerializer.Deserialize<BootstrapConfig>(File.ReadAllText(configPath))!;
+bServer = config.OrchestratorUrl;
 Log($"Orchestrator: {config.OrchestratorUrl}");
+bootPhase = 3;
 
-// Phase 3b: Network
-Log("Waiting for network...");
+// Phase 3: Network
+bootStatus = "Waiting for network...";
+BootRedraw();
 string ip;
 try
 {
-    ip = WpeInit.WaitForNetwork(config.NetworkTimeoutSec, Log);
+    ip = WpeInit.WaitForNetwork(config.NetworkTimeoutSec, s =>
+    {
+        bootStatus = s;
+        BootRedraw();
+        Log(s);
+    });
+    bIp = ip;
     Log($"Got IP: {ip}");
 }
 catch (TimeoutException ex)
 {
-    Log($"Network timeout: {ex.Message}");
-    Display.ShowError(ex.Message);
+    bootStatus = $"ERROR: {ex.Message}";
+    BootRedraw();
+    Log(bootStatus);
     Console.ReadLine();
     return 1;
 }
+bootPhase = 4;
 
 // Phase 4: Identity
+bootStatus = "Identifying machine...";
+BootRedraw();
 var identity = Identity.GetSmbios();
 var hostname = Environment.MachineName;
+bUuid = identity.Uuid;
+bVendor = identity.Vendor;
+bModel = identity.Model;
+bHost = hostname;
 Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
+bootPhase = 5;
 
 // Phase 5: Manifest
+bootStatus = "Fetching manifest...";
+BootRedraw();
 using var orchestrator = new Orchestrator(config.OrchestratorUrl);
-Log("Fetching manifest...");
 Manifest manifest;
 try
 {
@@ -91,8 +132,9 @@ try
 }
 catch (Exception ex)
 {
-    Log($"Manifest fetch failed: {ex.Message}");
-    Display.ShowError(ex.Message);
+    bootStatus = $"ERROR: Manifest fetch failed — {ex.Message}";
+    BootRedraw();
+    Log(bootStatus);
     Console.ReadLine();
     return 1;
 }
