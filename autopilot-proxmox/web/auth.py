@@ -45,6 +45,11 @@ _EXEMPT_PREFIXES = (
     "/api/version",
     "/static/",
     "/favicon.ico",
+    # PE-side bootstrap calls these from inside a booted WinPE that has no
+    # interactive user and no Entra session; per spec §7 (Plan 2) these
+    # routes are LAN-trusted and not behind operator auth. Content is
+    # sha-verified end-to-end so tampering surfaces.
+    "/winpe/",
 )
 
 

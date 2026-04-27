@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from web.artifact_store import ArtifactStore
@@ -34,7 +34,23 @@ class _CheckinIn(BaseModel):
     extra: dict = Field(default_factory=dict)
 
 
+class _HwidIn(BaseModel):
+    vmUuid: str
+    serial: str = ""
+    hardwareHash: str = ""
+    manufacturer: str = ""
+    model: str = ""
+    timestamp: str = ""
+
+
 router = APIRouter(prefix="/winpe", tags=["winpe"])
+
+
+@router.get("/deploy", response_class=HTMLResponse)
+def deploy_dashboard() -> HTMLResponse:
+    """Dev dashboard for monitoring deployments."""
+    html_path = Path(__file__).parent / "static" / "deploy-dashboard.html"
+    return HTMLResponse(content=html_path.read_text())
 
 
 def _artifact_root() -> Path:
@@ -107,4 +123,104 @@ def post_checkin(payload: _CheckinIn) -> None:
         error_message=payload.errorMessage,
         extra=payload.extra,
     ))
+    return None
+
+
+@router.get("/dashboard/events/{vm_uuid}")
+def get_dashboard_events(vm_uuid: str, since: str = "") -> JSONResponse:
+    """Recent checkins for the dev dashboard. Polls every 1s from the UI.
+    Only returns events from the latest deployment run (since the last p1|starting)."""
+    import sqlite3
+    root = _artifact_root()
+    db_path = root / "checkins.db"
+    if not db_path.exists():
+        return JSONResponse(content={"events": [], "heartbeat": None})
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        # Find the start of the latest run (most recent p1|starting)
+        latest_run = conn.execute(
+            "SELECT timestamp FROM winpe_checkins WHERE vm_uuid = ? AND step_id = 'p1' AND status = 'starting' "
+            "ORDER BY rowid DESC LIMIT 1", (vm_uuid,)
+        ).fetchone()
+        run_start = latest_run["timestamp"] if latest_run else ""
+
+        query = "SELECT step_id, status, timestamp, duration_sec, log_tail, error_message, extra_json FROM winpe_checkins WHERE vm_uuid = ?"
+        params: list = [vm_uuid]
+        # Use the later of: run_start or caller's since param
+        effective_since = max(run_start, since) if since else run_start
+        if effective_since:
+            query += " AND timestamp >= ?"
+            params.append(effective_since)
+        query += " ORDER BY rowid DESC LIMIT 200"
+        rows = conn.execute(query, params).fetchall()
+
+    events = [dict(r) for r in reversed(rows)]
+    heartbeat = None
+    for e in reversed(events):
+        if e["step_id"] == "heartbeat":
+            heartbeat = e
+    non_hb = [e for e in events if e["step_id"] != "heartbeat"]
+    return JSONResponse(content={"events": non_hb, "heartbeat": heartbeat})
+
+
+@router.get("/dashboard/targets")
+def get_dashboard_targets() -> JSONResponse:
+    """List all registered targets with their latest status."""
+    import sqlite3, json
+    root = _artifact_root()
+    targets = []
+
+    # Targets
+    tdb = root / "index.db"
+    if tdb.exists():
+        db = WinpeTargetsDb(tdb)
+        for uuid in db.list_uuids():
+            t = db.lookup(uuid)
+            if t:
+                targets.append({"vmUuid": t.vm_uuid, "label": t.template_id, "params": t.params})
+
+    # Hwid status
+    hdb = root / "hwid.db"
+    hwids = {}
+    if hdb.exists():
+        try:
+            with sqlite3.connect(hdb) as conn:
+                conn.row_factory = sqlite3.Row
+                for row in conn.execute("SELECT * FROM hwid").fetchall():
+                    hwids[row["vm_uuid"]] = dict(row)
+        except sqlite3.OperationalError:
+            pass
+
+    for t in targets:
+        h = hwids.get(t["vmUuid"])
+        t["hwid"] = {"collected": bool(h), "hashLen": len(h["hardware_hash"]) if h else 0} if h else None
+
+    return JSONResponse(content={"targets": targets})
+
+
+@router.post("/hwid", status_code=204, response_model=None, response_class=Response)
+def post_hwid(payload: _HwidIn) -> None:
+    """Receive Autopilot hardware hash from a freshly-deployed machine."""
+    import json, sqlite3
+    root = _artifact_root()
+    root.mkdir(parents=True, exist_ok=True)
+    db_path = root / "hwid.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS hwid (
+            vm_uuid TEXT PRIMARY KEY,
+            serial TEXT NOT NULL,
+            hardware_hash TEXT NOT NULL,
+            manufacturer TEXT NOT NULL,
+            model TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            raw_json TEXT NOT NULL
+        )""")
+        conn.execute(
+            "INSERT OR REPLACE INTO hwid (vm_uuid, serial, hardware_hash, manufacturer, model, timestamp, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (payload.vmUuid, payload.serial, payload.hardwareHash,
+             payload.manufacturer, payload.model, payload.timestamp,
+             json.dumps(payload.model_dump())),
+        )
     return None

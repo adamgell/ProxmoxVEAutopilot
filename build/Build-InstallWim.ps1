@@ -76,7 +76,10 @@ try {
         if (-not (Test-Path $srcWim)) { throw "install.wim not found at $srcWim" }
 
         Copy-Item -Path $srcWim -Destination $tempPath -Force
-        Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Copied $srcWim → $tempPath"
+        # ReadOnly attribute survives the copy from a mounted ISO and Mount-WindowsImage
+        # refuses to mount RW for servicing. Clear it before mounting.
+        Set-ItemProperty -Path $tempPath -Name IsReadOnly -Value $false
+        Write-CmTraceLog -Path $logTempPath -Severity Info -Component 'Build-InstallWim' -Message "Copied $srcWim → $tempPath (cleared ReadOnly)"
 
         $images = Get-WindowsImage -ImagePath $tempPath
         $match = $images | Where-Object { $_.ImageName -eq $config.edition }

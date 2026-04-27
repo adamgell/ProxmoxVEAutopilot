@@ -22,20 +22,69 @@ class RendererError(RuntimeError):
     pass
 
 
-_UNATTEND_TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
+_UNATTEND_TEMPLATE = r"""<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="specialize">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="__ARCH__"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>__INPUT_LOCALE__</InputLocale>
+      <SystemLocale>__LOCALE__</SystemLocale>
+      <UILanguage>__LOCALE__</UILanguage>
+      <UserLocale>__LOCALE__</UserLocale>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
+               processorArchitecture="__ARCH__"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
       <ComputerName>__COMPUTER_NAME__</ComputerName>
+      <TimeZone>__TIMEZONE__</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="__ARCH__"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>powershell.exe -NoProfile -Command "if (Test-Path C:\autopilot\openssh\install-sshd.ps1) { &amp; C:\autopilot\openssh\install-sshd.ps1; Set-Service sshd -StartupType Automatic; Start-Service sshd }"</Path>
+          <Description>Install OpenSSH Server from staged zip</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+  <settings pass="auditUser">
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="__ARCH__"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>C:\autopilot\dotnet\dotnet.exe C:\autopilot\launcher.dll --audit</Path>
+          <Description>Collect hardware hash and sysprep to OOBE</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
     </component>
   </settings>
   <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="__ARCH__"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>__INPUT_LOCALE__</InputLocale>
+      <SystemLocale>__LOCALE__</SystemLocale>
+      <UILanguage>__LOCALE__</UILanguage>
+      <UserLocale>__LOCALE__</UserLocale>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
+               processorArchitecture="__ARCH__"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
@@ -43,8 +92,18 @@ _UNATTEND_TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
         <HideEULAPage>true</HideEULAPage>
         <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
         <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
         <ProtectYourPC>3</ProtectYourPC>
       </OOBE>
+    </component>
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="__ARCH__"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <Reseal>
+        <Mode>Audit</Mode>
+      </Reseal>
     </component>
   </settings>
 </unattend>
@@ -53,7 +112,17 @@ _UNATTEND_TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
 
 def _render_unattend(params: dict) -> bytes:
     computer_name = params.get("computer_name", "AUTOPILOT-VM")
-    return _UNATTEND_TEMPLATE.replace("__COMPUTER_NAME__", computer_name).encode("utf-8")
+    arch = params.get("architecture", "arm64")
+    locale = params.get("locale", "en-US")
+    input_locale = params.get("input_locale", locale)
+    timezone = params.get("timezone", "Pacific Standard Time")
+    xml = (_UNATTEND_TEMPLATE
+           .replace("__COMPUTER_NAME__", computer_name)
+           .replace("__ARCH__", arch)
+           .replace("__LOCALE__", locale)
+           .replace("__INPUT_LOCALE__", input_locale)
+           .replace("__TIMEZONE__", timezone))
+    return xml.encode("utf-8")
 
 
 def render_manifest(target: WinpeTarget, store: ArtifactStore) -> dict:
