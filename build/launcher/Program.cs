@@ -66,10 +66,13 @@ void StartHeartbeat()
             {
                 await Task.Delay(1000, heartbeatCts.Token);
                 if (orchestrator != null && vmUuid != null)
+                {
+                    Log($"[heartbeat] phase={currentPhase}");
                     await orchestrator.SendHeartbeatAsync(vmUuid, currentPhase, bootStatus);
+                }
             }
             catch (OperationCanceledException) { break; }
-            catch { }
+            catch (Exception ex) { Log($"[heartbeat error] {ex.Message}"); }
         }
     }, heartbeatCts.Token);
 }
@@ -199,6 +202,7 @@ catch (Exception ex)
 await PhaseCheckin("manifest", "ok");
 
 // Phase 6: Execute steps
+orchestrator.SetHeartbeatContext(identity.Uuid, "steps");
 var runner = new StepRunner(orchestrator, identity.Uuid);
 var states = new StepState[manifest.Steps.Count];
 var elapsed = new TimeSpan[manifest.Steps.Count];
@@ -222,6 +226,7 @@ for (var i = 0; i < manifest.Steps.Count; i++)
     dlPercent = null;
     dlBytes = null;
     currentPhase = $"step:{step.Id}";
+    orchestrator.SetHeartbeatContext(identity.Uuid, currentPhase);
     statusMsg = $"{Display.StepTypeName(step.Type)}...";
     bootStatus = statusMsg;
     Redraw();

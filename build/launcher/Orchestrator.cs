@@ -9,10 +9,18 @@ public sealed class Orchestrator : IDisposable
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(30) };
     private readonly string _baseUrl;
+    internal string? _heartbeatVmUuid;
+    internal string? _heartbeatPhase;
 
     public Orchestrator(string baseUrl)
     {
         _baseUrl = baseUrl.TrimEnd('/');
+    }
+
+    public void SetHeartbeatContext(string vmUuid, string phase)
+    {
+        _heartbeatVmUuid = vmUuid;
+        _heartbeatPhase = phase;
     }
 
     public async Task<Manifest> FetchManifestAsync(string vmUuid, int retries, int backoffSec)
@@ -51,11 +59,18 @@ public sealed class Orchestrator : IDisposable
         var buffer = new byte[256 * 1024];
         long totalRead = 0;
         int read;
+        var lastHeartbeat = DateTime.UtcNow;
         while ((read = await stream.ReadAsync(buffer, ct)) > 0)
         {
             await file.WriteAsync(buffer.AsMemory(0, read), ct);
             totalRead += read;
             onProgress(totalRead, expectedSize);
+            // Inline heartbeat every 1s during download
+            if (_heartbeatVmUuid != null && (DateTime.UtcNow - lastHeartbeat).TotalMilliseconds >= 1000)
+            {
+                lastHeartbeat = DateTime.UtcNow;
+                await SendHeartbeatAsync(_heartbeatVmUuid, _heartbeatPhase ?? "download", $"downloading {totalRead}/{expectedSize}");
+            }
         }
 
         await file.FlushAsync(ct);

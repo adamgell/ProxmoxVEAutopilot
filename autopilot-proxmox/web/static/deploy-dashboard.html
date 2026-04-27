@@ -187,16 +187,13 @@ function renderSteps(events) {
 function renderEvents(events) {
   const el = document.getElementById('events');
   const nonHb = events.filter(e => e.step_id !== 'heartbeat');
-  if (!nonHb.length && !el.children.length) return;
+  if (!nonHb.length) { if (!el.children.length) el.innerHTML = '<div class="empty">No events yet</div>'; return; }
 
-  for (const e of nonHb) {
-    const div = document.createElement('div');
-    div.className = 'event';
+  el.innerHTML = nonHb.map(e => {
     const ts = e.timestamp.split('T')[1]?.slice(0,8) || '';
     const stColor = e.status === 'ok' ? 'var(--green)' : e.status === 'error' ? 'var(--red)' : 'var(--blue)';
-    div.innerHTML = `<span class="ts">${ts}</span><span class="sid">${e.step_id}</span><span class="st" style="color:${stColor}">${e.status}</span><span class="msg">${e.log_tail || e.error_message || ''}</span>`;
-    el.appendChild(div);
-  }
+    return `<div class="event"><span class="ts">${ts}</span><span class="sid">${e.step_id}</span><span class="st" style="color:${stColor}">${e.status}</span><span class="msg">${e.log_tail || e.error_message || ''}</span></div>`;
+  }).join('');
   el.scrollTop = el.scrollHeight;
 }
 
