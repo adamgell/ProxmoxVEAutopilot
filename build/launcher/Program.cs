@@ -113,13 +113,22 @@ var config = JsonSerializer.Deserialize<BootstrapConfig>(File.ReadAllText(config
 bServer = config.OrchestratorUrl;
 Log($"Orchestrator: {config.OrchestratorUrl}");
 orchestrator = new Orchestrator(config.OrchestratorUrl);
+
+// Get identity early (WMI works without network) so heartbeats have vmUuid
+var identity = Identity.GetSmbios();
+var hostname = Environment.MachineName;
+bUuid = identity.Uuid;
+bVendor = identity.Vendor;
+bModel = identity.Model;
+bHost = hostname;
+vmUuid = identity.Uuid;
+Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
 bootPhase = 3;
 
-// Phase 3: Network — heartbeats start once we have an IP
+// Phase 3: Network — with heartbeats every retry
 currentPhase = "network";
 bootStatus = "Waiting for network...";
 BootRedraw();
-await PhaseCheckin("network", "starting");
 string ip;
 try
 {
@@ -128,7 +137,7 @@ try
         bootStatus = s;
         BootRedraw();
         Log(s);
-    });
+    }, SendHeartbeat);
     bIp = ip;
     Log($"Got IP: {ip}");
 }
@@ -143,21 +152,7 @@ catch (TimeoutException ex)
 await PhaseCheckin("network", "ok");
 bootPhase = 4;
 
-// Phase 4: Identity — start heartbeat timer now that we have network + orchestrator
-currentPhase = "identity";
-bootStatus = "Identifying machine...";
-BootRedraw();
-var identity = Identity.GetSmbios();
-var hostname = Environment.MachineName;
-bUuid = identity.Uuid;
-bVendor = identity.Vendor;
-bModel = identity.Model;
-bHost = hostname;
-vmUuid = identity.Uuid;
-Log($"Identity: {identity.Uuid} (vendor={identity.Vendor} model={identity.Model})");
-
-await SendHeartbeat();
-
+// Phase 4: Identity done (moved earlier for heartbeat support)
 await PhaseCheckin("identity", "ok");
 bootPhase = 5;
 
