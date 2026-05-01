@@ -150,33 +150,67 @@
       delegate_to: localhost
       when: utm_boot_fallback_keystrokes | default(false) | bool
 
-    - name: "Template build: escape EFI shell via AppleScript (fallback)"
-      # Four backslashes in YAML -> AppleScript sees `\\` -> single `\`,
-      # giving the EDK2 shell `fs0:\efi\microsoft\boot\cdboot_noprompt.efi`.
-      # `key code 36` is not in UTM's AppleScript dialect (that's System
-      # Events); the working form embeds a literal newline inside the
-      # text string, which UTM's `input keystroke` sends as Return.
+    - name: "Template build: escape EFI shell via System Events keystroke"
+      # Two-step keystroke needed on UTM 4.7.5 AAVMF. Verified at the
+      # interactive shell with `dir fs0:` (acc-11):
+      #   FS0 = the El Torito FAT image (efisys.bin), NOT the outer
+      #   ISO9660 tree. The FAT contains exactly one file:
+      #     \EFI\BOOT\BOOTAA64.EFI  (968,096 bytes = cdboot.efi)
+      # The outer install-ISO tree at \efi\microsoft\boot\* is
+      # unreachable from FS0 because AAVMF's build does not include
+      # `Iso9660FileSystemDxe`. Older hardcoded path
+      # `fs0:\efi\microsoft\boot\cdboot_noprompt.efi` always failed with
+      # "not recognized" - acc-1/-2/-3 only "succeeded" because the
+      # operator manually typed something during install.
       #
-      # Why cdboot_noprompt.efi and not bootaa64.efi: bootaa64.efi chains
-      # through Windows BootMgr's "Press any key to boot from CD or DVD..."
-      # countdown, requiring a second keystroke to actually proceed.
-      # cdboot_noprompt.efi is Microsoft's OEM/deployment-mode CD boot
-      # loader (shipped right next to cdboot.efi on the install ISO at
-      # \efi\microsoft\boot\) that skips the prompt entirely - same
-      # downstream Setup behaviour, no key needed.
+      # Sequence:
+      #   1. `open -a UTM`: bring the UTM window to the foreground.
+      #      Does not require macOS Automation permission for UTM
+      #      (it's a Launch Services call).
+      #   2. Return key: ack "Press ESC to skip startup.nsh" so the
+      #      first character of the real command isn't absorbed.
+      #   3. `keystroke "fs0:"` + Return: switch the EFI shell to FS0.
+      #   4. `keystroke "\\efi\\boot\\bootaa64.efi"` + Return: launch
+      #      BOOTAA64.EFI from the El Torito FAT. On Win11 ARM64
+      #      install media this binary is cdboot.efi, which displays
+      #      "Press any key to boot from CD or DVD..." with a ~10 s
+      #      countdown.
+      #   5. delay 6 + Return: ack the cdboot prompt before the
+      #      countdown expires. cdboot then chains to BootMgr from the
+      #      CD and Setup proceeds normally.
       #
-      # Leading dummy space+newline ack's "Press ESC to skip startup.nsh"
-      # unambiguously before the real command is typed - protects against
-      # any residual timing race past the 18s wait.
+      # Why System Events and not `tell application "UTM"` or SPICE:
+      #   - `tell application "UTM" to input keystroke ...` requires
+      #     macOS Automation permission per-target-app (TCC service
+      #     kTCCServiceAppleEvents). Fails with `Application isn't
+      #     running (-600)` when not granted or revoked.
+      #   - SPICE InputsChannel direct injection is gated on
+      #     SPICE_MSG_INPUTS_INIT from the server; UTM's setup
+      #     doesn't deliver it to a secondary client, leaving the
+      #     channel state non-READY and silently dropping key sends.
+      #     Verified empirically (acc-12).
+      #   - System Events `keystroke` uses macOS Accessibility (TCC
+      #     service kTCCServiceAccessibility), a different silo
+      #     usually already granted to Terminal.app for tools like
+      #     keyboard-maestro / Hammerspoon. Types into whatever
+      #     window currently has focus - hence the `open -a UTM`
+      #     activate step.
       ansible.builtin.shell: |
-        /usr/bin/osascript <<OSA
-        tell application "UTM"
-            set vm to virtual machine id "{{ _utm_assigned_uuid }}"
-            input keystroke vm text "
-        "
+        # Bring UTM forward (Launch Services, no TCC permission).
+        /usr/bin/open -a UTM
+        # Wait briefly for window to gain key focus before typing.
+        /bin/sleep 1
+        /usr/bin/osascript <<'OSA'
+        tell application "System Events"
+            key code 36
             delay 1
-            input keystroke vm text "fs0:\\\\efi\\\\microsoft\\\\boot\\\\cdboot_noprompt.efi
-        "
+            keystroke "fs0:"
+            key code 36
+            delay 1
+            keystroke "\\efi\\boot\\bootaa64.efi"
+            key code 36
+            delay 6
+            key code 36
         end tell
         OSA
       args:

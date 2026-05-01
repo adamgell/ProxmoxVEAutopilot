@@ -52,3 +52,18 @@ utm_boot_fallback_keystrokes: true
 # utm_answer_sysprep_finalize themselves (or use this role's
 # orchestrator entrypoint).
 utm_answer_sysprep_finalize: true
+
+# Pre-bake a Boot0000 + BootOrder entry into the per-bundle efi_vars.fd
+# at render time via virt-fw-vars. When true (default), AAVMF tries the
+# baked CD entry first, which on UTM 4.7.5 reliably resolves to the
+# El Torito FAT image. Side effect: when AAVMF then drops to the EFI
+# shell, FS0 maps that El Torito FAT (which only contains
+# `\efi\boot\bootaa64.efi`), NOT the outer ISO9660 tree. The keystroke
+# fallback's hardcoded `fs0:\efi\microsoft\boot\cdboot_noprompt.efi`
+# path is unreachable in that mode and the shell rejects it.
+#
+# Set to false to disable the baking and let AAVMF do native discovery,
+# which mounts the CD as ISO9660 on FS0 and exposes the full outer
+# tree - restoring the path the keystroke fallback expects. Pair with
+# utm_boot_fallback_keystrokes=true so the shell drop is handled.
+utm_bake_boot_entry: true
