@@ -119,3 +119,65 @@ Describe 'Invoke-OrchestratorRequest' {
         $script:attempts | Should -Be 3
     }
 }
+
+Describe 'Invoke-ActionLoop' {
+    It 'runs each action and refreshes the bearer token from step results' {
+        $script:invoked = @()
+        $script:tokens = @('initial')
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:invoked += "$Method $Uri"
+            if ($Uri -match '/step/\d+/result$') {
+                return [pscustomobject]@{ ok = $true; bearer_token = "tok-$($script:invoked.Count)" }
+            }
+            return [pscustomobject]@{ ok = $true }
+        }
+        $handlers = @{
+            'partition_disk' = { param($p, $tok) }
+            'apply_wim'      = { param($p, $tok) }
+        }
+        $actions = @(
+            @{ step_id = 1; kind = 'partition_disk'; params = @{} },
+            @{ step_id = 2; kind = 'apply_wim'; params = @{} }
+        )
+        $finalToken = Invoke-ActionLoop -BaseUrl 'http://x:5000' `
+            -BearerToken 'initial' -Actions $actions `
+            -Handlers $handlers -RestInvoker $invoker
+        $finalToken | Should -Not -Be 'initial'
+        ($script:invoked | Where-Object { $_ -match 'POST.*/step/1/result' }).Count |
+            Should -Be 2  # running + ok
+    }
+
+    It 'aborts the loop on handler failure and posts state=error' {
+        $script:reported = @()
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            if ($Uri -match '/step/\d+/result$') {
+                $script:reported += $Body
+                return [pscustomobject]@{ ok = $true; bearer_token = 'rolling' }
+            }
+            return [pscustomobject]@{ ok = $true }
+        }
+        $handlers = @{
+            'apply_wim' = { param($p, $tok) throw "disk too small" }
+        }
+        $actions = @(@{ step_id = 99; kind = 'apply_wim'; params = @{} })
+        { Invoke-ActionLoop -BaseUrl 'http://x:5000' `
+            -BearerToken 'initial' -Actions $actions `
+            -Handlers $handlers -RestInvoker $invoker } |
+            Should -Throw '*disk too small*'
+        ($script:reported -join '|') | Should -Match 'error'
+        ($script:reported -join '|') | Should -Match 'disk too small'
+    }
+
+    It 'fails fast when no handler is registered for a kind' {
+        $invoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            return [pscustomobject]@{ ok = $true; bearer_token = 'rolling' }
+        }
+        $actions = @(@{ step_id = 1; kind = 'unknown_kind'; params = @{} })
+        { Invoke-ActionLoop -BaseUrl 'http://x:5000' `
+            -BearerToken 'initial' -Actions $actions `
+            -Handlers @{} -RestInvoker $invoker } |
+            Should -Throw '*no handler*unknown_kind*'
+    }
+}

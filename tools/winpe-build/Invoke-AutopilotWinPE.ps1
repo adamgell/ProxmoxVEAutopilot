@@ -89,3 +89,78 @@ function Invoke-OrchestratorRequest {
     }
     throw $lastErr
 }
+
+function _ReportStepState {
+    param(
+        [string] $BaseUrl, [string] $BearerToken, [int] $StepId,
+        [string] $State, [string] $ErrorMessage,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker
+    )
+    $body = @{ state = $State }
+    if ($ErrorMessage) { $body.error = $ErrorMessage }
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/step/$StepId/result"
+        Method = 'POST'
+        Body = $body
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $r = Invoke-OrchestratorRequest @reqArgs
+    if ($r.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $r.bearer_token) {
+        return $r.bearer_token
+    }
+    return $BearerToken
+}
+
+function Invoke-ActionLoop {
+    param(
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [Parameter(Mandatory)] [object[]] $Actions,
+        [Parameter(Mandatory)] [hashtable] $Handlers,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $token = $BearerToken
+    foreach ($action in $Actions) {
+        $kind = $action.kind
+        $stepId = [int] $action.step_id
+        if (-not $Handlers.ContainsKey($kind)) {
+            $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+                -StepId $stepId -State 'error' `
+                -ErrorMessage "no handler for kind: $kind" `
+                -FallbackBaseUrl $FallbackBaseUrl `
+                -RestInvoker $RestInvoker
+            throw "no handler registered for kind: $kind"
+        }
+        $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+            -StepId $stepId -State 'running' `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -RestInvoker $RestInvoker
+        try {
+            # Handlers receive the CURRENT token (post-running-refresh)
+            # rather than capturing the original via closure, so a long
+            # apply_wim followed by stage_unattend GETs use a fresh
+            # token, not one that may have expired during the apply.
+            & $Handlers[$kind] $action.params $token
+        } catch {
+            $msg = $_.Exception.Message
+            $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+                -StepId $stepId -State 'error' -ErrorMessage $msg `
+                -FallbackBaseUrl $FallbackBaseUrl `
+                -RestInvoker $RestInvoker
+            throw
+        }
+        $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+            -StepId $stepId -State 'ok' `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -RestInvoker $RestInvoker
+    }
+    return $token
+}
