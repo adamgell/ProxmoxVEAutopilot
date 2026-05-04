@@ -50,3 +50,42 @@ function Get-VMIdentity {
         mac     = $mac.ToString()
     }
 }
+
+function Invoke-OrchestratorRequest {
+    param(
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [ValidateSet('GET','POST')] [string] $Method,
+        [hashtable] $Body,
+        [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [int] $MaxAttempts = 5,
+        [int] $RetryDelayMs = 2000,
+        [int] $TimeoutSec = 30,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $headers = @{}
+    if ($BearerToken) { $headers.Authorization = "Bearer $BearerToken" }
+    $payload = $null
+    if ($Body) { $payload = $Body | ConvertTo-Json -Depth 10 -Compress }
+
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
+    $lastErr = $null
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + '/' + $Path.TrimStart('/')
+        for ($i = 1; $i -le $MaxAttempts; $i++) {
+            try {
+                return & $RestInvoker $uri $Method $headers $payload 'application/json' $TimeoutSec
+            } catch {
+                $lastErr = $_
+                if ($i -lt $MaxAttempts) { Start-Sleep -Milliseconds $RetryDelayMs }
+            }
+        }
+    }
+    throw $lastErr
+}

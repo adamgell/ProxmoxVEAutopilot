@@ -57,3 +57,65 @@ Describe 'Get-VMIdentity' {
             Should -Throw '*UUID*'
     }
 }
+
+Describe 'Invoke-OrchestratorRequest' {
+    BeforeAll {
+        function global:_MockInvokeRest {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:lastUri = $Uri
+            $script:lastMethod = $Method
+            $script:lastHeaders = $Headers
+            $script:lastBody = $Body
+            return [pscustomobject]@{ ok = $true; uri = $Uri }
+        }
+    }
+
+    It 'sends a POST with bearer header when token provided' {
+        $r = Invoke-OrchestratorRequest -BaseUrl 'http://x:5000' `
+            -Path '/winpe/register' -Method POST `
+            -Body @{ vm_uuid = 'u' } -BearerToken 'tok' `
+            -RestInvoker (Get-Item Function:_MockInvokeRest).ScriptBlock
+        $script:lastUri | Should -Be 'http://x:5000/winpe/register'
+        $script:lastMethod | Should -Be 'POST'
+        $script:lastHeaders.Authorization | Should -Be 'Bearer tok'
+        $r.ok | Should -BeTrue
+    }
+
+    It 'omits bearer header when token is null' {
+        $r = Invoke-OrchestratorRequest -BaseUrl 'http://x:5000' `
+            -Path '/winpe/register' -Method POST -Body @{} `
+            -RestInvoker (Get-Item Function:_MockInvokeRest).ScriptBlock
+        $script:lastHeaders.ContainsKey('Authorization') | Should -BeFalse
+    }
+
+    It 'falls back to FallbackBaseUrl when BaseUrl exhausts retries' {
+        $script:visited = @()
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:visited += $Uri
+            if ($Uri -match '^http://primary') { throw 'connection refused' }
+            return [pscustomobject]@{ ok = $true; uri = $Uri }
+        }
+        $r = Invoke-OrchestratorRequest -BaseUrl 'http://primary:5000' `
+            -Path '/winpe/register' -Method POST -Body @{} `
+            -FallbackBaseUrl 'http://fallback:5000' `
+            -MaxAttempts 2 -RetryDelayMs 1 -RestInvoker $invoker
+        $r.ok | Should -BeTrue
+        @($script:visited | Where-Object { $_ -match 'primary' }).Count | Should -Be 2
+        @($script:visited | Where-Object { $_ -match 'fallback' }).Count | Should -BeGreaterThan 0
+    }
+
+    It 'retries on transient failure up to MaxAttempts then throws' {
+        $script:attempts = 0
+        $boom = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:attempts++
+            throw [System.Net.WebException]::new('connection refused')
+        }
+        { Invoke-OrchestratorRequest -BaseUrl 'http://x:5000' `
+            -Path '/x' -Method GET -RestInvoker $boom `
+            -MaxAttempts 3 -RetryDelayMs 1 } |
+            Should -Throw '*connection refused*'
+        $script:attempts | Should -Be 3
+    }
+}
