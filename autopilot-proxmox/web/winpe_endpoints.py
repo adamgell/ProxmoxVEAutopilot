@@ -170,18 +170,17 @@ def get_sequence(run_id: int,
 
 
 def _resolve_autopilot_config_path():
-    """Resolve the on-disk path to AutopilotConfigurationFile.json.
-    Mirrors what roles/autopilot_inject reads from
-    `autopilot_config_path` (defaults to
-    autopilot-proxmox/files/AutopilotConfigurationFile.json).
-    Tests monkeypatch this to point at a fixture."""
+    """Resolve AutopilotConfigurationFile.json. Mirrors what
+    roles/autopilot_inject reads from autopilot_config_path. _load_vars
+    returns the raw YAML, so the typical inventory value
+    "{{ playbook_dir }}/../files/AutopilotConfigurationFile.json" is
+    a literal Jinja string here; treat that as 'use default'."""
     from pathlib import Path
     from web import app as web_app
     cfg = web_app._load_vars()
-    p = cfg.get("autopilot_config_path")
-    if p:
+    p = cfg.get("autopilot_config_path") or ""
+    if p and "{{" not in p and "{%" not in p:
         return Path(p)
-    # Default mirrors inventory/group_vars/all/vars.yml
     base = Path(__file__).resolve().parent.parent
     return base / "files" / "AutopilotConfigurationFile.json"
 

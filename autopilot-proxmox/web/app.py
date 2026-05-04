@@ -268,8 +268,44 @@ def _load_vault():
 
 def _vault_presence() -> dict[str, bool]:
     """Return {key: True} for every vault key whose value is non-empty.
-    Safe to render in HTML — carries no secret material."""
+    Safe to render in HTML -- carries no secret material."""
     return {k: bool(v) for k, v in _load_vault().items()}
+
+
+def _looks_like_jinja(value: str) -> bool:
+    return isinstance(value, str) and ("{{" in value or "{%" in value)
+
+
+def _bridge_winpe_vars_to_env() -> None:
+    """Mirror WinPE-relevant settings into os.environ so the WinPE
+    modules (which read env to stay decoupled from _load_vars at import
+    time) see real values. Vault-rendered fields come from _load_vault
+    directly because _load_vars returns Jinja strings literally."""
+    raw_vars = _load_vars()
+    vault = _load_vault()
+
+    # Token secret lives in vault.yml (vars.yml only references it via
+    # Jinja). Read straight from _load_vault to skip the unrendered
+    # indirection. Use setdefault so tests that pre-seed the env are not
+    # overwritten by the bridge.
+    secret = vault.get("vault_autopilot_winpe_token_secret") or ""
+    if secret:
+        os.environ.setdefault("AUTOPILOT_WINPE_TOKEN_SECRET", secret)
+
+    # Plain integer in vars.yml (no Jinja).
+    blank = raw_vars.get("winpe_blank_template_vmid")
+    if blank not in (None, "", "null"):
+        os.environ.setdefault("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", str(blank))
+
+    # Plain string ("isos:iso/...") in vars.yml.
+    iso = raw_vars.get("proxmox_winpe_iso") or ""
+    if iso and not _looks_like_jinja(iso):
+        os.environ.setdefault("AUTOPILOT_WINPE_ISO", iso)
+
+    # Plain string in vars.yml.
+    allow = raw_vars.get("autopilot_winpe_identity_allowlist") or ""
+    if allow and not _looks_like_jinja(allow):
+        os.environ.setdefault("AUTOPILOT_WINPE_IDENTITY_ALLOWLIST", allow)
 
 
 def _fetch_settings_options():
@@ -411,6 +447,7 @@ from web import device_history_db, device_monitor
 from web import auth as _auth
 
 from web.winpe_endpoints import router as _winpe_router
+_bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
 
 

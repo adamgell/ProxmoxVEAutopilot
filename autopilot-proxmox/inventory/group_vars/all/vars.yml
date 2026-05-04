@@ -67,6 +67,26 @@ proxmox_answer_iso: "isos:iso/autounattend.iso"
 proxmox_template_vmid: 105
 
 # =============================================================================
+# WinPE provisioning (phase-0 deploy path)
+# =============================================================================
+# VMID of an empty/clean Proxmox template the WinPE path clones from.
+# Configure once after running tools/winpe-build/build-winpe.ps1 and
+# uploading the ISO to proxmox_iso_storage. Leave null to disable the
+# WinPE option in the web UI.
+winpe_blank_template_vmid: null
+
+# Path of the most recent WinPE ISO in Proxmox storage notation.
+# Example: "isos:iso/winpe-autopilot-amd64-83793f7eb931ecee.iso"
+proxmox_winpe_iso: null
+
+# HMAC secret for /winpe/* bearer tokens. Sourced from vault.
+autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('') }}"
+
+# Comma-separated list of hostnames/IPs allowed to call
+# /winpe/run/<id>/identity (Ansible controllers).
+autopilot_winpe_identity_allowlist: "127.0.0.1,localhost"
+
+# =============================================================================
 # VM defaults
 # =============================================================================
 vm_cores: 2

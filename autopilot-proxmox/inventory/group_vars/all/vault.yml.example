@@ -29,3 +29,7 @@ vault_proxmox_root_password: ""
 vault_entra_app_id: ""
 vault_entra_tenant_id: ""
 vault_entra_app_secret: ""
+
+# Bearer-token signing secret for /winpe/* endpoints. Generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+vault_autopilot_winpe_token_secret: ""
