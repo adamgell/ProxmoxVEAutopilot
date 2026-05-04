@@ -83,3 +83,127 @@ def test_uuid_state_index_present(db_path):
             "SELECT name FROM sqlite_master WHERE type='index'"
         )}
     assert "idx_provisioning_runs_vm_uuid_state" in idx
+
+
+def test_create_run_returns_id_with_null_vmid(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="s", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    assert run_id == 1
+    run = sequences_db.get_provisioning_run(db_path, run_id)
+    assert run["vmid"] is None
+    assert run["vm_uuid"] is None
+    assert run["state"] == "queued"
+    assert run["provision_path"] == "winpe"
+
+
+def test_set_run_identity_populates_vmid_and_uuid(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="s", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1234,
+        vm_uuid="00000000-0000-0000-0000-aabbccddeeff",
+    )
+    run = sequences_db.get_provisioning_run(db_path, run_id)
+    assert run["vmid"] == 1234
+    assert run["vm_uuid"] == "00000000-0000-0000-0000-aabbccddeeff"
+    assert run["state"] == "awaiting_winpe"
+
+
+def test_get_run_by_uuid_state_finds_match(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="s", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1234, vm_uuid="abc",
+    )
+    found = sequences_db.find_run_by_uuid_state(
+        db_path, vm_uuid="abc", state="awaiting_winpe",
+    )
+    assert found["id"] == run_id
+
+
+def test_get_run_by_uuid_state_returns_none_when_state_wrong(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="s", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1234, vm_uuid="abc",
+    )
+    found = sequences_db.find_run_by_uuid_state(
+        db_path, vm_uuid="abc", state="firstlogon",
+    )
+    assert found is None
+
+
+def test_append_step_assigns_order_index_and_pending_state(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="s", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    s1 = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="partition_disk",
+        params={"layout": "default"},
+    )
+    s2 = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="apply_wim", params={},
+    )
+    assert s1["order_index"] == 0
+    assert s2["order_index"] == 1
+    assert s1["state"] == "pending"
+    assert s1["params_json"] == '{"layout": "default"}'
+
+
+def test_update_step_state_records_timestamps(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="s", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    s = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="apply_wim", params={},
+    )
+    sequences_db.update_run_step_state(
+        db_path, step_id=s["id"], state="running",
+    )
+    sequences_db.update_run_step_state(
+        db_path, step_id=s["id"], state="ok",
+    )
+    steps = sequences_db.list_run_steps(db_path, run_id=run_id)
+    assert steps[0]["state"] == "ok"
+    assert steps[0]["started_at"] is not None
+    assert steps[0]["finished_at"] is not None

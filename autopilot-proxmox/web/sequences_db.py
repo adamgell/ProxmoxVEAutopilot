@@ -746,3 +746,144 @@ def seed_defaults(db_path, cipher) -> None:
             target_os="ubuntu",
             steps=ubuntu_apt_cache_steps,
         )
+
+
+def create_provisioning_run(db_path, *,
+                            sequence_id: int,
+                            provision_path: str) -> int:
+    if provision_path not in ("clone", "winpe"):
+        raise ValueError(f"invalid provision_path: {provision_path!r}")
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO provisioning_runs "
+            "(sequence_id, provision_path, state, started_at) "
+            "VALUES (?, ?, 'queued', ?)",
+            (sequence_id, provision_path, _now()),
+        )
+        return cur.lastrowid
+
+
+def get_provisioning_run(db_path, run_id: int) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM provisioning_runs WHERE id=?", (run_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _normalize_uuid(vm_uuid: str) -> str:
+    """Canonical UUID form for DB writes and lookups: lowercase, stripped.
+    The Ansible role's _vm_identity.uuid is upper-case; WMI in WinPE
+    typically returns lower-case but is documented as case-insensitive.
+    Persist one form so an exact-match WHERE clause can be used."""
+    return (vm_uuid or "").strip().lower()
+
+
+def set_provisioning_run_identity(db_path, *,
+                                  run_id: int,
+                                  vmid: int,
+                                  vm_uuid: str) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE provisioning_runs "
+            "SET vmid=?, vm_uuid=?, state='awaiting_winpe' "
+            "WHERE id=? AND state='queued'",
+            (vmid, _normalize_uuid(vm_uuid), run_id),
+        )
+
+
+def find_run_by_uuid_state(db_path, *,
+                           vm_uuid: str,
+                           state: str) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM provisioning_runs "
+            "WHERE vm_uuid=? AND state=? "
+            "ORDER BY id DESC LIMIT 1",
+            (_normalize_uuid(vm_uuid), state),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_provisioning_run_state(db_path, *,
+                                  run_id: int,
+                                  state: str,
+                                  last_error: Optional[str] = None) -> None:
+    with _connect(db_path) as conn:
+        if state in ("done", "failed"):
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state=?, last_error=?, finished_at=? "
+                "WHERE id=?",
+                (state, last_error, _now(), run_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state=?, last_error=? WHERE id=?",
+                (state, last_error, run_id),
+            )
+
+
+def append_run_step(db_path, *,
+                    run_id: int,
+                    phase: str,
+                    kind: str,
+                    params: dict) -> dict:
+    with _connect(db_path) as conn:
+        nxt = conn.execute(
+            "SELECT COALESCE(MAX(order_index)+1, 0) "
+            "FROM provisioning_run_steps WHERE run_id=?",
+            (run_id,),
+        ).fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO provisioning_run_steps "
+            "(run_id, order_index, phase, kind, params_json, state) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
+            (run_id, nxt, phase, kind, json.dumps(params, sort_keys=True)),
+        )
+        sid = cur.lastrowid
+        row = conn.execute(
+            "SELECT * FROM provisioning_run_steps WHERE id=?", (sid,)
+        ).fetchone()
+        return dict(row)
+
+
+def update_run_step_state(db_path, *,
+                          step_id: int,
+                          state: str,
+                          error: Optional[str] = None) -> None:
+    with _connect(db_path) as conn:
+        if state == "running":
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state='running', started_at=COALESCE(started_at, ?) "
+                "WHERE id=?",
+                (_now(), step_id),
+            )
+        elif state in ("ok", "error"):
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state=?, finished_at=?, error=? WHERE id=?",
+                (state, _now(), error, step_id),
+            )
+        else:
+            raise ValueError(f"invalid step state: {state!r}")
+
+
+def list_run_steps(db_path, run_id: int) -> list[dict]:
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM provisioning_run_steps "
+            "WHERE run_id=? ORDER BY order_index",
+            (run_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_run_step(db_path, step_id: int) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM provisioning_run_steps WHERE id=?", (step_id,)
+        ).fetchone()
+    return dict(row) if row else None
