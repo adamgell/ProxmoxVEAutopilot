@@ -235,3 +235,30 @@ Describe 'Invoke-Action-ApplyWim' {
             -IndexResolver { 1 } } | Should -Throw '*dism*5*'
     }
 }
+
+Describe 'Invoke-Action-InjectDrivers' {
+    It 'invokes dism /add-driver against the VirtIO ISO root with /recurse' {
+        $script:invocations = @()
+        $dismRunner = { param($a) $script:invocations += ,$a
+            return @{ ExitCode = 0; Stdout = '' } }
+        $resolveVirtio = { 'E:\' }
+        Invoke-Action-InjectDrivers `
+            -Params @{ required_infs = @('vioscsi.inf') } `
+            -DismRunner $dismRunner `
+            -VirtioPathResolver $resolveVirtio
+        $args = $script:invocations[0] -join ' '
+        $args | Should -Match '/Image:V:\\\\'
+        $args | Should -Match '/Add-Driver'
+        $args | Should -Match '/Driver:E:\\'
+        $args | Should -Match '/Recurse'
+        $args | Should -Match '/ForceUnsigned'
+    }
+
+    It 'throws when the VirtIO source cannot be located' {
+        { Invoke-Action-InjectDrivers `
+            -Params @{ required_infs = @('vioscsi.inf') } `
+            -DismRunner { param($a) @{ ExitCode = 0 } } `
+            -VirtioPathResolver { throw 'no virtio iso found' } } |
+            Should -Throw '*virtio*'
+    }
+}

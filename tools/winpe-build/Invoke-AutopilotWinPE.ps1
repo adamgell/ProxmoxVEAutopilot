@@ -256,3 +256,33 @@ function Invoke-Action-ApplyWim {
         throw "dism /Apply-Image failed (exit $($r.ExitCode)): $($r.Stdout)"
     }
 }
+
+function _ResolveVirtioPath {
+    foreach ($drive in @('D','E','F','G','H','I')) {
+        $marker = "$($drive):\virtio-win_license.txt"
+        if (Test-Path -LiteralPath $marker) { return "$($drive):\" }
+        $marker = "$($drive):\NetKVM"
+        if (Test-Path -LiteralPath $marker) { return "$($drive):\" }
+    }
+    throw "could not find VirtIO ISO on any attached CD-ROM (D-I)"
+}
+
+function Invoke-Action-InjectDrivers {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DismRunner = { param($a) _RunDism -DismArgs $a },
+        [scriptblock] $VirtioPathResolver = { _ResolveVirtioPath }
+    )
+    $virtioRoot = & $VirtioPathResolver
+    $dismArgs = @(
+        '/Image:V:\\',
+        '/Add-Driver',
+        "/Driver:$virtioRoot",
+        '/Recurse',
+        '/ForceUnsigned'
+    )
+    $r = & $DismRunner $dismArgs
+    if ($r.ExitCode -ne 0) {
+        throw "dism /Add-Driver failed (exit $($r.ExitCode)): $($r.Stdout)"
+    }
+}
