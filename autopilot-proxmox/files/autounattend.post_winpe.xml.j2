@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- ================================================================
+       Specialize - machine identity
+       ================================================================ -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <ComputerName>{{ specialize_computer_name }}</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+
+    <!-- Install QEMU Guest Agent from the VirtIO ISO during specialize.
+         This runs as SYSTEM before OOBE starts - NO AutoLogon required
+         - so the clone has a working GA by the time Ansible's
+         hash_capture / autopilot_inject tasks try to reach it via
+         `qm guest exec`. Previously the MSI install was in
+         FirstLogonCommands, which only fire when AutoLogon is set;
+         we disabled AutoLogon so the clone stays at OOBE for Autopilot,
+         and clones stopped getting GA as a side-effect.
+
+         The loop scans D:, E:, F: because the VirtIO ISO's drive
+         letter shifts depending on which removable media the clone
+         has attached. msiexec /qn /norestart is silent + doesn't
+         force a reboot mid-specialize. -->
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>cmd.exe /c for %d in (D E F) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart</Path>
+          <Description>Install QEMU Guest Agent</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>cmd.exe /c sc config QEMU-GA start= auto &amp;&amp; net start QEMU-GA</Path>
+          <Description>Ensure QEMU-GA service is set to auto-start and running</Description>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>{{ specialize_identification_component }}
+  </settings>
+
+  <!-- ================================================================
+       OOBE - skip all prompts, create admin, install guest agent
+       ================================================================ -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64" language="neutral"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+
+      <!-- OOBE on clones is INTERACTIVE - start at the Region screen.
+           The original autounattend.xml had Hide* flags here that
+           auto-completed every OOBE screen (region, keyboard, network,
+           account, EULA, privacy) so a clone booted straight into the
+           Administrator desktop. That's correct for template *install*
+           (where the operator isn't sitting in front of it) but wrong
+           for clones - Autopilot enrollment + hash-capture workflows
+           rely on OOBE staying open so the operator (or end user) can
+           drive it. With AutoLogon also disabled by default in the
+           renderer, removing these flags lets OOBE display every
+           screen normally, starting at Region. -->
+      <OOBE/>
+
+{{ oobe_user_accounts }}
+
+      <!-- Auto-logon once to run FirstLogonCommands -->
+{{ oobe_auto_logon }}
+
+      <FirstLogonCommands>
+        <!-- Install QEMU Guest Agent from VirtIO ISO (scan D:, E:, F:) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>cmd.exe /c for %d in (D E F) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart</CommandLine>
+          <Description>Install QEMU Guest Agent</Description>
+        </SynchronousCommand>
+        <!-- Ensure the guest agent service is running -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>cmd.exe /c net start QEMU-GA</CommandLine>
+          <Description>Start QEMU Guest Agent service</Description>
+        </SynchronousCommand>
+        <!-- Enable RDP (useful for debugging, optional) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>powershell.exe -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine>
+          <Description>Enable Remote Desktop</Description>
+        </SynchronousCommand>{{ extra_first_logon_commands }}
+      </FirstLogonCommands>
+
+    </component>
+
+    <!-- International-Core in oobeSystem auto-fills the Region/Keyboard
+         answers, skipping the very first OOBE screens. Removed for
+         clones so OOBE stops at the Region selection screen. The
+         WinPE-pass International-Core component above is kept - that
+         one applies during template *install*, not clone OOBE, so it
+         doesn't affect runtime OOBE behavior. -->
+
+  </settings>
+</unattend>
