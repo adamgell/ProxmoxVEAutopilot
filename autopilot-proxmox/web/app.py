@@ -446,9 +446,10 @@ from web import sequence_compiler
 from web import device_history_db, device_monitor
 from web import auth as _auth
 
-from web.winpe_endpoints import router as _winpe_router
+from web.winpe_endpoints import router as _winpe_router, api_router as _winpe_api_router
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
+app.include_router(_winpe_api_router)
 
 
 # ---------------------------------------------------------------------------

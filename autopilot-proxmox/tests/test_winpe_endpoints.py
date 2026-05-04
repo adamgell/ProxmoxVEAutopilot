@@ -447,3 +447,61 @@ def test_done_is_idempotent(web_client, test_db, monkeypatch):
     r = web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
     # Already past awaiting_winpe; second call must not error
     assert r.status_code == 200
+
+
+def test_api_run_returns_state_and_steps(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 1234, "vm_uuid": "u-1"},
+    )
+    web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-1", "mac": "aa", "build_sha": "x"},
+    )
+    r = web_client.get(f"/api/runs/{run_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == run_id
+    assert body["state"] == "awaiting_winpe"
+    assert isinstance(body["steps"], list)
+    assert body["steps"][0]["kind"] == "partition_disk"
+
+
+def test_api_run_returns_404_for_unknown(web_client):
+    r = web_client.get("/api/runs/99999")
+    assert r.status_code == 404
+
+
+def test_api_run_fail_marks_run_failed(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 1234, "vm_uuid": "u-1"},
+    )
+    r = web_client.post(
+        f"/api/runs/{run_id}/fail",
+        json={"reason": "controller timeout 1800s"},
+    )
+    assert r.status_code == 200
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "failed"
+    assert "controller timeout" in (run["last_error"] or "")
+
+
+def test_api_run_fail_is_idempotent_on_terminal_state(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    from web import sequences_db
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="done",
+    )
+    r = web_client.post(
+        f"/api/runs/{run_id}/fail", json={"reason": "x"},
+    )
+    assert r.status_code == 200
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "done"

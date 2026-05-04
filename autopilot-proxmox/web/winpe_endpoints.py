@@ -344,3 +344,48 @@ def post_done(payload: dict = Depends(_require_bearer_token)):
             state="awaiting_specialize",
         )
     return {"ok": True}
+
+
+api_router = APIRouter(prefix="/api", tags=["api"])
+
+
+# Stale-run TTL: if an active run's newest step has been 'running' for
+# longer than this, /api/runs/<id> reads (and /winpe/register lookups)
+# flip the run to 'failed' inline before returning. 30 min covers the
+# worst-case apply_wim + driver inject we have observed; tighten if
+# your storage is faster.
+_STALE_RUN_TTL_SECONDS = 30 * 60
+
+
+@api_router.get("/runs/{run_id}")
+def get_run(run_id: int):
+    db = _db_path()
+    sequences_db.sweep_stale_runs(db, ttl_seconds=_STALE_RUN_TTL_SECONDS)
+    run = sequences_db.get_provisioning_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    steps = sequences_db.list_run_steps(db, run_id=run_id)
+    return {**run, "steps": steps}
+
+
+class _RunFailBody(BaseModel):
+    reason: str = "controller-side timeout"
+
+
+@api_router.post("/runs/{run_id}/fail")
+def post_run_fail(run_id: int, body: _RunFailBody):
+    """Out-of-band failure marker. Called by the playbook's
+    wait_for_run_state rescue block when its poll loop times out, and
+    by operators clicking 'fail run' in the UI. Idempotent: terminal
+    states stay terminal."""
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run["state"] in ("done", "failed"):
+        return {"ok": True}
+    sequences_db.update_provisioning_run_state(
+        db, run_id=run_id, state="failed",
+        last_error=body.reason,
+    )
+    return {"ok": True}
