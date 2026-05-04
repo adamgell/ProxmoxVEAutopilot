@@ -1,5 +1,7 @@
 # WinPE-Orchestrated Proxmox Deploy Implementation Plan
 
+Version: v2 (2026-05-04, revised after operator review)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a blank-disk WinPE provisioning path to ProxmoxVEAutopilot that boots a Proxmox VM into a custom WinPE image, partitions and applies a stock Windows install.wim, injects boot-critical drivers, stages the Autopilot configuration JSON offline, then hands off to Specialize/OOBE/FirstLogon for the existing FLC sequence to run unchanged. Hash capture stays in OOBE FLC for M1; pre-OS hash capture in WinPE is M2.
@@ -640,7 +642,7 @@ def test_compiled_winpe_phase_default_fields():
     assert p.requires_windows_iso is True
     assert p.requires_virtio_iso is True
     assert p.expected_reboot_count == 1
-    assert p.autopilot_config_payload is None
+    assert p.autopilot_enabled is False
 
 
 def test_compiled_winpe_phase_actions_is_independent_per_instance():
@@ -670,7 +672,12 @@ class CompiledWinPEPhase:
     requires_windows_iso: bool = True
     requires_virtio_iso: bool = True
     expected_reboot_count: int = 1
-    autopilot_config_payload: Optional[dict] = None
+    autopilot_enabled: bool = False
+    # Note: actual AutopilotConfigurationFile.json bytes are NOT carried
+    # on this struct. The /winpe/autopilot-config/<run_id> endpoint reads
+    # them from autopilot_config_path at request time (matching what
+    # roles/autopilot_inject does today) so updates to the file take
+    # effect without recompiling existing runs.
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -781,7 +788,12 @@ def test_compile_winpe_inject_drivers_lists_required_infs():
     }
 
 
-def test_compile_winpe_autopilot_payload_present_when_enabled():
+def test_compile_winpe_marks_autopilot_when_enabled():
+    """The compiler signals autopilot via the presence of the
+    stage_autopilot_config action; the actual JSON bytes are loaded
+    by the Flask endpoint from autopilot_config_path at request time
+    (not embedded in the compiled phase, since the file may change
+    between compile and serve)."""
     from web.sequence_compiler import compile_winpe
     seq = _seq(steps=[{
         "step_type": "autopilot_entra",
@@ -789,9 +801,7 @@ def test_compile_winpe_autopilot_payload_present_when_enabled():
         "enabled": True, "order_index": 0,
     }])
     p = compile_winpe(seq)
-    assert p.autopilot_config_payload is not None
-    # Cloud-Assigned-Tenant style minimal sanity
-    assert isinstance(p.autopilot_config_payload, dict)
+    assert any(a["kind"] == "stage_autopilot_config" for a in p.actions)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -810,19 +820,6 @@ Append to `web/sequence_compiler.py`:
 # ---------------------------------------------------------------------------
 # WinPE phase compiler
 # ---------------------------------------------------------------------------
-
-# Default Autopilot config payload shape. Operator must override
-# AutopilotConfigurationFile.json contents in vault/group_vars before any
-# real Autopilot run; this payload is the minimum the compiler needs to
-# emit so the agent has SOMETHING to write. The Flask endpoint
-# /winpe/autopilot-config/<run_id> overrides this with the real bytes
-# from autopilot_config_path at request time.
-_AUTOPILOT_PAYLOAD_PLACEHOLDER = {
-    "Comment_File": "Profile served by ProxmoxVEAutopilot",
-    "Version": 2049,
-    "ZtdCorrelationId": "00000000-0000-0000-0000-000000000000",
-}
-
 
 def _sequence_has_autopilot(sequence: dict) -> bool:
     for step in sequence.get("steps", []) or []:
@@ -889,7 +886,7 @@ def compile_winpe(sequence: dict,
                 ),
             },
         })
-        out.autopilot_config_payload = dict(_AUTOPILOT_PAYLOAD_PLACEHOLDER)
+        out.autopilot_enabled = True
 
     out.actions.append({"kind": "bake_boot_entry", "params": {}})
     out.actions.append({"kind": "stage_unattend", "params": {}})
@@ -953,10 +950,15 @@ def test_template_has_oobeSystem_pass():
     assert 'pass="oobeSystem"' in text
 
 
-def test_template_has_offlineServicing_pnp_block():
-    """vioserial driver-store staging must survive the windowsPE removal."""
+def test_template_has_no_disk_config_or_image_install():
+    """Setup's windowsPE pass owns DiskConfiguration / ImageInstall.
+    The post_winpe path bypasses Setup, so neither block must remain.
+    Drivers come from phase-0 dism /add-driver against the VirtIO ISO,
+    not from a PnpCustomizations pass in the unattend."""
     text = _TEMPLATE.read_text()
-    assert "Microsoft-Windows-PnpCustomizationsNonWinPE" in text
+    assert "<DiskConfiguration>" not in text
+    assert "<ImageInstall>" not in text
+    assert "Microsoft-Windows-PnpCustomizationsWinPE" not in text
 
 
 def test_template_jinja_blocks_match_full_template():
@@ -1004,10 +1006,10 @@ Expected: 0.
 ```bash
 grep -c 'pass="specialize"' autopilot-proxmox/files/autounattend.post_winpe.xml.j2
 grep -c 'pass="oobeSystem"' autopilot-proxmox/files/autounattend.post_winpe.xml.j2
-grep -c 'PnpCustomizationsNonWinPE' autopilot-proxmox/files/autounattend.post_winpe.xml.j2
+grep -c 'DiskConfiguration\|ImageInstall\|PnpCustomizationsWinPE' autopilot-proxmox/files/autounattend.post_winpe.xml.j2
 ```
 
-Expected: each at least 1.
+Expected: first two each at least 1; the third must be 0 (those blocks all lived inside the deleted windowsPE pass).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1340,17 +1342,30 @@ import pytest
 
 
 def _create_seq(client, **overrides):
-    """Helper: create a sequence via the existing API and return its id."""
+    """Helper: create a sequence via the existing API and return its id.
+
+    The real API uses _StepIn with .params (NOT params_json) and returns
+    HTTP 201. Caller may pass `steps` already in {step_type, params,
+    enabled} shape; we coerce loose enabled values to bool.
+    """
+    raw_steps = overrides.get("steps", [])
+    steps = []
+    for s in raw_steps:
+        steps.append({
+            "step_type": s["step_type"],
+            "params": s.get("params") or s.get("params_json") and __import__("json").loads(s["params_json"]) or {},
+            "enabled": bool(s.get("enabled", True)),
+        })
     body = {
-        "name": overrides.get("name", "wpe"),
+        "name": overrides.get("name", f"wpe-{id(client)}"),
         "description": "",
         "target_os": "windows",
         "produces_autopilot_hash": overrides.get("autopilot", False),
         "is_default": False,
-        "steps": overrides.get("steps", []),
+        "steps": steps,
     }
     r = client.post("/api/sequences", json=body)
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
@@ -1856,10 +1871,25 @@ git commit -m "feat(winpe): GET /winpe/sequence/<run_id> with bearer auth"
 Append:
 
 ```python
-def test_autopilot_config_returns_payload_when_enabled(web_client, test_db):
+def test_autopilot_config_returns_real_file_bytes_when_enabled(
+    web_client, test_db, tmp_path, monkeypatch,
+):
+    """The endpoint must serve the real AutopilotConfigurationFile.json
+    that roles/autopilot_inject would otherwise inject via QGA, not a
+    compiler-side placeholder. Operator-managed bytes flow unchanged."""
+    real = tmp_path / "AutopilotConfigurationFile.json"
+    real.write_bytes(
+        b'{"CloudAssignedTenantId":"00000000-0000-0000-0000-000000000001",'
+        b'"Version":2049}'
+    )
+    from web import winpe_endpoints
+    monkeypatch.setattr(
+        winpe_endpoints, "_resolve_autopilot_config_path",
+        lambda: real,
+    )
     seq_id = _create_seq(web_client, steps=[{
         "step_type": "autopilot_entra",
-        "params_json": "{}", "enabled": 1, "order_index": 0,
+        "params": {}, "enabled": True, "order_index": 0,
     }], autopilot=True)
     run_id = _create_run(test_db, seq_id)
     web_client.post(
@@ -1876,7 +1906,7 @@ def test_autopilot_config_returns_payload_when_enabled(web_client, test_db):
     )
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/json")
-    assert r.json().get("Version") == 2049
+    assert r.content == real.read_bytes()
 
 
 def test_autopilot_config_returns_404_when_not_enabled(web_client, test_db):
@@ -1910,6 +1940,23 @@ Expected: 2 FAIL.
 Append to `web/winpe_endpoints.py`:
 
 ```python
+def _resolve_autopilot_config_path():
+    """Resolve the on-disk path to AutopilotConfigurationFile.json.
+    Mirrors what roles/autopilot_inject reads from
+    `autopilot_config_path` (defaults to
+    autopilot-proxmox/files/AutopilotConfigurationFile.json).
+    Tests monkeypatch this to point at a fixture."""
+    from pathlib import Path
+    from web import app as web_app
+    cfg = web_app._load_vars()
+    p = cfg.get("autopilot_config_path")
+    if p:
+        return Path(p)
+    # Default mirrors inventory/group_vars/all/vars.yml
+    base = Path(__file__).resolve().parent.parent
+    return base / "files" / "AutopilotConfigurationFile.json"
+
+
 @router.get("/autopilot-config/{run_id}")
 def get_autopilot_config(run_id: int,
                          _: int = Depends(_require_bearer_for_run)):
@@ -1920,9 +1967,19 @@ def get_autopilot_config(run_id: int,
         raise HTTPException(status_code=404, detail="run not found")
     seq = sequences_db.get_sequence(db, run["sequence_id"])
     phase = sequence_compiler.compile_winpe(seq)
-    if phase.autopilot_config_payload is None:
+    if not phase.autopilot_enabled:
         raise HTTPException(status_code=404, detail="autopilot not enabled")
-    return phase.autopilot_config_payload
+    path = _resolve_autopilot_config_path()
+    if not path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"autopilot enabled but {path} is missing; "
+                "operator must populate AutopilotConfigurationFile.json"
+            ),
+        )
+    return Response(content=path.read_bytes(),
+                    media_type="application/json")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -2000,6 +2057,16 @@ Append to `web/winpe_endpoints.py`:
 from fastapi.responses import Response
 
 
+def _credential_resolver_for_run():
+    """Build a credential resolver matching the existing /api/jobs/provision
+    pattern. Local-admin / domain-join steps need this to compile."""
+    from web import app as web_app
+    def _resolve(cid: int):
+        rec = sequences_db.get_credential(_db_path(), web_app._cipher(), cid)
+        return rec["payload"] if rec else None
+    return _resolve
+
+
 @router.get("/unattend/{run_id}")
 def get_unattend(run_id: int,
                  _: int = Depends(_require_bearer_for_run)):
@@ -2009,7 +2076,12 @@ def get_unattend(run_id: int,
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     seq = sequences_db.get_sequence(db, run["sequence_id"])
-    compiled = sequence_compiler.compile(seq)
+    try:
+        compiled = sequence_compiler.compile(
+            seq, resolve_credential=_credential_resolver_for_run(),
+        )
+    except sequence_compiler.CompilerError as e:
+        raise HTTPException(status_code=400, detail=f"compile failed: {e}")
     xml = unattend_renderer.render_unattend(
         compiled, phase_layout="post_winpe",
     )
@@ -2264,17 +2336,28 @@ def _proxmox_detach_and_set_boot(*, vmid: int, slots: list[str],
                                  set_boot_order: str) -> None:
     """Detach disks and set boot order via Proxmox API.
 
-    Real implementation lives in web/proxmox_client.py (the existing
-    helper module used elsewhere); this wrapper exists so tests can
-    monkeypatch a single seam without touching the broader API code.
+    Mirrors the inline pattern used in app.py (search for
+    `proxmox_api_base` + `/qemu/{vmid}/config` PUTs and the
+    `delete: <slot>` form-urlencoded body in
+    roles/cleanup_answer_media.yml). One PUT carries delete= and boot=
+    together; Proxmox accepts both keys in the same form body.
     """
-    from web import proxmox_client
-    proxmox_client.update_vm_config(
-        vmid=vmid,
-        body={**{slot: "" for slot in slots},  # delete=...
-              "boot": set_boot_order,
-              "delete": ",".join(slots)},
+    import requests
+    from web import app as web_app
+    cfg = web_app._load_proxmox_config()
+    base = cfg["proxmox_api_base"]
+    headers = {"Authorization": cfg["proxmox_api_auth_header"]}
+    body = {
+        "delete": ",".join(slots),
+        "boot": set_boot_order,
+    }
+    r = requests.put(
+        f"{base}/nodes/{cfg['proxmox_node']}/qemu/{vmid}/config",
+        data=body, headers=headers,
+        verify=cfg.get("proxmox_validate_certs", False),
+        timeout=30,
     )
+    r.raise_for_status()
 
 
 @router.post("/done")
@@ -2300,7 +2383,7 @@ def post_done(payload: dict = Depends(_require_bearer_token)):
     return {"ok": True}
 ```
 
-If `web/proxmox_client.py` does not yet expose `update_vm_config` with this exact signature, add a thin wrapper that uses the existing API-token-based `PUT /nodes/<node>/qemu/<vmid>/config` pattern (the body format is form-urlencoded with `delete=ide2,sata0&boot=order=scsi0`).
+The pattern `body = {"delete": ",".join(slots), "boot": set_boot_order}` mirrors `cleanup_answer_media.yml` (which uses `body: { delete: "sata0" }` form-urlencoded). One PUT carries both keys; Proxmox accepts the combined body.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2313,7 +2396,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add autopilot-proxmox/web/winpe_endpoints.py autopilot-proxmox/web/proxmox_client.py autopilot-proxmox/tests/test_winpe_endpoints.py
+git add autopilot-proxmox/web/winpe_endpoints.py autopilot-proxmox/tests/test_winpe_endpoints.py
 git commit -m "feat(winpe): POST /winpe/done detaches ISOs and advances state"
 ```
 
@@ -3897,18 +3980,29 @@ try {
         }
     }
 
-    # Bake-in fallback drivers (NetKVM at minimum so phase 0 has a NIC).
+    # Bake-in WinPE-time drivers. vioscsi is REQUIRED so WinPE can see
+    # the virtio-scsi-pci disk (otherwise diskpart's `select disk 0`
+    # will fail). NetKVM is REQUIRED so the agent can phone home.
+    # vioserial is included so any phase-0 fallback to QGA still works.
+    # Other drivers (Balloon, vioinput, viogpudo) are needed only by the
+    # OS post-apply and are injected into V:\ via dism /add-driver in
+    # phase 0 from the still-attached VirtIO ISO -- not baked into WinPE.
     $virtioRoot = $null
     foreach ($candidate in @('D:\virtio','F:\BuildRoot\inputs\virtio-win')) {
         if (Test-Path -LiteralPath $candidate) { $virtioRoot = $candidate; break }
     }
-    if ($virtioRoot) {
-        $netkvm = Get-ChildItem -Path $virtioRoot -Recurse -Filter 'netkvm.inf' |
+    if (-not $virtioRoot) {
+        throw "WinPE build needs a VirtIO driver source at D:\virtio or F:\BuildRoot\inputs\virtio-win"
+    }
+    foreach ($infName in @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')) {
+        $inf = Get-ChildItem -Path $virtioRoot -Recurse -Filter $infName |
             Where-Object FullName -match "\\$Arch\\" |
             Select-Object -First 1
-        if ($netkvm) {
-            & dism.exe /Image:$mountDir /Add-Driver /Driver:$($netkvm.FullName) /ForceUnsigned | Out-Null
+        if (-not $inf) {
+            throw "WinPE build cannot find $infName under $virtioRoot for $Arch"
         }
+        & dism.exe /Image:$mountDir /Add-Driver /Driver:$($inf.FullName) /ForceUnsigned | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Add-Driver $infName failed: $LASTEXITCODE" }
     }
 
     # Stage agent files.
@@ -4101,11 +4195,42 @@ cd autopilot-proxmox && yamllint inventory/group_vars/all/vars.yml inventory/gro
 
 Expected: clean (no errors).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Bridge inventory vars into the FastAPI process**
+
+`web/winpe_token.py` reads `AUTOPILOT_WINPE_TOKEN_SECRET` from the env. The repo's pattern is to load Ansible vars via `_load_vars()` (see `web/app.py` line 246). So the bridge happens in `app.py` at startup: it reads the inventory value and exports it to the env BEFORE `winpe_endpoints` is imported.
+
+In `web/app.py`, immediately after the `_load_vars()` definition (around line 246) and before any `from web.winpe_endpoints import ...` line, add:
+
+```python
+def _bridge_winpe_vars_to_env() -> None:
+    """Mirror inventory-loaded WinPE settings into os.environ so
+    web/winpe_token.py and web/winpe_endpoints.py (which avoid a
+    direct dependency on _load_vars at import time) can read them."""
+    import os
+    cfg = _load_vars()
+    secret = cfg.get("autopilot_winpe_token_secret") or ""
+    if secret:
+        os.environ["AUTOPILOT_WINPE_TOKEN_SECRET"] = secret
+    blank = cfg.get("winpe_blank_template_vmid")
+    if blank:
+        os.environ["AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID"] = str(blank)
+    iso = cfg.get("proxmox_winpe_iso") or ""
+    if iso:
+        os.environ["AUTOPILOT_WINPE_ISO"] = iso
+    allow = cfg.get("autopilot_winpe_identity_allowlist") or ""
+    if allow:
+        os.environ["AUTOPILOT_WINPE_IDENTITY_ALLOWLIST"] = allow
+
+_bridge_winpe_vars_to_env()
+```
+
+The order matters: this call must precede `app.include_router(_winpe_router)` (which already happens in C2). Move the include block down past `_bridge_winpe_vars_to_env()` if necessary.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add autopilot-proxmox/inventory/group_vars/all/vars.yml autopilot-proxmox/inventory/group_vars/all/vault.yml.example
-git commit -m "feat(inventory): add WinPE blank-template, ISO, and token vars"
+git add autopilot-proxmox/inventory/group_vars/all/vars.yml autopilot-proxmox/inventory/group_vars/all/vault.yml.example autopilot-proxmox/web/app.py
+git commit -m "feat(inventory): WinPE vars + app.py bridge to env"
 ```
 
 ### Task F3: Create `wait_for_run_state.yml` common task
@@ -4283,8 +4408,17 @@ Create `autopilot-proxmox/playbooks/_provision_proxmox_winpe_vm.yml`:
   hosts: localhost
   gather_facts: false
   vars:
-    _template_vmid_override: "{{ winpe_blank_template_vmid }}"
+    # The clone role reads `proxmox_template_vmid` (set in inventory).
+    # Override it for this run so the role clones the WinPE blank
+    # template, not the sysprepped Windows template.
+    proxmox_template_vmid: "{{ winpe_blank_template_vmid }}"
+    # Skip Panther offline-injection: we serve the unattend over HTTP
+    # at boot via /winpe/unattend/<run_id>.
     _skip_panther_injection: true
+    # Defer the role's "Start VM" task until after we attach all three
+    # ISOs. Otherwise the role boots the VM with no media, BIOS finds
+    # nothing on scsi0, and we lose the WinPE entry path.
+    vm_start_after_create: false
 
   pre_tasks:
     - name: Validate WinPE path is configured
@@ -4298,7 +4432,7 @@ Create `autopilot-proxmox/playbooks/_provision_proxmox_winpe_vm.yml`:
           proxmox_winpe_iso, and vault_autopilot_winpe_token_secret.
 
   tasks:
-    - name: Clone the WinPE blank template (skips Panther injection)
+    - name: Clone the WinPE blank template (skips Panther injection, no auto-start)
       ansible.builtin.include_role:
         name: proxmox_vm_clone
 
@@ -4387,6 +4521,17 @@ Create `autopilot-proxmox/playbooks/_provision_proxmox_winpe_vm.yml`:
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_reboot_cycle.yml"
       loop: "{{ range(0, (_causes_reboot_count | default(0) | int) + 1) | list }}"
 
+    # Hash capture is QGA-driven (Push scripts -> Execute -> Retrieve CSV)
+    # and lives in roles/hash_capture. The clone path runs this role at
+    # the equivalent point post-Specialize. M1 keeps hash capture in
+    # OOBE/QGA-time (NOT pre-OS WinPE); M2 moves it into phase 0.
+    - name: Capture Autopilot hash via QGA (M1 hash path)
+      ansible.builtin.include_role:
+        name: hash_capture
+      when:
+        - capture_hardware_hash | default(true) | bool
+        - (sequence_hash_capture_phase | default('oobe')) == 'oobe'
+
     - name: Detach VirtIO ISO post-Specialize
       ansible.builtin.uri:
         url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
@@ -4430,40 +4575,57 @@ git commit -m "feat(playbook): _provision_proxmox_winpe_vm.yml + wrapper"
 
 Two small UI additions: a Boot mode toggle on the provision page and a `/runs/<id>` timeline. The Flask side wires a `provision_path` form field to the new playbook; the timeline page renders run state via the `/api/runs/<id>` endpoint added in F4.
 
-### Task G1: Boot mode toggle on `/devices/<vmid>/provision`
+### Task G1: Boot-mode toggle on `/provision` and branch in `/api/jobs/provision`
+
+The existing routes are `GET /provision` (renders `provision.html`) and `POST /api/jobs/provision` (handler `start_provision`, uses Form fields `profile`, `count`, `sequence_id`, `serial_prefix`, etc.). We add ONE form field (`boot_mode`) and a branch in the POST handler that, when `boot_mode == "winpe"`, skips the answer-floppy build and launches the WinPE playbook with the appropriate `-e` overrides.
 
 **Files:**
 - Modify: `autopilot-proxmox/web/templates/provision.html`
-- Modify: `autopilot-proxmox/web/app.py` (provision POST handler)
-- Modify: `autopilot-proxmox/tests/test_winpe_endpoints.py` (or a new UI test file)
+- Modify: `autopilot-proxmox/web/app.py` (`provision_page` GET handler + `start_provision` POST handler)
+- Modify: `autopilot-proxmox/tests/test_winpe_endpoints.py`
 
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/test_winpe_endpoints.py`:
 
 ```python
-def test_provision_post_with_boot_mode_winpe_creates_run(web_client, test_db, monkeypatch):
+def test_provision_post_with_boot_mode_winpe_creates_run(
+    web_client, test_db, monkeypatch,
+):
+    """POST /api/jobs/provision with boot_mode=winpe creates a
+    provisioning_runs row, skips the answer-floppy build, and launches
+    provision_proxmox_winpe.yml."""
+    monkeypatch.setenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", "9001")
+    monkeypatch.setenv("AUTOPILOT_WINPE_ISO", "isos:iso/winpe-test.iso")
+
     seq_id = _create_seq(web_client)
 
-    # Stub the playbook launcher so we don't actually run Ansible.
     launches = []
-    def fake_launch(*, playbook, extra_vars):
-        launches.append({"playbook": playbook, "extra_vars": extra_vars})
-        return {"job_id": 1}
     from web import app as web_app
-    monkeypatch.setattr(web_app, "launch_playbook", fake_launch, raising=False)
+
+    def fake_run_playbook(playbook_path, extra_vars=None, **_):
+        launches.append({"playbook": playbook_path,
+                         "extra_vars": dict(extra_vars or {})})
+        return {"job_id": 1}
+
+    # Match whatever existing helper start_provision dispatches through.
+    # The repo wraps Ansible launch in a function on app.py; the test
+    # monkeypatches the same seam used by the clone path.
+    monkeypatch.setattr(
+        web_app, "_launch_provision_job", fake_run_playbook, raising=False,
+    )
 
     r = web_client.post(
-        "/devices/provision",
+        "/api/jobs/provision",
         data={
+            "profile": "generic-desktop",
+            "count": 1,
             "sequence_id": seq_id,
             "boot_mode": "winpe",
-            "vm_count": 1,
         },
     )
-    assert r.status_code in (200, 303)
-    # A run row was created
-    from web import sequences_db
+    assert r.status_code == 200, r.text
+
     import sqlite3
     with sqlite3.connect(test_db) as conn:
         n = conn.execute(
@@ -4471,18 +4633,37 @@ def test_provision_post_with_boot_mode_winpe_creates_run(web_client, test_db, mo
             "WHERE provision_path='winpe' AND state='queued'"
         ).fetchone()[0]
     assert n == 1
-    # The launcher was called with the WinPE playbook
-    assert any(l["playbook"].endswith("provision_proxmox_winpe.yml")
-               for l in launches)
+    assert any(
+        str(l["playbook"]).endswith("provision_proxmox_winpe.yml")
+        for l in launches
+    )
 
 
-def test_provision_winpe_hidden_when_template_not_configured(web_client, test_db, monkeypatch):
+def test_provision_post_winpe_rejected_when_not_configured(
+    web_client, monkeypatch,
+):
     monkeypatch.delenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", raising=False)
-    r = web_client.get("/devices/provision-form")
-    # The boot-mode toggle should still render the page; the WinPE option
-    # is gated behind the env / inventory variable being set.
+    monkeypatch.delenv("AUTOPILOT_WINPE_ISO", raising=False)
+    seq_id = _create_seq(web_client)
+    r = web_client.post(
+        "/api/jobs/provision",
+        data={
+            "profile": "generic-desktop", "count": 1,
+            "sequence_id": seq_id, "boot_mode": "winpe",
+        },
+    )
+    assert r.status_code == 400
+    assert b"WinPE" in r.content
+
+
+def test_provision_page_renders_winpe_option_when_configured(
+    web_client, monkeypatch,
+):
+    monkeypatch.setenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", "9001")
+    monkeypatch.setenv("AUTOPILOT_WINPE_ISO", "isos:iso/x.iso")
+    r = web_client.get("/provision")
     assert r.status_code == 200
-    assert b"WinPE" not in r.content
+    assert b'name="boot_mode"' in r.content
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -4491,11 +4672,31 @@ def test_provision_winpe_hidden_when_template_not_configured(web_client, test_db
 cd autopilot-proxmox && python -m pytest tests/test_winpe_endpoints.py -v -k provision_post
 ```
 
-Expected: 2 FAIL.
+Expected: 3 FAIL.
 
-- [ ] **Step 3: Add the form field to the provision template**
+- [ ] **Step 3: Add `_winpe_enabled` helper and pass into the GET context**
 
-In `web/templates/provision.html`, locate the form's submit area and add (immediately above the Submit button):
+In `web/app.py`, add (near the other inventory-derived helpers, e.g. next to `_load_vars`):
+
+```python
+def _winpe_enabled() -> bool:
+    """The provision UI shows the WinPE option only when the inventory
+    has wired up both a blank template VMID AND a WinPE ISO. The bridge
+    in _bridge_winpe_vars_to_env() exports these as env vars at startup
+    (see Task F2 step 4); we read the env so the test suite can flip
+    the flag without monkeypatching the inventory loader."""
+    import os
+    return bool(
+        os.environ.get("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID")
+        and os.environ.get("AUTOPILOT_WINPE_ISO")
+    )
+```
+
+In `provision_page` (around line 1862), pass `winpe_enabled=_winpe_enabled()` into the template context.
+
+- [ ] **Step 4: Add the form field to `provision.html`**
+
+Find the existing form (search for the existing `name="profile"` or `name="count"` field) and add this row inside the same `<form>`:
 
 ```html
 {% if winpe_enabled %}
@@ -4504,67 +4705,78 @@ In `web/templates/provision.html`, locate the form's submit area and add (immedi
   <div class="col-sm-9">
     <select class="form-select" name="boot_mode">
       <option value="clone" selected>Clone (default)</option>
-      <option value="winpe">WinPE</option>
+      <option value="winpe">WinPE (blank-disk image-apply)</option>
     </select>
     <div class="form-text">
-      WinPE boots a custom WinPE image, partitions the disk, applies
+      WinPE boots a custom WinPE ISO, partitions the disk, applies
       install.wim, and hands off to Specialize. Requires
-      <code>winpe_blank_template_vmid</code> and
-      <code>proxmox_winpe_iso</code> in inventory.
+      <code>winpe_blank_template_vmid</code>,
+      <code>proxmox_winpe_iso</code>, and
+      <code>vault_autopilot_winpe_token_secret</code> in inventory.
     </div>
   </div>
 </div>
 {% endif %}
 ```
 
-The `winpe_enabled` variable is set by the route handler (Step 4).
+- [ ] **Step 5: Branch the POST handler**
 
-- [ ] **Step 4: Wire the route handler**
+Modify `start_provision` in `web/app.py` to accept the new field and, when `boot_mode == "winpe"`, skip the answer-floppy logic and launch the WinPE playbook.
 
-In `web/app.py`, find the route that renders `provision.html` (typically `GET /devices/provision-form` or `/devices/<vmid>/provision`). Add:
-
-```python
-import os
-
-def _winpe_enabled() -> bool:
-    """The provision UI shows the WinPE option only when the inventory
-    has wired up a blank template AND a WinPE ISO is configured."""
-    return bool(
-        os.environ.get("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID")
-        and os.environ.get("AUTOPILOT_WINPE_ISO")
-    )
-```
-
-In the GET handler that renders the template, pass `winpe_enabled=_winpe_enabled()` into the Jinja context.
-
-In the POST handler, inspect `boot_mode` and route accordingly:
+Add to the function signature:
 
 ```python
-boot_mode = (form.get("boot_mode") or "clone").lower()
-if boot_mode == "winpe":
-    if not _winpe_enabled():
-        raise HTTPException(status_code=400, detail="WinPE not configured")
-    run_id = sequences_db.create_provisioning_run(
-        SEQUENCES_DB, sequence_id=int(form["sequence_id"]),
-        provision_path="winpe",
-    )
-    launch_playbook(
-        playbook="playbooks/provision_proxmox_winpe.yml",
-        extra_vars={
-            "run_id": run_id,
-            "sequence_id": int(form["sequence_id"]),
-            "autopilot_base_url": os.environ.get(
-                "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
-        },
-    )
-else:
-    # Existing clone path: unchanged.
-    ...
+    boot_mode: str = Form("clone"),
 ```
 
-(`launch_playbook` is the existing helper used by the clone path; reuse whatever name app.py uses today.)
+Inside the handler, immediately after `profile = _sanitize_input(profile)` (around line 2612), insert:
 
-- [ ] **Step 5: Run tests to verify they pass**
+```python
+    boot_mode = (boot_mode or "clone").lower()
+    if boot_mode not in ("clone", "winpe"):
+        raise HTTPException(status_code=400, detail=f"unknown boot_mode: {boot_mode!r}")
+    if boot_mode == "winpe":
+        if not _winpe_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "WinPE provisioning is not configured. Set "
+                    "winpe_blank_template_vmid, proxmox_winpe_iso, and "
+                    "vault_autopilot_winpe_token_secret in inventory and "
+                    "restart the container."
+                ),
+            )
+        if not sequence_id:
+            raise HTTPException(
+                status_code=400,
+                detail="WinPE provisioning requires a sequence_id",
+            )
+        seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        if seq is None:
+            raise HTTPException(404, f"sequence {sequence_id} not found")
+        run_id = sequences_db.create_provisioning_run(
+            SEQUENCES_DB,
+            sequence_id=int(sequence_id),
+            provision_path="winpe",
+        )
+        return _launch_provision_job(
+            playbook_path="playbooks/provision_proxmox_winpe.yml",
+            extra_vars={
+                "run_id": run_id,
+                "sequence_id": int(sequence_id),
+                "vm_oem_profile": profile,
+                "vm_count": int(count),
+                "sequence_hash_capture_phase": seq["hash_capture_phase"],
+                "autopilot_base_url": os.environ.get(
+                    "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
+            },
+        )
+    # Existing clone path begins here -- unchanged.
+```
+
+If `_launch_provision_job` does not yet exist as a named seam, factor the existing Ansible-launch block (the section at the bottom of `start_provision` that builds `tokens` and runs `ansible-playbook`) into a helper named exactly that, so both branches reuse it. Keep the clone-path call site identical to today's behavior.
+
+- [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
 cd autopilot-proxmox && python -m pytest tests/test_winpe_endpoints.py -v
@@ -4572,11 +4784,11 @@ cd autopilot-proxmox && python -m pytest tests/test_winpe_endpoints.py -v
 
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add autopilot-proxmox/web/templates/provision.html autopilot-proxmox/web/app.py autopilot-proxmox/tests/test_winpe_endpoints.py
-git commit -m "feat(ui): Boot mode toggle (clone | winpe) on provision page"
+git commit -m "feat(ui): Boot mode toggle + branch in /api/jobs/provision"
 ```
 
 ### Task G2: `/runs/<run_id>` timeline page
@@ -4835,7 +5047,7 @@ One full provisioning run on pve1 using the WinPE path, demonstrating:
 
 ## Steps
 
-1. From the web UI, open `/devices/provision-form`.
+1. From the web UI, open `/provision`.
 2. Pick a sequence with `produces_autopilot_hash=true` and `hash_capture_phase=oobe`.
 3. Set Boot mode = WinPE. Submit.
 4. Open `/runs/<id>` (the redirect target).
@@ -5156,16 +5368,16 @@ git commit -m "feat(winpe-agent): Invoke-Action-CaptureHash"
 Append to `tests/test_winpe_endpoints.py`:
 
 ```python
-def test_post_hash_persists_via_existing_hash_store(web_client, test_db, monkeypatch):
-    captured = []
-    def fake_persist(*, vmid, serial, product_id, hardware_hash):
-        captured.append({"vmid": vmid, "serial": serial,
-                         "product_id": product_id,
-                         "hardware_hash": hardware_hash})
+def test_post_hash_writes_csv_into_hash_dir(
+    web_client, test_db, tmp_path, monkeypatch,
+):
+    """The endpoint persists by writing a CSV file into HASH_DIR using
+    the same column shape get_hash_files / hash_capture role produce.
+    Existing parser (web.app.get_hash_files at line 1794) picks it up
+    without code changes."""
+    from web import app as web_app
+    monkeypatch.setattr(web_app, "HASH_DIR", tmp_path, raising=True)
 
-    from web import winpe_endpoints
-    monkeypatch.setattr(winpe_endpoints,
-                        "_persist_autopilot_hash", fake_persist)
     run_id, reg = _register(web_client, test_db)
     r = web_client.post(
         "/winpe/hash",
@@ -5176,8 +5388,17 @@ def test_post_hash_persists_via_existing_hash_store(web_client, test_db, monkeyp
         headers=_bearer(reg["bearer_token"]),
     )
     assert r.status_code == 200
-    assert captured == [{"vmid": 100, "serial": "S1",
-                          "product_id": "PK1", "hardware_hash": "HH1"}]
+
+    csvs = list(tmp_path.glob("*.csv"))
+    assert len(csvs) == 1
+    text = csvs[0].read_text()
+    # Match the columns roles/hash_capture/files/Get-WindowsAutopilotInfo
+    # emits ("Device Serial Number,Windows Product ID,Hardware Hash"),
+    # which app.py's parser already understands.
+    assert "Device Serial Number" in text
+    assert "Hardware Hash" in text
+    assert "S1" in text
+    assert "HH1" in text
 
 
 def test_post_hash_requires_bearer(web_client):
@@ -5209,15 +5430,23 @@ class HashBody(BaseModel):
 
 def _persist_autopilot_hash(*, vmid: int, serial: str,
                             product_id: str, hardware_hash: str) -> None:
-    """Thin shim around the existing hash-store helper. Located in a
-    separate function so tests can monkeypatch it without spinning up
-    the real on-disk store."""
-    from web import hashes_db  # existing module name; adapt to actual name
-    hashes_db.upsert_hash(
-        vmid=vmid, serial_number=serial,
-        product_id=product_id, hardware_hash=hardware_hash,
-        source="winpe",
-    )
+    """Persist a captured hash by writing a CSV into HASH_DIR matching
+    the column shape produced by roles/hash_capture (the QGA-time path).
+    web.app.get_hash_files (line 1794) iterates HASH_DIR.glob('*.csv'),
+    so this path is the supported persistence surface."""
+    import csv
+    from datetime import datetime, timezone
+    from web import app as web_app
+    web_app.HASH_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_serial = "".join(c for c in serial if c.isalnum() or c in ("-", "_"))
+    out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-winpe.csv"
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["Device Serial Number",
+                    "Windows Product ID",
+                    "Hardware Hash"])
+        w.writerow([serial, product_id, hardware_hash])
 
 
 @router.post("/hash")
@@ -5235,8 +5464,6 @@ def post_hash(body: HashBody,
     )
     return {"ok": True}
 ```
-
-(Import `hashes_db` matching the existing module name; if the project uses a different helper, replace the body of `_persist_autopilot_hash` with the equivalent call.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -5426,7 +5653,24 @@ Implicit cross-references and consistency:
 - Run states: `queued -> awaiting_winpe -> awaiting_specialize -> done|failed`. Tasks A3 (helpers), C2 (identity), C3 (register), C8 (done), F5 (final advance), H4 (complete).
 - `vmid` is `INTEGER NULL` (A2) and Ansible owns allocation via `/cluster/nextid` (F5).
 - `vm_uuid` flows from `_vm_identity.uuid` (F5) to `provisioning_runs.vm_uuid` (A2/A3) to `/winpe/register` match (C3) to the agent's `Get-VMIdentity` (D2). One canonical source: `_vm_identity.uuid`, never `qm config`.
-- The post-WinPE template (B3) keeps `Microsoft-Windows-PnpCustomizationsNonWinPE` so vioserial driver-store staging still happens during specialize/offlineServicing once the VirtIO ISO is mounted.
+- The post-WinPE template (B3) drops the windowsPE settings block in full (DiskConfiguration, ImageInstall, PnpCustomizationsWinPE all lived there). It does NOT add a substitute `PnpCustomizationsNonWinPE` block; phase-0 dism /add-driver against the attached VirtIO ISO seeds the driver store directly into V:\ before BCD is written, so post-Specialize Windows already has the drivers.
 - `validate_boot_drivers` (D8) requires `vioscsi.inf`, `netkvm.inf`, `vioser.inf` (compiler default in B2). Failure aborts the run; spec's "no continue on partial driver inject" behavior.
+
+### v2 corrections vs v1 (operator review on 2026-05-04)
+
+| v1 mistake | v2 fix |
+|---|---|
+| Used `_template_vmid_override` (does not exist in clone role) | F5 sets `proxmox_template_vmid` directly (the actual var the role reads) |
+| Clone role started VM before media attach | F5 sets `vm_start_after_create: false`; explicit start step after all three ISOs attached |
+| M1 hash capture said "stays in OOBE FLC"; actual path is QGA-driven `roles/hash_capture` | F5 invokes the `hash_capture` role post-Specialize; gated on `sequence_hash_capture_phase == 'oobe'` |
+| `/winpe/autopilot-config/<run_id>` returned a placeholder JSON | C5 reads `autopilot_config_path` (= `files/AutopilotConfigurationFile.json`) and returns the real bytes; new `_resolve_autopilot_config_path` seam for tests |
+| Token + WinPE-enabled flags read from env vars but inventory uses `_load_vars()` | F2 step 4 adds `_bridge_winpe_vars_to_env()` in `web/app.py` to mirror inventory values into the env at startup |
+| `/devices/provision-form` and `/devices/provision` (do not exist) | G1 wires into the actual `GET /provision` and `POST /api/jobs/provision` (form fields `profile`, `count`, plus new `boot_mode`) |
+| `_create_seq` test helper expected status 200 + `params_json` | Updated to status 201 + `params` (matches `_StepIn` model + `status_code=201`) |
+| B3 test asserted `PnpCustomizationsNonWinPE` exists in the source template | B3 test asserts windowsPE-only blocks (DiskConfiguration / ImageInstall / PnpCustomizationsWinPE) are gone from the post_winpe template |
+| `/winpe/unattend/<run_id>` called `compile()` without resolver; sequences with `local_admin` / `domain_join` would fail with `CredentialMissing` | C6 builds a resolver matching `start_provision`'s pattern (line 2737-2745) and passes it as `resolve_credential=` |
+| C8 referenced nonexistent `web/proxmox_client.py` | C8 uses inline requests against `proxmox_api_base` matching app.py's PUT pattern; one PUT carries `delete=` and `boot=` together |
+| I3 referenced nonexistent `hashes_db` module | I3 writes a CSV into `HASH_DIR` matching the column shape `get_hash_files` already parses (line 1794) |
+| E2 only baked NetKVM | E2 now bakes vioscsi + NetKVM + vioser (vioscsi is required for WinPE to see the virtio-scsi-pci disk) |
 
 No placeholders, TBDs, or "implement later" lines. Every code-bearing step shows the actual code.
