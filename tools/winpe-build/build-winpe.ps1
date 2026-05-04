@@ -118,6 +118,18 @@ try {
     $autopilotDir = Join-Path $mountDir 'autopilot'
     New-Item -ItemType Directory -Path $autopilotDir -Force | Out-Null
     Copy-Item "$PSScriptRoot\Invoke-AutopilotWinPE.ps1" -Destination $autopilotDir
+    $gwapiPath = Join-Path $autopilotDir 'Get-WindowsAutopilotInfo.ps1'
+    $gwapiSource = Join-Path $PSScriptRoot 'vendored/Get-WindowsAutopilotInfo.ps1'
+    if (Test-Path -LiteralPath $gwapiSource) {
+        Copy-Item $gwapiSource -Destination $gwapiPath
+    } else {
+        Invoke-WebRequest -Uri 'https://www.powershellgallery.com/api/v2/package/Get-WindowsAutopilotInfo' `
+            -OutFile (Join-Path $env:TEMP 'gwapi.nupkg')
+        Expand-Archive (Join-Path $env:TEMP 'gwapi.nupkg') -DestinationPath (Join-Path $env:TEMP 'gwapi-extract') -Force
+        Get-ChildItem (Join-Path $env:TEMP 'gwapi-extract') -Recurse -Filter 'Get-WindowsAutopilotInfo.ps1' |
+            Select-Object -First 1 |
+            Copy-Item -Destination $gwapiPath
+    }
     Copy-Item "$PSScriptRoot\config.json" -Destination $autopilotDir
     Copy-Item "$PSScriptRoot\startnet.cmd" -Destination (Join-Path $mountDir 'Windows\System32\startnet.cmd') -Force
 } finally {
