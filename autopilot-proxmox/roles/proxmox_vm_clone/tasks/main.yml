@@ -150,7 +150,9 @@
 # location it honors, and a fresh file there is processed cleanly.
 - name: Inject per-VM unattend.xml into clone Panther
   ansible.builtin.include_tasks: inject_unattend.yml
-  when: _answer_floppy_path is defined and _answer_floppy_path | default('') | length > 0
+  when:
+    - _answer_floppy_path is defined and _answer_floppy_path | default('') | length > 0
+    - not (_skip_panther_injection | default(false) | bool)
 
 - name: Start VM
   ansible.builtin.uri:
