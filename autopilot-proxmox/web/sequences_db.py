@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS task_sequences (
     is_default INTEGER NOT NULL DEFAULT 0,
     produces_autopilot_hash INTEGER NOT NULL DEFAULT 0,
     target_os TEXT NOT NULL DEFAULT 'windows',
+    hash_capture_phase TEXT NOT NULL DEFAULT 'oobe' CHECK (hash_capture_phase IN ('winpe','oobe')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -93,6 +94,14 @@ def init(db_path: Path) -> None:
             conn.execute(
                 "UPDATE task_sequences SET target_os='windows' "
                 "WHERE target_os IS NULL OR target_os=''"
+            )
+        # --- Migration: add hash_capture_phase column (pre-existing DBs)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(task_sequences)")}
+        if "hash_capture_phase" not in cols:
+            conn.execute(
+                "ALTER TABLE task_sequences "
+                "ADD COLUMN hash_capture_phase TEXT NOT NULL DEFAULT 'oobe' "
+                "CHECK (hash_capture_phase IN ('winpe','oobe'))"
             )
 
 
@@ -216,6 +225,7 @@ def _row_to_sequence(row: sqlite3.Row) -> dict:
         "is_default": bool(row["is_default"]),
         "produces_autopilot_hash": bool(row["produces_autopilot_hash"]),
         "target_os": row["target_os"],
+        "hash_capture_phase": row["hash_capture_phase"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
