@@ -240,3 +240,59 @@ def get_autopilot_config(run_id: int,
         )
     return Response(content=path.read_bytes(),
                     media_type="application/json")
+
+
+class StepResultBody(BaseModel):
+    state: str
+    error: Optional[str] = None
+    stdout_tail: Optional[str] = None
+    stderr_tail: Optional[str] = None
+    elapsed_seconds: Optional[float] = None
+
+
+def _require_bearer_token(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer")
+    try:
+        return winpe_token.verify(
+            authorization.removeprefix("Bearer ").strip()
+        )
+    except winpe_token.TokenExpired:
+        raise HTTPException(status_code=401, detail="token expired")
+    except winpe_token.TokenError:
+        raise HTTPException(status_code=401, detail="invalid token")
+
+
+@router.post("/step/{step_id}/result")
+def post_step_result(step_id: int, body: StepResultBody,
+                     payload: dict = Depends(_require_bearer_token)):
+    db = _db_path()
+    step = sequences_db.get_run_step(db, step_id)
+    if step is None:
+        raise HTTPException(status_code=404, detail="step not found")
+    if int(step["run_id"]) != int(payload["run_id"]):
+        raise HTTPException(status_code=403, detail="token/run mismatch")
+
+    if body.state == "running":
+        sequences_db.update_run_step_state(
+            db, step_id=step_id, state="running",
+        )
+    elif body.state == "ok":
+        sequences_db.update_run_step_state(
+            db, step_id=step_id, state="ok",
+        )
+    elif body.state == "error":
+        sequences_db.update_run_step_state(
+            db, step_id=step_id, state="error", error=body.error or "",
+        )
+        sequences_db.update_provisioning_run_state(
+            db, run_id=int(step["run_id"]), state="failed",
+            last_error=f"step {step['kind']}: {body.error or 'unknown'}",
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"bad state: {body.state}")
+
+    new_token = winpe_token.sign(
+        run_id=int(payload["run_id"]), ttl_seconds=_REGISTER_TOKEN_TTL,
+    )
+    return {"ok": True, "bearer_token": new_token}

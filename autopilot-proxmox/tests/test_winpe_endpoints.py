@@ -337,3 +337,79 @@ def test_unattend_returns_404_for_unknown_run(web_client, monkeypatch):
         headers=_bearer(tok),
     )
     assert r.status_code == 404
+
+
+def _register(client, db, vm_uuid="u-X"):
+    seq_id = _create_seq(client)
+    run_id = _create_run(db, seq_id)
+    client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": vm_uuid},
+    )
+    reg = client.post(
+        "/winpe/register",
+        json={"vm_uuid": vm_uuid, "mac": "aa", "build_sha": "x"},
+    ).json()
+    return run_id, reg
+
+
+def test_step_result_running_then_ok_records_state(web_client, test_db):
+    run_id, reg = _register(web_client, test_db)
+    step_id = reg["actions"][0]["step_id"]
+    web_client.post(
+        f"/winpe/step/{step_id}/result",
+        json={"state": "running"},
+        headers=_bearer(reg["bearer_token"]),
+    )
+    r = web_client.post(
+        f"/winpe/step/{step_id}/result",
+        json={"state": "ok", "stdout_tail": "done", "elapsed_seconds": 12},
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "bearer_token" in body
+    from web import sequences_db
+    s = sequences_db.get_run_step(test_db, step_id)
+    assert s["state"] == "ok"
+    assert s["started_at"] is not None
+    assert s["finished_at"] is not None
+
+
+def test_step_result_error_marks_run_failed(web_client, test_db):
+    run_id, reg = _register(web_client, test_db)
+    step_id = reg["actions"][0]["step_id"]
+    web_client.post(
+        f"/winpe/step/{step_id}/result",
+        json={"state": "error", "error": "disk too small"},
+        headers=_bearer(reg["bearer_token"]),
+    )
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "failed"
+    assert "disk too small" in (run["last_error"] or "")
+
+
+def test_step_result_token_refresh_is_verifiable(web_client, test_db):
+    run_id, reg = _register(web_client, test_db)
+    step_id = reg["actions"][0]["step_id"]
+    r = web_client.post(
+        f"/winpe/step/{step_id}/result",
+        json={"state": "running"},
+        headers=_bearer(reg["bearer_token"]),
+    )
+    new_tok = r.json()["bearer_token"]
+    from web import winpe_token
+    assert winpe_token.verify(new_tok)["run_id"] == run_id
+
+
+def test_step_result_rejects_step_in_different_run(web_client, test_db):
+    run_a, reg_a = _register(web_client, test_db, vm_uuid="u-A")
+    run_b, reg_b = _register(web_client, test_db, vm_uuid="u-B")
+    step_in_b = reg_b["actions"][0]["step_id"]
+    r = web_client.post(
+        f"/winpe/step/{step_in_b}/result",
+        json={"state": "ok"},
+        headers=_bearer(reg_a["bearer_token"]),
+    )
+    assert r.status_code == 403
