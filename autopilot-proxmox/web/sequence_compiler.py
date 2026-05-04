@@ -505,3 +505,84 @@ def resolve_provision_vars(
             continue
         merged[key] = value
     return merged
+
+
+# ---------------------------------------------------------------------------
+# WinPE phase compiler
+# ---------------------------------------------------------------------------
+
+def _sequence_has_autopilot(sequence: dict) -> bool:
+    for step in sequence.get("steps", []) or []:
+        if not step.get("enabled", True):
+            continue
+        if step.get("step_type") == "autopilot_entra":
+            return True
+    return False
+
+
+def compile_winpe(sequence: dict,
+                  resolver: Optional[Callable] = None,
+                  ) -> "CompiledWinPEPhase":
+    """Compile the phase-0 (WinPE) action list for a sequence.
+
+    Returns the canonical action list every WinPE run executes. The
+    ordering is fixed; operator-authored steps do not appear in this
+    output (they flow through compile() and become FLC entries).
+    """
+    out = CompiledWinPEPhase()
+
+    autopilot = _sequence_has_autopilot(sequence)
+    capture_hash_in_winpe = (
+        bool(sequence.get("produces_autopilot_hash"))
+        and sequence.get("hash_capture_phase") == "winpe"
+    )
+
+    if capture_hash_in_winpe:
+        out.actions.append({"kind": "capture_hash", "params": {}})
+
+    out.actions.append({
+        "kind": "partition_disk",
+        "params": {"layout": "recovery_before_c"},
+    })
+    out.actions.append({
+        "kind": "apply_wim",
+        "params": {"image_index_metadata_name": "Windows 11 Enterprise"},
+    })
+    out.actions.append({
+        "kind": "inject_drivers",
+        "params": {
+            "required_infs": [
+                "vioscsi.inf", "netkvm.inf", "vioser.inf",
+                "balloon.inf", "vioinput.inf",
+            ],
+        },
+    })
+    out.actions.append({
+        "kind": "validate_boot_drivers",
+        "params": {
+            "required_infs": [
+                "vioscsi.inf", "netkvm.inf", "vioser.inf",
+            ],
+        },
+    })
+
+    if autopilot:
+        # Phase 0 applies Windows to V:\ (the soon-to-be-C:\ partition).
+        # The agent runs from X:\ (WinPE RAM drive) and has no C:\, so
+        # we MUST stage to V:\Windows\... here. The OS sees this as
+        # C:\Windows\... after first boot when V: is remapped to C:.
+        out.actions.append({
+            "kind": "stage_autopilot_config",
+            "params": {
+                "guest_path": (
+                    "V:\\Windows\\Provisioning\\Autopilot\\"
+                    "AutopilotConfigurationFile.json"
+                ),
+            },
+        })
+        out.autopilot_enabled = True
+
+    out.actions.append({"kind": "bake_boot_entry", "params": {}})
+    out.actions.append({"kind": "stage_unattend", "params": {}})
+
+    return out
