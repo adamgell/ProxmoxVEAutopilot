@@ -396,3 +396,30 @@ Describe 'Invoke-Action-BakeBootEntry' {
             Should -Throw '*bcdboot*1*'
     }
 }
+
+Describe 'Invoke-Action-StageUnattend' {
+    BeforeAll {
+        if ([string]::IsNullOrEmpty($env:TEMP)) {
+            $env:TEMP = if ($env:TMPDIR) { $env:TMPDIR.TrimEnd('/') } else { '/tmp' }
+        }
+    }
+
+    It 'fetches /winpe/unattend and writes V:\Windows\Panther\unattend.xml' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-unat-$(New-Guid)"
+        try {
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                return '<unattend>...</unattend>'
+            }
+            Invoke-Action-StageUnattend `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' `
+                -PantherDirOverride "$tmp" `
+                -RestInvoker $invoker
+            $body = Get-Content "$tmp\unattend.xml" -Raw
+            $body | Should -Match '<unattend>'
+        } finally {
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

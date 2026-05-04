@@ -369,3 +369,33 @@ function Invoke-Action-BakeBootEntry {
         throw "bcdboot failed (exit $($r.ExitCode)): $($r.Stdout)"
     }
 }
+
+function Invoke-Action-StageUnattend {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [string] $PantherDirOverride,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $dir = if ($PantherDirOverride) { $PantherDirOverride } else { 'V:\Windows\Panther' }
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/unattend/$RunId"
+        Method = 'GET'
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $xml = Invoke-OrchestratorRequest @reqArgs
+    Set-Content -LiteralPath (Join-Path $dir 'unattend.xml') `
+        -Value $xml -Encoding UTF8
+}
