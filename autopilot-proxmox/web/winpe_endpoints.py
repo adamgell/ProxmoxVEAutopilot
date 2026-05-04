@@ -186,6 +186,37 @@ def _resolve_autopilot_config_path():
     return base / "files" / "AutopilotConfigurationFile.json"
 
 
+def _credential_resolver_for_run():
+    """Build a credential resolver matching the existing /api/jobs/provision
+    pattern. Local-admin / domain-join steps need this to compile."""
+    from web import app as web_app
+    def _resolve(cid: int):
+        rec = sequences_db.get_credential(_db_path(), web_app._cipher(), cid)
+        return rec["payload"] if rec else None
+    return _resolve
+
+
+@router.get("/unattend/{run_id}")
+def get_unattend(run_id: int,
+                 _: int = Depends(_require_bearer_for_run)):
+    from web import sequence_compiler, unattend_renderer
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    seq = sequences_db.get_sequence(db, run["sequence_id"])
+    try:
+        compiled = sequence_compiler.compile(
+            seq, resolve_credential=_credential_resolver_for_run(),
+        )
+    except sequence_compiler.CompilerError as e:
+        raise HTTPException(status_code=400, detail=f"compile failed: {e}")
+    xml = unattend_renderer.render_unattend(
+        compiled, phase_layout="post_winpe",
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
 @router.get("/autopilot-config/{run_id}")
 def get_autopilot_config(run_id: int,
                          _: int = Depends(_require_bearer_for_run)):

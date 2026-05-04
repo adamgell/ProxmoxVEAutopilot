@@ -304,3 +304,36 @@ def test_autopilot_config_returns_404_when_not_enabled(web_client, test_db):
         headers=_bearer(reg["bearer_token"]),
     )
     assert r.status_code == 404
+
+
+def test_unattend_returns_xml_without_windowsPE(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-A"},
+    )
+    reg = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-A", "mac": "aa", "build_sha": "x"},
+    ).json()
+    r = web_client.get(
+        f"/winpe/unattend/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/xml") or \
+           r.headers["content-type"].startswith("text/xml")
+    assert b'pass="windowsPE"' not in r.content
+    assert b'pass="specialize"' in r.content
+
+
+def test_unattend_returns_404_for_unknown_run(web_client, monkeypatch):
+    monkeypatch.setenv("AUTOPILOT_WINPE_TOKEN_SECRET", "test-token-secret")
+    from web import winpe_token
+    tok = winpe_token.sign(run_id=99999, ttl_seconds=60)
+    r = web_client.get(
+        "/winpe/unattend/99999",
+        headers=_bearer(tok),
+    )
+    assert r.status_code == 404
