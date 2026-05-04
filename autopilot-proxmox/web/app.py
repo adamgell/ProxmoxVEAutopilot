@@ -308,6 +308,18 @@ def _bridge_winpe_vars_to_env() -> None:
         os.environ.setdefault("AUTOPILOT_WINPE_IDENTITY_ALLOWLIST", allow)
 
 
+def _winpe_enabled() -> bool:
+    """The provision UI shows the WinPE option only when the inventory
+    has wired up both a blank template VMID AND a WinPE ISO. The bridge
+    in _bridge_winpe_vars_to_env() exports these as env vars at startup
+    (see Task F2 step 4); we read the env so the test suite can flip
+    the flag without monkeypatching the inventory loader."""
+    return bool(
+        os.environ.get("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID")
+        and os.environ.get("AUTOPILOT_WINPE_ISO")
+    )
+
+
 def _fetch_settings_options():
     """Query Proxmox API to populate dropdown options for settings fields."""
     options = {}
@@ -1934,6 +1946,7 @@ async def provision_page(request: Request):
         "defaults": defaults,
         "template_disk_gb": template_disk,
         "sequences": sequences_db.list_sequences(SEQUENCES_DB),
+        "winpe_enabled": _winpe_enabled(),
     })
 
 
@@ -2581,6 +2594,23 @@ async def vms_page(request: Request, error: str = ""):
 
 # --- API Endpoints ---
 
+
+def _launch_provision_job(playbook_path: str, extra_vars: dict | None = None):
+    """Launch an ansible-playbook run for the WinPE provision path.
+
+    Builds a ``-e key=value`` command list from extra_vars, enqueues a job
+    via job_manager, and returns a JSONResponse so the WinPE branch of
+    start_provision can early-return with HTTP 200. The test suite
+    monkeypatches this function to intercept launches without touching the
+    real Ansible or Proxmox infra."""
+    extra_vars = extra_vars or {}
+    cmd = ["ansible-playbook", str(BASE_DIR / playbook_path)]
+    for key, value in extra_vars.items():
+        cmd += ["-e", f"{key}={value}"]
+    job = job_manager.start("provision_winpe", cmd, args=dict(extra_vars))
+    return JSONResponse({"ok": True, "job_id": job["id"]})
+
+
 def _keys_in_extra_args(tokens: list) -> set[str]:
     """Return the set of Ansible variable keys already carried as -e pairs.
 
@@ -2649,8 +2679,38 @@ async def start_provision(
     sequence_id: int = Form(None),
     hostname_pattern: str = Form("autopilot-{serial}"),
     chassis_type_override: int = Form(0),
+    boot_mode: str = Form("clone"),
 ):
     profile = _sanitize_input(profile)
+    boot_mode = (boot_mode or "clone").lower()
+    if boot_mode not in ("clone", "winpe"):
+        raise HTTPException(
+            status_code=400, detail=f"unknown boot_mode: {boot_mode!r}",
+        )
+    if boot_mode == "winpe":
+        if not _winpe_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "WinPE provisioning is not configured. Set "
+                    "winpe_blank_template_vmid, proxmox_winpe_iso, and "
+                    "vault_autopilot_winpe_token_secret in inventory and "
+                    "restart the container."
+                ),
+            )
+        if not sequence_id:
+            raise HTTPException(
+                status_code=400,
+                detail="WinPE provisioning requires a sequence_id",
+            )
+        if int(count) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "WinPE provisioning supports count=1 in M1; "
+                    "see docs/superpowers/plans/...-winpe-orchestrated-deploy.md"
+                ),
+            )
     if group_tag:
         group_tag = _sanitize_input(group_tag)
     if serial_prefix:
@@ -2687,19 +2747,22 @@ async def start_provision(
     # host: otherwise Ansible will emit `args: -smbios file=<missing>`
     # and QEMU fails to start the VM with a confusing "cannot open".
     # Surface the real cause + seed instructions as a 400 here.
-    from web import proxmox_snippets
-    for _ct in _chassis_types_to_stage:
-        try:
-            proxmox_snippets.require_chassis_type_binary(
-                node=_node, storage=_snippets_storage, chassis_type=_ct,
-            )
-        except proxmox_snippets.ChassisBinaryMissing as _e:
-            raise HTTPException(status_code=400, detail=str(_e)) from _e
-        except Exception as _e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"could not query chassis-type binary for type {_ct}: {_e}",
-            ) from _e
+    # WinPE path uses a blank template VM and never sets the QEMU args
+    # SMBIOS file, so this check is skipped entirely for winpe boot mode.
+    if boot_mode != "winpe":
+        from web import proxmox_snippets
+        for _ct in _chassis_types_to_stage:
+            try:
+                proxmox_snippets.require_chassis_type_binary(
+                    node=_node, storage=_snippets_storage, chassis_type=_ct,
+                )
+            except proxmox_snippets.ChassisBinaryMissing as _e:
+                raise HTTPException(status_code=400, detail=str(_e)) from _e
+            except Exception as _e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"could not query chassis-type binary for type {_ct}: {_e}",
+                ) from _e
 
     # Proxmox hardcodes 'args' as root-only (PVE::API2::Qemu
     # check_vm_modify_config_perm: literal eq match against 'root@pam').
@@ -2713,7 +2776,10 @@ async def start_provision(
     # file passthrough) and sequence-based provisions (per-VM answer
     # floppy attachment). Either path triggers the root@pam ticket
     # flow; both share the same vault_proxmox_root_password.
-    if _chassis_types_to_stage or sequence_id:
+    needs_root_ticket = (boot_mode != "winpe" and bool(_chassis_types_to_stage)) or (
+        bool(sequence_id) and boot_mode != "winpe"
+    )
+    if needs_root_ticket:
         _root_pw = cfg.get("vault_proxmox_root_password", "")
         if not _root_pw:
             raise HTTPException(
@@ -2794,44 +2860,82 @@ async def start_provision(
             vars_yml=_load_vars(),
         )
 
-        # Compile to a per-VM unattend and materialize it as a FAT12
-        # floppy image on the Proxmox host. Windows Setup on a
-        # sysprep-d clone lands on the floppy (position 4 of the
-        # answer-file search) because position 5 (read-only CD) is
-        # unreliable in online specialize. Two provisions whose
-        # compiled unattend matches byte-for-byte share one floppy.
-        from web import unattend_renderer, answer_floppy_cache
-        _unattend_xml = unattend_renderer.render_unattend(compiled)
-        _root_user = cfg.get("vault_proxmox_root_username") or "root@pam"
-        _root_password = cfg.get("vault_proxmox_root_password") or ""
-        _root_ssh_user = _root_user.split("@", 1)[0] or "root"
-        if not _root_password:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Sequence-based provisioning needs vault_proxmox_root_password "
-                    "set in vault.yml (Settings → Credentials). The web backend "
-                    "SSHes to the Proxmox host as root to build the per-VM "
-                    "answer floppy and to set the VM's args field."
-                ),
-            )
-        _ssh_runner = answer_floppy_cache.make_sshpass_runner(
-            host=cfg.get("proxmox_host", ""),
-            password=_root_password,
-            user=_root_ssh_user,
-        )
-        try:
-            _answer_floppy_path = answer_floppy_cache.ensure_floppy(
-                db_path=SEQUENCES_DB,
-                unattend_bytes=_unattend_xml.encode("utf-8"),
-                ssh=_ssh_runner,
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"answer-floppy build failed: {e}",
-            ) from e
         _causes_reboot_count = compiled.causes_reboot_count
+        if boot_mode != "winpe":
+            # Compile to a per-VM unattend and materialize it as a FAT12
+            # floppy image on the Proxmox host. Windows Setup on a
+            # sysprep-d clone lands on the floppy (position 4 of the
+            # answer-file search) because position 5 (read-only CD) is
+            # unreliable in online specialize. Two provisions whose
+            # compiled unattend matches byte-for-byte share one floppy.
+            from web import unattend_renderer, answer_floppy_cache
+            _unattend_xml = unattend_renderer.render_unattend(compiled)
+            _root_user = cfg.get("vault_proxmox_root_username") or "root@pam"
+            _root_password = cfg.get("vault_proxmox_root_password") or ""
+            _root_ssh_user = _root_user.split("@", 1)[0] or "root"
+            if not _root_password:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Sequence-based provisioning needs vault_proxmox_root_password "
+                        "set in vault.yml (Settings → Credentials). The web backend "
+                        "SSHes to the Proxmox host as root to build the per-VM "
+                        "answer floppy and to set the VM's args field."
+                    ),
+                )
+            _ssh_runner = answer_floppy_cache.make_sshpass_runner(
+                host=cfg.get("proxmox_host", ""),
+                password=_root_password,
+                user=_root_ssh_user,
+            )
+            try:
+                _answer_floppy_path = answer_floppy_cache.ensure_floppy(
+                    db_path=SEQUENCES_DB,
+                    unattend_bytes=_unattend_xml.encode("utf-8"),
+                    ssh=_ssh_runner,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"answer-floppy build failed: {e}",
+                ) from e
+
+    # WinPE path: create run record and hand off to the WinPE playbook.
+    # This early-return exits before any clone-specific logic below.
+    if boot_mode == "winpe":
+        run_id = sequences_db.create_provisioning_run(
+            SEQUENCES_DB,
+            sequence_id=int(sequence_id),
+            provision_path="winpe",
+        )
+        winpe_extra = dict(resolved_vars)
+        winpe_extra.update({
+            "run_id": run_id,
+            "sequence_id": int(sequence_id),
+            "vm_count": int(count),
+            "sequence_hash_capture_phase": seq.get("hash_capture_phase", False),
+            "autopilot_base_url": os.environ.get(
+                "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
+            "_causes_reboot_count": _causes_reboot_count,
+        })
+        # Form overrides last (highest precedence).
+        winpe_extra["vm_oem_profile"] = profile
+        for key, val in (
+            ("vm_cores", cores), ("vm_memory_mb", memory_mb),
+            ("vm_disk_size_gb", disk_size_gb),
+            ("vm_serial_prefix", serial_prefix),
+            ("vm_group_tag", group_tag),
+            ("hostname_pattern", hostname_pattern),
+        ):
+            if val:
+                winpe_extra[key] = val
+        if chassis_type_override and int(chassis_type_override) > 0:
+            winpe_extra["chassis_type_override"] = int(chassis_type_override)
+        return _launch_provision_job(
+            playbook_path="playbooks/provision_proxmox_winpe.yml",
+            extra_vars=winpe_extra,
+        )
+    # Existing clone path continues below unchanged.
 
     # Sequence-driven extras: per-VM answer floppy path + reboot-cycle
     # count + root ticket for the args PUT.

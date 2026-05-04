@@ -85,6 +85,24 @@
   <td><input type="text" name="group_tag" value="{{ defaults.group_tag }}" size="30">
     <small style="color:var(--ink-soft);">default: {{ defaults.group_tag or '—' }}</small></td>
 </tr>
+{% if winpe_enabled %}
+<tr>
+  <td><b>Boot mode:</b></td>
+  <td>
+    <select name="boot_mode">
+      <option value="clone" selected>Clone (default)</option>
+      <option value="winpe">WinPE (blank-disk image-apply)</option>
+    </select>
+    <small style="color:var(--ink-soft);">
+      WinPE boots a custom WinPE ISO, partitions the disk, applies
+      install.wim, and hands off to Specialize. Requires
+      <code>winpe_blank_template_vmid</code>,
+      <code>proxmox_winpe_iso</code>, and
+      <code>vault_autopilot_winpe_token_secret</code> in inventory.
+    </small>
+  </td>
+</tr>
+{% endif %}
 <tr>
   <td></td>
   <td><input type="submit" value="Provision VMs"></td>

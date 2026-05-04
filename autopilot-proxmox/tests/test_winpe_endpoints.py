@@ -505,3 +505,77 @@ def test_api_run_fail_is_idempotent_on_terminal_state(web_client, test_db):
     assert r.status_code == 200
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "done"
+
+
+def test_provision_post_with_boot_mode_winpe_creates_run(
+    web_client, test_db, monkeypatch,
+):
+    """POST /api/jobs/provision with boot_mode=winpe creates a
+    provisioning_runs row, skips the answer-floppy build, and launches
+    provision_proxmox_winpe.yml."""
+    monkeypatch.setenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", "9001")
+    monkeypatch.setenv("AUTOPILOT_WINPE_ISO", "isos:iso/winpe-test.iso")
+
+    seq_id = _create_seq(web_client)
+
+    launches = []
+    from web import app as web_app
+
+    def fake_run_playbook(playbook_path, extra_vars=None, **_):
+        launches.append({"playbook": playbook_path,
+                         "extra_vars": dict(extra_vars or {})})
+        return {"job_id": 1}
+
+    monkeypatch.setattr(
+        web_app, "_launch_provision_job", fake_run_playbook, raising=False,
+    )
+
+    r = web_client.post(
+        "/api/jobs/provision",
+        data={
+            "profile": "generic-desktop",
+            "count": 1,
+            "sequence_id": seq_id,
+            "boot_mode": "winpe",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    import sqlite3
+    with sqlite3.connect(test_db) as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM provisioning_runs "
+            "WHERE provision_path='winpe' AND state='queued'"
+        ).fetchone()[0]
+    assert n == 1
+    assert any(
+        str(l["playbook"]).endswith("provision_proxmox_winpe.yml")
+        for l in launches
+    )
+
+
+def test_provision_post_winpe_rejected_when_not_configured(
+    web_client, monkeypatch,
+):
+    monkeypatch.delenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", raising=False)
+    monkeypatch.delenv("AUTOPILOT_WINPE_ISO", raising=False)
+    seq_id = _create_seq(web_client)
+    r = web_client.post(
+        "/api/jobs/provision",
+        data={
+            "profile": "generic-desktop", "count": 1,
+            "sequence_id": seq_id, "boot_mode": "winpe",
+        },
+    )
+    assert r.status_code == 400
+    assert b"WinPE" in r.content
+
+
+def test_provision_page_renders_winpe_option_when_configured(
+    web_client, monkeypatch,
+):
+    monkeypatch.setenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", "9001")
+    monkeypatch.setenv("AUTOPILOT_WINPE_ISO", "isos:iso/x.iso")
+    r = web_client.get("/provision")
+    assert r.status_code == 200
+    assert b'name="boot_mode"' in r.content
