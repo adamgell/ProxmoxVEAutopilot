@@ -205,3 +205,33 @@ Describe 'Invoke-Action-PartitionDisk' {
             -DiskpartRunner { param($s) } } | Should -Throw '*layout*'
     }
 }
+
+Describe 'Invoke-Action-ApplyWim' {
+    It 'invokes dism /apply-image with index resolved by metadata name' {
+        $script:invocations = @()
+        $dismRunner = { param($a) $script:invocations += ,$a
+            return @{ ExitCode = 0; Stdout = ''; Stderr = '' } }
+        $resolveIndex = { param($wim,$name) 6 }   # known mock index
+        $resolveSource = { 'D:\sources\install.wim' }
+        Invoke-Action-ApplyWim `
+            -Params @{ image_index_metadata_name = 'Windows 11 Enterprise' } `
+            -DismRunner $dismRunner `
+            -SourceWimResolver $resolveSource `
+            -IndexResolver $resolveIndex
+        $applied = $script:invocations[0]
+        ($applied -join ' ') | Should -Match '/Apply-Image'
+        ($applied -join ' ') | Should -Match '/ImageFile:D:\\sources\\install.wim'
+        ($applied -join ' ') | Should -Match '/Index:6'
+        ($applied -join ' ') | Should -Match '/ApplyDir:V:\\\\'
+    }
+
+    It 'throws on dism non-zero exit' {
+        $dismRunner = { param($a)
+            return @{ ExitCode = 5; Stdout = ''; Stderr = 'access denied' } }
+        { Invoke-Action-ApplyWim `
+            -Params @{ image_index_metadata_name = 'X' } `
+            -DismRunner $dismRunner `
+            -SourceWimResolver { 'D:\x.wim' } `
+            -IndexResolver { 1 } } | Should -Throw '*dism*5*'
+    }
+}

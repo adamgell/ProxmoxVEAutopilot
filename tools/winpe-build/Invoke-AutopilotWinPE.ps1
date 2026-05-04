@@ -9,8 +9,6 @@
 # during development; running it from startnet.cmd at WinPE boot drives
 # the live flow.
 
-Set-StrictMode -Version Latest
-
 function Read-AgentConfig {
     param([Parameter(Mandatory)] [string] $Path)
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -200,5 +198,61 @@ function Invoke-Action-PartitionDisk {
             & $DiskpartRunner $script:DiskpartScriptRecoveryBeforeC
         }
         default { throw "partition_disk: unknown layout '$($Params.layout)'" }
+    }
+}
+
+function _RunDism {
+    param([string[]] $DismArgs)
+    $stdout = & dism.exe @DismArgs 2>&1 | Out-String
+    return @{ ExitCode = $LASTEXITCODE; Stdout = $stdout; Stderr = '' }
+}
+
+function _ResolveSourceWim {
+    foreach ($drive in @('D','E','F','G','H')) {
+        $p = "$($drive):\sources\install.wim"
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    throw "could not find sources\install.wim on attached CD-ROMs"
+}
+
+function _ResolveIndexByName {
+    param([string] $Wim, [string] $Name)
+    $out = (& dism.exe /Get-WimInfo /WimFile:$Wim) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "dism /Get-WimInfo failed: $LASTEXITCODE" }
+    # Parse blocks. dism output:
+    #   Index : 6
+    #   Name : Windows 11 Enterprise
+    $current = $null
+    foreach ($line in ($out -split "`r?`n")) {
+        if ($line -match '^\s*Index\s*:\s*(\d+)\s*$') { $current = [int]$Matches[1] }
+        elseif ($line -match '^\s*Name\s*:\s*(.+?)\s*$' -and $Matches[1] -eq $Name) {
+            return $current
+        }
+    }
+    throw "no image index matched name: $Name"
+}
+
+function Invoke-Action-ApplyWim {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DismRunner = { param($a) _RunDism -DismArgs $a },
+        [scriptblock] $SourceWimResolver = { _ResolveSourceWim },
+        [scriptblock] $IndexResolver = { param($wim, $name)
+            _ResolveIndexByName -Wim $wim -Name $name
+        }
+    )
+    $name = [string] $Params.image_index_metadata_name
+    if ([string]::IsNullOrWhiteSpace($name)) { throw "apply_wim: missing image_index_metadata_name" }
+    $wim = & $SourceWimResolver
+    $index = & $IndexResolver $wim $name
+    $dismArgs = @(
+        '/Apply-Image',
+        "/ImageFile:$wim",
+        "/Index:$index",
+        '/ApplyDir:V:\\'
+    )
+    $r = & $DismRunner $dismArgs
+    if ($r.ExitCode -ne 0) {
+        throw "dism /Apply-Image failed (exit $($r.ExitCode)): $($r.Stdout)"
     }
 }
