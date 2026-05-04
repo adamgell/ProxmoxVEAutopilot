@@ -84,6 +84,12 @@ autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('
 
 # Comma-separated list of hostnames/IPs allowed to call
 # /winpe/run/<id>/identity (Ansible controllers).
+# CAVEAT: matched against request.client.host. When Flask runs behind a
+# reverse proxy this resolves to the proxy IP, not the original Ansible
+# client, which silently bypasses the allowlist. Either keep the
+# controller and Flask on the same host (the default deployment shape)
+# or extend _check_identity_caller in web/winpe_endpoints.py to honor
+# X-Forwarded-For from a trusted proxy.
 autopilot_winpe_identity_allowlist: "127.0.0.1,localhost"
 
 # =============================================================================

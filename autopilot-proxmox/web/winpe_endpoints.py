@@ -15,7 +15,9 @@ Identity-endpoint client allowlist: AUTOPILOT_WINPE_IDENTITY_ALLOWLIST
 """
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -104,8 +106,8 @@ def post_register(body: RegisterBody):
     )
     if run is None:
         # Distinguish 404 (no such uuid at all) from 409 (uuid exists, wrong state)
-        with __import__("sqlite3").connect(db) as conn:
-            conn.row_factory = __import__("sqlite3").Row
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT state FROM provisioning_runs WHERE vm_uuid=? "
                 "ORDER BY id DESC LIMIT 1", (body.vm_uuid,),
@@ -122,7 +124,7 @@ def post_register(body: RegisterBody):
     if existing:
         actions = [
             {"step_id": s["id"], "kind": s["kind"],
-             "params": __import__("json").loads(s["params_json"])}
+             "params": json.loads(s["params_json"])}
             for s in existing
         ]
     else:
@@ -163,7 +165,7 @@ def get_sequence(run_id: int,
         "run_id": run_id,
         "actions": [
             {"step_id": s["id"], "kind": s["kind"],
-             "params": __import__("json").loads(s["params_json"])}
+             "params": json.loads(s["params_json"])}
             for s in steps
         ],
     }

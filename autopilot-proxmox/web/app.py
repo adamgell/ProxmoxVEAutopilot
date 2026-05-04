@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import csv
 import json
 import os
 import sqlite3
@@ -1852,9 +1853,13 @@ def get_hash_files():
         stat = f.stat()
         serial = ""
         try:
-            lines = f.read_text().strip().splitlines()
-            if len(lines) >= 2:
-                serial = lines[1].split(",")[0]
+            # Use csv.reader so quoted fields with embedded commas
+            # (rare but possible from agent-captured BIOS strings)
+            # round-trip correctly into the displayed serial.
+            with f.open("r", encoding="utf-8", newline="") as fh:
+                rows = list(csv.reader(fh))
+            if len(rows) >= 2 and rows[1]:
+                serial = rows[1][0]
         except Exception:
             pass
         vm_name = f.stem.replace("_hwid", "")
@@ -2913,7 +2918,7 @@ async def start_provision(
             "run_id": run_id,
             "sequence_id": int(sequence_id),
             "vm_count": int(count),
-            "sequence_hash_capture_phase": seq.get("hash_capture_phase", False),
+            "sequence_hash_capture_phase": seq.get("hash_capture_phase", "oobe"),
             "autopilot_base_url": os.environ.get(
                 "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
             "_causes_reboot_count": _causes_reboot_count,
@@ -2931,10 +2936,14 @@ async def start_provision(
                 winpe_extra[key] = val
         if chassis_type_override and int(chassis_type_override) > 0:
             winpe_extra["chassis_type_override"] = int(chassis_type_override)
-        return _launch_provision_job(
+        _launch_provision_job(
             playbook_path="playbooks/provision_proxmox_winpe.yml",
             extra_vars=winpe_extra,
         )
+        # Aligns with WINPE_E2E_RUNBOOK step 4 ("Open /runs/<id>") so an
+        # operator submitting the form lands on the timeline page instead
+        # of seeing the raw JSON job-id payload the clone path returns.
+        return RedirectResponse(f"/runs/{run_id}", status_code=303)
     # Existing clone path continues below unchanged.
 
     # Sequence-driven extras: per-VM answer floppy path + reboot-cycle

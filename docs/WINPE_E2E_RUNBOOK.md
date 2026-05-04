@@ -13,6 +13,7 @@ One full provisioning run on pve1 using the WinPE path, demonstrating:
 - Phase H2 completed: blank template VMID = 9001 exists.
 - `vault_autopilot_winpe_token_secret` set in vault.yml.
 - Web app restarted.
+- **Base-URL alignment.** The agent reaches Flask via `flask_base_url` baked into `tools/winpe-build/config.json` AND the Ansible playbook reaches Flask via `AUTOPILOT_BASE_URL` (env on the controller, defaulting to `http://127.0.0.1:5000`). Both must point at the same Flask instance reachable from the VM SDN. Mismatches show up as: agent `/winpe/register` succeeds via baked URL but playbook `/api/runs/<id>/complete` posts to a different URL and the run never advances to `done`. Validate by running `curl http://<flask>:5000/healthz` from BOTH the controller AND a WinPE VM (or the host network the SDN bridges to) before kicking off a real run.
 
 ## Steps
 
