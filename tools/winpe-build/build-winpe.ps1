@@ -57,5 +57,93 @@ Write-Output $isoPath
 
 if ($DryRun) { return }
 
-# Real build path is implemented in Tasks E2-E5 below.
-throw "build-winpe.ps1: real build path not yet implemented; use -DryRun"
+$adkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit"
+$peRoot = "$adkRoot\Windows Preinstallation Environment"
+$copyPe = "$peRoot\copype.cmd"
+if (-not (Test-Path -LiteralPath $copyPe)) {
+    throw "ADK + WinPE add-on not installed (looked for $copyPe)"
+}
+
+$workRoot = Join-Path $env:TEMP "winpe-build-$Arch-$(New-Guid)"
+& cmd /c "`"$copyPe`" $Arch `"$workRoot`"" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "copype failed: $LASTEXITCODE" }
+
+$mountDir = Join-Path $workRoot 'mount'
+$bootWim = Join-Path $workRoot 'media\sources\boot.wim'
+
+& dism.exe /Mount-Image /ImageFile:$bootWim /Index:1 /MountDir:$mountDir | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "dism /Mount-Image failed: $LASTEXITCODE" }
+
+try {
+    $optionalPackages = @(
+        'WinPE-WMI', 'WinPE-NetFx', 'WinPE-Scripting', 'WinPE-PowerShell',
+        'WinPE-StorageWMI', 'WinPE-DismCmdlets', 'WinPE-SecureStartup'
+    )
+    $pkgRoot = "$peRoot\$Arch\WinPE_OCs"
+    foreach ($pkg in $optionalPackages) {
+        & dism.exe /Image:$mountDir /Add-Package /PackagePath:"$pkgRoot\$pkg.cab" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Add-Package $pkg failed: $LASTEXITCODE" }
+        $langCab = "$pkgRoot\en-us\${pkg}_en-us.cab"
+        if (Test-Path -LiteralPath $langCab) {
+            & dism.exe /Image:$mountDir /Add-Package /PackagePath:$langCab | Out-Null
+        }
+    }
+
+    # Bake-in WinPE-time drivers. vioscsi is REQUIRED so WinPE can see
+    # the virtio-scsi-pci disk (otherwise diskpart's `select disk 0`
+    # will fail). NetKVM is REQUIRED so the agent can phone home.
+    # vioserial is included so any phase-0 fallback to QGA still works.
+    # Other drivers (Balloon, vioinput, viogpudo) are needed only by the
+    # OS post-apply and are injected into V:\ via dism /add-driver in
+    # phase 0 from the still-attached VirtIO ISO -- not baked into WinPE.
+    $virtioRoot = $null
+    foreach ($candidate in @('D:\virtio','F:\BuildRoot\inputs\virtio-win')) {
+        if (Test-Path -LiteralPath $candidate) { $virtioRoot = $candidate; break }
+    }
+    if (-not $virtioRoot) {
+        throw "WinPE build needs a VirtIO driver source at D:\virtio or F:\BuildRoot\inputs\virtio-win"
+    }
+    foreach ($infName in @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')) {
+        $inf = Get-ChildItem -Path $virtioRoot -Recurse -Filter $infName |
+            Where-Object FullName -match "\\$Arch\\" |
+            Select-Object -First 1
+        if (-not $inf) {
+            throw "WinPE build cannot find $infName under $virtioRoot for $Arch"
+        }
+        & dism.exe /Image:$mountDir /Add-Driver /Driver:$($inf.FullName) /ForceUnsigned | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Add-Driver $infName failed: $LASTEXITCODE" }
+    }
+
+    # Stage agent files.
+    $autopilotDir = Join-Path $mountDir 'autopilot'
+    New-Item -ItemType Directory -Path $autopilotDir -Force | Out-Null
+    Copy-Item "$PSScriptRoot\Invoke-AutopilotWinPE.ps1" -Destination $autopilotDir
+    Copy-Item "$PSScriptRoot\config.json" -Destination $autopilotDir
+    Copy-Item "$PSScriptRoot\startnet.cmd" -Destination (Join-Path $mountDir 'Windows\System32\startnet.cmd') -Force
+} finally {
+    & dism.exe /Unmount-Image /MountDir:$mountDir /Commit | Out-Null
+}
+
+if (-not (Test-Path -LiteralPath $OutputDir)) {
+    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+}
+Copy-Item $bootWim -Destination $wimPath -Force
+
+$makeIso = "$peRoot\MakeWinPEMedia.cmd"
+& cmd /c "`"$makeIso`" /ISO `"$workRoot`" `"$isoPath`"" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "MakeWinPEMedia failed: $LASTEXITCODE" }
+
+$wimSha = (Get-FileHash -LiteralPath $wimPath -Algorithm SHA256).Hash
+$manifest = [pscustomobject]@{
+    arch = $Arch
+    build_sha = $sha
+    output_wim = $wimPath
+    output_iso = $isoPath
+    wim_sha256 = $wimSha
+    adk_root = $adkRoot
+    optional_packages = $optionalPackages
+    built_at = (Get-Date).ToString('o')
+}
+$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
