@@ -343,39 +343,47 @@ Describe 'Invoke-Action-StageAutopilotConfig' {
         }
     }
 
-    It 'fetches /winpe/autopilot-config and writes it to V:\Windows\Provisioning\Autopilot' {
+    It 'fetches /winpe/autopilot-config and writes the response bytes verbatim' {
         $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-stage-$(New-Guid)"
         try {
+            $expectedBytes = [System.Text.Encoding]::UTF8.GetBytes(
+                '{"CloudAssignedTenantId":"abc","Version":2049}'
+            )
             $invoker = {
-                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
-                return [pscustomobject]@{ Version = 2049; ZtdCorrelationId = 'x' }
+                param($Uri,$Headers,$TimeoutSec)
+                return [pscustomobject]@{ Content = $expectedBytes }
             }
             Invoke-Action-StageAutopilotConfig `
                 -Params @{ guest_path = "$tmp\AutopilotConfigurationFile.json" } `
                 -BaseUrl 'http://x:5000' -RunId 7 -BearerToken 'tok' `
-                -RestInvoker $invoker
-            $written = Get-Content "$tmp\AutopilotConfigurationFile.json" -Raw | ConvertFrom-Json
-            $written.Version | Should -Be 2049
+                -WebInvoker $invoker
+            $writtenBytes = [System.IO.File]::ReadAllBytes(
+                "$tmp\AutopilotConfigurationFile.json"
+            )
+            $writtenBytes | Should -Be $expectedBytes
         } finally {
             Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
     It 'creates the directory tree if missing' {
-        $tmp = "$env:TEMP/wpe-stage-deep-$(New-Guid)/a/b/c"
+        $base = "$env:TEMP/wpe-stage-deep-$(New-Guid)"
+        $tmp = Join-Path $base (Join-Path 'a' (Join-Path 'b' 'c'))
+        $destFile = Join-Path $tmp 'AutopilotConfigurationFile.json'
         try {
             $invoker = {
-                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
-                return [pscustomobject]@{ Version = 1 }
+                param($Uri,$Headers,$TimeoutSec)
+                return [pscustomobject]@{
+                    Content = [System.Text.Encoding]::UTF8.GetBytes('{}')
+                }
             }
             Invoke-Action-StageAutopilotConfig `
-                -Params @{ guest_path = "$tmp\AutopilotConfigurationFile.json" } `
+                -Params @{ guest_path = $destFile } `
                 -BaseUrl 'http://x:5000' -RunId 7 -BearerToken 'tok' `
-                -RestInvoker $invoker
-            Test-Path "$tmp\AutopilotConfigurationFile.json" | Should -BeTrue
+                -WebInvoker $invoker
+            Test-Path $destFile | Should -BeTrue
         } finally {
-            $root = "$env:TEMP/wpe-stage-deep-$(New-Guid)" -replace '[^/]+$',''
-            Remove-Item ($tmp -replace '\\a\\b\\c$','') -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $base -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -408,14 +416,15 @@ Describe 'Invoke-Action-StageUnattend' {
         $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-unat-$(New-Guid)"
         try {
             $invoker = {
-                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
-                return '<unattend>...</unattend>'
+                param($Uri,$Headers,$TimeoutSec)
+                # Invoke-WebRequest .Content is a string for text/xml
+                return [pscustomobject]@{ Content = '<unattend>...</unattend>' }
             }
             Invoke-Action-StageUnattend `
                 -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
                 -BearerToken 'tok' `
                 -PantherDirOverride "$tmp" `
-                -RestInvoker $invoker
+                -WebInvoker $invoker
             $body = Get-Content "$tmp\unattend.xml" -Raw
             $body | Should -Match '<unattend>'
         } finally {

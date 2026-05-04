@@ -8,6 +8,17 @@
 # Designed for PowerShell 5.1 (WinPE-bundled). Sourced by Pester tests
 # during development; running it from startnet.cmd at WinPE boot drives
 # the live flow.
+#
+# IMPLEMENTATION NOTES
+#
+# Set-StrictMode is intentionally NOT enabled at file scope. Pester's
+# `BeforeAll { . $script:AgentPath }` dot-sources this file into the
+# test runspace, where strict mode then bleeds into Pester's own
+# scaffolding and trips spurious "uninitialized variable" errors on
+# variables Pester populates via parameter binding. Production WinPE
+# runs the agent via `powershell -File`, not dot-sourced, so removing
+# strict mode does not affect production safety. Individual functions
+# that need stricter checking can opt in locally.
 
 function Read-AgentConfig {
     param([Parameter(Mandatory)] [string] $Path)
@@ -33,10 +44,15 @@ function Get-VMIdentity {
     param(
         [scriptblock] $UuidResolver = { (Get-CimInstance Win32_ComputerSystemProduct).UUID },
         [scriptblock] $MacResolver  = {
-            (Get-NetAdapter -Physical |
-                Where-Object Status -eq 'Up' |
-                Sort-Object ifIndex |
-                Select-Object -First 1).MacAddress
+            # WinPE 11 ships WMI but not NetAdapter module; use CIM
+            # against Win32_NetworkAdapterConfiguration which is
+            # available via the WinPE-WMI optional package (already
+            # baked in by tools/winpe-build/build-winpe.ps1).
+            $adapter = Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration `
+                | Where-Object { $_.IPEnabled -eq $true -and $_.MACAddress } `
+                | Sort-Object Index `
+                | Select-Object -First 1
+            if ($adapter) { $adapter.MACAddress } else { $null }
         }
     )
     $uuid = & $UuidResolver
@@ -326,30 +342,56 @@ function Invoke-Action-StageAutopilotConfig {
         [Parameter(Mandatory)] [int] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
-        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
-            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
-                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        # WebInvoker takes ($Uri, $Headers, $TimeoutSec) and returns an
+        # object whose .Content is byte[] (or a string). Default uses
+        # Invoke-WebRequest which preserves the response body byte-for-
+        # byte without the JSON auto-parsing that Invoke-RestMethod
+        # would do for application/json responses.
+        [scriptblock] $WebInvoker = { param($Uri,$Headers,$TimeoutSec)
+            Invoke-WebRequest -Uri $Uri -Method GET -Headers $Headers `
+                -TimeoutSec $TimeoutSec -UseBasicParsing
         }
     )
     $guestPath = [string] $Params.guest_path
     if ([string]::IsNullOrWhiteSpace($guestPath)) {
         throw "stage_autopilot_config: missing guest_path"
     }
-    $reqArgs = @{
-        BaseUrl = $BaseUrl
-        Path = "/winpe/autopilot-config/$RunId"
-        Method = 'GET'
-        BearerToken = $BearerToken
-        RestInvoker = $RestInvoker
+
+    $headers = @{ Authorization = "Bearer $BearerToken" }
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
+    $lastErr = $null
+    $response = $null
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + "/winpe/autopilot-config/$RunId"
+        try {
+            $response = & $WebInvoker $uri $headers 30
+            break
+        } catch {
+            $lastErr = $_
+        }
     }
-    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
-    $payload = Invoke-OrchestratorRequest @reqArgs
+    if ($response -eq $null) { throw $lastErr }
+
     $dir = Split-Path -Parent $guestPath
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    $json = $payload | ConvertTo-Json -Depth 10
-    Set-Content -LiteralPath $guestPath -Value $json -Encoding UTF8
+
+    # $response.Content from Invoke-WebRequest is byte[] when the
+    # response Content-Type is binary, and string for text. We always
+    # want the raw bytes regardless of how PS classified it.
+    if ($response.Content -is [byte[]]) {
+        [System.IO.File]::WriteAllBytes($guestPath, $response.Content)
+    } elseif ($response.Content -is [string]) {
+        [System.IO.File]::WriteAllBytes(
+            $guestPath, [System.Text.Encoding]::UTF8.GetBytes($response.Content)
+        )
+    } else {
+        # PSObject from a mock test - pull RawContent or fall back to ToString
+        [System.IO.File]::WriteAllText($guestPath, [string] $response.Content)
+    }
 }
 
 function _RunBcdboot {
@@ -378,26 +420,46 @@ function Invoke-Action-StageUnattend {
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [string] $PantherDirOverride,
-        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
-            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
-                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        # WebInvoker bypasses Invoke-RestMethod's auto-parsing of
+        # application/xml responses (which would deserialize into an
+        # [xml] document and write the type name to disk).
+        [scriptblock] $WebInvoker = { param($Uri,$Headers,$TimeoutSec)
+            Invoke-WebRequest -Uri $Uri -Method GET -Headers $Headers `
+                -TimeoutSec $TimeoutSec -UseBasicParsing
         }
     )
     $dir = if ($PantherDirOverride) { $PantherDirOverride } else { 'V:\Windows\Panther' }
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    $reqArgs = @{
-        BaseUrl = $BaseUrl
-        Path = "/winpe/unattend/$RunId"
-        Method = 'GET'
-        BearerToken = $BearerToken
-        RestInvoker = $RestInvoker
+
+    $headers = @{ Authorization = "Bearer $BearerToken" }
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
+    $lastErr = $null
+    $response = $null
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + "/winpe/unattend/$RunId"
+        try {
+            $response = & $WebInvoker $uri $headers 30
+            break
+        } catch {
+            $lastErr = $_
+        }
     }
-    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
-    $xml = Invoke-OrchestratorRequest @reqArgs
-    Set-Content -LiteralPath (Join-Path $dir 'unattend.xml') `
-        -Value $xml -Encoding UTF8
+    if ($response -eq $null) { throw $lastErr }
+
+    $out = Join-Path $dir 'unattend.xml'
+    if ($response.Content -is [byte[]]) {
+        [System.IO.File]::WriteAllBytes($out, $response.Content)
+    } elseif ($response.Content -is [string]) {
+        [System.IO.File]::WriteAllBytes(
+            $out, [System.Text.Encoding]::UTF8.GetBytes($response.Content)
+        )
+    } else {
+        [System.IO.File]::WriteAllText($out, [string] $response.Content)
+    }
 }
 
 function Invoke-Action-CaptureHash {
@@ -518,7 +580,6 @@ function Start-AutopilotWinPE {
                 RunId = $runId; BearerToken = $tok
             }
             if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
-            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
             Invoke-Action-StageAutopilotConfig @a
         }
         'bake_boot_entry' = { param($p, $tok)
@@ -532,7 +593,6 @@ function Start-AutopilotWinPE {
                 RunId = $runId; BearerToken = $tok
             }
             if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
-            if ($RestInvoker)        { $a.RestInvoker = $RestInvoker }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
             Invoke-Action-StageUnattend @a
         }
