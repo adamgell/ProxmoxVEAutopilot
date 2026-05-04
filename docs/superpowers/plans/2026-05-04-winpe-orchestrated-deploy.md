@@ -1,6 +1,6 @@
 # WinPE-Orchestrated Proxmox Deploy Implementation Plan
 
-Version: v2.1 (2026-05-04, second operator-review pass)
+Version: v2.2 (2026-05-04, third operator-review pass)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -877,11 +877,15 @@ def compile_winpe(sequence: dict,
     })
 
     if autopilot:
+        # Phase 0 applies Windows to V:\ (the soon-to-be-C:\ partition).
+        # The agent runs from X:\ (WinPE RAM drive) and has no C:\, so
+        # we MUST stage to V:\Windows\... here. The OS sees this as
+        # C:\Windows\... after first boot when V: is remapped to C:.
         out.actions.append({
             "kind": "stage_autopilot_config",
             "params": {
                 "guest_path": (
-                    "C:\\Windows\\Provisioning\\Autopilot\\"
+                    "V:\\Windows\\Provisioning\\Autopilot\\"
                     "AutopilotConfigurationFile.json"
                 ),
             },
@@ -1942,7 +1946,13 @@ Expected: 2 FAIL.
 
 - [ ] **Step 3: Implement endpoint**
 
-Append to `web/winpe_endpoints.py`:
+Append to `web/winpe_endpoints.py` (top of the file, with the other imports). `Response` is reused by /winpe/unattend in C6 and /winpe/hash in M2, so we add it once now:
+
+```python
+from fastapi.responses import Response
+```
+
+Then append the endpoint body:
 
 ```python
 def _resolve_autopilot_config_path():
@@ -2056,12 +2066,9 @@ Expected: 2 FAIL.
 
 - [ ] **Step 3: Implement endpoint**
 
-Append to `web/winpe_endpoints.py`:
+Append to `web/winpe_endpoints.py` (`Response` is already imported at the top of the file from Task C5):
 
 ```python
-from fastapi.responses import Response
-
-
 def _credential_resolver_for_run():
     """Build a credential resolver matching the existing /api/jobs/provision
     pattern. Local-admin / domain-join steps need this to compile."""
@@ -4792,6 +4799,18 @@ Add to the function signature:
     boot_mode: str = Form("clone"),
 ```
 
+**Relax the existing root-ticket preflight first.** Around line 2675, today's code reads `if _chassis_types_to_stage or sequence_id:` and demands `vault_proxmox_root_password`. The root ticket is only used for the `args:` PUT, which is needed for chassis-type SMBIOS files (both paths) AND the per-VM answer floppy attachment (clone path only). WinPE skips the floppy entirely, so a WinPE sequence without chassis override does NOT need root@pam. Change the condition to:
+
+```python
+    needs_root_ticket = bool(_chassis_types_to_stage) or (
+        sequence_id and boot_mode != "winpe"
+    )
+    if needs_root_ticket:
+        ...
+```
+
+Update the in-error message to mention the chassis-or-floppy nuance only when relevant.
+
 After `profile = _sanitize_input(profile)`:
 
 ```python
@@ -4872,17 +4891,26 @@ After the existing block (still inside `start_provision`), add the WinPE launch 
             sequence_id=int(sequence_id),
             provision_path="winpe",
         )
-        winpe_extra = {
+        # Precedence (lowest -> highest):
+        #   1. inventory defaults (already in vars.yml; not added here)
+        #   2. sequence-derived resolved_vars (from compile + resolve_provision_vars)
+        #   3. form values, when explicitly set (non-zero / non-empty)
+        # Step 3 wins so an operator's explicit form input overrides
+        # whatever the sequence left as a default. This matches the
+        # role's `_effective_chassis_type` behavior (form override wins).
+        winpe_extra = dict(resolved_vars)
+        # Run-level fixed identifiers, not operator-overridable.
+        winpe_extra.update({
             "run_id": run_id,
             "sequence_id": int(sequence_id),
-            "vm_oem_profile": profile,
             "vm_count": int(count),
             "sequence_hash_capture_phase": seq["hash_capture_phase"],
             "autopilot_base_url": os.environ.get(
                 "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
             "_causes_reboot_count": _causes_reboot_count,
-        }
-        # Mirror the same per-form overrides the clone path applies.
+        })
+        # Form overrides last (highest precedence).
+        winpe_extra["vm_oem_profile"] = profile  # always present in form
         for key, val in (
             ("vm_cores", cores), ("vm_memory_mb", memory_mb),
             ("vm_disk_size_gb", disk_size_gb),
@@ -4894,7 +4922,6 @@ After the existing block (still inside `start_provision`), add the WinPE launch 
                 winpe_extra[key] = val
         if chassis_type_override and int(chassis_type_override) > 0:
             winpe_extra["chassis_type_override"] = int(chassis_type_override)
-        winpe_extra.update(resolved_vars)
         return _launch_provision_job(
             playbook_path="playbooks/provision_proxmox_winpe.yml",
             extra_vars=winpe_extra,
@@ -5731,6 +5758,27 @@ def create_sequence(db_path, *, name: str, description: str,
 
 For `update_sequence`, accept `hash_capture_phase: Optional[str] = None` and add it to the partial-UPDATE construction (existing function uses a list of `set_clauses` it appends to; follow that pattern). Validate `in ("winpe","oobe")` only when non-None.
 
+For `duplicate_sequence` (line 366), thread the field through so a duplicated sequence keeps its hash phase rather than silently reverting to `oobe`. The current body calls `create_sequence(...)` with only a subset of fields; add `hash_capture_phase=seq["hash_capture_phase"]`:
+
+```python
+def duplicate_sequence(db_path, seq_id: int, *, new_name: str) -> int:
+    seq = get_sequence(db_path, seq_id)
+    if seq is None:
+        raise ValueError(f"sequence {seq_id} not found")
+    new_id = create_sequence(
+        db_path, name=new_name, description=seq["description"],
+        is_default=False,
+        produces_autopilot_hash=seq["produces_autopilot_hash"],
+        target_os=seq.get("target_os", "windows"),
+        hash_capture_phase=seq["hash_capture_phase"],
+    )
+    set_sequence_steps(db_path, new_id, [
+        {"step_type": s["step_type"], "params": s["params"], "enabled": s["enabled"]}
+        for s in seq["steps"]
+    ])
+    return new_id
+```
+
 - [ ] **Step 4: Add a test**
 
 Append to `tests/test_sequence_compiler_winpe.py`:
@@ -5777,6 +5825,21 @@ def test_create_sequence_rejects_unknown_hash_capture_phase(tmp_path):
             target_os="windows", produces_autopilot_hash=False,
             is_default=False, hash_capture_phase="bogus",
         )
+
+
+def test_duplicate_sequence_preserves_hash_capture_phase(tmp_path):
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    sid = sequences_db.create_sequence(
+        db, name="src-winpe", description="",
+        target_os="windows", produces_autopilot_hash=True,
+        is_default=False, hash_capture_phase="winpe",
+    )
+    new_id = sequences_db.duplicate_sequence(
+        db, sid, new_name="src-winpe-copy",
+    )
+    assert sequences_db.get_sequence(db, new_id)["hash_capture_phase"] == "winpe"
 
 
 def test_api_sequences_create_persists_hash_capture_phase(web_client):
@@ -5912,5 +5975,15 @@ Implicit cross-references and consistency:
 | F5 attached VirtIO ISO at sata1, but `proxmox_vm_clone/update_config.yml` line 31 already attaches it at ide3 | F5 drops the duplicate attach; cleanup detaches `ide3` (the role-attached slot) |
 | `_create_seq` used `f"wpe-{id(client)}"` (collides on repeat calls in one test) | `_create_seq` uses `f"wpe-{uuid4().hex[:8]}"` |
 | I4 described a sequence-edit POST handler that does not exist (editor saves via JS to `/api/sequences`) | I4 extends `_SequenceCreate` / `_SequenceUpdate` Pydantic models, the JS payload, and `create_sequence` / `update_sequence` DB helpers |
+
+### v2.2 corrections vs v2.1 (third operator review)
+
+| v2.1 mistake | v2.2 fix |
+|---|---|
+| `compile_winpe` emitted `guest_path = C:\Windows\...` but phase 0 applies Windows to V:\, so the offline write would either fail (no C: in WinPE) or land in the wrong place | Compiler now emits `V:\Windows\Provisioning\Autopilot\AutopilotConfigurationFile.json`; the OS sees this as `C:\Windows\...` after first boot when V: is remapped |
+| C5 referenced `Response(...)` but `from fastapi.responses import Response` was added in C6 -> NameError on C5 tests | C5 step 3 now adds the import at the top of `winpe_endpoints.py`; C6 reuses the already-imported name |
+| WinPE provision still triggered the root-ticket preflight via `if _chassis_types_to_stage or sequence_id:` (root@pam needed only for chassis-args; WinPE skips the answer-floppy entirely) | G1 also relaxes the preflight: `needs_root_ticket = bool(_chassis_types_to_stage) or (sequence_id and boot_mode != "winpe")` |
+| WinPE extra-vars precedence inverted: `winpe_extra.update(resolved_vars)` overwrote form-supplied chassis_type_override with sequence/default | G1 builds `winpe_extra = dict(resolved_vars)` first, then layers form values on top so explicit form input wins (matches role's `_effective_chassis_type` precedence) |
+| `duplicate_sequence` did not copy `hash_capture_phase`, silently reverting duplicated sequences to `oobe` | I4 patches `duplicate_sequence` to thread the field through; new test asserts the duplicated sequence keeps the original phase |
 
 No placeholders, TBDs, or "implement later" lines. Every code-bearing step shows the actual code.
