@@ -1,6 +1,6 @@
 # WinPE-Orchestrated Proxmox Deploy Implementation Plan
 
-Version: v2.2 (2026-05-04, third operator-review pass)
+Version: v2.3 (2026-05-04, fourth review pass; positive verdict + 3 ops-risk recommendations)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -612,6 +612,171 @@ Expected: 11 PASS.
 ```bash
 git add autopilot-proxmox/web/sequences_db.py autopilot-proxmox/tests/test_provisioning_runs_db.py
 git commit -m "feat(db): add provisioning run + step helper functions"
+```
+
+### Task A4: Stale-run reaper (request-time, no background task)
+
+If the WinPE agent crashes mid-`apply_wim` or the controller-side Ansible job dies, the run stays in `awaiting_winpe` forever and the latest step stays in `running` forever. Operators see the timeline freeze with no error. We avoid a background reaper thread (extra moving part, deployment shape change) and instead sweep stale runs whenever someone reads run state via `/api/runs/<id>` or registers via `/winpe/register`. A sweep walks runs in active states (`awaiting_winpe`, `awaiting_specialize`) and flips any whose newest step has been `running` for longer than the configured TTL to `failed`, with `last_error="stale; no step update for >N min"`.
+
+**Files:**
+- Modify: `autopilot-proxmox/web/sequences_db.py`
+- Modify: `autopilot-proxmox/tests/test_provisioning_runs_db.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_provisioning_runs_db.py`:
+
+```python
+def test_sweep_stale_runs_marks_run_failed_after_ttl(db_path, monkeypatch):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="x", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1, vm_uuid="u",
+    )
+    s = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="apply_wim", params={},
+    )
+    sequences_db.update_run_step_state(
+        db_path, step_id=s["id"], state="running",
+    )
+    # Force the step's started_at into the distant past so it looks stale.
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE provisioning_run_steps "
+            "SET started_at = '2000-01-01T00:00:00+00:00' WHERE id=?",
+            (s["id"],),
+        )
+
+    n = sequences_db.sweep_stale_runs(db_path, ttl_seconds=600)
+    assert n == 1
+    run = sequences_db.get_provisioning_run(db_path, run_id)
+    assert run["state"] == "failed"
+    assert "stale" in (run["last_error"] or "")
+
+
+def test_sweep_stale_runs_leaves_active_runs_alone(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="y", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1, vm_uuid="u",
+    )
+    s = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="apply_wim", params={},
+    )
+    sequences_db.update_run_step_state(
+        db_path, step_id=s["id"], state="running",
+    )
+    n = sequences_db.sweep_stale_runs(db_path, ttl_seconds=3600)
+    assert n == 0
+    run = sequences_db.get_provisioning_run(db_path, run_id)
+    assert run["state"] == "awaiting_winpe"
+
+
+def test_sweep_stale_runs_skips_runs_in_terminal_state(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="z", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1, vm_uuid="u",
+    )
+    sequences_db.update_provisioning_run_state(
+        db_path, run_id=run_id, state="done",
+    )
+    n = sequences_db.sweep_stale_runs(db_path, ttl_seconds=1)
+    assert n == 0
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```bash
+cd autopilot-proxmox && python -m pytest tests/test_provisioning_runs_db.py -v -k stale
+```
+
+Expected: 3 FAIL ("module 'web.sequences_db' has no attribute 'sweep_stale_runs'").
+
+- [ ] **Step 3: Implement `sweep_stale_runs`**
+
+Append to `web/sequences_db.py`:
+
+```python
+def sweep_stale_runs(db_path, *, ttl_seconds: int = 1800) -> int:
+    """Mark any run whose newest step has been 'running' for longer
+    than ttl_seconds as failed. Returns the count of runs flipped.
+
+    Called inline by /api/runs/<id> reads and /winpe/register so we
+    do not need a background reaper. ttl_seconds = 30 min by default
+    (covers a slow apply_wim + driver inject on cold storage; tighten
+    if your hardware allows).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ttl_seconds)
+    cutoff_iso = cutoff.isoformat(timespec="seconds")
+    flipped = 0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT r.id AS run_id, MAX(s.started_at) AS last_started "
+            "FROM provisioning_runs r "
+            "JOIN provisioning_run_steps s ON s.run_id = r.id "
+            "WHERE r.state IN ('awaiting_winpe','awaiting_specialize') "
+            "  AND s.state = 'running' "
+            "GROUP BY r.id "
+            "HAVING last_started IS NOT NULL AND last_started < ?",
+            (cutoff_iso,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state='failed', last_error=?, finished_at=? "
+                "WHERE id=? AND state IN ('awaiting_winpe','awaiting_specialize')",
+                (
+                    f"stale; no step update for >{ttl_seconds//60} min",
+                    _now(), row["run_id"],
+                ),
+            )
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state='error', finished_at=?, error='stale: agent silent' "
+                "WHERE run_id=? AND state='running'",
+                (_now(), row["run_id"]),
+            )
+            flipped += 1
+    return flipped
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+cd autopilot-proxmox && python -m pytest tests/test_provisioning_runs_db.py -v
+```
+
+Expected: all PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add autopilot-proxmox/web/sequences_db.py autopilot-proxmox/tests/test_provisioning_runs_db.py
+git commit -m "feat(db): sweep_stale_runs marks long-silent agents failed"
 ```
 
 ---
@@ -2531,9 +2696,21 @@ Create `tools/winpe-build/config.json`:
 ```json
 {
   "flask_base_url": "http://192.168.2.4:5000",
+  "flask_base_url_fallback": null,
   "build_sha": "DEV"
 }
 ```
+
+`flask_base_url` SHOULD be an IP literal so the agent has zero DNS dependency on first contact (chicken-and-egg: the agent cannot ask `/winpe/sequence/<id>` to learn its DNS server because it cannot reach the orchestrator without one). `flask_base_url_fallback` is optional; when set, `Invoke-OrchestratorRequest` retries it after `flask_base_url` exhausts its own retry budget. Operators with a stable hostname can put the hostname in `flask_base_url` and a static IP fallback here.
+
+**Bootstrap order at WinPE boot** (each step must succeed before the next can run; failure at any step leaves the VM at the WinPE prompt with the log on screen for triage):
+
+1. UEFI loads the WinPE ISO (`ide2`).
+2. `wpeinit` runs (winload). At this point WinPE has whatever drivers were baked into `boot.wim` at build time -- per Task E2 that's vioscsi (so the disk is visible) + NetKVM (so a NIC is up) + vioser. **Without these baked, every other step is unreachable.**
+3. `startnet.cmd` runs `drvload` against any `X:\autopilot\drivers\*.inf` (currently empty; reserved for ad-hoc driver drops without rebuilding the ISO).
+4. `startnet.cmd` launches `Invoke-AutopilotWinPE.ps1`.
+5. The agent's `Wait for network` step polls `Test-NetConnection <flask_base_url>:5000` for up to 60s. If `flask_base_url_fallback` is configured, the same poll runs against the fallback after the first URL exhausts.
+6. `POST /winpe/register` -> action list arrives -> `inject_drivers` action runs `dism /add-driver` against the attached VirtIO ISO. (Drivers added here are for the Windows OS image at `V:\`, not WinPE itself.)
 
 - [ ] **Step 5: Run Pester to verify it passes**
 
@@ -2674,6 +2851,23 @@ Describe 'Invoke-OrchestratorRequest' {
         $script:lastHeaders.ContainsKey('Authorization') | Should -BeFalse
     }
 
+    It 'falls back to FallbackBaseUrl when BaseUrl exhausts retries' {
+        $script:visited = @()
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:visited += $Uri
+            if ($Uri -match '^http://primary') { throw 'connection refused' }
+            return [pscustomobject]@{ ok = $true; uri = $Uri }
+        }
+        $r = Invoke-OrchestratorRequest -BaseUrl 'http://primary:5000' `
+            -Path '/winpe/register' -Method POST -Body @{} `
+            -FallbackBaseUrl 'http://fallback:5000' `
+            -MaxAttempts 2 -RetryDelayMs 1 -RestInvoker $invoker
+        $r.ok | Should -BeTrue
+        ($script:visited | Where-Object { $_ -match 'primary' }).Count | Should -Be 2
+        ($script:visited | Where-Object { $_ -match 'fallback' }).Count | Should -BeGreaterThan 0
+    }
+
     It 'retries on transient failure up to MaxAttempts then throws' {
         $script:attempts = 0
         $boom = {
@@ -2710,6 +2904,7 @@ function Invoke-OrchestratorRequest {
         [Parameter(Mandatory)] [ValidateSet('GET','POST')] [string] $Method,
         [hashtable] $Body,
         [string] $BearerToken,
+        [string] $FallbackBaseUrl,
         [int] $MaxAttempts = 5,
         [int] $RetryDelayMs = 2000,
         [int] $TimeoutSec = 30,
@@ -2720,17 +2915,22 @@ function Invoke-OrchestratorRequest {
     )
     $headers = @{}
     if ($BearerToken) { $headers.Authorization = "Bearer $BearerToken" }
-    $uri = ($BaseUrl.TrimEnd('/')) + '/' + $Path.TrimStart('/')
     $payload = $null
     if ($Body) { $payload = $Body | ConvertTo-Json -Depth 10 -Compress }
 
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
     $lastErr = $null
-    for ($i = 1; $i -le $MaxAttempts; $i++) {
-        try {
-            return & $RestInvoker $uri $Method $headers $payload 'application/json' $TimeoutSec
-        } catch {
-            $lastErr = $_
-            if ($i -lt $MaxAttempts) { Start-Sleep -Milliseconds $RetryDelayMs }
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + '/' + $Path.TrimStart('/')
+        for ($i = 1; $i -le $MaxAttempts; $i++) {
+            try {
+                return & $RestInvoker $uri $Method $headers $payload 'application/json' $TimeoutSec
+            } catch {
+                $lastErr = $_
+                if ($i -lt $MaxAttempts) { Start-Sleep -Milliseconds $RetryDelayMs }
+            }
         }
     }
     throw $lastErr
@@ -3689,12 +3889,17 @@ function Start-AutopilotWinPE {
     $id = Get-VMIdentity @idArgs
     Write-AgentLog -Path $LogPath -Level INFO -Message "vm_uuid=$($id.vm_uuid) mac=$($id.mac)"
 
+    $fallbackUrl = $null
+    if ($cfg.PSObject.Properties.Match('flask_base_url_fallback').Count -gt 0) {
+        $fallbackUrl = $cfg.flask_base_url_fallback
+    }
     $reqArgs = @{
         BaseUrl = $cfg.flask_base_url
         Path = '/winpe/register'
         Method = 'POST'
         Body = @{ vm_uuid = $id.vm_uuid; mac = $id.mac; build_sha = $cfg.build_sha }
     }
+    if ($fallbackUrl) { $reqArgs.FallbackBaseUrl = $fallbackUrl }
     if ($RestInvoker) { $reqArgs.RestInvoker = $RestInvoker }
     $reg = Invoke-OrchestratorRequest @reqArgs
 
@@ -3762,6 +3967,7 @@ function Start-AutopilotWinPE {
         BaseUrl = $cfg.flask_base_url; Path = '/winpe/done'
         Method = 'POST'; Body = @{}; BearerToken = $token
     }
+    if ($fallbackUrl) { $doneArgs.FallbackBaseUrl = $fallbackUrl }
     if ($RestInvoker) { $doneArgs.RestInvoker = $RestInvoker }
     Invoke-OrchestratorRequest @doneArgs
 
@@ -4335,15 +4541,34 @@ git commit -m "feat(inventory): WinPE vars + app.py bridge to env"
 # Fails when the deadline expires without a matching state.
 
 - name: "Wait for run {{ _wfrs_run_id }} state in {{ _wfrs_accepted_states }}"
-  ansible.builtin.uri:
-    url: "{{ autopilot_base_url }}/api/runs/{{ _wfrs_run_id }}"
-    method: GET
-    return_content: true
-    status_code: [200]
-  register: _wfrs_resp
-  until: "(_wfrs_resp.json.state | default('')) in (_wfrs_accepted_states | default([]))"
-  retries: "{{ ((_wfrs_timeout | default(1800)) // (_wfrs_poll_interval | default(10))) | int }}"
-  delay: "{{ _wfrs_poll_interval | default(10) | int }}"
+  block:
+    - name: "Poll until accepted state"
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/runs/{{ _wfrs_run_id }}"
+        method: GET
+        return_content: true
+        status_code: [200]
+      register: _wfrs_resp
+      until: "(_wfrs_resp.json.state | default('')) in (_wfrs_accepted_states | default([]))"
+      retries: "{{ ((_wfrs_timeout | default(1800)) // (_wfrs_poll_interval | default(10))) | int }}"
+      delay: "{{ _wfrs_poll_interval | default(10) | int }}"
+  rescue:
+    # Ansible-side timeout: poll loop ran out of retries. Mark the run
+    # failed in Flask so the UI does not show 'awaiting_winpe' forever
+    # and the request-time stale sweep does not have to wait for its
+    # TTL to fire.
+    - name: "Mark run failed (Ansible-side timeout)"
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/runs/{{ _wfrs_run_id }}/fail"
+        method: POST
+        body_format: json
+        body:
+          reason: "controller-side timeout after {{ _wfrs_timeout | default(1800) }}s waiting for {{ _wfrs_accepted_states | join(',') }}"
+        status_code: [200]
+      ignore_errors: true
+    - name: "Re-raise the wait failure"
+      ansible.builtin.fail:
+        msg: "wait_for_run_state timed out after {{ _wfrs_timeout | default(1800) }}s"
 
 - name: "Capture final run state"
   ansible.builtin.set_fact:
@@ -4402,6 +4627,39 @@ def test_api_run_returns_state_and_steps(web_client, test_db):
 def test_api_run_returns_404_for_unknown(web_client):
     r = web_client.get("/api/runs/99999")
     assert r.status_code == 404
+
+
+def test_api_run_fail_marks_run_failed(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 1234, "vm_uuid": "u-1"},
+    )
+    r = web_client.post(
+        f"/api/runs/{run_id}/fail",
+        json={"reason": "controller timeout 1800s"},
+    )
+    assert r.status_code == 200
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "failed"
+    assert "controller timeout" in (run["last_error"] or "")
+
+
+def test_api_run_fail_is_idempotent_on_terminal_state(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    from web import sequences_db
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="done",
+    )
+    r = web_client.post(
+        f"/api/runs/{run_id}/fail", json={"reason": "x"},
+    )
+    assert r.status_code == 200
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "done"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -4420,14 +4678,46 @@ Append:
 api_router = APIRouter(prefix="/api", tags=["api"])
 
 
+# Stale-run TTL: if an active run's newest step has been 'running' for
+# longer than this, /api/runs/<id> reads (and /winpe/register lookups)
+# flip the run to 'failed' inline before returning. 30 min covers the
+# worst-case apply_wim + driver inject we have observed; tighten if
+# your storage is faster.
+_STALE_RUN_TTL_SECONDS = 30 * 60
+
+
 @api_router.get("/runs/{run_id}")
 def get_run(run_id: int):
     db = _db_path()
+    sequences_db.sweep_stale_runs(db, ttl_seconds=_STALE_RUN_TTL_SECONDS)
     run = sequences_db.get_provisioning_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     steps = sequences_db.list_run_steps(db, run_id=run_id)
     return {**run, "steps": steps}
+
+
+class _RunFailBody(BaseModel):
+    reason: str = "controller-side timeout"
+
+
+@api_router.post("/runs/{run_id}/fail")
+def post_run_fail(run_id: int, body: _RunFailBody):
+    """Out-of-band failure marker. Called by the playbook's
+    wait_for_run_state rescue block when its poll loop times out, and
+    by operators clicking 'fail run' in the UI. Idempotent: terminal
+    states stay terminal."""
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run["state"] in ("done", "failed"):
+        return {"ok": True}
+    sequences_db.update_provisioning_run_state(
+        db, run_id=run_id, state="failed",
+        last_error=body.reason,
+    )
+    return {"ok": True}
 ```
 
 In `web/app.py`, mount the second router:
@@ -5985,5 +6275,13 @@ Implicit cross-references and consistency:
 | WinPE provision still triggered the root-ticket preflight via `if _chassis_types_to_stage or sequence_id:` (root@pam needed only for chassis-args; WinPE skips the answer-floppy entirely) | G1 also relaxes the preflight: `needs_root_ticket = bool(_chassis_types_to_stage) or (sequence_id and boot_mode != "winpe")` |
 | WinPE extra-vars precedence inverted: `winpe_extra.update(resolved_vars)` overwrote form-supplied chassis_type_override with sequence/default | G1 builds `winpe_extra = dict(resolved_vars)` first, then layers form values on top so explicit form input wins (matches role's `_effective_chassis_type` precedence) |
 | `duplicate_sequence` did not copy `hash_capture_phase`, silently reverting duplicated sequences to `oobe` | I4 patches `duplicate_sequence` to thread the field through; new test asserts the duplicated sequence keeps the original phase |
+
+### v2.3 changes vs v2.2 (operational-risk feedback)
+
+| v2.2 gap | v2.3 fix |
+|---|---|
+| No timeout/recovery for runs whose agent crashed mid-step (UI froze in `running` indefinitely) | Task A4 adds `sweep_stale_runs(ttl_seconds)` that flips long-silent active runs to `failed` inline at `/api/runs/<id>` reads (no background thread); `/api/runs/<id>/fail` endpoint added for explicit out-of-band failure; `wait_for_run_state.yml` rescue block POSTs to it on Ansible-side timeout |
+| Network-bootstrap dependency chain was not surfaced anywhere in one place | D1 step 4 documents the full bootstrap order (UEFI -> WinPE drivers baked at E2 -> startnet drvload -> agent network wait -> register -> dynamic driver inject); makes the chicken-and-egg explicit |
+| `flask_base_url` was IP-only; no fallback if operators want hostnames | `config.json` adds optional `flask_base_url_fallback`; `Invoke-OrchestratorRequest` accepts `FallbackBaseUrl` and retries it after the primary exhausts; `Start-AutopilotWinPE` threads the fallback into the register + done calls (action handlers continue using the primary URL since they only run after register has confirmed connectivity) |
 
 No placeholders, TBDs, or "implement later" lines. Every code-bearing step shows the actual code.
