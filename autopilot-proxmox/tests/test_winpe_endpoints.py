@@ -618,3 +618,44 @@ def test_post_run_complete_advances_to_done(web_client, test_db):
     assert r.status_code == 200
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "done"
+
+
+def test_post_hash_writes_csv_into_hash_dir(
+    web_client, test_db, tmp_path, monkeypatch,
+):
+    """The endpoint persists by writing a CSV file into HASH_DIR using
+    the same column shape get_hash_files / hash_capture role produce.
+    Existing parser (web.app.get_hash_files at line 1794) picks it up
+    without code changes."""
+    from web import app as web_app
+    monkeypatch.setattr(web_app, "HASH_DIR", tmp_path, raising=True)
+
+    run_id, reg = _register(web_client, test_db)
+    r = web_client.post(
+        "/winpe/hash",
+        json={
+            "serial_number": "S1", "product_id": "PK1",
+            "hardware_hash": "HH1",
+        },
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+
+    csvs = list(tmp_path.glob("*.csv"))
+    assert len(csvs) == 1
+    text = csvs[0].read_text()
+    # Match the columns roles/hash_capture/files/Get-WindowsAutopilotInfo
+    # emits ("Device Serial Number,Windows Product ID,Hardware Hash"),
+    # which app.py's parser already understands.
+    assert "Device Serial Number" in text
+    assert "Hardware Hash" in text
+    assert "S1" in text
+    assert "HH1" in text
+
+
+def test_post_hash_requires_bearer(web_client):
+    r = web_client.post(
+        "/winpe/hash",
+        json={"serial_number": "S", "product_id": "P", "hardware_hash": "H"},
+    )
+    assert r.status_code == 401

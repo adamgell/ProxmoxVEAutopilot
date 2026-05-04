@@ -346,6 +346,49 @@ def post_done(payload: dict = Depends(_require_bearer_token)):
     return {"ok": True}
 
 
+class HashBody(BaseModel):
+    serial_number: str
+    product_id: str
+    hardware_hash: str
+
+
+def _persist_autopilot_hash(*, vmid: int, serial: str,
+                            product_id: str, hardware_hash: str) -> None:
+    """Persist a captured hash by writing a CSV into HASH_DIR matching
+    the column shape produced by roles/hash_capture (the QGA-time path).
+    web.app.get_hash_files (line 1794) iterates HASH_DIR.glob('*.csv'),
+    so this path is the supported persistence surface."""
+    import csv
+    from datetime import datetime, timezone
+    from web import app as web_app
+    web_app.HASH_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_serial = "".join(c for c in serial if c.isalnum() or c in ("-", "_"))
+    out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-winpe.csv"
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["Device Serial Number",
+                    "Windows Product ID",
+                    "Hardware Hash"])
+        w.writerow([serial, product_id, hardware_hash])
+
+
+@router.post("/hash")
+def post_hash(body: HashBody,
+              payload: dict = Depends(_require_bearer_token)):
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, int(payload["run_id"]))
+    if run is None or run["vmid"] is None:
+        raise HTTPException(status_code=404, detail="run not found or no vmid yet")
+    _persist_autopilot_hash(
+        vmid=int(run["vmid"]),
+        serial=body.serial_number,
+        product_id=body.product_id,
+        hardware_hash=body.hardware_hash,
+    )
+    return {"ok": True}
+
+
 api_router = APIRouter(prefix="/api", tags=["api"])
 
 
