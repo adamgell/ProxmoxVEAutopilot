@@ -207,3 +207,83 @@ def test_update_step_state_records_timestamps(db_path):
     assert steps[0]["state"] == "ok"
     assert steps[0]["started_at"] is not None
     assert steps[0]["finished_at"] is not None
+
+
+def test_sweep_stale_runs_marks_run_failed_after_ttl(db_path, monkeypatch):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="x", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1, vm_uuid="u",
+    )
+    s = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="apply_wim", params={},
+    )
+    sequences_db.update_run_step_state(
+        db_path, step_id=s["id"], state="running",
+    )
+    # Force the step's started_at into the distant past so it looks stale.
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE provisioning_run_steps "
+            "SET started_at = '2000-01-01T00:00:00+00:00' WHERE id=?",
+            (s["id"],),
+        )
+
+    n = sequences_db.sweep_stale_runs(db_path, ttl_seconds=600)
+    assert n == 1
+    run = sequences_db.get_provisioning_run(db_path, run_id)
+    assert run["state"] == "failed"
+    assert "stale" in (run["last_error"] or "")
+
+
+def test_sweep_stale_runs_leaves_active_runs_alone(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="y", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1, vm_uuid="u",
+    )
+    s = sequences_db.append_run_step(
+        db_path, run_id=run_id, phase="winpe", kind="apply_wim", params={},
+    )
+    sequences_db.update_run_step_state(
+        db_path, step_id=s["id"], state="running",
+    )
+    n = sequences_db.sweep_stale_runs(db_path, ttl_seconds=3600)
+    assert n == 0
+    run = sequences_db.get_provisioning_run(db_path, run_id)
+    assert run["state"] == "awaiting_winpe"
+
+
+def test_sweep_stale_runs_skips_runs_in_terminal_state(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    seq_id = sequences_db.create_sequence(
+        db_path, name="z", description="",
+        target_os="windows", produces_autopilot_hash=False, is_default=False,
+    )
+    run_id = sequences_db.create_provisioning_run(
+        db_path, sequence_id=seq_id, provision_path="winpe",
+    )
+    sequences_db.set_provisioning_run_identity(
+        db_path, run_id=run_id, vmid=1, vm_uuid="u",
+    )
+    sequences_db.update_provisioning_run_state(
+        db_path, run_id=run_id, state="done",
+    )
+    n = sequences_db.sweep_stale_runs(db_path, ttl_seconds=1)
+    assert n == 0

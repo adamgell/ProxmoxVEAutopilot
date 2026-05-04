@@ -887,3 +887,47 @@ def get_run_step(db_path, step_id: int) -> Optional[dict]:
             "SELECT * FROM provisioning_run_steps WHERE id=?", (step_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+def sweep_stale_runs(db_path, *, ttl_seconds: int = 1800) -> int:
+    """Mark any run whose newest step has been 'running' for longer
+    than ttl_seconds as failed. Returns the count of runs flipped.
+
+    Called inline by /api/runs/<id> reads and /winpe/register so we
+    do not need a background reaper. ttl_seconds = 30 min by default
+    (covers a slow apply_wim + driver inject on cold storage; tighten
+    if your hardware allows).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ttl_seconds)
+    cutoff_iso = cutoff.isoformat(timespec="seconds")
+    flipped = 0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT r.id AS run_id, MAX(s.started_at) AS last_started "
+            "FROM provisioning_runs r "
+            "JOIN provisioning_run_steps s ON s.run_id = r.id "
+            "WHERE r.state IN ('awaiting_winpe','awaiting_specialize') "
+            "  AND s.state = 'running' "
+            "GROUP BY r.id "
+            "HAVING last_started IS NOT NULL AND last_started < ?",
+            (cutoff_iso,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state='failed', last_error=?, finished_at=? "
+                "WHERE id=? AND state IN ('awaiting_winpe','awaiting_specialize')",
+                (
+                    f"stale; no step update for >{ttl_seconds//60} min",
+                    _now(), row["run_id"],
+                ),
+            )
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state='error', finished_at=?, error='stale: agent silent' "
+                "WHERE run_id=? AND state='running'",
+                (_now(), row["run_id"]),
+            )
+            flipped += 1
+    return flipped
