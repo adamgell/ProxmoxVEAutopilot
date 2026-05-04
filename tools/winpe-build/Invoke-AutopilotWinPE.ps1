@@ -30,3 +30,23 @@ function Write-AgentLog {
     Add-Content -LiteralPath $Path -Value $line -Encoding UTF8
     Write-Host $line
 }
+
+function Get-VMIdentity {
+    param(
+        [scriptblock] $UuidResolver = { (Get-CimInstance Win32_ComputerSystemProduct).UUID },
+        [scriptblock] $MacResolver  = {
+            (Get-NetAdapter -Physical |
+                Where-Object Status -eq 'Up' |
+                Sort-Object ifIndex |
+                Select-Object -First 1).MacAddress
+        }
+    )
+    $uuid = & $UuidResolver
+    $mac  = & $MacResolver
+    if ([string]::IsNullOrWhiteSpace($uuid)) { throw "could not read SMBIOS UUID" }
+    if ([string]::IsNullOrWhiteSpace($mac))  { throw "could not read MAC address"  }
+    return [pscustomobject]@{
+        vm_uuid = $uuid.ToString().ToLowerInvariant()
+        mac     = $mac.ToString()
+    }
+}

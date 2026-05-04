@@ -35,3 +35,25 @@ Describe 'Write-AgentLog' {
         }
     }
 }
+
+Describe 'Get-VMIdentity' {
+    It 'returns uuid and mac from injected resolvers' {
+        $uuidResolver = { '11111111-2222-3333-4444-555555555555' }
+        $macResolver = { '00:11:22:33:44:55' }
+        $id = Get-VMIdentity -UuidResolver $uuidResolver -MacResolver $macResolver
+        $id.vm_uuid | Should -Be '11111111-2222-3333-4444-555555555555'
+        $id.mac | Should -Be '00:11:22:33:44:55'
+    }
+
+    It 'normalizes uuid to lowercase' {
+        $uuidResolver = { 'AABBCCDD-EEFF-0011-2233-445566778899' }
+        $macResolver = { 'aa:bb:cc:dd:ee:ff' }
+        $id = Get-VMIdentity -UuidResolver $uuidResolver -MacResolver $macResolver
+        $id.vm_uuid | Should -Be 'aabbccdd-eeff-0011-2233-445566778899'
+    }
+
+    It 'throws when resolver returns empty' {
+        { Get-VMIdentity -UuidResolver { '' } -MacResolver { 'aa' } } |
+            Should -Throw '*UUID*'
+    }
+}
