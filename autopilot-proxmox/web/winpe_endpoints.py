@@ -296,3 +296,52 @@ def post_step_result(step_id: int, body: StepResultBody,
         run_id=int(payload["run_id"]), ttl_seconds=_REGISTER_TOKEN_TTL,
     )
     return {"ok": True, "bearer_token": new_token}
+
+
+def _proxmox_detach_and_set_boot(*, vmid: int, slots: list[str],
+                                 set_boot_order: str) -> None:
+    """Detach disks and set boot order via Proxmox API.
+
+    Reuses web.app._proxmox_api_put (line 1294), which constructs the
+    URL + auth header from primitive vault fields. We deliberately do
+    NOT read proxmox_api_base / proxmox_api_auth_header from
+    _load_proxmox_config -- those values are Jinja strings in vars.yml
+    that _load_vars never renders.
+
+    One PUT carries delete= and boot= together; Proxmox accepts both
+    keys in the same form body (same shape as
+    roles/cleanup_answer_media.yml uses).
+    """
+    from web import app as web_app
+    cfg = web_app._load_proxmox_config()
+    node = cfg.get("proxmox_node") or "pve"
+    body = {
+        "delete": ",".join(slots),
+        "boot": set_boot_order,
+    }
+    web_app._proxmox_api_put(
+        f"/nodes/{node}/qemu/{vmid}/config", data=body,
+    )
+
+
+@router.post("/done")
+def post_done(payload: dict = Depends(_require_bearer_token)):
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, int(payload["run_id"]))
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run["vmid"] is None:
+        raise HTTPException(
+            status_code=409, detail="run identity not set"
+        )
+    if run["state"] == "awaiting_winpe":
+        _proxmox_detach_and_set_boot(
+            vmid=int(run["vmid"]),
+            slots=["ide2", "sata0"],
+            set_boot_order="order=scsi0",
+        )
+        sequences_db.update_provisioning_run_state(
+            db, run_id=int(run["id"]),
+            state="awaiting_specialize",
+        )
+    return {"ok": True}

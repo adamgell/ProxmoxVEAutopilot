@@ -413,3 +413,37 @@ def test_step_result_rejects_step_in_different_run(web_client, test_db):
         headers=_bearer(reg_a["bearer_token"]),
     )
     assert r.status_code == 403
+
+
+def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypatch):
+    calls = []
+
+    def fake_detach(*, vmid, slots, set_boot_order):
+        calls.append({"vmid": vmid, "slots": list(slots),
+                      "boot": set_boot_order})
+
+    from web import winpe_endpoints
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        fake_detach)
+    run_id, reg = _register(web_client, test_db)
+    r = web_client.post(
+        "/winpe/done",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "awaiting_specialize"
+    assert calls == [{"vmid": 100, "slots": ["ide2", "sata0"],
+                      "boot": "order=scsi0"}]
+
+
+def test_done_is_idempotent(web_client, test_db, monkeypatch):
+    from web import winpe_endpoints
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        lambda **kw: None)
+    run_id, reg = _register(web_client, test_db)
+    web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    r = web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    # Already past awaiting_winpe; second call must not error
+    assert r.status_code == 200
