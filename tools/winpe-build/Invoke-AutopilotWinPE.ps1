@@ -164,3 +164,41 @@ function Invoke-ActionLoop {
     }
     return $token
 }
+
+$script:DiskpartScriptRecoveryBeforeC = @'
+select disk 0
+clean
+convert gpt
+create partition efi size=100
+format fs=fat32 quick label="EFI"
+assign letter=S
+create partition msr size=16
+create partition primary size=1024
+format fs=ntfs quick label="Recovery"
+set id="de94bba4-06d1-4d40-a16a-bfd50179d6ac"
+gpt attributes=0x8000000000000001
+create partition primary
+format fs=ntfs quick label="Windows"
+assign letter=V
+exit
+'@
+
+function Invoke-Action-PartitionDisk {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DiskpartRunner = { param($script)
+            $tmp = [System.IO.Path]::GetTempFileName()
+            try {
+                Set-Content -LiteralPath $tmp -Value $script -Encoding ASCII
+                & diskpart.exe /s $tmp
+                if ($LASTEXITCODE -ne 0) { throw "diskpart failed: $LASTEXITCODE" }
+            } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    )
+    switch ($Params.layout) {
+        'recovery_before_c' {
+            & $DiskpartRunner $script:DiskpartScriptRecoveryBeforeC
+        }
+        default { throw "partition_disk: unknown layout '$($Params.layout)'" }
+    }
+}

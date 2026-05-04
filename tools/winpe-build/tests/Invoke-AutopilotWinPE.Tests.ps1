@@ -181,3 +181,27 @@ Describe 'Invoke-ActionLoop' {
             Should -Throw '*no handler*unknown_kind*'
     }
 }
+
+Describe 'Invoke-Action-PartitionDisk' {
+    It 'emits a diskpart script with Recovery before C: for layout=recovery_before_c' {
+        $captured = $null
+        $runner = { param($script) $script:captured = $script }
+        Invoke-Action-PartitionDisk -Params @{ layout = 'recovery_before_c' } `
+            -DiskpartRunner $runner
+        $script:captured | Should -Match 'select disk 0'
+        $script:captured | Should -Match 'create partition efi size=100'
+        $script:captured | Should -Match 'create partition msr size=16'
+        # Recovery comes before Windows
+        $idxRecovery = $script:captured.IndexOf("create partition primary size=1024")
+        $idxOs = $script:captured.IndexOf("create partition primary",
+                                          $idxRecovery + 1)
+        $idxRecovery | Should -BeLessThan $idxOs
+        $idxRecovery | Should -BeGreaterThan -1
+        $idxOs | Should -BeGreaterThan -1
+    }
+
+    It 'rejects unknown layout values' {
+        { Invoke-Action-PartitionDisk -Params @{ layout = 'unknown' } `
+            -DiskpartRunner { param($s) } } | Should -Throw '*layout*'
+    }
+}
