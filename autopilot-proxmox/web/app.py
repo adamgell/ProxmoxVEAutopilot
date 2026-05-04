@@ -311,13 +311,15 @@ def _bridge_winpe_vars_to_env() -> None:
 
 def _winpe_enabled() -> bool:
     """The provision UI shows the WinPE option only when the inventory
-    has wired up both a blank template VMID AND a WinPE ISO. The bridge
-    in _bridge_winpe_vars_to_env() exports these as env vars at startup
-    (see Task F2 step 4); we read the env so the test suite can flip
-    the flag without monkeypatching the inventory loader."""
+    has wired up a blank template VMID, a WinPE ISO, and the token
+    signing secret. The bridge in _bridge_winpe_vars_to_env() exports
+    these as env vars at startup (see Task F2 step 4); we read the env
+    so the test suite can flip the flag without monkeypatching the
+    inventory loader."""
     return bool(
         os.environ.get("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID")
         and os.environ.get("AUTOPILOT_WINPE_ISO")
+        and os.environ.get("AUTOPILOT_WINPE_TOKEN_SECRET")
     )
 
 
@@ -2918,6 +2920,7 @@ async def start_provision(
             "run_id": run_id,
             "sequence_id": int(sequence_id),
             "vm_count": int(count),
+            "_skip_chassis_type_smbios_file": True,
             "sequence_hash_capture_phase": seq.get("hash_capture_phase", "oobe"),
             "autopilot_base_url": os.environ.get(
                 "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),

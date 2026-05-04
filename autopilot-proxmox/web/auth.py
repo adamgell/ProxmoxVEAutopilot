@@ -38,11 +38,15 @@ log = logging.getLogger(__name__)
 
 # Routes that bypass auth. Keep this small — anything here is
 # world-readable. /healthz is for uptime probes, /api/version is the
-# footer version check (doesn't leak any config).
+# footer version check (doesn't leak any config). /winpe/* carries its
+# own bearer-token checks after registration; /api/runs/* is polled by
+# the local Ansible controller during WinPE provisioning.
 _EXEMPT_PREFIXES = (
     "/auth/",
     "/healthz",
     "/api/version",
+    "/winpe/",
+    "/api/runs/",
     "/static/",
     "/favicon.ico",
 )

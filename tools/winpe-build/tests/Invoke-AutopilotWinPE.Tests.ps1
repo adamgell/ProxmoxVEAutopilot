@@ -431,6 +431,29 @@ Describe 'Invoke-Action-StageUnattend' {
             Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'writes XmlDocument responses as XML, not the type name' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-unat-xml-$(New-Guid)"
+        try {
+            $invoker = {
+                param($Uri,$Headers,$TimeoutSec)
+                return [pscustomobject]@{
+                    Content = [xml] '<unattend><settings pass="specialize" /></unattend>'
+                }
+            }
+            Invoke-Action-StageUnattend `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' `
+                -PantherDirOverride "$tmp" `
+                -WebInvoker $invoker
+            $body = Get-Content "$tmp\unattend.xml" -Raw
+            $body | Should -Match '<unattend>'
+            $body | Should -Match 'pass="specialize"'
+            $body | Should -Not -Match 'System.Xml.XmlDocument'
+        } finally {
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe 'Invoke-Action-CaptureHash' {

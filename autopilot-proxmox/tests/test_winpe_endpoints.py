@@ -507,6 +507,21 @@ def test_api_run_fail_is_idempotent_on_terminal_state(web_client, test_db):
     assert run["state"] == "done"
 
 
+def test_auth_exempts_winpe_machine_callbacks():
+    from web import auth
+
+    for path in (
+        "/winpe/run/1/identity",
+        "/winpe/register",
+        "/winpe/step/1/result",
+        "/winpe/done",
+        "/api/runs/1",
+        "/api/runs/1/fail",
+        "/api/runs/1/complete",
+    ):
+        assert auth.is_exempt_path(path)
+
+
 def test_provision_post_with_boot_mode_winpe_creates_run(
     web_client, test_db, monkeypatch,
 ):
@@ -552,6 +567,7 @@ def test_provision_post_with_boot_mode_winpe_creates_run(
         str(l["playbook"]).endswith("provision_proxmox_winpe.yml")
         for l in launches
     )
+    assert launches[0]["extra_vars"]["_skip_chassis_type_smbios_file"] is True
 
 
 def test_provision_post_winpe_rejected_when_not_configured(
@@ -559,6 +575,24 @@ def test_provision_post_winpe_rejected_when_not_configured(
 ):
     monkeypatch.delenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", raising=False)
     monkeypatch.delenv("AUTOPILOT_WINPE_ISO", raising=False)
+    seq_id = _create_seq(web_client)
+    r = web_client.post(
+        "/api/jobs/provision",
+        data={
+            "profile": "generic-desktop", "count": 1,
+            "sequence_id": seq_id, "boot_mode": "winpe",
+        },
+    )
+    assert r.status_code == 400
+    assert b"WinPE" in r.content
+
+
+def test_provision_post_winpe_rejected_when_token_secret_missing(
+    web_client, monkeypatch,
+):
+    monkeypatch.setenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", "9001")
+    monkeypatch.setenv("AUTOPILOT_WINPE_ISO", "isos:iso/winpe-test.iso")
+    monkeypatch.delenv("AUTOPILOT_WINPE_TOKEN_SECRET", raising=False)
     seq_id = _create_seq(web_client)
     r = web_client.post(
         "/api/jobs/provision",

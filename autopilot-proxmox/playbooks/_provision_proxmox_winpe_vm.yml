@@ -24,6 +24,10 @@
     # Skip Panther offline-injection: we serve the unattend over HTTP
     # at boot via /winpe/unattend/<run_id>.
     _skip_panther_injection: true
+    # Keep SMBIOS1 identity from the selected OEM profile, but skip the
+    # root-only Type 3 SMBIOS file/args path. WinPE does not prefetch a
+    # root@pam ticket and does not need chassis-type emulation to boot.
+    _skip_chassis_type_smbios_file: true
     # Defer the role's "Start VM" task until after we attach all three
     # ISOs. Otherwise the role boots the VM with no media, BIOS finds
     # nothing on scsi0, and we lose the WinPE entry path.

@@ -457,6 +457,8 @@ function Invoke-Action-StageUnattend {
         [System.IO.File]::WriteAllBytes(
             $out, [System.Text.Encoding]::UTF8.GetBytes($response.Content)
         )
+    } elseif ($response.Content -is [System.Xml.XmlNode]) {
+        [System.IO.File]::WriteAllText($out, $response.Content.OuterXml)
     } else {
         [System.IO.File]::WriteAllText($out, [string] $response.Content)
     }
