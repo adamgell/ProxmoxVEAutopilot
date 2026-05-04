@@ -64,3 +64,74 @@ def post_identity(run_id: int, body: IdentityBody, request: Request):
         )
     # Already past queued: idempotent no-op (rerun-safe from Ansible)
     return {"ok": True}
+
+
+class RegisterBody(BaseModel):
+    vm_uuid: str
+    mac: str
+    build_sha: str
+
+
+_REGISTER_TOKEN_TTL = 60 * 60  # 60 minutes
+
+
+def _build_actions_for_run(db: str, run_id: int, sequence_id: int) -> list[dict]:
+    """Compile WinPE actions, persist as pending steps, return action dicts
+    augmented with the assigned step_id."""
+    from web import sequence_compiler
+    seq = sequences_db.get_sequence(db, sequence_id)
+    phase = sequence_compiler.compile_winpe(seq)
+    out = []
+    for action in phase.actions:
+        step = sequences_db.append_run_step(
+            db, run_id=run_id, phase="winpe",
+            kind=action["kind"], params=action["params"],
+        )
+        out.append({
+            "step_id": step["id"],
+            "kind": action["kind"],
+            "params": action["params"],
+        })
+    return out
+
+
+@router.post("/register")
+def post_register(body: RegisterBody):
+    db = _db_path()
+    run = sequences_db.find_run_by_uuid_state(
+        db, vm_uuid=body.vm_uuid, state="awaiting_winpe",
+    )
+    if run is None:
+        # Distinguish 404 (no such uuid at all) from 409 (uuid exists, wrong state)
+        with __import__("sqlite3").connect(db) as conn:
+            conn.row_factory = __import__("sqlite3").Row
+            row = conn.execute(
+                "SELECT state FROM provisioning_runs WHERE vm_uuid=? "
+                "ORDER BY id DESC LIMIT 1", (body.vm_uuid,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="no run for vm_uuid")
+        raise HTTPException(
+            status_code=409,
+            detail=f"run state is {row['state']!r}, expected awaiting_winpe",
+        )
+
+    # Idempotency: if steps already exist (re-registration), reuse them.
+    existing = sequences_db.list_run_steps(db, run_id=run["id"])
+    if existing:
+        actions = [
+            {"step_id": s["id"], "kind": s["kind"],
+             "params": __import__("json").loads(s["params_json"])}
+            for s in existing
+        ]
+    else:
+        actions = _build_actions_for_run(db, run["id"], run["sequence_id"])
+
+    token = winpe_token.sign(
+        run_id=run["id"], ttl_seconds=_REGISTER_TOKEN_TTL,
+    )
+    return {
+        "run_id": run["id"],
+        "bearer_token": token,
+        "actions": actions,
+    }

@@ -89,3 +89,107 @@ def test_post_identity_rejects_missing_fields(web_client, test_db):
         json={"vmid": 1234},
     )
     assert r.status_code == 422
+
+
+def test_register_returns_actions_and_token(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-100"},
+    )
+    r = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa:bb:cc:dd:ee:ff",
+              "build_sha": "deadbeef"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["run_id"] == run_id
+    assert body["bearer_token"]
+    assert isinstance(body["actions"], list)
+    kinds = [a["kind"] for a in body["actions"]]
+    assert "partition_disk" in kinds
+
+
+def test_register_persists_steps(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-100"},
+    )
+    web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa", "build_sha": "x"},
+    )
+    from web import sequences_db
+    steps = sequences_db.list_run_steps(test_db, run_id=run_id)
+    kinds = [s["kind"] for s in steps]
+    assert kinds[0] == "partition_disk"
+    assert all(s["state"] == "pending" for s in steps)
+
+
+def test_register_matches_uppercase_identity_to_lowercase_register(
+    web_client, test_db,
+):
+    """Ansible's _vm_identity.uuid is uppercase. The agent reads SMBIOS
+    via WMI in WinPE and lowercases the result. Both must reach the
+    same DB row, so the layer normalizes UUIDs to lowercase on every
+    write and lookup."""
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100,
+              "vm_uuid": "AABBCCDD-EEFF-0011-2233-445566778899"},
+    )
+    r = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "aabbccdd-eeff-0011-2233-445566778899",
+              "mac": "aa", "build_sha": "x"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["run_id"] == run_id
+
+
+def test_register_returns_404_for_unknown_uuid(web_client):
+    r = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "nope", "mac": "aa", "build_sha": "x"},
+    )
+    assert r.status_code == 404
+
+
+def test_register_returns_409_when_state_wrong(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-100"},
+    )
+    from web import sequences_db
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="awaiting_specialize",
+    )
+    r = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa", "build_sha": "x"},
+    )
+    assert r.status_code == 409
+
+
+def test_register_token_is_verifiable(web_client, test_db, monkeypatch):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-100"},
+    )
+    body = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa", "build_sha": "x"},
+    ).json()
+    from web import winpe_token
+    payload = winpe_token.verify(body["bearer_token"])
+    assert payload["run_id"] == run_id
