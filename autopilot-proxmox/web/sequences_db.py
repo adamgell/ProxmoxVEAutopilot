@@ -275,15 +275,19 @@ def create_sequence(db_path, *, name: str, description: str,
                     is_default: bool = False,
                     produces_autopilot_hash: bool = False,
                     target_os: str = "windows",
+                    hash_capture_phase: str = "oobe",
                     steps: Optional[list[dict]] = None) -> int:
+    if hash_capture_phase not in ("winpe", "oobe"):
+        raise ValueError(f"invalid hash_capture_phase: {hash_capture_phase!r}")
     now = _now()
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO task_sequences "
             "(name, description, is_default, produces_autopilot_hash, "
-            " target_os, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " target_os, hash_capture_phase, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (name, description, int(is_default), int(produces_autopilot_hash),
-             target_os, now, now),
+             target_os, hash_capture_phase, now, now),
         )
         new_id = cur.lastrowid
         # Demote any other defaults AFTER the insert succeeds so a failed
@@ -306,7 +310,10 @@ def update_sequence(db_path, seq_id: int, *,
                     description: Optional[str] = None,
                     is_default: Optional[bool] = None,
                     produces_autopilot_hash: Optional[bool] = None,
-                    target_os: Optional[str] = None) -> None:
+                    target_os: Optional[str] = None,
+                    hash_capture_phase: Optional[str] = None) -> None:
+    if hash_capture_phase is not None and hash_capture_phase not in ("winpe", "oobe"):
+        raise ValueError(f"invalid hash_capture_phase: {hash_capture_phase!r}")
     now = _now()
     updates, args = [], []
     if name is not None:
@@ -320,6 +327,8 @@ def update_sequence(db_path, seq_id: int, *,
         updates.append("is_default = ?"); args.append(int(is_default))
     if target_os is not None:
         updates.append("target_os = ?"); args.append(target_os)
+    if hash_capture_phase is not None:
+        updates.append("hash_capture_phase = ?"); args.append(hash_capture_phase)
     if not updates:
         return
     updates.append("updated_at = ?"); args.append(now)
@@ -410,6 +419,8 @@ def duplicate_sequence(db_path, seq_id: int, *, new_name: str) -> int:
         db_path, name=new_name, description=seq["description"],
         is_default=False,
         produces_autopilot_hash=seq["produces_autopilot_hash"],
+        target_os=seq.get("target_os", "windows"),
+        hash_capture_phase=seq["hash_capture_phase"],
     )
     set_sequence_steps(db_path, new_id, [
         {"step_type": s["step_type"], "params": s["params"], "enabled": s["enabled"]}

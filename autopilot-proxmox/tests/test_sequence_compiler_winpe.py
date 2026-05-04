@@ -116,3 +116,80 @@ def test_compile_winpe_marks_autopilot_when_enabled():
     }])
     p = compile_winpe(seq)
     assert any(a["kind"] == "stage_autopilot_config" for a in p.actions)
+
+
+def test_create_sequence_persists_hash_capture_phase(tmp_path):
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    sid = sequences_db.create_sequence(
+        db, name="winpe-seq", description="",
+        target_os="windows", produces_autopilot_hash=True,
+        is_default=False, hash_capture_phase="winpe",
+    )
+    seq = sequences_db.get_sequence(db, sid)
+    assert seq["hash_capture_phase"] == "winpe"
+
+
+def test_update_sequence_changes_hash_capture_phase(tmp_path):
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    sid = sequences_db.create_sequence(
+        db, name="oobe-seq", description="",
+        target_os="windows", produces_autopilot_hash=True,
+        is_default=False,
+    )
+    sequences_db.update_sequence(
+        db, seq_id=sid,
+        hash_capture_phase="winpe",
+    )
+    seq = sequences_db.get_sequence(db, sid)
+    assert seq["hash_capture_phase"] == "winpe"
+
+
+def test_create_sequence_rejects_unknown_hash_capture_phase(tmp_path):
+    import pytest
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    with pytest.raises(ValueError):
+        sequences_db.create_sequence(
+            db, name="bad", description="",
+            target_os="windows", produces_autopilot_hash=False,
+            is_default=False, hash_capture_phase="bogus",
+        )
+
+
+def test_duplicate_sequence_preserves_hash_capture_phase(tmp_path):
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    sid = sequences_db.create_sequence(
+        db, name="src-winpe", description="",
+        target_os="windows", produces_autopilot_hash=True,
+        is_default=False, hash_capture_phase="winpe",
+    )
+    new_id = sequences_db.duplicate_sequence(
+        db, sid, new_name="src-winpe-copy",
+    )
+    assert sequences_db.get_sequence(db, new_id)["hash_capture_phase"] == "winpe"
+
+
+def test_api_sequences_create_persists_hash_capture_phase(web_client):
+    r = web_client.post(
+        "/api/sequences",
+        json={
+            "name": "winpe-via-api",
+            "description": "",
+            "target_os": "windows",
+            "is_default": False,
+            "produces_autopilot_hash": True,
+            "hash_capture_phase": "winpe",
+            "steps": [],
+        },
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    r2 = web_client.get(f"/api/sequences/{body['id']}")
+    assert r2.json()["hash_capture_phase"] == "winpe"

@@ -21,6 +21,15 @@
 <tr><td><b>Autopilot hash?</b></td>
     <td><label><input type="checkbox" id="produces_autopilot_hash"
         {% if seq and seq.produces_autopilot_hash %}checked{% endif %}> VMs provisioned with this sequence produce an Autopilot hash</label></td></tr>
+<tr><td><b>Hash capture phase</b></td>
+    <td>
+      <select class="form-select" id="hash_capture_phase" name="hash_capture_phase">
+        <option value="oobe" {% if not seq or seq.hash_capture_phase == "oobe" %}selected{% endif %}>OOBE (default; QGA / hash_capture role)</option>
+        <option value="winpe" {% if seq and seq.hash_capture_phase == "winpe" %}selected{% endif %}>WinPE (pre-OS)</option>
+      </select>
+      <small style="color:#666;">WinPE phase requires a build (M2) with Get-WindowsAutopilotInfo.ps1
+      baked in. Default OOBE matches today's clone-path behavior.</small>
+    </td></tr>
 </table>
 </form>
 
@@ -191,6 +200,7 @@ async function save() {
     target_os: document.getElementById('target_os').value,
     is_default: document.getElementById('is_default').checked,
     produces_autopilot_hash: document.getElementById('produces_autopilot_hash').checked,
+    hash_capture_phase: document.getElementById('hash_capture_phase').value,
     steps: stepsState.map(s => ({
       step_type: s.step_type, params: s.params, enabled: s.enabled,
     })),
