@@ -423,3 +423,45 @@ Describe 'Invoke-Action-StageUnattend' {
         }
     }
 }
+
+Describe 'Start-AutopilotWinPE' {
+    It 'registers, runs the action loop, calls /winpe/done, then reboots' {
+        $script:posted = @()
+        $script:rebootCalled = $false
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:posted += "$Method $Uri"
+            if ($Uri -match '/register$') {
+                return [pscustomobject]@{
+                    run_id = 7
+                    bearer_token = 't1'
+                    actions = @(
+                        @{ step_id = 1; kind = 'partition_disk'; params = @{ layout = 'recovery_before_c' } }
+                    )
+                }
+            } elseif ($Uri -match '/step/\d+/result$') {
+                return [pscustomobject]@{ ok = $true; bearer_token = 't2' }
+            } elseif ($Uri -match '/done$') {
+                return [pscustomobject]@{ ok = $true }
+            }
+        }
+        $rebootRunner = { $script:rebootCalled = $true }
+        $tmpCfg = [System.IO.Path]::GetTempFileName()
+        Set-Content -LiteralPath $tmpCfg -Value '{"flask_base_url":"http://x:5000","build_sha":"DEV"}' -Encoding UTF8
+        try {
+            Start-AutopilotWinPE `
+                -ConfigPath $tmpCfg `
+                -LogPath ([System.IO.Path]::GetTempFileName()) `
+                -RestInvoker $invoker `
+                -RebootRunner $rebootRunner `
+                -UuidResolver { 'fake-uuid' } `
+                -MacResolver { 'aa:bb' } `
+                -PartitionRunner { param($s) }
+            ($script:posted -join '|') | Should -Match 'POST.*/register'
+            ($script:posted -join '|') | Should -Match 'POST.*/done'
+            $script:rebootCalled | Should -BeTrue
+        } finally {
+            Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

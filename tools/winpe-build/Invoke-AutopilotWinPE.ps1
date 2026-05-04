@@ -399,3 +399,118 @@ function Invoke-Action-StageUnattend {
     Set-Content -LiteralPath (Join-Path $dir 'unattend.xml') `
         -Value $xml -Encoding UTF8
 }
+
+function Start-AutopilotWinPE {
+    param(
+        [string] $ConfigPath = 'X:\autopilot\config.json',
+        [string] $LogPath = 'X:\Windows\Temp\autopilot-winpe.log',
+        [scriptblock] $RestInvoker = $null,
+        [scriptblock] $RebootRunner = { & wpeutil.exe reboot },
+        [scriptblock] $UuidResolver = $null,
+        [scriptblock] $MacResolver = $null,
+        [scriptblock] $PartitionRunner = $null,
+        [scriptblock] $DismRunner = $null,
+        [scriptblock] $BcdbootRunner = $null,
+        [scriptblock] $VirtioPathResolver = $null,
+        [scriptblock] $SourceWimResolver = $null,
+        [scriptblock] $IndexResolver = $null,
+        [scriptblock] $DriverInfResolver = $null,
+        [string] $PantherDirOverride
+    )
+    $cfg = Read-AgentConfig -Path $ConfigPath
+    Write-AgentLog -Path $LogPath -Level INFO -Message "agent starting build_sha=$($cfg.build_sha)"
+
+    $idArgs = @{}
+    if ($UuidResolver) { $idArgs.UuidResolver = $UuidResolver }
+    if ($MacResolver)  { $idArgs.MacResolver  = $MacResolver }
+    $id = Get-VMIdentity @idArgs
+    Write-AgentLog -Path $LogPath -Level INFO -Message "vm_uuid=$($id.vm_uuid) mac=$($id.mac)"
+
+    $fallbackUrl = $null
+    if ($cfg.PSObject.Properties.Match('flask_base_url_fallback').Count -gt 0) {
+        $fallbackUrl = $cfg.flask_base_url_fallback
+    }
+    $reqArgs = @{
+        BaseUrl = $cfg.flask_base_url
+        Path = '/winpe/register'
+        Method = 'POST'
+        Body = @{ vm_uuid = $id.vm_uuid; mac = $id.mac; build_sha = $cfg.build_sha }
+    }
+    if ($fallbackUrl) { $reqArgs.FallbackBaseUrl = $fallbackUrl }
+    if ($RestInvoker) { $reqArgs.RestInvoker = $RestInvoker }
+    $reg = Invoke-OrchestratorRequest @reqArgs
+
+    $token = $reg.bearer_token
+    $runId = [int] $reg.run_id
+
+    $handlers = @{
+        'partition_disk' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($PartitionRunner) { $a.DiskpartRunner = $PartitionRunner }
+            Invoke-Action-PartitionDisk @a
+        }
+        'apply_wim' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)        { $a.DismRunner = $DismRunner }
+            if ($SourceWimResolver) { $a.SourceWimResolver = $SourceWimResolver }
+            if ($IndexResolver)     { $a.IndexResolver = $IndexResolver }
+            Invoke-Action-ApplyWim @a
+        }
+        'inject_drivers' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)         { $a.DismRunner = $DismRunner }
+            if ($VirtioPathResolver) { $a.VirtioPathResolver = $VirtioPathResolver }
+            Invoke-Action-InjectDrivers @a
+        }
+        'validate_boot_drivers' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DriverInfResolver) { $a.DriverInfResolver = $DriverInfResolver }
+            Invoke-Action-ValidateBootDrivers @a
+        }
+        'stage_autopilot_config' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-StageAutopilotConfig @a
+        }
+        'bake_boot_entry' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($BcdbootRunner) { $a.BcdbootRunner = $BcdbootRunner }
+            Invoke-Action-BakeBootEntry @a
+        }
+        'stage_unattend' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($RestInvoker)        { $a.RestInvoker = $RestInvoker }
+            if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            Invoke-Action-StageUnattend @a
+        }
+    }
+
+    $loopArgs = @{
+        BaseUrl = $cfg.flask_base_url
+        BearerToken = $token
+        Actions = $reg.actions
+        Handlers = $handlers
+    }
+    if ($fallbackUrl) { $loopArgs.FallbackBaseUrl = $fallbackUrl }
+    if ($RestInvoker) { $loopArgs.RestInvoker = $RestInvoker }
+    $token = Invoke-ActionLoop @loopArgs
+
+    $doneArgs = @{
+        BaseUrl = $cfg.flask_base_url; Path = '/winpe/done'
+        Method = 'POST'; Body = @{}; BearerToken = $token
+    }
+    if ($fallbackUrl) { $doneArgs.FallbackBaseUrl = $fallbackUrl }
+    if ($RestInvoker) { $doneArgs.RestInvoker = $RestInvoker }
+    Invoke-OrchestratorRequest @doneArgs
+
+    Write-AgentLog -Path $LogPath -Level INFO -Message 'rebooting'
+    & $RebootRunner
+}
