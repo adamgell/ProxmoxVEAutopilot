@@ -53,3 +53,30 @@ def test_template_jinja_blocks_match_full_template():
         )
         # same placeholder must exist in the full template (sanity check)
         assert f"{{{{ {var} }}}}" in full or f"{{{{{var}}}}}" in full
+
+
+def test_render_default_phase_layout_is_full(monkeypatch):
+    """phase_layout default 'full' must use the existing template path."""
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    out = unattend_renderer.render_unattend(CompiledSequence())
+    assert 'pass="windowsPE"' in out
+
+
+def test_render_phase_layout_post_winpe_uses_new_template():
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    out = unattend_renderer.render_unattend(
+        CompiledSequence(), phase_layout="post_winpe",
+    )
+    assert 'pass="windowsPE"' not in out
+    assert 'pass="specialize"' in out
+
+
+def test_render_phase_layout_invalid_raises():
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    with pytest.raises(ValueError):
+        unattend_renderer.render_unattend(
+            CompiledSequence(), phase_layout="bogus",
+        )

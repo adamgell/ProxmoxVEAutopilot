@@ -23,6 +23,7 @@ from web.sequence_compiler import CompiledSequence
 
 _FILES_DIR = Path(__file__).resolve().parent.parent / "files"
 _TEMPLATE_PATH = _FILES_DIR / "autounattend.xml.j2"
+_POST_WINPE_TEMPLATE_PATH = _FILES_DIR / "autounattend.post_winpe.xml.j2"
 
 
 # Defaults for the per-clone unattend.
@@ -104,29 +105,33 @@ def _render_first_logon_extras(commands: list) -> str:
 
 def render_unattend(compiled: CompiledSequence,
                     *,
-                    template_path: Optional[Path] = None) -> str:
-    """Render ``autounattend.xml`` bytes for the given compiled sequence."""
-    path = template_path or _TEMPLATE_PATH
+                    template_path: Optional[Path] = None,
+                    phase_layout: str = "full") -> str:
+    """Render unattend XML bytes for the given compiled sequence.
+
+    phase_layout:
+      "full"        -- include the windowsPE pass (default; clone path).
+      "post_winpe"  -- omit windowsPE; for the WinPE provisioning path.
+    """
+    if phase_layout not in ("full", "post_winpe"):
+        raise ValueError(f"invalid phase_layout: {phase_layout!r}")
+    if template_path is None:
+        path = (_POST_WINPE_TEMPLATE_PATH if phase_layout == "post_winpe"
+                else _TEMPLATE_PATH)
+    else:
+        path = template_path
     env = Environment(
         undefined=StrictUndefined,
         keep_trailing_newline=True,
         autoescape=False,
     )
     template = env.from_string(path.read_text())
-
     blocks = compiled.unattend_blocks
     return template.render(
         oobe_user_accounts=blocks.get("oobe_user_accounts",
                                       _DEFAULT_USER_ACCOUNTS),
         oobe_auto_logon=blocks.get("oobe_auto_logon",
                                    _DEFAULT_AUTO_LOGON),
-        # "*" = let Windows auto-generate (WIN-<random>). Sequences that
-        # want a deterministic name emit a value containing
-        # %AUTOPILOT_SERIAL% / %AUTOPILOT_VMID% sentinels that
-        # inject_unattend.yml substitutes with the concrete per-VM
-        # values right before writing Panther. Keeping sentinels (rather
-        # than concrete values) here preserves the per-sequence content
-        # hash — one cached floppy covers every VM in the sequence.
         specialize_computer_name=blocks.get("specialize_computer_name", "*"),
         specialize_identification_component=_wrap_identification(
             blocks.get("specialize_identification", "")),
