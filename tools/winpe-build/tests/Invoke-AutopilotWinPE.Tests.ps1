@@ -334,3 +334,48 @@ The operation completed successfully.
         }
     }
 }
+
+Describe 'Invoke-Action-StageAutopilotConfig' {
+    BeforeAll {
+        # $env:TEMP is not set on macOS; fall back to $env:TMPDIR or /tmp.
+        if ([string]::IsNullOrEmpty($env:TEMP)) {
+            $env:TEMP = if ($env:TMPDIR) { $env:TMPDIR.TrimEnd('/') } else { '/tmp' }
+        }
+    }
+
+    It 'fetches /winpe/autopilot-config and writes it to V:\Windows\Provisioning\Autopilot' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-stage-$(New-Guid)"
+        try {
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                return [pscustomobject]@{ Version = 2049; ZtdCorrelationId = 'x' }
+            }
+            Invoke-Action-StageAutopilotConfig `
+                -Params @{ guest_path = "$tmp\AutopilotConfigurationFile.json" } `
+                -BaseUrl 'http://x:5000' -RunId 7 -BearerToken 'tok' `
+                -RestInvoker $invoker
+            $written = Get-Content "$tmp\AutopilotConfigurationFile.json" -Raw | ConvertFrom-Json
+            $written.Version | Should -Be 2049
+        } finally {
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'creates the directory tree if missing' {
+        $tmp = "$env:TEMP/wpe-stage-deep-$(New-Guid)/a/b/c"
+        try {
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                return [pscustomobject]@{ Version = 1 }
+            }
+            Invoke-Action-StageAutopilotConfig `
+                -Params @{ guest_path = "$tmp\AutopilotConfigurationFile.json" } `
+                -BaseUrl 'http://x:5000' -RunId 7 -BearerToken 'tok' `
+                -RestInvoker $invoker
+            Test-Path "$tmp\AutopilotConfigurationFile.json" | Should -BeTrue
+        } finally {
+            $root = "$env:TEMP/wpe-stage-deep-$(New-Guid)" -replace '[^/]+$',''
+            Remove-Item ($tmp -replace '\\a\\b\\c$','') -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

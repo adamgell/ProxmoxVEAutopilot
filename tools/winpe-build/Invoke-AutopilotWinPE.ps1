@@ -318,3 +318,36 @@ function Invoke-Action-ValidateBootDrivers {
         throw "validate_boot_drivers: missing INFs: $($missing -join ', ')"
     }
 }
+
+function Invoke-Action-StageAutopilotConfig {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $guestPath = [string] $Params.guest_path
+    if ([string]::IsNullOrWhiteSpace($guestPath)) {
+        throw "stage_autopilot_config: missing guest_path"
+    }
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/autopilot-config/$RunId"
+        Method = 'GET'
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $payload = Invoke-OrchestratorRequest @reqArgs
+    $dir = Split-Path -Parent $guestPath
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $json = $payload | ConvertTo-Json -Depth 10
+    Set-Content -LiteralPath $guestPath -Value $json -Encoding UTF8
+}
