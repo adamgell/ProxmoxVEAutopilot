@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from web import sequences_db, winpe_token
@@ -134,4 +134,35 @@ def post_register(body: RegisterBody):
         "run_id": run["id"],
         "bearer_token": token,
         "actions": actions,
+    }
+
+
+def _require_bearer_for_run(run_id: int,
+                            authorization: Optional[str] = Header(None)) -> int:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer")
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = winpe_token.verify(token)
+    except winpe_token.TokenExpired:
+        raise HTTPException(status_code=401, detail="token expired")
+    except winpe_token.TokenError:
+        raise HTTPException(status_code=401, detail="invalid token")
+    if int(payload["run_id"]) != int(run_id):
+        raise HTTPException(status_code=403, detail="token/run mismatch")
+    return int(payload["run_id"])
+
+
+@router.get("/sequence/{run_id}")
+def get_sequence(run_id: int,
+                 _: int = Depends(_require_bearer_for_run)):
+    db = _db_path()
+    steps = sequences_db.list_run_steps(db, run_id=run_id)
+    return {
+        "run_id": run_id,
+        "actions": [
+            {"step_id": s["id"], "kind": s["kind"],
+             "params": __import__("json").loads(s["params_json"])}
+            for s in steps
+        ],
     }

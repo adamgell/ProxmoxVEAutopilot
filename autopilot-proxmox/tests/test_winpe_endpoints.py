@@ -193,3 +193,58 @@ def test_register_token_is_verifiable(web_client, test_db, monkeypatch):
     from web import winpe_token
     payload = winpe_token.verify(body["bearer_token"])
     assert payload["run_id"] == run_id
+
+
+def _bearer(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_sequence_get_returns_same_actions_after_register(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-100"},
+    )
+    reg = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa", "build_sha": "x"},
+    ).json()
+    r = web_client.get(
+        f"/winpe/sequence/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    actions = r.json()["actions"]
+    assert [a["kind"] for a in actions] == [a["kind"] for a in reg["actions"]]
+    assert [a["step_id"] for a in actions] == [a["step_id"] for a in reg["actions"]]
+
+
+def test_sequence_get_rejects_missing_token(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    r = web_client.get(f"/winpe/sequence/{run_id}")
+    assert r.status_code == 401
+
+
+def test_sequence_get_rejects_token_for_wrong_run(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_a = _create_run(test_db, seq_id)
+    run_b = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_a}/identity",
+        json={"vmid": 100, "vm_uuid": "u-A"},
+    )
+    web_client.post(
+        f"/winpe/run/{run_b}/identity",
+        json={"vmid": 101, "vm_uuid": "u-B"},
+    )
+    reg_a = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-A", "mac": "aa", "build_sha": "x"},
+    ).json()
+    r = web_client.get(
+        f"/winpe/sequence/{run_b}",
+        headers=_bearer(reg_a["bearer_token"]),
+    )
+    assert r.status_code == 403
