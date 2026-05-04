@@ -424,6 +424,44 @@ Describe 'Invoke-Action-StageUnattend' {
     }
 }
 
+Describe 'Invoke-Action-CaptureHash' {
+    It 'invokes Get-WindowsAutopilotInfo, parses CSV, and POSTs to /winpe/hash' {
+        $tmpCsv = [System.IO.Path]::GetTempFileName()
+        @'
+Device Serial Number,Windows Product ID,Hardware Hash
+TEST-SERIAL-1,XXXXXXX,DEADBEEFCAFE
+'@ | Set-Content -LiteralPath $tmpCsv -Encoding UTF8
+
+        $captureRunner = { param($outputPath)
+            Copy-Item -Force -LiteralPath $tmpCsv -Destination $outputPath
+            return @{ ExitCode = 0 }
+        }
+        $script:posted = $null
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:posted = @{ uri = $Uri; body = $Body }
+            return [pscustomobject]@{ ok = $true }
+        }
+        Invoke-Action-CaptureHash -Params @{} `
+            -BaseUrl 'http://x:5000' -RunId 7 -BearerToken 'tok' `
+            -CaptureRunner $captureRunner -RestInvoker $invoker
+
+        $script:posted.uri | Should -Match '/winpe/hash$'
+        $script:posted.body | Should -Match 'TEST-SERIAL-1'
+        $script:posted.body | Should -Match 'DEADBEEFCAFE'
+
+        Remove-Item $tmpCsv -Force
+    }
+
+    It 'throws when the capture script fails' {
+        $captureRunner = { param($outputPath) return @{ ExitCode = 1 } }
+        { Invoke-Action-CaptureHash -Params @{} `
+            -BaseUrl 'http://x:5000' -RunId 7 -BearerToken 'tok' `
+            -CaptureRunner $captureRunner } |
+            Should -Throw '*capture*1*'
+    }
+}
+
 Describe 'Start-AutopilotWinPE' {
     It 'registers, runs the action loop, calls /winpe/done, then reboots' {
         $script:posted = @()

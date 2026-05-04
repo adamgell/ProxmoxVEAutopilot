@@ -400,6 +400,51 @@ function Invoke-Action-StageUnattend {
         -Value $xml -Encoding UTF8
 }
 
+function Invoke-Action-CaptureHash {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $CaptureRunner = { param($outputPath)
+            $script = 'X:\autopilot\Get-WindowsAutopilotInfo.ps1'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+                -OutputFile $outputPath
+            return @{ ExitCode = $LASTEXITCODE }
+        },
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $tmp = [System.IO.Path]::GetTempFileName() + '.csv'
+    try {
+        $r = & $CaptureRunner $tmp
+        if ($r.ExitCode -ne 0) {
+            throw "Get-WindowsAutopilotInfo capture failed (exit $($r.ExitCode))"
+        }
+        $row = Import-Csv -LiteralPath $tmp | Select-Object -First 1
+        $body = @{
+            serial_number = $row.'Device Serial Number'
+            product_id    = $row.'Windows Product ID'
+            hardware_hash = $row.'Hardware Hash'
+        }
+        $reqArgs = @{
+            BaseUrl = $BaseUrl
+            Path = "/winpe/hash"
+            Method = 'POST'
+            Body = $body
+            BearerToken = $BearerToken
+            RestInvoker = $RestInvoker
+        }
+        if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+        Invoke-OrchestratorRequest @reqArgs
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Start-AutopilotWinPE {
     param(
         [string] $ConfigPath = 'X:\autopilot\config.json',
@@ -490,6 +535,15 @@ function Start-AutopilotWinPE {
             if ($RestInvoker)        { $a.RestInvoker = $RestInvoker }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
             Invoke-Action-StageUnattend @a
+        }
+        'capture_hash' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-CaptureHash @a
         }
     }
 
