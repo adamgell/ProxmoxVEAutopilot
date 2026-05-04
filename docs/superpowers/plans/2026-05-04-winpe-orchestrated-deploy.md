@@ -1,6 +1,6 @@
 # WinPE-Orchestrated Proxmox Deploy Implementation Plan
 
-Version: v2 (2026-05-04, revised after operator review)
+Version: v2.1 (2026-05-04, second operator-review pass)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1347,7 +1347,12 @@ def _create_seq(client, **overrides):
     The real API uses _StepIn with .params (NOT params_json) and returns
     HTTP 201. Caller may pass `steps` already in {step_type, params,
     enabled} shape; we coerce loose enabled values to bool.
+
+    Names are globally unique per process via uuid; multiple calls in
+    the same test against the same web_client must not collide on the
+    UNIQUE(name) constraint.
     """
+    import uuid as _uuid
     raw_steps = overrides.get("steps", [])
     steps = []
     for s in raw_steps:
@@ -1357,7 +1362,7 @@ def _create_seq(client, **overrides):
             "enabled": bool(s.get("enabled", True)),
         })
     body = {
-        "name": overrides.get("name", f"wpe-{id(client)}"),
+        "name": overrides.get("name", f"wpe-{_uuid.uuid4().hex[:8]}"),
         "description": "",
         "target_os": "windows",
         "produces_autopilot_hash": overrides.get("autopilot", False),
@@ -2336,28 +2341,26 @@ def _proxmox_detach_and_set_boot(*, vmid: int, slots: list[str],
                                  set_boot_order: str) -> None:
     """Detach disks and set boot order via Proxmox API.
 
-    Mirrors the inline pattern used in app.py (search for
-    `proxmox_api_base` + `/qemu/{vmid}/config` PUTs and the
-    `delete: <slot>` form-urlencoded body in
-    roles/cleanup_answer_media.yml). One PUT carries delete= and boot=
-    together; Proxmox accepts both keys in the same form body.
+    Reuses web.app._proxmox_api_put (line 1294), which constructs the
+    URL + auth header from primitive vault fields. We deliberately do
+    NOT read proxmox_api_base / proxmox_api_auth_header from
+    _load_proxmox_config -- those values are Jinja strings in vars.yml
+    that _load_vars never renders.
+
+    One PUT carries delete= and boot= together; Proxmox accepts both
+    keys in the same form body (same shape as
+    roles/cleanup_answer_media.yml uses).
     """
-    import requests
     from web import app as web_app
     cfg = web_app._load_proxmox_config()
-    base = cfg["proxmox_api_base"]
-    headers = {"Authorization": cfg["proxmox_api_auth_header"]}
+    node = cfg.get("proxmox_node") or "pve"
     body = {
         "delete": ",".join(slots),
         "boot": set_boot_order,
     }
-    r = requests.put(
-        f"{base}/nodes/{cfg['proxmox_node']}/qemu/{vmid}/config",
-        data=body, headers=headers,
-        verify=cfg.get("proxmox_validate_certs", False),
-        timeout=30,
+    web_app._proxmox_api_put(
+        f"/nodes/{node}/qemu/{vmid}/config", data=body,
     )
-    r.raise_for_status()
 
 
 @router.post("/done")
@@ -2766,8 +2769,8 @@ Describe 'Invoke-ActionLoop' {
             return [pscustomobject]@{ ok = $true }
         }
         $handlers = @{
-            'partition_disk' = { param($p) }
-            'apply_wim'      = { param($p) }
+            'partition_disk' = { param($p, $tok) }
+            'apply_wim'      = { param($p, $tok) }
         }
         $actions = @(
             @{ step_id = 1; kind = 'partition_disk'; params = @{} },
@@ -2792,7 +2795,7 @@ Describe 'Invoke-ActionLoop' {
             return [pscustomobject]@{ ok = $true }
         }
         $handlers = @{
-            'apply_wim' = { param($p) throw "disk too small" }
+            'apply_wim' = { param($p, $tok) throw "disk too small" }
         }
         $actions = @(@{ step_id = 99; kind = 'apply_wim'; params = @{} })
         { Invoke-ActionLoop -BaseUrl 'http://x:5000' `
@@ -2871,7 +2874,11 @@ function Invoke-ActionLoop {
         $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
             -StepId $stepId -State 'running' -RestInvoker $RestInvoker
         try {
-            & $Handlers[$kind] $action.params
+            # Handlers receive the CURRENT token (post-running-refresh)
+            # rather than capturing the original via closure, so a long
+            # apply_wim followed by stage_unattend GETs use a fresh
+            # token, not one that may have expired during the apply.
+            & $Handlers[$kind] $action.params $token
         } catch {
             $msg = $_.Exception.Message
             $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
@@ -3688,25 +3695,50 @@ function Start-AutopilotWinPE {
     $runId = [int] $reg.run_id
 
     $handlers = @{
-        'partition_disk'         = { param($p) Invoke-Action-PartitionDisk -Params $p `
-                                        @($(if ($PartitionRunner) { @{ DiskpartRunner = $PartitionRunner } } else { @{} }).GetEnumerator() | ForEach-Object { @{$_.Key=$_.Value} }) }
-        'apply_wim'              = { param($p) Invoke-Action-ApplyWim -Params $p }
-        'inject_drivers'         = { param($p) Invoke-Action-InjectDrivers -Params $p }
-        'validate_boot_drivers'  = { param($p) Invoke-Action-ValidateBootDrivers -Params $p }
-        'stage_autopilot_config' = { param($p)
-            Invoke-Action-StageAutopilotConfig -Params $p `
-                -BaseUrl $cfg.flask_base_url -RunId $runId -BearerToken $token `
-                -RestInvoker $RestInvoker
+        'partition_disk' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($PartitionRunner) { $a.DiskpartRunner = $PartitionRunner }
+            Invoke-Action-PartitionDisk @a
         }
-        'bake_boot_entry'        = { param($p) Invoke-Action-BakeBootEntry -Params $p }
-        'stage_unattend'         = { param($p)
-            $stageArgs = @{
+        'apply_wim' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)        { $a.DismRunner = $DismRunner }
+            if ($SourceWimResolver) { $a.SourceWimResolver = $SourceWimResolver }
+            if ($IndexResolver)     { $a.IndexResolver = $IndexResolver }
+            Invoke-Action-ApplyWim @a
+        }
+        'inject_drivers' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)         { $a.DismRunner = $DismRunner }
+            if ($VirtioPathResolver) { $a.VirtioPathResolver = $VirtioPathResolver }
+            Invoke-Action-InjectDrivers @a
+        }
+        'validate_boot_drivers' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DriverInfResolver) { $a.DriverInfResolver = $DriverInfResolver }
+            Invoke-Action-ValidateBootDrivers @a
+        }
+        'stage_autopilot_config' = { param($p, $tok)
+            $a = @{
                 Params = $p; BaseUrl = $cfg.flask_base_url
-                RunId = $runId; BearerToken = $token
+                RunId = $runId; BearerToken = $tok
             }
-            if ($RestInvoker) { $stageArgs.RestInvoker = $RestInvoker }
-            if ($PantherDirOverride) { $stageArgs.PantherDirOverride = $PantherDirOverride }
-            Invoke-Action-StageUnattend @stageArgs
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-StageAutopilotConfig @a
+        }
+        'bake_boot_entry' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($BcdbootRunner) { $a.BcdbootRunner = $BcdbootRunner }
+            Invoke-Action-BakeBootEntry @a
+        }
+        'stage_unattend' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($RestInvoker)        { $a.RestInvoker = $RestInvoker }
+            if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            Invoke-Action-StageUnattend @a
         }
     }
 
@@ -4197,34 +4229,72 @@ Expected: clean (no errors).
 
 - [ ] **Step 4: Bridge inventory vars into the FastAPI process**
 
-`web/winpe_token.py` reads `AUTOPILOT_WINPE_TOKEN_SECRET` from the env. The repo's pattern is to load Ansible vars via `_load_vars()` (see `web/app.py` line 246). So the bridge happens in `app.py` at startup: it reads the inventory value and exports it to the env BEFORE `winpe_endpoints` is imported.
+`web/winpe_token.py` reads `AUTOPILOT_WINPE_TOKEN_SECRET` from the env. The repo's pattern is two loaders: `_load_vars()` (line 246) reads `inventory/group_vars/all/vars.yml` literally (no Jinja rendering, no vault merge) and `_load_vault()` (line 258) reads `vault.yml` literally. Because `vars.yml` line 89 reads `autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('') }}"`, calling `_load_vars()["autopilot_winpe_token_secret"]` returns the literal Jinja string. The bridge must read `vault_autopilot_winpe_token_secret` directly from `_load_vault()` instead.
 
-In `web/app.py`, immediately after the `_load_vars()` definition (around line 246) and before any `from web.winpe_endpoints import ...` line, add:
+For `autopilot_config_path` (already in vars.yml, value `"{{ playbook_dir }}/../files/AutopilotConfigurationFile.json"` -- another Jinja string), the bridge cannot evaluate `playbook_dir`. Treat any Jinja-looking value as "use default" and let the endpoint fall back to `<repo>/autopilot-proxmox/files/AutopilotConfigurationFile.json`.
+
+In `web/app.py`, immediately after the `_load_vault()` definition (around line 258) and before any `from web.winpe_endpoints import ...` line, add:
 
 ```python
+def _looks_like_jinja(value: str) -> bool:
+    return isinstance(value, str) and ("{{" in value or "{%" in value)
+
+
 def _bridge_winpe_vars_to_env() -> None:
-    """Mirror inventory-loaded WinPE settings into os.environ so
-    web/winpe_token.py and web/winpe_endpoints.py (which avoid a
-    direct dependency on _load_vars at import time) can read them."""
+    """Mirror WinPE-relevant settings into os.environ so the WinPE
+    modules (which read env to stay decoupled from _load_vars at import
+    time) see real values. Vault-rendered fields come from _load_vault
+    directly because _load_vars returns Jinja strings literally."""
     import os
-    cfg = _load_vars()
-    secret = cfg.get("autopilot_winpe_token_secret") or ""
+    raw_vars = _load_vars()
+    vault = _load_vault()
+
+    # Token secret lives in vault.yml (vars.yml only references it via
+    # Jinja). Read straight from _load_vault to skip the unrendered
+    # indirection.
+    secret = vault.get("vault_autopilot_winpe_token_secret") or ""
     if secret:
         os.environ["AUTOPILOT_WINPE_TOKEN_SECRET"] = secret
-    blank = cfg.get("winpe_blank_template_vmid")
-    if blank:
+
+    # Plain integer in vars.yml (no Jinja).
+    blank = raw_vars.get("winpe_blank_template_vmid")
+    if blank not in (None, "", "null"):
         os.environ["AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID"] = str(blank)
-    iso = cfg.get("proxmox_winpe_iso") or ""
-    if iso:
+
+    # Plain string ("isos:iso/...") in vars.yml.
+    iso = raw_vars.get("proxmox_winpe_iso") or ""
+    if iso and not _looks_like_jinja(iso):
         os.environ["AUTOPILOT_WINPE_ISO"] = iso
-    allow = cfg.get("autopilot_winpe_identity_allowlist") or ""
-    if allow:
+
+    # Plain string in vars.yml.
+    allow = raw_vars.get("autopilot_winpe_identity_allowlist") or ""
+    if allow and not _looks_like_jinja(allow):
         os.environ["AUTOPILOT_WINPE_IDENTITY_ALLOWLIST"] = allow
+
 
 _bridge_winpe_vars_to_env()
 ```
 
-The order matters: this call must precede `app.include_router(_winpe_router)` (which already happens in C2). Move the include block down past `_bridge_winpe_vars_to_env()` if necessary.
+Update `_resolve_autopilot_config_path()` in `web/winpe_endpoints.py` (added in C5) to ignore Jinja-looking values:
+
+```python
+def _resolve_autopilot_config_path():
+    """Resolve AutopilotConfigurationFile.json. Mirrors what
+    roles/autopilot_inject reads from autopilot_config_path. _load_vars
+    returns the raw YAML, so the typical inventory value
+    "{{ playbook_dir }}/../files/AutopilotConfigurationFile.json" is
+    a literal Jinja string here; treat that as 'use default'."""
+    from pathlib import Path
+    from web import app as web_app
+    cfg = web_app._load_vars()
+    p = cfg.get("autopilot_config_path") or ""
+    if p and "{{" not in p and "{%" not in p:
+        return Path(p)
+    base = Path(__file__).resolve().parent.parent
+    return base / "files" / "AutopilotConfigurationFile.json"
+```
+
+The order matters: `_bridge_winpe_vars_to_env()` must precede `app.include_router(_winpe_router)` (which already happens in C2). Move the include block down past `_bridge_winpe_vars_to_env()` if necessary.
 
 - [ ] **Step 5: Commit**
 
@@ -4470,17 +4540,10 @@ Create `autopilot-proxmox/playbooks/_provision_proxmox_winpe_vm.yml`:
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
 
-    - name: Attach VirtIO ISO at sata1 (kept through Specialize for QGA install)
-      ansible.builtin.uri:
-        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
-        method: PUT
-        body_format: form-urlencoded
-        body:
-          sata1: "{{ proxmox_virtio_iso }},media=cdrom"
-        headers:
-          Authorization: "{{ proxmox_api_auth_header }}"
-        validate_certs: "{{ proxmox_validate_certs }}"
-        status_code: [200]
+    # NOTE: VirtIO ISO is already attached at ide3 by proxmox_vm_clone's
+    # update_config.yml (line 31, when proxmox_virtio_iso is defined).
+    # Don't double-attach here; just make sure the role left it
+    # attached. Detach happens after Specialize completes (below).
 
     - name: Set boot order to ide2 first then scsi0
       ansible.builtin.uri:
@@ -4538,7 +4601,7 @@ Create `autopilot-proxmox/playbooks/_provision_proxmox_winpe_vm.yml`:
         method: PUT
         body_format: form-urlencoded
         body:
-          delete: "sata1"
+          delete: "ide3"
         headers:
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
@@ -4719,9 +4782,9 @@ Find the existing form (search for the existing `name="profile"` or `name="count
 {% endif %}
 ```
 
-- [ ] **Step 5: Branch the POST handler**
+- [ ] **Step 5: Branch the POST handler at the right point**
 
-Modify `start_provision` in `web/app.py` to accept the new field and, when `boot_mode == "winpe"`, skip the answer-floppy logic and launch the WinPE playbook.
+The existing `start_provision` does (in order): validate inputs, stage chassis-type binaries, fetch root@pam ticket if needed, compile the sequence + resolve overrides + materialize the answer floppy, build the `-e` token list, launch Ansible. The WinPE branch needs to share the validate/compile/override work but skip the answer-floppy materialization (no per-VM floppy needed; the unattend ships over HTTP) AND the chassis-type SMBIOS file dance is still required (per-VM SMBIOS file is what carries the canonical UUID for `/winpe/register`).
 
 Add to the function signature:
 
@@ -4729,12 +4792,14 @@ Add to the function signature:
     boot_mode: str = Form("clone"),
 ```
 
-Inside the handler, immediately after `profile = _sanitize_input(profile)` (around line 2612), insert:
+After `profile = _sanitize_input(profile)`:
 
 ```python
     boot_mode = (boot_mode or "clone").lower()
     if boot_mode not in ("clone", "winpe"):
-        raise HTTPException(status_code=400, detail=f"unknown boot_mode: {boot_mode!r}")
+        raise HTTPException(
+            status_code=400, detail=f"unknown boot_mode: {boot_mode!r}",
+        )
     if boot_mode == "winpe":
         if not _winpe_enabled():
             raise HTTPException(
@@ -4751,30 +4816,93 @@ Inside the handler, immediately after `profile = _sanitize_input(profile)` (arou
                 status_code=400,
                 detail="WinPE provisioning requires a sequence_id",
             )
+        if int(count) != 1:
+            # M1 is one VM per run. Multi-VM WinPE means one provisioning_run
+            # per VM, identity POST per VM, and ISO-attach per VM. Defer to
+            # M2+; reject loudly so the operator sees the limit.
+            raise HTTPException(
+                status_code=400,
+                detail="WinPE provisioning supports count=1 in M1; "
+                       "see docs/superpowers/plans/...-winpe-orchestrated-deploy.md",
+            )
+```
+
+Then locate the existing sequence-resolution block (around line 2732 starting at `if sequence_id:`). Today this block always builds an answer floppy; we want the floppy build to be skipped for WinPE while everything else (compile, resolve_provision_vars, _causes_reboot_count) runs the same.
+
+Wrap the floppy-only steps in `if boot_mode != "winpe":`. Concretely, in the existing block:
+
+```python
+    if sequence_id:
         seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
         if seq is None:
             raise HTTPException(404, f"sequence {sequence_id} not found")
+
+        def _resolve_cred(cid: int):
+            rec = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cid)
+            return rec["payload"] if rec else None
+
+        try:
+            compiled = sequence_compiler.compile(
+                seq, resolve_credential=_resolve_cred,
+            )
+        except sequence_compiler.CompilerError as e:
+            raise HTTPException(400, f"sequence compile failed: {e}")
+        form_overrides = {"vm_oem_profile": profile}
+        resolved_vars = sequence_compiler.resolve_provision_vars(
+            compiled,
+            form_overrides=form_overrides,
+            vars_yml=_load_vars(),
+        )
+
+        if boot_mode != "winpe":
+            # Existing answer-floppy materialization stays here unchanged.
+            from web import unattend_renderer, answer_floppy_cache
+            _unattend_xml = unattend_renderer.render_unattend(compiled)
+            # ... (existing _root_user / _ssh_runner / ensure_floppy logic) ...
+
+        _causes_reboot_count = compiled.causes_reboot_count
+```
+
+After the existing block (still inside `start_provision`), add the WinPE launch path. The clone-path `-e` overrides (cores, memory, etc.) are computed by the existing `cmd_tokens` block; the WinPE branch wants the same overrides plus run_id + base_url + sequence_hash_capture_phase. Factor that to one helper:
+
+```python
+    if boot_mode == "winpe":
         run_id = sequences_db.create_provisioning_run(
             SEQUENCES_DB,
             sequence_id=int(sequence_id),
             provision_path="winpe",
         )
+        winpe_extra = {
+            "run_id": run_id,
+            "sequence_id": int(sequence_id),
+            "vm_oem_profile": profile,
+            "vm_count": int(count),
+            "sequence_hash_capture_phase": seq["hash_capture_phase"],
+            "autopilot_base_url": os.environ.get(
+                "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
+            "_causes_reboot_count": _causes_reboot_count,
+        }
+        # Mirror the same per-form overrides the clone path applies.
+        for key, val in (
+            ("vm_cores", cores), ("vm_memory_mb", memory_mb),
+            ("vm_disk_size_gb", disk_size_gb),
+            ("vm_serial_prefix", serial_prefix),
+            ("vm_group_tag", group_tag),
+            ("hostname_pattern", hostname_pattern),
+        ):
+            if val:
+                winpe_extra[key] = val
+        if chassis_type_override and int(chassis_type_override) > 0:
+            winpe_extra["chassis_type_override"] = int(chassis_type_override)
+        winpe_extra.update(resolved_vars)
         return _launch_provision_job(
             playbook_path="playbooks/provision_proxmox_winpe.yml",
-            extra_vars={
-                "run_id": run_id,
-                "sequence_id": int(sequence_id),
-                "vm_oem_profile": profile,
-                "vm_count": int(count),
-                "sequence_hash_capture_phase": seq["hash_capture_phase"],
-                "autopilot_base_url": os.environ.get(
-                    "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
-            },
+            extra_vars=winpe_extra,
         )
-    # Existing clone path begins here -- unchanged.
+    # Existing clone path continues below unchanged.
 ```
 
-If `_launch_provision_job` does not yet exist as a named seam, factor the existing Ansible-launch block (the section at the bottom of `start_provision` that builds `tokens` and runs `ansible-playbook`) into a helper named exactly that, so both branches reuse it. Keep the clone-path call site identical to today's behavior.
+If `_launch_provision_job` does not yet exist as a named seam, factor the existing Ansible-launch block (at the bottom of `start_provision`, the section that builds `tokens` and runs `ansible-playbook`) into a helper with this name. Both branches use it; the clone path passes its existing token list, the WinPE path passes a single dict that the helper unrolls to `-e key=val` pairs.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -5332,13 +5460,13 @@ function Invoke-Action-CaptureHash {
 Also wire the handler in `Start-AutopilotWinPE`'s `$handlers` table:
 
 ```powershell
-        'capture_hash' = { param($p)
-            $args = @{
+        'capture_hash' = { param($p, $tok)
+            $a = @{
                 Params = $p; BaseUrl = $cfg.flask_base_url
-                RunId = $runId; BearerToken = $token
+                RunId = $runId; BearerToken = $tok
             }
-            if ($RestInvoker) { $args.RestInvoker = $RestInvoker }
-            Invoke-Action-CaptureHash @args
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-CaptureHash @a
         }
 ```
 
@@ -5482,108 +5610,207 @@ git commit -m "feat(winpe): POST /winpe/hash persists via existing hash store"
 
 ### Task I4: Enable `hash_capture_phase` dropdown in sequence editor
 
+The sequence editor saves through JS (`async function save()`) calling `POST /api/sequences` (create) or `PUT /api/sequences/<id>` (update) with a JSON body shaped by `_SequenceCreate` / `_SequenceUpdate` (`web/app.py`). There is no form POST handler. To wire the new field through we extend the Pydantic models, the `update_sequence` DB helper, and the JS payload.
+
 **Files:**
-- Modify: `autopilot-proxmox/web/templates/sequence_edit.html`
-- Modify: `autopilot-proxmox/web/app.py` (sequence-edit POST handler)
-- Modify: `autopilot-proxmox/tests/test_sequence_compiler_winpe.py` (or a new UI test)
+- Modify: `autopilot-proxmox/web/templates/sequence_edit.html` (add `<select>` + include in JS body)
+- Modify: `autopilot-proxmox/web/app.py` (`_SequenceCreate`, `_SequenceUpdate`, the create/update routes that pass through to the DB)
+- Modify: `autopilot-proxmox/web/sequences_db.py` (`create_sequence` + `update_sequence` accept + persist the column)
+- Modify: `autopilot-proxmox/tests/test_sequence_compiler_winpe.py`
 
-- [ ] **Step 1: Add the dropdown**
+- [ ] **Step 1: Add the dropdown to the template**
 
-In `web/templates/sequence_edit.html`, find the form row that edits `produces_autopilot_hash` and add a sibling row right below:
+In `web/templates/sequence_edit.html`, find the existing input/checkbox for `produces_autopilot_hash` (search the file for that string) and add a sibling form row right below:
 
 ```html
 <div class="row mb-3">
   <label class="col-sm-3 col-form-label">Hash capture phase</label>
   <div class="col-sm-9">
-    <select class="form-select" name="hash_capture_phase">
-      <option value="oobe" {% if sequence.hash_capture_phase == 'oobe' %}selected{% endif %}>OOBE (default; FLC)</option>
-      <option value="winpe" {% if sequence.hash_capture_phase == 'winpe' %}selected{% endif %}>WinPE (pre-OS)</option>
+    <select class="form-select" id="hash_capture_phase" name="hash_capture_phase">
+      <option value="oobe">OOBE (default; QGA / hash_capture role)</option>
+      <option value="winpe">WinPE (pre-OS)</option>
     </select>
     <div class="form-text">
-      WinPE phase requires a recent build (Phase I) with
-      Get-WindowsAutopilotInfo.ps1 baked in.
+      WinPE phase requires a build (M2) with Get-WindowsAutopilotInfo.ps1
+      baked in. Default OOBE matches today's clone-path behavior.
     </div>
   </div>
 </div>
 ```
 
-- [ ] **Step 2: Update the POST handler**
+Where the page initializes form values from the sequence dict (the same place that sets `name`, `description`, etc.), select the right option:
 
-In `web/app.py`, find the sequence-edit POST handler and pass `hash_capture_phase` through to `update_sequence`:
+```javascript
+document.getElementById("hash_capture_phase").value =
+    SEQ.hash_capture_phase || "oobe";
+```
+
+In the existing `async function save()` body construction (the `body = { ... steps: ... }` block), add the field:
+
+```javascript
+const body = {
+    name: document.getElementById('name').value.trim(),
+    description: document.getElementById('description').value.trim(),
+    target_os: document.getElementById('target_os').value,
+    is_default: document.getElementById('is_default').checked,
+    produces_autopilot_hash: document.getElementById('produces_autopilot_hash').checked,
+    hash_capture_phase: document.getElementById('hash_capture_phase').value,
+    steps: stepsState.map(s => ({
+        step_type: s.step_type, params: s.params, enabled: s.enabled,
+    })),
+};
+```
+
+- [ ] **Step 2: Extend Pydantic models in `web/app.py`**
+
+Find `_SequenceCreate` (around line 5670) and `_SequenceUpdate` and add the new field. After the change:
 
 ```python
-update_sequence(
-    SEQUENCES_DB, seq_id=seq_id,
-    name=form["name"], description=form["description"],
-    target_os=form.get("target_os", "windows"),
-    produces_autopilot_hash=bool(form.get("produces_autopilot_hash")),
-    hash_capture_phase=form.get("hash_capture_phase", "oobe"),
-    ...
+class _SequenceCreate(BaseModel):
+    name: str
+    description: str = ""
+    target_os: str = "windows"
+    is_default: bool = False
+    produces_autopilot_hash: bool = False
+    hash_capture_phase: str = "oobe"
+    steps: list[_StepIn] = []
+
+
+class _SequenceUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    target_os: Optional[str] = None
+    is_default: Optional[bool] = None
+    produces_autopilot_hash: Optional[bool] = None
+    hash_capture_phase: Optional[str] = None
+    steps: Optional[list[_StepIn]] = None
+```
+
+In `api_sequences_create`, pass the field through to `sequences_db.create_sequence`:
+
+```python
+sid = sequences_db.create_sequence(
+    SEQUENCES_DB,
+    name=body.name, description=body.description,
+    is_default=body.is_default,
+    produces_autopilot_hash=body.produces_autopilot_hash,
+    target_os=body.target_os,
+    hash_capture_phase=body.hash_capture_phase,
 )
 ```
 
-Update `update_sequence` in `web/sequences_db.py` to accept and persist the new column:
+In the equivalent `api_sequences_update` route (search for `@app.put("/api/sequences/`), add the field to the kwargs forwarded to `update_sequence`.
+
+- [ ] **Step 3: Extend DB helpers**
+
+In `web/sequences_db.py`, update `create_sequence` (find the existing signature and append the new parameter):
 
 ```python
-def update_sequence(db_path, seq_id: int, *,
-                    name: str, description: str,
-                    target_os: str = "windows",
+def create_sequence(db_path, *, name: str, description: str,
+                    is_default: bool = False,
                     produces_autopilot_hash: bool = False,
-                    hash_capture_phase: str = "oobe",
-                    **kw) -> None:
+                    target_os: str = "windows",
+                    hash_capture_phase: str = "oobe") -> int:
     if hash_capture_phase not in ("winpe", "oobe"):
         raise ValueError(f"invalid hash_capture_phase: {hash_capture_phase!r}")
     with _connect(db_path) as conn:
-        conn.execute(
-            "UPDATE task_sequences SET name=?, description=?, target_os=?, "
-            "produces_autopilot_hash=?, hash_capture_phase=?, updated_at=? "
-            "WHERE id=?",
-            (name, description, target_os,
+        cur = conn.execute(
+            "INSERT INTO task_sequences "
+            "(name, description, is_default, produces_autopilot_hash, "
+            "target_os, hash_capture_phase, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, description,
+             1 if is_default else 0,
              1 if produces_autopilot_hash else 0,
-             hash_capture_phase, _now(), seq_id),
+             target_os, hash_capture_phase, _now(), _now()),
         )
+        return cur.lastrowid
 ```
 
-(Adapt to the existing function signature; the existing function already updates other columns, so wedge `hash_capture_phase` in alongside.)
+(Adapt to the existing `create_sequence` function body if it shapes things differently; the additive change is the new arg + the new column in the INSERT.)
 
-- [ ] **Step 3: Add a test**
+For `update_sequence`, accept `hash_capture_phase: Optional[str] = None` and add it to the partial-UPDATE construction (existing function uses a list of `set_clauses` it appends to; follow that pattern). Validate `in ("winpe","oobe")` only when non-None.
+
+- [ ] **Step 4: Add a test**
 
 Append to `tests/test_sequence_compiler_winpe.py`:
 
 ```python
-def test_update_sequence_persists_hash_capture_phase(tmp_path):
+def test_create_sequence_persists_hash_capture_phase(tmp_path):
     from web import sequences_db
     db = tmp_path / "sequences.db"
     sequences_db.init(db)
     sid = sequences_db.create_sequence(
-        db, name="x", description="",
+        db, name="winpe-seq", description="",
+        target_os="windows", produces_autopilot_hash=True,
+        is_default=False, hash_capture_phase="winpe",
+    )
+    seq = sequences_db.get_sequence(db, sid)
+    assert seq["hash_capture_phase"] == "winpe"
+
+
+def test_update_sequence_changes_hash_capture_phase(tmp_path):
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    sid = sequences_db.create_sequence(
+        db, name="oobe-seq", description="",
         target_os="windows", produces_autopilot_hash=True,
         is_default=False,
     )
     sequences_db.update_sequence(
         db, seq_id=sid,
-        name="x", description="",
-        target_os="windows",
-        produces_autopilot_hash=True,
         hash_capture_phase="winpe",
     )
     seq = sequences_db.get_sequence(db, sid)
     assert seq["hash_capture_phase"] == "winpe"
+
+
+def test_create_sequence_rejects_unknown_hash_capture_phase(tmp_path):
+    import pytest
+    from web import sequences_db
+    db = tmp_path / "sequences.db"
+    sequences_db.init(db)
+    with pytest.raises(ValueError):
+        sequences_db.create_sequence(
+            db, name="bad", description="",
+            target_os="windows", produces_autopilot_hash=False,
+            is_default=False, hash_capture_phase="bogus",
+        )
+
+
+def test_api_sequences_create_persists_hash_capture_phase(web_client):
+    r = web_client.post(
+        "/api/sequences",
+        json={
+            "name": "winpe-via-api",
+            "description": "",
+            "target_os": "windows",
+            "is_default": False,
+            "produces_autopilot_hash": True,
+            "hash_capture_phase": "winpe",
+            "steps": [],
+        },
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    r2 = web_client.get(f"/api/sequences/{body['id']}")
+    assert r2.json()["hash_capture_phase"] == "winpe"
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-cd autopilot-proxmox && python -m pytest tests/test_sequence_compiler_winpe.py tests/test_sequences_db.py -v
+cd autopilot-proxmox && python -m pytest tests/test_sequence_compiler_winpe.py tests/test_sequences_db.py tests/test_sequences_api.py -v
 ```
 
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add autopilot-proxmox/web/templates/sequence_edit.html autopilot-proxmox/web/app.py autopilot-proxmox/web/sequences_db.py autopilot-proxmox/tests/test_sequence_compiler_winpe.py
-git commit -m "feat(ui): hash_capture_phase dropdown on sequence editor"
+git commit -m "feat(ui): hash_capture_phase dropdown via /api/sequences JSON"
 ```
 
 ### Task I5: M2 e2e validation
@@ -5672,5 +5899,18 @@ Implicit cross-references and consistency:
 | C8 referenced nonexistent `web/proxmox_client.py` | C8 uses inline requests against `proxmox_api_base` matching app.py's PUT pattern; one PUT carries `delete=` and `boot=` together |
 | I3 referenced nonexistent `hashes_db` module | I3 writes a CSV into `HASH_DIR` matching the column shape `get_hash_files` already parses (line 1794) |
 | E2 only baked NetKVM | E2 now bakes vioscsi + NetKVM + vioser (vioscsi is required for WinPE to see the virtio-scsi-pci disk) |
+
+### v2.1 corrections vs v2 (second operator review)
+
+| v2 mistake | v2.1 fix |
+|---|---|
+| F2 bridge read `_load_vars()["autopilot_winpe_token_secret"]` (returns the literal Jinja string) | F2 bridge reads `_load_vault()["vault_autopilot_winpe_token_secret"]` directly; `_resolve_autopilot_config_path()` falls back to default whenever the inventory value contains `{{` |
+| C8 read `proxmox_api_base` / `proxmox_api_auth_header` (Jinja in inventory) | C8 calls `web_app._proxmox_api_put(path, data)` (line 1294) which builds URL + auth from primitive vault fields |
+| G1 early-returned for WinPE, skipping the existing sequence compile + form-overrides + chassis-type SMBIOS staging | G1 reuses the existing compile/override path, gates only the answer-floppy materialization, then launches the WinPE playbook with the same overrides; rejects `count > 1` with a clear M1 message |
+| Action handlers captured `$token` via closure, so long applies bricked subsequent stage_* GETs | Handlers receive the current token via `param($p, $tok)`; `Invoke-ActionLoop` passes the post-running-refresh token at each call |
+| `Start-AutopilotWinPE` passed `-RestInvoker $RestInvoker` even when null (overrode the handler's own default) | Each handler entry uses the conditional-splat pattern (build hashtable, only add overrides when non-null) |
+| F5 attached VirtIO ISO at sata1, but `proxmox_vm_clone/update_config.yml` line 31 already attaches it at ide3 | F5 drops the duplicate attach; cleanup detaches `ide3` (the role-attached slot) |
+| `_create_seq` used `f"wpe-{id(client)}"` (collides on repeat calls in one test) | `_create_seq` uses `f"wpe-{uuid4().hex[:8]}"` |
+| I4 described a sequence-edit POST handler that does not exist (editor saves via JS to `/api/sequences`) | I4 extends `_SequenceCreate` / `_SequenceUpdate` Pydantic models, the JS payload, and `create_sequence` / `update_sequence` DB helpers |
 
 No placeholders, TBDs, or "implement later" lines. Every code-bearing step shows the actual code.

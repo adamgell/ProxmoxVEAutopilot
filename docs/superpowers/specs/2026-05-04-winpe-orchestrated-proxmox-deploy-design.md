@@ -91,7 +91,7 @@ The sequence engine remains the single source of truth for "what gets done to a 
    - Attaches three ISOs:
      - `ide2 = winpe-autopilot-amd64-<sha>.iso,media=cdrom`
      - `sata0 = <windows_source_iso>,media=cdrom`
-     - `sata1 = <virtio_iso>,media=cdrom`
+     - `ide3 = <virtio_iso>,media=cdrom`
    - Sets `boot=order=ide2;scsi0`.
    - Starts the VM.
 4. WinPE boots. `startnet.cmd` (baked into the WIM) runs `wpeinit`, then `drvload` for any virtio drivers baked into the WIM (defensive; primary driver source is the attached VirtIO ISO during phase 0), then launches `X:\autopilot\Invoke-AutopilotWinPE.ps1`.
@@ -105,14 +105,14 @@ The sequence engine remains the single source of truth for "what gets done to a 
    - `bake_boot_entry`: `bcdboot V:\Windows /s S: /f UEFI`.
    - `stage_unattend`: HTTPS GET `/winpe/unattend/<run_id>` (post-WinPE unattend), write to `V:\Windows\Panther\unattend.xml`.
    - `capture_hash` (M2 only, gated by `hash_capture_phase = "winpe"` on the sequence): invokes `Get-WindowsAutopilotInfo.ps1` (baked into the WIM); POSTs the hash JSON to `/winpe/hash`. If the WMI provider isn't usable, the script's existing failure mode is a non-zero exit with a message about MDM_DevDetail_Ext01; the action records the error and the run fails closed (no silent fallback). M1 omits this action entirely; hash capture stays in the FLC pipeline. See section 5.1 on the OA3Tool option being evaluated alongside.
-7. Agent POSTs `/winpe/done {run_id}`. Flask calls Proxmox API with `body: { delete: "ide2,sata0" }` (per the existing `cleanup_answer_media.yml` pattern) AND sets `boot=order=scsi0`. The VirtIO ISO at sata1 stays attached because Specialize uses it to install QGA. Returns 200.
+7. Agent POSTs `/winpe/done {run_id}`. Flask calls Proxmox API with `body: { delete: "ide2,sata0" }` (per the existing `cleanup_answer_media.yml` pattern) AND sets `boot=order=scsi0`. The VirtIO ISO at ide3 stays attached because Specialize uses it to install QGA. Returns 200.
 8. Agent runs `wpeutil reboot`.
 9. VM reboots. Boot order is now `scsi0` only. UEFI boots Windows. Specialize runs against the staged `Panther\unattend.xml`, which:
-   - Loads VirtIO drivers from sata1 (just like today's autounattend, since the post-WinPE template inherits the OEM driver paths block).
+   - Loads VirtIO drivers from ide3 (just like today's autounattend, since the post-WinPE template inherits the OEM driver paths block).
    - Installs QGA via the same FirstLogonCommand or specialize-pass logic the existing template uses.
    - Reads `C:\Windows\Provisioning\Autopilot\AutopilotConfigurationFile.json` (already staged by phase 0) when Autopilot is enabled.
 10. OOBE runs. FirstLogon runs the FLC sequence the existing engine compiled.
-11. Post-OOBE: existing `cleanup_answer_media.yml` (or its equivalent invoked by the new playbook) detaches sata1 with `body: { delete: "sata1" }`. `wait_reboot_cycle.yml` and the existing hash file watcher run unchanged.
+11. Post-OOBE: existing `cleanup_answer_media.yml` (or its equivalent invoked by the new playbook) detaches ide3 with `body: { delete: "ide3" }`. `wait_reboot_cycle.yml` and the existing hash file watcher run unchanged.
 
 ## 5. Components
 
@@ -168,7 +168,7 @@ All endpoints accept JSON. Bearer auth required except `/winpe/register` (uses V
 | `/winpe/unattend/<run_id>` | GET | Returns the post-WinPE unattend.xml that was rendered at compile time. |
 | `/winpe/hash` | POST | M2: receives hash JSON, persists into existing hash store. |
 | `/winpe/step/<step_id>/result` | POST | Step state telemetry. Updates run timeline. Response includes refreshed bearer token. |
-| `/winpe/done` | POST | Triggers Proxmox API call to detach `ide2` + `sata0` and set boot order to `scsi0`. VirtIO ISO at sata1 stays. Marks run `awaiting_specialize`. |
+| `/winpe/done` | POST | Triggers Proxmox API call to detach `ide2` + `sata0` and set boot order to `scsi0`. VirtIO ISO at ide3 stays. Marks run `awaiting_specialize`. |
 
 Bearer token: stateless HMAC-signed `{run_id, expires_at}` with a per-install secret stored in `vault.yml`. 60-minute initial validity; every step-result POST returns a new token with reset expiry.
 
@@ -256,12 +256,12 @@ Mirrors the structure of `playbooks/_provision_clone_vm.yml`. Key differences:
 - Attaches three ISOs via `update_config.yml` (or a sibling `attach_winpe_media.yml`):
   - `ide2 = winpe-autopilot-amd64-<sha>.iso,media=cdrom`
   - `sata0 = <windows_source_iso>,media=cdrom`
-  - `sata1 = <virtio_iso>,media=cdrom`
+  - `ide3 = <virtio_iso>,media=cdrom`
   - Uses the existing API token + form-urlencoded pattern.
 - Sets `boot = order=ide2;scsi0`.
 - Starts the VM.
 - Replaces the `wait_for_specialize_complete` task with `wait_for_run_state(awaiting_specialize | failed)` polling Flask.
-- After the run reaches `awaiting_specialize`, follows the existing `wait_reboot_cycle` + hash-file pattern from the clone path. Detaches sata1 via the existing `cleanup_answer_media.yml` (or a parameterized variant) using `body: { delete: "sata1" }`.
+- After the run reaches `awaiting_specialize`, follows the existing `wait_reboot_cycle` + hash-file pattern from the clone path. Detaches ide3 via the existing `cleanup_answer_media.yml` (or a parameterized variant) using `body: { delete: "ide3" }`.
 
 Top-level wrapper `provision_proxmox_winpe.yml` is the entry point invoked by Flask, mirroring `provision_clone.yml`.
 
@@ -275,16 +275,16 @@ Top-level wrapper `provision_proxmox_winpe.yml` is the entry point invoked by Fl
 
 Proxmox VM lifecycle for a WinPE run:
 
-| Stage | ide2 | sata0 | sata1 | scsi0 | Boot order |
+| Stage | ide2 | sata0 | ide3 (auto-attached by clone role) | scsi0 | Boot order |
 |---|---|---|---|---|---|
 | Pre-clone | n/a | n/a | n/a | n/a | n/a |
 | Cloned, ISOs attached, before start | WinPE | Windows source | VirtIO | empty disk | `ide2;scsi0` |
 | Phase 0 running | same | same | same | same | same |
 | `/winpe/done` callback | detached (`delete: ide2`) | detached (`delete: sata0`) | VirtIO | OS disk (now populated) | `scsi0` |
 | Specialize/OOBE | empty | empty | VirtIO | OS disk | `scsi0` |
-| Post-Specialize cleanup | empty | empty | detached (`delete: sata1`) | OS disk | `scsi0` |
+| Post-Specialize cleanup | empty | empty | detached (`delete: ide3`) | OS disk | `scsi0` |
 
-Detach pattern uses the existing `cleanup_answer_media.yml` form: read config, conditionally `body: { delete: "<slot>" }`. Two detaches happen at different times: ide2+sata0 by Flask on `/winpe/done` (so reboot lands on scsi0 cleanly), sata1 by Ansible after Specialize so QGA-from-VirtIO-ISO has a chance to install.
+Detach pattern uses the existing `cleanup_answer_media.yml` form: read config, conditionally `body: { delete: "<slot>" }`. Two detaches happen at different times: ide2+sata0 by Flask on `/winpe/done` (so reboot lands on scsi0 cleanly), ide3 by Ansible after Specialize so QGA-from-VirtIO-ISO has a chance to install.
 
 If the agent crashes after attach but before `/winpe/done`, all three ISOs stay attached and the VM stays at the WinPE prompt. Operator sees the run as `failed` in the UI with the last step's error tail. Recovery is to re-run provisioning (which re-issues the playbook) or roll back the clone.
 
