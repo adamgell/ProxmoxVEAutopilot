@@ -58,6 +58,20 @@ class CompiledSequence:
     causes_reboot_count: int = 0
 
 
+@dataclass
+class CompiledWinPEPhase:
+    actions: list = field(default_factory=list)
+    requires_windows_iso: bool = True
+    requires_virtio_iso: bool = True
+    expected_reboot_count: int = 1
+    autopilot_enabled: bool = False
+    # Note: actual AutopilotConfigurationFile.json bytes are NOT carried
+    # on this struct. The /winpe/autopilot-config/<run_id> endpoint reads
+    # them from autopilot_config_path at request time (matching what
+    # roles/autopilot_inject does today) so updates to the file take
+    # effect without recompiling existing runs.
+
+
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
