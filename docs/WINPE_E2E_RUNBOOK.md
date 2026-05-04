@@ -49,3 +49,17 @@ One full provisioning run on pve1 using the WinPE path, demonstrating:
 `/runs/<id>` shows all phase-0 steps `ok`, run state `awaiting_specialize`,
 the VM completes Specialize (existing wait_reboot_cycle returns), and the
 existing hash-file watcher reports the hash captured.
+
+## M2: pre-OS hash capture validation
+
+1. Edit a test sequence; set Hash capture phase = WinPE; save.
+2. Provision with Boot mode = WinPE.
+3. On `/runs/<id>` confirm the action list now starts with `capture_hash`.
+4. Confirm the captured hash appears in the existing hashes UI.
+5. Compare against an OOBE-pass capture for the same VM; the
+   `hardware_hash` value must match.
+
+If the capture step fails on the live cluster (likely with
+Get-WindowsAutopilotInfo's WMI provider expectations), evaluate the
+OA3Tool path or direct-SMBIOS path before re-running. Each gets its
+own follow-up task.
