@@ -5962,6 +5962,18 @@ def _make_root_ssh_runner():
     )
 
 
+@app.get("/runs/{run_id}", response_class=HTMLResponse)
+def run_detail_page(run_id: int, request: Request):
+    run = sequences_db.get_provisioning_run(SEQUENCES_DB, run_id)
+    if run is None:
+        raise HTTPException(status_code=404)
+    steps = sequences_db.list_run_steps(SEQUENCES_DB, run_id=run_id)
+    return templates.TemplateResponse(
+        "run_detail.html",
+        {"request": request, "run": run, "steps": steps},
+    )
+
+
 @app.get("/answer-isos", response_class=HTMLResponse)
 def page_answer_isos(request: Request, error: str = ""):
     # Route name kept for URL stability; content is the answer-floppy

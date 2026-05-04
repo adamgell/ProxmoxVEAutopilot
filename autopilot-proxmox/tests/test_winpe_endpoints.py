@@ -579,3 +579,25 @@ def test_provision_page_renders_winpe_option_when_configured(
     r = web_client.get("/provision")
     assert r.status_code == 200
     assert b'name="boot_mode"' in r.content
+
+
+def test_run_detail_page_renders(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 1234, "vm_uuid": "u-1"},
+    )
+    web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-1", "mac": "aa", "build_sha": "x"},
+    )
+    r = web_client.get(f"/runs/{run_id}")
+    assert r.status_code == 200
+    assert b"partition_disk" in r.content
+    assert b"awaiting_winpe" in r.content
+
+
+def test_run_detail_404_when_unknown(web_client):
+    r = web_client.get("/runs/99999")
+    assert r.status_code == 404
