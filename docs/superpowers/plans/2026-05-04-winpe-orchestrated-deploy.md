@@ -1,6 +1,6 @@
 # WinPE-Orchestrated Proxmox Deploy Implementation Plan
 
-Version: v2.3 (2026-05-04, fourth review pass; positive verdict + 3 ops-risk recommendations)
+Version: v2.4 (2026-05-04, fifth review pass)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -489,6 +489,14 @@ def get_provisioning_run(db_path, run_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def _normalize_uuid(vm_uuid: str) -> str:
+    """Canonical UUID form for DB writes and lookups: lowercase, stripped.
+    The Ansible role's _vm_identity.uuid is upper-case; WMI in WinPE
+    typically returns lower-case but is documented as case-insensitive.
+    Persist one form so an exact-match WHERE clause can be used."""
+    return (vm_uuid or "").strip().lower()
+
+
 def set_provisioning_run_identity(db_path, *,
                                   run_id: int,
                                   vmid: int,
@@ -498,7 +506,7 @@ def set_provisioning_run_identity(db_path, *,
             "UPDATE provisioning_runs "
             "SET vmid=?, vm_uuid=?, state='awaiting_winpe' "
             "WHERE id=? AND state='queued'",
-            (vmid, vm_uuid, run_id),
+            (vmid, _normalize_uuid(vm_uuid), run_id),
         )
 
 
@@ -510,7 +518,7 @@ def find_run_by_uuid_state(db_path, *,
             "SELECT * FROM provisioning_runs "
             "WHERE vm_uuid=? AND state=? "
             "ORDER BY id DESC LIMIT 1",
-            (vm_uuid, state),
+            (_normalize_uuid(vm_uuid), state),
         ).fetchone()
     return dict(row) if row else None
 
@@ -1763,6 +1771,29 @@ def test_register_persists_steps(web_client, test_db):
     kinds = [s["kind"] for s in steps]
     assert kinds[0] == "partition_disk"
     assert all(s["state"] == "pending" for s in steps)
+
+
+def test_register_matches_uppercase_identity_to_lowercase_register(
+    web_client, test_db,
+):
+    """Ansible's _vm_identity.uuid is uppercase. The agent reads SMBIOS
+    via WMI in WinPE and lowercases the result. Both must reach the
+    same DB row, so the layer normalizes UUIDs to lowercase on every
+    write and lookup."""
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100,
+              "vm_uuid": "AABBCCDD-EEFF-0011-2233-445566778899"},
+    )
+    r = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "aabbccdd-eeff-0011-2233-445566778899",
+              "mac": "aa", "build_sha": "x"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["run_id"] == run_id
 
 
 def test_register_returns_404_for_unknown_uuid(web_client):
@@ -3042,14 +3073,22 @@ Append:
 function _ReportStepState {
     param(
         [string] $BaseUrl, [string] $BearerToken, [int] $StepId,
-        [string] $State, [string] $ErrorMessage, [scriptblock] $RestInvoker
+        [string] $State, [string] $ErrorMessage,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker
     )
     $body = @{ state = $State }
     if ($ErrorMessage) { $body.error = $ErrorMessage }
-    $r = Invoke-OrchestratorRequest -BaseUrl $BaseUrl `
-        -Path "/winpe/step/$StepId/result" -Method POST `
-        -Body $body -BearerToken $BearerToken `
-        -RestInvoker $RestInvoker
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/step/$StepId/result"
+        Method = 'POST'
+        Body = $body
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $r = Invoke-OrchestratorRequest @reqArgs
     if ($r.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $r.bearer_token) {
         return $r.bearer_token
     }
@@ -3062,6 +3101,7 @@ function Invoke-ActionLoop {
         [Parameter(Mandatory)] [string] $BearerToken,
         [Parameter(Mandatory)] [object[]] $Actions,
         [Parameter(Mandatory)] [hashtable] $Handlers,
+        [string] $FallbackBaseUrl,
         [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
             Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
                 -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
@@ -3075,11 +3115,14 @@ function Invoke-ActionLoop {
             $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
                 -StepId $stepId -State 'error' `
                 -ErrorMessage "no handler for kind: $kind" `
+                -FallbackBaseUrl $FallbackBaseUrl `
                 -RestInvoker $RestInvoker
             throw "no handler registered for kind: $kind"
         }
         $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
-            -StepId $stepId -State 'running' -RestInvoker $RestInvoker
+            -StepId $stepId -State 'running' `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -RestInvoker $RestInvoker
         try {
             # Handlers receive the CURRENT token (post-running-refresh)
             # rather than capturing the original via closure, so a long
@@ -3090,11 +3133,14 @@ function Invoke-ActionLoop {
             $msg = $_.Exception.Message
             $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
                 -StepId $stepId -State 'error' -ErrorMessage $msg `
+                -FallbackBaseUrl $FallbackBaseUrl `
                 -RestInvoker $RestInvoker
             throw
         }
         $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
-            -StepId $stepId -State 'ok' -RestInvoker $RestInvoker
+            -StepId $stepId -State 'ok' `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -RestInvoker $RestInvoker
     }
     return $token
 }
@@ -3398,13 +3444,21 @@ Append:
 
 ```powershell
 function _ResolveVirtioPath {
-    foreach ($drive in @('E','F','G','H','I')) {
+    # Scan D: through I:. WinPE assigns CD-ROM letters in attach
+    # order, and we cannot guarantee D: is the Windows source ISO
+    # (the QEMU device order Proxmox emits to the guest depends on
+    # bus type + slot, not config order). The marker checks below
+    # disambiguate VirtIO from Windows source ISO regardless of
+    # which letter each lands on, so we scan the same range as the
+    # WIM resolver to avoid an avoidable "could not find VirtIO"
+    # failure when the operator's storage assigned letters differently.
+    foreach ($drive in @('D','E','F','G','H','I')) {
         $marker = "$($drive):\virtio-win_license.txt"
         if (Test-Path -LiteralPath $marker) { return "$($drive):\" }
         $marker = "$($drive):\NetKVM"
         if (Test-Path -LiteralPath $marker) { return "$($drive):\" }
     }
-    throw "could not find VirtIO ISO on any attached CD-ROM"
+    throw "could not find VirtIO ISO on any attached CD-ROM (D-I)"
 }
 
 function Invoke-Action-InjectDrivers {
@@ -3470,6 +3524,61 @@ Describe 'Invoke-Action-ValidateBootDrivers' {
             Should -Throw '*netkvm.inf*vioser.inf*'
     }
 }
+
+Describe '_GetInjectedDriverInfs (parses dism /Format:List output)' {
+    It 'extracts the leaf INF name from each "Original File Name" line' {
+        # Realistic dism /Get-Drivers /Format:List shape (truncated):
+        #   Published Name : oem3.inf
+        #   Original File Name : E:\NetKVM\w11\amd64\netkvm.inf
+        #   Inbox : No
+        #   Class Name : Net
+        #   ...
+        $sampleOutput = @"
+Deployment Image Servicing and Management tool
+Version: 10.0.26100.1
+
+Image Version: 10.0.26100.1
+
+Driver packages listing:
+
+Published Name : oem3.inf
+Original File Name : E:\NetKVM\w11\amd64\netkvm.inf
+Inbox : No
+Class Name : Net
+Provider Name : Red Hat, Inc.
+Date : 1/8/2025
+Version : 100.95.104.26200
+
+Published Name : oem4.inf
+Original File Name : E:\vioscsi\w11\amd64\vioscsi.inf
+Inbox : No
+Class Name : SCSIAdapter
+Provider Name : Red Hat, Inc.
+Date : 1/8/2025
+Version : 100.95.104.26200
+
+Published Name : oem5.inf
+Original File Name : E:\vioserial\w11\amd64\vioser.inf
+Inbox : No
+Class Name : System
+Provider Name : Red Hat, Inc.
+Date : 1/8/2025
+Version : 100.95.104.26200
+
+The operation completed successfully.
+"@
+        # Stub dism.exe + LASTEXITCODE for the duration of the call.
+        function global:dism.exe { $sampleOutput; $global:LASTEXITCODE = 0 }
+        try {
+            $infs = _GetInjectedDriverInfs
+            $infs | Should -Contain 'netkvm.inf'
+            $infs | Should -Contain 'vioscsi.inf'
+            $infs | Should -Contain 'vioser.inf'
+        } finally {
+            Remove-Item Function:\dism.exe -ErrorAction SilentlyContinue
+        }
+    }
+}
 ```
 
 - [ ] **Step 2: Run Pester to verify it fails**
@@ -3486,15 +3595,19 @@ Append:
 
 ```powershell
 function _GetInjectedDriverInfs {
-    $out = (& dism.exe /Image:V:\ /Get-Drivers /Format:Table) 2>&1 | Out-String
+    # /Format:Table truncates "Original File Name" and pads columns
+    # unpredictably across DISM versions, so a tail-of-line regex
+    # silently returns nothing on real output and validate_boot_drivers
+    # incorrectly fails every run. /Format:List emits each driver as a
+    # block of "Key : Value" lines; "Original File Name : <path>" is
+    # the original INF path (e.g. "E:\NetKVM\w11\amd64\netkvm.inf"),
+    # which we tail-split on \ to get the leaf filename.
+    $out = (& dism.exe /Image:V:\ /Get-Drivers /Format:List) 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "dism /Get-Drivers failed: $LASTEXITCODE" }
     $infs = @()
     foreach ($line in ($out -split "`r?`n")) {
-        if ($line -match '^(oem\d+\.inf)\s') {
-            # Get-Drivers shows oem names, not original. Need /Get-DriverInfo
-            # for the original filename - but the column "Original File Name"
-            # is also present in the table view (post-Win10). Pull it.
-            if ($line -match '\s(\S+\.inf)\s*$') { $infs += $Matches[1].ToLowerInvariant() }
+        if ($line -match '^\s*Original File Name\s*:\s*(.+\\)?(\S+\.inf)\s*$') {
+            $infs += $Matches[2].ToLowerInvariant()
         }
     }
     return $infs
@@ -3598,6 +3711,7 @@ function Invoke-Action-StageAutopilotConfig {
         [Parameter(Mandatory)] [string] $BaseUrl,
         [Parameter(Mandatory)] [int] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
         [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
             Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
                 -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
@@ -3607,9 +3721,15 @@ function Invoke-Action-StageAutopilotConfig {
     if ([string]::IsNullOrWhiteSpace($guestPath)) {
         throw "stage_autopilot_config: missing guest_path"
     }
-    $payload = Invoke-OrchestratorRequest -BaseUrl $BaseUrl `
-        -Path "/winpe/autopilot-config/$RunId" -Method GET `
-        -BearerToken $BearerToken -RestInvoker $RestInvoker
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/autopilot-config/$RunId"
+        Method = 'GET'
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $payload = Invoke-OrchestratorRequest @reqArgs
     $dir = Split-Path -Parent $guestPath
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -3762,6 +3882,7 @@ function Invoke-Action-StageUnattend {
         [Parameter(Mandatory)] [string] $BaseUrl,
         [Parameter(Mandatory)] [int] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
         [string] $PantherDirOverride,
         [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
             Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
@@ -3772,9 +3893,15 @@ function Invoke-Action-StageUnattend {
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    $xml = Invoke-OrchestratorRequest -BaseUrl $BaseUrl `
-        -Path "/winpe/unattend/$RunId" -Method GET `
-        -BearerToken $BearerToken -RestInvoker $RestInvoker
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/unattend/$RunId"
+        Method = 'GET'
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $xml = Invoke-OrchestratorRequest @reqArgs
     Set-Content -LiteralPath (Join-Path $dir 'unattend.xml') `
         -Value $xml -Encoding UTF8
 }
@@ -3935,6 +4062,7 @@ function Start-AutopilotWinPE {
                 Params = $p; BaseUrl = $cfg.flask_base_url
                 RunId = $runId; BearerToken = $tok
             }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
             if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
             Invoke-Action-StageAutopilotConfig @a
         }
@@ -3948,6 +4076,7 @@ function Start-AutopilotWinPE {
                 Params = $p; BaseUrl = $cfg.flask_base_url
                 RunId = $runId; BearerToken = $tok
             }
+            if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
             if ($RestInvoker)        { $a.RestInvoker = $RestInvoker }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
             Invoke-Action-StageUnattend @a
@@ -3960,6 +4089,7 @@ function Start-AutopilotWinPE {
         Actions = $reg.actions
         Handlers = $handlers
     }
+    if ($fallbackUrl) { $loopArgs.FallbackBaseUrl = $fallbackUrl }
     if ($RestInvoker) { $loopArgs.RestInvoker = $RestInvoker }
     $token = Invoke-ActionLoop @loopArgs
 
@@ -4131,9 +4261,9 @@ if ($DryRun) { return }
 throw "build-winpe.ps1: real build path not yet implemented; use -DryRun"
 ```
 
-Create `tools/winpe-build/README.md`:
+Create `tools/winpe-build/README.md` (use FOUR backticks for the outer fence so the inner `powershell`/`markdown` triple-backtick code blocks render correctly):
 
-```markdown
+````markdown
 # WinPE build pipeline
 
 Builds a custom WinPE image used by the ProxmoxVEAutopilot phase-0 agent.
@@ -4164,7 +4294,7 @@ final WIM.
 # Then upload the .iso to your Proxmox ISO storage as
 # winpe-autopilot-amd64-<sha>.iso so Flask can detect it.
 ```
-```
+````
 
 - [ ] **Step 4: Run Pester to verify it passes**
 
@@ -4793,10 +4923,17 @@ Create `autopilot-proxmox/playbooks/_provision_proxmox_winpe_vm.yml`:
         that:
           - winpe_blank_template_vmid is not none
           - proxmox_winpe_iso is not none
+          - proxmox_windows_iso is not none and (proxmox_windows_iso | length) > 0
+          - proxmox_virtio_iso is not none and (proxmox_virtio_iso | length) > 0
           - autopilot_winpe_token_secret | length > 0
         fail_msg: >-
-          WinPE provisioning requires winpe_blank_template_vmid,
-          proxmox_winpe_iso, and vault_autopilot_winpe_token_secret.
+          WinPE provisioning requires the following inventory values to
+          be set: winpe_blank_template_vmid (the empty template), and
+          proxmox_winpe_iso, proxmox_windows_iso, proxmox_virtio_iso
+          (the three CDROMs the WinPE phase mounts), plus
+          vault_autopilot_winpe_token_secret. proxmox_virtio_iso must
+          also be set so the clone role attaches it at ide3 (the WinPE
+          phase reads viostor/NetKVM/vioserial from there).
 
   tasks:
     - name: Clone the WinPE blank template (skips Panther injection, no auto-start)
@@ -5742,6 +5879,7 @@ function Invoke-Action-CaptureHash {
         [Parameter(Mandatory)] [string] $BaseUrl,
         [Parameter(Mandatory)] [int] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
         [scriptblock] $CaptureRunner = { param($outputPath)
             $script = 'X:\autopilot\Get-WindowsAutopilotInfo.ps1'
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -5765,9 +5903,16 @@ function Invoke-Action-CaptureHash {
             product_id    = $row.'Windows Product ID'
             hardware_hash = $row.'Hardware Hash'
         }
-        Invoke-OrchestratorRequest -BaseUrl $BaseUrl `
-            -Path "/winpe/hash" -Method POST -Body $body `
-            -BearerToken $BearerToken -RestInvoker $RestInvoker
+        $reqArgs = @{
+            BaseUrl = $BaseUrl
+            Path = "/winpe/hash"
+            Method = 'POST'
+            Body = $body
+            BearerToken = $BearerToken
+            RestInvoker = $RestInvoker
+        }
+        if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+        Invoke-OrchestratorRequest @reqArgs
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
@@ -5782,6 +5927,7 @@ Also wire the handler in `Start-AutopilotWinPE`'s `$handlers` table:
                 Params = $p; BaseUrl = $cfg.flask_base_url
                 RunId = $runId; BearerToken = $tok
             }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
             if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
             Invoke-Action-CaptureHash @a
         }
@@ -6283,5 +6429,16 @@ Implicit cross-references and consistency:
 | No timeout/recovery for runs whose agent crashed mid-step (UI froze in `running` indefinitely) | Task A4 adds `sweep_stale_runs(ttl_seconds)` that flips long-silent active runs to `failed` inline at `/api/runs/<id>` reads (no background thread); `/api/runs/<id>/fail` endpoint added for explicit out-of-band failure; `wait_for_run_state.yml` rescue block POSTs to it on Ansible-side timeout |
 | Network-bootstrap dependency chain was not surfaced anywhere in one place | D1 step 4 documents the full bootstrap order (UEFI -> WinPE drivers baked at E2 -> startnet drvload -> agent network wait -> register -> dynamic driver inject); makes the chicken-and-egg explicit |
 | `flask_base_url` was IP-only; no fallback if operators want hostnames | `config.json` adds optional `flask_base_url_fallback`; `Invoke-OrchestratorRequest` accepts `FallbackBaseUrl` and retries it after the primary exhausts; `Start-AutopilotWinPE` threads the fallback into the register + done calls (action handlers continue using the primary URL since they only run after register has confirmed connectivity) |
+
+### v2.4 changes vs v2.3 (fifth review pass)
+
+| v2.3 gap | v2.4 fix |
+|---|---|
+| `_vm_identity.uuid` from Ansible is uppercase; agent lowercases the WMI value before POSTing; `find_run_by_uuid_state` did exact `WHERE vm_uuid=?`; live registration would 404 | `sequences_db._normalize_uuid()` lowercases on every write (`set_provisioning_run_identity`) and lookup (`find_run_by_uuid_state`); new test posts uppercase identity then registers with lowercase and asserts a match |
+| `validate_boot_drivers` parsed `dism /Get-Drivers /Format:Table` with a tail-of-line regex that misses on real DISM output (column truncation, padding inconsistency) | `_GetInjectedDriverInfs` now uses `/Format:List` and parses the `Original File Name : <path>` line; new Pester fixture exercises realistic DISM output and asserts vioscsi.inf / netkvm.inf / vioser.inf are extracted |
+| `_ResolveVirtioPath` scanned E-I, but Proxmox CDROM letter assignment depends on bus + slot, not config order; if VirtIO landed on D: the agent failed | Resolver now scans D-I (matching the WIM resolver range); the marker checks (`virtio-win_license.txt` + `NetKVM` directory) disambiguate VirtIO from the Windows source ISO |
+| F5 preflight asserted only `winpe_blank_template_vmid`, `proxmox_winpe_iso`, and the token; missing `proxmox_windows_iso` / `proxmox_virtio_iso` would slip past and fail mid-clone | F5 preflight now asserts all five vars before cloning |
+| `FallbackBaseUrl` was wired only into register + done; step-result POSTs and the staging/hash GETs continued using the primary URL, so a primary-failed/fallback-registered run would die at the first step result | `Invoke-ActionLoop` accepts `-FallbackBaseUrl` and threads it into `_ReportStepState`; `Invoke-Action-StageAutopilotConfig`, `Invoke-Action-StageUnattend`, and `Invoke-Action-CaptureHash` accept the same parameter; `Start-AutopilotWinPE` threads the fallback into all of them |
+| README codeblock used triple-backtick fence wrapping triple-backtick code blocks (rendered plan broke at the inner `\`\`\`powershell`) | Outer fence is now four backticks |
 
 No placeholders, TBDs, or "implement later" lines. Every code-bearing step shows the actual code.
