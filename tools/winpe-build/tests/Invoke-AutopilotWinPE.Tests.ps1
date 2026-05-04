@@ -262,3 +262,75 @@ Describe 'Invoke-Action-InjectDrivers' {
             Should -Throw '*virtio*'
     }
 }
+
+Describe 'Invoke-Action-ValidateBootDrivers' {
+    It 'passes when all required INFs are present' {
+        $resolver = { @('vioscsi.inf', 'netkvm.inf', 'vioser.inf', 'extra.inf') }
+        { Invoke-Action-ValidateBootDrivers `
+            -Params @{ required_infs = @('vioscsi.inf','netkvm.inf','vioser.inf') } `
+            -DriverInfResolver $resolver } | Should -Not -Throw
+    }
+
+    It 'throws listing every missing INF' {
+        $resolver = { @('vioscsi.inf') }   # netkvm + vioser missing
+        { Invoke-Action-ValidateBootDrivers `
+            -Params @{ required_infs = @('vioscsi.inf','netkvm.inf','vioser.inf') } `
+            -DriverInfResolver $resolver } |
+            Should -Throw '*netkvm.inf*vioser.inf*'
+    }
+}
+
+Describe '_GetInjectedDriverInfs (parses dism /Format:List output)' {
+    It 'extracts the leaf INF name from each "Original File Name" line' {
+        # Realistic dism /Get-Drivers /Format:List shape (truncated):
+        #   Published Name : oem3.inf
+        #   Original File Name : E:\NetKVM\w11\amd64\netkvm.inf
+        #   Inbox : No
+        #   Class Name : Net
+        #   ...
+        $sampleOutput = @"
+Deployment Image Servicing and Management tool
+Version: 10.0.26100.1
+
+Image Version: 10.0.26100.1
+
+Driver packages listing:
+
+Published Name : oem3.inf
+Original File Name : E:\NetKVM\w11\amd64\netkvm.inf
+Inbox : No
+Class Name : Net
+Provider Name : Red Hat, Inc.
+Date : 1/8/2025
+Version : 100.95.104.26200
+
+Published Name : oem4.inf
+Original File Name : E:\vioscsi\w11\amd64\vioscsi.inf
+Inbox : No
+Class Name : SCSIAdapter
+Provider Name : Red Hat, Inc.
+Date : 1/8/2025
+Version : 100.95.104.26200
+
+Published Name : oem5.inf
+Original File Name : E:\vioserial\w11\amd64\vioser.inf
+Inbox : No
+Class Name : System
+Provider Name : Red Hat, Inc.
+Date : 1/8/2025
+Version : 100.95.104.26200
+
+The operation completed successfully.
+"@
+        # Stub dism.exe + LASTEXITCODE for the duration of the call.
+        function global:dism.exe { $sampleOutput; $global:LASTEXITCODE = 0 }
+        try {
+            $infs = _GetInjectedDriverInfs
+            $infs | Should -Contain 'netkvm.inf'
+            $infs | Should -Contain 'vioscsi.inf'
+            $infs | Should -Contain 'vioser.inf'
+        } finally {
+            Remove-Item Function:\dism.exe -ErrorAction SilentlyContinue
+        }
+    }
+}

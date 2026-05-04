@@ -286,3 +286,35 @@ function Invoke-Action-InjectDrivers {
         throw "dism /Add-Driver failed (exit $($r.ExitCode)): $($r.Stdout)"
     }
 }
+
+function _GetInjectedDriverInfs {
+    # /Format:Table truncates "Original File Name" and pads columns
+    # unpredictably across DISM versions, so a tail-of-line regex
+    # silently returns nothing on real output and validate_boot_drivers
+    # incorrectly fails every run. /Format:List emits each driver as a
+    # block of "Key : Value" lines; "Original File Name : <path>" is
+    # the original INF path (e.g. "E:\NetKVM\w11\amd64\netkvm.inf"),
+    # which we tail-split on \ to get the leaf filename.
+    $out = (& dism.exe /Image:V:\ /Get-Drivers /Format:List) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "dism /Get-Drivers failed: $LASTEXITCODE" }
+    $infs = @()
+    foreach ($line in ($out -split "`r?`n")) {
+        if ($line -match '^\s*Original File Name\s*:\s*(.+\\)?(\S+\.inf)\s*$') {
+            $infs += $Matches[2].ToLowerInvariant()
+        }
+    }
+    return $infs
+}
+
+function Invoke-Action-ValidateBootDrivers {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DriverInfResolver = { _GetInjectedDriverInfs }
+    )
+    $required = @($Params.required_infs) | ForEach-Object { $_.ToLowerInvariant() }
+    $present = @(& $DriverInfResolver) | ForEach-Object { $_.ToLowerInvariant() }
+    $missing = $required | Where-Object { $_ -notin $present }
+    if ($missing.Count -gt 0) {
+        throw "validate_boot_drivers: missing INFs: $($missing -join ', ')"
+    }
+}
