@@ -601,3 +601,20 @@ def test_run_detail_page_renders(web_client, test_db):
 def test_run_detail_404_when_unknown(web_client):
     r = web_client.get("/runs/99999")
     assert r.status_code == 404
+
+
+def test_post_run_complete_advances_to_done(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 1234, "vm_uuid": "u-1"},
+    )
+    from web import sequences_db
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="awaiting_specialize",
+    )
+    r = web_client.post(f"/api/runs/{run_id}/complete")
+    assert r.status_code == 200
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "done"

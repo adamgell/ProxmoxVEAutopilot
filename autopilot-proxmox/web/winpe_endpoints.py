@@ -389,3 +389,17 @@ def post_run_fail(run_id: int, body: _RunFailBody):
         last_error=body.reason,
     )
     return {"ok": True}
+
+
+@api_router.post("/runs/{run_id}/complete")
+def post_run_complete(run_id: int):
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run["state"] in ("done", "failed"):
+        return {"ok": True}
+    sequences_db.update_provisioning_run_state(
+        db, run_id=run_id, state="done",
+    )
+    return {"ok": True}

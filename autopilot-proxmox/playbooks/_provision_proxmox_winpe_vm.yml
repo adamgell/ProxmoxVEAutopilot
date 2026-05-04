@@ -152,3 +152,9 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+
+    - name: Mark run done
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/runs/{{ run_id }}/complete"
+        method: POST
+        status_code: [200]
