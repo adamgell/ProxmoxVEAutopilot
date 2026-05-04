@@ -60,6 +60,35 @@ CREATE TABLE IF NOT EXISTS answer_iso_cache (
     compiled_at TEXT NOT NULL,
     last_used_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS provisioning_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vmid INTEGER,
+    sequence_id INTEGER NOT NULL REFERENCES task_sequences(id),
+    provision_path TEXT NOT NULL CHECK (provision_path IN ('clone','winpe')),
+    state TEXT NOT NULL,
+    vm_uuid TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    last_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_provisioning_runs_vm_uuid_state
+    ON provisioning_runs(vm_uuid, state);
+
+CREATE TABLE IF NOT EXISTS provisioning_run_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES provisioning_runs(id) ON DELETE CASCADE,
+    order_index INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    state TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    UNIQUE (run_id, order_index)
+);
 """
 
 
