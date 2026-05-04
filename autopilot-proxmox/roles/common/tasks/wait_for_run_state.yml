@@ -1,0 +1,50 @@
+---
+# Poll Flask for a provisioning_run state until it matches one of the
+# accepted values, or the deadline passes.
+#
+# Required vars:
+#   _wfrs_run_id          int
+#   _wfrs_accepted_states list[str]   e.g. ['awaiting_specialize','failed']
+#   _wfrs_timeout         int seconds  (default 1800)
+#   _wfrs_poll_interval   int seconds  (default 10)
+#
+# Sets:
+#   _wfrs_final_state    str
+#   _wfrs_run            dict   the final run row
+#
+# Fails when the deadline expires without a matching state.
+
+- name: "Wait for run {{ _wfrs_run_id }} state in {{ _wfrs_accepted_states }}"
+  block:
+    - name: "Poll until accepted state"
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/runs/{{ _wfrs_run_id }}"
+        method: GET
+        return_content: true
+        status_code: [200]
+      register: _wfrs_resp
+      until: "(_wfrs_resp.json.state | default('')) in (_wfrs_accepted_states | default([]))"
+      retries: "{{ ((_wfrs_timeout | default(1800)) // (_wfrs_poll_interval | default(10))) | int }}"
+      delay: "{{ _wfrs_poll_interval | default(10) | int }}"
+  rescue:
+    # Ansible-side timeout: poll loop ran out of retries. Mark the run
+    # failed in Flask so the UI does not show 'awaiting_winpe' forever
+    # and the request-time stale sweep does not have to wait for its
+    # TTL to fire.
+    - name: "Mark run failed (Ansible-side timeout)"
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/runs/{{ _wfrs_run_id }}/fail"
+        method: POST
+        body_format: json
+        body:
+          reason: "controller-side timeout after {{ _wfrs_timeout | default(1800) }}s waiting for {{ _wfrs_accepted_states | join(',') }}"
+        status_code: [200]
+      ignore_errors: true
+    - name: "Re-raise the wait failure"
+      ansible.builtin.fail:
+        msg: "wait_for_run_state timed out after {{ _wfrs_timeout | default(1800) }}s"
+
+- name: "Capture final run state"
+  ansible.builtin.set_fact:
+    _wfrs_final_state: "{{ _wfrs_resp.json.state }}"
+    _wfrs_run: "{{ _wfrs_resp.json }}"
