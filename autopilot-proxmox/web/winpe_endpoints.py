@@ -19,6 +19,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from web import sequences_db, winpe_token
@@ -166,3 +167,45 @@ def get_sequence(run_id: int,
             for s in steps
         ],
     }
+
+
+def _resolve_autopilot_config_path():
+    """Resolve the on-disk path to AutopilotConfigurationFile.json.
+    Mirrors what roles/autopilot_inject reads from
+    `autopilot_config_path` (defaults to
+    autopilot-proxmox/files/AutopilotConfigurationFile.json).
+    Tests monkeypatch this to point at a fixture."""
+    from pathlib import Path
+    from web import app as web_app
+    cfg = web_app._load_vars()
+    p = cfg.get("autopilot_config_path")
+    if p:
+        return Path(p)
+    # Default mirrors inventory/group_vars/all/vars.yml
+    base = Path(__file__).resolve().parent.parent
+    return base / "files" / "AutopilotConfigurationFile.json"
+
+
+@router.get("/autopilot-config/{run_id}")
+def get_autopilot_config(run_id: int,
+                         _: int = Depends(_require_bearer_for_run)):
+    from web import sequence_compiler
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    seq = sequences_db.get_sequence(db, run["sequence_id"])
+    phase = sequence_compiler.compile_winpe(seq)
+    if not phase.autopilot_enabled:
+        raise HTTPException(status_code=404, detail="autopilot not enabled")
+    path = _resolve_autopilot_config_path()
+    if not path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"autopilot enabled but {path} is missing; "
+                "operator must populate AutopilotConfigurationFile.json"
+            ),
+        )
+    return Response(content=path.read_bytes(),
+                    media_type="application/json")

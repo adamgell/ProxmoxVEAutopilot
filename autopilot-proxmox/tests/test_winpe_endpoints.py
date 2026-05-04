@@ -248,3 +248,59 @@ def test_sequence_get_rejects_token_for_wrong_run(web_client, test_db):
         headers=_bearer(reg_a["bearer_token"]),
     )
     assert r.status_code == 403
+
+
+def test_autopilot_config_returns_real_file_bytes_when_enabled(
+    web_client, test_db, tmp_path, monkeypatch,
+):
+    """The endpoint must serve the real AutopilotConfigurationFile.json
+    that roles/autopilot_inject would otherwise inject via QGA, not a
+    compiler-side placeholder. Operator-managed bytes flow unchanged."""
+    real = tmp_path / "AutopilotConfigurationFile.json"
+    real.write_bytes(
+        b'{"CloudAssignedTenantId":"00000000-0000-0000-0000-000000000001",'
+        b'"Version":2049}'
+    )
+    from web import winpe_endpoints
+    monkeypatch.setattr(
+        winpe_endpoints, "_resolve_autopilot_config_path",
+        lambda: real,
+    )
+    seq_id = _create_seq(web_client, steps=[{
+        "step_type": "autopilot_entra",
+        "params": {}, "enabled": True, "order_index": 0,
+    }], autopilot=True)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-A"},
+    )
+    reg = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-A", "mac": "aa", "build_sha": "x"},
+    ).json()
+    r = web_client.get(
+        f"/winpe/autopilot-config/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.content == real.read_bytes()
+
+
+def test_autopilot_config_returns_404_when_not_enabled(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-A"},
+    )
+    reg = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-A", "mac": "aa", "build_sha": "x"},
+    ).json()
+    r = web_client.get(
+        f"/winpe/autopilot-config/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 404
