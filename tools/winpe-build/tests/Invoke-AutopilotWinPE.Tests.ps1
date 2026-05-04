@@ -379,3 +379,20 @@ Describe 'Invoke-Action-StageAutopilotConfig' {
         }
     }
 }
+
+Describe 'Invoke-Action-BakeBootEntry' {
+    It 'invokes bcdboot V:\Windows /s S: /f UEFI' {
+        $script:lastArgs = $null
+        $runner = { param($a)
+            $script:lastArgs = $a
+            return @{ ExitCode = 0 } }
+        Invoke-Action-BakeBootEntry -Params @{} -BcdbootRunner $runner
+        ($script:lastArgs -join ' ') | Should -Match 'V:\\\\Windows\s+/s\s+S:\s+/f\s+UEFI'
+    }
+
+    It 'throws on non-zero exit' {
+        $runner = { param($a) return @{ ExitCode = 1; Stdout = 'no bootmgr' } }
+        { Invoke-Action-BakeBootEntry -Params @{} -BcdbootRunner $runner } |
+            Should -Throw '*bcdboot*1*'
+    }
+}

@@ -351,3 +351,21 @@ function Invoke-Action-StageAutopilotConfig {
     $json = $payload | ConvertTo-Json -Depth 10
     Set-Content -LiteralPath $guestPath -Value $json -Encoding UTF8
 }
+
+function _RunBcdboot {
+    param([string[]] $BcdbootArgs)
+    $stdout = & bcdboot.exe @BcdbootArgs 2>&1 | Out-String
+    return @{ ExitCode = $LASTEXITCODE; Stdout = $stdout }
+}
+
+function Invoke-Action-BakeBootEntry {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $BcdbootRunner = { param($a) _RunBcdboot -BcdbootArgs $a }
+    )
+    $bcdArgs = @('V:\\Windows', '/s', 'S:', '/f', 'UEFI')
+    $r = & $BcdbootRunner $bcdArgs
+    if ($r.ExitCode -ne 0) {
+        throw "bcdboot failed (exit $($r.ExitCode)): $($r.Stdout)"
+    }
+}
