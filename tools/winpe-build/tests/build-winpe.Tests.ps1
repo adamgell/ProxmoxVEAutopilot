@@ -19,4 +19,17 @@ Describe 'build-winpe.ps1 parameter validation' {
         $out = & $script:BuildScript -Arch amd64 -DryRun
         ($out -join "`n") | Should -Match 'winpe-autopilot-amd64-'
     }
+
+    It 'builds ISO media with the UEFI no-prompt boot image' {
+        $content = Get-Content -LiteralPath $script:BuildScript -Raw
+        $content | Should -Match 'efisys_noprompt\.bin'
+        $content | Should -Match 'oscdimg\.exe'
+        $content | Should -Not -Match 'MakeWinPEMedia'
+    }
+
+    It 'prefers modern Windows 11 amd64 VirtIO drivers for WinPE' {
+        $content = Get-Content -LiteralPath $script:BuildScript -Raw
+        $content | Should -Match 'w11'
+        $content | Should -Match 'Resolve-VirtioInf'
+    }
 }

@@ -80,6 +80,16 @@ def _sanitize_input(value):
     return str(value)
 
 
+def _optional_text(value) -> str:
+    """Normalize optional form/default values without rendering YAML null as text."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() in ("none", "null"):
+        return ""
+    return text
+
+
 def _safe_path(base_dir, filename):
     """Resolve a filename and verify it stays inside base_dir. Raises ValueError on traversal."""
     resolved = (base_dir / filename).resolve()
@@ -1941,11 +1951,11 @@ async def provision_page(request: Request):
         "memory_mb":    cfg.get("vm_memory_mb", 4096),
         "disk_size_gb": cfg.get("vm_disk_size_gb", 64),
         "count":        cfg.get("vm_count", 1),
-        "serial_prefix": cfg.get("vm_serial_prefix", ""),
-        "group_tag":    cfg.get("vm_group_tag", ""),
+        "serial_prefix": _optional_text(cfg.get("vm_serial_prefix", "")),
+        "group_tag":    _optional_text(cfg.get("vm_group_tag", "")),
         "oem_profile":  cfg.get("vm_oem_profile", ""),
         "template_vmid": cfg.get("proxmox_template_vmid", ""),
-        "hostname_pattern": cfg.get("vm_hostname_pattern", "autopilot-{serial}"),
+        "hostname_pattern": _optional_text(cfg.get("vm_hostname_pattern", "")) or "autopilot-{serial}",
     }
     return templates.TemplateResponse("provision.html", {
         "request": request,
@@ -2718,6 +2728,8 @@ async def start_provision(
                     "see docs/superpowers/plans/...-winpe-orchestrated-deploy.md"
                 ),
             )
+    serial_prefix = _optional_text(serial_prefix)
+    group_tag = _optional_text(group_tag)
     if group_tag:
         group_tag = _sanitize_input(group_tag)
     if serial_prefix:
@@ -2921,7 +2933,12 @@ async def start_provision(
             "sequence_id": int(sequence_id),
             "vm_count": int(count),
             "_skip_chassis_type_smbios_file": True,
+            # The installed Windows image is presented on inbox-safe
+            # devices, so there is intentionally no QGA dependency after
+            # first boot. WinPE hash capture remains opt-in because the
+            # MDM WMI provider is not present in every WinPE build.
             "sequence_hash_capture_phase": seq.get("hash_capture_phase", "oobe"),
+            "proxmox_winpe_expect_guest_agent": False,
             "autopilot_base_url": os.environ.get(
                 "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
             "_causes_reboot_count": _causes_reboot_count,

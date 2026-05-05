@@ -8,8 +8,8 @@ Builds a custom WinPE image used by the ProxmoxVEAutopilot phase-0 agent.
 - Windows ADK installed (matching the Windows version).
 - WinPE add-on for ADK.
 - `pwsh` (PowerShell 7) for running tests; PowerShell 5.1 also works.
-- A copy of the VirtIO Win drivers ISO mounted at `D:\virtio` or available
-  at `F:\BuildRoot\inputs\virtio-win.iso`.
+- A copy of the VirtIO Win drivers extracted or mounted at `D:\virtio`,
+  `F:\BuildRoot\inputs\virtio`, or `F:\BuildRoot\inputs\virtio-win`.
 
 ## Building
 

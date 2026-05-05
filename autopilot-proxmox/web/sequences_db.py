@@ -868,7 +868,8 @@ def update_run_step_state(db_path, *,
         if state == "running":
             conn.execute(
                 "UPDATE provisioning_run_steps "
-                "SET state='running', started_at=COALESCE(started_at, ?) "
+                "SET state='running', started_at=COALESCE(started_at, ?), "
+                "finished_at=NULL, error=NULL "
                 "WHERE id=?",
                 (_now(), step_id),
             )

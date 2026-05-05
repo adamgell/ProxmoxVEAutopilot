@@ -62,7 +62,7 @@ class CompiledSequence:
 class CompiledWinPEPhase:
     actions: list = field(default_factory=list)
     requires_windows_iso: bool = True
-    requires_virtio_iso: bool = True
+    requires_virtio_iso: bool = False
     expected_reboot_count: int = 1
     autopilot_enabled: bool = False
     # Note: actual AutopilotConfigurationFile.json bytes are NOT carried
@@ -548,24 +548,6 @@ def compile_winpe(sequence: dict,
         "kind": "apply_wim",
         "params": {"image_index_metadata_name": "Windows 11 Enterprise"},
     })
-    out.actions.append({
-        "kind": "inject_drivers",
-        "params": {
-            "required_infs": [
-                "vioscsi.inf", "netkvm.inf", "vioser.inf",
-                "balloon.inf", "vioinput.inf",
-            ],
-        },
-    })
-    out.actions.append({
-        "kind": "validate_boot_drivers",
-        "params": {
-            "required_infs": [
-                "vioscsi.inf", "netkvm.inf", "vioser.inf",
-            ],
-        },
-    })
-
     if autopilot:
         # Phase 0 applies Windows to V:\ (the soon-to-be-C:\ partition).
         # The agent runs from X:\ (WinPE RAM drive) and has no C:\, so

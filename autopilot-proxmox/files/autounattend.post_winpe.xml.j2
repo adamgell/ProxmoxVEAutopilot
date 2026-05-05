@@ -22,10 +22,15 @@
          we disabled AutoLogon so the clone stays at OOBE for Autopilot,
          and clones stopped getting GA as a side-effect.
 
-         The loop scans D:, E:, F: because the VirtIO ISO's drive
+         The loop scans D: through I: because the VirtIO ISO's drive
          letter shifts depending on which removable media the clone
          has attached. msiexec /qn /norestart is silent + doesn't
-         force a reboot mid-specialize. -->
+         force a reboot mid-specialize. Setup should continue even if
+         the MSI returns a reboot-required or transient installer code;
+         the controller verifies QGA availability later at the normal
+         wait-for-guest-agent step. Windows' normal specialize-to-OOBE
+         reboot starts the service cleanly, rather than starting QGA
+         inside specialize while PnP is still settling. -->
     <component name="Microsoft-Windows-Deployment"
                processorArchitecture="amd64" language="neutral"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
@@ -33,13 +38,13 @@
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Path>cmd.exe /c for %d in (D E F) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart</Path>
+          <Path>cmd.exe /c for %d in (D E F G H I) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart &amp; exit /b 0</Path>
           <Description>Install QEMU Guest Agent</Description>
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>2</Order>
-          <Path>cmd.exe /c sc config QEMU-GA start= auto &amp;&amp; net start QEMU-GA</Path>
-          <Description>Ensure QEMU-GA service is set to auto-start and running</Description>
+          <Path>cmd.exe /c sc query QEMU-GA &gt;nul 2&gt;nul &amp;&amp; sc config QEMU-GA start= auto || exit /b 0</Path>
+          <Description>Ensure QEMU-GA service is set to auto-start</Description>
           <WillReboot>Never</WillReboot>
         </RunSynchronousCommand>
       </RunSynchronous>

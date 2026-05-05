@@ -37,6 +37,58 @@ Describe 'Write-AgentLog' {
 }
 
 Describe 'Get-VMIdentity' {
+    It 'resolves MAC from a physical adapter before DHCP marks it IP-enabled' {
+        $mac = Resolve-MacAddress `
+            -AdapterResolver {
+                @(
+                    [pscustomobject]@{
+                        MACAddress = 'AA:BB:CC:DD:EE:FF'
+                        PhysicalAdapter = $true
+                        NetEnabled = $true
+                        InterfaceIndex = 7
+                        Index = 7
+                    }
+                )
+            } `
+            -IpAdapterResolver {
+                @(
+                    [pscustomobject]@{
+                        MACAddress = $null
+                        IPEnabled = $false
+                        InterfaceIndex = 7
+                        Index = 7
+                    }
+                )
+            }
+        $mac | Should -Be 'AA:BB:CC:DD:EE:FF'
+    }
+
+    It 'falls back to IP-enabled adapter config when physical adapters have no MAC' {
+        $mac = Resolve-MacAddress `
+            -AdapterResolver {
+                @(
+                    [pscustomobject]@{
+                        MACAddress = $null
+                        PhysicalAdapter = $true
+                        NetEnabled = $true
+                        InterfaceIndex = 7
+                        Index = 7
+                    }
+                )
+            } `
+            -IpAdapterResolver {
+                @(
+                    [pscustomobject]@{
+                        MACAddress = '11:22:33:44:55:66'
+                        IPEnabled = $true
+                        InterfaceIndex = 4
+                        Index = 4
+                    }
+                )
+            }
+        $mac | Should -Be '11:22:33:44:55:66'
+    }
+
     It 'returns uuid and mac from injected resolvers' {
         $uuidResolver = { '11111111-2222-3333-4444-555555555555' }
         $macResolver = { '00:11:22:33:44:55' }
@@ -180,6 +232,62 @@ Describe 'Invoke-ActionLoop' {
             -Handlers @{} -RestInvoker $invoker } |
             Should -Throw '*no handler*unknown_kind*'
     }
+
+    It 'converts JSON PSCustomObject params to hashtables before invoking handlers' {
+        $script:seenType = $null
+        $script:captured = $null
+        $invoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            return [pscustomobject]@{ ok = $true; bearer_token = 'rolling' }
+        }
+        $handlers = @{
+            'partition_disk' = {
+                param($p, $tok)
+                $script:seenType = $p.GetType().FullName
+                Invoke-Action-PartitionDisk -Params $p -DiskpartRunner {
+                    param($script)
+                    $script:captured = $script
+                }
+            }
+        }
+        $actions = @(
+            [pscustomobject]@{
+                step_id = 1
+                kind = 'partition_disk'
+                params = [pscustomobject]@{ layout = 'recovery_before_c' }
+            }
+        )
+
+        Invoke-ActionLoop -BaseUrl 'http://x:5000' -BearerToken 'initial' `
+            -Actions $actions -Handlers $handlers -RestInvoker $invoker
+
+        $script:seenType | Should -Be 'System.Collections.Hashtable'
+        $script:captured | Should -Match 'select disk 0'
+    }
+
+    It 'does not emit handler stdout as part of the returned bearer token' {
+        $script:stepPosts = 0
+        $invoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            if ($Uri -match '/step/\d+/result$') {
+                $script:stepPosts++
+                return [pscustomobject]@{ ok = $true; bearer_token = "tok-$script:stepPosts" }
+            }
+            return [pscustomobject]@{ ok = $true }
+        }
+        $handlers = @{
+            'partition_disk' = {
+                param($p, $tok)
+                Write-Output 'diskpart chatter'
+            }
+        }
+        $actions = @(@{ step_id = 1; kind = 'partition_disk'; params = @{} })
+
+        $finalToken = Invoke-ActionLoop -BaseUrl 'http://x:5000' `
+            -BearerToken 'initial' -Actions $actions `
+            -Handlers $handlers -RestInvoker $invoker
+
+        $finalToken | Should -Be 'tok-2'
+        $finalToken | Should -Not -BeOfType [object[]]
+    }
 }
 
 Describe 'Invoke-Action-PartitionDisk' {
@@ -237,21 +345,42 @@ Describe 'Invoke-Action-ApplyWim' {
 }
 
 Describe 'Invoke-Action-InjectDrivers' {
-    It 'invokes dism /add-driver against the VirtIO ISO root with /recurse' {
+    It 'adds only the selected modern VirtIO driver INFs to the installed image' {
         $script:invocations = @()
         $dismRunner = { param($a) $script:invocations += ,$a
             return @{ ExitCode = 0; Stdout = '' } }
-        $resolveVirtio = { 'E:\' }
-        Invoke-Action-InjectDrivers `
-            -Params @{ required_infs = @('vioscsi.inf') } `
-            -DismRunner $dismRunner `
-            -VirtioPathResolver $resolveVirtio
-        $args = $script:invocations[0] -join ' '
-        $args | Should -Match '/Image:V:\\\\'
-        $args | Should -Match '/Add-Driver'
-        $args | Should -Match '/Driver:E:\\'
-        $args | Should -Match '/Recurse'
-        $args | Should -Match '/ForceUnsigned'
+        $tempRoot = [System.IO.Path]::GetTempPath()
+        $root = New-Item -Type Directory -Path (Join-Path $tempRoot "virtio-$(New-Guid)")
+        try {
+            foreach ($path in @(
+                'NetKVM/2k12/amd64/netkvm.inf',
+                'NetKVM/w11/amd64/netkvm.inf',
+                'amd64/w11/vioscsi.inf',
+                'vioserial/w11/amd64/vioser.inf'
+            )) {
+                $full = Join-Path $root.FullName $path
+                New-Item -Type Directory -Path (Split-Path -Parent $full) -Force | Out-Null
+                Set-Content -LiteralPath $full -Value '[Version]' -Encoding ASCII
+            }
+
+            Invoke-Action-InjectDrivers `
+                -Params @{ required_infs = @('vioscsi.inf','netkvm.inf','vioser.inf') } `
+                -DismRunner $dismRunner `
+                -VirtioPathResolver { $root.FullName }
+
+            $script:invocations.Count | Should -Be 3
+            $joined = ($script:invocations | ForEach-Object { $_ -join ' ' }) -join "`n"
+            $joined | Should -Match '/Image:V:\\\\'
+            $joined | Should -Match '/Add-Driver'
+            $joined | Should -Match 'w11'
+            $joined | Should -Match 'netkvm\.inf'
+            $joined | Should -Match 'vioscsi\.inf'
+            $joined | Should -Match 'vioser\.inf'
+            $joined | Should -Not -Match '/Recurse'
+            $joined | Should -Not -Match '2k12'
+        } finally {
+            Remove-Item -LiteralPath $root.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It 'throws when the VirtIO source cannot be located' {
@@ -495,6 +624,34 @@ TEST-SERIAL-1,XXXXXXX,DEADBEEFCAFE
 }
 
 Describe 'Start-AutopilotWinPE' {
+    It 'dry-runs identity discovery without register, actions, done, or reboot' {
+        $script:posted = @()
+        $script:rebootCalled = $false
+        $invoker = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            $script:posted += "$Method $Uri"
+            return [pscustomobject]@{ ok = $true }
+        }
+        $tmpCfg = [System.IO.Path]::GetTempFileName()
+        Set-Content -LiteralPath $tmpCfg -Value '{"flask_base_url":"http://x:5000","build_sha":"DEV"}' -Encoding UTF8
+        try {
+            $id = Start-AutopilotWinPE `
+                -ConfigPath $tmpCfg `
+                -LogPath ([System.IO.Path]::GetTempFileName()) `
+                -RestInvoker $invoker `
+                -RebootRunner { $script:rebootCalled = $true } `
+                -UuidResolver { 'fake-uuid' } `
+                -MacResolver { 'aa:bb' } `
+                -DryRun
+            $id.vm_uuid | Should -Be 'fake-uuid'
+            $id.mac | Should -Be 'aa:bb'
+            $script:posted.Count | Should -Be 0
+            $script:rebootCalled | Should -BeFalse
+        } finally {
+            Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'registers, runs the action loop, calls /winpe/done, then reboots' {
         $script:posted = @()
         $script:rebootCalled = $false

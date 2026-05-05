@@ -58,15 +58,66 @@ Write-Output $isoPath
 if ($DryRun) { return }
 
 $adkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit"
+$dandISetEnv = "$adkRoot\Deployment Tools\DandISetEnv.bat"
+$oscdimgRoot = "$adkRoot\Deployment Tools\$Arch\Oscdimg"
 $peRoot = "$adkRoot\Windows Preinstallation Environment"
 $copyPe = "$peRoot\copype.cmd"
+if (-not (Test-Path -LiteralPath $dandISetEnv)) {
+    throw "ADK Deployment Tools not installed (looked for $dandISetEnv)"
+}
 if (-not (Test-Path -LiteralPath $copyPe)) {
     throw "ADK + WinPE add-on not installed (looked for $copyPe)"
 }
+$oscdimg = "$oscdimgRoot\oscdimg.exe"
+$efiNoPrompt = "$oscdimgRoot\efisys_noprompt.bin"
+if (-not (Test-Path -LiteralPath $oscdimg)) {
+    throw "ADK oscdimg.exe not installed (looked for $oscdimg)"
+}
+if (-not (Test-Path -LiteralPath $efiNoPrompt)) {
+    throw "ADK UEFI no-prompt boot image not installed (looked for $efiNoPrompt)"
+}
+
+function Invoke-Cmd {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Label,
+
+        [Parameter(Mandatory)]
+        [string] $CommandLine
+    )
+
+    $output = & cmd.exe /d /c $CommandLine 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($output) { $output | Write-Host }
+    if ($exitCode -ne 0) { throw "$Label failed: $exitCode" }
+}
+
+function Resolve-VirtioInf {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Root,
+
+        [Parameter(Mandatory)]
+        [string] $InfName,
+
+        [Parameter(Mandatory)]
+        [string] $Arch
+    )
+
+    $candidates = Get-ChildItem -Path $Root -Recurse -Filter $InfName |
+        Where-Object FullName -match "\\$Arch\\"
+    $preferred = $candidates |
+        Where-Object FullName -match "\\w11\\$Arch\\|\\$Arch\\w11\\" |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($preferred) { return $preferred }
+    return $candidates | Sort-Object FullName | Select-Object -First 1
+}
 
 $workRoot = Join-Path $env:TEMP "winpe-build-$Arch-$(New-Guid)"
-& cmd /c "`"$copyPe`" $Arch `"$workRoot`"" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "copype failed: $LASTEXITCODE" }
+Invoke-Cmd `
+    -Label 'copype' `
+    -CommandLine "call `"$dandISetEnv`" && call `"$copyPe`" $Arch `"$workRoot`""
 
 $mountDir = Join-Path $workRoot 'mount'
 $bootWim = Join-Path $workRoot 'media\sources\boot.wim'
@@ -97,19 +148,28 @@ try {
     # OS post-apply and are injected into V:\ via dism /add-driver in
     # phase 0 from the still-attached VirtIO ISO -- not baked into WinPE.
     $virtioRoot = $null
-    foreach ($candidate in @('D:\virtio','F:\BuildRoot\inputs\virtio-win')) {
-        if (Test-Path -LiteralPath $candidate) { $virtioRoot = $candidate; break }
+    $virtioInfNames = @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')
+    foreach ($candidate in @('D:\virtio','F:\BuildRoot\inputs\virtio','F:\BuildRoot\inputs\virtio-win')) {
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        $missingInf = $false
+        foreach ($infName in $virtioInfNames) {
+            $inf = Resolve-VirtioInf -Root $candidate -InfName $infName -Arch $Arch
+            if (-not $inf) {
+                $missingInf = $true
+                break
+            }
+        }
+        if (-not $missingInf) { $virtioRoot = $candidate; break }
     }
     if (-not $virtioRoot) {
-        throw "WinPE build needs a VirtIO driver source at D:\virtio or F:\BuildRoot\inputs\virtio-win"
+        throw "WinPE build needs a VirtIO driver source at D:\virtio, F:\BuildRoot\inputs\virtio, or F:\BuildRoot\inputs\virtio-win"
     }
-    foreach ($infName in @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')) {
-        $inf = Get-ChildItem -Path $virtioRoot -Recurse -Filter $infName |
-            Where-Object FullName -match "\\$Arch\\" |
-            Select-Object -First 1
+    foreach ($infName in $virtioInfNames) {
+        $inf = Resolve-VirtioInf -Root $virtioRoot -InfName $infName -Arch $Arch
         if (-not $inf) {
             throw "WinPE build cannot find $infName under $virtioRoot for $Arch"
         }
+        Write-Host "Adding VirtIO driver $infName from $($inf.FullName)"
         & dism.exe /Image:$mountDir /Add-Driver /Driver:$($inf.FullName) /ForceUnsigned | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Add-Driver $infName failed: $LASTEXITCODE" }
     }
@@ -141,9 +201,16 @@ if (-not (Test-Path -LiteralPath $OutputDir)) {
 }
 Copy-Item $bootWim -Destination $wimPath -Force
 
-$makeIso = "$peRoot\MakeWinPEMedia.cmd"
-& cmd /c "`"$makeIso`" /ISO `"$workRoot`" `"$isoPath`"" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "MakeWinPEMedia failed: $LASTEXITCODE" }
+$mediaRoot = Join-Path $workRoot 'media'
+$etfsBoot = "$oscdimgRoot\etfsboot.com"
+if (Test-Path -LiteralPath $etfsBoot) {
+    $bootData = "-bootdata:2#p0,e,b`"$etfsBoot`"#pEF,e,b`"$efiNoPrompt`""
+} else {
+    $bootData = "-bootdata:1#pEF,e,b`"$efiNoPrompt`""
+}
+Invoke-Cmd `
+    -Label 'oscdimg' `
+    -CommandLine "`"$oscdimg`" -m -o -u2 -udfver102 $bootData `"$mediaRoot`" `"$isoPath`""
 
 $wimSha = (Get-FileHash -LiteralPath $wimPath -Algorithm SHA256).Hash
 $manifest = [pscustomobject]@{

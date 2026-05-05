@@ -130,6 +130,37 @@ def test_register_persists_steps(web_client, test_db):
     assert all(s["state"] == "pending" for s in steps)
 
 
+def test_register_reuses_only_unfinished_existing_steps(web_client, test_db):
+    seq_id = _create_seq(web_client)
+    run_id = _create_run(test_db, seq_id)
+    web_client.post(
+        f"/winpe/run/{run_id}/identity",
+        json={"vmid": 100, "vm_uuid": "u-100"},
+    )
+    first = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa", "build_sha": "x"},
+    ).json()
+
+    from web import sequences_db
+    steps = sequences_db.list_run_steps(test_db, run_id=run_id)
+    sequences_db.update_run_step_state(
+        test_db, step_id=steps[0]["id"], state="ok",
+    )
+
+    second = web_client.post(
+        "/winpe/register",
+        json={"vm_uuid": "u-100", "mac": "aa", "build_sha": "x"},
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert steps[0]["id"] not in [a["step_id"] for a in body["actions"]]
+    assert [a["step_id"] for a in body["actions"]] == [
+        a["step_id"] for a in first["actions"][1:]
+    ]
+    assert len(sequences_db.list_run_steps(test_db, run_id=run_id)) == len(steps)
+
+
 def test_register_matches_uppercase_identity_to_lowercase_register(
     web_client, test_db,
 ):
@@ -417,6 +448,7 @@ def test_step_result_rejects_step_in_different_run(web_client, test_db):
 
 def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypatch):
     calls = []
+    power_cycles = []
 
     def fake_detach(*, vmid, slots, set_boot_order):
         calls.append({"vmid": vmid, "slots": list(slots),
@@ -425,6 +457,10 @@ def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypa
     from web import winpe_endpoints
     monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
                         fake_detach)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: power_cycles.append(kw),
+    )
     run_id, reg = _register(web_client, test_db)
     r = web_client.post(
         "/winpe/done",
@@ -436,12 +472,45 @@ def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypa
     assert run["state"] == "awaiting_specialize"
     assert calls == [{"vmid": 100, "slots": ["ide2", "sata0"],
                       "boot": "order=scsi0"}]
+    assert power_cycles == [{"vmid": 100}]
+
+
+def test_done_uses_sata_handoff_boot_order_for_winpe_safe_disk(
+    web_client, test_db, monkeypatch,
+):
+    calls = []
+
+    from web import winpe_endpoints
+
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_handoff_boot_order",
+        lambda *, vmid: "order=sata1",
+    )
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_detach_and_set_boot",
+        lambda **kw: calls.append(kw),
+    )
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
+    run_id, reg = _register(web_client, test_db)
+    r = web_client.post(
+        "/winpe/done",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    assert calls[0]["set_boot_order"] == "order=sata1"
 
 
 def test_done_is_idempotent(web_client, test_db, monkeypatch):
     from web import winpe_endpoints
     monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
                         lambda **kw: None)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
     run_id, reg = _register(web_client, test_db)
     web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
     r = web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))

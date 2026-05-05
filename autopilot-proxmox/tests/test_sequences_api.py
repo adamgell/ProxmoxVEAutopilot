@@ -369,6 +369,60 @@ def test_provision_with_rename_computer_passes_reboot_count(app_env):
     assert "_answer_floppy_path=/var/lib/vz/snippets/autopilot-unattend-cafebabecafebabe.img" in cmd
 
 
+def test_wait_reboot_cycle_supports_playbook_level_include():
+    """The WinPE playbook includes wait_reboot_cycle.yml directly from
+    playbook scope, where Ansible does not define role_path. Keep the
+    helper usable from both role includes and playbook includes."""
+    from pathlib import Path
+    content = (
+        Path(__file__).resolve().parents[1]
+        / "roles" / "common" / "tasks" / "wait_reboot_cycle.yml"
+    ).read_text()
+    assert "role_path is defined" in content
+    assert "playbook_dir" in content
+
+
+def test_common_dispatchers_support_pve_alias_and_playbook_level_include():
+    """Common task dispatchers are used from both roles and playbooks.
+    Inventory uses hypervisor_type=pve, which must dispatch to the
+    Proxmox implementation files rather than literal _pve_*.yml names."""
+    from pathlib import Path
+    tasks_dir = Path(__file__).resolve().parents[1] / "roles" / "common" / "tasks"
+    for name in ("wait_guest_agent.yml", "guest_exec.yml", "guest_file_write.yml"):
+        content = (tasks_dir / name).read_text()
+        assert "role_path is defined" in content
+        assert "playbook_dir" in content
+        assert "'proxmox'" in content
+        assert "'pve'" in content
+
+
+def test_winpe_playbook_preserves_secure_boot_on_clones():
+    """WinPE avoids revoked VirtIO boot drivers by changing the guest
+    hardware path, not by downgrading the template's firmware policy."""
+    from pathlib import Path
+    content = (
+        Path(__file__).resolve().parents[1]
+        / "playbooks" / "_provision_proxmox_winpe_vm.yml"
+    ).read_text()
+    assert "pre-enrolled-keys=0" not in content
+    assert "Disable Secure Boot on WinPE clone" not in content
+
+
+def test_winpe_playbook_uses_inbox_safe_devices_after_revoked_virtio_boot_driver():
+    """The current Windows media blocks VirtIO boot drivers as revoked,
+    so WinPE clones must boot installed Windows from SATA and use an
+    inbox NIC path instead of depending on QGA."""
+    from pathlib import Path
+    content = (
+        Path(__file__).resolve().parents[1]
+        / "playbooks" / "_provision_proxmox_winpe_vm.yml"
+    ).read_text()
+    assert "sata1:" in content
+    assert "net0: \"e1000e" in content
+    assert "boot: \"order=ide2;sata1\"" in content
+    assert "proxmox_winpe_expect_guest_agent | default(false)" in content
+
+
 def test_provision_without_sequence_skips_floppy_compile(app_env):
     """A raw provision with no sequence_id must NOT invoke the floppy
     cache (backward-compatible path — template's baked-in sata0 is

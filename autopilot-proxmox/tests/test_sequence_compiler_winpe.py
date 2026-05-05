@@ -7,7 +7,7 @@ def test_compiled_winpe_phase_default_fields():
     p = CompiledWinPEPhase()
     assert p.actions == []
     assert p.requires_windows_iso is True
-    assert p.requires_virtio_iso is True
+    assert p.requires_virtio_iso is False
     assert p.expected_reboot_count == 1
     assert p.autopilot_enabled is False
 
@@ -38,8 +38,6 @@ def test_compile_winpe_baseline_action_order():
     assert kinds == [
         "partition_disk",
         "apply_wim",
-        "inject_drivers",
-        "validate_boot_drivers",
         "bake_boot_entry",
         "stage_unattend",
     ]
@@ -93,13 +91,12 @@ def test_compile_winpe_partition_disk_carries_layout_param():
     assert pd["params"]["layout"] == "recovery_before_c"
 
 
-def test_compile_winpe_inject_drivers_lists_required_infs():
+def test_compile_winpe_avoids_installed_windows_virtio_driver_injection():
     from web.sequence_compiler import compile_winpe
     p = compile_winpe(_seq())
-    inj = next(a for a in p.actions if a["kind"] == "inject_drivers")
-    assert set(inj["params"]["required_infs"]) >= {
-        "vioscsi.inf", "netkvm.inf", "vioser.inf",
-    }
+    kinds = [a["kind"] for a in p.actions]
+    assert "inject_drivers" not in kinds
+    assert "validate_boot_drivers" not in kinds
 
 
 def test_compile_winpe_marks_autopilot_when_enabled():

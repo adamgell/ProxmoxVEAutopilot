@@ -46,4 +46,9 @@
   when: _reboot_ping.status | default(0) == 200
 
 - name: "Wait for guest {{ vm_vmid }} to come back after reboot"
-  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_guest_agent.yml"
+  ansible.builtin.include_tasks: >-
+    {{
+      (role_path ~ '/../common/tasks/wait_guest_agent.yml')
+      if (role_path is defined)
+      else (playbook_dir ~ '/../roles/common/tasks/wait_guest_agent.yml')
+    }}

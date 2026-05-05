@@ -16,11 +16,13 @@ Identity-endpoint client allowlist: AUTOPILOT_WINPE_IDENTITY_ALLOWLIST
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -28,6 +30,7 @@ from web import sequences_db, winpe_token
 
 
 router = APIRouter(prefix="/winpe", tags=["winpe"])
+LOG = logging.getLogger(__name__)
 
 
 class IdentityBody(BaseModel):
@@ -126,6 +129,7 @@ def post_register(body: RegisterBody):
             {"step_id": s["id"], "kind": s["kind"],
              "params": json.loads(s["params_json"])}
             for s in existing
+            if s["state"] != "ok"
         ]
     else:
         actions = _build_actions_for_run(db, run["id"], run["sequence_id"])
@@ -325,8 +329,65 @@ def _proxmox_detach_and_set_boot(*, vmid: int, slots: list[str],
     )
 
 
+def _proxmox_handoff_boot_order(*, vmid: int) -> str:
+    """Choose the installed-OS boot target for the WinPE handoff.
+
+    New WinPE clones move their boot disk from VirtIO SCSI to SATA to
+    avoid Windows Code Integrity blocking revoked VirtIO boot drivers.
+    Older/already-created clones may still have scsi0, so fall back
+    conservatively when the config read fails or sata1 is absent.
+    """
+    from web import app as web_app
+    cfg = web_app._load_proxmox_config()
+    node = cfg.get("proxmox_node") or "pve"
+    try:
+        data = web_app._proxmox_api(
+            f"/nodes/{node}/qemu/{vmid}/config",
+        ) or {}
+    except Exception as exc:
+        LOG.warning("WinPE handoff config read failed for VM %s: %s", vmid, exc)
+        return "order=scsi0"
+    if data.get("sata1"):
+        return "order=sata1"
+    return "order=scsi0"
+
+
+def _proxmox_power_cycle_for_pending_config(*, vmid: int) -> None:
+    """Apply pending CD-ROM deletion + boot-order changes.
+
+    Proxmox records deleting IDE/SATA CD-ROMs and changing boot order as
+    pending while a VM is running. A guest-initiated reboot from WinPE
+    keeps the current QEMU device graph, so the VM boots WinPE again.
+    After /winpe/done returns to the agent, hard stop/start the VM from
+    the controller so the next boot uses scsi0 only.
+    """
+    from web import app as web_app
+    cfg = web_app._load_proxmox_config()
+    node = cfg.get("proxmox_node") or "pve"
+    time.sleep(2)
+    try:
+        web_app._proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
+    except Exception as exc:
+        LOG.warning("WinPE handoff stop failed for VM %s: %s", vmid, exc)
+    for _ in range(60):
+        try:
+            status = web_app._proxmox_api(
+                f"/nodes/{node}/qemu/{vmid}/status/current",
+            ) or {}
+            if status.get("status") == "stopped":
+                break
+        except Exception as exc:
+            LOG.warning("WinPE handoff status poll failed for VM %s: %s", vmid, exc)
+        time.sleep(1)
+    try:
+        web_app._proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
+    except Exception as exc:
+        LOG.error("WinPE handoff start failed for VM %s: %s", vmid, exc)
+
+
 @router.post("/done")
-def post_done(payload: dict = Depends(_require_bearer_token)):
+def post_done(background_tasks: BackgroundTasks,
+              payload: dict = Depends(_require_bearer_token)):
     db = _db_path()
     run = sequences_db.get_provisioning_run(db, int(payload["run_id"]))
     if run is None:
@@ -336,14 +397,19 @@ def post_done(payload: dict = Depends(_require_bearer_token)):
             status_code=409, detail="run identity not set"
         )
     if run["state"] == "awaiting_winpe":
+        boot_order = _proxmox_handoff_boot_order(vmid=int(run["vmid"]))
         _proxmox_detach_and_set_boot(
             vmid=int(run["vmid"]),
             slots=["ide2", "sata0"],
-            set_boot_order="order=scsi0",
+            set_boot_order=boot_order,
         )
         sequences_db.update_provisioning_run_state(
             db, run_id=int(run["id"]),
             state="awaiting_specialize",
+        )
+        background_tasks.add_task(
+            _proxmox_power_cycle_for_pending_config,
+            vmid=int(run["vmid"]),
         )
     return {"ok": True}
 

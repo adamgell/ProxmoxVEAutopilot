@@ -40,19 +40,46 @@ function Write-AgentLog {
     Write-Host $line
 }
 
+function Resolve-MacAddress {
+    param(
+        [scriptblock] $AdapterResolver = {
+            Get-CimInstance -ClassName Win32_NetworkAdapter
+        },
+        [scriptblock] $IpAdapterResolver = {
+            Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration
+        }
+    )
+
+    # WinPE can expose the VirtIO NIC before DHCP flips
+    # Win32_NetworkAdapterConfiguration.IPEnabled to true. Prefer the
+    # physical adapter MAC first, then fall back to IP-enabled config.
+    $adapter = @(& $AdapterResolver) |
+        Where-Object {
+            $_.MACAddress -and
+            (
+                $_.PhysicalAdapter -eq $true -or
+                $_.NetEnabled -eq $true -or
+                $_.Name -match 'VirtIO|Ethernet|Network'
+            )
+        } |
+        Sort-Object InterfaceIndex, Index |
+        Select-Object -First 1
+    if ($adapter) { return $adapter.MACAddress }
+
+    $ipAdapter = @(& $IpAdapterResolver) |
+        Where-Object { $_.IPEnabled -eq $true -and $_.MACAddress } |
+        Sort-Object InterfaceIndex, Index |
+        Select-Object -First 1
+    if ($ipAdapter) { return $ipAdapter.MACAddress }
+
+    return $null
+}
+
 function Get-VMIdentity {
     param(
         [scriptblock] $UuidResolver = { (Get-CimInstance Win32_ComputerSystemProduct).UUID },
         [scriptblock] $MacResolver  = {
-            # WinPE 11 ships WMI but not NetAdapter module; use CIM
-            # against Win32_NetworkAdapterConfiguration which is
-            # available via the WinPE-WMI optional package (already
-            # baked in by tools/winpe-build/build-winpe.ps1).
-            $adapter = Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration `
-                | Where-Object { $_.IPEnabled -eq $true -and $_.MACAddress } `
-                | Sort-Object Index `
-                | Select-Object -First 1
-            if ($adapter) { $adapter.MACAddress } else { $null }
+            Resolve-MacAddress
         }
     )
     $uuid = & $UuidResolver
@@ -129,6 +156,47 @@ function _ReportStepState {
     return $BearerToken
 }
 
+function ConvertTo-AgentValue {
+    param([AllowNull()] [object] $Value)
+    if ($null -eq $Value) { return $null }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $out = @{}
+        foreach ($key in $Value.Keys) {
+            $out[$key] = ConvertTo-AgentValue -Value $Value[$key]
+        }
+        return $out
+    }
+
+    if ($Value -is [pscustomobject]) {
+        $out = @{}
+        foreach ($prop in $Value.PSObject.Properties) {
+            $out[$prop.Name] = ConvertTo-AgentValue -Value $prop.Value
+        }
+        return $out
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += ConvertTo-AgentValue -Value $item
+        }
+        return $items
+    }
+
+    return $Value
+}
+
+function ConvertTo-AgentParams {
+    param([AllowNull()] [object] $Params)
+    if ($null -eq $Params) { return @{} }
+
+    $converted = ConvertTo-AgentValue -Value $Params
+    if ($converted -is [hashtable]) { return $converted }
+
+    throw "step params must be a JSON object"
+}
+
 function Invoke-ActionLoop {
     param(
         [Parameter(Mandatory)] [string] $BaseUrl,
@@ -162,7 +230,8 @@ function Invoke-ActionLoop {
             # rather than capturing the original via closure, so a long
             # apply_wim followed by stage_unattend GETs use a fresh
             # token, not one that may have expired during the apply.
-            & $Handlers[$kind] $action.params $token
+            $params = ConvertTo-AgentParams -Params $action.params
+            $null = & $Handlers[$kind] $params $token
         } catch {
             $msg = $_.Exception.Message
             $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
@@ -283,6 +352,34 @@ function _ResolveVirtioPath {
     throw "could not find VirtIO ISO on any attached CD-ROM (D-I)"
 }
 
+function Resolve-VirtioInf {
+    param(
+        [Parameter(Mandatory)] [string] $Root,
+        [Parameter(Mandatory)] [string] $InfName,
+        [string] $Arch = 'amd64'
+    )
+    $candidates = @(Get-ChildItem -LiteralPath $Root -Recurse -Filter $InfName -ErrorAction SilentlyContinue)
+    $preferred = $candidates |
+        Where-Object {
+            $normalized = $_.FullName -replace '/', '\'
+            $normalized -match "\\w11\\$Arch\\|\\$Arch\\w11\\"
+        } |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($preferred) { return $preferred.FullName }
+
+    $fallback = $candidates |
+        Where-Object {
+            $normalized = $_.FullName -replace '/', '\'
+            $normalized -match "\\$Arch\\"
+        } |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($fallback) { return $fallback.FullName }
+
+    throw "could not find VirtIO driver $InfName for $Arch under $Root"
+}
+
 function Invoke-Action-InjectDrivers {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
@@ -290,16 +387,27 @@ function Invoke-Action-InjectDrivers {
         [scriptblock] $VirtioPathResolver = { _ResolveVirtioPath }
     )
     $virtioRoot = & $VirtioPathResolver
-    $dismArgs = @(
-        '/Image:V:\\',
-        '/Add-Driver',
-        "/Driver:$virtioRoot",
-        '/Recurse',
-        '/ForceUnsigned'
-    )
-    $r = & $DismRunner $dismArgs
-    if ($r.ExitCode -ne 0) {
-        throw "dism /Add-Driver failed (exit $($r.ExitCode)): $($r.Stdout)"
+    $arch = 'amd64'
+    if ($Params.ContainsKey('architecture') -and $Params.architecture) {
+        $arch = [string] $Params.architecture
+    }
+    $requiredInfs = @($Params.required_infs)
+    if ($requiredInfs.Count -eq 0) {
+        $requiredInfs = @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')
+    }
+
+    foreach ($infName in $requiredInfs) {
+        $infPath = Resolve-VirtioInf -Root $virtioRoot -InfName $infName -Arch $arch
+        $dismArgs = @(
+            '/Image:V:\\',
+            '/Add-Driver',
+            "/Driver:$infPath",
+            '/ForceUnsigned'
+        )
+        $r = & $DismRunner $dismArgs
+        if ($r.ExitCode -ne 0) {
+            throw "dism /Add-Driver failed for $infName (exit $($r.ExitCode)): $($r.Stdout)"
+        }
     }
 }
 
@@ -524,6 +632,7 @@ function Start-AutopilotWinPE {
         [scriptblock] $SourceWimResolver = $null,
         [scriptblock] $IndexResolver = $null,
         [scriptblock] $DriverInfResolver = $null,
+        [switch] $DryRun,
         [string] $PantherDirOverride
     )
     $cfg = Read-AgentConfig -Path $ConfigPath
@@ -534,6 +643,10 @@ function Start-AutopilotWinPE {
     if ($MacResolver)  { $idArgs.MacResolver  = $MacResolver }
     $id = Get-VMIdentity @idArgs
     Write-AgentLog -Path $LogPath -Level INFO -Message "vm_uuid=$($id.vm_uuid) mac=$($id.mac)"
+    if ($DryRun) {
+        Write-AgentLog -Path $LogPath -Level INFO -Message 'dry run complete; skipping register/action/reboot'
+        return $id
+    }
 
     $fallbackUrl = $null
     if ($cfg.PSObject.Properties.Match('flask_base_url_fallback').Count -gt 0) {
