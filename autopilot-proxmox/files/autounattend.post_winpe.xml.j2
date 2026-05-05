@@ -61,18 +61,10 @@
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
                publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
 
-      <!-- OOBE on clones is INTERACTIVE - start at the Region screen.
-           The original autounattend.xml had Hide* flags here that
-           auto-completed every OOBE screen (region, keyboard, network,
-           account, EULA, privacy) so a clone booted straight into the
-           Administrator desktop. That's correct for template *install*
-           (where the operator isn't sitting in front of it) but wrong
-           for clones - Autopilot enrollment + hash-capture workflows
-           rely on OOBE staying open so the operator (or end user) can
-           drive it. With AutoLogon also disabled by default in the
-           renderer, removing these flags lets OOBE display every
-           screen normally, starting at Region. -->
-      <OOBE/>
+      <!-- OOBE is intentionally omitted so Windows shows every screen
+           interactively (Region, Keyboard, Network, Account, etc.).
+           Autopilot enrollment fires during OOBE when a registered
+           hash + AutopilotConfigurationFile.json are present. -->
 
 {{ oobe_user_accounts }}
 
