@@ -330,7 +330,7 @@ Describe 'Invoke-Action-ApplyWim' {
         ($applied -join ' ') | Should -Match '/Apply-Image'
         ($applied -join ' ') | Should -Match '/ImageFile:D:\\sources\\install.wim'
         ($applied -join ' ') | Should -Match '/Index:6'
-        ($applied -join ' ') | Should -Match '/ApplyDir:V:\\\\'
+        ($applied -join ' ') | Should -Match '/ApplyDir:V:\\'
     }
 
     It 'throws on dism non-zero exit' {
@@ -370,7 +370,7 @@ Describe 'Invoke-Action-InjectDrivers' {
 
             $script:invocations.Count | Should -Be 3
             $joined = ($script:invocations | ForEach-Object { $_ -join ' ' }) -join "`n"
-            $joined | Should -Match '/Image:V:\\\\'
+            $joined | Should -Match '/Image:V:\\'
             $joined | Should -Match '/Add-Driver'
             $joined | Should -Match 'w11'
             $joined | Should -Match 'netkvm\.inf'
@@ -389,6 +389,14 @@ Describe 'Invoke-Action-InjectDrivers' {
             -DismRunner { param($a) @{ ExitCode = 0 } } `
             -VirtioPathResolver { throw 'no virtio iso found' } } |
             Should -Throw '*virtio*'
+    }
+
+    It 'skips missing VirtIO media when the driver package is optional' {
+        { Invoke-Action-InjectDrivers `
+            -Params @{ required_infs = @('vioscsi.inf'); optional = $true } `
+            -DismRunner { param($a) throw 'DISM should not run' } `
+            -VirtioPathResolver { throw 'no virtio iso found' } } |
+            Should -Not -Throw
     }
 }
 
@@ -524,7 +532,7 @@ Describe 'Invoke-Action-BakeBootEntry' {
             $script:lastArgs = $a
             return @{ ExitCode = 0 } }
         Invoke-Action-BakeBootEntry -Params @{} -BcdbootRunner $runner
-        ($script:lastArgs -join ' ') | Should -Match 'V:\\\\Windows\s+/s\s+S:\s+/f\s+UEFI'
+        ($script:lastArgs -join ' ') | Should -Match 'V:\\Windows\s+/s\s+S:\s+/f\s+UEFI'
     }
 
     It 'throws on non-zero exit' {
@@ -582,6 +590,162 @@ Describe 'Invoke-Action-StageUnattend' {
         } finally {
             Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe 'Invoke-Action-PrepareWindowsSetup' {
+    BeforeAll {
+        if ([string]::IsNullOrEmpty($env:TEMP)) {
+            $env:TEMP = if ($env:TMPDIR) { $env:TMPDIR.TrimEnd('/') } else { '/tmp' }
+        }
+    }
+
+    It 'writes Panther unattend and clears offline MountedDevices' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-prepare-$(New-Guid)"
+        try {
+            $script:regCalls = @()
+            $web = {
+                param($Uri,$Headers,$TimeoutSec)
+                return [pscustomobject]@{
+                    Content = '<unattend><settings pass="specialize" /></unattend>'
+                }
+            }
+            $reg = {
+                param($a)
+                $script:regCalls += ,$a
+                return @{ ExitCode = 0; Stdout = 'ok' }
+            }
+
+            Invoke-Action-PrepareWindowsSetup `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' -PantherDirOverride "$tmp" `
+                -WebInvoker $web -RegRunner $reg
+
+            $body = Get-Content "$tmp\unattend.xml" -Raw
+            $body | Should -Match 'pass="specialize"'
+            $joined = ($script:regCalls | ForEach-Object { $_ -join ' ' }) -join "`n"
+            $joined | Should -Match 'load HKLM\\APVEOFFLINESYSTEM'
+            $joined | Should -Match 'delete HKLM\\APVEOFFLINESYSTEM\\MountedDevices /f'
+            $joined | Should -Match 'unload HKLM\\APVEOFFLINESYSTEM'
+        } finally {
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Invoke-Action-StageOsdClient' {
+    BeforeAll {
+        if ([string]::IsNullOrEmpty($env:TEMP)) {
+            $env:TEMP = if ($env:TMPDIR) { $env:TMPDIR.TrimEnd('/') } else { '/tmp' }
+        }
+    }
+
+    It 'writes OSD package files and osd-config.json under the applied OS' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-osd-$(New-Guid)"
+        $driveCreated = $false
+        try {
+            if (Get-PSDrive -Name V -ErrorAction SilentlyContinue) {
+                throw 'test requires unused V: PSDrive'
+            }
+            New-PSDrive -Name V -PSProvider FileSystem -Root $tmp.FullName | Out-Null
+            $driveCreated = $true
+            $setupBytes = [System.Text.Encoding]::UTF8.GetBytes('@echo off')
+            $clientBytes = [System.Text.Encoding]::UTF8.GetBytes('Write-Host osd')
+            $rest = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                return [pscustomobject]@{
+                    run_id = 7
+                    bearer_token = 'osd-token'
+                    files = @(
+                        [pscustomobject]@{
+                            path = 'V:\Windows\Setup\Scripts\SetupComplete.cmd'
+                            content_b64 = [System.Convert]::ToBase64String($setupBytes)
+                        },
+                        [pscustomobject]@{
+                            path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                            content_b64 = [System.Convert]::ToBase64String($clientBytes)
+                        }
+                    )
+                }
+            }
+
+            Invoke-Action-StageOsdClient `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' -RestInvoker $rest
+
+            (Get-Content 'V:\Windows\Setup\Scripts\SetupComplete.cmd' -Raw) |
+                Should -Match '@echo off'
+            (Get-Content 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1' -Raw) |
+                Should -Match 'osd'
+            $cfg = Get-Content 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json' -Raw |
+                ConvertFrom-Json
+            $cfg.run_id | Should -Be 7
+            $cfg.bearer_token | Should -Be 'osd-token'
+            $cfg.flask_base_url | Should -Be 'http://x:5000'
+        } finally {
+            if ($driveCreated) {
+                Remove-PSDrive -Name V -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'rejects OSD package responses without files' {
+        $rest = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            return [pscustomobject]@{
+                run_id = 7
+                bearer_token = 'osd-token'
+            }
+        }
+
+        {
+            Invoke-Action-StageOsdClient `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' -RestInvoker $rest
+        } | Should -Throw '*missing nonempty files array*'
+    }
+
+    It 'rejects OSD package files without paths with response context' {
+        $rest = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            return [pscustomobject]@{
+                run_id = 7
+                bearer_token = 'osd-token'
+                files = @(
+                    [pscustomobject]@{
+                        content_b64 = 'AA=='
+                    }
+                )
+            }
+        }
+
+        {
+            Invoke-Action-StageOsdClient `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' -RestInvoker $rest
+        } | Should -Throw '*file*missing path*response_type=System.Management.Automation.PSCustomObject*'
+    }
+
+    It 'rejects OSD package files without content' {
+        $rest = {
+            param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            return [pscustomobject]@{
+                run_id = 7
+                bearer_token = 'osd-token'
+                files = @(
+                    [pscustomobject]@{
+                        path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                    }
+                )
+            }
+        }
+
+        {
+            Invoke-Action-StageOsdClient `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId 7 `
+                -BearerToken 'tok' -RestInvoker $rest
+        } | Should -Throw '*file*missing content_b64*response_type=System.Management.Automation.PSCustomObject*'
     }
 }
 

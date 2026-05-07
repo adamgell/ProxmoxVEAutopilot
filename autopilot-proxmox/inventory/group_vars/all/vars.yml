@@ -77,7 +77,7 @@ winpe_blank_template_vmid: 9001
 
 # Path of the most recent WinPE ISO in Proxmox storage notation.
 # Example: "isos:iso/winpe-autopilot-amd64-83793f7eb931ecee.iso"
-proxmox_winpe_iso: "isos:iso/winpe-autopilot-amd64-60e5c22c2fa6fabb.iso"
+proxmox_winpe_iso: "isos:iso/winpe-autopilot-amd64-6e9f6a8833faa41a.iso"
 
 # HMAC secret for /winpe/* bearer tokens. Sourced from vault.
 autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('') }}"
@@ -90,7 +90,7 @@ autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('
 # controller and Flask on the same host (the default deployment shape)
 # or extend _check_identity_caller in web/winpe_endpoints.py to honor
 # X-Forwarded-For from a trusted proxy.
-autopilot_winpe_identity_allowlist: "127.0.0.1,localhost,192.168.2.50"
+autopilot_winpe_identity_allowlist: "127.0.0.1,localhost,192.168.2.50,192.168.2.4"
 
 # =============================================================================
 # VM defaults

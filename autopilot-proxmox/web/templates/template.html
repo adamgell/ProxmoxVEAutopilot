@@ -1,7 +1,17 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head %}
 {% block title %}Build Template - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Build Template{% if hypervisor_type == "utm" %} — UTM (macOS/ARM64){% else %} from ISO{% endif %}</h2>
+{{ page_head("Build Template", "Template forge for Windows, Ubuntu, Proxmox, and UTM build paths with pause-before-sysprep controls.") }}
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <div class="cockpit-lifecycle">
+    <div class="cockpit-lifecycle-step">Select OS</div>
+    <div class="cockpit-lifecycle-step">Stage ISO</div>
+    <div class="cockpit-lifecycle-step">Install</div>
+    <div class="cockpit-lifecycle-step">Pause Gate</div>
+    <div class="cockpit-lifecycle-step">Seal Template</div>
+  </div>
+</section>
 
 {% if hypervisor_type == "utm" %}
 {# ─────────────────────────── UTM path ──────────────────────────────────── #}

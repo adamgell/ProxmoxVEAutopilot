@@ -1,9 +1,9 @@
 # Invoke-AutopilotWinPE.ps1
 #
 # In-WinPE phase-0 agent. Boots a Proxmox VM into Windows by:
-#   register -> capture_hash (M2) -> partition_disk -> apply_wim ->
-#   inject_drivers -> validate_boot_drivers -> stage_autopilot_config ->
-#   bake_boot_entry -> stage_unattend -> done -> reboot.
+#   register -> capture_hash (optional) -> partition_disk -> apply_wim ->
+#   apply_driver_package -> prepare_windows_setup -> stage_osd_client ->
+#   bake_boot_entry -> handoff_to_windows_setup -> done -> reboot.
 #
 # Designed for PowerShell 5.1 (WinPE-bundled). Sourced by Pester tests
 # during development; running it from startnet.cmd at WinPE boot drives
@@ -334,7 +334,7 @@ function Invoke-Action-ApplyWim {
         '/Apply-Image',
         "/ImageFile:$wim",
         "/Index:$index",
-        '/ApplyDir:V:\\'
+        '/ApplyDir:V:\'
     )
     $r = & $DismRunner $dismArgs
     if ($r.ExitCode -ne 0) {
@@ -386,7 +386,15 @@ function Invoke-Action-InjectDrivers {
         [scriptblock] $DismRunner = { param($a) _RunDism -DismArgs $a },
         [scriptblock] $VirtioPathResolver = { _ResolveVirtioPath }
     )
-    $virtioRoot = & $VirtioPathResolver
+    try {
+        $virtioRoot = & $VirtioPathResolver
+    } catch {
+        if ($Params.ContainsKey('optional') -and [bool] $Params.optional) {
+            Write-Host "apply_driver_package: VirtIO media not found; optional step skipped."
+            return
+        }
+        throw
+    }
     $arch = 'amd64'
     if ($Params.ContainsKey('architecture') -and $Params.architecture) {
         $arch = [string] $Params.architecture
@@ -399,7 +407,7 @@ function Invoke-Action-InjectDrivers {
     foreach ($infName in $requiredInfs) {
         $infPath = Resolve-VirtioInf -Root $virtioRoot -InfName $infName -Arch $arch
         $dismArgs = @(
-            '/Image:V:\\',
+            '/Image:V:\',
             '/Add-Driver',
             "/Driver:$infPath",
             '/ForceUnsigned'
@@ -407,6 +415,56 @@ function Invoke-Action-InjectDrivers {
         $r = & $DismRunner $dismArgs
         if ($r.ExitCode -ne 0) {
             throw "dism /Add-Driver failed for $infName (exit $($r.ExitCode)): $($r.Stdout)"
+        }
+    }
+}
+
+function Invoke-Action-PrepareWindowsSetup {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [string] $PantherDirOverride,
+        [scriptblock] $WebInvoker = { param($Uri,$Headers,$TimeoutSec)
+            Invoke-WebRequest -Uri $Uri -Method GET -Headers $Headers `
+                -TimeoutSec $TimeoutSec -UseBasicParsing
+        },
+        [scriptblock] $RegRunner = { param($a)
+            $stdout = & reg.exe @a 2>&1 | Out-String
+            return @{ ExitCode = $LASTEXITCODE; Stdout = $stdout }
+        }
+    )
+    Invoke-Action-StageUnattend `
+        -Params @{} `
+        -BaseUrl $BaseUrl `
+        -RunId $RunId `
+        -BearerToken $BearerToken `
+        -FallbackBaseUrl $FallbackBaseUrl `
+        -PantherDirOverride $PantherDirOverride `
+        -WebInvoker $WebInvoker
+
+    $hive = 'V:\Windows\System32\Config\SYSTEM'
+    $mount = 'HKLM\APVEOFFLINESYSTEM'
+    $loaded = $false
+    try {
+        $r = & $RegRunner @('load', $mount, $hive)
+        if ($r.ExitCode -ne 0) {
+            throw "reg load failed (exit $($r.ExitCode)): $($r.Stdout)"
+        }
+        $loaded = $true
+
+        # ConfigMgr normalizes offline state before mini-setup. The most
+        # important part for this flow is clearing WinPE drive-letter
+        # residue so Windows assigns the deployed OS volume as C:.
+        $null = & $RegRunner @('delete', "$mount\MountedDevices", '/f')
+    } finally {
+        if ($loaded) {
+            $r = & $RegRunner @('unload', $mount)
+            if ($r.ExitCode -ne 0) {
+                throw "reg unload failed (exit $($r.ExitCode)): $($r.Stdout)"
+            }
         }
     }
 }
@@ -513,7 +571,7 @@ function Invoke-Action-BakeBootEntry {
         [Parameter(Mandatory)] [hashtable] $Params,
         [scriptblock] $BcdbootRunner = { param($a) _RunBcdboot -BcdbootArgs $a }
     )
-    $bcdArgs = @('V:\\Windows', '/s', 'S:', '/f', 'UEFI')
+    $bcdArgs = @('V:\Windows', '/s', 'S:', '/f', 'UEFI')
     $r = & $BcdbootRunner $bcdArgs
     if ($r.ExitCode -ne 0) {
         throw "bcdboot failed (exit $($r.ExitCode)): $($r.Stdout)"
@@ -570,6 +628,83 @@ function Invoke-Action-StageUnattend {
     } else {
         [System.IO.File]::WriteAllText($out, [string] $response.Content)
     }
+}
+
+function Invoke-Action-StageOsdClient {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $package = Invoke-OrchestratorRequest `
+        -BaseUrl $BaseUrl `
+        -Path "/osd/client/package/$RunId" `
+        -Method GET `
+        -BearerToken $BearerToken `
+        -FallbackBaseUrl $FallbackBaseUrl `
+        -RestInvoker $RestInvoker
+
+    if ($null -eq $package) {
+        throw "stage_osd_client: package response was empty"
+    }
+    $packageType = $package.GetType().FullName
+    if ($package.PSObject.Properties.Match('run_id').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string] $package.run_id)) {
+        throw "stage_osd_client: package missing run_id response_type=$packageType"
+    }
+    try {
+        $packageRunId = [int] $package.run_id
+    } catch {
+        throw "stage_osd_client: package run_id is not numeric response_type=$packageType actual=$($package.run_id)"
+    }
+    if ($packageRunId -ne $RunId) {
+        throw "stage_osd_client: package run_id mismatch expected=$RunId actual=$($package.run_id)"
+    }
+    if ([string]::IsNullOrWhiteSpace([string] $package.bearer_token)) {
+        throw "stage_osd_client: package missing bearer_token response_type=$packageType"
+    }
+    if ($package.PSObject.Properties.Match('files').Count -eq 0 -or $null -eq $package.files -or @($package.files).Count -eq 0) {
+        throw "stage_osd_client: package missing nonempty files array response_type=$packageType"
+    }
+
+    $fileIndex = 0
+    foreach ($file in @($package.files)) {
+        $fileIndex += 1
+        $path = [string] $file.path
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            throw "stage_osd_client: package file[$fileIndex] missing path response_type=$packageType"
+        }
+        if ([string]::IsNullOrWhiteSpace([string] $file.content_b64)) {
+            throw "stage_osd_client: package file[$fileIndex] missing content_b64 for $path response_type=$packageType"
+        }
+        $providerPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
+        $dir = Split-Path -Parent $providerPath
+        if (-not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllBytes(
+            $providerPath,
+            [System.Convert]::FromBase64String([string] $file.content_b64)
+        )
+    }
+
+    $configDir = 'V:\ProgramData\ProxmoxVEAutopilot\OSD'
+    if (-not (Test-Path -LiteralPath $configDir)) {
+        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+    $config = @{
+        flask_base_url = $BaseUrl
+        run_id = $RunId
+        bearer_token = [string] $package.bearer_token
+    }
+    if ($FallbackBaseUrl) { $config.flask_base_url_fallback = $FallbackBaseUrl }
+    $config | ConvertTo-Json -Depth 5 |
+        Set-Content -LiteralPath (Join-Path $configDir 'osd-config.json') -Encoding UTF8
 }
 
 function Invoke-Action-CaptureHash {
@@ -632,6 +767,7 @@ function Start-AutopilotWinPE {
         [scriptblock] $SourceWimResolver = $null,
         [scriptblock] $IndexResolver = $null,
         [scriptblock] $DriverInfResolver = $null,
+        [scriptblock] $RegRunner = $null,
         [switch] $DryRun,
         [string] $PantherDirOverride
     )
@@ -684,6 +820,12 @@ function Start-AutopilotWinPE {
             if ($VirtioPathResolver) { $a.VirtioPathResolver = $VirtioPathResolver }
             Invoke-Action-InjectDrivers @a
         }
+        'apply_driver_package' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)         { $a.DismRunner = $DismRunner }
+            if ($VirtioPathResolver) { $a.VirtioPathResolver = $VirtioPathResolver }
+            Invoke-Action-InjectDrivers @a
+        }
         'validate_boot_drivers' = { param($p, $tok)
             $a = @{ Params = $p }
             if ($DriverInfResolver) { $a.DriverInfResolver = $DriverInfResolver }
@@ -702,6 +844,16 @@ function Start-AutopilotWinPE {
             if ($BcdbootRunner) { $a.BcdbootRunner = $BcdbootRunner }
             Invoke-Action-BakeBootEntry @a
         }
+        'prepare_windows_setup' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            if ($RegRunner)          { $a.RegRunner = $RegRunner }
+            Invoke-Action-PrepareWindowsSetup @a
+        }
         'stage_unattend' = { param($p, $tok)
             $a = @{
                 Params = $p; BaseUrl = $cfg.flask_base_url
@@ -710,6 +862,18 @@ function Start-AutopilotWinPE {
             if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
             Invoke-Action-StageUnattend @a
+        }
+        'stage_osd_client' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-StageOsdClient @a
+        }
+        'handoff_to_windows_setup' = { param($p, $tok)
+            Write-Host 'handoff_to_windows_setup: controller will detach WinPE media and reboot.'
         }
         'capture_hash' = { param($p, $tok)
             $a = @{

@@ -38,12 +38,15 @@ def test_compile_winpe_baseline_action_order():
     assert kinds == [
         "partition_disk",
         "apply_wim",
+        "apply_driver_package",
+        "prepare_windows_setup",
+        "stage_osd_client",
         "bake_boot_entry",
-        "stage_unattend",
+        "handoff_to_windows_setup",
     ]
 
 
-def test_compile_winpe_inserts_stage_autopilot_config_when_enabled():
+def test_compile_winpe_omits_stage_autopilot_config_when_enabled():
     from web.sequence_compiler import compile_winpe
     seq = _seq(steps=[{
         "step_type": "autopilot_entra",
@@ -52,10 +55,7 @@ def test_compile_winpe_inserts_stage_autopilot_config_when_enabled():
     }])
     p = compile_winpe(seq)
     kinds = [a["kind"] for a in p.actions]
-    assert "stage_autopilot_config" in kinds
-    # Must come after apply_wim (writes to V:\) but before bake_boot_entry
-    assert kinds.index("stage_autopilot_config") > kinds.index("apply_wim")
-    assert kinds.index("stage_autopilot_config") < kinds.index("bake_boot_entry")
+    assert "stage_autopilot_config" not in kinds
 
 
 def test_compile_winpe_omits_stage_autopilot_config_when_not_enabled():
@@ -91,20 +91,19 @@ def test_compile_winpe_partition_disk_carries_layout_param():
     assert pd["params"]["layout"] == "recovery_before_c"
 
 
-def test_compile_winpe_avoids_installed_windows_virtio_driver_injection():
+def test_compile_winpe_stages_optional_driver_package():
     from web.sequence_compiler import compile_winpe
     p = compile_winpe(_seq())
+    action = next(a for a in p.actions if a["kind"] == "apply_driver_package")
+    assert action["params"]["optional"] is True
+    assert "vioscsi.inf" in action["params"]["required_infs"]
+    assert "netkvm.inf" in action["params"]["required_infs"]
     kinds = [a["kind"] for a in p.actions]
-    assert "inject_drivers" not in kinds
     assert "validate_boot_drivers" not in kinds
 
 
-def test_compile_winpe_marks_autopilot_when_enabled():
-    """The compiler signals autopilot via the presence of the
-    stage_autopilot_config action; the actual JSON bytes are loaded
-    by the Flask endpoint from autopilot_config_path at request time
-    (not embedded in the compiled phase, since the file may change
-    between compile and serve)."""
+def test_compile_winpe_does_not_mark_autopilot_when_enabled():
+    """WinPE no longer stages AutopilotConfigurationFile.json."""
     from web.sequence_compiler import compile_winpe
     seq = _seq(steps=[{
         "step_type": "autopilot_entra",
@@ -112,7 +111,8 @@ def test_compile_winpe_marks_autopilot_when_enabled():
         "enabled": True, "order_index": 0,
     }])
     p = compile_winpe(seq)
-    assert any(a["kind"] == "stage_autopilot_config" for a in p.actions)
+    assert p.autopilot_enabled is False
+    assert not any(a["kind"] == "stage_autopilot_config" for a in p.actions)
 
 
 def test_create_sequence_persists_hash_capture_phase(tmp_path):

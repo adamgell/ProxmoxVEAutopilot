@@ -1,34 +1,38 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, alert, empty_state %}
 {% block title %}Cloud Devices - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 
 {% if request.query_params.get('synced') %}
-<p style="background:var(--ok-bg);border:1px solid var(--ok-fg);padding:8px;color:var(--ok-fg);">Synced ({{ request.query_params.get('synced') }}).</p>
+{{ alert("Synced (" ~ request.query_params.get('synced') ~ ").", level="ok") }}
 {% endif %}
 {% if request.query_params.get('deleted') %}
-<p style="background:var(--ok-bg);border:1px solid var(--ok-fg);padding:8px;color:var(--ok-fg);">Deleted {{ request.query_params.get('deleted') }} object(s). Failed: {{ request.query_params.get('failed', '0') }}.</p>
+{{ alert("Deleted " ~ request.query_params.get('deleted') ~ " object(s). Failed: " ~ request.query_params.get('failed', '0') ~ ".", level="ok") }}
 {% endif %}
 {% if request.query_params.get('error') %}
-<p style="background:var(--bad-bg);border:1px solid var(--bad-fg);padding:8px;color:var(--bad-fg);">{{ request.query_params.get('error') }}</p>
+{{ alert(request.query_params.get('error'), level="bad") }}
 {% endif %}
 
-<h2>Cloud Devices
-  <small style="color:var(--ink-soft);font-weight:normal;font-size:11px;">
+{{ page_head("Cloud Devices", "Serial-grouped Autopilot, Intune, Entra, and Proxmox retirement control plane.") }}
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <div class="subtitle">
     {% if windows_only and meta.counts_filtered %}
-      (showing Windows only — Autopilot: {{ meta.counts_filtered.autopilot }} · Intune: {{ meta.counts_filtered.intune }}/{{ meta.counts.intune }} · Entra: {{ meta.counts_filtered.entra }}/{{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %}) <a href="/cloud?all=1">Show all platforms</a>
+      Showing Windows only - Autopilot: {{ meta.counts_filtered.autopilot }} / Intune: {{ meta.counts_filtered.intune }}/{{ meta.counts.intune }} / Entra: {{ meta.counts_filtered.entra }}/{{ meta.counts.entra }}{% if meta.synced_at %} / last sync {{ meta.synced_at }}{% endif %}. <a href="/cloud?all=1">Show all platforms</a>
     {% else %}
-      (all platforms — Autopilot: {{ meta.counts.autopilot }} · Intune: {{ meta.counts.intune }} · Entra: {{ meta.counts.entra }}{% if meta.synced_at %} · last sync {{ meta.synced_at }}{% endif %}) <a href="/cloud">Windows only</a>
+      All platforms - Autopilot: {{ meta.counts.autopilot }} / Intune: {{ meta.counts.intune }} / Entra: {{ meta.counts.entra }}{% if meta.synced_at %} / last sync {{ meta.synced_at }}{% endif %}. <a href="/cloud">Windows only</a>
     {% endif %}
-  </small>
-</h2>
-
-<form method="POST" action="/api/cloud/sync" style="display:inline;">
-  <input type="submit" value="Sync from Microsoft Graph">
-</form>
-<input type="text" id="filter" placeholder="Search serial, name, tag, object/device/ZTDID…"
-       oninput="applyFilter();" autocomplete="off"
-       style="margin-left:10px;width:350px;padding:3px 6px;">
-<span id="visiblecount" style="color:var(--ink-soft);font-size:10px;margin-left:6px;"></span>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+    <form method="POST" action="/api/cloud/sync" style="display:inline;">
+      <input type="submit" value="Sync from Microsoft Graph">
+    </form>
+    <label style="flex:1 1 320px;">Filter cloud records
+      <input type="text" id="filter" placeholder="serial, name, tag, object/device/ZTDID"
+             oninput="applyFilter();" autocomplete="off" style="width:100%;margin-top:6px;">
+    </label>
+    <span id="visiblecount" style="color:var(--ink-soft);font-size:10px;"></span>
+  </div>
+</section>
 
 {% if groups or unmatched %}
 <form id="nukeForm" method="POST" action="/api/cloud/delete">
@@ -111,13 +115,13 @@
 </table>
 <br>
 <div style="display:flex;gap:8px;align-items:center;">
-  <button type="button" onclick="nukeSelected();" class="action-btn-delete">Nuke Selected</button>
+  <button type="button" onclick="nukeSelected();" class="action-btn-delete">Retire Selected</button>
   <span id="selcount" style="color:var(--ink-soft);font-size:10px;">0 selected</span>
   <label style="color:var(--ink-muted);font-size:10px;margin-left:15px;">
     <input type="checkbox" id="includePve" checked>
     Also delete matching Proxmox VMs (by serial, autopilot tag required)
   </label>
-  <span style="color:var(--ink-soft);font-size:10px;margin-left:auto;">Order: Proxmox → Intune → Autopilot → Entra</span>
+  <span style="color:var(--ink-soft);font-size:10px;margin-left:auto;">Order: Proxmox -> Intune -> Autopilot -> Entra</span>
 </div>
 </form>
 
@@ -140,7 +144,7 @@
   </div>
 </div>
 {% else %}
-<p style="margin-top:15px;"><i>No devices in local inventory. Click <b>Sync from Microsoft Graph</b> to populate.</i></p>
+{{ empty_state("No devices in local inventory.", hint="Click Sync from Microsoft Graph to populate the cloud inventory.") }}
 {% endif %}
 
 {% if deletions %}
@@ -226,11 +230,18 @@ function nukeSelected() {
   items.forEach(function(i) { byType[i.source]++; });
   var msg = 'Delete ' + items.length + ' cloud object(s)?\n\n' +
             'Order: ' +
-            (includePve ? 'Proxmox (up to ' + serialList.length + ') → ' : '') +
-            'Intune (' + byType.intune + ') → Autopilot (' + byType.autopilot + ') → Entra (' + byType.entra + ')\n\n' +
+            (includePve ? 'Proxmox (up to ' + serialList.length + ') -> ' : '') +
+            'Intune (' + byType.intune + ') -> Autopilot (' + byType.autopilot + ') -> Entra (' + byType.entra + ')\n\n' +
             (includePve ? 'Matching Proxmox VMs (autopilot-tagged, name = serial) will be stopped and destroyed.\n\n' : '') +
-            'This cannot be undone.';
+            'This cannot be undone.\n\nType RETIRE on the next prompt to continue.';
   if (!confirm(msg)) return;
+  var typed = prompt('Type RETIRE to permanently retire selected cloud/device records:');
+  if (typed !== 'RETIRE') {
+    if (window.CockpitUI) {
+      window.CockpitUI.toast('Retire cancelled', 'Confirmation text did not match RETIRE.', 'warn');
+    }
+    return;
+  }
 
   var fd = new FormData();
   items.forEach(function(i) { fd.append('targets', i.source + ':' + i.object_id); });

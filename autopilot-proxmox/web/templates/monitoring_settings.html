@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head %}
 {% block title %}Monitoring settings - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 
@@ -28,8 +29,8 @@
   .ok { color:var(--ok-fg); font-size:12px; margin-left:8px; }
 </style>
 
-<p class="bc"><a href="/monitoring">Monitoring</a> › settings</p>
-<h2>Monitoring settings</h2>
+<p class="bc"><a href="/monitoring">Monitoring</a> / settings</p>
+{{ page_head("Monitoring Settings", "Control-plane cards for cadence, AD search OUs, keytab health, and credential wiring.") }}
 
 <div class="card">
   <h3>Monitor configuration</h3>
@@ -42,26 +43,26 @@
     <label for="interval">Sweep interval (seconds)</label>
     <input type="number" id="interval" min="60" step="30"
            value="{{ settings.interval_seconds }}">
-    <span id="intervalNote" class="bc">15 min = 900 · hourly = 3600</span>
+    <span id="intervalNote" class="bc">15 min = 900 / hourly = 3600</span>
     <div id="intervalWarn" class="warn-banner">
-      ⚠️ Not tested below 900s (15 min).
-      Upstream AD → Entra Connect sync cadence is ~30 min, so intervals
-      below that may surface noisy ⏳ sync-pending states without
+      Not tested below 900s (15 min).
+      Upstream AD to Entra Connect sync cadence is ~30 min, so intervals
+      below that may surface noisy sync-pending states without
       actually catching regressions any faster.
     </div>
   </div>
   <div class="row">
     <label for="adcred">AD credential</label>
     <select id="adcred">
-      <option value="0">(none — disable AD probes)</option>
+      <option value="0">(none - disable AD probes)</option>
       {% for cred in domain_creds %}
         <option value="{{ cred.id }}"
           {% if settings.ad_credential_id == cred.id %}selected{% endif %}>
-          #{{ cred.id }} · {{ cred.name }}
+          #{{ cred.id }} / {{ cred.name }}
         </option>
       {% endfor %}
     </select>
-    <span class="bc">domain-join credential — the refresher uses this to kinit
+    <span class="bc">domain-join credential - the refresher uses this to kinit
     and read the gMSA's managed password, then writes a keytab at
     <code>/etc/krb5.keytab</code> for the AD probes to bind with.</span>
   </div>
@@ -89,7 +90,7 @@
               {{ keytab.last_probe_status }}
             </span>
             {{ keytab.last_probe_message or '' }}
-          {% else %}<span class="bc">(no probe yet — wait for first sweep)</span>{% endif %}
+          {% else %}<span class="bc">(no probe yet - wait for first sweep)</span>{% endif %}
         </td></tr>
     <tr><th>Path</th>
         <td><code>{{ keytab.keytab_path if keytab else '/etc/krb5.keytab' }}</code></td></tr>
@@ -103,9 +104,9 @@
             {{ keytab.keytab_kvno_ad or '—' }}
             {% if keytab.keytab_kvno_local and keytab.keytab_kvno_ad
                   and keytab.keytab_kvno_local == keytab.keytab_kvno_ad %}
-              <span class="ok">✓ match</span>
+              <span class="ok">match</span>
             {% elif keytab.keytab_kvno_local and keytab.keytab_kvno_ad %}
-              <span class="error">✗ mismatch — refresh pending</span>
+              <span class="error">mismatch - refresh pending</span>
             {% endif %}
           {% else %}—{% endif %}
         </td></tr>
@@ -121,9 +122,9 @@
             <time datetime="{{ keytab.last_kinit_at }}"
                   data-utc="{{ keytab.last_kinit_at }}">{{ keytab.last_kinit_at }}</time>
             {% if keytab.last_kinit_ok == 1 %}
-              · <span class="ok">✓ success</span>
+              / <span class="ok">success</span>
             {% elif keytab.last_kinit_ok == 0 %}
-              · <span class="error">✗ {{ keytab.last_kinit_error or 'failed' }}</span>
+              / <span class="error">{{ keytab.last_kinit_error or 'failed' }}</span>
             {% endif %}
           {% else %}—{% endif %}
         </td></tr>
@@ -133,9 +134,9 @@
             <time datetime="{{ keytab.last_refresh_at }}"
                   data-utc="{{ keytab.last_refresh_at }}">{{ keytab.last_refresh_at }}</time>
             {% if keytab.last_refresh_ok == 1 %}
-              · <span class="ok">✓ {{ keytab.last_refresh_message or '' }}</span>
+              / <span class="ok">{{ keytab.last_refresh_message or '' }}</span>
             {% elif keytab.last_refresh_ok == 0 %}
-              · <span class="error">✗ {{ keytab.last_refresh_message or '' }}</span>
+              / <span class="error">{{ keytab.last_refresh_message or '' }}</span>
             {% endif %}
           {% else %}<span class="bc">(never refreshed)</span>{% endif %}
         </td></tr>
@@ -150,7 +151,7 @@
   <h3>AD search OUs</h3>
   <p class="bc">Each sweep runs one LDAP search per enabled OU
   (SCOPE_SUBTREE) and unions the results. At least one OU must
-  stay enabled at all times — the delete and disable controls are
+  stay enabled at all times - the delete and disable controls are
   greyed out when disabling or deleting would leave zero enabled
   entries.</p>
   <table class="ou-table" id="ouTable">
@@ -169,10 +170,9 @@
 </div>
 
 <script>
-// DN regex — mirrors the DAL's _DN_RE. Surfaces obvious typos (semis,
+// DN regex mirrors the DAL's _DN_RE. Surfaces obvious typos (semis,
 // double equals) client-side before a round-trip.
 const DN_RE = /^(?:OU|CN|DC)=[^,;=\x00]+(?:,(?:OU|CN|DC)=[^,;=\x00]+)*$/i;
-const BADGES = {ok:'✅', warn:'⚠️', missing:'❌'};
 
 function msg(el, text, cls) {
   el.className = cls || 'ok';
@@ -185,13 +185,13 @@ if (refreshNowBtn) refreshNowBtn.onclick = async () => {
   const msgEl = document.getElementById('refreshMsg');
   refreshNowBtn.disabled = true;
   msgEl.className = 'bc';
-  msgEl.textContent = 'kinit + refresh running on the backend…';
+  msgEl.textContent = 'kinit + refresh running on the backend...';
   try {
     const r = await fetch('/api/monitoring/keytab/refresh-now', {method: 'POST'});
     if (!r.ok) {
       msg(msgEl, 'refresh failed: ' + (await r.text()).slice(0, 200), 'error');
     } else {
-      msg(msgEl, 'refresh complete — reloading…', 'ok');
+      msg(msgEl, 'refresh complete - reloading...', 'ok');
       setTimeout(() => location.reload(), 800);
     }
   } finally {

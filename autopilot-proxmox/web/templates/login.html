@@ -3,86 +3,207 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Sign in - Proxmox VE Autopilot</title>
   <link rel="icon" type="image/svg+xml" href="/auth/logo">
   <style>
-    /* Login page is intentionally a fixed light aesthetic. The XP Bliss
-       wallpaper defines the mood; supporting dark-mode tokens here would
-       make the card clash with the photo. Once the operator authenticates,
-       the authenticated app (/base.html) is fully theme-aware. */
-    html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, sans-serif; color: #212529; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #edf4ff;
+      background: #05070d;
+    }
     body {
-      /* Bliss-remastered 5K, baked into /app/files/bliss.jpg and
-         served from /auth/bliss. Sky-blue → grass-green gradient
-         is the fallback if the image is ever missing (unlikely —
-         it ships in the image). */
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
       background:
-        linear-gradient(180deg, #a6cff5 0%, #5aa3e1 55%, #7fae3d 56%, #6b9232 100%)
-        center/cover no-repeat fixed;
+        radial-gradient(circle at 20% 0%, rgba(59, 183, 255, 0.22), transparent 28rem),
+        radial-gradient(circle at 80% 10%, rgba(159, 227, 107, 0.10), transparent 24rem),
+        linear-gradient(180deg, #07101c 0%, #05070d 64%);
+      overflow: hidden;
     }
-    body.bliss {
-      background: url("/auth/bliss") center/cover no-repeat fixed;
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.026) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,0.8), transparent 82%);
     }
-    .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .shell {
+      width: min(980px, 100%);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 420px;
+      gap: 18px;
+      align-items: stretch;
+      position: relative;
+      z-index: 1;
+    }
+    .brief,
     .card {
-      background: rgba(255, 255, 255, 0.94);
-      backdrop-filter: blur(2px);
-      max-width: 380px; width: 100%;
-      padding: 24px 28px 20px;
+      border: 1px solid rgba(142, 163, 191, 0.18);
       border-radius: 8px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      background: rgba(13, 18, 30, 0.88);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.34);
+      backdrop-filter: blur(18px);
     }
-    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
-    .brand img { width: 48px; height: 48px; display: block; }
-    .brand-text h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; line-height: 1.2; }
-    .brand-text .subtitle { color: #6c757d; margin: 2px 0 0 0; font-size: 13px; }
-    .subtitle { color: #6c757d; margin: 0 0 18px 0; font-size: 13px; }
-
+    .brief {
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 390px;
+    }
+    .brief-label {
+      color: rgba(237,244,255,0.48);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .brief h1 {
+      margin: 14px 0 12px;
+      max-width: 520px;
+      font-size: clamp(34px, 6vw, 58px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+    .brief p {
+      max-width: 520px;
+      margin: 0;
+      color: #9aa9bc;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .signal {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 24px;
+    }
+    .signal span {
+      height: 5px;
+      border-radius: 999px;
+      background: #3bb7ff;
+      opacity: 0.7;
+    }
+    .signal span:nth-child(2) { background: #9fe36b; }
+    .signal span:nth-child(3) { background: #ffd166; }
+    .signal span:nth-child(4) { background: #ff795f; }
+    .card {
+      padding: 26px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+    .brand img {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 0 0 4px rgba(59,183,255,0.10);
+    }
+    .brand h2 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    .brand .subtitle,
+    .subtitle {
+      color: #9aa9bc;
+      margin: 3px 0 0;
+      font-size: 13px;
+    }
     .tenant {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 12px; color: #343a40; margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 18px 0;
+      color: #9aa9bc;
+      font-size: 12px;
     }
     .tenant-label {
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
-      background: #e9ecef; padding: 3px 8px; border-radius: 3px;
-      color: #212529; font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 5px;
+      color: #edf4ff;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.10);
     }
-
     .msbtn {
-      display: flex; width: 100%; align-items: center; justify-content: center;
-      gap: 10px; padding: 10px 14px; background: #2f2f2f; color: #fff;
-      border: 0; border-radius: 4px; cursor: pointer; font-size: 14px;
-      text-decoration: none; font-weight: 500;
-      transition: background 0.15s;
-      box-sizing: border-box;
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 11px 14px;
+      color: #ffffff;
+      background: linear-gradient(180deg, rgba(59,183,255,0.24), rgba(59,183,255,0.12));
+      border: 1px solid rgba(59,183,255,0.36);
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 32px rgba(0,0,0,0.24);
     }
-    .msbtn:hover { background: #1c1c1c; }
-    .msbtn:focus-visible { outline: 2px solid #7fae3d; outline-offset: 2px; }
+    .msbtn:hover { background: linear-gradient(180deg, rgba(59,183,255,0.34), rgba(59,183,255,0.18)); }
+    .msbtn:focus-visible { outline: 2px solid #3bb7ff; outline-offset: 3px; }
     .msbtn svg { flex-shrink: 0; }
-
     .err {
-      background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;
-      padding: 8px 10px; border-radius: 4px; margin-bottom: 14px;
+      background: rgba(255, 121, 95, 0.13);
+      color: #ffb0a0;
+      border: 1px solid rgba(255, 121, 95, 0.34);
+      padding: 9px 10px;
+      border-radius: 7px;
+      margin-bottom: 14px;
       font-size: 13px;
     }
-
     .footer {
-      margin-top: 16px; font-size: 11px; color: #868e96; text-align: center;
+      margin-top: 18px;
+      font-size: 11px;
+      color: #65758d;
+      text-align: center;
     }
     .footer code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+    @media (max-width: 820px) {
+      .shell { grid-template-columns: 1fr; }
+      .brief { min-height: auto; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
   </style>
 </head>
-<body class="bliss">
-<div class="wrap">
-  <div class="card">
+<body>
+<main class="shell">
+  <section class="brief" aria-label="Product identity">
+    <div>
+      <div class="brief-label">Operator Console</div>
+      <h1>Proxmox VE Autopilot</h1>
+      <p>Dark command cockpit for virtual machine provisioning, template builds, monitoring evidence, cloud retirement, and lifecycle repair.</p>
+    </div>
+    <div class="signal" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+  </section>
+
+  <section class="card" aria-label="Sign in">
     <div class="brand">
       <img src="/auth/logo" alt="">
-      <div class="brand-text">
-        <h1>Proxmox VE Autopilot</h1>
-        <p class="subtitle">Sign in to continue.</p>
+      <div>
+        <h2>Secure sign in</h2>
+        <p class="subtitle">Continue to the cockpit.</p>
       </div>
     </div>
-    <div style="height: 14px;"></div>
 
     {% if error %}
     <div class="err">{{ error }}</div>
@@ -90,13 +211,13 @@
 
     {% if tenant_label %}
     <div class="tenant" title="Entra tenant this instance authenticates against">
-      <span>tenant:</span>
+      <span>tenant</span>
       <span class="tenant-label">{{ tenant_label }}</span>
     </div>
     {% endif %}
 
     <a class="msbtn" href="/auth/login/start?next={{ next_url }}">
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 21 21">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
         <rect x="1" y="1" width="9" height="9" fill="#f35325"/>
         <rect x="11" y="1" width="9" height="9" fill="#81bc06"/>
         <rect x="1" y="11" width="9" height="9" fill="#05a6f0"/>
@@ -107,23 +228,9 @@
 
     <div class="footer">
       Build <code>{{ build_sha or 'unknown' }}</code>
-      {% if build_time %} · <span title="{{ build_time }}">{{ build_time[:10] }}</span>{% endif %}
+      {% if build_time %} / <span title="{{ build_time }}">{{ build_time[:10] }}</span>{% endif %}
     </div>
-  </div>
-</div>
-
-<script>
-// Probe the local bliss.jpg; start with .bliss applied so the photo
-// paints immediately, and remove the class only if the probe fails.
-// (Inverted polarity avoids a ~100ms flash of the gradient fallback
-// on cold loads when the image probe beats first paint.) If the file
-// is ever missing (old image tag without the asset, broken mount)
-// the sky-and-grass gradient fallback takes over.
-(function() {
-  var img = new Image();
-  img.onerror = function() { document.body.classList.remove('bliss'); };
-  img.src = '/auth/bliss';
-})();
-</script>
+  </section>
+</main>
 </body>
 </html>

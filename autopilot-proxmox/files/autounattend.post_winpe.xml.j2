@@ -13,46 +13,11 @@
       <TimeZone>UTC</TimeZone>
     </component>
 
-    <!-- Install QEMU Guest Agent from the VirtIO ISO during specialize.
-         This runs as SYSTEM before OOBE starts - NO AutoLogon required
-         - so the clone has a working GA by the time Ansible's
-         hash_capture / autopilot_inject tasks try to reach it via
-         `qm guest exec`. Previously the MSI install was in
-         FirstLogonCommands, which only fire when AutoLogon is set;
-         we disabled AutoLogon so the clone stays at OOBE for Autopilot,
-         and clones stopped getting GA as a side-effect.
-
-         The loop scans D: through I: because the VirtIO ISO's drive
-         letter shifts depending on which removable media the clone
-         has attached. msiexec /qn /norestart is silent + doesn't
-         force a reboot mid-specialize. Setup should continue even if
-         the MSI returns a reboot-required or transient installer code;
-         the controller verifies QGA availability later at the normal
-         wait-for-guest-agent step. Windows' normal specialize-to-OOBE
-         reboot starts the service cleanly, rather than starting QGA
-         inside specialize while PnP is still settling. -->
-    <component name="Microsoft-Windows-Deployment"
-               processorArchitecture="amd64" language="neutral"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
-      <RunSynchronous>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Path>cmd.exe /c for %d in (D E F G H I) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart &amp; exit /b 0</Path>
-          <Description>Install QEMU Guest Agent</Description>
-        </RunSynchronousCommand>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <Path>cmd.exe /c sc query QEMU-GA &gt;nul 2&gt;nul &amp;&amp; sc config QEMU-GA start= auto || exit /b 0</Path>
-          <Description>Ensure QEMU-GA service is set to auto-start</Description>
-          <WillReboot>Never</WillReboot>
-        </RunSynchronousCommand>
-      </RunSynchronous>
-    </component>{{ specialize_identification_component }}
+    {{ specialize_identification_component }}
   </settings>
 
   <!-- ================================================================
-       OOBE - skip all prompts, create admin, install guest agent
+       OOBE - suppress setup UI; OSD continuation runs from SetupComplete
        ================================================================ -->
   <settings pass="oobeSystem">
 
@@ -61,45 +26,27 @@
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
                publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
 
-      <!-- OOBE is intentionally omitted so Windows shows every screen
-           interactively (Region, Keyboard, Network, Account, etc.).
-           Autopilot enrollment fires during OOBE when a registered
-           hash + AutopilotConfigurationFile.json are present. -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
 
 {{ oobe_user_accounts }}
 
-      <!-- Auto-logon once to run FirstLogonCommands -->
+      <!-- Auto-logon is only emitted when a sequence explicitly creates
+           a local admin account. SetupComplete/OSD does not depend on it. -->
 {{ oobe_auto_logon }}
 
-      <FirstLogonCommands>
-        <!-- Install QEMU Guest Agent from VirtIO ISO (scan D:, E:, F:) -->
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <CommandLine>cmd.exe /c for %d in (D E F) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart</CommandLine>
-          <Description>Install QEMU Guest Agent</Description>
-        </SynchronousCommand>
-        <!-- Ensure the guest agent service is running -->
-        <SynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <CommandLine>cmd.exe /c net start QEMU-GA</CommandLine>
-          <Description>Start QEMU Guest Agent service</Description>
-        </SynchronousCommand>
-        <!-- Enable RDP (useful for debugging, optional) -->
-        <SynchronousCommand wcm:action="add">
-          <Order>3</Order>
-          <CommandLine>powershell.exe -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"</CommandLine>
-          <Description>Enable Remote Desktop</Description>
-        </SynchronousCommand>{{ extra_first_logon_commands }}
-      </FirstLogonCommands>
+      {{ extra_first_logon_commands }}
 
     </component>
 
-    <!-- International-Core in oobeSystem auto-fills the Region/Keyboard
-         answers, skipping the very first OOBE screens. Removed for
-         clones so OOBE stops at the Region selection screen. The
-         WinPE-pass International-Core component above is kept - that
-         one applies during template *install*, not clone OOBE, so it
-         doesn't affect runtime OOBE behavior. -->
+    <!-- No windowsPE pass belongs here: disk, image, and driver work has
+         already happened in WinPE. This answer file only guides Windows
+         mini-setup after the image boots. -->
 
   </settings>
 </unattend>

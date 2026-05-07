@@ -201,7 +201,7 @@ def test_register_returns_409_when_state_wrong(web_client, test_db):
     )
     from web import sequences_db
     sequences_db.update_provisioning_run_state(
-        test_db, run_id=run_id, state="awaiting_specialize",
+        test_db, run_id=run_id, state="awaiting_windows_setup",
     )
     r = web_client.post(
         "/winpe/register",
@@ -281,12 +281,10 @@ def test_sequence_get_rejects_token_for_wrong_run(web_client, test_db):
     assert r.status_code == 403
 
 
-def test_autopilot_config_returns_real_file_bytes_when_enabled(
+def test_autopilot_config_returns_404_even_when_sequence_has_autopilot_step(
     web_client, test_db, tmp_path, monkeypatch,
 ):
-    """The endpoint must serve the real AutopilotConfigurationFile.json
-    that roles/autopilot_inject would otherwise inject via QGA, not a
-    compiler-side placeholder. Operator-managed bytes flow unchanged."""
+    """WinPE no longer stages AutopilotConfigurationFile.json."""
     real = tmp_path / "AutopilotConfigurationFile.json"
     real.write_bytes(
         b'{"CloudAssignedTenantId":"00000000-0000-0000-0000-000000000001",'
@@ -314,9 +312,7 @@ def test_autopilot_config_returns_real_file_bytes_when_enabled(
         f"/winpe/autopilot-config/{run_id}",
         headers=_bearer(reg["bearer_token"]),
     )
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("application/json")
-    assert r.content == real.read_bytes()
+    assert r.status_code == 404
 
 
 def test_autopilot_config_returns_404_when_not_enabled(web_client, test_db):
@@ -455,6 +451,10 @@ def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypa
                       "boot": set_boot_order})
 
     from web import winpe_endpoints
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_handoff_boot_order",
+        lambda *, vmid: "order=scsi0",
+    )
     monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
                         fake_detach)
     monkeypatch.setattr(
@@ -469,13 +469,13 @@ def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypa
     assert r.status_code == 200
     from web import sequences_db
     run = sequences_db.get_provisioning_run(test_db, run_id)
-    assert run["state"] == "awaiting_specialize"
+    assert run["state"] == "awaiting_windows_setup"
     assert calls == [{"vmid": 100, "slots": ["ide2", "sata0"],
                       "boot": "order=scsi0"}]
     assert power_cycles == [{"vmid": 100}]
 
 
-def test_done_uses_sata_handoff_boot_order_for_winpe_safe_disk(
+def test_done_uses_virtio_handoff_boot_order_for_injected_wim(
     web_client, test_db, monkeypatch,
 ):
     calls = []
@@ -484,7 +484,7 @@ def test_done_uses_sata_handoff_boot_order_for_winpe_safe_disk(
 
     monkeypatch.setattr(
         winpe_endpoints, "_proxmox_handoff_boot_order",
-        lambda *, vmid: "order=sata1",
+        lambda *, vmid: "order=scsi0",
     )
     monkeypatch.setattr(
         winpe_endpoints, "_proxmox_detach_and_set_boot",
@@ -500,7 +500,7 @@ def test_done_uses_sata_handoff_boot_order_for_winpe_safe_disk(
         headers=_bearer(reg["bearer_token"]),
     )
     assert r.status_code == 200
-    assert calls[0]["set_boot_order"] == "order=sata1"
+    assert calls[0]["set_boot_order"] == "order=scsi0"
 
 
 def test_done_is_idempotent(web_client, test_db, monkeypatch):
@@ -516,6 +516,189 @@ def test_done_is_idempotent(web_client, test_db, monkeypatch):
     r = web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
     # Already past awaiting_winpe; second call must not error
     assert r.status_code == 200
+
+
+def test_osd_package_returns_setupcomplete_and_client(web_client, test_db):
+    run_id, reg = _register(web_client, test_db)
+    r = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    paths = [f["path"] for f in body["files"]]
+    assert r"V:\Windows\Setup\Scripts\SetupComplete.cmd" in paths
+    assert any(p.endswith(r"\OsdClient.ps1") for p in paths)
+    assert body["bearer_token"]
+
+
+def test_osd_register_moves_to_client_state_and_creates_steps(
+    web_client, test_db, monkeypatch,
+):
+    from web import winpe_endpoints
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        lambda **kw: None)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
+    run_id, reg = _register(web_client, test_db)
+    done = web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    assert done.status_code == 200
+
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    r = web_client.post(
+        "/osd/client/register",
+        json={"computer_name": "WIN-1"},
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [a["kind"] for a in body["actions"]] == [
+        "install_qga",
+        "fix_recovery_partition",
+    ]
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "awaiting_osd_client"
+    steps = sequences_db.list_run_steps(test_db, run_id)
+    assert [s["phase"] for s in steps[-2:]] == ["osd", "osd"]
+
+
+def test_osd_step_result_and_complete_mark_run_done(
+    web_client, test_db, monkeypatch,
+):
+    from web import winpe_endpoints
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        lambda **kw: None)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
+    run_id, reg = _register(web_client, test_db)
+    web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    osd = web_client.post(
+        "/osd/client/register",
+        json={},
+        headers=_bearer(pkg["bearer_token"]),
+    ).json()
+    token = osd["bearer_token"]
+    for action in osd["actions"]:
+        r1 = web_client.post(
+            f"/osd/client/step/{action['step_id']}/result",
+            json={"state": "running"},
+            headers=_bearer(token),
+        )
+        assert r1.status_code == 200, r1.text
+        token = r1.json()["bearer_token"]
+        r2 = web_client.post(
+            f"/osd/client/step/{action['step_id']}/result",
+            json={"state": "ok"},
+            headers=_bearer(token),
+        )
+        assert r2.status_code == 200, r2.text
+        token = r2.json()["bearer_token"]
+    r = web_client.post("/osd/client/complete", headers=_bearer(token))
+    assert r.status_code == 200, r.text
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "done"
+
+
+def test_osd_complete_requires_registered_ok_steps(
+    web_client, test_db, monkeypatch,
+):
+    from web import winpe_endpoints
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        lambda **kw: None)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
+    run_id, reg = _register(web_client, test_db)
+    web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+
+    r = web_client.post(
+        "/osd/client/complete",
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 409
+    assert "before registering steps" in r.text
+
+    osd = web_client.post(
+        "/osd/client/register",
+        json={},
+        headers=_bearer(pkg["bearer_token"]),
+    ).json()
+    r = web_client.post(
+        "/osd/client/complete",
+        headers=_bearer(osd["bearer_token"]),
+    )
+    assert r.status_code == 409
+    assert "incomplete steps" in r.text
+
+
+def test_osd_register_done_run_returns_no_actions(web_client, test_db):
+    from web import sequences_db
+    run_id, reg = _register(web_client, test_db)
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="done",
+    )
+
+    r = web_client.post(
+        "/osd/client/register",
+        json={},
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 200
+    assert r.json()["actions"] == []
+
+
+def test_osd_step_error_marks_run_failed(web_client, test_db, monkeypatch):
+    from web import winpe_endpoints
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        lambda **kw: None)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
+    run_id, reg = _register(web_client, test_db)
+    web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    osd = web_client.post(
+        "/osd/client/register",
+        json={},
+        headers=_bearer(pkg["bearer_token"]),
+    ).json()
+    step_id = osd["actions"][0]["step_id"]
+    r = web_client.post(
+        f"/osd/client/step/{step_id}/result",
+        json={"state": "error", "error": "boom"},
+        headers=_bearer(osd["bearer_token"]),
+    )
+    assert r.status_code == 200, r.text
+    from web import sequences_db
+    run = sequences_db.get_provisioning_run(test_db, run_id)
+    assert run["state"] == "failed"
+    assert "osd step install_qga: boom" in run["last_error"]
 
 
 def test_api_run_returns_state_and_steps(web_client, test_db):
@@ -587,6 +770,10 @@ def test_auth_exempts_winpe_machine_callbacks():
         "/api/runs/1",
         "/api/runs/1/fail",
         "/api/runs/1/complete",
+        "/osd/client/package/1",
+        "/osd/client/register",
+        "/osd/client/step/1/result",
+        "/osd/client/complete",
     ):
         assert auth.is_exempt_path(path)
 
@@ -715,7 +902,7 @@ def test_post_run_complete_advances_to_done(web_client, test_db):
     )
     from web import sequences_db
     sequences_db.update_provisioning_run_state(
-        test_db, run_id=run_id, state="awaiting_specialize",
+        test_db, run_id=run_id, state="awaiting_osd_client",
     )
     r = web_client.post(f"/api/runs/{run_id}/complete")
     assert r.status_code == 200

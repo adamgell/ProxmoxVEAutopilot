@@ -86,8 +86,23 @@ function Invoke-Cmd {
         [string] $CommandLine
     )
 
-    $output = & cmd.exe /d /c $CommandLine 2>&1
-    $exitCode = $LASTEXITCODE
+    $oldEap = $ErrorActionPreference
+    $oldNative = $null
+    $hasNative = Test-Path variable:PSNativeCommandUseErrorActionPreference
+    if ($hasNative) {
+        $oldNative = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = & cmd.exe /d /c $CommandLine 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldEap
+        if ($hasNative) {
+            $PSNativeCommandUseErrorActionPreference = $oldNative
+        }
+    }
     if ($output) { $output | Write-Host }
     if ($exitCode -ne 0) { throw "$Label failed: $exitCode" }
 }
@@ -183,9 +198,10 @@ try {
     if (Test-Path -LiteralPath $gwapiSource) {
         Copy-Item $gwapiSource -Destination $gwapiPath
     } else {
+        $gwapiArchive = Join-Path $env:TEMP 'gwapi.zip'
         Invoke-WebRequest -Uri 'https://www.powershellgallery.com/api/v2/package/Get-WindowsAutopilotInfo' `
-            -OutFile (Join-Path $env:TEMP 'gwapi.nupkg')
-        Expand-Archive (Join-Path $env:TEMP 'gwapi.nupkg') -DestinationPath (Join-Path $env:TEMP 'gwapi-extract') -Force
+            -OutFile $gwapiArchive
+        Expand-Archive $gwapiArchive -DestinationPath (Join-Path $env:TEMP 'gwapi-extract') -Force
         Get-ChildItem (Join-Path $env:TEMP 'gwapi-extract') -Recurse -Filter 'Get-WindowsAutopilotInfo.ps1' |
             Select-Object -First 1 |
             Copy-Item -Destination $gwapiPath

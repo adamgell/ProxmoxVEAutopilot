@@ -13,7 +13,7 @@ from typing import Optional
 
 import requests
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -461,6 +461,7 @@ def _save_vault(updates):
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates.env.filters["tojson"] = lambda x, indent=None: json.dumps(x, indent=indent)
 job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
     jobs_db_path=JOBS_DB,
@@ -471,9 +472,14 @@ from web import sequence_compiler
 from web import device_history_db, device_monitor
 from web import auth as _auth
 
-from web.winpe_endpoints import router as _winpe_router, api_router as _winpe_api_router
+from web.winpe_endpoints import (
+    router as _winpe_router,
+    api_router as _winpe_api_router,
+    osd_router as _osd_router,
+)
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
+app.include_router(_osd_router)
 app.include_router(_winpe_api_router)
 
 
@@ -1896,9 +1902,15 @@ def get_hash_files():
 def compute_duration(job):
     if not job.get("started"):
         return None
-    start = datetime.fromisoformat(job["started"])
+    # Older job rows were written with naive UTC timestamps; newer code
+    # writes offset-aware. Treat naive values as UTC so subtraction
+    # against datetime.now(timezone.utc) doesn't raise.
+    def _as_utc(s: str) -> datetime:
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    start = _as_utc(job["started"])
     if job.get("ended"):
-        end = datetime.fromisoformat(job["ended"])
+        end = _as_utc(job["ended"])
     elif job["status"] == "running":
         end = datetime.now(timezone.utc)
     else:
@@ -2623,6 +2635,8 @@ def _launch_provision_job(playbook_path: str, extra_vars: dict | None = None):
     extra_vars = extra_vars or {}
     cmd = ["ansible-playbook", str(BASE_DIR / playbook_path)]
     for key, value in extra_vars.items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
         cmd += ["-e", f"{key}={value}"]
     job = job_manager.start("provision_winpe", cmd, args=dict(extra_vars))
     return JSONResponse({"ok": True, "job_id": job["id"]})
@@ -2933,12 +2947,12 @@ async def start_provision(
             "sequence_id": int(sequence_id),
             "vm_count": int(count),
             "_skip_chassis_type_smbios_file": True,
-            # The installed Windows image is presented on inbox-safe
-            # devices, so there is intentionally no QGA dependency after
-            # first boot. WinPE hash capture remains opt-in because the
-            # MDM WMI provider is not present in every WinPE build.
+            # The installed Windows image uses VirtIO devices and the
+            # VirtIO ISO remains attached for QGA installation by the
+            # OSD client, so let the playbook observe the guest after
+            # first boot instead of declaring success at /winpe/done.
             "sequence_hash_capture_phase": seq.get("hash_capture_phase", "oobe"),
-            "proxmox_winpe_expect_guest_agent": False,
+            "proxmox_winpe_expect_guest_agent": True,
             "autopilot_base_url": os.environ.get(
                 "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
             "_causes_reboot_count": _causes_reboot_count,
@@ -4636,6 +4650,63 @@ async def api_fleet_summary():
         out["intune_pct"] = round(100 * int(row["intune"]) / total)
     # mde_pct intentionally omitted — no column for it yet.
     return out
+
+
+@app.get("/api/cockpit/summary")
+async def api_cockpit_summary():
+    """Aggregate the existing dashboard data sources for the cockpit UI.
+
+    This is intentionally a read-only composition endpoint: it reuses the
+    jobs manager, service-health table, and monitoring DB instead of adding
+    UI-specific persistence.
+    """
+    running = await api_running_jobs()
+    recent = await api_recent_jobs(limit=6)
+    services = await api_services()
+    fleet = await api_fleet_summary()
+
+    monitoring = {"devices": 0, "ad": 0, "entra": 0, "intune": 0}
+    try:
+        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+        monitoring["devices"] = len(latest)
+        for row in latest:
+            probe = row.get("probe") or {}
+            if probe.get("ad_found"):
+                monitoring["ad"] += 1
+            if probe.get("entra_found"):
+                monitoring["entra"] += 1
+            if probe.get("intune_found"):
+                monitoring["intune"] += 1
+    except Exception:
+        pass
+
+    service_rows = services.get("services") if isinstance(services, dict) else []
+    service_count = len(service_rows or [])
+    stale_services = 0
+    for svc in service_rows or []:
+        age = svc.get("age_seconds")
+        if age is not None and age > 120:
+            stale_services += 1
+
+    readiness_parts = []
+    if fleet.get("total"):
+        for key in ("ad_joined_pct", "autopilot_pct", "intune_pct"):
+            if key in fleet:
+                readiness_parts.append(int(fleet[key]))
+    if service_count:
+        readiness_parts.append(max(0, round(100 * (service_count - stale_services) / service_count)))
+    if running.get("running_count", 0) == 0:
+        readiness_parts.append(100)
+
+    readiness = round(sum(readiness_parts) / len(readiness_parts)) if readiness_parts else 0
+    return {
+        "readiness_score": readiness,
+        "jobs": running,
+        "recent_jobs": recent.get("jobs", []),
+        "services": services,
+        "fleet": fleet,
+        "monitoring": monitoring,
+    }
 
 
 @app.get("/api/jobs/{job_id}")
@@ -6653,6 +6724,14 @@ async def api_monitoring_keytab_refresh_now():
     except Exception as e:
         raise HTTPException(500, f"refresh failed: {e}") from e
     return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+
+
+@app.post("/api/monitoring/sweep-now", status_code=202)
+async def api_monitoring_sweep_now(background_tasks: BackgroundTasks):
+    """Queue one monitor sweep using the same helper as the monitor container."""
+    from web import monitor_main
+    background_tasks.add_task(monitor_main._do_sweep_tick, DEVICE_MONITOR_DB)
+    return {"ok": True, "queued": True}
 
 
 @app.get("/api/monitoring/keytab/health")

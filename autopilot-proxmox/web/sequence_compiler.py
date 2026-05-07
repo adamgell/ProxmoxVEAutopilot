@@ -531,7 +531,6 @@ def compile_winpe(sequence: dict,
     """
     out = CompiledWinPEPhase()
 
-    autopilot = _sequence_has_autopilot(sequence)
     capture_hash_in_winpe = (
         bool(sequence.get("produces_autopilot_hash"))
         and sequence.get("hash_capture_phase") == "winpe"
@@ -548,23 +547,27 @@ def compile_winpe(sequence: dict,
         "kind": "apply_wim",
         "params": {"image_index_metadata_name": "Windows 11 Enterprise"},
     })
-    if autopilot:
-        # Phase 0 applies Windows to V:\ (the soon-to-be-C:\ partition).
-        # The agent runs from X:\ (WinPE RAM drive) and has no C:\, so
-        # we MUST stage to V:\Windows\... here. The OS sees this as
-        # C:\Windows\... after first boot when V: is remapped to C:.
-        out.actions.append({
-            "kind": "stage_autopilot_config",
-            "params": {
-                "guest_path": (
-                    "V:\\Windows\\Provisioning\\Autopilot\\"
-                    "AutopilotConfigurationFile.json"
-                ),
-            },
-        })
-        out.autopilot_enabled = True
+    out.actions.append({
+        "kind": "apply_driver_package",
+        "params": {
+            "architecture": "amd64",
+            "required_infs": [
+                "vioscsi.inf",
+                "viostor.inf",
+                "netkvm.inf",
+                "vioser.inf",
+                "balloon.inf",
+            ],
+            # SATA/e1000e stock-image isolation runs deliberately omit
+            # VirtIO media. Treat missing media as a logged skip instead
+            # of failing those first-boot diagnostics.
+            "optional": True,
+        },
+    })
+    out.actions.append({"kind": "prepare_windows_setup", "params": {}})
+    out.actions.append({"kind": "stage_osd_client", "params": {}})
 
     out.actions.append({"kind": "bake_boot_entry", "params": {}})
-    out.actions.append({"kind": "stage_unattend", "params": {}})
+    out.actions.append({"kind": "handoff_to_windows_setup", "params": {}})
 
     return out

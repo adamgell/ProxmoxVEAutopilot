@@ -408,18 +408,18 @@ def test_winpe_playbook_preserves_secure_boot_on_clones():
     assert "Disable Secure Boot on WinPE clone" not in content
 
 
-def test_winpe_playbook_uses_inbox_safe_devices_after_revoked_virtio_boot_driver():
-    """The current Windows media blocks VirtIO boot drivers as revoked,
-    so WinPE clones must boot installed Windows from SATA and use an
-    inbox NIC path instead of depending on QGA."""
+def test_winpe_playbook_keeps_virtio_devices_with_injected_wim():
+    """The WinPE source WIM carries VirtIO drivers, so the VM keeps the
+    same VirtIO disk/NIC path for WinPE and first Windows boot."""
     from pathlib import Path
     content = (
         Path(__file__).resolve().parents[1]
         / "playbooks" / "_provision_proxmox_winpe_vm.yml"
     ).read_text()
-    assert "sata1:" in content
-    assert "net0: \"e1000e" in content
-    assert "boot: \"order=ide2;sata1\"" in content
+    assert "sata1:" not in content
+    assert "net0: \"e1000e" not in content
+    assert "boot: \"order=ide2;scsi0\"" in content
+    assert "ide3: \"{{ proxmox_virtio_iso }},media=cdrom\"" in content
     assert "proxmox_winpe_expect_guest_agent | default(false)" in content
 
 
@@ -537,6 +537,21 @@ def test_proxmox_root_ticket_fetch_appends_pam_realm_to_bare_username(monkeypatc
         "vault_proxmox_root_password": "pw",
     })
     assert captured["data"]["username"] == "someone@pve"
+
+
+def test_proxmox_args_write_requires_root_ticket_when_smbios_args_needed():
+    task_file = (
+        Path(__file__).resolve().parents[1]
+        / "roles/proxmox_vm_clone/tasks/update_config.yml"
+    )
+    text = task_file.read_text(encoding="utf-8")
+
+    assert "_args_write_required" in text
+    assert "Fail if args write needs root@pam ticket" in text
+    assert "_proxmox_root_ticket is not defined" in text
+    assert "_proxmox_root_csrf_token is not defined" in text
+    assert "Apply args via root@pam ticket" in text
+    assert "- _args_write_required | default(false) | bool" in text
 
 
 def test_startup_seeds_defaults(tmp_path):

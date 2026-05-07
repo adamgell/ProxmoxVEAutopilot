@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head %}
 {% block title %}Device {{ vmid }} - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 
 <style>
   .bc { color:var(--ink-muted); font-size:12px; }
-  .linkage { margin:10px 0; padding:8px; background:var(--surface-muted);
-             border:1px solid var(--line); }
+  .linkage { margin:10px 0 14px; padding:14px; background:var(--cockpit-panel);
+             border:1px solid var(--cockpit-line); border-radius:8px; }
   .linkage-row { display:grid; grid-template-columns: 320px 40px 1fr;
                  gap:8px; padding:3px 0; font-size:13px; }
   .linkage-row .lk-ok { color:var(--ok-fg); font-weight:600; }
@@ -13,8 +14,8 @@
   .linkage-row .lk-pending { color:var(--ink-soft); }
   .cols { display:grid; grid-template-columns: repeat(4, 1fr);
           gap:10px; margin:10px 0; }
-  .col { border:1px solid var(--line); padding:10px;
-         background:var(--panel); font-size:13px; min-width:0; }
+  .col { border:1px solid var(--cockpit-line); padding:12px;
+         background:var(--cockpit-panel-2); border-radius:8px; font-size:13px; min-width:0; }
   .col h3 { margin:0 0 8px 0; font-size:14px; border-bottom:1px solid var(--line);
             padding-bottom:4px; }
   .col dt { font-size:11px; color:var(--ink-muted); margin-top:6px; }
@@ -39,12 +40,17 @@
   details.raw summary { cursor:pointer; color:var(--ink-muted); font-size:12px; }
   details.raw pre { background:var(--surface-muted); border:1px solid var(--line); padding:6px;
                     font-size:11px; max-height:400px; overflow:auto; }
+  @media (max-width: 1100px) { .cols { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 700px) {
+    .cols { grid-template-columns: 1fr; }
+    .linkage-row { grid-template-columns: 1fr; }
+  }
 </style>
 
-<p class="bc"><a href="/monitoring">Monitoring</a> ›
-  {{ vmid }} › {{ pve.name if pve else '(unknown)' }}</p>
+<p class="bc"><a href="/monitoring">Monitoring</a> /
+  {{ vmid }} / {{ pve.name if pve else '(unknown)' }}</p>
 
-<h2>{{ pve.name if pve else 'VM ' ~ vmid }}</h2>
+{{ page_head(pve.name if pve else 'VM ' ~ vmid, "Device evidence board across Proxmox, guest identity, AD, Entra, Intune, linkage health, and timeline.") }}
 
 {# -------- Linkage health strip -------- #}
 <div class="linkage">
@@ -54,11 +60,11 @@
       <div>{{ chk.label }}</div>
       <div>
         {% if chk.ok == True %}
-          <span class="lk-ok">✓</span>
+          <span class="badge ok">OK</span>
         {% elif chk.ok == False %}
-          <span class="lk-bad">✗</span>
+          <span class="badge error">Fail</span>
         {% else %}
-          <span class="lk-pending">⏳</span>
+          <span class="badge pending">Pending</span>
         {% endif %}
       </div>
       <div><code>{{ chk.value }}</code></div>
@@ -82,8 +88,8 @@
         <dd>{{ pve.cores or '?' }} / {{ pve.memory_mb or '?' }} MB</dd>
         <dt>machine / bios</dt>
         <dd>{{ pve.machine or '?' }} / {{ pve.bios or '?' }}</dd>
-        <dt>smbios1</dt><dd>{{ (pve.smbios1 or '—')[:80] }}{% if pve.smbios1 and pve.smbios1|length > 80 %}…{% endif %}</dd>
-        <dt>args</dt><dd>{{ (pve.args or '—')[:80] }}{% if pve.args and pve.args|length > 80 %}…{% endif %}</dd>
+        <dt>smbios1</dt><dd>{{ (pve.smbios1 or '—')[:80] }}{% if pve.smbios1 and pve.smbios1|length > 80 %}...{% endif %}</dd>
+        <dt>args</dt><dd>{{ (pve.args or '—')[:80] }}{% if pve.args and pve.args|length > 80 %}...{% endif %}</dd>
         <dt>vmgenid</dt><dd>{{ pve.vmgenid or '—' }}</dd>
         <dt>last checked</dt>
         <dd><time datetime="{{ pve.checked_at }}" data-utc="{{ pve.checked_at }}" title="{{ pve.checked_at }}">{{ pve.checked_at }}</time></dd>
@@ -94,7 +100,7 @@
   </div>
 
   <div class="col">
-    <h3>Active Directory{% if ad_matches|length > 1 %} <span class="sev-rename">×{{ ad_matches|length }}</span>{% endif %}</h3>
+    <h3>Active Directory{% if ad_matches|length > 1 %} <span class="sev-rename">x{{ ad_matches|length }}</span>{% endif %}</h3>
     {% if ad_matches %}
       {% for m in ad_matches %}
         <dl>
@@ -121,7 +127,7 @@
   </div>
 
   <div class="col">
-    <h3>Entra{% if entra_matches|length > 1 %} <span class="sev-rename">×{{ entra_matches|length }}</span>{% endif %}</h3>
+    <h3>Entra{% if entra_matches|length > 1 %} <span class="sev-rename">x{{ entra_matches|length }}</span>{% endif %}</h3>
     {% if entra_matches %}
       {% for m in entra_matches %}
         <dl>
@@ -145,7 +151,7 @@
   </div>
 
   <div class="col">
-    <h3>Intune{% if intune_matches|length > 1 %} <span class="sev-rename">×{{ intune_matches|length }}</span>{% endif %}</h3>
+    <h3>Intune{% if intune_matches|length > 1 %} <span class="sev-rename">x{{ intune_matches|length }}</span>{% endif %}</h3>
     {% if intune_matches %}
       {% for m in intune_matches %}
         <dl>

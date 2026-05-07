@@ -1,13 +1,10 @@
 {% extends "base.html" %}
-{% block title %}UTM VMs — Proxmox VE Autopilot{% endblock %}
+{% from "_macros.html" import page_head, alert, empty_state %}
+{% block title %}UTM VMs - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 
-<h2>UTM Virtual Machines
-  <button type="button" onclick="location.reload();"
-    style="font-size:11px;padding:1px 6px;background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer;margin-left:10px;">
-    ↻ Refresh
-  </button>
-</h2>
+{{ page_head("UTM Virtual Machines", "macOS-hosted VM control surface with power actions, IP lookup, and snapshot management.") }}
+<button type="button" onclick="location.reload();" style="margin-bottom:12px;">Refresh</button>
 
 <p style="font-size:12px;color:var(--ink-muted);margin-bottom:14px;">
   <strong>utmctl:</strong> <code>{{ utmctl_path }}</code> &nbsp;·&nbsp;
@@ -15,9 +12,7 @@
 </p>
 
 {% if error %}
-<p style="background:var(--bad-bg,#fff0f0);border:1px solid var(--err-fg,#c0392b);padding:8px;color:var(--err-fg,#c0392b);border-radius:4px;">
-  {{ error }}
-</p>
+{{ alert(error, level="bad") }}
 {% endif %}
 
 {% if vms %}
@@ -53,39 +48,39 @@
 
       <button class="btn-action" onclick="vmAction('start','{{ vm.name }}',this)"
         {% if vm.status == 'started' %}disabled title="Already running"{% endif %}>
-        ▶ Start
+        Start
       </button>
 
       <button class="btn-action" onclick="vmAction('suspend','{{ vm.name }}',this)"
         {% if vm.status == 'stopped' %}disabled title="VM is stopped"{% endif %}>
-        ⏸ Suspend
+        Suspend
       </button>
 
       <button class="btn-action" onclick="vmAction('stop','{{ vm.name }}',this)"
         {% if vm.status == 'stopped' %}disabled title="Already stopped"{% endif %}>
-        ⏹ Stop
+        Stop
       </button>
 
       <button class="btn-action btn-warn"
         onclick="confirmAction('force-stop','{{ vm.name }}','Force-stop will SIGTERM the QEMU process. Continue?',this)"
         {% if vm.status == 'stopped' %}disabled title="Already stopped"{% endif %}>
-        ⚡ Force
+        Force
       </button>
 
       <button class="btn-action" onclick="vmAction('open-in-app','{{ vm.name }}',this)">
-        🖥 Open
+        Open
       </button>
 
       <button class="btn-action btn-danger"
         onclick="confirmAction('delete','{{ vm.name }}','Delete VM &quot;{{ vm.name }}&quot; and its .utm bundle from disk? This cannot be undone.',this)"
         {% if vm.status != 'stopped' %}disabled title="Stop the VM before deleting"{% endif %}>
-        🗑 Delete
+        Delete
       </button>
 
       <button class="btn-action btn-snap"
         onclick="openSnapPanel('{{ vm.name }}', '{{ vm.uuid }}', '{{ vm.status }}')"
         title="Manage qcow2 snapshots (requires VM stopped for create/restore/delete)">
-        📸 Snapshots
+        Snapshots
       </button>
 
     </div>
@@ -96,10 +91,7 @@
 </table>
 
 {% else %}
-<div style="padding:40px;text-align:center;color:var(--ink-soft);">
-  <p style="font-size:18px;">No UTM VMs found.</p>
-  <p>Build one from the <a href="/template">Template</a> page.</p>
-</div>
+{{ empty_state("No UTM VMs found.", action_href="/template", action_label="Build one", hint="UTM inventory appears here after the macOS helper returns VM records.") }}
 {% endif %}
 
 <style>
@@ -189,7 +181,7 @@ document.querySelectorAll('.ip-cell').forEach(cell => {
 
 async function vmAction(action, vmName, btn) {
   btn.disabled = true;
-  btn.textContent = '⌛';
+  btn.textContent = 'Working';
   try {
     const r = await fetch('/api/utm/vms/' + encodeURIComponent(vmName) + '/' + action,
       { method: action === 'open-in-app' ? 'POST' : 'POST' });
@@ -221,13 +213,13 @@ function openSnapPanel(vmName, vmUuid, vmStatus) {
   _snapVmName = vmName;
   _snapVmUuid = vmUuid;
   _snapVmStatus = vmStatus;
-  document.getElementById('snap-panel-title').textContent = 'Snapshots — ' + vmName;
+  document.getElementById('snap-panel-title').textContent = 'Snapshots - ' + vmName;
   const stopped = vmStatus === 'stopped';
   document.getElementById('snap-new-name').disabled = !stopped;
   document.getElementById('snap-create-btn').disabled = !stopped;
   if (!stopped) {
     document.getElementById('snap-status').innerHTML =
-      '<span class="snap-warn">⚠ VM is ' + vmStatus + '. Stop it to create/restore/delete snapshots. Listing is always available.</span>';
+      '<span class="snap-warn">VM is ' + vmStatus + '. Stop it to create/restore/delete snapshots. Listing is always available.</span>';
   } else {
     document.getElementById('snap-status').textContent = '';
   }
@@ -242,7 +234,7 @@ function closeSnapPanel() {
 
 async function loadSnapshots() {
   const tbody = document.getElementById('snap-tbody');
-  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--ink-soft)">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--ink-soft)">Loading...</td></tr>';
   try {
     const r = await fetch('/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots');
     const data = await r.json();
@@ -263,9 +255,9 @@ async function loadSnapshots() {
       '<td>' + escHtml(s.date) + '</td>' +
       '<td style="white-space:nowrap">' +
         '<button class="btn-action" ' + (_snapVmStatus !== 'stopped' ? 'disabled title="Stop VM first"' : '') +
-          ' onclick="restoreSnap(' + JSON.stringify(s.tag) + ')">↩ Restore</button> ' +
+          ' onclick="restoreSnap(' + JSON.stringify(s.tag) + ')">Restore</button> ' +
         '<button class="btn-action btn-danger" ' + (_snapVmStatus !== 'stopped' ? 'disabled title="Stop VM first"' : '') +
-          ' onclick="deleteSnap(' + JSON.stringify(s.tag) + ')">✕ Delete</button>' +
+          ' onclick="deleteSnap(' + JSON.stringify(s.tag) + ')">Delete</button>' +
       '</td>' +
       '</tr>'
     ).join('');
@@ -279,7 +271,7 @@ async function createSnap() {
   const snapName = nameEl.value.trim();
   if (!snapName) { alert('Enter a snapshot name.'); return; }
   const statusEl = document.getElementById('snap-status');
-  statusEl.textContent = 'Creating…';
+  statusEl.textContent = 'Creating...';
   try {
     const r = await fetch('/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots', {
       method: 'POST',
@@ -288,7 +280,7 @@ async function createSnap() {
     });
     const data = await r.json();
     if (data.ok) {
-      statusEl.textContent = '✓ Snapshot "' + snapName + '" created.';
+      statusEl.textContent = 'Snapshot "' + snapName + '" created.';
       nameEl.value = '';
       loadSnapshots();
     } else {
@@ -302,7 +294,7 @@ async function createSnap() {
 async function restoreSnap(snapName) {
   if (!confirm('Restore snapshot "' + snapName + '"? The current disk state will be overwritten.')) return;
   const statusEl = document.getElementById('snap-status');
-  statusEl.textContent = 'Restoring…';
+  statusEl.textContent = 'Restoring...';
   try {
     const r = await fetch(
       '/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots/' + encodeURIComponent(snapName) + '/restore',
@@ -310,7 +302,7 @@ async function restoreSnap(snapName) {
     );
     const data = await r.json();
     if (data.ok) {
-      statusEl.textContent = '✓ Snapshot "' + snapName + '" restored.';
+      statusEl.textContent = 'Snapshot "' + snapName + '" restored.';
       loadSnapshots();
     } else {
       statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Error: ' + escHtml(data.error || 'unknown') + '</span>';
@@ -323,7 +315,7 @@ async function restoreSnap(snapName) {
 async function deleteSnap(snapName) {
   if (!confirm('Delete snapshot "' + snapName + '"? This cannot be undone.')) return;
   const statusEl = document.getElementById('snap-status');
-  statusEl.textContent = 'Deleting…';
+  statusEl.textContent = 'Deleting...';
   try {
     const r = await fetch(
       '/api/utm/vms/' + encodeURIComponent(_snapVmName) + '/snapshots/' + encodeURIComponent(snapName),
@@ -331,7 +323,7 @@ async function deleteSnap(snapName) {
     );
     const data = await r.json();
     if (data.ok) {
-      statusEl.textContent = '✓ Snapshot "' + snapName + '" deleted.';
+      statusEl.textContent = 'Snapshot "' + snapName + '" deleted.';
       loadSnapshots();
     } else {
       statusEl.innerHTML = '<span style="color:var(--err-fg,#c0392b)">Error: ' + escHtml(data.error || 'unknown') + '</span>';

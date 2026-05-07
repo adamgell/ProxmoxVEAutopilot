@@ -1,0 +1,2133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Proxmox VE Autopilot // Full Cockpit Mockup</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #05070a;
+  --deck: #080d13;
+  --panel: #0d141e;
+  --panel-2: #111b27;
+  --panel-3: #172435;
+  --ink: #f3f8ff;
+  --muted: #9cacbf;
+  --soft: #63758a;
+  --line: #223247;
+  --line-2: #344b67;
+  --blue: #35b8ff;
+  --cyan: #5ce8d6;
+  --green: #a6ec45;
+  --yellow: #ffd15d;
+  --red: #ff684e;
+  --violet: #a98cff;
+  --shadow: 0 26px 80px rgba(0, 0, 0, .56);
+  --radius: 8px;
+  --rail: 88px;
+  --inspector: 404px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font: 13.5px/1.45 "Aptos", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  background:
+    radial-gradient(900px 380px at 58% -12%, rgba(54, 183, 255, .2), transparent 66%),
+    linear-gradient(180deg, #05070a, #081018 47%, #05070a);
+}
+body:before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .9;
+  background:
+    linear-gradient(rgba(255,255,255,.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: linear-gradient(#000 0 74%, transparent);
+}
+button, input, select, textarea { font: inherit; }
+button { color: inherit; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { color: var(--ink); }
+.app {
+  position: relative;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: 64px 1fr;
+}
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: 286px minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(5, 7, 10, .91);
+  backdrop-filter: blur(18px);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  flex: 0 0 auto;
+  background:
+    linear-gradient(135deg, #f25022 0 30%, #7fba00 30% 58%, #00a4ef 58%);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.16), 0 0 30px rgba(54,183,255,.2);
+}
+.brand b { display: block; font-size: 14px; letter-spacing: .01em; }
+.brand span,
+.micro {
+  display: block;
+  color: var(--soft);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.command {
+  height: 42px;
+  max-width: 840px;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #0a1018;
+}
+.command input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.slash,
+.kbd {
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel-2);
+  font: 11px/1 "IBM Plex Mono", "SF Mono", monospace;
+  padding: 4px 7px;
+}
+.top-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.btn {
+  min-height: 36px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: linear-gradient(180deg, #172437, #101824);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-weight: 850;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.btn:hover,
+.btn.active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(54,183,255,.1);
+}
+.btn.primary {
+  border-color: #22bfff;
+  background: linear-gradient(180deg, #078bd5, #00629d);
+}
+.btn.danger {
+  color: #ffc2b7;
+  border-color: rgba(255,104,78,.58);
+  background: linear-gradient(180deg, #2d1715, #151015);
+}
+.btn.ghost { background: rgba(255,255,255,.03); }
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: .46;
+  box-shadow: none;
+}
+.layout {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr) var(--inspector);
+  gap: 14px;
+  padding: 14px 18px 28px;
+}
+.rail {
+  position: sticky;
+  top: 78px;
+  height: calc(100vh - 92px);
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+.rail-group {
+  display: grid;
+  gap: 7px;
+}
+.rail-label {
+  color: var(--soft);
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  text-align: center;
+  margin: 4px 0 1px;
+}
+.rail button {
+  min-height: 54px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.rail button:hover,
+.rail button.active {
+  color: #fff;
+  border-color: var(--blue);
+  background: rgba(54,183,255,.09);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.main {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.screen-head {
+  min-height: 184px;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(112deg, rgba(54,183,255,.16), rgba(98,234,216,.05) 38%, rgba(255,104,78,.06)),
+    var(--panel);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  animation: rise .42s cubic-bezier(.2,.75,.25,1) both;
+}
+.screen-head:after {
+  content: "";
+  position: absolute;
+  right: -86px;
+  top: -110px;
+  width: 340px;
+  height: 340px;
+  border: 1px solid rgba(54,183,255,.14);
+  transform: rotate(35deg);
+  box-shadow: inset 0 0 90px rgba(54,183,255,.08);
+}
+.eyebrow {
+  color: var(--blue);
+  font-size: 10.5px;
+  font-weight: 950;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 7px;
+  background: var(--green);
+  box-shadow: 0 0 0 0 rgba(164,235,70,.45);
+  animation: pulse 1.8s infinite;
+}
+.screen-head h1 {
+  max-width: 780px;
+  margin: 8px 0 8px;
+  font-size: 32px;
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+.screen-head p {
+  max-width: 820px;
+  color: var(--muted);
+  margin: 0;
+}
+.hero-actions {
+  position: relative;
+  z-index: 2;
+  margin-top: 20px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.readout {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  background: rgba(8,13,19,.72);
+}
+.scoreline {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.scoreline b {
+  font: 48px/.9 "IBM Plex Mono", "SF Mono", monospace;
+}
+.scoreline span { color: var(--green); font-weight: 900; }
+.meter-row {
+  display: grid;
+  grid-template-columns: 92px 1fr 38px;
+  gap: 9px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.meter {
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255,255,255,.06);
+}
+.meter i {
+  display: block;
+  height: 100%;
+  width: var(--w);
+  background: linear-gradient(90deg, var(--blue), var(--cyan), var(--green));
+  background-size: 220% 100%;
+  animation: flow 2.8s linear infinite;
+}
+.grid {
+  display: grid;
+  gap: 14px;
+}
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(12,19,29,.95);
+  animation: rise .38s cubic-bezier(.2,.75,.25,1) both;
+}
+.panel-head {
+  min-height: 50px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.panel-head h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.panel-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.panel-body { padding: 14px; }
+.stat {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 13px;
+  cursor: pointer;
+  min-width: 0;
+}
+.stat:hover,
+.stat.active {
+  border-color: var(--blue);
+  background: rgba(54,183,255,.08);
+}
+.stat label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.stat b {
+  font: 31px/1 "IBM Plex Mono", "SF Mono", monospace;
+}
+.stat small {
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+.ok { background: rgba(164,235,70,.14); color: #c7ff7e; }
+.warn { background: rgba(255,208,94,.15); color: #ffdf86; }
+.bad { background: rgba(255,104,78,.15); color: #ffa08f; }
+.info { background: rgba(54,183,255,.15); color: #8edcff; }
+.neutral { background: rgba(242,247,255,.08); color: #c0ccd8; }
+.violet { background: rgba(169,140,255,.15); color: #cfc1ff; }
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.chip {
+  min-height: 30px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+.chip:hover,
+.chip.active {
+  color: #fff;
+  border-color: var(--blue);
+  background: rgba(54,183,255,.1);
+}
+.table-wrap { overflow: auto; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+th {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #090f16;
+  color: var(--muted);
+  text-align: left;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  vertical-align: middle;
+}
+tr.selectable { cursor: pointer; }
+tr.selectable:hover td,
+tr.selected td {
+  background: rgba(54,183,255,.065);
+}
+.name {
+  display: block;
+  color: var(--ink);
+  font-weight: 900;
+}
+.sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.mono {
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+.railbar {
+  width: 132px;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+}
+.railbar span {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+}
+.railbar .pass { background: rgba(164,235,70,.52); }
+.railbar .hold { background: rgba(255,208,94,.58); }
+.railbar .fail { background: rgba(255,104,78,.58); }
+.runway {
+  position: relative;
+  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(132px, 1fr));
+  padding: 16px;
+}
+.runway:before {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  left: 16px;
+  right: 16px;
+  top: 18px;
+  height: 3px;
+  border-radius: 999px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(54,183,255,.08), var(--blue), var(--cyan), transparent);
+  filter: drop-shadow(0 0 10px rgba(54,183,255,.55));
+  animation: trace 4s linear infinite;
+}
+.stage {
+  position: relative;
+  min-height: 142px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  padding: 12px;
+  cursor: pointer;
+}
+.stage:first-child { border-radius: 8px 0 0 8px; }
+.stage:last-child { border-radius: 0 8px 8px 0; }
+.stage:not(:last-child):after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  z-index: 2;
+  width: 12px;
+  height: 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  transform: translateY(-50%) rotate(45deg);
+}
+.stage:hover,
+.stage.active {
+  z-index: 4;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(54,183,255,.08);
+  transform: translateY(-2px);
+}
+.stage:before {
+  content: "";
+  display: block;
+  height: 4px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: var(--soft);
+}
+.stage.good:before { background: var(--green); }
+.stage.warn:before { background: var(--yellow); }
+.stage.bad:before { background: var(--red); }
+.stage.info-stage:before { background: var(--blue); }
+.stage h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.stage b {
+  display: block;
+  margin: 8px 0 3px;
+  font: 26px/1 "IBM Plex Mono", "SF Mono", monospace;
+}
+.stage p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mini-note {
+  margin-top: 9px;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 6px;
+  background: rgba(0,0,0,.13);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.card-list {
+  display: grid;
+  gap: 9px;
+}
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 11px;
+  cursor: pointer;
+  min-width: 0;
+}
+.card:hover,
+.card.selected {
+  border-color: var(--blue);
+  background: rgba(54,183,255,.08);
+}
+.card b {
+  display: block;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.card small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.badges {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+.flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.flow-step {
+  min-height: 94px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 11px;
+  position: relative;
+  overflow: hidden;
+}
+.flow-step.active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(54,183,255,.08);
+}
+.flow-step.active:after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--blue), var(--cyan), var(--green));
+  background-size: 200% 100%;
+  animation: flow 1.8s linear infinite;
+}
+.flow-step strong { display: block; }
+.flow-step span { color: var(--muted); font-size: 12px; }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.field label {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.field input,
+.field select,
+.field textarea {
+  min-height: 36px;
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  padding: 0 10px;
+  outline: none;
+}
+.field textarea {
+  min-height: 84px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  padding: 8px;
+  color: var(--muted);
+}
+.log {
+  display: grid;
+  gap: 7px;
+}
+.log-line {
+  display: grid;
+  grid-template-columns: 78px 1fr auto;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.timeline {
+  display: grid;
+  gap: 8px;
+}
+.event {
+  display: grid;
+  grid-template-columns: 9px 1fr auto;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  padding: 9px;
+  cursor: pointer;
+}
+.event:hover { border-color: var(--blue); }
+.dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.dot.g { background: var(--green); }
+.dot.y { background: var(--yellow); }
+.dot.r { background: var(--red); }
+.dot.b { background: var(--blue); }
+.event b { display: block; font-size: 12.5px; }
+.event small { color: var(--muted); }
+.component-demo {
+  display: grid;
+  gap: 14px;
+}
+.token-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+.swatch {
+  min-height: 70px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px;
+  display: grid;
+  align-content: end;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  box-shadow: inset 0 0 35px rgba(0,0,0,.22);
+}
+.empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,.025);
+  color: var(--muted);
+  padding: 18px;
+}
+.inspector {
+  position: sticky;
+  top: 78px;
+  height: calc(100vh - 92px);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #080d13;
+}
+.inspector.scan:after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 80px;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(54,183,255,.26), transparent);
+  animation: scan .62s ease;
+}
+.inspector-head {
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.target {
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 11px;
+  align-items: center;
+}
+.cube {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: linear-gradient(160deg, rgba(54,183,255,.25), rgba(164,235,70,.08));
+  box-shadow: inset 0 0 30px rgba(54,183,255,.08);
+}
+.target.scan .cube { animation: targetFlash .58s ease; }
+.target h3 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.target span { color: var(--muted); font-size: 12px; }
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 0 14px 12px;
+}
+.tab {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  padding: 7px 4px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+}
+.tab:hover,
+.tab.active {
+  color: #fff;
+  border-color: var(--blue);
+}
+.inspector-body {
+  overflow: auto;
+  padding: 0 14px 14px;
+}
+.kv {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 7px 10px;
+  font-size: 12.5px;
+}
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.inspector-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+}
+.drawer {
+  position: fixed;
+  right: 18px;
+  top: 78px;
+  width: min(500px, calc(100vw - 36px));
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+  z-index: 80;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: #080d13;
+  box-shadow: 0 28px 90px rgba(0,0,0,.7);
+  padding: 14px;
+  transform: translateX(calc(100% + 28px));
+  transition: transform .24s cubic-bezier(.2,.78,.2,1), box-shadow .24s ease;
+}
+.drawer.open {
+  transform: translateX(0);
+  box-shadow: 0 28px 90px rgba(0,0,0,.7), 0 0 0 1px rgba(54,183,255,.2), 0 0 44px rgba(54,183,255,.1);
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.drawer h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.drawer-body {
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+}
+.drawer.open .drawer-body > * { animation: drawerItem .28s ease both; }
+.drawer.open .drawer-body > *:nth-child(1) { animation-delay: .03s; }
+.drawer.open .drawer-body > *:nth-child(2) { animation-delay: .07s; }
+.drawer.open .drawer-body > *:nth-child(3) { animation-delay: .11s; }
+.drawer.open .drawer-body > *:nth-child(4) { animation-delay: .15s; }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 100;
+  transform: translateX(-50%) translateY(80px);
+  border: 1px solid var(--blue);
+  border-radius: 999px;
+  background: #07111a;
+  color: #ddf6ff;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5);
+  padding: 10px 14px;
+  transition: transform .2s ease;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.packet {
+  position: fixed;
+  left: var(--x);
+  top: var(--y);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  z-index: 90;
+  pointer-events: none;
+  background: var(--blue);
+  box-shadow: 0 0 20px rgba(54,183,255,.85), 0 0 0 5px rgba(54,183,255,.12);
+  animation: packet .72s cubic-bezier(.18,.8,.25,1) forwards;
+}
+.filtered {
+  opacity: .13;
+  transform: scale(.986);
+  filter: saturate(.46);
+}
+.blink { animation: targetFlash .5s ease; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px) scale(.992); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pulse {
+  70% { box-shadow: 0 0 0 10px rgba(164,235,70,0); }
+}
+@keyframes flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 220% 50%; }
+}
+@keyframes trace {
+  0% { transform: translateX(-30%); opacity: 0; }
+  12%, 70% { opacity: 1; }
+  100% { transform: translateX(130%); opacity: 0; }
+}
+@keyframes scan {
+  0% { transform: translateY(-120%); opacity: 0; }
+  18% { opacity: .9; }
+  100% { transform: translateY(160%); opacity: 0; }
+}
+@keyframes drawerItem {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes targetFlash {
+  0% { filter: brightness(1); }
+  35% { filter: brightness(1.35); }
+  100% { filter: brightness(1); }
+}
+@keyframes packet {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.4); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.95); }
+}
+@media (max-width: 1280px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .rail {
+    position: static;
+    height: auto;
+    display: flex;
+    overflow: auto;
+    padding-bottom: 2px;
+  }
+  .rail-group { display: flex; gap: 7px; }
+  .rail-label { display: none; }
+  .rail button { min-width: 86px; }
+  .inspector { position: static; height: auto; }
+  .screen-head { grid-template-columns: 1fr; }
+}
+@media (max-width: 820px) {
+  .topbar { grid-template-columns: 1fr; padding: 10px; height: auto; }
+  .layout { padding: 12px; }
+  .grid.two,
+  .grid.three,
+  .grid.four,
+  .flow,
+  .form-grid,
+  .token-row { grid-template-columns: 1fr; }
+  .screen-head h1 { font-size: 25px; }
+  .inspector-actions { grid-template-columns: 1fr; }
+  .runway { grid-template-columns: 1fr; }
+  .stage,
+  .stage:first-child,
+  .stage:last-child { border-radius: 8px; }
+  .stage:not(:last-child):after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:before,
+  *:after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div>
+        <b>Proxmox VE Autopilot</b>
+        <span>Full UI cockpit system</span>
+      </div>
+    </div>
+    <label class="command">
+      <span class="slash">/</span>
+      <input id="globalSearch" placeholder="Command, route, VMID, hostname, serial, job, sequence">
+      <span class="kbd">Ctrl K</span>
+    </label>
+    <div class="top-actions">
+      <button class="btn" data-command="sweep">Sweep <span id="countdown">14:59</span></button>
+      <button class="btn" data-route="design">System Kit</button>
+      <button class="btn primary" data-command="provision">Provision</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="rail" id="navRail" aria-label="Prototype navigation"></nav>
+    <main class="main" id="screen" tabindex="-1"></main>
+    <aside class="inspector" id="inspector"></aside>
+  </div>
+</div>
+
+<aside class="drawer" id="drawer" aria-live="polite">
+  <div class="drawer-head">
+    <h2 id="drawerTitle">Command panel</h2>
+    <button class="btn ghost" id="drawerClose" type="button">Close</button>
+  </div>
+  <div class="drawer-body" id="drawerBody">Select a command or target.</div>
+</aside>
+<div class="toast" id="toast">Action staged</div>
+
+<script>
+const appState = {
+  route: "dashboard",
+  selectedKind: "vm",
+  selectedId: "116",
+  filter: "all",
+  inspectorTab: "overview",
+  query: "",
+  readiness: 82,
+  routes: [
+    { id: "dashboard", label: "Dash", group: "Ops", title: "Command dashboard" },
+    { id: "provision", label: "Provision", group: "Build", title: "Provision VMs" },
+    { id: "template", label: "Template", group: "Build", title: "Build template" },
+    { id: "sequences", label: "Sequence", group: "Build", title: "Sequences" },
+    { id: "fleet", label: "Fleet", group: "Fleet", title: "VM fleet" },
+    { id: "device", label: "Device", group: "Fleet", title: "Device detail" },
+    { id: "jobs", label: "Jobs", group: "Run", title: "Jobs" },
+    { id: "monitoring", label: "Monitor", group: "Run", title: "Monitoring" },
+    { id: "cloud", label: "Cloud", group: "Cloud", title: "Cloud devices" },
+    { id: "artifacts", label: "Artifacts", group: "Cloud", title: "Hashes and answer ISOs" },
+    { id: "settings", label: "Control", group: "Admin", title: "Settings" },
+    { id: "design", label: "System", group: "Admin", title: "Design system" }
+  ],
+  services: [
+    { id: "web", type: "web", status: "ok", age: 8, detail: "serving UI", sha: "a6bcb35" },
+    { id: "monitor", type: "monitor", status: "ok", age: 12, detail: "sweep idle", sha: "a6bcb35" },
+    { id: "builder-01", type: "builder", status: "ok", age: 6, detail: "1 running", sha: "a6bcb35" },
+    { id: "builder-02", type: "builder", status: "degraded", age: 44, detail: "last job complete", sha: "a6bcb35" }
+  ],
+  vms: [
+    {
+      id: "116", name: "GELL-EC41E7EB", vmid: 116, node: "pve2", os: "Windows 11",
+      status: "running", stage: "ready", lane: "ready", tags: "autopilot;win11",
+      serial: "Gell-EC41E7EB", winName: "GELL-EC41E7EB", sequence: "Win11 Autopilot standard",
+      ad: "ok", entra: "ok", intune: "ok", compliance: "compliant", trust: "ServerAd",
+      rail: ["pass","pass","pass","pass","pass","pass"], cloudIds: ["intune:f8153", "autopilot:ztd-116", "entra:ab560"],
+      events: ["QGA identity refreshed", "AD CN matched", "Graph linkage verified"]
+    },
+    {
+      id: "122", name: "WIN11-LAB-22", vmid: 122, node: "pve1", os: "Windows 11",
+      status: "running", stage: "sync", lane: "watch", tags: "autopilot;winpe",
+      serial: "5DF11902", winName: "WIN11-LAB-22", sequence: "WinPE OSD Autopilot",
+      ad: "ok", entra: "pending", intune: "unknown", compliance: "unknown", trust: "pending",
+      rail: ["pass","pass","pass","hold","",""], cloudIds: ["autopilot:ztd-122"],
+      events: ["AD object first seen 31 minutes ago", "Waiting on Entra sync", "Intune probe pending"]
+    },
+    {
+      id: "131", name: "DESKTOP-REPAIR", vmid: 131, node: "pve2", os: "Windows 11",
+      status: "running", stage: "repair", lane: "repair", tags: "autopilot;repair",
+      serial: "serial missing", winName: "DESKTOP-REPAIR", sequence: "Win11 Autopilot standard",
+      ad: "missing", entra: "missing", intune: "unknown", compliance: "unknown", trust: "none",
+      rail: ["pass","pass","fail","","",""], cloudIds: [],
+      events: ["Serial missing from guest", "AD object missing", "Repair command recommended"]
+    },
+    {
+      id: "205", name: "UBUNTU-MDE-04", vmid: 205, node: "pve3", os: "Ubuntu 24.04",
+      status: "running", stage: "review", lane: "repair", tags: "autopilot;linux;mde",
+      serial: "APHV000109FC718", winName: "ubuntu-mde-04", sequence: "Ubuntu MDE desktop",
+      ad: "n/a", entra: "ok", intune: "warn", compliance: "MDE warning", trust: "AzureAd",
+      rail: ["pass","pass","pass","","pass","hold"], cloudIds: ["intune:lin205", "entra:lin205"],
+      events: ["MDE agent online", "Compliance warning reported", "Review endpoint protection"]
+    },
+    {
+      id: "240", name: "WIN11-PAUSED-24H2", vmid: 240, node: "pve1", os: "Windows 11",
+      status: "stopped", stage: "template", lane: "watch", tags: "template;win11",
+      serial: "template", winName: "", sequence: "Template Forge",
+      ad: "n/a", entra: "n/a", intune: "n/a", compliance: "sealed", trust: "none",
+      rail: ["pass","pass","hold","","",""], cloudIds: [],
+      events: ["Pause before sysprep", "Operator app install window open", "Resume signal required"]
+    }
+  ],
+  jobs: [
+    { id: "932", type: "build_template", target: "WIN11-GOLD-24H2", status: "running", progress: 68, worker: "builder-01", started: "15:18", path: "clone", detail: "pause before sysprep" },
+    { id: "941", type: "provision_winpe", target: "WIN11-LAB-22", status: "pending", progress: 8, worker: "queue", started: "15:52", path: "winpe", detail: "blank template waiting" },
+    { id: "927", type: "provision_clone", target: "GELL-EC41E7EB", status: "complete", progress: 100, worker: "builder-02", started: "14:22", path: "clone", detail: "hash captured" },
+    { id: "918", type: "cloud_delete", target: "OLD-DEVICE-16", status: "verifying", progress: 74, worker: "web", started: "13:57", path: "cloud", detail: "Autopilot delete accepted" }
+  ],
+  sequences: [
+    { id: "11", name: "Win11 Autopilot standard", os: "windows", steps: 8, reboots: 2, status: "published", lastRun: "2h ago", risk: "stable" },
+    { id: "12", name: "WinPE OSD Autopilot", os: "windows", steps: 12, reboots: 3, status: "draft", lastRun: "31m ago", risk: "active build" },
+    { id: "21", name: "Ubuntu MDE desktop", os: "ubuntu", steps: 7, reboots: 1, status: "published", lastRun: "1d ago", risk: "stable" }
+  ],
+  cloud: [
+    { id: "c116", serial: "Gell-EC41E7EB", autopilot: "assigned", intune: "compliant", entra: "ServerAd", lastSync: "12m", deleteState: "none" },
+    { id: "c122", serial: "5DF11902", autopilot: "assigned", intune: "pending", entra: "syncing", lastSync: "31m", deleteState: "none" },
+    { id: "cold16", serial: "OLD-DEVICE-16", autopilot: "delete accepted", intune: "deleted", entra: "deleted", lastSync: "2h", deleteState: "verifying" }
+  ],
+  hashes: [
+    { name: "Gell-EC41E7EB.csv", age: "12d", group: "WorkspaceLabs", state: "uploaded" },
+    { name: "WIN11-LAB-22.csv", age: "31m", group: "Lab", state: "captured" },
+    { name: "answer-winpe-941.iso", age: "8m", group: "WinPE", state: "attached" }
+  ],
+  settings: {
+    hypervisor: "Proxmox VE",
+    host: "192.168.2.4",
+    node: "pve2",
+    sweepSeconds: 900,
+    keytab: "healthy",
+    ous: ["WorkspaceLabs", "Devices", "Repair"]
+  }
+};
+
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
+const screen = $("#screen");
+const navRail = $("#navRail");
+const inspector = $("#inspector");
+const drawer = $("#drawer");
+const drawerTitle = $("#drawerTitle");
+const drawerBody = $("#drawerBody");
+const search = $("#globalSearch");
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+  }[c]));
+}
+function clsForStatus(status) {
+  const s = String(status || "").toLowerCase();
+  if (["ok", "ready", "running", "complete", "compliant", "healthy", "published", "assigned", "uploaded", "attached", "stable"].includes(s)) return "ok";
+  if (["warn", "warning", "pending", "sync", "syncing", "review", "draft", "verifying", "captured", "degraded"].includes(s)) return "warn";
+  if (["bad", "error", "missing", "failed", "dead", "repair", "blocked", "delete accepted"].includes(s)) return "bad";
+  if (["winpe", "clone", "web", "monitor", "cloud"].includes(s)) return "info";
+  if (["ubuntu", "windows"].includes(s)) return "violet";
+  return "neutral";
+}
+function badge(text, tone) {
+  return `<span class="badge ${tone || clsForStatus(text)}">${esc(text)}</span>`;
+}
+function railbar(parts) {
+  return `<div class="railbar">${parts.map(p => `<span class="${esc(p)}"></span>`).join("")}</div>`;
+}
+function panel(title, subtitle, body, action = "") {
+  return `
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>${esc(title)}</h2>${subtitle ? `<span>${esc(subtitle)}</span>` : ""}</div>
+        ${action}
+      </div>
+      ${body}
+    </section>`;
+}
+function hero(title, copy, actions = "", meters = defaultMeters()) {
+  return `
+    <section class="screen-head">
+      <div>
+        <div class="eyebrow"><span class="live-dot"></span>${esc(routeTitle())} online</div>
+        <h1>${esc(title)}</h1>
+        <p>${esc(copy)}</p>
+        <div class="hero-actions">${actions}</div>
+      </div>
+      <aside class="readout">
+        <div class="scoreline"><div><b id="readinessScore">${appState.readiness}</b><span>operational</span></div>${badge("stable", "ok")}</div>
+        ${meters}
+      </aside>
+    </section>`;
+}
+function defaultMeters() {
+  return [
+    ["Hypervisor", 92],
+    ["Identity", 84],
+    ["Cloud", 76],
+    ["Queue", 68]
+  ].map(([name, val]) => `
+    <div class="meter-row"><span>${name}</span><div class="meter"><i style="--w:${val}%"></i></div><b>${val}</b></div>
+  `).join("");
+}
+function routeTitle() {
+  return appState.routes.find(r => r.id === appState.route)?.title || "Cockpit";
+}
+function button(label, attrs = "", kind = "") {
+  return `<button class="btn ${kind}" ${attrs}>${esc(label)}</button>`;
+}
+function toast(message) {
+  const t = $("#toast");
+  t.textContent = message;
+  t.classList.add("show");
+  clearTimeout(window.__toast);
+  window.__toast = setTimeout(() => t.classList.remove("show"), 1600);
+}
+function packet(source) {
+  const target = screen || document.body;
+  if (!source || !target) return;
+  const a = source.getBoundingClientRect();
+  const b = target.getBoundingClientRect();
+  const p = document.createElement("span");
+  p.className = "packet";
+  p.style.setProperty("--x", `${a.left + a.width / 2}px`);
+  p.style.setProperty("--y", `${a.top + a.height / 2}px`);
+  p.style.setProperty("--dx", `${b.left + b.width * .5 - a.left - a.width / 2}px`);
+  p.style.setProperty("--dy", `${b.top + 30 - a.top - a.height / 2}px`);
+  document.body.appendChild(p);
+  setTimeout(() => p.remove(), 760);
+}
+function selectedVm() {
+  return appState.vms.find(v => v.id === appState.selectedId) || appState.vms[0];
+}
+function selectedJob() {
+  return appState.jobs.find(j => j.id === appState.selectedId) || appState.jobs[0];
+}
+function selectedSequence() {
+  return appState.sequences.find(s => s.id === appState.selectedId) || appState.sequences[0];
+}
+function selectedCloud() {
+  return appState.cloud.find(c => c.id === appState.selectedId) || appState.cloud[0];
+}
+function getSelected() {
+  if (appState.selectedKind === "job") return selectedJob();
+  if (appState.selectedKind === "sequence") return selectedSequence();
+  if (appState.selectedKind === "cloud") return selectedCloud();
+  if (appState.selectedKind === "artifact") return appState.hashes.find(h => h.name === appState.selectedId) || appState.hashes[0];
+  return selectedVm();
+}
+function select(kind, id) {
+  appState.selectedKind = kind;
+  appState.selectedId = String(id);
+  renderInspector();
+  markSelections();
+  inspector.classList.remove("scan");
+  $(".target", inspector)?.classList.remove("scan");
+  void inspector.offsetWidth;
+  inspector.classList.add("scan");
+  $(".target", inspector)?.classList.add("scan");
+  toast(`Selected ${targetLabel(getSelected())}`);
+}
+function targetLabel(item) {
+  return item?.name || item?.target || item?.serial || item?.name || item?.id || "target";
+}
+function setRoute(route) {
+  appState.route = route;
+  appState.filter = "all";
+  appState.query = search.value = "";
+  renderRoute(route);
+  screen.focus({ preventScroll: true });
+}
+function openDrawer(title, html) {
+  drawerTitle.textContent = title;
+  drawerBody.innerHTML = html;
+  drawer.classList.add("open");
+}
+function closeDrawer() {
+  drawer.classList.remove("open");
+}
+function dataRows(items, columns, kind) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${columns.map(c => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${items.map(item => `
+            <tr class="selectable" data-select-kind="${kind}" data-select-id="${esc(item.id || item.name)}" data-tags="${esc(rowTags(item))}">
+              ${columns.map(c => `<td>${c.render(item)}</td>`).join("")}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+function rowTags(item) {
+  return [
+    item.lane, item.stage, item.status, item.os, item.path, item.state, item.type,
+    item.name, item.target, item.serial, item.sequence, item.node,
+    item.ad, item.entra, item.intune, item.compliance
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+function filterButtons(filters) {
+  return filters.map(f => `<button class="chip ${appState.filter === f.id ? "active" : ""}" data-filter="${esc(f.id)}">${esc(f.label)}</button>`).join("");
+}
+function applyCurrentFilter() {
+  const q = (appState.query || "").toLowerCase();
+  const f = appState.filter;
+  let visible = 0;
+  $$("[data-tags]").forEach(el => {
+    const tags = el.dataset.tags || "";
+    const matchesFilter = f === "all" || tags.includes(f);
+    const matchesQuery = !q || el.innerText.toLowerCase().includes(q) || tags.includes(q);
+    const show = matchesFilter && matchesQuery;
+    el.classList.toggle("filtered", !show);
+    if (el.tagName === "TR") el.style.display = show ? "" : "table-row";
+    if (show) visible++;
+  });
+  const count = $("#visibleCount");
+  if (count) count.textContent = `${visible} visible`;
+}
+function markSelections() {
+  $$("[data-select-id]").forEach(el => {
+    el.classList.toggle(
+      "selected",
+      el.dataset.selectKind === appState.selectedKind && el.dataset.selectId === String(appState.selectedId)
+    );
+  });
+}
+
+function renderNav() {
+  const groups = {};
+  appState.routes.forEach(r => {
+    groups[r.group] ||= [];
+    groups[r.group].push(r);
+  });
+  navRail.innerHTML = Object.entries(groups).map(([group, routes]) => `
+    <div class="rail-group">
+      <div class="rail-label">${esc(group)}</div>
+      ${routes.map(r => `<button class="${appState.route === r.id ? "active" : ""}" data-route="${esc(r.id)}">${esc(r.label)}</button>`).join("")}
+    </div>
+  `).join("");
+}
+
+function renderRoute(route = appState.route) {
+  appState.route = route;
+  renderNav();
+  const renderers = {
+    dashboard: renderDashboard,
+    provision: renderProvision,
+    template: renderTemplate,
+    sequences: renderSequences,
+    fleet: renderFleet,
+    device: renderDevice,
+    jobs: renderJobs,
+    monitoring: renderMonitoring,
+    cloud: renderCloud,
+    artifacts: renderArtifacts,
+    settings: renderSettings,
+    design: renderDesignSystem
+  };
+  screen.innerHTML = (renderers[appState.route] || renderDashboard)();
+  renderInspector();
+  bindRouteControls();
+  applyCurrentFilter();
+  markSelections();
+}
+
+function renderDashboard() {
+  const ready = appState.vms.filter(v => v.lane === "ready").length;
+  const attention = appState.vms.filter(v => v.lane === "repair").length;
+  const runningJobs = appState.jobs.filter(j => j.status === "running").length;
+  return `
+    ${hero(
+      "Operate the whole VM lifecycle from one tactical surface.",
+      "This full-app prototype turns dashboard, build, fleet, jobs, monitoring, cloud cleanup, artifacts, and settings into one command-forward cockpit.",
+      `${button("Provision strike", 'data-command="provision"', "primary")}
+       ${button("Open monitoring", 'data-route="monitoring"')}
+       ${button("Retire device", 'data-command="retire"', "danger")}`
+    )}
+    <section class="grid four">
+      <div class="stat active" data-route="fleet"><label>VMs tracked</label><b>${appState.vms.length}</b><small>${ready} handoff-safe</small></div>
+      <div class="stat" data-route="monitoring"><label>Attention</label><b>${attention}</b><small>repair lanes active</small></div>
+      <div class="stat" data-route="jobs"><label>Jobs</label><b>${appState.jobs.length}</b><small>${runningJobs} running</small></div>
+      <div class="stat" data-route="cloud"><label>Cloud records</label><b>${appState.cloud.length}</b><small>delete verification live</small></div>
+    </section>
+    ${panel("Lifecycle command runway", "Every stage can filter, inspect, or open a command drawer", lifecycleRunway(), button("Show flow", 'data-command="flow"'))}
+    <section class="grid two">
+      ${panel("Active work", "Selectable operating lanes", workBoard(), button("New repair", 'data-command="repair"'))}
+      ${panel("Service mesh", "Heartbeat state across web, monitor, builders", serviceCards(), button("Sweep now", 'data-command="sweep"'))}
+    </section>
+    ${panel("Recent jobs", "Queue, progress, worker, and target", jobTable(appState.jobs), button("View jobs", 'data-route="jobs"'))}
+  `;
+}
+
+function lifecycleRunway() {
+  const stages = [
+    ["Template", 5, "Golden images and pause gates", "Next: seal Win11 24H2", "good", "template"],
+    ["Provision", 31, "Clone and WinPE paths", "pve2 preferred", "good", "provision"],
+    ["Guest", 44, "Agent and hostname captured", "4 guest agents missing", "good", "guest"],
+    ["AD", 42, "Join and OU scope", "2 objects missing", "warn", "ad"],
+    ["Entra", 40, "Hybrid sync windows", "oldest pending 31m", "warn", "entra"],
+    ["Intune", 39, "Compliance and MDE", "6 reviews", "bad", "intune"]
+  ];
+  return `<div class="runway">${stages.map(s => `
+    <article class="stage ${s[4]}" data-filter="${s[5]}" data-tags="${s[5]}">
+      <h3>${s[0]}</h3><b>${s[1]}</b><p>${s[2]}</p><div class="mini-note">${s[3]}</div>
+    </article>
+  `).join("")}</div>`;
+}
+function workBoard() {
+  const lanes = [
+    ["Ready", "ready"],
+    ["Watch", "watch"],
+    ["Repair", "repair"]
+  ];
+  return `<div class="panel-body grid three">${lanes.map(([label, lane]) => `
+    <div class="card-list">
+      <div class="micro">${label} / ${appState.vms.filter(v => v.lane === lane).length}</div>
+      ${appState.vms.filter(v => v.lane === lane).map(v => vmCard(v)).join("")}
+    </div>
+  `).join("")}</div>`;
+}
+function vmCard(v) {
+  return `
+    <article class="card" data-select-kind="vm" data-select-id="${v.id}" data-tags="${rowTags(v)}">
+      <b>${esc(v.name)}</b>
+      <small>VMID ${v.vmid} / ${esc(v.node)} / ${esc(v.sequence)}</small>
+      <div class="badges">${badge(v.ad)}${badge(v.entra)}${badge(v.intune)}${badge(v.status)}</div>
+    </article>`;
+}
+function serviceCards() {
+  return `<div class="panel-body card-list">${appState.services.map(s => `
+    <article class="card" data-drawer="Service ${esc(s.id)}|${esc(s.detail)} / heartbeat age ${s.age}s / sha ${s.sha}" data-tags="${rowTags(s)}">
+      <b>${esc(s.id)}</b>
+      <small>${esc(s.type)} / ${esc(s.detail)} / ${s.age}s old</small>
+      <div class="badges">${badge(s.status)}${badge(s.sha, "neutral")}</div>
+    </article>
+  `).join("")}</div>`;
+}
+
+function renderProvision() {
+  return `
+    ${hero(
+      "Provision clone and WinPE deployments without leaving the cockpit.",
+      "The production form becomes a staged command drawer backed by sequence, target OS, node, sizing, SMBIOS, and hash-capture choices.",
+      `${button("Stage clone provision", 'data-command="provision"', "primary")}
+       ${button("Stage WinPE", 'data-command="winpe"')}
+       ${button("Preview flow", 'data-command="flow"')}`
+    )}
+    <section class="grid two">
+      ${panel("Provision command form", "Representative production controls", provisionForm(), button("Stage", 'data-command="provision"', "primary"))}
+      ${panel("Provision flow", "Operator view before launch", provisionFlow(), "")}
+    </section>
+    ${panel("Target queue", "Selectable VMs and desired paths", vmTable(appState.vms), "")}
+  `;
+}
+function provisionForm() {
+  return `
+    <div class="panel-body">
+      <div class="form-grid">
+        <div class="field"><label>Boot path</label><select><option>Clone from template</option><option>WinPE OSD</option></select></div>
+        <div class="field"><label>Sequence</label><select>${appState.sequences.map(s => `<option>${esc(s.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Node</label><select><option>pve2 preferred</option><option>least loaded</option><option>pve1</option><option>pve3</option></select></div>
+        <div class="field"><label>Count</label><input value="3"></div>
+        <div class="field"><label>Cores</label><input value="4"></div>
+        <div class="field"><label>Memory MB</label><input value="8192"></div>
+        <div class="field"><label>Serial prefix</label><input value="Gell"></div>
+        <div class="field"><label>Group tag</label><input value="WorkspaceLabs"></div>
+      </div>
+      <div style="height:10px"></div>
+      <label class="check"><input type="checkbox" checked> Open monitoring flow after launch</label>
+      <label class="check"><input type="checkbox" checked> Capture hardware hash after OOBE</label>
+    </div>`;
+}
+function provisionFlow() {
+  return `<div class="panel-body"><div class="flow">
+    <div class="flow-step active"><strong>1. Resolve</strong><span>Compile sequence, credentials, OEM profile, SMBIOS.</span></div>
+    <div class="flow-step"><strong>2. Build</strong><span>Clone or blank-template WinPE path starts.</span></div>
+    <div class="flow-step"><strong>3. Observe</strong><span>Guest agent, AD join, Entra sync, Intune enrollment.</span></div>
+    <div class="flow-step"><strong>4. Handoff</strong><span>Ready state with evidence trail.</span></div>
+  </div></div>`;
+}
+
+function renderTemplate() {
+  return `
+    ${hero(
+      "Forge, pause, resume, seal, and verify golden templates.",
+      "Template work gets its own cockpit: profile, OS family, pause gates, job log, and operator resume controls.",
+      `${button("Build template", 'data-command="template"', "primary")}
+       ${button("Resume paused build", 'data-command="resume"')}
+       ${button("Open jobs", 'data-route="jobs"')}`
+    )}
+    <section class="grid two">
+      ${panel("Template forge", "Windows and Ubuntu image controls", templateForm(), button("Stage build", 'data-command="template"', "primary"))}
+      ${panel("Pause gate", "What the operator sees mid-build", pauseGate(), button("Resume", 'data-command="resume"'))}
+    </section>
+    ${panel("Template jobs", "Build queue and checkpoints", jobTable(appState.jobs.filter(j => j.type.includes("template"))), "")}
+  `;
+}
+function templateForm() {
+  return `
+    <div class="panel-body">
+      <div class="form-grid">
+        <div class="field"><label>OS kind</label><select><option>Windows 11 24H2</option><option>Windows Server</option><option>Ubuntu 24.04</option></select></div>
+        <div class="field"><label>OEM profile</label><select><option>Microsoft Surface-like</option><option>Default virtual desktop</option></select></div>
+        <div class="field"><label>CPU cores</label><input value="4"></div>
+        <div class="field"><label>Memory MB</label><input value="8192"></div>
+        <div class="field"><label>Disk GB</label><input value="96"></div>
+        <div class="field"><label>ISO</label><select><option>Win11_24H2_English_x64.iso</option><option>ubuntu-24.04-live-server.iso</option></select></div>
+      </div>
+      <div style="height:10px"></div>
+      <label class="check"><input type="checkbox" checked> Pause before sysprep</label>
+      <label class="check"><input type="checkbox" checked> Capture build evidence</label>
+    </div>`;
+}
+function pauseGate() {
+  return `<div class="panel-body log">
+    <div class="log-line"><span class="mono">15:18</span><span>Build started on pve1</span>${badge("running")}</div>
+    <div class="log-line"><span class="mono">15:39</span><span>Windows OOBE completed</span>${badge("ok")}</div>
+    <div class="log-line"><span class="mono">15:52</span><span>Paused for manual app install</span>${badge("paused", "warn")}</div>
+    <div class="log-line"><span class="mono">next</span><span>Resume signal triggers cleanup, sysprep, shutdown, convert to template</span>${badge("operator")}</div>
+  </div>`;
+}
+
+function renderSequences() {
+  return `
+    ${hero(
+      "Compose lifecycle sequences as inspectable build doctrine.",
+      "Steps, credentials, reboots, target OS, and risk state become first-class cockpit objects.",
+      `${button("New sequence", 'data-command="sequence"', "primary")}
+       ${button("Duplicate selected", 'data-command="duplicate"')}
+       ${button("Provision with sequence", 'data-command="provision"')}`
+    )}
+    <section class="grid two">
+      ${panel("Sequence catalog", "Selectable sequence definitions", sequenceCards(), button("Create", 'data-command="sequence"'))}
+      ${panel("Step blueprint", "Representative step timeline", sequenceTimeline(), "")}
+    </section>
+    ${panel("Sequence table", "Target OS, risk, reboots, and last run", sequenceTable(), "")}
+  `;
+}
+function sequenceCards() {
+  return `<div class="panel-body card-list">${appState.sequences.map(s => `
+    <article class="card" data-select-kind="sequence" data-select-id="${s.id}" data-tags="${rowTags(s)}">
+      <b>${esc(s.name)}</b>
+      <small>${esc(s.os)} / ${s.steps} steps / ${s.reboots} reboot cycles</small>
+      <div class="badges">${badge(s.status)}${badge(s.risk)}${badge(s.lastRun, "neutral")}</div>
+    </article>
+  `).join("")}</div>`;
+}
+function sequenceTimeline() {
+  const steps = ["Set OEM hardware", "Rename computer", "Install MDE", "Join domain", "Capture hash", "Upload hash", "Restart", "Validate endpoint"];
+  return `<div class="panel-body timeline">${steps.map((s, i) => `
+    <div class="event" data-drawer="${esc(s)}|Sequence step ${i + 1}: parameters, credentials, reboot policy, and output contract.">
+      <span class="dot ${i < 5 ? "g" : i === 6 ? "y" : "b"}"></span>
+      <div><b>${esc(s)}</b><small>Step ${i + 1} in the standard Windows lifecycle.</small></div>
+      ${badge(i === 6 ? "reboot" : "ready", i === 6 ? "warn" : "ok")}
+    </div>
+  `).join("")}</div>`;
+}
+function sequenceTable() {
+  return dataRows(appState.sequences, [
+    { label: "Sequence", render: s => `<span class="name">${esc(s.name)}</span><span class="sub">${s.steps} steps / ${s.reboots} reboots</span>` },
+    { label: "OS", render: s => badge(s.os) },
+    { label: "Status", render: s => badge(s.status) },
+    { label: "Risk", render: s => badge(s.risk) },
+    { label: "Last run", render: s => esc(s.lastRun) }
+  ], "sequence");
+}
+
+function renderFleet() {
+  return `
+    ${hero(
+      "Scan, power, console, and inspect the complete VM fleet.",
+      "Fleet becomes a dense operations table with lifecycle rails, quick actions, and the same right-hand inspector model.",
+      `${button("Power selected", 'data-command="power"', "primary")}
+       ${button("Console", 'data-command="console"')}
+       ${button("Retire selected", 'data-command="retire"', "danger")}`
+    )}
+    ${panel("Fleet table", "Filter by ready, repair, sync, node, OS, or command search", `
+      <div class="toolbar">${filterButtons([
+        {id:"all", label:"All"}, {id:"ready", label:"Ready"}, {id:"repair", label:"Repair"},
+        {id:"sync", label:"Sync"}, {id:"windows", label:"Windows"}, {id:"ubuntu", label:"Ubuntu"}
+      ])}<span class="badge neutral" id="visibleCount">0 visible</span></div>
+      ${vmTable(appState.vms)}
+    `, button("Open device detail", 'data-route="device"'))}
+  `;
+}
+function vmTable(vms) {
+  return dataRows(vms, [
+    { label: "Target", render: v => `<span class="name">${esc(v.name)}</span><span class="sub">VMID ${v.vmid} / ${esc(v.node)} / ${esc(v.os)}</span>` },
+    { label: "Rail", render: v => railbar(v.rail) },
+    { label: "Power", render: v => badge(v.status) },
+    { label: "Identity", render: v => `${badge(v.ad)} ${badge(v.entra)} ${badge(v.intune)}` },
+    { label: "Sequence", render: v => `<span class="sub">${esc(v.sequence)}</span>` },
+    { label: "Actions", render: v => `${button("Console", `data-command="console" data-vmid="${v.id}"`)} ${button("Power", `data-command="power" data-vmid="${v.id}"`)}` }
+  ], "vm");
+}
+
+function renderDevice() {
+  const v = selectedVm();
+  return `
+    ${hero(
+      `Device ${v.name}`,
+      "A device detail page becomes a cross-system evidence board: Proxmox, guest identity, AD, Entra, Intune, timeline, raw data, and repair commands.",
+      `${button("Console", 'data-command="console"', "primary")}
+       ${button("Repair identity", 'data-command="repair"')}
+       ${button("Retire", 'data-command="retire"', "danger")}`
+    )}
+    <section class="grid four">
+      ${detailPanel("Proxmox", [["VMID", v.vmid], ["Node", v.node], ["Status", v.status], ["Tags", v.tags]])}
+      ${detailPanel("Guest", [["Windows name", v.winName || "unknown"], ["Serial", v.serial], ["OS", v.os], ["Sequence", v.sequence]])}
+      ${detailPanel("Directory", [["AD", v.ad], ["Entra", v.entra], ["Trust", v.trust], ["CN", v.winName || "none"]])}
+      ${detailPanel("Endpoint", [["Intune", v.intune], ["Compliance", v.compliance], ["MDE", v.compliance], ["Last sync", "12m"]])}
+    </section>
+    <section class="grid two">
+      ${panel("Linkage health", "What needs to line up across systems", linkageHealth(v), "")}
+      ${panel("Device timeline", "Newest first with event evidence", eventTimeline(v.events), "")}
+    </section>
+  `;
+}
+function detailPanel(title, rows) {
+  return panel(title, "", `<div class="panel-body"><dl class="kv">${rows.map(([k,v]) => `<dt>${esc(k)}</dt><dd>${badge(v)}</dd>`).join("")}</dl></div>`);
+}
+function linkageHealth(v) {
+  const rows = [
+    ["SMBIOS.serial -> Intune.serialNumber", v.serial, v.intune === "ok" ? "ok" : "warn"],
+    ["Windows.Name -> AD.cn", v.winName || "unknown", v.ad === "ok" ? "ok" : "bad"],
+    ["AD.objectSid -> Entra.onPremSID", v.trust, v.entra === "ok" ? "ok" : "warn"],
+    ["Entra.deviceId -> Intune.azureADDeviceId", v.compliance, v.intune === "ok" ? "ok" : "warn"]
+  ];
+  return `<div class="panel-body log">${rows.map(r => `<div class="log-line"><span class="mono">${badge(r[2])}</span><span>${esc(r[0])}</span><span>${esc(r[1])}</span></div>`).join("")}</div>`;
+}
+function eventTimeline(events) {
+  return `<div class="panel-body timeline">${events.map((e, i) => `
+    <div class="event" data-drawer="${esc(e)}|Event detail, raw fields, source system, timestamp, and suggested next command.">
+      <span class="dot ${i === 0 ? "g" : i === 1 ? "y" : "b"}"></span>
+      <div><b>${esc(e)}</b><small>${15 - i * 4}:5${i} UTC / monitoring sweep</small></div>
+      ${badge(i === 1 ? "watch" : "ok", i === 1 ? "warn" : "ok")}
+    </div>`).join("")}</div>`;
+}
+
+function renderJobs() {
+  return `
+    ${hero(
+      "Watch work move through builders, logs, pauses, and verification.",
+      "Jobs are no longer a passive history table: the cockpit exposes current workers, progress, resume gates, kill requests, and related targets.",
+      `${button("Kill selected", 'data-command="kill"', "danger")}
+       ${button("Resume template", 'data-command="resume"')}
+       ${button("Provision", 'data-command="provision"', "primary")}`
+    )}
+    <section class="grid three">
+      ${appState.jobs.map(j => `<div class="stat" data-select-kind="job" data-select-id="${j.id}" data-tags="${rowTags(j)}"><label>${esc(j.type)}</label><b>${j.progress}%</b><small>${esc(j.target)} / ${esc(j.status)}</small></div>`).join("")}
+    </section>
+    ${panel("Job table", "Status, worker, target, progress, and actions", jobTable(appState.jobs), "")}
+    ${panel("Live log", "Selected job log stream mock", jobLog(), "")}
+  `;
+}
+function jobTable(jobs) {
+  return dataRows(jobs, [
+    { label: "Job", render: j => `<span class="name">#${esc(j.id)} ${esc(j.type)}</span><span class="sub">${esc(j.detail)}</span>` },
+    { label: "Target", render: j => esc(j.target) },
+    { label: "Path", render: j => badge(j.path) },
+    { label: "Status", render: j => badge(j.status) },
+    { label: "Progress", render: j => `<div class="meter"><i style="--w:${j.progress}%"></i></div>` },
+    { label: "Worker", render: j => esc(j.worker) }
+  ], "job");
+}
+function jobLog() {
+  const j = selectedJob();
+  return `<div class="panel-body log">
+    <div class="log-line"><span class="mono">${j.started}</span><span>Job #${esc(j.id)} claimed by ${esc(j.worker)}</span>${badge(j.status)}</div>
+    <div class="log-line"><span class="mono">+04m</span><span>Loaded ${esc(j.path)} execution path for ${esc(j.target)}</span>${badge("ok")}</div>
+    <div class="log-line"><span class="mono">+18m</span><span>${esc(j.detail)}</span>${badge(j.status)}</div>
+  </div>`;
+}
+
+function renderMonitoring() {
+  return `
+    ${hero(
+      "Monitor identity, lifecycle, compliance, keytab health, and services.",
+      "Monitoring keeps the V5 runway but lives inside the full-app cockpit system.",
+      `${button("Sweep now", 'data-command="sweep"', "primary")}
+       ${button("Configure OUs", 'data-route="settings"')}
+       ${button("Repair identity", 'data-command="repair"')}`
+    )}
+    <section class="grid four">
+      <div class="stat" data-filter="all"><label>Tracked</label><b>${appState.vms.length}</b><small>autopilot VM scope</small></div>
+      <div class="stat" data-filter="ready"><label>Ready</label><b>${appState.vms.filter(v => v.lane === "ready").length}</b><small>identity complete</small></div>
+      <div class="stat" data-filter="repair"><label>Repair</label><b>${appState.vms.filter(v => v.lane === "repair").length}</b><small>active blockers</small></div>
+      <div class="stat" data-route="settings"><label>Sweep</label><b>${appState.settings.sweepSeconds}</b><small>seconds cadence</small></div>
+    </section>
+    ${panel("Lifecycle runway", "From power state to managed endpoint compliance", lifecycleRunway(), "")}
+    ${panel("Monitoring fleet", "Badges match AD, Entra, Intune classifier vocabulary", `
+      <div class="toolbar">${filterButtons([
+        {id:"all", label:"All"}, {id:"ready", label:"Ready"}, {id:"repair", label:"Repair"}, {id:"sync", label:"Sync"}, {id:"missing", label:"Missing"}
+      ])}<span class="badge neutral" id="visibleCount">0 visible</span></div>
+      ${vmTable(appState.vms)}
+    `, button("Settings", 'data-route="settings"'))}
+  `;
+}
+
+function renderCloud() {
+  return `
+    ${hero(
+      "Correlate cloud records and retire devices with verification.",
+      "Autopilot, Intune, Entra, and matching Proxmox VMs are grouped by serial with a staged destructive flow.",
+      `${button("Sync cloud", 'data-command="cloudSync"', "primary")}
+       ${button("Retire selected", 'data-command="retire"', "danger")}
+       ${button("Open artifacts", 'data-route="artifacts"')}`
+    )}
+    ${panel("Cloud inventory", "Serial-grouped Autopilot, Intune, Entra records", cloudTable(), button("Retire", 'data-command="retire"', "danger"))}
+    ${panel("Delete verification", "Background delete state with per-source polling", deleteVerification(), "")}
+  `;
+}
+function cloudTable() {
+  return dataRows(appState.cloud, [
+    { label: "Serial", render: c => `<span class="name">${esc(c.serial)}</span><span class="sub">Last sync ${esc(c.lastSync)}</span>` },
+    { label: "Autopilot", render: c => badge(c.autopilot) },
+    { label: "Intune", render: c => badge(c.intune) },
+    { label: "Entra", render: c => badge(c.entra) },
+    { label: "Delete", render: c => badge(c.deleteState) },
+    { label: "Action", render: () => button("Retire", 'data-command="retire"', "danger") }
+  ], "cloud");
+}
+function deleteVerification() {
+  return `<div class="panel-body flow">
+    <div class="flow-step active"><strong>1. Stop VM</strong><span>Proxmox VM is stopped before cloud removal.</span></div>
+    <div class="flow-step active"><strong>2. Delete Intune</strong><span>MDM channel torn down first.</span></div>
+    <div class="flow-step"><strong>3. Delete Autopilot</strong><span>May verify for up to two hours.</span></div>
+    <div class="flow-step"><strong>4. Delete Entra</strong><span>Directory object removed last.</span></div>
+  </div>`;
+}
+
+function renderArtifacts() {
+  return `
+    ${hero(
+      "Manage hashes, uploads, and answer ISOs as lifecycle artifacts.",
+      "Artifacts get promoted from file lists into a lifecycle evidence shelf with upload, prune, attach, and audit states.",
+      `${button("Capture hash", 'data-command="capture"', "primary")}
+       ${button("Upload selected", 'data-command="upload"')}
+       ${button("Prune", 'data-command="prune"', "danger")}`
+    )}
+    <section class="grid two">
+      ${panel("Hardware hashes", "Capture and upload artifacts", artifactCards(), button("Capture", 'data-command="capture"'))}
+      ${panel("Answer ISOs", "Generated answer media and attachment state", answerIsoCards(), button("Build answer ISO", 'data-command="answerIso"'))}
+    </section>
+  `;
+}
+function artifactCards() {
+  return `<div class="panel-body card-list">${appState.hashes.filter(h => h.name.endsWith(".csv")).map(h => `
+    <article class="card" data-select-kind="artifact" data-select-id="${esc(h.name)}" data-tags="${rowTags(h)}">
+      <b>${esc(h.name)}</b><small>${esc(h.age)} / ${esc(h.group)}</small><div class="badges">${badge(h.state)}</div>
+    </article>`).join("")}</div>`;
+}
+function answerIsoCards() {
+  return `<div class="panel-body card-list">${appState.hashes.filter(h => h.name.endsWith(".iso")).map(h => `
+    <article class="card" data-select-kind="artifact" data-select-id="${esc(h.name)}" data-tags="${rowTags(h)}">
+      <b>${esc(h.name)}</b><small>${esc(h.age)} / ${esc(h.group)}</small><div class="badges">${badge(h.state)}${badge("WinPE", "info")}</div>
+    </article>`).join("")}
+    <article class="card" data-drawer="Empty answer ISO slot|Shows how an empty state behaves for generated media.">
+      <b>Next answer ISO slot</b><small>Waiting for a sequence-backed provision command.</small><div class="badges">${badge("empty", "neutral")}</div>
+    </article>
+  </div>`;
+}
+
+function renderSettings() {
+  return `
+    ${hero(
+      "Control plane settings, credentials, monitor scope, and safety rails.",
+      "Settings are grouped into operational panels instead of a long form: hypervisor, credentials, storage, monitoring, keytab, and cloud access.",
+      `${button("Save settings", 'data-command="save"', "primary")}
+       ${button("Refresh keytab", 'data-command="keytab"')}
+       ${button("Manage credentials", 'data-command="credentials"')}`
+    )}
+    <section class="grid two">
+      ${panel("Hypervisor backend", "Connection, storage, and template defaults", settingsForm(), button("Test connection", 'data-command="testConnection"'))}
+      ${panel("Monitoring control", "Sweep cadence, OU scope, and keytab state", monitoringSettings(), button("Refresh", 'data-command="keytab"'))}
+    </section>
+    ${panel("Credentials", "Presence-only secret cards", credentialCards(), button("New credential", 'data-command="credentials"', "primary"))}
+  `;
+}
+function settingsForm() {
+  return `<div class="panel-body"><div class="form-grid">
+    <div class="field"><label>Backend</label><select><option>${esc(appState.settings.hypervisor)}</option><option>UTM + QEMU</option></select></div>
+    <div class="field"><label>Host</label><input value="${esc(appState.settings.host)}"></div>
+    <div class="field"><label>Node</label><input value="${esc(appState.settings.node)}"></div>
+    <div class="field"><label>Storage</label><input value="local-lvm"></div>
+    <div class="field"><label>Bridge</label><input value="vmbr0"></div>
+    <div class="field"><label>Template VMID</label><input value="240"></div>
+  </div></div>`;
+}
+function monitoringSettings() {
+  return `<div class="panel-body card-list">
+    <article class="card"><b>Sweep cadence</b><small>${appState.settings.sweepSeconds} seconds. Aggressive warning below 900.</small><div class="badges">${badge("enabled")}</div></article>
+    <article class="card"><b>Search OUs</b><small>${appState.settings.ous.join(", ")}</small><div class="badges">${badge("3 scopes", "info")}</div></article>
+    <article class="card"><b>Kerberos keytab</b><small>Local kvno matches AD kvno.</small><div class="badges">${badge(appState.settings.keytab)}</div></article>
+  </div>`;
+}
+function credentialCards() {
+  const creds = [
+    ["Proxmox API token", "present", "used for VM operations"],
+    ["Root password ticket", "present", "used only for QEMU args PUT"],
+    ["Entra app secret", "present", "Graph device and Intune reads"],
+    ["Domain join account", "present", "AD OU and keytab refresh"]
+  ];
+  return `<div class="panel-body grid four">${creds.map(c => `
+    <article class="card" data-drawer="${esc(c[0])}|Secret values stay masked; this card only shows presence, purpose, and last validation.">
+      <b>${esc(c[0])}</b><small>${esc(c[2])}</small><div class="badges">${badge(c[1])}</div>
+    </article>`).join("")}</div>`;
+}
+
+function renderDesignSystem() {
+  return `
+    ${hero(
+      "The shared cockpit design system before any production port.",
+      "This page establishes tokens, components, motion, forms, states, drawers, tables, rails, timelines, and empty states for the whole app.",
+      `${button("Open drawer", 'data-command="componentDrawer"', "primary")}
+       ${button("Animate scan", 'data-command="scan"')}
+       ${button("Go dashboard", 'data-route="dashboard"')}`
+    )}
+    <section class="component-demo">
+      ${panel("Color tokens", "Dark-first palette with functional signal colors", `
+        <div class="panel-body token-row">
+          <div class="swatch" style="background:#35b8ff">blue</div>
+          <div class="swatch" style="background:#5ce8d6">cyan</div>
+          <div class="swatch" style="background:#a6ec45;color:#112">green</div>
+          <div class="swatch" style="background:#ffd15d;color:#221">yellow</div>
+          <div class="swatch" style="background:#ff684e">red</div>
+          <div class="swatch" style="background:#a98cff">violet</div>
+          <div class="swatch" style="background:#172435">panel</div>
+        </div>`, "")}
+      <section class="grid two">
+        ${panel("Components", "Buttons, chips, badges, cards, fields", componentSampler(), "")}
+        ${panel("Empty state", "Used for no devices, no jobs, or no artifacts", `<div class="panel-body"><div class="empty"><div><b>No monitored devices yet</b><br><span>Run a sweep or provision a VM to fill this surface.</span><br><br>${button("Start sweep", 'data-command="sweep"', "primary")}</div></div></div>`, "")}
+      </section>
+      ${panel("Motion contract", "Scan, packet, drawer, pulse, and runway trace", provisionFlow(), button("Launch packet", 'data-command="componentDrawer"'))}
+    </section>
+  `;
+}
+function componentSampler() {
+  return `<div class="panel-body card-list">
+    <div class="badges">${badge("ok")}${badge("pending")}${badge("missing")}${badge("running")}${badge("draft")}${badge("dead")}</div>
+    <div class="toolbar" style="padding-left:0;border:0">${button("Primary", "", "primary")}${button("Default")}${button("Danger", "", "danger")}<button class="chip active">Active chip</button><button class="chip">Filter chip</button></div>
+    <div class="form-grid">
+      <div class="field"><label>Text field</label><input value="GELL-EC41E7EB"></div>
+      <div class="field"><label>Select</label><select><option>Win11 Autopilot standard</option></select></div>
+    </div>
+    <article class="card"><b>Reusable card</b><small>Selectable, inspectable, command-aware.</small><div class="badges">${badge("selected", "info")}</div></article>
+  </div>`;
+}
+
+function renderInspector() {
+  const item = getSelected();
+  const label = targetLabel(item);
+  const meta = inspectorMeta(item);
+  inspector.innerHTML = `
+    <div class="inspector-head">
+      <div><h2>Target inspector</h2><span class="micro">${esc(appState.selectedKind)} detail mode</span></div>
+      ${badge(meta.state)}
+    </div>
+    <div class="target">
+      <div class="cube"></div>
+      <div><h3>${esc(label)}</h3><span>${esc(meta.sub)}</span></div>
+    </div>
+    <div class="tabs">
+      ${["overview","build","cloud","logs"].map(t => `<button class="tab ${appState.inspectorTab === t ? "active" : ""}" data-tab="${t}">${esc(t)}</button>`).join("")}
+    </div>
+    <div class="inspector-body">${inspectorTab(item, appState.inspectorTab)}</div>
+    <div class="inspector-actions">
+      ${button("Console", 'data-command="console"')}
+      ${button("Repair", 'data-command="repair"')}
+      ${button("Sweep", 'data-command="sweep"')}
+      ${button("Retire", 'data-command="retire"', "danger")}
+    </div>`;
+}
+function inspectorMeta(item) {
+  if (appState.selectedKind === "job") return { state: item.status, sub: `${item.type} / ${item.worker} / ${item.progress}%` };
+  if (appState.selectedKind === "sequence") return { state: item.status, sub: `${item.os} / ${item.steps} steps / ${item.reboots} reboots` };
+  if (appState.selectedKind === "cloud") return { state: item.deleteState || item.intune, sub: `${item.autopilot} / ${item.intune} / ${item.entra}` };
+  if (appState.selectedKind === "artifact") return { state: item.state, sub: `${item.group} / ${item.age}` };
+  return { state: item.stage, sub: `VMID ${item.vmid} / ${item.node} / ${item.os}` };
+}
+function inspectorTab(item, tab) {
+  if (tab === "build") {
+    return `<dl class="kv">
+      <dt>Path</dt><dd>${badge(item.path || item.sequence || "clone")}</dd>
+      <dt>Sequence</dt><dd>${esc(item.sequence || item.type || item.name || "none")}</dd>
+      <dt>Progress</dt><dd>${item.progress !== undefined ? `<div class="meter"><i style="--w:${item.progress}%"></i></div>` : badge("not running", "neutral")}</dd>
+      <dt>Worker</dt><dd>${esc(item.worker || "not assigned")}</dd>
+    </dl>`;
+  }
+  if (tab === "cloud") {
+    return `<dl class="kv">
+      <dt>AD</dt><dd>${badge(item.ad || "n/a")}</dd>
+      <dt>Entra</dt><dd>${badge(item.entra || "n/a")}</dd>
+      <dt>Intune</dt><dd>${badge(item.intune || "n/a")}</dd>
+      <dt>Compliance</dt><dd>${badge(item.compliance || item.deleteState || "n/a")}</dd>
+    </dl>`;
+  }
+  if (tab === "logs") {
+    const lines = item.events || [item.detail || "No live log attached", "Command drawer can stage next action", "Evidence stream would appear here"];
+    return `<div class="mini-log log">${lines.map((l, i) => `<div class="log-line"><span class="mono">${i + 1}</span><span>${esc(l)}</span>${badge(i ? "info" : "ok")}</div>`).join("")}</div>`;
+  }
+  return `<dl class="kv">
+    <dt>Type</dt><dd>${badge(appState.selectedKind, "info")}</dd>
+    <dt>Name</dt><dd>${esc(targetLabel(item))}</dd>
+    <dt>Status</dt><dd>${badge(inspectorMeta(item).state)}</dd>
+    <dt>Meta</dt><dd>${esc(inspectorMeta(item).sub)}</dd>
+  </dl>`;
+}
+
+function commandDrawer(kind) {
+  const vm = selectedVm();
+  const drawers = {
+    provision: ["Provision strike", `
+      <div class="form-grid">
+        <div class="field"><label>Boot path</label><select><option>Clone</option><option>WinPE</option></select></div>
+        <div class="field"><label>Sequence</label><select>${appState.sequences.map(s => `<option>${esc(s.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Node</label><select><option>pve2 preferred</option><option>least loaded</option></select></div>
+        <div class="field"><label>Count</label><input value="3"></div>
+      </div>
+      <label class="check"><input type="checkbox" checked> Open monitoring after launch</label>
+      ${button("Stage provision", 'data-action="Provision command staged"', "primary")}
+      ${button("Preview flow", 'data-command="flow"')}
+    `],
+    winpe: ["WinPE OSD deploy", `
+      <div class="form-grid">
+        <div class="field"><label>Blank template VMID</label><input value="9000"></div>
+        <div class="field"><label>WinPE ISO</label><select><option>proxmox-winpe-autopilot.iso</option></select></div>
+        <div class="field"><label>Sequence</label><select><option>WinPE OSD Autopilot</option></select></div>
+        <div class="field"><label>Token state</label><input value="configured"></div>
+      </div>
+      ${button("Stage WinPE run", 'data-action="WinPE command staged"', "primary")}
+    `],
+    template: ["Template forge", `
+      <div class="form-grid">
+        <div class="field"><label>Template</label><select><option>WIN11-GOLD-24H2</option><option>Ubuntu Desktop MDE</option></select></div>
+        <div class="field"><label>Checkpoint</label><select><option>Pause before sysprep</option><option>Seal immediately</option></select></div>
+      </div>
+      <label class="check"><input type="checkbox" checked> Capture build evidence</label>
+      ${button("Stage template build", 'data-action="Template build staged"', "primary")}
+    `],
+    repair: ["Identity repair", `
+      <label class="check"><input type="checkbox" checked> Rename VM to guest hostname</label>
+      <label class="check"><input type="checkbox" checked> Reprobe AD OUs</label>
+      <label class="check"><input type="checkbox"> Force Graph sync watch</label>
+      <label class="check"><input type="checkbox"> Queue Intune remediation</label>
+      ${button("Stage repair", 'data-action="Repair command staged"', "primary")}
+    `],
+    sweep: ["Manual monitoring sweep", `
+      <div class="form-grid">
+        <div class="field"><label>Scope</label><select><option>All monitored VMs</option><option>Selected VM ${esc(vm.vmid)}</option><option>Attention only</option></select></div>
+        <div class="field"><label>Probe depth</label><select><option>PVE + guest + AD + Graph</option><option>PVE only</option></select></div>
+      </div>
+      ${button("Run sweep", 'data-action="Sweep requested"', "primary")}
+    `],
+    retire: ["Retire and verify", `
+      <p>Destructive flow for <b>${esc(vm.name)}</b>. Type <span class="mono">RETIRE</span> to arm the mock command.</p>
+      <label class="check"><input type="checkbox" checked> Stop and delete matching Proxmox VM</label>
+      <label class="check"><input type="checkbox" checked> Delete Intune managed device</label>
+      <label class="check"><input type="checkbox" checked> Delete Autopilot identity</label>
+      <label class="check"><input type="checkbox" checked> Delete Entra device last</label>
+      <div class="field"><label>Confirmation</label><input id="retireConfirm" placeholder="RETIRE"></div>
+      ${button("Stage retire", 'data-retire-confirm="1"', "danger")}
+    `],
+    power: ["Power controls", `
+      <p>Selected target: <b>${esc(vm.name)}</b> / VMID ${vm.vmid}</p>
+      <div class="form-grid">
+        ${["start","shutdown","reboot","stop","reset","suspend"].map(a => button(a, `data-action="VM ${vm.vmid} ${a} staged"`)).join("")}
+      </div>
+    `],
+    console: ["Console", `
+      <p>Open the embedded noVNC console for <b>${esc(vm.name)}</b>.</p>
+      ${button(`Open /api/vms/${vm.vmid}/console`, `data-action="Console opened for VM ${vm.vmid}"`, "primary")}
+      <label class="check"><input type="checkbox"> Send Ctrl-Alt-Delete after connect</label>
+    `],
+    flow: ["Lifecycle flow preview", `<div class="flow">${["Resolve", "Build", "Observe", "Handoff"].map((s, i) => `<div class="flow-step ${i === 0 ? "active" : ""}"><strong>${i + 1}. ${s}</strong><span>Preview command stage ${i + 1} before launch.</span></div>`).join("")}</div>`],
+    componentDrawer: ["Component drawer", `<p>This drawer is the standard command surface: staged controls, confirmation actions, and contextual details.</p>${button("Confirm mock action", 'data-action="Component action confirmed"', "primary")}`]
+  };
+  const [title, html] = drawers[kind] || [kind, `<p>Mock command surface for ${esc(kind)}.</p>${button("Stage action", `data-action="${esc(kind)} staged"`, "primary")}`];
+  openDrawer(title, html);
+}
+
+function bindRouteControls() {
+  $$("[data-route]").forEach(el => {
+    el.onclick = e => {
+      e.preventDefault();
+      packet(el);
+      setRoute(el.dataset.route);
+    };
+  });
+  $$("[data-command]").forEach(el => {
+    el.onclick = e => {
+      e.preventDefault();
+      packet(el);
+      if (el.dataset.vmid) select("vm", el.dataset.vmid);
+      if (el.dataset.command === "scan") {
+        inspector.classList.remove("scan");
+        void inspector.offsetWidth;
+        inspector.classList.add("scan");
+        toast("Inspector scan replayed");
+        return;
+      }
+      commandDrawer(el.dataset.command);
+    };
+  });
+  $$("[data-select-kind]").forEach(el => {
+    el.onclick = e => {
+      if (e.target.closest("[data-command]")) return;
+      packet(el);
+      select(el.dataset.selectKind, el.dataset.selectId);
+    };
+  });
+  $$("[data-filter]").forEach(el => {
+    el.onclick = e => {
+      e.preventDefault();
+      appState.filter = el.dataset.filter;
+      $$(".chip").forEach(c => c.classList.toggle("active", c.dataset.filter === appState.filter));
+      packet(el);
+      applyCurrentFilter();
+      toast(`Filter ${appState.filter}`);
+    };
+  });
+  $$("[data-drawer]").forEach(el => {
+    el.onclick = e => {
+      e.preventDefault();
+      const [title, body] = el.dataset.drawer.split("|");
+      packet(el);
+      openDrawer(title, `<p>${esc(body || "Command detail")}</p>${button("Queue as job", `data-action="${esc(title)} queued"`, "primary")}`);
+    };
+  });
+}
+
+document.addEventListener("click", e => {
+  const railRoute = e.target.closest("#navRail [data-route]");
+  if (railRoute) {
+    e.preventDefault();
+    packet(railRoute);
+    setRoute(railRoute.dataset.route);
+    return;
+  }
+  const commandTarget = e.target.closest("[data-command]");
+  if (commandTarget) {
+    e.preventDefault();
+    packet(commandTarget);
+    if (commandTarget.dataset.vmid) select("vm", commandTarget.dataset.vmid);
+    if (commandTarget.dataset.command === "scan") {
+      inspector.classList.remove("scan");
+      void inspector.offsetWidth;
+      inspector.classList.add("scan");
+      toast("Inspector scan replayed");
+      return;
+    }
+    commandDrawer(commandTarget.dataset.command);
+    return;
+  }
+  const action = e.target.closest("[data-action]");
+  if (action) {
+    e.preventDefault();
+    toast(action.dataset.action);
+  }
+  const retire = e.target.closest("[data-retire-confirm]");
+  if (retire) {
+    e.preventDefault();
+    const value = ($("#retireConfirm")?.value || "").trim();
+    if (value !== "RETIRE") {
+      toast("Type RETIRE to arm destructive mock action");
+      return;
+    }
+    toast("Retire verification job staged");
+    closeDrawer();
+  }
+  const tab = e.target.closest("[data-tab]");
+  if (tab) {
+    e.preventDefault();
+    appState.inspectorTab = tab.dataset.tab;
+    renderInspector();
+  }
+});
+$("#drawerClose").onclick = closeDrawer;
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    search.focus();
+  }
+  if (e.key === "Escape") closeDrawer();
+});
+search.addEventListener("input", e => {
+  appState.query = e.target.value;
+  const q = appState.query.toLowerCase().trim();
+  const routeHit = appState.routes.find(r => q && (r.label.toLowerCase() === q || r.title.toLowerCase().includes(q)));
+  if (routeHit && q.length > 3) {
+    toast(`Route available: ${routeHit.title}`);
+  }
+  applyCurrentFilter();
+});
+let sec = 899;
+setInterval(() => {
+  sec = sec <= 0 ? 899 : sec - 1;
+  const m = String(Math.floor(sec / 60)).padStart(2, "0");
+  const s = String(sec % 60).padStart(2, "0");
+  $("#countdown").textContent = `${m}:${s}`;
+  appState.readiness = 82 + Math.round(Math.sin(Date.now() / 1800) * 2);
+  const score = $("#readinessScore");
+  if (score) score.textContent = appState.readiness;
+}, 1000);
+
+renderRoute();
+</script>
+</body>
+</html>

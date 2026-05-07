@@ -1,27 +1,29 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, alert, empty_state %}
 {% block title %}Task Sequences - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 <style>
-.os-badge { padding: 2px 6px; border-radius: 3px; font-size: 0.8em; color: white; }
-.os-windows { background: #0078d4; }
-.os-ubuntu  { background: #e95420; }
+.os-badge { padding: 2px 8px; border-radius: 999px; font-size: 0.8em; color: white; border:1px solid rgba(255,255,255,0.12); }
+.os-windows { background: var(--ms-blue-dark); }
+.os-ubuntu  { background: var(--warn-fg); }
 </style>
-<h2>Task Sequences
-  <small style="color:var(--ink-soft);font-weight:normal;font-size:11px;">
-    · <a href="/sequences/new">+ New sequence</a>
-  </small>
-</h2>
-<p style="color:var(--ink-muted);font-size:11px;">
+{{ page_head("Task Sequences", "Reusable lifecycle recipes for OEM hardware, OOBE identity, domain join, scripts, reboot gates, and Linux enrollment.", "/sequences/new", "New sequence") }}
+<p class="subtitle">
   A task sequence is an ordered list of steps that together provision a
-  VM — OEM hardware, OOBE account, domain join, scripts. Exactly one
+  VM - OEM hardware, OOBE account, domain join, scripts. Exactly one
   sequence is marked as <b>default</b> and used when the provision page
   doesn't specify one.
 </p>
 
 {% if not sequences %}
-<p><i>No sequences yet. <a href="/sequences/new">Create one</a>.</i></p>
+{{ empty_state("No sequences yet.", action_href="/sequences/new", action_label="Create one", hint="Sequences become the command recipes used by provisioning runs.") }}
 {% else %}
-<table>
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <label>Filter sequences
+    <input type="search" data-cockpit-filter="#sequence-table" placeholder="name, OS, description, default" style="width:100%;margin-top:6px;">
+  </label>
+</section>
+<table id="sequence-table" class="cockpit-scanline">
 <tr><th>Name</th><th>Target OS</th><th>Description</th><th>Steps</th><th>Default?</th>
     <th>Autopilot hash?</th><th>Updated</th><th>Actions</th></tr>
 {% for s in sequences %}
@@ -52,6 +54,6 @@
 {% endif %}
 
 {% if error %}
-<p><span class="status-red">Error:</span> {{ error }}</p>
+{{ alert(error, level="bad") }}
 {% endif %}
 {% endblock %}

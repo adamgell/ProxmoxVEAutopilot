@@ -919,7 +919,9 @@ def sweep_stale_runs(db_path, *, ttl_seconds: int = 1800) -> int:
             "SELECT r.id AS run_id, MAX(s.started_at) AS last_started "
             "FROM provisioning_runs r "
             "JOIN provisioning_run_steps s ON s.run_id = r.id "
-            "WHERE r.state IN ('awaiting_winpe','awaiting_specialize') "
+            "WHERE r.state IN ("
+            "'awaiting_winpe','awaiting_windows_setup',"
+            "'awaiting_osd_client','awaiting_specialize') "
             "  AND s.state = 'running' "
             "GROUP BY r.id "
             "HAVING last_started IS NOT NULL AND last_started < ?",
@@ -929,7 +931,9 @@ def sweep_stale_runs(db_path, *, ttl_seconds: int = 1800) -> int:
             conn.execute(
                 "UPDATE provisioning_runs "
                 "SET state='failed', last_error=?, finished_at=? "
-                "WHERE id=? AND state IN ('awaiting_winpe','awaiting_specialize')",
+                "WHERE id=? AND state IN ("
+                "'awaiting_winpe','awaiting_windows_setup',"
+                "'awaiting_osd_client','awaiting_specialize')",
                 (
                     f"stale; no step update for >{ttl_seconds//60} min",
                     _now(), row["run_id"],

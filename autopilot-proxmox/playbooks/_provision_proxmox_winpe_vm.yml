@@ -1,8 +1,8 @@
 ---
 # WinPE provisioning path. Clones a configured-but-empty template
 # (winpe_blank_template_vmid), POSTs vmid + vm_uuid to Flask, attaches
-# two ISOs (WinPE, Windows source), sets boot order, starts
-# the VM, and waits for the run state to advance to awaiting_specialize.
+# three ISOs (WinPE, Windows source, VirtIO), sets boot order, starts
+# the VM, and waits for the run state to advance through Windows setup.
 #
 # Required extra vars (passed in by web/app.py):
 #   run_id            int    pre-created provisioning_runs row id
@@ -32,10 +32,6 @@
     # ISOs. Otherwise the role boots the VM with no media, BIOS finds
     # nothing on scsi0, and we lose the WinPE entry path.
     vm_start_after_create: false
-    # The installed Windows image now uses inbox SATA/e1000e devices so
-    # it does not need the runtime VirtIO ISO or QGA after WinPE.
-    proxmox_virtio_iso: ""
-
   pre_tasks:
     - name: Validate WinPE path is configured
       ansible.builtin.assert:
@@ -55,7 +51,7 @@
       ansible.builtin.include_role:
         name: proxmox_vm_clone
 
-    - name: Read cloned VM config for WinPE hardware adjustment
+    - name: Read cloned VM config for WinPE hardware validation
       ansible.builtin.uri:
         url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
         method: GET
@@ -65,31 +61,10 @@
         status_code: [200]
       register: _winpe_clone_config
 
-    - name: Fail if WinPE clone has no scsi0 boot disk to move
+    - name: Fail if WinPE clone has no VirtIO SCSI boot disk
       ansible.builtin.fail:
-        msg: "WinPE clone {{ vm_vmid }} has no scsi0 disk to move to SATA."
+        msg: "WinPE clone {{ vm_vmid }} has no scsi0 disk for VirtIO boot testing."
       when: (_winpe_clone_config.json.data.scsi0 | default('')) | length == 0
-
-    - name: Build SATA boot disk config for inbox Windows storage
-      ansible.builtin.set_fact:
-        _winpe_sata1_disk: >-
-          {{ (_winpe_clone_config.json.data.scsi0 | default(''))
-             | regex_replace(',iothread=1', '') }}
-
-    - name: Move installed Windows path to inbox-safe devices
-      ansible.builtin.uri:
-        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
-        method: PUT
-        body_format: form-urlencoded
-        body:
-          delete: "scsi0"
-          sata1: "{{ _winpe_sata1_disk }}"
-          net0: "e1000e,bridge={{ proxmox_bridge }},firewall=0{{ ',tag=' + (proxmox_vlan_tag | string) if proxmox_vlan_tag else '' }}"
-          agent: "enabled=0"
-        headers:
-          Authorization: "{{ proxmox_api_auth_header }}"
-        validate_certs: "{{ proxmox_validate_certs }}"
-        status_code: [200]
 
     - name: POST run identity to Flask
       ansible.builtin.uri:
@@ -125,17 +100,26 @@
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
 
-    # NOTE: WinPE no longer attaches the runtime VirtIO ISO. Windows
-    # boots from sata1 and uses e1000e so first boot does not depend on
-    # drivers that current media may reject as revoked.
-
-    - name: Set boot order to ide2 first then sata1
+    - name: Attach VirtIO drivers ISO at ide3
       ansible.builtin.uri:
         url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
         method: PUT
         body_format: form-urlencoded
         body:
-          boot: "order=ide2;sata1"
+          ide3: "{{ proxmox_virtio_iso }},media=cdrom"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      when: proxmox_virtio_iso is defined and (proxmox_virtio_iso | length) > 0
+
+    - name: Set boot order to ide2 first then scsi0
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          boot: "order=ide2;scsi0"
         headers:
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
@@ -149,12 +133,12 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
 
-    - name: Wait for WinPE phase to finish (state in awaiting_specialize | failed)
+    - name: Wait for WinPE phase to hand off to Windows Setup
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_for_run_state.yml"
       vars:
         _wfrs_run_id: "{{ run_id | int }}"
         _wfrs_accepted_states:
-          - awaiting_specialize
+          - awaiting_windows_setup
           - failed
         _wfrs_timeout: 2400
         _wfrs_poll_interval: 10
@@ -164,10 +148,23 @@
         msg: "WinPE run {{ run_id }} failed: {{ _wfrs_run.last_error | default('unknown') }}"
       when: _wfrs_final_state == 'failed'
 
-    - name: "Follow guest through {{ _causes_reboot_count | default(0) }} reboot(s) after Specialize"
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_reboot_cycle.yml"
-      loop: "{{ range(0, (_causes_reboot_count | default(0) | int) + 1) | list }}"
+    - name: Wait for OSD client to complete Windows Setup continuation
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_for_run_state.yml"
       when: proxmox_winpe_expect_guest_agent | default(false) | bool
+      vars:
+        _wfrs_run_id: "{{ run_id | int }}"
+        _wfrs_accepted_states:
+          - done
+          - failed
+        _wfrs_timeout: 3600
+        _wfrs_poll_interval: 15
+
+    - name: Fail if the OSD client run failed
+      ansible.builtin.fail:
+        msg: "OSD client run {{ run_id }} failed: {{ _wfrs_run.last_error | default('unknown') }}"
+      when:
+        - proxmox_winpe_expect_guest_agent | default(false) | bool
+        - _wfrs_final_state == 'failed'
 
     # Hash capture is QGA-driven (Push scripts -> Execute -> Retrieve CSV)
     # and lives in roles/hash_capture. The clone path runs this role at

@@ -73,20 +73,18 @@ def test_render_phase_layout_post_winpe_uses_new_template():
     assert 'pass="specialize"' in out
 
 
-def test_post_winpe_qga_install_does_not_start_service_in_specialize():
-    """QGA is installed during specialize, but service start waits for
-    Windows' normal specialize-to-OOBE reboot. Starting it inside
-    specialize can race PnP/virtio-serial initialization."""
+def test_post_winpe_qga_install_is_not_in_specialize():
+    """The ConfigMgr-style path keeps specialize/OOBE focused on mini-setup.
+    QGA is now an OSD client step launched by SetupComplete."""
     from web import unattend_renderer
     from web.sequence_compiler import CompiledSequence
     out = unattend_renderer.render_unattend(
         CompiledSequence(), phase_layout="post_winpe",
     )
-    assert "qemu-ga-x86_64.msi" in out
-    assert "D E F G H I" in out
-    assert "exit /b 0" in out
+    assert "qemu-ga-x86_64.msi" not in out
+    assert "D E F G H I" not in out
     assert "<Path>cmd.exe /c sc config QEMU-GA start= auto &amp;&amp; net start QEMU-GA</Path>" not in out
-    assert "Ensure QEMU-GA service is set to auto-start</Description>" in out
+    assert "Ensure QEMU-GA service is set to auto-start</Description>" not in out
 
 
 def test_render_phase_layout_invalid_raises():

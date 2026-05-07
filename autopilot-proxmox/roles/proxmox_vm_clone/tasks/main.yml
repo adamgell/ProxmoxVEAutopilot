@@ -54,7 +54,7 @@
   when:
     - _effective_chassis_type is defined
     - (_effective_chassis_type | int) > 0
-    - not (_skip_chassis_type_smbios_file | default(false) | bool)
+    - not ((_skip_chassis_type_smbios_file | default(false) | string | lower) in ['true', '1', 'yes', 'on'])
 
 # When chassis-type override is in play we generate a per-VM SMBIOS
 # file owning Type 0 + Type 1 + Type 3. Type 1 contains the OEM

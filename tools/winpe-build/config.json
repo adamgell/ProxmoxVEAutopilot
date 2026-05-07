@@ -1,5 +1,5 @@
 {
-  "flask_base_url": "http://192.168.2.50:5055",
+  "flask_base_url": "http://192.168.2.4:5000",
   "flask_base_url_fallback": null,
   "build_sha": "DEV"
 }
