@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -285,11 +286,56 @@ def test_redirect_with_error_encodes_special_chars():
     assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
 
 
-def test_web_writes_service_health_heartbeat_on_startup(pg_conn, client):
-    """The web heartbeat path writes a 'web' row in service_health."""
+@pytest.mark.real_app_database_startup
+def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
+    """Startup creates the service_health table before routes can serve."""
+    from web import app as web_app
+    from web import db_pg, jobs_pg, service_health_pg, ts_engine_pg
+
+    calls = []
+
+    class FakeConn:
+        pass
+
+    @contextmanager
+    def fake_connection(dsn):
+        calls.append(("connect", dsn))
+        yield FakeConn()
+
+    def fake_jobs_init(conn):
+        calls.append(("jobs_init", conn.__class__.__name__))
+
+    def fake_service_health_init(conn=None):
+        calls.append((
+            "service_health_init",
+            conn.__class__.__name__ if conn is not None else "None",
+        ))
+
+    def fake_ts_init(conn):
+        calls.append(("ts_init", conn.__class__.__name__))
+
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://startup-test")
+    monkeypatch.setattr(db_pg, "connection", fake_connection)
+    monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
+    monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
+    monkeypatch.setattr(service_health_pg, "heartbeat", lambda **kwargs: None)
+    monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
+    monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "sequences.db")
+    monkeypatch.setattr(web_app, "SECRETS_DIR", tmp_path / "secrets")
+    monkeypatch.setattr(
+        web_app, "CREDENTIAL_KEY", tmp_path / "secrets" / "credential_key"
+    )
+    web_app._CIPHER = None
+
+    with TestClient(web_app.app):
+        pass
+
+    assert ("service_health_init", "FakeConn") in calls
+
+
+def test_api_services_reads_postgres_rows(pg_conn, client):
     from web import service_health_pg as service_health
-    # Force one heartbeat synchronously via the module-level helper;
-    # we don't need to wait for the async loop to tick.
+
     service_health.init(pg_conn)
     pg_conn.execute("TRUNCATE service_health")
     pg_conn.commit()
@@ -297,9 +343,15 @@ def test_web_writes_service_health_heartbeat_on_startup(pg_conn, client):
         service_id="web", service_type="web",
         version_sha="testsha", detail="idle",
     )
-    rows = service_health.list_services()
-    ids = [r["service_id"] for r in rows]
-    assert "web" in ids
+
+    r = client.get("/api/services")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["services"][0]["service_id"] == "web"
+    assert body["services"][0]["version_sha"] == "testsha"
+    assert body["services"][0]["status"] == "ok"
 
 
 def test_kill_sets_kill_requested_flag(client, pg_conn):

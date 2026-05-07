@@ -806,10 +806,11 @@ def _init_sequences_db() -> None:
 
 
 def _init_jobs_database() -> None:
-    from web import db_pg
+    from web import db_pg, service_health_pg
 
     with db_pg.connection(_database_url()) as conn:
         jobs_db.init(conn)
+        service_health_pg.init(conn)
 
 
 @app.on_event("startup")
@@ -4789,58 +4790,10 @@ async def api_running_jobs():
 
 @app.get("/api/services")
 async def api_services():
-    """Read per-service heartbeats from the ``service_health`` table.
+    """Read per-service heartbeats from the PostgreSQL service_health table."""
+    from web import service_health_pg
 
-    The table is owned by the microservice-split PR — until that
-    ships, the table won't exist. In that case we return
-    ``{"services": [], "available": false}`` so the dashboard strip
-    can hide itself gracefully without throwing a 500.
-    """
-    db_path = DEVICE_MONITOR_DB
-    if not db_path.exists():
-        return {"services": [], "available": False}
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        try:
-            exists = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='service_health'"
-            ).fetchone()
-            if not exists:
-                return {"services": [], "available": False}
-            rows = conn.execute(
-                "SELECT service_id, service_type, version_sha, "
-                "started_at, last_heartbeat, detail "
-                "FROM service_health ORDER BY service_type, service_id"
-            ).fetchall()
-        finally:
-            conn.close()
-    except Exception:
-        # Schema drift, lock contention, corrupted file — don't
-        # blow up the dashboard. Silently degrade.
-        return {"services": [], "available": False}
-
-    now = datetime.now(timezone.utc)
-    out = []
-    for r in rows:
-        age = None
-        hb = r["last_heartbeat"]
-        if hb:
-            try:
-                age = int((now - datetime.fromisoformat(hb)).total_seconds())
-            except Exception:
-                age = None
-        out.append({
-            "service_id":     r["service_id"],
-            "service_type":   r["service_type"],
-            "version_sha":    r["version_sha"],
-            "started_at":     r["started_at"],
-            "last_heartbeat": hb,
-            "detail":         r["detail"],
-            "age_seconds":    age,
-        })
-    return {"services": out, "available": True}
+    return {"services": service_health_pg.list_services(), "available": True}
 
 
 @app.get("/api/fleet/summary")
