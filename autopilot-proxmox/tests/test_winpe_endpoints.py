@@ -2,6 +2,15 @@
 import pytest
 
 
+CONFIGMGR_WINPE_SPINE = [
+    "partition_disk",
+    "apply_wim",
+    "apply_driver_package",
+    "prepare_windows_setup",
+    "stage_osd_client",
+]
+
+
 def _create_seq(client, **overrides):
     """Helper: create a sequence via the existing API and return its id.
 
@@ -109,7 +118,8 @@ def test_register_returns_actions_and_token(web_client, test_db):
     assert body["bearer_token"]
     assert isinstance(body["actions"], list)
     kinds = [a["kind"] for a in body["actions"]]
-    assert "partition_disk" in kinds
+    assert kinds[:len(CONFIGMGR_WINPE_SPINE)] == CONFIGMGR_WINPE_SPINE
+    assert kinds[-1] == "handoff_to_windows_setup"
 
 
 def test_register_persists_steps(web_client, test_db):
@@ -126,7 +136,8 @@ def test_register_persists_steps(web_client, test_db):
     from web import sequences_db
     steps = sequences_db.list_run_steps(test_db, run_id=run_id)
     kinds = [s["kind"] for s in steps]
-    assert kinds[0] == "partition_disk"
+    assert kinds[:len(CONFIGMGR_WINPE_SPINE)] == CONFIGMGR_WINPE_SPINE
+    assert kinds[-1] == "handoff_to_windows_setup"
     assert all(s["state"] == "pending" for s in steps)
 
 
@@ -475,7 +486,7 @@ def test_done_advances_run_state_and_calls_proxmox(web_client, test_db, monkeypa
     assert power_cycles == [{"vmid": 100}]
 
 
-def test_done_uses_virtio_handoff_boot_order_for_injected_wim(
+def test_done_uses_virtio_handoff_boot_order_for_windows_setup(
     web_client, test_db, monkeypatch,
 ):
     calls = []
@@ -529,6 +540,14 @@ def test_osd_package_returns_setupcomplete_and_client(web_client, test_db):
     paths = [f["path"] for f in body["files"]]
     assert r"V:\Windows\Setup\Scripts\SetupComplete.cmd" in paths
     assert any(p.endswith(r"\OsdClient.ps1") for p in paths)
+    import base64
+    files = {
+        f["path"]: base64.b64decode(f["content_b64"])
+        for f in body["files"]
+    }
+    assert b"OsdClient.ps1" in files[
+        r"V:\Windows\Setup\Scripts\SetupComplete.cmd"
+    ]
     assert body["bearer_token"]
 
 
@@ -877,7 +896,9 @@ def test_api_run_returns_state_and_steps(web_client, test_db):
     assert body["id"] == run_id
     assert body["state"] == "awaiting_winpe"
     assert isinstance(body["steps"], list)
-    assert body["steps"][0]["kind"] == "partition_disk"
+    assert [s["kind"] for s in body["steps"][:len(CONFIGMGR_WINPE_SPINE)]] == (
+        CONFIGMGR_WINPE_SPINE
+    )
 
 
 def test_api_run_returns_404_for_unknown(web_client):
@@ -1052,6 +1073,7 @@ def test_run_detail_page_renders(web_client, test_db):
     r = web_client.get(f"/runs/{run_id}")
     assert r.status_code == 200
     assert b"partition_disk" in r.content
+    assert b"stage_osd_client" in r.content
     assert b"awaiting_winpe" in r.content
 
 

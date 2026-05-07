@@ -15,6 +15,27 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+CONFIGMGR_WINPE_STEPS = [
+    ("Partition Disk", "partition_disk", {}),
+    ("Apply Windows Image", "apply_wim", {
+        "image_index_metadata_name": "Windows 11 Enterprise",
+    }),
+    ("Apply Driver Package", "apply_driver_package", {
+        "architecture": "amd64",
+        "required_infs": [
+            "vioscsi.inf",
+            "viostor.inf",
+            "netkvm.inf",
+            "vioser.inf",
+            "balloon.inf",
+        ],
+        "optional": True,
+    }),
+    ("Prepare Windows Setup", "prepare_windows_setup", {}),
+    ("Stage OSD Client", "stage_osd_client", {}),
+]
+
+
 @pytest.fixture(scope="module")
 def pg_dsn():
     container = subprocess.check_output(
@@ -104,15 +125,17 @@ def _create_run(
     from web import ts_engine_pg
 
     sequence_id = ts_engine_pg.create_sequence(pg_conn, name="OSD v2 Demo")
-    ts_engine_pg.add_step(
-        pg_conn,
-        sequence_id=sequence_id,
-        parent_id=None,
-        name="Partition Disk",
-        kind="partition_disk",
-        phase="winpe",
-        position=0,
-    )
+    for position, (name, kind, params) in enumerate(CONFIGMGR_WINPE_STEPS):
+        ts_engine_pg.add_step(
+            pg_conn,
+            sequence_id=sequence_id,
+            parent_id=None,
+            name=name,
+            kind=kind,
+            phase="winpe",
+            position=position,
+            params=params,
+        )
     if not winpe_only:
         ts_engine_pg.add_step(
             pg_conn,
@@ -121,7 +144,7 @@ def _create_run(
             name="Install QGA",
             kind="install_qga",
             phase="full_os",
-            position=1,
+            position=len(CONFIGMGR_WINPE_STEPS),
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
             reboot_behavior=reboot_behavior,
@@ -207,6 +230,38 @@ def test_agent_register_next_logs_and_result_complete_step(osd_v2_client, pg_con
     assert result.status_code == 200, result.text
     assert result.json()["step"]["state"] == "done"
     assert ts_engine_pg.list_run_steps(pg_conn, run_id)[0]["state"] == "done"
+
+
+def test_winpe_agent_next_exposes_configmgr_osd_spine(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "winpe-1", "phase": "winpe"},
+    ).json()
+
+    nxt = osd_v2_client.post(
+        "/osd/v2/agent/next",
+        json={
+            "run_id": run_id,
+            "agent_id": "winpe-1",
+            "phase": "winpe",
+            "batch_size": 10,
+        },
+        headers=_bearer(reg["bearer_token"]),
+    )
+
+    assert nxt.status_code == 200, nxt.text
+    actions = nxt.json()["actions"]
+    assert [action["kind"] for action in actions] == [
+        kind for _, kind, _ in CONFIGMGR_WINPE_STEPS
+    ]
+    assert actions[1]["params"]["image_index_metadata_name"] == (
+        "Windows 11 Enterprise"
+    )
+    assert actions[2]["params"]["required_infs"][:2] == [
+        "vioscsi.inf",
+        "viostor.inf",
+    ]
 
 
 def test_full_os_agent_cannot_claim_winpe_only_step(osd_v2_client, pg_conn):

@@ -2,6 +2,20 @@
 import pytest
 
 
+CONFIGMGR_WINPE_SPINE = [
+    "partition_disk",
+    "apply_wim",
+    "apply_driver_package",
+    "prepare_windows_setup",
+    "stage_osd_client",
+]
+
+WINDOWS_SETUP_HANDOFF = [
+    "bake_boot_entry",
+    "handoff_to_windows_setup",
+]
+
+
 def test_compiled_winpe_phase_default_fields():
     from web.sequence_compiler import CompiledWinPEPhase
     p = CompiledWinPEPhase()
@@ -31,19 +45,12 @@ def _seq(name="s", steps=None, autopilot_enabled=False, hash_phase="oobe"):
     }
 
 
-def test_compile_winpe_baseline_action_order():
+def test_compile_winpe_configmgr_osd_action_spine():
     from web.sequence_compiler import compile_winpe
     p = compile_winpe(_seq())
     kinds = [a["kind"] for a in p.actions]
-    assert kinds == [
-        "partition_disk",
-        "apply_wim",
-        "apply_driver_package",
-        "prepare_windows_setup",
-        "stage_osd_client",
-        "bake_boot_entry",
-        "handoff_to_windows_setup",
-    ]
+    assert kinds[:len(CONFIGMGR_WINPE_SPINE)] == CONFIGMGR_WINPE_SPINE
+    assert kinds[len(CONFIGMGR_WINPE_SPINE):] == WINDOWS_SETUP_HANDOFF
 
 
 def test_compile_winpe_omits_stage_autopilot_config_when_enabled():

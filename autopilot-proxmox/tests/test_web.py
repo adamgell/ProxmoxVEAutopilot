@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -28,6 +29,7 @@ def client(tmp_dirs):
         # UNIQUE-constraint collisions across tests.
         from web import jobs_db
         jobs_db.init(jobs_db_path)
+        import web.app  # noqa: F401 - make web.app resolvable for patch()
         with patch("web.app.HASH_DIR", Path(hash_dir)):
             with patch("web.app.SEQUENCES_DB", seq_db):
                 with patch("web.app.JOBS_DB", jobs_db_path):
@@ -406,6 +408,107 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
     live_vms.assert_not_called()
 
 
+def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path):
+    """Rows built from monitor snapshots should show when PVE/probe data
+    was last checked, and the header should expose sweep freshness."""
+    from web import app as app_module, device_history_db
+
+    monitor_db = tmp_path / "device_monitor.db"
+    device_history_db.init(monitor_db)
+    sweep_id = device_history_db.start_sweep(monitor_db)
+    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+        "vmid": 117,
+        "node": "pve2",
+        "name": "freshness-vm",
+        "status": "running",
+        "tags_csv": "autopilot",
+        "checked_at": "2026-04-20T23:55:00+00:00",
+        "config_digest": "digest",
+    })
+    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+        "vmid": 117,
+        "vm_name": "freshness-vm",
+        "win_name": "freshness-vm",
+        "serial": "FRESH117",
+        "checked_at": "2026-04-20T23:56:30+00:00",
+    })
+    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+
+    app_module._VMS_CACHE.update(
+        {"data": None, "devices": None, "hash_serials": None,
+         "fetched_at": 0.0, "refreshing": False},
+    )
+    with patch("web.app.DEVICE_MONITOR_DB", monitor_db), \
+         patch("web.app.get_autopilot_devices", return_value=([], None)), \
+         patch("web.app.get_hash_files", return_value=[]), \
+         patch("web.app._refresh_vms_cache_bg"):
+        r = client.get("/vms")
+
+    assert r.status_code == 200
+    assert "Last monitor sweep" in r.text
+    assert "Last checked" in r.text
+    assert "Last probed" in r.text
+    assert 'data-utc="2026-04-20T23:55:00+00:00"' in r.text
+    assert 'data-utc="2026-04-20T23:56:30+00:00"' in r.text
+
+
+def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeypatch):
+    """A manual monitoring sweep should not leave a warm /vms cache serving
+    the pre-sweep VM rows after the sweep task has completed."""
+    from web import app as app_module, device_history_db, monitor_main
+
+    monitor_db = tmp_path / "device_monitor.db"
+    device_history_db.init(monitor_db)
+    app_module._VMS_CACHE.update({
+        "data": [{
+            "vmid": 199,
+            "name": "stale-vm",
+            "status": "running",
+            "serial": "STALE199",
+            "oem": "",
+            "hostname": "stale-vm",
+            "tags": "autopilot",
+        }],
+        "devices": ([], None),
+        "hash_serials": set(),
+        "fetched_at": app_module.time.monotonic(),
+        "refreshing": False,
+    })
+
+    def fake_sweep(db_path):
+        sweep_id = device_history_db.start_sweep(db_path)
+        device_history_db.insert_pve_snapshot(db_path, sweep_id, {
+            "vmid": 200,
+            "node": "pve2",
+            "name": "fresh-vm",
+            "status": "running",
+            "tags_csv": "autopilot",
+            "checked_at": "2026-04-21T00:00:00+00:00",
+            "config_digest": "digest",
+        })
+        device_history_db.insert_device_probe(db_path, sweep_id, {
+            "vmid": 200,
+            "vm_name": "fresh-vm",
+            "win_name": "fresh-vm",
+            "serial": "FRESH200",
+            "checked_at": "2026-04-21T00:00:05+00:00",
+        })
+        device_history_db.finish_sweep(db_path, sweep_id, vm_count=1)
+
+    monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", monitor_db)
+    monkeypatch.setattr(monitor_main, "_do_sweep_tick", fake_sweep)
+    monkeypatch.setattr(app_module, "get_autopilot_devices", lambda: ([], None))
+    monkeypatch.setattr(app_module, "get_hash_files", lambda: [])
+
+    r = client.post("/api/monitoring/sweep-now")
+    assert r.status_code == 202
+
+    r = client.get("/vms")
+    assert r.status_code == 200
+    assert "fresh-vm" in r.text
+    assert "stale-vm" not in r.text
+
+
 def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path):
     """If Entra reports trustType=ServerAd, the hostname badge should show
     domain evidence instead of falling through to workgroup."""
@@ -489,6 +592,60 @@ def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path):
     assert r.status_code == 200
     assert "Entra ID joined" in r.text
     assert ">Entra ID<" in r.text
+    assert ">workgroup<" not in r.text
+
+
+def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path):
+    """When Entra was found by Intune azureADDeviceId linkage, the
+    hostname bubble should expose that source in the tooltip."""
+    from web import app as app_module, device_history_db
+
+    device_id = "6a0ba1f9-0090-4683-aee3-31a6abc1e4ad"
+    monitor_db = tmp_path / "device_monitor.db"
+    device_history_db.init(monitor_db)
+    sweep_id = device_history_db.start_sweep(monitor_db)
+    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+        "vmid": 108,
+        "node": "pve2",
+        "name": "Gell-60F03E42",
+        "status": "running",
+        "tags_csv": "autopilot",
+        "config_digest": "digest",
+    })
+    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+        "vmid": 108,
+        "vm_name": "Gell-60F03E42",
+        "win_name": "Gell-60F03E42",
+        "serial": "Gell-60F03E42",
+        "entra_found": 1,
+        "entra_match_count": 1,
+        "entra_matches_json": json.dumps([{
+            "displayName": "WIN-C4P3CQ6R5LQ",
+            "deviceId": device_id,
+            "trustType": "AzureAd",
+        }]),
+        "intune_found": 1,
+        "intune_match_count": 1,
+        "intune_matches_json": json.dumps([{
+            "deviceName": "WIN-C4P3CQ6R5LQ",
+            "azureADDeviceId": device_id,
+        }]),
+    })
+    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+
+    app_module._VMS_CACHE.update(
+        {"data": None, "devices": None, "hash_serials": None,
+         "fetched_at": 0.0, "refreshing": False},
+    )
+    with patch("web.app.DEVICE_MONITOR_DB", monitor_db), \
+         patch("web.app.get_autopilot_devices", return_value=([], None)), \
+         patch("web.app.get_hash_files", return_value=[]), \
+         patch("web.app._refresh_vms_cache_bg"):
+        r = client.get("/vms")
+
+    assert r.status_code == 200
+    assert ">Entra ID<" in r.text
+    assert "Intune azureADDeviceId -&gt; Entra deviceId" in r.text
     assert ">workgroup<" not in r.text
 
 
