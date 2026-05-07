@@ -134,13 +134,13 @@ class SequenceRunCreateBody(BaseModel):
 def _database_url() -> str:
     from web import app as web_app
 
-    dsn = web_app._ts_engine_database_url()
-    if not dsn:
+    try:
+        return web_app._database_url()
+    except RuntimeError:
         raise HTTPException(
             status_code=503,
             detail="Task Sequence Engine v2 database is not configured",
         )
-    return dsn
 
 
 @contextmanager

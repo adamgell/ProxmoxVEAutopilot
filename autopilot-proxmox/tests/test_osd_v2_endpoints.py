@@ -114,6 +114,15 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_database_url_prefers_autopilot_database_url(monkeypatch):
+    from web import osd_v2_endpoints
+
+    monkeypatch.setenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", "postgresql://old")
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
+
+    assert osd_v2_endpoints._database_url() == "postgresql://new"
+
+
 def _create_run(
     pg_conn,
     *,
