@@ -22,23 +22,16 @@ def client(tmp_dirs):
     jobs_dir, hash_dir = tmp_dirs
     with tempfile.TemporaryDirectory() as seq_dir:
         seq_db = Path(seq_dir) / "sequences.db"
-        jobs_db_path = Path(seq_dir) / "jobs.db"
         sequences_db.init(seq_db)
-        # Also init jobs.db here — post-Task-13 tests enqueue/claim
-        # against app_module.JOBS_DB and a fresh temp DB prevents
-        # UNIQUE-constraint collisions across tests.
-        from web import jobs_db
-        jobs_db.init(jobs_db_path)
         import web.app  # noqa: F401 - make web.app resolvable for patch()
         with patch("web.app.HASH_DIR", Path(hash_dir)):
             with patch("web.app.SEQUENCES_DB", seq_db):
-                with patch("web.app.JOBS_DB", jobs_db_path):
-                    with patch("web.app.job_manager") as mock_manager:
-                        from web.app import app
-                        mock_manager.list_jobs.return_value = []
-                        mock_manager.jobs_dir = jobs_dir
-                        with TestClient(app) as tc:
-                            yield tc
+                with patch("web.app.job_manager") as mock_manager:
+                    from web.app import app
+                    mock_manager.list_jobs.return_value = []
+                    mock_manager.jobs_dir = jobs_dir
+                    with TestClient(app) as tc:
+                        yield tc
 
 
 def test_home_page_renders(client):
@@ -307,18 +300,23 @@ def test_web_writes_service_health_heartbeat_on_startup(client):
     assert "web" in ids
 
 
-def test_kill_sets_kill_requested_flag(client):
+def test_kill_sets_kill_requested_flag(client, pg_conn):
     """POST /api/jobs/<id>/kill flips kill_requested=1 and redirects."""
-    from web import app as app_module, jobs_db
-    jobs_db.enqueue(app_module.JOBS_DB, job_id="live",
-                    job_type="capture_hash", playbook="x",
-                    cmd=["sleep", "1"], args={})
-    jobs_db.claim_next_job(app_module.JOBS_DB, worker_id="test-worker")
+    from web import jobs_pg as jobs_db
+
+    jobs_db.enqueue(
+        job_id="live",
+        job_type="capture_hash",
+        playbook="x",
+        cmd=["sleep", "1"],
+        args={},
+    )
+    jobs_db.claim_next_job(worker_id="test-worker")
 
     r = client.post("/api/jobs/live/kill", follow_redirects=False)
     assert r.status_code == 303
-    row = jobs_db.get_job(app_module.JOBS_DB, "live")
-    assert row["kill_requested"] == 1
+    row = jobs_db.get_job("live")
+    assert row["kill_requested"] is True
 
 
 def test_healthz_ok_after_startup(client):

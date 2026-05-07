@@ -28,6 +28,10 @@ as-is.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import time
+from contextlib import closing
 
 # Tests never go through Entra — flip the auth bypass BEFORE web.app
 # is imported so the env check in app.py picks it up.
@@ -86,6 +90,76 @@ def app_database_startup_bootstrap(monkeypatch, request):
     from web import app as web_app
 
     monkeypatch.setattr(web_app, "_init_app_database", lambda: None)
+    monkeypatch.setattr(web_app, "_init_jobs_database", lambda: None)
+
+
+@pytest.fixture(scope="session")
+def pg_dsn():
+    if shutil.which("docker") is None:
+        pytest.skip("docker is required for PostgreSQL-backed tests")
+    container = subprocess.check_output(
+        [
+            "docker",
+            "run",
+            "-d",
+            "-e",
+            "POSTGRES_PASSWORD=postgres",
+            "-e",
+            "POSTGRES_DB=autopilot_test",
+            "-p",
+            "127.0.0.1::5432",
+            "postgres:16-alpine",
+        ],
+        text=True,
+    ).strip()
+    try:
+        port = subprocess.check_output(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostPort}}",
+                container,
+            ],
+            text=True,
+        ).strip()
+        dsn = (
+            f"postgresql://postgres:postgres@127.0.0.1:{port}/"
+            "autopilot_test"
+        )
+        import psycopg
+
+        deadline = time.time() + 30
+        while True:
+            try:
+                with psycopg.connect(dsn) as conn:
+                    conn.execute("select 1")
+                break
+            except Exception:
+                if time.time() > deadline:
+                    logs = subprocess.run(
+                        ["docker", "logs", container],
+                        text=True,
+                        capture_output=True,
+                    ).stdout
+                    raise RuntimeError(f"postgres did not start:\n{logs}")
+                time.sleep(0.5)
+        yield dsn
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], check=False)
+
+
+@pytest.fixture
+def pg_conn(pg_dsn, monkeypatch):
+    import psycopg
+    from psycopg.rows import dict_row
+    from web import jobs_pg
+
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    with closing(psycopg.connect(pg_dsn, row_factory=dict_row)) as conn:
+        jobs_pg.reset_for_tests(conn)
+        jobs_pg.init(conn)
+        yield conn
 
 
 @pytest.fixture

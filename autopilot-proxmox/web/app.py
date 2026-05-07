@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from web.jobs import JobManager
 from web import devices_db
-from web import jobs_db
+from web import jobs_pg as jobs_db
 from web import monitoring_evidence
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -465,7 +465,6 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["tojson"] = lambda x, indent=None: json.dumps(x, indent=indent)
 job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
-    jobs_db_path=JOBS_DB,
 )
 
 from web import sequences_db, crypto as _crypto
@@ -806,14 +805,13 @@ def _init_sequences_db() -> None:
     _SEQUENCES_READY = True
 
 
+def _init_jobs_database() -> None:
+    jobs_db.init()
+
+
 @app.on_event("startup")
 def _init_jobs_db_and_migrate() -> None:
-    from web import jobs_db, jobs_migration
-    jobs_db.init(JOBS_DB)
-    jobs_migration.migrate_legacy_index(
-        jobs_dir=Path(job_manager.jobs_dir),
-        db_path=JOBS_DB,
-    )
+    _init_jobs_database()
     global _JOBS_READY
     _JOBS_READY = True
 
@@ -4652,13 +4650,13 @@ async def kill_job(job_id: str):
     """Request termination. Flips kill_requested=1 on the job row; the
     builder owning the job will see it on its next heartbeat cycle
     (~5s max) and SIGTERM the subprocess. Redirects to /jobs/<id>."""
-    row = jobs_db.get_job(JOBS_DB, job_id)
+    row = jobs_db.get_job(job_id)
     if row is None:
         raise HTTPException(404, f"job {job_id} not found")
     if row["status"] != "running":
         # Already done; ignore quietly so double-clicks don't 400.
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
-    jobs_db.request_kill(JOBS_DB, job_id)
+    jobs_db.request_kill(job_id)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
