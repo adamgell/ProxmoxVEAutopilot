@@ -271,6 +271,84 @@ def test_sweep_includes_vmids_from_extra_in_scope_even_without_tag(db):
     assert [r["vmid"] for r in rows] == [999]
 
 
+def test_latest_per_vmid_hides_vms_not_seen_in_latest_sweep(db):
+    from web import device_history_db
+
+    old_sweep = device_history_db.start_sweep(db)
+    device_history_db.insert_pve_snapshot(db, old_sweep, {
+        "vmid": 118,
+        "status": "running",
+        "node": "pve2",
+        "name": "OLD-E2E",
+        "config_digest": "old",
+        "checked_at": "2026-05-05T20:02:14+00:00",
+    })
+    device_history_db.insert_device_probe(db, old_sweep, {
+        "vmid": 118,
+        "win_name": "OLD-E2E",
+        "serial": "OLD-SERIAL",
+        "checked_at": "2026-05-05T20:02:15+00:00",
+    })
+    device_history_db.finish_sweep(db, old_sweep, vm_count=1)
+
+    current_sweep = device_history_db.start_sweep(db)
+    device_history_db.insert_pve_snapshot(db, current_sweep, {
+        "vmid": 116,
+        "status": "running",
+        "node": "pve2",
+        "name": "CURRENT",
+        "config_digest": "current",
+        "checked_at": "2026-05-07T15:13:44+00:00",
+    })
+    device_history_db.insert_device_probe(db, current_sweep, {
+        "vmid": 116,
+        "win_name": "CURRENT",
+        "serial": "CURRENT-SERIAL",
+        "checked_at": "2026-05-07T15:13:48+00:00",
+    })
+    device_history_db.finish_sweep(db, current_sweep, vm_count=1)
+
+    rows = device_history_db.latest_per_vmid(db)
+    assert [r["vmid"] for r in rows] == [116]
+    assert rows[0]["probe"]["win_name"] == "CURRENT"
+
+
+def test_latest_per_vmid_does_not_pair_current_pve_with_stale_probe(db):
+    from web import device_history_db
+
+    old_sweep = device_history_db.start_sweep(db)
+    device_history_db.insert_pve_snapshot(db, old_sweep, {
+        "vmid": 116,
+        "status": "running",
+        "node": "pve2",
+        "name": "DEVICE",
+        "config_digest": "old",
+        "checked_at": "2026-05-07T14:00:00+00:00",
+    })
+    device_history_db.insert_device_probe(db, old_sweep, {
+        "vmid": 116,
+        "win_name": "STALE-WINDOWS-NAME",
+        "serial": "STALE-SERIAL",
+        "checked_at": "2026-05-07T14:00:05+00:00",
+    })
+    device_history_db.finish_sweep(db, old_sweep, vm_count=1)
+
+    current_sweep = device_history_db.start_sweep(db)
+    device_history_db.insert_pve_snapshot(db, current_sweep, {
+        "vmid": 116,
+        "status": "running",
+        "node": "pve2",
+        "name": "DEVICE",
+        "config_digest": "current",
+        "checked_at": "2026-05-07T15:13:44+00:00",
+    })
+    device_history_db.finish_sweep(db, current_sweep, vm_count=1)
+
+    rows = device_history_db.latest_per_vmid(db)
+    assert [r["vmid"] for r in rows] == [116]
+    assert rows[0]["probe"] is None
+
+
 def test_sweep_records_pve_list_failure_on_sweep_row(db):
     from web import device_history_db, device_monitor
 
