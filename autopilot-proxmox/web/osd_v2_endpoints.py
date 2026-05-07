@@ -19,6 +19,7 @@ from web import ts_engine_pg, winpe_token
 
 router = APIRouter(prefix="/osd/v2", tags=["osd-v2"])
 api_router = APIRouter(prefix="/api/osd/v2", tags=["osd-v2-api"])
+content_api_router = APIRouter(prefix="/api/content", tags=["content"])
 
 _AGENT_TOKEN_TTL = 24 * 60 * 60
 
@@ -79,6 +80,13 @@ class ContentVersionCreateBody(BaseModel):
     sha256: str = Field(pattern=r"^[A-Fa-f0-9]{64}$")
     source_uri: str = Field(min_length=1)
     size_bytes: Optional[int] = Field(default=None, ge=0)
+    architecture: str = Field(default="any", min_length=1)
+    target_os: str = Field(default="any", min_length=1)
+    reboot_behavior: str = Field(
+        default="none",
+        pattern=r"^(none|optional|required|deferred)$",
+    )
+    conditions: dict = Field(default_factory=dict)
     metadata: dict = Field(default_factory=dict)
 
 
@@ -360,6 +368,10 @@ def create_content_version(item_id: str, body: ContentVersionCreateBody):
                 sha256=body.sha256.lower(),
                 source_uri=body.source_uri,
                 size_bytes=body.size_bytes,
+                architecture=body.architecture,
+                target_os=body.target_os,
+                reboot_behavior=body.reboot_behavior,
+                conditions=body.conditions,
                 metadata=body.metadata,
             )
         except UniqueViolation:
@@ -372,3 +384,24 @@ def create_content_version(item_id: str, body: ContentVersionCreateBody):
             conn.rollback()
             raise HTTPException(status_code=404, detail="content item not found")
         return ts_engine_pg.get_content_version(conn, version_id)
+
+
+@content_api_router.get("/manifest")
+def get_global_content_manifest():
+    with _conn() as conn:
+        return ts_engine_pg.build_content_manifest_v1(conn)
+
+
+@content_api_router.get("/items")
+def list_global_content_items():
+    return list_content_items()
+
+
+@content_api_router.post("/items", status_code=201)
+def create_global_content_item(body: ContentItemCreateBody):
+    return create_content_item(body)
+
+
+@content_api_router.post("/items/{item_id}/versions", status_code=201)
+def create_global_content_version(item_id: str, body: ContentVersionCreateBody):
+    return create_content_version(item_id, body)

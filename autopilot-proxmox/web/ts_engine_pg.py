@@ -190,11 +190,24 @@ CREATE TABLE IF NOT EXISTS ts_content_versions (
     sha256 text NOT NULL,
     size_bytes bigint NULL,
     source_uri text NOT NULL,
+    architecture text NOT NULL DEFAULT 'any',
+    target_os text NOT NULL DEFAULT 'any',
+    reboot_behavior text NOT NULL DEFAULT 'none',
+    conditions_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL,
     created_by text,
     UNIQUE (content_item_id, version)
 );
+
+ALTER TABLE ts_content_versions
+    ADD COLUMN IF NOT EXISTS architecture text NOT NULL DEFAULT 'any';
+ALTER TABLE ts_content_versions
+    ADD COLUMN IF NOT EXISTS target_os text NOT NULL DEFAULT 'any';
+ALTER TABLE ts_content_versions
+    ADD COLUMN IF NOT EXISTS reboot_behavior text NOT NULL DEFAULT 'none';
+ALTER TABLE ts_content_versions
+    ADD COLUMN IF NOT EXISTS conditions_json jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_ts_content_versions_sha256
     ON ts_content_versions(sha256);
@@ -764,6 +777,10 @@ def create_content_version(
     sha256: str,
     source_uri: str,
     size_bytes: Optional[int] = None,
+    architecture: str = "any",
+    target_os: str = "any",
+    reboot_behavior: str = "none",
+    conditions: Optional[dict] = None,
     metadata: Optional[dict] = None,
     created_by: Optional[str] = None,
 ) -> str:
@@ -772,17 +789,22 @@ def create_content_version(
         """
         INSERT INTO ts_content_versions (
             id, content_item_id, version, sha256, size_bytes, source_uri,
+            architecture, target_os, reboot_behavior, conditions_json,
             metadata_json, created_at, created_by
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             version_id,
             content_item_id,
             version,
-            sha256,
+            sha256.lower(),
             size_bytes,
             source_uri,
+            architecture,
+            target_os,
+            reboot_behavior,
+            _json(conditions or {}),
             _json(metadata or {}),
             _now(),
             created_by,
@@ -892,7 +914,70 @@ def _normalize_content_version(row: dict) -> dict:
         "sha256": row["sha256"],
         "size_bytes": row["size_bytes"],
         "source_uri": row["source_uri"],
+        "architecture": row["architecture"],
+        "target_os": row["target_os"],
+        "reboot_behavior": row["reboot_behavior"],
+        "conditions": row["conditions_json"],
         "metadata": row["metadata_json"],
+    }
+
+
+def build_content_manifest_v1(conn: Connection) -> dict:
+    """Build the global Content Manifest v1 from latest enabled versions."""
+    from web.content_manifest import manifest_digest, validate_manifest
+
+    rows = conn.execute(
+        """
+        SELECT
+            ci.name,
+            ci.content_type,
+            latest.version,
+            latest.sha256,
+            latest.size_bytes,
+            latest.source_uri,
+            latest.architecture,
+            latest.target_os,
+            latest.reboot_behavior,
+            latest.conditions_json,
+            latest.metadata_json
+        FROM ts_content_items ci
+        JOIN LATERAL (
+            SELECT *
+            FROM ts_content_versions cv
+            WHERE cv.content_item_id = ci.id
+            ORDER BY cv.created_at DESC, cv.id DESC
+            LIMIT 1
+        ) latest ON true
+        WHERE ci.enabled = true
+        ORDER BY ci.name
+        """
+    ).fetchall()
+    raw = {
+        "schema_version": 1,
+        "items": [
+            {
+                "id": row["name"],
+                "kind": row["content_type"],
+                "name": row["name"],
+                "version": row["version"],
+                "source_uri": row["source_uri"],
+                "sha256": row["sha256"],
+                "size_bytes": int(row["size_bytes"] or 0),
+                "architecture": row["architecture"],
+                "target_os": row["target_os"],
+                "reboot_behavior": row["reboot_behavior"],
+                "conditions": row["conditions_json"] or {},
+                "metadata": row["metadata_json"] or {},
+            }
+            for row in rows
+        ],
+    }
+    manifest = validate_manifest(raw).to_dict()
+    return {
+        "schema_version": 1,
+        "manifest": manifest,
+        "digest": manifest_digest(manifest),
+        "item_count": len(manifest["items"]),
     }
 
 
