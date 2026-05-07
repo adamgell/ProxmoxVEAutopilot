@@ -134,6 +134,18 @@ def _action_from_step(conn, step: dict) -> dict:
     }
 
 
+def _manifest_response(conn, run_id: str) -> dict:
+    try:
+        ts_engine_pg.get_run(conn, run_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "items": ts_engine_pg.list_run_manifest(conn, run_id),
+    }
+
+
 @router.post("/agent/register")
 def register_agent(body: AgentRegisterBody):
     with _conn() as conn:
@@ -285,6 +297,16 @@ def post_phase_complete(
     }
 
 
+@router.get("/agent/content-manifest/{run_id}")
+def get_agent_content_manifest(
+    run_id: str,
+    payload: dict = Depends(_require_bearer),
+):
+    _require_run_token(run_id, payload)
+    with _conn() as conn:
+        return _manifest_response(conn, run_id)
+
+
 @router.get("/content/{manifest_id}")
 def get_content_manifest_item(
     manifest_id: str,
@@ -297,6 +319,12 @@ def get_content_manifest_item(
             raise HTTPException(status_code=404, detail="content not found")
     _require_run_token(item["run_id"], payload)
     return item
+
+
+@api_router.get("/runs/{run_id}/content-manifest")
+def get_run_content_manifest(run_id: str):
+    with _conn() as conn:
+        return _manifest_response(conn, run_id)
 
 
 @api_router.get("/content/items")

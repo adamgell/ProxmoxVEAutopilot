@@ -275,6 +275,7 @@ def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
         version="107.0",
         sha256="c" * 64,
         source_uri="https://content.local/qga-107.msi",
+        metadata={"install_command": "msiexec.exe /i {path} /qn"},
     )
     assert older_version_id != latest_version_id
     seq_version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
@@ -298,6 +299,7 @@ def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
                 "\\qemu-guest-agent\\107.0"
             ),
             "status": "pending",
+            "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
         }
     ]
 

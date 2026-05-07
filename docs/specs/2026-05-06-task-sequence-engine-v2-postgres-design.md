@@ -818,6 +818,7 @@ Example manifest:
 
 ```json
 {
+  "schema_version": 1,
   "run_id": "uuid",
   "items": [
     {
@@ -836,11 +837,24 @@ Example manifest:
       "sha256": "...",
       "source_uri": "proxmox-iso://isos/virtio-win-0.1.285.iso",
       "required_phase": "winpe",
-      "staging_path": "D:\\"
+      "staging_path": "D:\\",
+      "metadata": {
+        "install_command": "pnputil /add-driver {path}\\*.inf /subdirs /install"
+      }
     }
   ]
 }
 ```
+
+The v1 API exposes two views of the same immutable run manifest:
+
+- `GET /api/osd/v2/runs/{run_id}/content-manifest` for operators/UI.
+- `GET /osd/v2/agent/content-manifest/{run_id}` for authenticated agents.
+
+Agent `next` responses also include each step's referenced manifest items
+under `action.content`. The content payload includes the pinned version,
+SHA-256, source URI, staging path, status, and version metadata. Package
+steps use metadata for command templates such as `install_command`.
 
 Initial content types:
 
@@ -850,6 +864,7 @@ Initial content types:
 - OSD client package
 - script package
 - tool package
+- application package
 
 The manifest should be stored as rows for queryability and as a JSON
 rendering for agents.
@@ -871,8 +886,11 @@ Windows setup / full OS phase:
 
 - `install_qga`
 - `fix_recovery_partition`
+- `verify_qga`
+- `capture_autopilot_hash`
 - `run_powershell_script`
 - `install_msi_package`
+- `handoff_to_oobe`
 - `capture_hash`
 
 Future phases:

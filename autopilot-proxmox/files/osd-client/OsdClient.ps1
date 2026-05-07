@@ -237,6 +237,80 @@ function Invoke-InstallPackage {
     Write-OsdLog "Package install completed exit=$($proc.ExitCode)"
 }
 
+function Invoke-CaptureAutopilotHash {
+    param(
+        [Parameter(Mandatory)] [object] $Config,
+        [Parameter(Mandatory)] [string] $BearerToken
+    )
+
+    $autopilotInfoScript = Join-Path $OsdRoot 'Get-WindowsAutopilotInfo.ps1'
+    if (-not (Test-Path -LiteralPath $autopilotInfoScript)) {
+        throw "Get-WindowsAutopilotInfo.ps1 not found: $autopilotInfoScript"
+    }
+
+    $hashDir = Join-Path $OsdRoot 'HardwareHashes'
+    New-DirectoryIfMissing -Path $hashDir
+
+    $serial = ''
+    try {
+        $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
+        $serial = [string] $bios.SerialNumber
+    } catch {
+        Write-OsdLog "Unable to read BIOS serial before hash capture: $($_.Exception.Message)"
+    }
+    if ([string]::IsNullOrWhiteSpace($serial) -or $serial -eq 'None') {
+        try {
+            $csprod = Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction Stop
+            $serial = [string] $csprod.UUID
+        } catch {
+            Write-OsdLog "Unable to read system UUID before hash capture: $($_.Exception.Message)"
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($serial)) {
+        $serial = $env:COMPUTERNAME
+    }
+
+    $safeSerial = $serial -replace '[^\w.-]', '_'
+    $csvPath = Join-Path $hashDir "${safeSerial}_hwid.csv"
+    if (Test-Path -LiteralPath $csvPath) {
+        Remove-Item -LiteralPath $csvPath -Force
+    }
+
+    Write-OsdLog "Capturing Autopilot hardware hash to $csvPath"
+    & powershell.exe -ExecutionPolicy Bypass -NoProfile `
+        -File $autopilotInfoScript -OutputFile $csvPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Get-WindowsAutopilotInfo.ps1 failed with exit $LASTEXITCODE"
+    }
+    if (-not (Test-Path -LiteralPath $csvPath)) {
+        throw "Autopilot hardware hash CSV was not created at $csvPath"
+    }
+
+    $rows = @(Import-Csv -LiteralPath $csvPath)
+    if ($rows.Count -lt 1) {
+        throw "Autopilot hardware hash CSV is empty: $csvPath"
+    }
+    $row = $rows[0]
+    $capturedSerial = [string] $row.'Device Serial Number'
+    $productId = [string] $row.'Windows Product ID'
+    $hardwareHash = [string] $row.'Hardware Hash'
+    if ([string]::IsNullOrWhiteSpace($capturedSerial)) {
+        $capturedSerial = $serial
+    }
+    if ([string]::IsNullOrWhiteSpace($hardwareHash)) {
+        throw "Autopilot hardware hash CSV missing Hardware Hash column: $csvPath"
+    }
+
+    Invoke-OsdRequest -Config $Config -Path '/osd/client/hash' -Method POST `
+        -BearerToken $BearerToken `
+        -Body @{
+            serial_number = $capturedSerial
+            product_id = $productId
+            hardware_hash = $hardwareHash
+        } | Out-Null
+    Write-OsdLog "Autopilot hardware hash uploaded for serial=$capturedSerial path=$csvPath"
+}
+
 function Invoke-HandoffToOobe {
     Invoke-VerifyQga
     Write-OsdLog 'Pre-OOBE gate passed; handing off to OOBE.'
@@ -266,6 +340,7 @@ try {
                 'install_qga' { Invoke-InstallQga }
                 'fix_recovery_partition' { Invoke-RecoveryFix }
                 'verify_qga' { Invoke-VerifyQga }
+                'capture_autopilot_hash' { Invoke-CaptureAutopilotHash -Config $cfg -BearerToken $token }
                 'handoff_to_oobe' { Invoke-HandoffToOobe }
                 'install_package' { Invoke-InstallPackage -Action $action }
                 default { throw "unknown OSD step kind: $kind" }

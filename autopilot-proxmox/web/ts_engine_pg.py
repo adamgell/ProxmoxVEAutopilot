@@ -918,6 +918,10 @@ def add_manifest_item(
     ).fetchone()
     if not row:
         raise ValueError(f"content version not found: {content_version_id}")
+    merged_metadata = {
+        **(row["metadata_json"] or {}),
+        **(metadata or {}),
+    }
     manifest_id = _new_id()
     conn.execute(
         """
@@ -940,7 +944,7 @@ def add_manifest_item(
             row["sha256"],
             row["size_bytes"],
             staging_path,
-            _json(metadata or {}),
+            _json(merged_metadata),
             _now(),
         ),
     )
@@ -971,17 +975,28 @@ def get_manifest_item(conn: Connection, manifest_id: str) -> dict:
     ).fetchone()
     if not row:
         raise ValueError(f"manifest item not found: {manifest_id}")
-    return {
-        **row,
+    item = {
         "id": str(row["id"]),
         "run_id": str(row["run_id"]),
+        "logical_name": row["logical_name"],
+        "content_type": row["content_type"],
+        "version": row["version"],
+        "sha256": row["sha256"],
+        "source_uri": row["source_uri"],
+        "required_phase": row["required_phase"],
+        "staging_path": row["staging_path"],
+        "status": row["status"],
     }
+    if row["metadata_json"]:
+        item["metadata"] = row["metadata_json"]
+    return item
 
 
 def list_run_manifest(conn: Connection, run_id: str) -> list[dict]:
-    return conn.execute(
+    rows = conn.execute(
         """
         SELECT
+            m.id,
             m.logical_name,
             m.content_type,
             cv.version,
@@ -989,7 +1004,8 @@ def list_run_manifest(conn: Connection, run_id: str) -> list[dict]:
             m.source_uri,
             m.required_phase,
             m.staging_path,
-            m.status
+            m.status,
+            m.metadata_json
         FROM ts_run_content_manifest m
         JOIN ts_content_versions cv ON cv.id = m.content_version_id
         WHERE m.run_id = %s
@@ -997,6 +1013,22 @@ def list_run_manifest(conn: Connection, run_id: str) -> list[dict]:
         """,
         (run_id,),
     ).fetchall()
+    items = []
+    for row in rows:
+        item = {
+            "logical_name": row["logical_name"],
+            "content_type": row["content_type"],
+            "version": row["version"],
+            "sha256": row["sha256"],
+            "source_uri": row["source_uri"],
+            "required_phase": row["required_phase"],
+            "staging_path": row["staging_path"],
+            "status": row["status"],
+        }
+        if row["metadata_json"]:
+            item["metadata"] = row["metadata_json"]
+        items.append(item)
+    return items
 
 
 def resolve_run_content_manifest(
@@ -1036,6 +1068,7 @@ def resolve_run_content_manifest(
                 cv.sha256,
                 cv.size_bytes,
                 cv.source_uri,
+                cv.metadata_json,
                 ci.content_type
             FROM ts_content_items ci
             JOIN ts_content_versions cv ON cv.content_item_id = ci.id
@@ -1071,7 +1104,7 @@ def resolve_run_content_manifest(
                 row["sha256"],
                 row["size_bytes"],
                 staging_path,
-                _json({}),
+                _json(row["metadata_json"] or {}),
                 _now(),
             ),
         )
@@ -1095,7 +1128,8 @@ def content_for_step(conn: Connection, step_id: str) -> list[dict]:
             m.source_uri,
             m.required_phase,
             m.staging_path,
-            m.status
+            m.status,
+            m.metadata_json
         FROM ts_run_content_manifest m
         JOIN ts_content_versions cv ON cv.id = m.content_version_id
         WHERE m.run_id = %s
@@ -1104,13 +1138,23 @@ def content_for_step(conn: Connection, step_id: str) -> list[dict]:
         """,
         (step["run_id"], refs),
     ).fetchall()
-    return [
-        {
-            **row,
+    out = []
+    for row in rows:
+        item = {
             "id": str(row["id"]),
+            "logical_name": row["logical_name"],
+            "content_type": row["content_type"],
+            "version": row["version"],
+            "sha256": row["sha256"],
+            "source_uri": row["source_uri"],
+            "required_phase": row["required_phase"],
+            "staging_path": row["staging_path"],
+            "status": row["status"],
         }
-        for row in rows
-    ]
+        if row["metadata_json"]:
+            item["metadata"] = row["metadata_json"]
+        out.append(item)
+    return out
 
 
 def claim_next_step(

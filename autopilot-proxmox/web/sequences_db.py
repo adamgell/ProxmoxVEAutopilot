@@ -893,6 +893,36 @@ def list_run_steps(db_path, run_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def reorder_run_phase_steps(db_path, *,
+                            run_id: int,
+                            phase: str,
+                            ordered_kinds: list[str]) -> None:
+    order = {kind: idx for idx, kind in enumerate(ordered_kinds)}
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, kind, order_index FROM provisioning_run_steps "
+            "WHERE run_id=? AND phase=? ORDER BY order_index",
+            (run_id, phase),
+        ).fetchall()
+        if not rows:
+            return
+        base = min(row["order_index"] for row in rows)
+        sorted_rows = sorted(
+            rows,
+            key=lambda row: (order.get(row["kind"], len(order)), row["order_index"]),
+        )
+        for idx, row in enumerate(sorted_rows):
+            conn.execute(
+                "UPDATE provisioning_run_steps SET order_index=? WHERE id=?",
+                (-(idx + 1), row["id"]),
+            )
+        for idx, row in enumerate(sorted_rows):
+            conn.execute(
+                "UPDATE provisioning_run_steps SET order_index=? WHERE id=?",
+                (base + idx, row["id"]),
+            )
+
+
 def get_run_step(db_path, step_id: int) -> Optional[dict]:
     with _connect(db_path) as conn:
         row = conn.execute(

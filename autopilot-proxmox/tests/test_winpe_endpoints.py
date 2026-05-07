@@ -561,13 +561,16 @@ def test_osd_register_moves_to_client_state_and_creates_steps(
         "install_qga",
         "fix_recovery_partition",
         "verify_qga",
+        "capture_autopilot_hash",
         "handoff_to_oobe",
     ]
     from web import sequences_db
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "awaiting_osd_client"
     steps = sequences_db.list_run_steps(test_db, run_id)
-    assert [s["phase"] for s in steps[-4:]] == ["osd", "osd", "osd", "osd"]
+    assert [s["phase"] for s in steps[-5:]] == [
+        "osd", "osd", "osd", "osd", "osd",
+    ]
 
 
 def test_osd_step_result_and_complete_mark_run_done(
@@ -612,6 +615,44 @@ def test_osd_step_result_and_complete_mark_run_done(
     from web import sequences_db
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "done"
+
+
+def test_osd_register_inserts_hash_capture_before_oobe_for_legacy_steps(
+    web_client, test_db,
+):
+    from web import sequences_db
+    run_id, reg = _register(web_client, test_db)
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="awaiting_osd_client",
+    )
+    for kind in (
+        "install_qga",
+        "fix_recovery_partition",
+        "verify_qga",
+        "handoff_to_oobe",
+    ):
+        sequences_db.append_run_step(
+            test_db, run_id=run_id, phase="osd", kind=kind, params={},
+        )
+
+    r = web_client.post(
+        "/osd/client/register",
+        json={},
+        headers=_bearer(pkg["bearer_token"]),
+    )
+
+    assert r.status_code == 200, r.text
+    assert [a["kind"] for a in r.json()["actions"]] == [
+        "install_qga",
+        "fix_recovery_partition",
+        "verify_qga",
+        "capture_autopilot_hash",
+        "handoff_to_oobe",
+    ]
 
 
 def test_osd_complete_reconciles_interrupted_winpe_job(
@@ -707,6 +748,37 @@ def test_osd_complete_requires_registered_ok_steps(
     assert "incomplete steps" in r.text
 
 
+def test_osd_complete_requires_autopilot_hash_before_oobe_handoff(
+    web_client, test_db,
+):
+    from web import sequences_db
+    run_id, reg = _register(web_client, test_db)
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="awaiting_osd_client",
+    )
+    for kind in (
+        "install_qga",
+        "fix_recovery_partition",
+        "verify_qga",
+        "handoff_to_oobe",
+    ):
+        step = sequences_db.append_run_step(
+            test_db, run_id=run_id, phase="osd", kind=kind, params={},
+        )
+        sequences_db.update_run_step_state(test_db, step_id=step["id"], state="ok")
+
+    r = web_client.post(
+        "/osd/client/complete",
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 409
+    assert "capture_autopilot_hash" in r.text
+
+
 def test_osd_complete_requires_oobe_handoff_step(web_client, test_db):
     from web import sequences_db
     run_id, reg = _register(web_client, test_db)
@@ -717,7 +789,12 @@ def test_osd_complete_requires_oobe_handoff_step(web_client, test_db):
     sequences_db.update_provisioning_run_state(
         test_db, run_id=run_id, state="awaiting_osd_client",
     )
-    for kind in ("install_qga", "fix_recovery_partition", "verify_qga"):
+    for kind in (
+        "install_qga",
+        "fix_recovery_partition",
+        "verify_qga",
+        "capture_autopilot_hash",
+    ):
         step = sequences_db.append_run_step(
             test_db, run_id=run_id, phase="osd", kind=kind, params={},
         )
@@ -855,6 +932,7 @@ def test_auth_exempts_winpe_machine_callbacks():
         "/osd/client/package/1",
         "/osd/client/register",
         "/osd/client/step/1/result",
+        "/osd/client/hash",
         "/osd/client/complete",
         "/osd/v2/agent/register",
         "/osd/v2/agent/next",
@@ -1030,6 +1108,37 @@ def test_post_hash_writes_csv_into_hash_dir(
     assert "Hardware Hash" in text
     assert "S1" in text
     assert "HH1" in text
+
+
+def test_post_osd_hash_writes_csv_into_hash_dir(
+    web_client, test_db, tmp_path, monkeypatch,
+):
+    from web import app as web_app
+    monkeypatch.setattr(web_app, "HASH_DIR", tmp_path, raising=True)
+
+    run_id, reg = _register(web_client, test_db)
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    r = web_client.post(
+        "/osd/client/hash",
+        json={
+            "serial_number": "S2", "product_id": "PK2",
+            "hardware_hash": "HH2",
+        },
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 200, r.text
+
+    csvs = list(tmp_path.glob("*.csv"))
+    assert len(csvs) == 1
+    text = csvs[0].read_text()
+    assert "Device Serial Number" in text
+    assert "Hardware Hash" in text
+    assert "S2" in text
+    assert "HH2" in text
+    assert csvs[0].name.endswith("-osd.csv")
 
 
 def test_post_hash_requires_bearer(web_client):
