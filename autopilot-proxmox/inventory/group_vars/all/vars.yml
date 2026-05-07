@@ -77,7 +77,7 @@ winpe_blank_template_vmid: 9001
 
 # Path of the most recent WinPE ISO in Proxmox storage notation.
 # Example: "isos:iso/winpe-autopilot-amd64-83793f7eb931ecee.iso"
-proxmox_winpe_iso: "isos:iso/winpe-autopilot-amd64-6e9f6a8833faa41a.iso"
+proxmox_winpe_iso: "isos:iso/winpe-autopilot-amd64-fbcf4068a133127c.iso"
 
 # HMAC secret for /winpe/* bearer tokens. Sourced from vault.
 autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('') }}"
