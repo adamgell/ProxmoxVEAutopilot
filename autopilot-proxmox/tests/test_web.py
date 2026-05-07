@@ -353,6 +353,54 @@ def test_vms_page_escapes_vm_name_in_data_attributes(client):
     assert "vm_name:'evil" not in body
 
 
+def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
+    """A cold /vms page load should not block on live guest-agent probes
+    when the monitor service already has a completed sweep snapshot."""
+    from web import app as app_module, device_history_db
+
+    monitor_db = tmp_path / "device_monitor.db"
+    device_history_db.init(monitor_db)
+    sweep_id = device_history_db.start_sweep(monitor_db)
+    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+        "vmid": 116,
+        "node": "pve2",
+        "name": "Gell-EC41E7EB",
+        "status": "running",
+        "tags_csv": "autopilot",
+        "cores": 2,
+        "memory_mb": 4096,
+        "smbios1": "serial=template-default,uuid=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "args": "-smbios file=/var/lib/vz/snippets/Gell-EC41E7EB.bin",
+        "config_digest": "digest",
+    })
+    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+        "vmid": 116,
+        "vm_name": "Gell-EC41E7EB",
+        "win_name": "Gell-EC41E7EB",
+        "serial": "Gell-EC41E7EB",
+        "os_build": "26100",
+        "dsreg_status": "{\"AzureAdJoined\": \"YES\", \"TenantName\": \"home\"}",
+    })
+    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+
+    app_module._VMS_CACHE.update(
+        {"data": None, "devices": None, "hash_serials": None,
+         "fetched_at": 0.0, "refreshing": False},
+    )
+    with patch("web.app.DEVICE_MONITOR_DB", monitor_db), \
+         patch("web.app.get_autopilot_vms",
+               side_effect=AssertionError("live VM probe should not run")) as live_vms, \
+         patch("web.app.get_autopilot_devices", return_value=([], None)), \
+         patch("web.app.get_hash_files", return_value=[]), \
+         patch("web.app._refresh_vms_cache_bg"):
+        r = client.get("/vms")
+
+    assert r.status_code == 200
+    assert "Gell-EC41E7EB" in r.text
+    assert 'data-vmid="116"' in r.text
+    live_vms.assert_not_called()
+
+
 def test_healthz_503_before_full_init():
     """Simulate schema init not complete: /healthz must 503, not 200.
     Exercised by temporarily patching both flags to False."""

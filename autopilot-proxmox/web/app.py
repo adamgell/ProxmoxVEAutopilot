@@ -1932,6 +1932,8 @@ def compute_duration(job):
     # writes offset-aware. Treat naive values as UTC so subtraction
     # against datetime.now(timezone.utc) doesn't raise.
     def _as_utc(s: str) -> datetime:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
     start = _as_utc(job["started"])
@@ -2504,7 +2506,89 @@ _VMS_CACHE_TTL_SECONDS = 30.0
 _VMS_CACHE_STALE_SECONDS = 5 * 60  # if older than this, refetch synchronously
 
 
-def _fetch_vms_payload():
+def _json_obj(value, default):
+    if not value:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _vms_from_monitor_snapshot() -> list[dict]:
+    """Build /vms rows from the monitor service's newest completed sweep.
+
+    This avoids doing live QGA/guest-exec probes on the request path. The
+    monitor owns slow enrichment; /vms should render from its last snapshot
+    and let the explicit Refresh button do live collection when needed.
+    """
+    try:
+        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+    except Exception:
+        return []
+
+    out: list[dict] = []
+    for entry in latest:
+        pve = entry.get("pve") or {}
+        probe = entry.get("probe") or {}
+        vmid = int(entry.get("vmid") or pve.get("vmid") or 0)
+        name = pve.get("name") or probe.get("vm_name") or ""
+        status = pve.get("status") or "unknown"
+        tags = (pve.get("tags_csv") or "").replace(",", ";")
+        smbios1 = pve.get("smbios1") or ""
+        args = pve.get("args") or ""
+
+        serial = probe.get("serial") or ""
+        if not serial:
+            if "smbios file=" in args and name.lower().startswith("gell-"):
+                serial = name
+            elif smbios1:
+                serial = _decode_smbios_serial(smbios1)
+
+        dsreg = _json_obj(probe.get("dsreg_status"), {})
+        aad_joined_raw = str(
+            dsreg.get("AzureAdJoined")
+            or dsreg.get("azureAdJoined")
+            or dsreg.get("aad_joined")
+            or ""
+        ).strip().lower()
+        aad_joined = aad_joined_raw in {"yes", "true", "1"}
+
+        ad_matches = _json_obj(probe.get("ad_matches_json"), [])
+        first_ad = ad_matches[0] if ad_matches else {}
+        domain = (
+            first_ad.get("domain")
+            or first_ad.get("dnsDomain")
+            or first_ad.get("userPrincipalName", "").split("@")[-1]
+        )
+
+        out.append({
+            "vmid": vmid,
+            "name": name,
+            "status": status,
+            "serial": serial,
+            "oem": "",
+            "hostname": probe.get("win_name") or (name if status == "running" else ""),
+            "mem_mb": int(pve.get("memory_mb") or 0),
+            "cpus": pve.get("cores") or "",
+            "tags": tags,
+            "has_guest_data": bool(probe),
+            "domain": domain or "",
+            "part_of_domain": bool(int(probe.get("ad_found") or 0)),
+            "aad_joined": aad_joined,
+            "aad_tenant": dsreg.get("TenantName") or dsreg.get("tenant_name") or "",
+            "os_caption": "",
+            "os_build": str(probe.get("os_build") or ""),
+            "os_version": "",
+            "ip_address": "",
+            "last_boot": "",
+        })
+    return sorted(out, key=lambda v: v["vmid"])
+
+
+def _fetch_vms_payload_live():
     """Synchronous fetcher — calls every upstream the /vms page needs.
     Returns a dict ready to stash in _VMS_CACHE."""
     return {
@@ -2512,6 +2596,17 @@ def _fetch_vms_payload():
         "devices": get_autopilot_devices(),
         "hash_serials": {f["serial"] for f in get_hash_files()},
     }
+
+
+def _fetch_vms_payload():
+    monitor_vms = _vms_from_monitor_snapshot()
+    if monitor_vms:
+        return {
+            "data": monitor_vms,
+            "devices": get_autopilot_devices(),
+            "hash_serials": {f["serial"] for f in get_hash_files()},
+        }
+    return _fetch_vms_payload_live()
 
 
 async def _refresh_vms_cache_bg() -> None:
@@ -2522,7 +2617,7 @@ async def _refresh_vms_cache_bg() -> None:
         return
     _VMS_CACHE["refreshing"] = True
     try:
-        payload = await asyncio.to_thread(_fetch_vms_payload)
+        payload = await asyncio.to_thread(_fetch_vms_payload_live)
         _VMS_CACHE.update(payload)
         _VMS_CACHE["fetched_at"] = time.monotonic()
     except Exception:
@@ -2544,16 +2639,23 @@ async def _get_vms_payload():
     age = now - _VMS_CACHE["fetched_at"] if _VMS_CACHE["fetched_at"] else float("inf")
 
     # Cold start — nobody has ever fetched. Block to avoid serving
-    # empty tables.
+    # empty tables. Prefer the monitor snapshot if present so page
+    # rendering is not coupled to slow/dead guest-agent probes.
     if _VMS_CACHE["data"] is None:
         payload = await asyncio.to_thread(_fetch_vms_payload)
         _VMS_CACHE.update(payload)
         _VMS_CACHE["fetched_at"] = time.monotonic()
+        if payload["data"] and not _VMS_CACHE["refreshing"]:
+            asyncio.create_task(_refresh_vms_cache_bg())
         return _VMS_CACHE, 0.0
 
     # Very stale — block rather than serve badly outdated data.
     if age >= _VMS_CACHE_STALE_SECONDS:
-        await _refresh_vms_cache_bg()
+        payload = await asyncio.to_thread(_fetch_vms_payload)
+        _VMS_CACHE.update(payload)
+        _VMS_CACHE["fetched_at"] = time.monotonic()
+        if payload["data"] and not _VMS_CACHE["refreshing"]:
+            asyncio.create_task(_refresh_vms_cache_bg())
         return _VMS_CACHE, 0.0
 
     # Past TTL but within staleness — kick a background refresh,
