@@ -2569,6 +2569,13 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             (m.get("trustType") or "").lower() == "serverad"
             for m in entra_matches
         )
+        entra_id_joined = (
+            aad_joined_raw in {"yes", "true", "1"}
+            or any(
+                (m.get("trustType") or "").lower() == "azuread"
+                for m in entra_matches
+            )
+        )
         domain = (
             first_ad.get("domain")
             or first_ad.get("dnsDomain")
@@ -2589,6 +2596,7 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "domain": domain or ("domain" if hybrid_joined else ""),
             "part_of_domain": bool(int(probe.get("ad_found") or 0)),
             "hybrid_joined": hybrid_joined,
+            "entra_id_joined": entra_id_joined,
             "aad_joined": aad_joined,
             "aad_tenant": dsreg.get("TenantName") or dsreg.get("tenant_name") or "",
             "in_intune": bool(int(probe.get("intune_found") or 0)),

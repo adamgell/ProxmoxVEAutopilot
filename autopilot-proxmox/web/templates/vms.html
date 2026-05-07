@@ -68,6 +68,8 @@ async function refreshVms() {
       <br><span class="badge badge-green" title="Active Directory domain-joined">{{ vm.domain }}</span>
     {% elif vm.hybrid_joined %}
       <br><span class="badge badge-green" title="Hybrid Entra join reported by Entra trustType=ServerAd">{{ vm.domain or 'domain' }}</span>
+    {% elif vm.entra_id_joined %}
+      <br><span class="badge badge-green" title="Entra ID joined">Entra ID</span>
     {% elif vm.status == 'running' and vm.hostname and vm.has_guest_data %}
       <br><span class="badge badge-gray" title="Not joined to an AD domain">workgroup</span>
     {% endif %}
