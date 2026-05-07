@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from web import jobs_pg as jobs_db
-from web import service_health
+from web import service_health_pg as service_health
 from web.paths import OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT as _REPO_ROOT
 
 _log = logging.getLogger("web.monitor_main")
@@ -97,7 +97,7 @@ def _run_loops(*, stop_event: threading.Event,
     Each tick is wrapped in ``try/except`` so a transient failure in
     one (e.g., Proxmox API hiccup) never stops the others from firing.
     """
-    service_health.init(monitor_db_path)
+    service_health.init()
     version = _version_sha()
 
     last_sweep = 0.0
@@ -117,11 +117,11 @@ def _run_loops(*, stop_event: threading.Event,
         if now - last_hb >= heartbeat_interval_seconds:
             try:
                 service_health.heartbeat(
-                    monitor_db_path, service_id="monitor",
+                    service_id="monitor",
                     service_type="monitor", version_sha=version,
                     detail="running",
                 )
-                service_health.prune_dead_workers(monitor_db_path)
+                service_health.prune_dead_workers()
             except Exception:
                 _log.exception("heartbeat failed")
             last_hb = now

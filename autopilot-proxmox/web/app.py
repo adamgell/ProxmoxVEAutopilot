@@ -894,21 +894,25 @@ def _load_version_sha() -> str:
 async def _start_health_heartbeat() -> None:
     import asyncio
     import logging as _logging
-    from web import service_health
-    service_health.init(DEVICE_MONITOR_DB)
+    from web import service_health_pg as service_health
+    logger = _logging.getLogger("web.health")
+    initialized = False
 
     async def _loop():
+        nonlocal initialized
         while True:
             try:
+                if not initialized:
+                    service_health.init()
+                    initialized = True
                 service_health.heartbeat(
-                    DEVICE_MONITOR_DB,
                     service_id="web",
                     service_type="web",
                     version_sha=_load_version_sha(),
                     detail="idle",
                 )
             except Exception:
-                _logging.getLogger("web.health").exception("heartbeat failed")
+                logger.exception("heartbeat failed")
             await asyncio.sleep(10)
 
     global _HEALTH_TASK
@@ -6794,7 +6798,7 @@ def _ad_first_seen_map() -> dict[int, str]:
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
-    from web import monitoring_view, service_health
+    from web import monitoring_view, service_health_pg as service_health
     latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = monitoring_view.build_dashboard_rows(
@@ -6804,12 +6808,7 @@ def page_monitoring(request: Request):
     )
     settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
     keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
-    try:
-        svc_rows = service_health.list_services(DEVICE_MONITOR_DB)
-    except sqlite3.OperationalError:
-        # service_health table may not exist yet on a freshly-initialized
-        # device_monitor.db (init() is called from the startup hook).
-        svc_rows = []
+    svc_rows = service_health.list_services()
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,

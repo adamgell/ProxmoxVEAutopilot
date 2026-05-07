@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 
 from web import jobs_pg as jobs_db
-from web import service_health
+from web import service_health_pg as service_health
 from web.paths import JOBS_DIR as _JOBS_DIR, OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT
 
 _log = logging.getLogger("web.builder")
@@ -179,10 +179,11 @@ def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
     _log.info("builder %s starting (poll=%ss heartbeat=%ss)",
               worker_id, poll_interval_seconds, heartbeat_seconds)
 
-    service_health.init(monitor_db_path)
-    service_health.heartbeat(monitor_db_path,
-                             service_id=worker_id, service_type="builder",
-                             version_sha=version, detail="starting")
+    service_health.init()
+    service_health.heartbeat(
+        service_id=worker_id, service_type="builder",
+        version_sha=version, detail="starting",
+    )
 
     last_service_heartbeat = 0.0
     while not stop_event.is_set():
@@ -191,7 +192,7 @@ def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
         if now - last_service_heartbeat >= 10.0:
             detail = f"running {row['id']}" if row else "idle"
             service_health.heartbeat(
-                monitor_db_path, service_id=worker_id,
+                service_id=worker_id,
                 service_type="builder", version_sha=version, detail=detail,
             )
             last_service_heartbeat = now
@@ -205,7 +206,7 @@ def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
         _run_one_job(row, log_path=log_path, db_path=db_path,
                      worker_id=worker_id, stop_event=stop_event)
         service_health.heartbeat(
-            monitor_db_path, service_id=worker_id,
+            service_id=worker_id,
             service_type="builder", version_sha=version, detail="idle",
         )
 

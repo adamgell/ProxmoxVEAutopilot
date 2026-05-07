@@ -285,17 +285,19 @@ def test_redirect_with_error_encodes_special_chars():
     assert qs["error"] == ["Rename failed: name 'x & y' needs # escaping?"]
 
 
-def test_web_writes_service_health_heartbeat_on_startup(client):
-    """Starting the app creates a 'web' row in service_health."""
-    from web import app as web_app, service_health
+def test_web_writes_service_health_heartbeat_on_startup(pg_conn, client):
+    """The web heartbeat path writes a 'web' row in service_health."""
+    from web import service_health_pg as service_health
     # Force one heartbeat synchronously via the module-level helper;
     # we don't need to wait for the async loop to tick.
+    service_health.init(pg_conn)
+    pg_conn.execute("TRUNCATE service_health")
+    pg_conn.commit()
     service_health.heartbeat(
-        web_app.DEVICE_MONITOR_DB,
         service_id="web", service_type="web",
         version_sha="testsha", detail="idle",
     )
-    rows = service_health.list_services(web_app.DEVICE_MONITOR_DB)
+    rows = service_health.list_services()
     ids = [r["service_id"] for r in rows]
     assert "web" in ids
 

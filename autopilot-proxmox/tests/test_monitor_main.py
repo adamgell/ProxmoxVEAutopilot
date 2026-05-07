@@ -39,7 +39,7 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
 
     with tempfile.TemporaryDirectory() as d:
         monitor_db = Path(d) / "device_monitor.db"
-        from web import jobs_pg, service_health
+        from web import jobs_pg, service_health_pg as service_health
 
         jobs_pg.enqueue(
             job_id="stale",
@@ -55,7 +55,7 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
             ("stale",),
         )
         pg_conn.commit()
-        service_health.init(monitor_db)
+        service_health.init(pg_conn)
 
         stop = threading.Event()
         with patch("web.monitor_main._do_sweep_tick", return_value=None), \

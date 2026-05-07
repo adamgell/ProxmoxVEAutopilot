@@ -6,12 +6,15 @@ import pytest
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch):
+def client(tmp_path: Path, monkeypatch, pg_conn):
     from fastapi.testclient import TestClient
-    from web import app as app_module, device_history_db
+    from web import app as app_module, device_history_db, service_health_pg
     db_path = tmp_path / "device_monitor.db"
     monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", db_path)
     device_history_db.init(db_path)
+    service_health_pg.init(pg_conn)
+    pg_conn.execute("TRUNCATE service_health")
+    pg_conn.commit()
     with TestClient(app_module.app) as c:
         yield c, db_path
 
@@ -77,16 +80,13 @@ def test_monitoring_page_interval_warning_below_15min(client, monkeypatch):
 
 
 def test_monitoring_page_shows_service_health(client):
-    from web import service_health
-    c, db = client
-    service_health.init(db)
+    from web import service_health_pg as service_health
+    c, _ = client
     service_health.heartbeat(
-        db,
         service_id="web", service_type="web",
         version_sha="abc1234", detail="idle",
     )
     service_health.heartbeat(
-        db,
         service_id="builder-xyz", service_type="builder",
         version_sha="abc1234", detail="running",
     )
