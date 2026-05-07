@@ -531,6 +531,61 @@ def test_content_api_creates_lists_and_versions(osd_v2_client, pg_conn):
     ]
 
 
+def test_content_manifest_api_returns_v1_manifest(osd_v2_client, pg_conn):
+    item = osd_v2_client.post(
+        "/api/content/items",
+        json={
+            "name": "qemu-guest-agent",
+            "content_type": "package",
+            "description": "QGA MSI",
+        },
+    )
+    assert item.status_code == 201, item.text
+
+    version = osd_v2_client.post(
+        f"/api/content/items/{item.json()['id']}/versions",
+        json={
+            "version": "107.0",
+            "sha256": "D" * 64,
+            "size_bytes": 2048,
+            "source_uri": "https://content.local/qga-107.msi",
+            "architecture": "x64",
+            "target_os": "windows",
+            "reboot_behavior": "deferred",
+            "conditions": {"phase": "full_os"},
+            "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
+        },
+    )
+    assert version.status_code == 201, version.text
+
+    manifest = osd_v2_client.get("/api/content/manifest")
+
+    assert manifest.status_code == 200, manifest.text
+    body = manifest.json()
+    assert body["schema_version"] == 1
+    assert body["item_count"] == 1
+    assert len(body["digest"]) == 64
+    assert body["manifest"] == {
+        "schema_version": 1,
+        "items": [
+            {
+                "id": "qemu-guest-agent",
+                "kind": "package",
+                "name": "qemu-guest-agent",
+                "version": "107.0",
+                "source_uri": "https://content.local/qga-107.msi",
+                "sha256": "d" * 64,
+                "size_bytes": 2048,
+                "architecture": "x64",
+                "target_os": "windows",
+                "reboot_behavior": "deferred",
+                "conditions": {"phase": "full_os"},
+                "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
+            }
+        ],
+    }
+
+
 def test_content_api_rejects_invalid_sha(osd_v2_client, pg_conn):
     item = osd_v2_client.post(
         "/api/osd/v2/content/items",

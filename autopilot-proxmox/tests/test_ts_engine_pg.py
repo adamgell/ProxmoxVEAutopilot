@@ -304,6 +304,78 @@ def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
     ]
 
 
+def test_global_content_manifest_v1_uses_latest_enabled_versions(pg_conn):
+    from web import ts_engine_pg
+    from web.content_manifest import manifest_digest
+
+    disabled_id = ts_engine_pg.create_content_item(
+        pg_conn, name="disabled-app", content_type="package"
+    )
+    ts_engine_pg.create_content_version(
+        pg_conn,
+        content_item_id=disabled_id,
+        version="1.0",
+        sha256="1" * 64,
+        source_uri="https://content.local/disabled.msi",
+        size_bytes=1,
+    )
+    pg_conn.execute(
+        "UPDATE ts_content_items SET enabled = false WHERE id = %s",
+        (disabled_id,),
+    )
+    pg_conn.commit()
+
+    item_id = ts_engine_pg.create_content_item(
+        pg_conn, name="qemu-guest-agent", content_type="package",
+        description="QGA MSI",
+    )
+    ts_engine_pg.create_content_version(
+        pg_conn,
+        content_item_id=item_id,
+        version="106.0",
+        sha256="2" * 64,
+        source_uri="https://content.local/qga-106.msi",
+        size_bytes=1024,
+    )
+    ts_engine_pg.create_content_version(
+        pg_conn,
+        content_item_id=item_id,
+        version="107.0",
+        sha256="A" * 64,
+        source_uri="https://content.local/qga-107.msi",
+        size_bytes=2048,
+        architecture="x64",
+        target_os="windows",
+        reboot_behavior="deferred",
+        conditions={"phase": "full_os", "min_build": 22631},
+        metadata={"install_command": "msiexec.exe /i {path} /qn"},
+    )
+
+    response = ts_engine_pg.build_content_manifest_v1(pg_conn)
+
+    assert response["manifest"] == {
+        "schema_version": 1,
+        "items": [
+            {
+                "id": "qemu-guest-agent",
+                "kind": "package",
+                "name": "qemu-guest-agent",
+                "version": "107.0",
+                "source_uri": "https://content.local/qga-107.msi",
+                "sha256": "a" * 64,
+                "size_bytes": 2048,
+                "architecture": "x64",
+                "target_os": "windows",
+                "reboot_behavior": "deferred",
+                "conditions": {"phase": "full_os", "min_build": 22631},
+                "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
+            }
+        ],
+    }
+    assert response["digest"] == manifest_digest(response["manifest"])
+    assert response["item_count"] == 1
+
+
 def test_create_run_can_require_and_pin_content_manifest(pg_conn):
     from web import ts_engine_pg
 
