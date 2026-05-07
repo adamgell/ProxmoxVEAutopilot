@@ -2564,6 +2564,11 @@ def _vms_from_monitor_snapshot() -> list[dict]:
 
         ad_matches = _json_obj(probe.get("ad_matches_json"), [])
         first_ad = ad_matches[0] if ad_matches else {}
+        entra_matches = _json_obj(probe.get("entra_matches_json"), [])
+        hybrid_joined = any(
+            (m.get("trustType") or "").lower() == "serverad"
+            for m in entra_matches
+        )
         domain = (
             first_ad.get("domain")
             or first_ad.get("dnsDomain")
@@ -2581,8 +2586,9 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "cpus": pve.get("cores") or "",
             "tags": tags,
             "has_guest_data": bool(probe),
-            "domain": domain or "",
+            "domain": domain or ("domain" if hybrid_joined else ""),
             "part_of_domain": bool(int(probe.get("ad_found") or 0)),
+            "hybrid_joined": hybrid_joined,
             "aad_joined": aad_joined,
             "aad_tenant": dsreg.get("TenantName") or dsreg.get("tenant_name") or "",
             "in_intune": bool(int(probe.get("intune_found") or 0)),
