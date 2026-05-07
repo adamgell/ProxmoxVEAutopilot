@@ -651,6 +651,22 @@ def post_osd_complete(payload: dict = Depends(_require_bearer_token)):
     sequences_db.update_provisioning_run_state(
         db, run_id=run_id, state="done",
     )
+    try:
+        from web import app as web_app
+        from web import jobs_db
+        reconciled = jobs_db.complete_interrupted_provision_winpe_jobs_for_run(
+            web_app.JOBS_DB, run_id=run_id,
+        )
+        if reconciled:
+            LOG.info(
+                "reconciled %s interrupted provision_winpe job(s) for run %s",
+                reconciled, run_id,
+            )
+    except Exception:
+        LOG.exception(
+            "failed to reconcile provision_winpe job after run %s completion",
+            run_id,
+        )
     return {"ok": True}
 
 
