@@ -225,10 +225,23 @@ CREATE TABLE IF NOT EXISTS ts_run_content_manifest (
     size_bytes bigint NULL,
     staging_path text NULL,
     status text NOT NULL DEFAULT 'pending',
+    staging_attempts integer NOT NULL DEFAULT 0,
+    staged_by text NULL,
+    staged_at timestamptz NULL,
+    last_error text NULL,
     metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL,
     UNIQUE (run_id, logical_name)
 );
+
+ALTER TABLE ts_run_content_manifest
+    ADD COLUMN IF NOT EXISTS staging_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE ts_run_content_manifest
+    ADD COLUMN IF NOT EXISTS staged_by text NULL;
+ALTER TABLE ts_run_content_manifest
+    ADD COLUMN IF NOT EXISTS staged_at timestamptz NULL;
+ALTER TABLE ts_run_content_manifest
+    ADD COLUMN IF NOT EXISTS last_error text NULL;
 """
 
 
@@ -1114,6 +1127,112 @@ def list_run_manifest(conn: Connection, run_id: str) -> list[dict]:
             item["metadata"] = row["metadata_json"]
         items.append(item)
     return items
+
+
+def mark_manifest_item_staging(
+    conn: Connection,
+    *,
+    manifest_id: str,
+    run_id: str,
+    status: str,
+    agent_id: str,
+    staging_path: Optional[str] = None,
+    error: Optional[str] = None,
+) -> dict:
+    if status not in {"pending", "staging", "staged", "failed"}:
+        raise ValueError(f"unsupported content staging status: {status}")
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE ts_run_content_manifest
+        SET status = %s,
+            staging_path = COALESCE(%s, staging_path),
+            staging_attempts = (
+                staging_attempts + CASE WHEN %s = 'staging' THEN 1 ELSE 0 END
+            ),
+            staged_by = %s,
+            staged_at = CASE WHEN %s = 'staged' THEN %s ELSE staged_at END,
+            last_error = CASE WHEN %s = 'failed' THEN %s ELSE NULL END
+        WHERE id = %s
+          AND run_id = %s
+        RETURNING
+            id,
+            run_id,
+            logical_name,
+            status,
+            staging_path,
+            staging_attempts,
+            staged_by,
+            staged_at,
+            last_error
+        """,
+        (
+            status,
+            staging_path,
+            status,
+            agent_id,
+            status,
+            now,
+            status,
+            error,
+            manifest_id,
+            run_id,
+        ),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"content manifest item not found: {manifest_id}")
+    _commit(conn)
+    return _normalize_manifest_staging(row)
+
+
+def list_run_content_staging(conn: Connection, run_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            m.id,
+            m.run_id,
+            m.logical_name,
+            m.content_type,
+            cv.version,
+            m.status,
+            m.staging_path,
+            m.staging_attempts,
+            m.staged_by,
+            m.staged_at,
+            m.last_error
+        FROM ts_run_content_manifest m
+        JOIN ts_content_versions cv ON cv.id = m.content_version_id
+        WHERE m.run_id = %s
+        ORDER BY m.created_at, m.logical_name
+        """,
+        (run_id,),
+    ).fetchall()
+    return [
+        {
+            **{
+                key: value
+                for key, value in _normalize_manifest_staging(row).items()
+                if key != "run_id"
+            },
+            "content_type": row["content_type"],
+            "version": row["version"],
+        }
+        for row in rows
+    ]
+
+
+def _normalize_manifest_staging(row: dict) -> dict:
+    return {
+        "id": str(row["id"]),
+        "run_id": str(row["run_id"]),
+        "logical_name": row["logical_name"],
+        "status": row["status"],
+        "staging_path": row["staging_path"],
+        "staging_attempts": row["staging_attempts"],
+        "staged_by": row["staged_by"],
+        "staged_at": row["staged_at"].isoformat() if row["staged_at"] else None,
+        "last_error": row["last_error"],
+    }
 
 
 def resolve_run_content_manifest(

@@ -69,6 +69,15 @@ class PhaseCompleteBody(BaseModel):
     phase: str
 
 
+class ContentStageBody(BaseModel):
+    run_id: str
+    agent_id: str
+    phase: str
+    status: str = Field(pattern=r"^(pending|staging|staged|failed)$")
+    staging_path: Optional[str] = None
+    error: Optional[str] = None
+
+
 class ContentItemCreateBody(BaseModel):
     name: str = Field(min_length=1)
     content_type: str = Field(min_length=1)
@@ -329,10 +338,46 @@ def get_content_manifest_item(
     return item
 
 
+@router.post("/agent/content/{manifest_id}/stage")
+def report_content_stage(
+    manifest_id: str,
+    body: ContentStageBody,
+    payload: dict = Depends(_require_bearer),
+):
+    _require_run_token(body.run_id, payload)
+    with _conn() as conn:
+        try:
+            return ts_engine_pg.mark_manifest_item_staging(
+                conn,
+                manifest_id=manifest_id,
+                run_id=body.run_id,
+                status=body.status,
+                agent_id=body.agent_id,
+                staging_path=body.staging_path,
+                error=body.error,
+            )
+        except ValueError:
+            raise HTTPException(status_code=404, detail="content not found")
+
+
 @api_router.get("/runs/{run_id}/content-manifest")
 def get_run_content_manifest(run_id: str):
     with _conn() as conn:
         return _manifest_response(conn, run_id)
+
+
+@api_router.get("/runs/{run_id}/content-staging")
+def get_run_content_staging(run_id: str):
+    with _conn() as conn:
+        try:
+            ts_engine_pg.get_run(conn, run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+        return {
+            "schema_version": 1,
+            "run_id": run_id,
+            "items": ts_engine_pg.list_run_content_staging(conn, run_id),
+        }
 
 
 @api_router.get("/content/items")

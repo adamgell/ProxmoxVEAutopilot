@@ -304,6 +304,82 @@ def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
     ]
 
 
+def test_manifest_item_staging_state_tracks_attempts_and_errors(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Staging Demo")
+    item_id = ts_engine_pg.create_content_item(
+        pg_conn, name="qemu-guest-agent", content_type="package"
+    )
+    version_id = ts_engine_pg.create_content_version(
+        pg_conn,
+        content_item_id=item_id,
+        version="107.0",
+        sha256="d" * 64,
+        source_uri="https://content.local/qga-107.msi",
+    )
+    seq_version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn, sequence_version_id=seq_version_id
+    )
+    manifest_id = ts_engine_pg.add_manifest_item(
+        pg_conn,
+        run_id=run_id,
+        content_version_id=version_id,
+        logical_name="qemu-guest-agent",
+        required_phase="full_os",
+    )
+
+    staging = ts_engine_pg.mark_manifest_item_staging(
+        pg_conn,
+        manifest_id=manifest_id,
+        run_id=run_id,
+        status="staging",
+        agent_id="osd-1",
+        staging_path=(
+            "C:\\ProgramData\\ProxmoxVEAutopilot\\Content"
+            "\\qemu-guest-agent\\107.0"
+        ),
+    )
+    assert staging["status"] == "staging"
+    assert staging["staging_attempts"] == 1
+    assert staging["last_error"] is None
+
+    failed = ts_engine_pg.mark_manifest_item_staging(
+        pg_conn,
+        manifest_id=manifest_id,
+        run_id=run_id,
+        status="failed",
+        agent_id="osd-1",
+        error="download timed out",
+    )
+    assert failed["status"] == "failed"
+    assert failed["staging_attempts"] == 1
+    assert failed["last_error"] == "download timed out"
+
+    retry = ts_engine_pg.mark_manifest_item_staging(
+        pg_conn,
+        manifest_id=manifest_id,
+        run_id=run_id,
+        status="staging",
+        agent_id="osd-1",
+    )
+    assert retry["status"] == "staging"
+    assert retry["staging_attempts"] == 2
+    assert retry["last_error"] is None
+
+    staged = ts_engine_pg.mark_manifest_item_staging(
+        pg_conn,
+        manifest_id=manifest_id,
+        run_id=run_id,
+        status="staged",
+        agent_id="osd-1",
+    )
+    assert staged["status"] == "staged"
+    assert staged["staging_attempts"] == 2
+    assert staged["staged_at"] is not None
+
+
 def test_global_content_manifest_v1_uses_latest_enabled_versions(pg_conn):
     from web import ts_engine_pg
     from web.content_manifest import manifest_digest
