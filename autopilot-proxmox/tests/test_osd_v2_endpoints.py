@@ -323,6 +323,55 @@ def test_full_os_action_includes_manifest_content(osd_v2_client, pg_conn):
     ]
 
 
+def test_agent_can_report_content_staging_status(osd_v2_client, pg_conn):
+    from web import ts_engine_pg
+
+    run_id = _create_run(pg_conn)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+    ).json()
+    nxt = osd_v2_client.post(
+        "/osd/v2/agent/next",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+        headers=_bearer(reg["bearer_token"]),
+    )
+    manifest_id = nxt.json()["actions"][0]["content"][0]["id"]
+
+    staging = osd_v2_client.post(
+        f"/osd/v2/agent/content/{manifest_id}/stage",
+        json={
+            "run_id": run_id,
+            "agent_id": "osd-1",
+            "phase": "full_os",
+            "status": "staging",
+            "staging_path": (
+                "C:\\ProgramData\\ProxmoxVEAutopilot\\Content"
+                "\\qemu-guest-agent\\107.0"
+            ),
+        },
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert staging.status_code == 200, staging.text
+    assert staging.json()["status"] == "staging"
+    assert staging.json()["staging_attempts"] == 1
+
+    staged = osd_v2_client.post(
+        f"/osd/v2/agent/content/{manifest_id}/stage",
+        json={
+            "run_id": run_id,
+            "agent_id": "osd-1",
+            "phase": "full_os",
+            "status": "staged",
+        },
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert staged.status_code == 200, staged.text
+    assert staged.json()["status"] == "staged"
+    assert staged.json()["staged_at"] is not None
+    assert ts_engine_pg.list_run_manifest(pg_conn, run_id)[0]["status"] == "staged"
+
+
 def test_agent_can_fetch_full_content_manifest(osd_v2_client, pg_conn):
     run_id = _create_run(pg_conn)
     reg = osd_v2_client.post(
@@ -358,6 +407,52 @@ def test_operator_can_fetch_run_content_manifest(osd_v2_client, pg_conn):
     assert body["schema_version"] == 1
     assert body["run_id"] == run_id
     assert body["items"][0]["logical_name"] == "qemu-guest-agent"
+
+
+def test_operator_can_fetch_run_content_staging_status(osd_v2_client, pg_conn):
+    from web import ts_engine_pg
+
+    run_id = _create_run(pg_conn)
+    manifest_id = str(
+        pg_conn.execute(
+            "SELECT id FROM ts_run_content_manifest WHERE run_id = %s",
+            (run_id,),
+        ).fetchone()["id"]
+    )
+    ts_engine_pg.mark_manifest_item_staging(
+        pg_conn,
+        manifest_id=manifest_id,
+        run_id=run_id,
+        status="failed",
+        agent_id="osd-1",
+        error="download timed out",
+    )
+
+    status = osd_v2_client.get(
+        f"/api/osd/v2/runs/{run_id}/content-staging",
+    )
+
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert body["schema_version"] == 1
+    assert body["run_id"] == run_id
+    assert body["items"] == [
+        {
+            "id": manifest_id,
+            "logical_name": "qemu-guest-agent",
+            "content_type": "package",
+            "version": "107.0",
+            "status": "failed",
+            "staging_path": (
+                "C:\\ProgramData\\ProxmoxVEAutopilot\\Content"
+                "\\qemu-guest-agent\\107.0"
+            ),
+            "staging_attempts": 0,
+            "staged_by": "osd-1",
+            "staged_at": None,
+            "last_error": "download timed out",
+        }
+    ]
 
 
 def test_action_includes_required_reboot_behavior(osd_v2_client, pg_conn):
@@ -616,5 +711,6 @@ def test_auth_exempts_osd_v2_machine_callbacks():
         "/osd/v2/agent/rebooting",
         "/osd/v2/agent/phase-complete",
         "/osd/v2/content/1",
+        "/osd/v2/agent/content/1/stage",
     ):
         assert auth.is_exempt_path(path)
