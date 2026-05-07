@@ -774,6 +774,13 @@ def test_auth_exempts_winpe_machine_callbacks():
         "/osd/client/register",
         "/osd/client/step/1/result",
         "/osd/client/complete",
+        "/osd/v2/agent/register",
+        "/osd/v2/agent/next",
+        "/osd/v2/agent/step/1/result",
+        "/osd/v2/agent/step/1/logs",
+        "/osd/v2/agent/rebooting",
+        "/osd/v2/agent/phase-complete",
+        "/osd/v2/content/1",
     ):
         assert auth.is_exempt_path(path)
 

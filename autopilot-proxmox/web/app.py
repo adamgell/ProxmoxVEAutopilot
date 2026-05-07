@@ -477,9 +477,11 @@ from web.winpe_endpoints import (
     api_router as _winpe_api_router,
     osd_router as _osd_router,
 )
+from web.osd_v2_endpoints import router as _osd_v2_router
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
 app.include_router(_osd_router)
+app.include_router(_osd_v2_router)
 app.include_router(_winpe_api_router)
 
 
@@ -820,6 +822,26 @@ def _ensure_hypervisor_type_default() -> None:
     if current_vars.get("hypervisor_type") is None:
         current_vars["hypervisor_type"] = "proxmox"
         _save_vars({"hypervisor_type": "proxmox"})
+
+
+def _ts_engine_database_url() -> str:
+    return os.environ.get("AUTOPILOT_TS_ENGINE_DATABASE_URL", "").strip()
+
+
+def _init_ts_engine_database_if_configured() -> bool:
+    dsn = _ts_engine_database_url()
+    if not dsn:
+        return False
+    from web import ts_engine_pg
+
+    with ts_engine_pg.connect(dsn) as conn:
+        ts_engine_pg.init(conn)
+    return True
+
+
+@app.on_event("startup")
+def _init_ts_engine_pg() -> None:
+    _init_ts_engine_database_if_configured()
 
 
 # Note: the periodic device-monitor sweep + keytab-refresh loop used

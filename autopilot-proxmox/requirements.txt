@@ -35,6 +35,9 @@ impacket>=0.12,<1.0
 # our own container's restart, so the self-update completes even as
 # this process is being replaced.
 docker>=7,<8
+# PostgreSQL-backed Task Sequence Engine v2. The existing app keeps its
+# SQLite stores during migration, but all new OSD engine state is Postgres.
+psycopg[binary]>=3.2,<4
 # Entra OIDC for the web UI. authlib wraps the Authorization-Code +
 # PKCE flow, discovery, JWT validation. itsdangerous is a Starlette
 # SessionMiddleware dep for cookie signing.
