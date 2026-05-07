@@ -449,6 +449,49 @@ def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path):
     assert ">workgroup<" not in r.text
 
 
+def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path):
+    """Cloud Entra-joined devices should show Entra ID in the hostname
+    bubble. Workgroup is only for devices with no domain or Entra evidence."""
+    from web import app as app_module, device_history_db
+
+    monitor_db = tmp_path / "device_monitor.db"
+    device_history_db.init(monitor_db)
+    sweep_id = device_history_db.start_sweep(monitor_db)
+    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+        "vmid": 118,
+        "node": "pve2",
+        "name": "Gell-CLOUDJOIN",
+        "status": "running",
+        "tags_csv": "autopilot",
+        "config_digest": "digest",
+    })
+    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+        "vmid": 118,
+        "vm_name": "Gell-CLOUDJOIN",
+        "win_name": "Gell-CLOUDJOIN",
+        "serial": "Gell-CLOUDJOIN",
+        "entra_found": 1,
+        "entra_match_count": 1,
+        "entra_matches_json": "[{\"trustType\": \"AzureAd\"}]",
+    })
+    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+
+    app_module._VMS_CACHE.update(
+        {"data": None, "devices": None, "hash_serials": None,
+         "fetched_at": 0.0, "refreshing": False},
+    )
+    with patch("web.app.DEVICE_MONITOR_DB", monitor_db), \
+         patch("web.app.get_autopilot_devices", return_value=([], None)), \
+         patch("web.app.get_hash_files", return_value=[]), \
+         patch("web.app._refresh_vms_cache_bg"):
+        r = client.get("/vms")
+
+    assert r.status_code == 200
+    assert "Entra ID joined" in r.text
+    assert ">Entra ID<" in r.text
+    assert ">workgroup<" not in r.text
+
+
 def test_healthz_503_before_full_init():
     """Simulate schema init not complete: /healthz must 503, not 200.
     Exercised by temporarily patching both flags to False."""
