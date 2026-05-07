@@ -95,10 +95,11 @@ async function refreshVms() {
         <span style="color:var(--ink-soft);" title="Ubuntu VM — click Check to query Intune/MDE status">—</span>
       {% endif %}
     {% else %}
-      {% if vm.in_autopilot %}<span class="badge badge-green" title="Registered in Intune Autopilot">Autopilot</span>{% endif %}
-      {% if vm.aad_joined %}<span class="badge badge-green" title="Entra (Azure AD) joined{% if vm.aad_tenant %} — {{ vm.aad_tenant }}{% endif %}">Entra</span>{% endif %}
+      {% if vm.in_intune %}<span class="badge badge-green" title="Intune MDM enrolled{% if vm.intune_compliance %} — {{ vm.intune_compliance }}{% endif %}">Intune</span>{% endif %}
+      {% if vm.in_autopilot %}<span class="badge badge-green" title="Windows Autopilot hardware identity registered">Autopilot ID</span>{% endif %}
+      {% if vm.aad_joined %}<span class="badge badge-green" title="Entra device found{% if vm.aad_tenant %} — {{ vm.aad_tenant }}{% endif %}">Entra</span>{% endif %}
       {% if vm.has_hash %}<span class="badge badge-green" title="Hardware hash CSV captured locally">hash</span>{% endif %}
-      {% if not vm.in_autopilot and not vm.aad_joined and not vm.part_of_domain and vm.status == 'running' %}
+      {% if not vm.in_autopilot and not vm.in_intune and not vm.aad_joined and not vm.part_of_domain and vm.status == 'running' %}
         <span class="badge badge-gray" title="No enrollment state detected">unenrolled</span>
       {% elif vm.status != 'running' %}
         <span style="color:var(--ink-soft);">—</span>
