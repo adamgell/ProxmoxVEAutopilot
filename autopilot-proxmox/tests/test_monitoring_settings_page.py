@@ -1,15 +1,14 @@
 """GET /monitoring/settings smoke test — renders controls + seeded OU."""
-from pathlib import Path
 import pytest
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch):
+def client(pg_conn):
     from fastapi.testclient import TestClient
-    from web import app as app_module, device_history_db
-    db_path = tmp_path / "device_monitor.db"
-    monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", db_path)
-    device_history_db.init(db_path)
+    from web import app as app_module, device_history_pg
+
+    device_history_pg.reset_for_tests(pg_conn)
+    device_history_pg.init(pg_conn)
     with TestClient(app_module.app) as c:
         yield c
 
