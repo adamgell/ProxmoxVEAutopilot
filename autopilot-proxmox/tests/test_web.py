@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -293,6 +294,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     from web import db_pg, jobs_pg, service_health_pg, ts_engine_pg
 
     calls = []
+    heartbeat_seen = threading.Event()
 
     class FakeConn:
         pass
@@ -314,11 +316,15 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     def fake_ts_init(conn):
         calls.append(("ts_init", conn.__class__.__name__))
 
+    def fake_heartbeat(**kwargs):
+        calls.append(("heartbeat", kwargs))
+        heartbeat_seen.set()
+
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://startup-test")
     monkeypatch.setattr(db_pg, "connection", fake_connection)
     monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
     monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
-    monkeypatch.setattr(service_health_pg, "heartbeat", lambda **kwargs: None)
+    monkeypatch.setattr(service_health_pg, "heartbeat", fake_heartbeat)
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
     monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "sequences.db")
     monkeypatch.setattr(web_app, "SECRETS_DIR", tmp_path / "secrets")
@@ -328,12 +334,24 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     web_app._CIPHER = None
 
     with TestClient(web_app.app):
-        pass
+        assert heartbeat_seen.wait(timeout=2)
 
     assert ("service_health_init", "FakeConn") in calls
+    heartbeat_calls = [call for call in calls if call[0] == "heartbeat"]
+    assert heartbeat_calls == [
+        (
+            "heartbeat",
+            {
+                "service_id": "web",
+                "service_type": "web",
+                "version_sha": web_app._load_version_sha(),
+                "detail": "idle",
+            },
+        )
+    ]
 
 
-def test_api_services_reads_postgres_rows(pg_conn, client):
+def test_api_services_returns_postgres_service_health(pg_conn, client):
     from web import service_health_pg as service_health
 
     service_health.init(pg_conn)
