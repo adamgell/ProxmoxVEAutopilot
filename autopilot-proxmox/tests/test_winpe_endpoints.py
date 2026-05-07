@@ -560,12 +560,14 @@ def test_osd_register_moves_to_client_state_and_creates_steps(
     assert [a["kind"] for a in body["actions"]] == [
         "install_qga",
         "fix_recovery_partition",
+        "verify_qga",
+        "handoff_to_oobe",
     ]
     from web import sequences_db
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "awaiting_osd_client"
     steps = sequences_db.list_run_steps(test_db, run_id)
-    assert [s["phase"] for s in steps[-2:]] == ["osd", "osd"]
+    assert [s["phase"] for s in steps[-4:]] == ["osd", "osd", "osd", "osd"]
 
 
 def test_osd_step_result_and_complete_mark_run_done(
@@ -612,6 +614,62 @@ def test_osd_step_result_and_complete_mark_run_done(
     assert run["state"] == "done"
 
 
+def test_osd_complete_reconciles_interrupted_winpe_job(
+    web_client, test_db, tmp_path, monkeypatch,
+):
+    from web import app as web_app
+    from web import jobs_db
+    from web import winpe_endpoints
+
+    monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
+                        lambda **kw: None)
+    monkeypatch.setattr(
+        winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
+        lambda **kw: None,
+    )
+    jobs_db_path = tmp_path / "jobs.db"
+    jobs_db.init(jobs_db_path)
+    monkeypatch.setattr(web_app, "JOBS_DB", jobs_db_path)
+
+    run_id, reg = _register(web_client, test_db)
+    job = jobs_db.enqueue(
+        jobs_db_path,
+        job_id="job-interrupted",
+        job_type="provision_winpe",
+        playbook="playbooks/provision_proxmox_winpe.yml",
+        cmd=["ansible-playbook"],
+        args={"run_id": run_id},
+    )
+    jobs_db.claim_next_job(jobs_db_path, worker_id="builder-1")
+    jobs_db.finalize_job(jobs_db_path, job["id"], exit_code=-15)
+
+    web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    osd = web_client.post(
+        "/osd/client/register",
+        json={},
+        headers=_bearer(pkg["bearer_token"]),
+    ).json()
+    token = osd["bearer_token"]
+    for action in osd["actions"]:
+        r = web_client.post(
+            f"/osd/client/step/{action['step_id']}/result",
+            json={"state": "ok"},
+            headers=_bearer(token),
+        )
+        assert r.status_code == 200, r.text
+        token = r.json()["bearer_token"]
+
+    r = web_client.post("/osd/client/complete", headers=_bearer(token))
+    assert r.status_code == 200, r.text
+    reconciled = jobs_db.get_job(jobs_db_path, job["id"])
+    assert reconciled["status"] == "complete"
+    assert reconciled["exit_code"] == 0
+
+
 def test_osd_complete_requires_registered_ok_steps(
     web_client, test_db, monkeypatch,
 ):
@@ -647,6 +705,30 @@ def test_osd_complete_requires_registered_ok_steps(
     )
     assert r.status_code == 409
     assert "incomplete steps" in r.text
+
+
+def test_osd_complete_requires_oobe_handoff_step(web_client, test_db):
+    from web import sequences_db
+    run_id, reg = _register(web_client, test_db)
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="awaiting_osd_client",
+    )
+    for kind in ("install_qga", "fix_recovery_partition", "verify_qga"):
+        step = sequences_db.append_run_step(
+            test_db, run_id=run_id, phase="osd", kind=kind, params={},
+        )
+        sequences_db.update_run_step_state(test_db, step_id=step["id"], state="ok")
+
+    r = web_client.post(
+        "/osd/client/complete",
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 409
+    assert "handoff_to_oobe" in r.text
 
 
 def test_osd_register_done_run_returns_no_actions(web_client, test_db):
@@ -774,6 +856,13 @@ def test_auth_exempts_winpe_machine_callbacks():
         "/osd/client/register",
         "/osd/client/step/1/result",
         "/osd/client/complete",
+        "/osd/v2/agent/register",
+        "/osd/v2/agent/next",
+        "/osd/v2/agent/step/1/result",
+        "/osd/v2/agent/step/1/logs",
+        "/osd/v2/agent/rebooting",
+        "/osd/v2/agent/phase-complete",
+        "/osd/v2/content/1",
     ):
         assert auth.is_exempt_path(path)
 

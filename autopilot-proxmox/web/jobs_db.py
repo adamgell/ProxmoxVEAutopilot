@@ -266,6 +266,48 @@ def finalize_job(db_path: Path, job_id: str, *, exit_code: int) -> int:
     return cur.rowcount
 
 
+def complete_interrupted_provision_winpe_jobs_for_run(
+    db_path: Path, *, run_id: int,
+) -> int:
+    """Mark interrupted WinPE provision jobs complete after run success.
+
+    The image-based OSD handoff continues independently once WinPE has
+    staged Windows. If Docker or the builder restarts during that wait, the
+    job can be left failed/orphaned even though the run later reaches done
+    through the OSD client. Reconcile only interruption-shaped rows so real
+    playbook failures are not hidden.
+    """
+    candidates: list[str] = []
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, args_json, status, exit_code FROM jobs "
+            "WHERE job_type='provision_winpe' "
+            "AND status IN ('failed', 'orphaned')"
+        ).fetchall()
+        for row in rows:
+            try:
+                args = json.loads(row["args_json"])
+            except Exception:
+                continue
+            if int(args.get("run_id") or 0) != int(run_id):
+                continue
+            interrupted = (
+                row["status"] == "orphaned"
+                or row["exit_code"] in (-15, None)
+            )
+            if interrupted:
+                candidates.append(row["id"])
+        if not candidates:
+            return 0
+        now = _now()
+        cur = conn.executemany(
+            "UPDATE jobs SET status='complete', exit_code=0, ended_at=?, "
+            "kill_requested=0 WHERE id=?",
+            [(now, job_id) for job_id in candidates],
+        )
+    return cur.rowcount
+
+
 def request_kill(db_path: Path, job_id: str) -> None:
     with _connect(db_path) as conn:
         conn.execute(

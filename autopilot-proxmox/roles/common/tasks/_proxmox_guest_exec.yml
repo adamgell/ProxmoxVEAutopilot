@@ -28,6 +28,11 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
   register: _guest_exec_result
+  until:
+    - _guest_exec_result.status == 200
+    - _guest_exec_result.json.data.pid is defined
+  retries: "{{ _exec_start_retries | default(6) | int }}"
+  delay: "{{ _exec_start_delay | default(5) | int }}"
 
 - name: "Poll exec status until completion on VM {{ vm_vmid }}"
   ansible.builtin.uri:

@@ -482,12 +482,17 @@ class OsdRegisterBody(BaseModel):
     setupcomplete_log_tail: Optional[str] = None
 
 
+_DEFAULT_OSD_ACTIONS = (
+    {"kind": "install_qga", "params": {}},
+    {"kind": "fix_recovery_partition", "params": {}},
+    {"kind": "verify_qga", "params": {}},
+    {"kind": "handoff_to_oobe", "params": {}},
+)
+
+
 def _build_osd_actions_for_run(db: str, run_id: int) -> list[dict]:
     out = []
-    for action in (
-        {"kind": "install_qga", "params": {}},
-        {"kind": "fix_recovery_partition", "params": {}},
-    ):
+    for action in _DEFAULT_OSD_ACTIONS:
         step = sequences_db.append_run_step(
             db, run_id=run_id, phase="osd",
             kind=action["kind"], params=action["params"],
@@ -498,6 +503,30 @@ def _build_osd_actions_for_run(db: str, run_id: int) -> list[dict]:
             "params": action["params"],
         })
     return out
+
+
+def _ensure_osd_actions_for_run(db: str, run_id: int) -> list[dict]:
+    existing = [
+        s for s in sequences_db.list_run_steps(db, run_id=run_id)
+        if s["phase"] == "osd"
+    ]
+    if not existing:
+        return _build_osd_actions_for_run(db, run_id)
+
+    existing_kinds = {s["kind"] for s in existing}
+    for action in _DEFAULT_OSD_ACTIONS:
+        if action["kind"] not in existing_kinds:
+            sequences_db.append_run_step(
+                db, run_id=run_id, phase="osd",
+                kind=action["kind"], params=action["params"],
+            )
+
+    return [
+        {"step_id": s["id"], "kind": s["kind"],
+         "params": json.loads(s["params_json"])}
+        for s in sequences_db.list_run_steps(db, run_id=run_id)
+        if s["phase"] == "osd" and s["state"] != "ok"
+    ]
 
 
 @osd_router.post("/register")
@@ -529,19 +558,7 @@ def post_osd_register(body: OsdRegisterBody,
             "actions": [],
         }
 
-    existing = [
-        s for s in sequences_db.list_run_steps(db, run_id=run_id)
-        if s["phase"] == "osd"
-    ]
-    if existing:
-        actions = [
-            {"step_id": s["id"], "kind": s["kind"],
-             "params": json.loads(s["params_json"])}
-            for s in existing
-            if s["state"] != "ok"
-        ]
-    else:
-        actions = _build_osd_actions_for_run(db, run_id)
+    actions = _ensure_osd_actions_for_run(db, run_id)
 
     return {
         "run_id": run_id,
@@ -623,9 +640,33 @@ def post_osd_complete(payload: dict = Depends(_require_bearer_token)):
             status_code=409,
             detail=f"OSD client cannot complete with incomplete steps: {names}",
         )
+    handoff = [s for s in osd_steps if s["kind"] == "handoff_to_oobe"]
+    if not handoff or handoff[-1]["state"] != "ok":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "OSD client cannot complete before handoff_to_oobe is ok"
+            ),
+        )
     sequences_db.update_provisioning_run_state(
         db, run_id=run_id, state="done",
     )
+    try:
+        from web import app as web_app
+        from web import jobs_db
+        reconciled = jobs_db.complete_interrupted_provision_winpe_jobs_for_run(
+            web_app.JOBS_DB, run_id=run_id,
+        )
+        if reconciled:
+            LOG.info(
+                "reconciled %s interrupted provision_winpe job(s) for run %s",
+                reconciled, run_id,
+            )
+    except Exception:
+        LOG.exception(
+            "failed to reconcile provision_winpe job after run %s completion",
+            run_id,
+        )
     return {"ok": True}
 
 

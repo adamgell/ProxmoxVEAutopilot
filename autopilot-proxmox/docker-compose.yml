@@ -32,12 +32,36 @@ services:
       # /host/repo via the bind mount). Used by /api/update/run
       # to tell the sidecar where to run git pull / compose.
       HOST_REPO_PATH: /opt/ProxmoxVEAutopilot
+      # Task Sequence Engine v2 uses Postgres. Override
+      # AUTOPILOT_POSTGRES_PASSWORD in production.
+      AUTOPILOT_TS_ENGINE_DATABASE_URL: postgresql://autopilot:${AUTOPILOT_POSTGRES_PASSWORD:-autopilot-dev}@127.0.0.1:5432/autopilot
+    depends_on:
+      autopilot-postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:5000/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 20s
+    restart: unless-stopped
+
+  autopilot-postgres:
+    image: postgres:16-alpine
+    container_name: autopilot-postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: autopilot
+      POSTGRES_USER: autopilot
+      POSTGRES_PASSWORD: ${AUTOPILOT_POSTGRES_PASSWORD:-autopilot-dev}
+    volumes:
+      - autopilot-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autopilot -d autopilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   autopilot-builder:
@@ -76,3 +100,4 @@ services:
 
 volumes:
   autopilot-jobs:
+  autopilot-postgres:
