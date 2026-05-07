@@ -255,6 +255,49 @@ def test_sweep_writes_pve_and_probe_rows_for_autopilot_vms(db):
     assert ad[0]["source_ou_dn"] == "OU=WorkspaceLabs,DC=home,DC=gell,DC=one"
 
 
+def test_sweep_backfills_entra_from_intune_azure_ad_device_id(db):
+    """When displayName lookup misses, Intune's azureADDeviceId is the
+    authoritative edge back to the Entra device object."""
+    from web import device_history_db, device_monitor
+
+    vms = [{"vmid": 108, "name": "Gell-60F03E42", "node": "pve2",
+            "status": "running", "tags": "autopilot"}]
+    lookup_ids = []
+    ctx = _make_ctx(
+        db,
+        list_pve_vms=lambda: vms,
+        fetch_pve_config=lambda vmid, node: _fake_config(vmid),
+        fetch_guest_details=lambda vmid, node: {
+            "win_name": "Gell-60F03E42",
+            "serial": "Gell-60F03E42",
+            "dsreg": {},
+        },
+        ad_search=lambda dn, name: [],
+        graph_find_entra_device=lambda name: [],
+        graph_find_intune_device=lambda serial: [{
+            "serialNumber": serial,
+            "deviceName": "WIN-C4P3CQ6R5LQ",
+            "azureADDeviceId": "6a0ba1f9-0090-4683-aee3-31a6abc1e4ad",
+        }],
+    )
+    ctx.graph_find_entra_device_by_device_id = lambda device_id: (
+        lookup_ids.append(device_id) or [{
+            "displayName": "WIN-C4P3CQ6R5LQ",
+            "deviceId": device_id,
+            "trustType": "AzureAd",
+        }]
+    )
+
+    device_monitor.sweep(ctx)
+
+    row = device_history_db.latest_device_probe(db, 108)
+    assert row["entra_found"] == 1
+    assert row["entra_match_count"] == 1
+    assert lookup_ids == ["6a0ba1f9-0090-4683-aee3-31a6abc1e4ad"]
+    entra = json.loads(row["entra_matches_json"])
+    assert entra[0]["trustType"] == "AzureAd"
+
+
 def test_sweep_includes_vmids_from_extra_in_scope_even_without_tag(db):
     from web import device_history_db, device_monitor
     vms = [{"vmid": 999, "name": "Gell-LEGACY", "node": "pve2",
