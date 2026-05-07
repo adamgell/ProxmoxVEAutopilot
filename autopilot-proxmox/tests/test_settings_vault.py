@@ -20,11 +20,11 @@ def _write(path: Path, content: str) -> None:
 
 
 @pytest.fixture
-def app_client():
+def app_client(pg_conn):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         secrets = tmp / "secrets"
-        db = tmp / "sequences.db"
+        db = None
         import web.app as _wa
         _wa._CIPHER = None
         with patch("web.app.SECRETS_DIR", secrets), \
@@ -35,8 +35,9 @@ def app_client():
             jm.list_jobs.return_value = []
             jm.jobs_dir = str(tmp / "jobs")
             from web.app import app
-            from web import sequences_db as _sdb
+            from web import sequences_pg as _sdb
             secrets.mkdir(parents=True, exist_ok=True)
+            _sdb.reset_for_tests(pg_conn)
             _sdb.init(db)
             yield TestClient(app)
 

@@ -3,7 +3,6 @@ import base64
 import csv
 import json
 import os
-import sqlite3
 import subprocess
 import time
 import urllib3
@@ -45,6 +44,10 @@ def _redirect_with_error(path: str, error: str) -> RedirectResponse:
     return RedirectResponse(f"{path}?error={quote_plus(str(error))}", status_code=303)
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    return isinstance(exc, psycopg.errors.UniqueViolation) or "unique" in str(exc).lower()
+
+
 def _load_version() -> dict:
     """Read the build SHA + timestamp baked in at image build time."""
     version_file = os.environ.get("APP_VERSION_FILE", str(BASE_DIR / "VERSION"))
@@ -65,12 +68,9 @@ _LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, 
 
 # Two flags, one per startup hook. /healthz gates on BOTH so
 # docker-compose `depends_on: service_healthy` can't release
-# builder/monitor after only one hook has completed — FastAPI runs
-# startup hooks in registration order, so a single shared flag flipped
-# True at the end of EITHER hook would leave a race window where the
-# jobs.db migration (second hook) hasn't finished yet. Keeping
-# sequences-init and jobs-init as separate functions matters because
-# the jobs migration reads rows that sequences-init seeds.
+# builder/monitor after only one hook has completed. FastAPI runs
+# startup hooks in registration order, so keep sequence init and job init
+# as separate checkpoints.
 _SEQUENCES_READY = False
 _JOBS_READY = False
 
@@ -104,8 +104,10 @@ PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
 SECRETS_DIR = BASE_DIR / "secrets"
-SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
-JOBS_DB = BASE_DIR / "output" / "jobs.db"
+# Legacy call sites still pass these handles into the compatibility layer;
+# the backing store is Postgres via web.db_pg, not local database files.
+SEQUENCES_DB = None
+JOBS_DB = None
 CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
 DEVICE_MONITOR_DB = BASE_DIR / "output" / "device_monitor.db"
 
@@ -466,7 +468,7 @@ job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
 )
 
-from web import sequences_db, crypto as _crypto
+from web import sequences_pg as sequences_db, crypto as _crypto
 from web import sequence_compiler
 from web import device_history_pg as device_history_db, device_monitor
 from web import auth as _auth
@@ -797,8 +799,11 @@ _auth.install_session_middleware(
 @app.on_event("startup")
 def _init_sequences_db() -> None:
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
-    sequences_db.init(SEQUENCES_DB)
-    sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        sequences_db.init(conn)
+        sequences_db.seed_defaults(conn, _cipher())
     global _SEQUENCES_READY
     _SEQUENCES_READY = True
 
@@ -1044,14 +1049,8 @@ def _vm_provisioning_vmids() -> set:
     """VMIDs that were provisioned through this system — stays
     in-scope for the monitor even if the ``autopilot`` tag was
     later stripped off."""
-    import sqlite3
     try:
-        conn = sqlite3.connect(SEQUENCES_DB)
-        try:
-            rows = conn.execute("SELECT vmid FROM vm_provisioning").fetchall()
-        finally:
-            conn.close()
-        return {int(r[0]) for r in rows}
+        return sequences_db.list_vm_provisioning_vmids(SEQUENCES_DB)
     except Exception:
         return set()
 
@@ -1366,7 +1365,7 @@ def _resolve_ad_credential() -> dict:
     try:
         # sequences_db.get_credential signature is (db, cipher, id) —
         # earlier revision had (db, id, cipher), which raised a silent
-        # sqlite3 bind error and dropped all AD probes.
+        # database bind error and dropped all AD probes.
         cred = sequences_db.get_credential(
             SEQUENCES_DB, _cipher(), int(cred_id),
         )
@@ -6021,8 +6020,8 @@ async def api_credentials_create(request: Request):
             SEQUENCES_DB, _cipher(),
             name=name, type=cred_type, payload=payload,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"credential name already exists: {name}")
         raise
     return {"id": cid}
@@ -6038,8 +6037,8 @@ def api_credentials_update(cred_id: int, body: _CredentialUpdate):
             SEQUENCES_DB, _cipher(), cred_id,
             name=body.name, payload=body.payload,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"credential name already exists: {body.name}")
         raise
     return {"ok": True}
@@ -6111,8 +6110,8 @@ def api_sequences_create(body: _SequenceCreate):
             target_os=body.target_os,
             hash_capture_phase=body.hash_capture_phase,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"sequence name already exists: {body.name}")
         raise
     sequences_db.set_sequence_steps(
@@ -6136,8 +6135,8 @@ def api_sequences_update(seq_id: int, body: _SequenceUpdate):
             target_os=body.target_os,
             hash_capture_phase=body.hash_capture_phase,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"sequence name already exists: {body.name}")
         raise
     if body.steps is not None:
@@ -6157,8 +6156,8 @@ def api_sequences_duplicate(seq_id: int, body: _DuplicateReq):
         new_id = sequences_db.duplicate_sequence(
             SEQUENCES_DB, seq_id, new_name=body.new_name,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"sequence name already exists: {body.new_name}")
         raise
     return {"id": new_id}
@@ -6323,8 +6322,8 @@ async def submit_credential_new(request: Request):
             SEQUENCES_DB, _cipher(),
             name=form["name"], type=cred_type, payload=payload,
         )
-    except sqlite3.IntegrityError as e:
-        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+    except psycopg.IntegrityError as e:
+        msg = "name already exists" if _is_unique_violation(e) else str(e)
         return _redirect_with_error("/credentials/new", msg)
     except ValueError as e:
         return _redirect_with_error("/credentials/new", str(e))
@@ -6353,8 +6352,8 @@ async def submit_credential_edit(request: Request, cred_id: int):
             SEQUENCES_DB, _cipher(), cred_id,
             name=form["name"], payload=new_payload,
         )
-    except sqlite3.IntegrityError as e:
-        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+    except psycopg.IntegrityError as e:
+        msg = "name already exists" if _is_unique_violation(e) else str(e)
         return _redirect_with_error(f"/credentials/{cred_id}/edit", msg)
     except ValueError as e:
         return _redirect_with_error(f"/credentials/{cred_id}/edit", str(e))
@@ -6454,8 +6453,8 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
     new_name = form.get("new_name", "").strip() or "Copy"
     try:
         sequences_db.duplicate_sequence(SEQUENCES_DB, seq_id, new_name=new_name)
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             return _redirect_with_error(
                 "/sequences", f"name '{new_name}' already exists")
         raise
@@ -6639,7 +6638,7 @@ def api_monitoring_search_ous_create(body: _SearchOuCreate):
         )
     except device_history_db.InvalidDn as e:
         raise HTTPException(400, str(e)) from e
-    except (sqlite3.IntegrityError, psycopg.IntegrityError) as e:
+    except psycopg.IntegrityError as e:
         raise HTTPException(
             409, f"search OU with dn={body.dn!r} already exists",
         ) from e
@@ -6658,7 +6657,7 @@ def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
         raise HTTPException(409, str(e)) from e
     except device_history_db.InvalidDn as e:
         raise HTTPException(400, str(e)) from e
-    except (sqlite3.IntegrityError, psycopg.IntegrityError) as e:
+    except psycopg.IntegrityError as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
 

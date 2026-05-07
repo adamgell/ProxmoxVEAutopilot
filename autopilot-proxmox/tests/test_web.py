@@ -20,10 +20,11 @@ def tmp_dirs():
 
 
 @pytest.fixture
-def client(tmp_dirs):
+def client(tmp_dirs, pg_conn):
     jobs_dir, hash_dir = tmp_dirs
     with tempfile.TemporaryDirectory() as seq_dir:
-        seq_db = Path(seq_dir) / "sequences.db"
+        seq_db = None
+        sequences_db.reset_for_tests(pg_conn)
         sequences_db.init(seq_db)
         import web.app  # noqa: F401 - make web.app resolvable for patch()
         with patch("web.app.HASH_DIR", Path(hash_dir)):
@@ -296,6 +297,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
         device_history_pg,
         devices_pg,
         jobs_pg,
+        sequences_pg,
         service_health_pg,
         ts_engine_pg,
     )
@@ -313,6 +315,12 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
 
     def fake_jobs_init(conn):
         calls.append(("jobs_init", conn.__class__.__name__))
+
+    def fake_sequences_init(conn):
+        calls.append(("sequences_init", conn.__class__.__name__))
+
+    def fake_seed_defaults(_handle, _cipher):
+        calls.append(("sequences_seed", "ok"))
 
     def fake_service_health_init(conn=None):
         calls.append((
@@ -336,6 +344,8 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://startup-test")
     monkeypatch.setattr(db_pg, "connection", fake_connection)
     monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
+    monkeypatch.setattr(sequences_pg, "init", fake_sequences_init)
+    monkeypatch.setattr(sequences_pg, "seed_defaults", fake_seed_defaults)
     monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
     monkeypatch.setattr(service_health_pg, "heartbeat", fake_heartbeat)
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
@@ -443,15 +453,16 @@ def test_vms_page_escapes_vm_name_in_data_attributes(client):
     assert "vm_name:'evil" not in body
 
 
-def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
+def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path, pg_conn):
     """A cold /vms page load should not block on live guest-agent probes
     when the monitor service already has a completed sweep snapshot."""
     from web import app as app_module, device_history_db
 
     monitor_db = tmp_path / "device_monitor.db"
-    device_history_db.init(monitor_db)
-    sweep_id = device_history_db.start_sweep(monitor_db)
-    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
+    sweep_id = device_history_db.start_sweep()
+    device_history_db.insert_pve_snapshot(sweep_id, {
         "vmid": 116,
         "node": "pve2",
         "name": "Gell-EC41E7EB",
@@ -463,7 +474,7 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
         "args": "-smbios file=/var/lib/vz/snippets/Gell-EC41E7EB.bin",
         "config_digest": "digest",
     })
-    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+    device_history_db.insert_device_probe(sweep_id, {
         "vmid": 116,
         "vm_name": "Gell-EC41E7EB",
         "win_name": "Gell-EC41E7EB",
@@ -474,7 +485,7 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
         "intune_matches_json": "[{\"complianceState\": \"compliant\"}]",
         "dsreg_status": "{\"AzureAdJoined\": \"YES\", \"TenantName\": \"home\"}",
     })
-    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+    device_history_db.finish_sweep(sweep_id, vm_count=1)
 
     app_module._VMS_CACHE.update(
         {"data": None, "devices": None, "hash_serials": None,
@@ -496,15 +507,16 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
     live_vms.assert_not_called()
 
 
-def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path):
+def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path, pg_conn):
     """Rows built from monitor snapshots should show when PVE/probe data
     was last checked, and the header should expose sweep freshness."""
     from web import app as app_module, device_history_db
 
     monitor_db = tmp_path / "device_monitor.db"
-    device_history_db.init(monitor_db)
-    sweep_id = device_history_db.start_sweep(monitor_db)
-    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
+    sweep_id = device_history_db.start_sweep()
+    device_history_db.insert_pve_snapshot(sweep_id, {
         "vmid": 117,
         "node": "pve2",
         "name": "freshness-vm",
@@ -513,14 +525,14 @@ def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path):
         "checked_at": "2026-04-20T23:55:00+00:00",
         "config_digest": "digest",
     })
-    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+    device_history_db.insert_device_probe(sweep_id, {
         "vmid": 117,
         "vm_name": "freshness-vm",
         "win_name": "freshness-vm",
         "serial": "FRESH117",
         "checked_at": "2026-04-20T23:56:30+00:00",
     })
-    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+    device_history_db.finish_sweep(sweep_id, vm_count=1)
 
     app_module._VMS_CACHE.update(
         {"data": None, "devices": None, "hash_serials": None,
@@ -540,13 +552,14 @@ def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path):
     assert 'data-utc="2026-04-20T23:56:30+00:00"' in r.text
 
 
-def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeypatch):
+def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeypatch, pg_conn):
     """A manual monitoring sweep should not leave a warm /vms cache serving
     the pre-sweep VM rows after the sweep task has completed."""
     from web import app as app_module, device_history_db, monitor_main
 
     monitor_db = tmp_path / "device_monitor.db"
-    device_history_db.init(monitor_db)
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
     app_module._VMS_CACHE.update({
         "data": [{
             "vmid": 199,
@@ -563,9 +576,9 @@ def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeyp
         "refreshing": False,
     })
 
-    def fake_sweep(db_path):
-        sweep_id = device_history_db.start_sweep(db_path)
-        device_history_db.insert_pve_snapshot(db_path, sweep_id, {
+    def fake_sweep():
+        sweep_id = device_history_db.start_sweep()
+        device_history_db.insert_pve_snapshot(sweep_id, {
             "vmid": 200,
             "node": "pve2",
             "name": "fresh-vm",
@@ -574,14 +587,14 @@ def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeyp
             "checked_at": "2026-04-21T00:00:00+00:00",
             "config_digest": "digest",
         })
-        device_history_db.insert_device_probe(db_path, sweep_id, {
+        device_history_db.insert_device_probe(sweep_id, {
             "vmid": 200,
             "vm_name": "fresh-vm",
             "win_name": "fresh-vm",
             "serial": "FRESH200",
             "checked_at": "2026-04-21T00:00:05+00:00",
         })
-        device_history_db.finish_sweep(db_path, sweep_id, vm_count=1)
+        device_history_db.finish_sweep(sweep_id, vm_count=1)
 
     monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", monitor_db)
     monkeypatch.setattr(monitor_main, "_do_sweep_tick", fake_sweep)
@@ -597,15 +610,16 @@ def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeyp
     assert "stale-vm" not in r.text
 
 
-def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path):
+def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path, pg_conn):
     """If Entra reports trustType=ServerAd, the hostname badge should show
     domain evidence instead of falling through to workgroup."""
     from web import app as app_module, device_history_db
 
     monitor_db = tmp_path / "device_monitor.db"
-    device_history_db.init(monitor_db)
-    sweep_id = device_history_db.start_sweep(monitor_db)
-    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
+    sweep_id = device_history_db.start_sweep()
+    device_history_db.insert_pve_snapshot(sweep_id, {
         "vmid": 106,
         "node": "pve2",
         "name": "Gell-E9C0C757",
@@ -613,7 +627,7 @@ def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path):
         "tags_csv": "autopilot",
         "config_digest": "digest",
     })
-    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+    device_history_db.insert_device_probe(sweep_id, {
         "vmid": 106,
         "vm_name": "Gell-E9C0C757",
         "win_name": "Gell-E9C0C757",
@@ -622,7 +636,7 @@ def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path):
         "entra_match_count": 1,
         "entra_matches_json": "[{\"trustType\": \"ServerAd\"}]",
     })
-    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+    device_history_db.finish_sweep(sweep_id, vm_count=1)
 
     app_module._VMS_CACHE.update(
         {"data": None, "devices": None, "hash_serials": None,
@@ -640,15 +654,16 @@ def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path):
     assert ">workgroup<" not in r.text
 
 
-def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path):
+def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path, pg_conn):
     """Cloud Entra-joined devices should show Entra ID in the hostname
     bubble. Workgroup is only for devices with no domain or Entra evidence."""
     from web import app as app_module, device_history_db
 
     monitor_db = tmp_path / "device_monitor.db"
-    device_history_db.init(monitor_db)
-    sweep_id = device_history_db.start_sweep(monitor_db)
-    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
+    sweep_id = device_history_db.start_sweep()
+    device_history_db.insert_pve_snapshot(sweep_id, {
         "vmid": 118,
         "node": "pve2",
         "name": "Gell-CLOUDJOIN",
@@ -656,7 +671,7 @@ def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path):
         "tags_csv": "autopilot",
         "config_digest": "digest",
     })
-    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+    device_history_db.insert_device_probe(sweep_id, {
         "vmid": 118,
         "vm_name": "Gell-CLOUDJOIN",
         "win_name": "Gell-CLOUDJOIN",
@@ -665,7 +680,7 @@ def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path):
         "entra_match_count": 1,
         "entra_matches_json": "[{\"trustType\": \"AzureAd\"}]",
     })
-    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+    device_history_db.finish_sweep(sweep_id, vm_count=1)
 
     app_module._VMS_CACHE.update(
         {"data": None, "devices": None, "hash_serials": None,
@@ -683,16 +698,17 @@ def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path):
     assert ">workgroup<" not in r.text
 
 
-def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path):
+def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path, pg_conn):
     """When Entra was found by Intune azureADDeviceId linkage, the
     hostname bubble should expose that source in the tooltip."""
     from web import app as app_module, device_history_db
 
     device_id = "6a0ba1f9-0090-4683-aee3-31a6abc1e4ad"
     monitor_db = tmp_path / "device_monitor.db"
-    device_history_db.init(monitor_db)
-    sweep_id = device_history_db.start_sweep(monitor_db)
-    device_history_db.insert_pve_snapshot(monitor_db, sweep_id, {
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
+    sweep_id = device_history_db.start_sweep()
+    device_history_db.insert_pve_snapshot(sweep_id, {
         "vmid": 108,
         "node": "pve2",
         "name": "Gell-60F03E42",
@@ -700,7 +716,7 @@ def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path):
         "tags_csv": "autopilot",
         "config_digest": "digest",
     })
-    device_history_db.insert_device_probe(monitor_db, sweep_id, {
+    device_history_db.insert_device_probe(sweep_id, {
         "vmid": 108,
         "vm_name": "Gell-60F03E42",
         "win_name": "Gell-60F03E42",
@@ -719,7 +735,7 @@ def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path):
             "azureADDeviceId": device_id,
         }]),
     })
-    device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
+    device_history_db.finish_sweep(sweep_id, vm_count=1)
 
     app_module._VMS_CACHE.update(
         {"data": None, "devices": None, "hash_serials": None,

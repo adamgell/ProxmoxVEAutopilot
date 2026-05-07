@@ -962,7 +962,7 @@ def test_auth_exempts_winpe_machine_callbacks():
 
 
 def test_provision_post_with_boot_mode_winpe_creates_run(
-    web_client, test_db, monkeypatch,
+    web_client, test_db, monkeypatch, pg_conn,
 ):
     """POST /api/jobs/provision with boot_mode=winpe creates a
     provisioning_runs row, skips the answer-floppy build, and launches
@@ -995,12 +995,10 @@ def test_provision_post_with_boot_mode_winpe_creates_run(
     )
     assert r.status_code == 200, r.text
 
-    import sqlite3
-    with sqlite3.connect(test_db) as conn:
-        n = conn.execute(
-            "SELECT COUNT(*) FROM provisioning_runs "
-            "WHERE provision_path='winpe' AND state='queued'"
-        ).fetchone()[0]
+    n = pg_conn.execute(
+        "SELECT COUNT(*) AS count FROM provisioning_runs "
+        "WHERE provision_path='winpe' AND state='queued'"
+    ).fetchone()["count"]
     assert n == 1
     assert any(
         str(l["playbook"]).endswith("provision_proxmox_winpe.yml")

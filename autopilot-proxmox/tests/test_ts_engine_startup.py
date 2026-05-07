@@ -16,6 +16,7 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         device_history_pg,
         devices_pg,
         jobs_pg,
+        sequences_pg,
         service_health_pg,
         ts_engine_pg,
     )
@@ -36,6 +37,12 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     def fake_jobs_init(conn):
         calls.append(("jobs_init", conn.__class__.__name__))
 
+    def fake_sequences_init(conn):
+        calls.append(("sequences_init", conn.__class__.__name__))
+
+    def fake_seed_defaults(_handle, _cipher):
+        calls.append(("sequences_seed", "ok"))
+
     def fake_service_health_init(conn):
         calls.append(("service_health_init", conn.__class__.__name__))
 
@@ -49,6 +56,8 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
     monkeypatch.setattr(db_pg, "connection", fake_connection)
     monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
+    monkeypatch.setattr(sequences_pg, "init", fake_sequences_init)
+    monkeypatch.setattr(sequences_pg, "seed_defaults", fake_seed_defaults)
     monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
     monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
@@ -58,6 +67,9 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         pass
 
     assert calls == [
+        ("connect", "postgresql://new"),
+        ("sequences_init", "FakeConn"),
+        ("sequences_seed", "ok"),
         ("connect", "postgresql://new"),
         ("jobs_init", "FakeConn"),
         ("service_health_init", "FakeConn"),

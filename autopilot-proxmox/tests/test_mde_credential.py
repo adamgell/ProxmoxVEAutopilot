@@ -18,11 +18,11 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def app_env():
+def app_env(pg_conn):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         secrets = tmp / "secrets"
-        db = tmp / "sequences.db"
+        db = None
         # Reset the process-wide cipher cache so this test's patched
         # CREDENTIAL_KEY is actually used (prevents cross-test contamination
         # when a previous test left a stale Fernet in web.app._CIPHER).
@@ -36,8 +36,9 @@ def app_env():
             jm.list_jobs.return_value = []
             jm.jobs_dir = str(tmp / "jobs")
             from web.app import app
-            from web import sequences_db as _sdb
+            from web import sequences_pg as _sdb
             secrets.mkdir(parents=True, exist_ok=True)
+            _sdb.reset_for_tests(pg_conn)
             _sdb.init(db)
             yield TestClient(app), db, secrets / "credential_key"
 

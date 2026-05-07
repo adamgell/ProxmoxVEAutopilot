@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -29,7 +28,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from web import osd_package
-from web import sequences_db, winpe_token
+from web import sequences_pg as sequences_db, winpe_token
 
 
 router = APIRouter(prefix="/winpe", tags=["winpe"])
@@ -114,17 +113,12 @@ def post_register(body: RegisterBody):
     )
     if run is None:
         # Distinguish 404 (no such uuid at all) from 409 (uuid exists, wrong state)
-        with sqlite3.connect(db) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT state FROM provisioning_runs WHERE vm_uuid=? "
-                "ORDER BY id DESC LIMIT 1", (body.vm_uuid,),
-            ).fetchone()
-        if row is None:
+        state = sequences_db.get_latest_run_state_by_uuid(db, vm_uuid=body.vm_uuid)
+        if state is None:
             raise HTTPException(status_code=404, detail="no run for vm_uuid")
         raise HTTPException(
             status_code=409,
-            detail=f"run state is {row['state']!r}, expected awaiting_winpe",
+            detail=f"run state is {state!r}, expected awaiting_winpe",
         )
 
     # Idempotency: if steps already exist (re-registration), reuse them.

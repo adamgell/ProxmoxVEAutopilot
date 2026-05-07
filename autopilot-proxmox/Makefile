@@ -16,7 +16,7 @@ test: ## Run full test suite
 	$(PY) -m pytest
 
 test-unit: ## Unit tests only (no FastAPI integration)
-	$(PY) -m pytest tests/test_crypto.py tests/test_sequences_db.py tests/test_ubuntu_compiler_*.py tests/test_ubuntu_enrollment.py
+	$(PY) -m pytest tests/test_crypto.py tests/test_sequences_pg.py tests/test_ubuntu_compiler_*.py tests/test_ubuntu_enrollment.py
 
 test-compiler: ## Ubuntu compiler tests
 	$(PY) -m pytest tests/test_ubuntu_compiler_*.py tests/test_linuxesp_parity.py

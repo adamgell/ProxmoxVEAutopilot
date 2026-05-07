@@ -10,9 +10,8 @@ Fixtures (opt-in helpers for new tests)
 ---------------------------------------
 - ``tmp_secrets_dir``: an isolated writable secrets dir pre-seeded with a
   fresh Fernet credential_key file.
-- ``test_db``: a freshly initialised sequences.db (no default seeds).
-- ``seeded_db``: a sequences.db initialised AND seeded with the three
-  default sequences.
+- ``test_db``: a freshly initialised Postgres sequence store (no default seeds).
+- ``seeded_db``: a Postgres sequence store initialised AND seeded with defaults.
 - ``web_client``: a FastAPI ``TestClient`` wired to ``test_db`` +
   ``tmp_secrets_dir``.
 - ``seeded_web_client``: the same, but against the seeded DB.
@@ -172,29 +171,29 @@ def tmp_secrets_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def test_db(tmp_path: Path) -> Path:
-    """Fresh, initialised sequences DB (no default sequences seeded)."""
-    from web import sequences_db
+def test_db(pg_conn):
+    """Fresh, initialised sequence store (no default sequences seeded)."""
+    from web import sequences_pg
 
-    db = tmp_path / "sequences.db"
-    sequences_db.init(db)
-    return db
+    sequences_pg.reset_for_tests(pg_conn)
+    sequences_pg.init(pg_conn)
+    return None
 
 
 @pytest.fixture
-def seeded_db(test_db: Path, tmp_secrets_dir: Path) -> Path:
-    """Sequences DB initialised + seeded with the default sequences."""
-    from web import sequences_db
+def seeded_db(test_db, tmp_secrets_dir: Path):
+    """Sequence store initialised + seeded with the default sequences."""
+    from web import sequences_pg
     from web.crypto import Cipher
 
-    sequences_db.seed_defaults(
+    sequences_pg.seed_defaults(
         test_db,
         Cipher(tmp_secrets_dir / "credential_key"),
     )
     return test_db
 
 
-def _patch_app_paths(monkeypatch, db: Path, secrets: Path, tmp_path: Path) -> None:
+def _patch_app_paths(monkeypatch, db, secrets: Path, tmp_path: Path) -> None:
     """Redirect web.app's on-disk state at the module level."""
     import web.app as web_app
 

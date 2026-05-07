@@ -35,7 +35,7 @@ def test_compiled_winpe_phase_actions_is_independent_per_instance():
 
 
 def _seq(name="s", steps=None, autopilot_enabled=False, hash_phase="oobe"):
-    """Build a minimal sequence dict matching sequences_db.get_sequence's shape."""
+    """Build a minimal sequence dict matching sequences_pg.get_sequence's shape."""
     return {
         "id": 1, "name": name, "description": "",
         "is_default": False, "produces_autopilot_hash": False,
@@ -122,9 +122,10 @@ def test_compile_winpe_does_not_mark_autopilot_when_enabled():
     assert not any(a["kind"] == "stage_autopilot_config" for a in p.actions)
 
 
-def test_create_sequence_persists_hash_capture_phase(tmp_path):
-    from web import sequences_db
-    db = tmp_path / "sequences.db"
+def test_create_sequence_persists_hash_capture_phase(pg_conn):
+    from web import sequences_pg as sequences_db
+    db = None
+    sequences_db.reset_for_tests(pg_conn)
     sequences_db.init(db)
     sid = sequences_db.create_sequence(
         db, name="winpe-seq", description="",
@@ -135,9 +136,10 @@ def test_create_sequence_persists_hash_capture_phase(tmp_path):
     assert seq["hash_capture_phase"] == "winpe"
 
 
-def test_update_sequence_changes_hash_capture_phase(tmp_path):
-    from web import sequences_db
-    db = tmp_path / "sequences.db"
+def test_update_sequence_changes_hash_capture_phase(pg_conn):
+    from web import sequences_pg as sequences_db
+    db = None
+    sequences_db.reset_for_tests(pg_conn)
     sequences_db.init(db)
     sid = sequences_db.create_sequence(
         db, name="oobe-seq", description="",
@@ -152,10 +154,11 @@ def test_update_sequence_changes_hash_capture_phase(tmp_path):
     assert seq["hash_capture_phase"] == "winpe"
 
 
-def test_create_sequence_rejects_unknown_hash_capture_phase(tmp_path):
+def test_create_sequence_rejects_unknown_hash_capture_phase(pg_conn):
     import pytest
-    from web import sequences_db
-    db = tmp_path / "sequences.db"
+    from web import sequences_pg as sequences_db
+    db = None
+    sequences_db.reset_for_tests(pg_conn)
     sequences_db.init(db)
     with pytest.raises(ValueError):
         sequences_db.create_sequence(
@@ -165,9 +168,10 @@ def test_create_sequence_rejects_unknown_hash_capture_phase(tmp_path):
         )
 
 
-def test_duplicate_sequence_preserves_hash_capture_phase(tmp_path):
-    from web import sequences_db
-    db = tmp_path / "sequences.db"
+def test_duplicate_sequence_preserves_hash_capture_phase(pg_conn):
+    from web import sequences_pg as sequences_db
+    db = None
+    sequences_db.reset_for_tests(pg_conn)
     sequences_db.init(db)
     sid = sequences_db.create_sequence(
         db, name="src-winpe", description="",

@@ -89,7 +89,7 @@ class JobManager:
     def set_arg(self, job_id: str, key: str, value) -> None:
         """Attach arbitrary key/value metadata to a job.
 
-        Writes through to jobs.db's args_json column so the builder and
+        Writes through to the Postgres jobs args_json column so the builder and
         downstream readers see it.
         """
         job = self.get_job(job_id)

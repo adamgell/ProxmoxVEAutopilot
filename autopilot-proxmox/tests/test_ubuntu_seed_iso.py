@@ -64,7 +64,7 @@ def test_build_seed_iso_accepts_optional_network_config(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------------
 
 
-def _setup_client(tmp_path, monkeypatch, *, seed=True):
+def _setup_client(tmp_path, monkeypatch, pg_conn, *, seed=True):
     """Install an Ubuntu sequence + seed defaults into a fresh DB, return TestClient."""
     from web import app as web_app, sequences_db
     from cryptography.fernet import Fernet
@@ -75,9 +75,10 @@ def _setup_client(tmp_path, monkeypatch, *, seed=True):
     cred_key.write_bytes(Fernet.generate_key())
 
     monkeypatch.setattr(web_app, "SECRETS_DIR", secrets_dir)
-    monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "s.db")
+    monkeypatch.setattr(web_app, "SEQUENCES_DB", None)
     monkeypatch.setattr(web_app, "CREDENTIAL_KEY", cred_key)
 
+    sequences_db.reset_for_tests(pg_conn)
     sequences_db.init(web_app.SEQUENCES_DB)
     if seed:
         sequences_db.seed_defaults(web_app.SEQUENCES_DB, web_app._cipher())
@@ -85,7 +86,7 @@ def _setup_client(tmp_path, monkeypatch, *, seed=True):
     return TestClient(web_app.app)
 
 
-def test_rebuild_seed_iso_compiles_and_uploads(tmp_path, monkeypatch):
+def test_rebuild_seed_iso_compiles_and_uploads(tmp_path, monkeypatch, pg_conn):
     # Stub stdlib `crypt` (removed in Py3.13) so web.ubuntu_compiler can import
     # create_ubuntu_user. This test does not exercise password hashing.
     import sys
@@ -98,7 +99,7 @@ def test_rebuild_seed_iso_compiles_and_uploads(tmp_path, monkeypatch):
         sys.modules["crypt"] = stub
 
     from web import sequences_db, app as web_app
-    client = _setup_client(tmp_path, monkeypatch)
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
     # Find the Ubuntu Plain sequence id
     seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
     ubuntu_plain = next(s for s in seqs if s["name"] == "Ubuntu Plain")
@@ -132,16 +133,16 @@ def test_rebuild_seed_iso_compiles_and_uploads(tmp_path, monkeypatch):
     assert data["iso"].endswith("ubuntu-seed.iso")
 
 
-def test_rebuild_seed_iso_404_on_missing_sequence(tmp_path, monkeypatch):
-    client = _setup_client(tmp_path, monkeypatch, seed=False)
+def test_rebuild_seed_iso_404_on_missing_sequence(tmp_path, monkeypatch, pg_conn):
+    client = _setup_client(tmp_path, monkeypatch, pg_conn, seed=False)
     resp = client.post("/api/ubuntu/rebuild-seed-iso?sequence_id=9999")
     assert resp.status_code == 404
     assert resp.json()["ok"] is False
 
 
-def test_rebuild_seed_iso_400_on_windows_sequence(tmp_path, monkeypatch):
+def test_rebuild_seed_iso_400_on_windows_sequence(tmp_path, monkeypatch, pg_conn):
     from web import sequences_db, app as web_app
-    client = _setup_client(tmp_path, monkeypatch)
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
     seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
     # The Entra Join default is a Windows sequence
     windows = next(s for s in seqs if s["target_os"] == "windows")
@@ -155,8 +156,8 @@ def test_rebuild_seed_iso_400_on_windows_sequence(tmp_path, monkeypatch):
 # -----------------------------------------------------------------------------
 
 
-def test_template_page_renders_ubuntu_panel(tmp_path, monkeypatch):
-    client = _setup_client(tmp_path, monkeypatch)
+def test_template_page_renders_ubuntu_panel(tmp_path, monkeypatch, pg_conn):
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
     resp = client.get("/template")
     assert resp.status_code == 200, resp.text
     body = resp.text
@@ -166,9 +167,9 @@ def test_template_page_renders_ubuntu_panel(tmp_path, monkeypatch):
     assert 'Ubuntu Plain' in body
 
 
-def test_build_ubuntu_template_returns_job_id(tmp_path, monkeypatch):
+def test_build_ubuntu_template_returns_job_id(tmp_path, monkeypatch, pg_conn):
     from web import app as web_app, sequences_db
-    client = _setup_client(tmp_path, monkeypatch)
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
     seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
     ubuntu_plain = next(s for s in seqs if s["name"] == "Ubuntu Plain")
 
@@ -192,9 +193,9 @@ def test_build_ubuntu_template_returns_job_id(tmp_path, monkeypatch):
     assert f"ubuntu_template_sequence_id={ubuntu_plain['id']}" in cmd
 
 
-def test_build_ubuntu_template_404_on_missing_or_windows(tmp_path, monkeypatch):
+def test_build_ubuntu_template_404_on_missing_or_windows(tmp_path, monkeypatch, pg_conn):
     from web import app as web_app, sequences_db
-    client = _setup_client(tmp_path, monkeypatch)
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
 
     # Missing id
     resp = client.post("/api/ubuntu/build-template?sequence_id=9999")
@@ -214,7 +215,7 @@ def test_build_ubuntu_template_404_on_missing_or_windows(tmp_path, monkeypatch):
 # -----------------------------------------------------------------------------
 
 
-def test_per_vm_seed_builds_and_uploads(tmp_path, monkeypatch):
+def test_per_vm_seed_builds_and_uploads(tmp_path, monkeypatch, pg_conn):
     # Same crypt stub shim as test_rebuild_seed_iso_compiles_and_uploads —
     # compile_sequence imports create_ubuntu_user which needs `crypt` on <3.13.
     import sys
@@ -227,7 +228,7 @@ def test_per_vm_seed_builds_and_uploads(tmp_path, monkeypatch):
         sys.modules["crypt"] = stub
 
     from web import sequences_db, app as web_app
-    client = _setup_client(tmp_path, monkeypatch)
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
     seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
     ubuntu_plain = next(s for s in seqs if s["name"] == "Ubuntu Plain")
 
@@ -259,8 +260,8 @@ def test_per_vm_seed_builds_and_uploads(tmp_path, monkeypatch):
     assert "ubuntu-per-vm-107.iso" in data["iso"]
 
 
-def test_per_vm_seed_404_on_missing_sequence(tmp_path, monkeypatch):
-    client = _setup_client(tmp_path, monkeypatch, seed=False)
+def test_per_vm_seed_404_on_missing_sequence(tmp_path, monkeypatch, pg_conn):
+    client = _setup_client(tmp_path, monkeypatch, pg_conn, seed=False)
     resp = client.post(
         "/api/ubuntu/per-vm-seed?vmid=107&sequence_id=9999&hostname=h"
     )
@@ -268,9 +269,9 @@ def test_per_vm_seed_404_on_missing_sequence(tmp_path, monkeypatch):
     assert resp.json()["ok"] is False
 
 
-def test_per_vm_seed_400_on_windows_sequence(tmp_path, monkeypatch):
+def test_per_vm_seed_400_on_windows_sequence(tmp_path, monkeypatch, pg_conn):
     from web import sequences_db, app as web_app
-    client = _setup_client(tmp_path, monkeypatch)
+    client = _setup_client(tmp_path, monkeypatch, pg_conn)
     seqs = sequences_db.list_sequences(web_app.SEQUENCES_DB)
     windows = next(s for s in seqs if s["target_os"] == "windows")
     resp = client.post(

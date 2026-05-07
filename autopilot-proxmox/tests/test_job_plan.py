@@ -8,21 +8,22 @@ import pytest
 
 
 @pytest.fixture
-def seeded_db():
-    """Stand up a sequences DB with a sequence + credentials so the
+def seeded_db(pg_conn):
+    """Stand up a sequence store with a sequence + credentials so the
     provision_clone plan has real data to render against."""
-    from web import sequences_db, crypto
+    from web import sequences_pg as sequences_db, crypto
     import web.app as _wa
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         secrets = tmp / "secrets"
-        db = tmp / "sequences.db"
+        db = None
         _wa._CIPHER = None
         with patch("web.app.SECRETS_DIR", secrets), \
              patch("web.app.SEQUENCES_DB", db), \
              patch("web.app.CREDENTIAL_KEY", secrets / "credential_key"):
             secrets.mkdir(parents=True, exist_ok=True)
+            sequences_db.reset_for_tests(pg_conn)
             sequences_db.init(db)
             cipher = crypto.Cipher(secrets / "credential_key")
             la_id = sequences_db.create_credential(
