@@ -522,6 +522,7 @@ def create_run_from_version(
     deployment_target: Optional[dict] = None,
     run_variables: Optional[dict] = None,
     created_by: Optional[str] = None,
+    resolve_content: bool = False,
 ) -> str:
     version = conn.execute(
         "SELECT * FROM ts_task_sequence_versions WHERE id = %s",
@@ -607,7 +608,14 @@ def create_run_from_version(
             ),
         )
     _append_event(conn, run_id=run_id, event_type="run_created")
-    _commit(conn)
+    if resolve_content:
+        try:
+            resolve_run_content_manifest(conn, run_id)
+        except Exception:
+            conn.rollback()
+            raise
+    else:
+        _commit(conn)
     return run_id
 
 
@@ -782,6 +790,110 @@ def create_content_version(
     )
     _commit(conn)
     return version_id
+
+
+def list_content_items(conn: Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            ci.id,
+            ci.name,
+            ci.content_type,
+            ci.description,
+            ci.enabled,
+            latest.id AS latest_version_id,
+            latest.version AS latest_version,
+            latest.sha256 AS latest_sha256,
+            latest.size_bytes AS latest_size_bytes,
+            latest.source_uri AS latest_source_uri,
+            latest.metadata_json AS latest_metadata
+        FROM ts_content_items ci
+        LEFT JOIN LATERAL (
+            SELECT *
+            FROM ts_content_versions cv
+            WHERE cv.content_item_id = ci.id
+            ORDER BY cv.created_at DESC, cv.id DESC
+            LIMIT 1
+        ) latest ON true
+        ORDER BY ci.name
+        """
+    ).fetchall()
+    return [_normalize_content_item(row) for row in rows]
+
+
+def get_content_item(conn: Connection, item_id: str) -> dict:
+    row = conn.execute(
+        """
+        SELECT
+            ci.id,
+            ci.name,
+            ci.content_type,
+            ci.description,
+            ci.enabled,
+            latest.id AS latest_version_id,
+            latest.version AS latest_version,
+            latest.sha256 AS latest_sha256,
+            latest.size_bytes AS latest_size_bytes,
+            latest.source_uri AS latest_source_uri,
+            latest.metadata_json AS latest_metadata
+        FROM ts_content_items ci
+        LEFT JOIN LATERAL (
+            SELECT *
+            FROM ts_content_versions cv
+            WHERE cv.content_item_id = ci.id
+            ORDER BY cv.created_at DESC, cv.id DESC
+            LIMIT 1
+        ) latest ON true
+        WHERE ci.id = %s
+        """,
+        (item_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"content item not found: {item_id}")
+    return _normalize_content_item(row)
+
+
+def get_content_version(conn: Connection, version_id: str) -> dict:
+    row = conn.execute(
+        "SELECT * FROM ts_content_versions WHERE id = %s",
+        (version_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"content version not found: {version_id}")
+    return _normalize_content_version(row)
+
+
+def _normalize_content_item(row: dict) -> dict:
+    latest_version = None
+    if row["latest_version_id"]:
+        latest_version = {
+            "id": str(row["latest_version_id"]),
+            "version": row["latest_version"],
+            "sha256": row["latest_sha256"],
+            "size_bytes": row["latest_size_bytes"],
+            "source_uri": row["latest_source_uri"],
+            "metadata": row["latest_metadata"],
+        }
+    return {
+        "id": str(row["id"]),
+        "name": row["name"],
+        "content_type": row["content_type"],
+        "description": row["description"],
+        "enabled": row["enabled"],
+        "latest_version": latest_version,
+    }
+
+
+def _normalize_content_version(row: dict) -> dict:
+    return {
+        "id": str(row["id"]),
+        "content_item_id": str(row["content_item_id"]),
+        "version": row["version"],
+        "sha256": row["sha256"],
+        "size_bytes": row["size_bytes"],
+        "source_uri": row["source_uri"],
+        "metadata": row["metadata_json"],
+    }
 
 
 def add_manifest_item(

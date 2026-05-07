@@ -11,12 +11,14 @@ from contextlib import contextmanager
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from pydantic import BaseModel, Field
 
 from web import ts_engine_pg, winpe_token
 
 
 router = APIRouter(prefix="/osd/v2", tags=["osd-v2"])
+api_router = APIRouter(prefix="/api/osd/v2", tags=["osd-v2-api"])
 
 _AGENT_TOKEN_TTL = 24 * 60 * 60
 
@@ -64,6 +66,20 @@ class PhaseCompleteBody(BaseModel):
     run_id: str
     agent_id: str
     phase: str
+
+
+class ContentItemCreateBody(BaseModel):
+    name: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    description: str = ""
+
+
+class ContentVersionCreateBody(BaseModel):
+    version: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[A-Fa-f0-9]{64}$")
+    source_uri: str = Field(min_length=1)
+    size_bytes: Optional[int] = Field(default=None, ge=0)
+    metadata: dict = Field(default_factory=dict)
 
 
 def _database_url() -> str:
@@ -278,3 +294,50 @@ def get_content_manifest_item(
             raise HTTPException(status_code=404, detail="content not found")
     _require_run_token(item["run_id"], payload)
     return item
+
+
+@api_router.get("/content/items")
+def list_content_items():
+    with _conn() as conn:
+        return {"items": ts_engine_pg.list_content_items(conn)}
+
+
+@api_router.post("/content/items", status_code=201)
+def create_content_item(body: ContentItemCreateBody):
+    with _conn() as conn:
+        try:
+            item_id = ts_engine_pg.create_content_item(
+                conn,
+                name=body.name,
+                content_type=body.content_type,
+                description=body.description,
+            )
+        except UniqueViolation:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="content item already exists")
+        return ts_engine_pg.get_content_item(conn, item_id)
+
+
+@api_router.post("/content/items/{item_id}/versions", status_code=201)
+def create_content_version(item_id: str, body: ContentVersionCreateBody):
+    with _conn() as conn:
+        try:
+            version_id = ts_engine_pg.create_content_version(
+                conn,
+                content_item_id=item_id,
+                version=body.version,
+                sha256=body.sha256.lower(),
+                source_uri=body.source_uri,
+                size_bytes=body.size_bytes,
+                metadata=body.metadata,
+            )
+        except UniqueViolation:
+            conn.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="content version already exists for item",
+            )
+        except ForeignKeyViolation:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="content item not found")
+        return ts_engine_pg.get_content_version(conn, version_id)

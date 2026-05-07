@@ -328,6 +328,77 @@ def test_step_result_for_wrong_phase_is_rejected(osd_v2_client, pg_conn):
     assert result.status_code == 409
 
 
+def test_content_api_creates_lists_and_versions(osd_v2_client, pg_conn):
+    item = osd_v2_client.post(
+        "/api/osd/v2/content/items",
+        json={
+            "name": "notepad-plus-plus",
+            "content_type": "package",
+            "description": "Notepad++ installer",
+        },
+    )
+    assert item.status_code == 201, item.text
+    item_body = item.json()
+    assert item_body["name"] == "notepad-plus-plus"
+    assert item_body["content_type"] == "package"
+    assert item_body["latest_version"] is None
+
+    version = osd_v2_client.post(
+        f"/api/osd/v2/content/items/{item_body['id']}/versions",
+        json={
+            "version": "8.6.7",
+            "sha256": "f" * 64,
+            "size_bytes": 4096,
+            "source_uri": "https://content.local/npp.8.6.7.x64.msi",
+            "metadata": {"install_command": "msiexec.exe /i npp.msi /qn"},
+        },
+    )
+    assert version.status_code == 201, version.text
+    assert version.json()["version"] == "8.6.7"
+    assert version.json()["metadata"] == {
+        "install_command": "msiexec.exe /i npp.msi /qn"
+    }
+
+    listing = osd_v2_client.get("/api/osd/v2/content/items")
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["items"] == [
+        {
+            "id": item_body["id"],
+            "name": "notepad-plus-plus",
+            "content_type": "package",
+            "description": "Notepad++ installer",
+            "enabled": True,
+            "latest_version": {
+                "id": version.json()["id"],
+                "version": "8.6.7",
+                "sha256": "f" * 64,
+                "size_bytes": 4096,
+                "source_uri": "https://content.local/npp.8.6.7.x64.msi",
+                "metadata": {"install_command": "msiexec.exe /i npp.msi /qn"},
+            },
+        }
+    ]
+
+
+def test_content_api_rejects_invalid_sha(osd_v2_client, pg_conn):
+    item = osd_v2_client.post(
+        "/api/osd/v2/content/items",
+        json={"name": "bad-hash-app", "content_type": "package"},
+    )
+    assert item.status_code == 201, item.text
+
+    version = osd_v2_client.post(
+        f"/api/osd/v2/content/items/{item.json()['id']}/versions",
+        json={
+            "version": "1.0",
+            "sha256": "not-a-sha",
+            "source_uri": "https://content.local/bad.msi",
+        },
+    )
+
+    assert version.status_code == 422
+
+
 def test_auth_exempts_osd_v2_machine_callbacks():
     from web import auth
 

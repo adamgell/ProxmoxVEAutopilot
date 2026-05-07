@@ -47,4 +47,13 @@ Describe 'OsdClient.ps1 contract' {
         $script:Body | Should -Match 'WaitForStatus'
         $script:Body | Should -Match 'FixRecoveryPartition\.ps1'
     }
+
+    It 'supports generic install_package content actions' {
+        $script:Body | Should -Match 'function Invoke-InstallPackage'
+        $script:Body | Should -Match "'install_package' \{ Invoke-InstallPackage -Action"
+        $script:Body | Should -Match 'Invoke-WebRequest'
+        $script:Body | Should -Match 'Get-FileHash'
+        $script:Body | Should -Match 'Start-Process'
+        $script:Body | Should -Match 'install_command'
+    }
 }

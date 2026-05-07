@@ -302,6 +302,67 @@ def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
     ]
 
 
+def test_create_run_can_require_and_pin_content_manifest(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Required Content")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Install app",
+        kind="install_package",
+        phase="full_os",
+        position=0,
+        content_refs=["required-app"],
+    )
+    item_id = ts_engine_pg.create_content_item(
+        pg_conn, name="required-app", content_type="package"
+    )
+    ts_engine_pg.create_content_version(
+        pg_conn,
+        content_item_id=item_id,
+        version="1.0.0",
+        sha256="e" * 64,
+        source_uri="https://content.local/required-app.msi",
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn,
+        sequence_version_id=version_id,
+        resolve_content=True,
+    )
+
+    assert ts_engine_pg.list_run_manifest(pg_conn, run_id)[0]["logical_name"] == (
+        "required-app"
+    )
+
+
+def test_create_run_rejects_missing_required_content_when_requested(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Missing Content")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Install missing app",
+        kind="install_package",
+        phase="full_os",
+        position=0,
+        content_refs=["missing-app"],
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+
+    with pytest.raises(ValueError, match="content reference has no version"):
+        ts_engine_pg.create_run_from_version(
+            pg_conn,
+            sequence_version_id=version_id,
+            resolve_content=True,
+        )
+
+
 def test_conditions_skip_steps_when_run_is_created(pg_conn):
     from web import ts_engine_pg
 

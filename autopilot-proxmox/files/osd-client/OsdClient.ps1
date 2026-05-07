@@ -155,6 +155,68 @@ function Invoke-RecoveryFix {
     }
 }
 
+function Invoke-InstallPackage {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $content = @($Action.content)
+    if ($content.Count -ne 1) {
+        throw "install_package requires exactly one content item; count=$($content.Count)"
+    }
+    $item = $content[0]
+    $sourceUri = [string] $item.source_uri
+    $expectedSha = ([string] $item.sha256).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($sourceUri)) {
+        throw 'install_package content item missing source_uri'
+    }
+    if ([string]::IsNullOrWhiteSpace($expectedSha)) {
+        throw 'install_package content item missing sha256'
+    }
+
+    $stageDir = [string] $item.staging_path
+    if ([string]::IsNullOrWhiteSpace($stageDir)) {
+        $safeName = ([string] $item.logical_name) -replace '[^\w.-]', '_'
+        $stageDir = Join-Path $OsdRoot "Content\$safeName"
+    }
+    New-DirectoryIfMissing -Path $stageDir
+
+    $fileName = [System.IO.Path]::GetFileName(([Uri] $sourceUri).AbsolutePath)
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        $fileName = 'package.bin'
+    }
+    $packagePath = Join-Path $stageDir $fileName
+    Write-OsdLog "Downloading package content source=$sourceUri target=$packagePath"
+    Invoke-WebRequest -Uri $sourceUri -OutFile $packagePath -UseBasicParsing -TimeoutSec 300
+
+    $actualSha = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha -ne $expectedSha) {
+        throw "install_package SHA256 mismatch expected=$expectedSha actual=$actualSha path=$packagePath"
+    }
+
+    $installCommand = ''
+    if ($Action.PSObject.Properties.Match('params').Count -gt 0 -and
+        $Action.params.PSObject.Properties.Match('install_command').Count -gt 0) {
+        $installCommand = [string] $Action.params.install_command
+    }
+    if ([string]::IsNullOrWhiteSpace($installCommand)) {
+        if ($packagePath.EndsWith('.msi', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $installLog = Join-Path $stageDir 'install.log'
+            $installCommand = "msiexec.exe /i `"$packagePath`" /qn /norestart /L*v `"$installLog`""
+        } else {
+            throw 'install_package requires params.install_command for non-MSI content'
+        }
+    } else {
+        $installCommand = $installCommand.Replace('{path}', $packagePath)
+    }
+
+    Write-OsdLog "Running package install command: $installCommand"
+    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $installCommand) `
+        -Wait -PassThru
+    if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+        throw "install_package command failed with exit $($proc.ExitCode)"
+    }
+    Write-OsdLog "Package install completed exit=$($proc.ExitCode)"
+}
+
 try {
     $cfg = Read-OsdConfig
     Write-OsdLog "OSD client starting run_id=$($cfg.run_id)"
@@ -178,6 +240,7 @@ try {
             switch ($kind) {
                 'install_qga' { Invoke-InstallQga }
                 'fix_recovery_partition' { Invoke-RecoveryFix }
+                'install_package' { Invoke-InstallPackage -Action $action }
                 default { throw "unknown OSD step kind: $kind" }
             }
             $token = Send-StepState -Config $cfg -StepId $stepId -State ok -BearerToken $token

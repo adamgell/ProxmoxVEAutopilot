@@ -477,11 +477,15 @@ from web.winpe_endpoints import (
     api_router as _winpe_api_router,
     osd_router as _osd_router,
 )
-from web.osd_v2_endpoints import router as _osd_v2_router
+from web.osd_v2_endpoints import (
+    router as _osd_v2_router,
+    api_router as _osd_v2_api_router,
+)
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
 app.include_router(_osd_router)
 app.include_router(_osd_v2_router)
+app.include_router(_osd_v2_api_router)
 app.include_router(_winpe_api_router)
 
 
