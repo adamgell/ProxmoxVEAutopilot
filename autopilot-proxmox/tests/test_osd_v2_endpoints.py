@@ -94,7 +94,12 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 def _create_run(
-    pg_conn, *, winpe_only: bool = False, reboot_behavior: str = "none"
+    pg_conn,
+    *,
+    winpe_only: bool = False,
+    reboot_behavior: str = "none",
+    retry_count: int = 0,
+    retry_delay_seconds: int = 10,
 ) -> str:
     from web import ts_engine_pg
 
@@ -117,6 +122,8 @@ def _create_run(
             kind="install_qga",
             phase="full_os",
             position=1,
+            retry_count=retry_count,
+            retry_delay_seconds=retry_delay_seconds,
             reboot_behavior=reboot_behavior,
             content_refs=["qemu-guest-agent"],
         )
@@ -231,6 +238,8 @@ def test_full_os_action_includes_manifest_content(osd_v2_client, pg_conn):
     action = nxt.json()["actions"][0]
     assert action["kind"] == "install_qga"
     assert action["reboot_behavior"] == "none"
+    assert action["retry_count"] == 0
+    assert action["retry_delay_seconds"] == 10
     assert action["content"] == [
         {
             "id": action["content"][0]["id"],
@@ -264,6 +273,25 @@ def test_action_includes_required_reboot_behavior(osd_v2_client, pg_conn):
 
     assert nxt.status_code == 200, nxt.text
     assert nxt.json()["actions"][0]["reboot_behavior"] == "required"
+
+
+def test_action_includes_retry_policy(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, retry_count=2, retry_delay_seconds=30)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+    ).json()
+
+    nxt = osd_v2_client.post(
+        "/osd/v2/agent/next",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+        headers=_bearer(reg["bearer_token"]),
+    )
+
+    assert nxt.status_code == 200, nxt.text
+    action = nxt.json()["actions"][0]
+    assert action["retry_count"] == 2
+    assert action["retry_delay_seconds"] == 30
 
 
 def test_agent_register_after_reboot_resumes_cursor(osd_v2_client, pg_conn):

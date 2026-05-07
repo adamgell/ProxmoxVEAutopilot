@@ -1262,14 +1262,21 @@ def complete_step(
         finished_at = None
         severity = "info"
     elif status == "failed":
-        step_state = "failed"
-        run_state = (
-            _next_run_state(conn, run_id, excluding_step_id=step_id)
-            if step["continue_on_error"]
-            else "failed"
-        )
-        finished_at = now
-        severity = "error"
+        retries_remaining = int(step["attempt"]) <= int(step["retry_count"])
+        if retries_remaining:
+            step_state = "pending"
+            run_state = f"running_{step['phase']}"
+            finished_at = None
+            severity = "warning"
+        else:
+            step_state = "failed"
+            run_state = (
+                _next_run_state(conn, run_id, excluding_step_id=step_id)
+                if step["continue_on_error"]
+                else "failed"
+            )
+            finished_at = now
+            severity = "error"
     else:
         raise ValueError(f"unsupported step status: {status}")
 
@@ -1278,10 +1285,12 @@ def complete_step(
         UPDATE ts_run_plan_steps
         SET state = %s,
             finished_at = %s,
-            last_error = CASE WHEN %s = 'failed' THEN %s ELSE last_error END
+            claimed_by = CASE WHEN %s = 'pending' THEN NULL ELSE claimed_by END,
+            claimed_at = CASE WHEN %s = 'pending' THEN NULL ELSE claimed_at END,
+            last_error = CASE WHEN %s = 'failed' THEN %s ELSE NULL END
         WHERE id = %s
         """,
-        (step_state, finished_at, status, message, step_id),
+        (step_state, finished_at, step_state, step_state, status, message, step_id),
     )
     conn.execute(
         """

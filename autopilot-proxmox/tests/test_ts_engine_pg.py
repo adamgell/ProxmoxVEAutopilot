@@ -475,6 +475,62 @@ def test_required_reboot_behavior_converts_success_to_awaiting_reboot(pg_conn):
     assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "awaiting_reboot"
 
 
+def test_failed_step_retries_until_retry_count_is_exhausted(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Retry Package")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Install retryable package",
+        kind="install_package",
+        phase="full_os",
+        position=0,
+        retry_count=1,
+        retry_delay_seconds=5,
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn, sequence_version_id=version_id
+    )
+
+    first_claim = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="osd-1"
+    )
+    retry_result = ts_engine_pg.complete_step(
+        pg_conn,
+        run_id=run_id,
+        step_id=first_claim["id"],
+        agent_id="osd-1",
+        status="failed",
+        message="transient download failure",
+    )
+    assert retry_result["state"] == "pending"
+    assert retry_result["attempt"] == 1
+    assert retry_result["last_error"] == "transient download failure"
+    assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "running_full_os"
+
+    second_claim = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="osd-1"
+    )
+    assert second_claim["id"] == first_claim["id"]
+    assert second_claim["attempt"] == 2
+    exhausted_result = ts_engine_pg.complete_step(
+        pg_conn,
+        run_id=run_id,
+        step_id=second_claim["id"],
+        agent_id="osd-1",
+        status="failed",
+        message="permanent install failure",
+    )
+
+    assert exhausted_result["state"] == "failed"
+    assert exhausted_result["attempt"] == 2
+    assert exhausted_result["last_error"] == "permanent install failure"
+    assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "failed"
+
+
 def test_claim_next_step_honors_phase_and_advances_one_step(pg_conn):
     from web import ts_engine_pg
 

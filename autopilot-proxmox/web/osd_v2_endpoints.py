@@ -126,6 +126,8 @@ def _action_from_step(conn, step: dict) -> dict:
         "kind": step["kind"],
         "attempt": step["attempt"],
         "timeout_seconds": step["timeout_seconds"],
+        "retry_count": step["retry_count"],
+        "retry_delay_seconds": step["retry_delay_seconds"],
         "reboot_behavior": step["reboot_behavior"],
         "params": step["resolved_params_json"],
         "content": ts_engine_pg.content_for_step(conn, step["id"]),
