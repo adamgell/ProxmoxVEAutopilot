@@ -102,6 +102,48 @@ function Send-StepState {
     return $BearerToken
 }
 
+function Send-ContentStageState {
+    param(
+        [object] $Config,
+        [Parameter(Mandatory)] [object] $Item,
+        [Parameter(Mandatory)] [ValidateSet('staging','staged','failed')] [string] $State,
+        [string] $Phase = 'full_os',
+        [string] $StagingPath,
+        [string] $ErrorMessage,
+        [string] $BearerToken
+    )
+    if (-not $Config) { return }
+    $manifestId = ''
+    if ($Item.PSObject.Properties.Match('id').Count -gt 0) {
+        $manifestId = [string] $Item.id
+    }
+    if ([string]::IsNullOrWhiteSpace($manifestId)) { return }
+
+    $agentId = 'osd-client'
+    if ($Config.PSObject.Properties.Match('agent_id').Count -gt 0 -and $Config.agent_id) {
+        $agentId = [string] $Config.agent_id
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
+        $agentId = [string] $env:COMPUTERNAME
+    }
+
+    $body = @{
+        run_id = [string] $Config.run_id
+        agent_id = $agentId
+        phase = $Phase
+        status = $State
+    }
+    if (-not [string]::IsNullOrWhiteSpace($StagingPath)) {
+        $body.staging_path = $StagingPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
+        $body.error = $ErrorMessage
+    }
+
+    Invoke-OsdRequest -Config $Config `
+        -Path "/osd/v2/agent/content/$manifestId/stage" `
+        -Method POST -Body $body -BearerToken $BearerToken | Out-Null
+}
+
 function Invoke-InstallQga {
     $msi = $null
     foreach ($drive in @('D','E','F','G','H','I')) {
@@ -176,7 +218,11 @@ function Invoke-RecoveryFix {
 }
 
 function Invoke-InstallPackage {
-    param([Parameter(Mandatory)] [object] $Action)
+    param(
+        [Parameter(Mandatory)] [object] $Action,
+        [object] $Config,
+        [string] $BearerToken
+    )
 
     $content = @($Action.content)
     if ($content.Count -ne 1) {
@@ -198,18 +244,33 @@ function Invoke-InstallPackage {
         $stageDir = Join-Path $OsdRoot "Content\$safeName"
     }
     New-DirectoryIfMissing -Path $stageDir
+    $phase = 'full_os'
+    if ($Action.PSObject.Properties.Match('phase').Count -gt 0 -and $Action.phase) {
+        $phase = [string] $Action.phase
+    }
 
     $fileName = [System.IO.Path]::GetFileName(([Uri] $sourceUri).AbsolutePath)
     if ([string]::IsNullOrWhiteSpace($fileName)) {
         $fileName = 'package.bin'
     }
     $packagePath = Join-Path $stageDir $fileName
-    Write-OsdLog "Downloading package content source=$sourceUri target=$packagePath"
-    Invoke-WebRequest -Uri $sourceUri -OutFile $packagePath -UseBasicParsing -TimeoutSec 300
+    try {
+        Send-ContentStageState -Config $Config -Item $item -State staging `
+            -Phase $phase -StagingPath $stageDir -BearerToken $BearerToken
+        Write-OsdLog "Downloading package content source=$sourceUri target=$packagePath"
+        Invoke-WebRequest -Uri $sourceUri -OutFile $packagePath -UseBasicParsing -TimeoutSec 300
 
-    $actualSha = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualSha -ne $expectedSha) {
-        throw "install_package SHA256 mismatch expected=$expectedSha actual=$actualSha path=$packagePath"
+        $actualSha = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -ne $expectedSha) {
+            throw "install_package SHA256 mismatch expected=$expectedSha actual=$actualSha path=$packagePath"
+        }
+        Send-ContentStageState -Config $Config -Item $item -State staged `
+            -Phase $phase -StagingPath $stageDir -BearerToken $BearerToken
+    } catch {
+        Send-ContentStageState -Config $Config -Item $item -State failed `
+            -Phase $phase -StagingPath $stageDir `
+            -ErrorMessage $_.Exception.Message -BearerToken $BearerToken
+        throw
     }
 
     $installCommand = ''
@@ -316,6 +377,10 @@ function Invoke-HandoffToOobe {
     Write-OsdLog 'Pre-OOBE gate passed; handing off to OOBE.'
 }
 
+if ($env:AUTOPILOT_OSD_CLIENT_LIBRARY_ONLY -eq '1') {
+    return
+}
+
 try {
     $cfg = Read-OsdConfig
     Write-OsdLog "OSD client starting run_id=$($cfg.run_id)"
@@ -342,7 +407,9 @@ try {
                 'verify_qga' { Invoke-VerifyQga }
                 'capture_autopilot_hash' { Invoke-CaptureAutopilotHash -Config $cfg -BearerToken $token }
                 'handoff_to_oobe' { Invoke-HandoffToOobe }
-                'install_package' { Invoke-InstallPackage -Action $action }
+                'install_package' {
+                    Invoke-InstallPackage -Action $action -Config $cfg -BearerToken $token
+                }
                 default { throw "unknown OSD step kind: $kind" }
             }
             $token = Send-StepState -Config $cfg -StepId $stepId -State ok -BearerToken $token
