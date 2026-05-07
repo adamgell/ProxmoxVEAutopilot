@@ -440,6 +440,41 @@ def test_step_completion_and_reboot_resume_are_recorded(pg_conn):
     assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "done"
 
 
+def test_required_reboot_behavior_converts_success_to_awaiting_reboot(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Required Reboot")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Install package requiring reboot",
+        kind="install_package",
+        phase="full_os",
+        position=0,
+        reboot_behavior="required",
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn, sequence_version_id=version_id
+    )
+    claim = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="osd-1"
+    )
+
+    result = ts_engine_pg.complete_step(
+        pg_conn,
+        run_id=run_id,
+        step_id=claim["id"],
+        agent_id="osd-1",
+        status="success",
+        message="Install succeeded and reboot is required by policy",
+    )
+
+    assert result["state"] == "awaiting_reboot"
+    assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "awaiting_reboot"
+
+
 def test_claim_next_step_honors_phase_and_advances_one_step(pg_conn):
     from web import ts_engine_pg
 

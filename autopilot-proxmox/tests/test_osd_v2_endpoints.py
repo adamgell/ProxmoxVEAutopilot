@@ -93,7 +93,9 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_run(pg_conn, *, winpe_only: bool = False) -> str:
+def _create_run(
+    pg_conn, *, winpe_only: bool = False, reboot_behavior: str = "none"
+) -> str:
     from web import ts_engine_pg
 
     sequence_id = ts_engine_pg.create_sequence(pg_conn, name="OSD v2 Demo")
@@ -115,6 +117,7 @@ def _create_run(pg_conn, *, winpe_only: bool = False) -> str:
             kind="install_qga",
             phase="full_os",
             position=1,
+            reboot_behavior=reboot_behavior,
             content_refs=["qemu-guest-agent"],
         )
         item_id = ts_engine_pg.create_content_item(
@@ -227,6 +230,7 @@ def test_full_os_action_includes_manifest_content(osd_v2_client, pg_conn):
     assert nxt.status_code == 200, nxt.text
     action = nxt.json()["actions"][0]
     assert action["kind"] == "install_qga"
+    assert action["reboot_behavior"] == "none"
     assert action["content"] == [
         {
             "id": action["content"][0]["id"],
@@ -243,6 +247,23 @@ def test_full_os_action_includes_manifest_content(osd_v2_client, pg_conn):
             "status": "pending",
         }
     ]
+
+
+def test_action_includes_required_reboot_behavior(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, reboot_behavior="required")
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+    ).json()
+
+    nxt = osd_v2_client.post(
+        "/osd/v2/agent/next",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+        headers=_bearer(reg["bearer_token"]),
+    )
+
+    assert nxt.status_code == 200, nxt.text
+    assert nxt.json()["actions"][0]["reboot_behavior"] == "required"
 
 
 def test_agent_register_after_reboot_resumes_cursor(osd_v2_client, pg_conn):

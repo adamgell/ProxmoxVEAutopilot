@@ -1241,7 +1241,12 @@ def complete_step(
         raise ValueError(f"step not found for run: {step_id}")
 
     now = _now()
-    if status == "success":
+    if status == "success" and step["reboot_behavior"] == "required":
+        step_state = "awaiting_reboot"
+        run_state = "awaiting_reboot"
+        finished_at = None
+        severity = "info"
+    elif status == "success":
         step_state = "done"
         run_state = _next_run_state(conn, run_id, excluding_step_id=step_id)
         finished_at = now
