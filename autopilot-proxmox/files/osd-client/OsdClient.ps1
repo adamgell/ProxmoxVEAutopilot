@@ -377,6 +377,143 @@ function Invoke-HandoffToOobe {
     Write-OsdLog 'Pre-OOBE gate passed; handing off to OOBE.'
 }
 
+function Get-OsdAgentId {
+    param([Parameter(Mandatory)] [object] $Config)
+
+    if ($Config.PSObject.Properties.Match('agent_id').Count -gt 0 -and $Config.agent_id) {
+        return [string] $Config.agent_id
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
+        return [string] $env:COMPUTERNAME
+    }
+    return 'osd-client'
+}
+
+function Get-OsdPhase {
+    param([Parameter(Mandatory)] [object] $Config)
+
+    if ($Config.PSObject.Properties.Match('phase').Count -gt 0 -and $Config.phase) {
+        return [string] $Config.phase
+    }
+    return 'full_os'
+}
+
+function Invoke-OsdAction {
+    param(
+        [Parameter(Mandatory)] [object] $Action,
+        [object] $Config,
+        [string] $BearerToken
+    )
+
+    $kind = [string] $Action.kind
+    switch ($kind) {
+        'install_qga' { Invoke-InstallQga }
+        'fix_recovery_partition' { Invoke-RecoveryFix }
+        'verify_qga' { Invoke-VerifyQga }
+        'capture_autopilot_hash' {
+            Invoke-CaptureAutopilotHash -Config $Config -BearerToken $BearerToken
+        }
+        'handoff_to_oobe' { Invoke-HandoffToOobe }
+        'install_package' {
+            Invoke-InstallPackage -Action $Action -Config $Config -BearerToken $BearerToken
+        }
+        default { throw "unknown OSD step kind: $kind" }
+    }
+}
+
+function Send-V2StepResult {
+    param(
+        [Parameter(Mandatory)] [object] $Config,
+        [Parameter(Mandatory)] [object] $Action,
+        [Parameter(Mandatory)] [ValidateSet('success','failed','skipped','reboot_required')] [string] $Status,
+        [string] $Message,
+        [string] $BearerToken
+    )
+
+    $phase = [string] $Action.phase
+    if ([string]::IsNullOrWhiteSpace($phase)) {
+        $phase = Get-OsdPhase -Config $Config
+    }
+    $body = @{
+        run_id = [string] $Config.run_id
+        agent_id = Get-OsdAgentId -Config $Config
+        phase = $phase
+        status = $Status
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Message)) {
+        $body.message = $Message
+    }
+
+    $r = Invoke-OsdRequest -Config $Config `
+        -Path "/osd/v2/agent/step/$($Action.step_id)/result" `
+        -Method POST -Body $body -BearerToken $BearerToken
+    if ($r.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $r.bearer_token) {
+        return [string] $r.bearer_token
+    }
+    return $BearerToken
+}
+
+function Invoke-OsdV2Client {
+    param([Parameter(Mandatory)] [object] $Config)
+
+    $agentId = Get-OsdAgentId -Config $Config
+    $phase = Get-OsdPhase -Config $Config
+    $token = [string] $Config.bearer_token
+
+    $reg = Invoke-OsdRequest -Config $Config -Path '/osd/v2/agent/register' `
+        -Method POST -BearerToken $token `
+        -Body @{
+            run_id = [string] $Config.run_id
+            agent_id = $agentId
+            phase = $phase
+            computer_name = $env:COMPUTERNAME
+            capabilities = @('content', 'packages', 'hash_capture')
+        }
+    if ($reg.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $reg.bearer_token) {
+        $token = [string] $reg.bearer_token
+    }
+
+    while ($true) {
+        $next = Invoke-OsdRequest -Config $Config -Path '/osd/v2/agent/next' `
+            -Method POST -BearerToken $token `
+            -Body @{
+                run_id = [string] $Config.run_id
+                agent_id = $agentId
+                phase = $phase
+                batch_size = 1
+            }
+        if ($next.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $next.bearer_token) {
+            $token = [string] $next.bearer_token
+        }
+
+        $actions = @($next.actions)
+        if ($actions.Count -eq 0) { break }
+
+        foreach ($action in $actions) {
+            $kind = [string] $action.kind
+            Write-OsdLog "OSD v2 step starting id=$($action.step_id) kind=$kind"
+            try {
+                Invoke-OsdAction -Action $action -Config $Config -BearerToken $token
+                $token = Send-V2StepResult -Config $Config -Action $action `
+                    -Status success -Message 'ok' -BearerToken $token
+                Write-OsdLog "OSD v2 step completed id=$($action.step_id) kind=$kind"
+            } catch {
+                $token = Send-V2StepResult -Config $Config -Action $action `
+                    -Status failed -Message $_.Exception.Message -BearerToken $token
+                throw
+            }
+        }
+    }
+
+    Invoke-OsdRequest -Config $Config -Path '/osd/v2/agent/phase-complete' `
+        -Method POST -BearerToken $token `
+        -Body @{
+            run_id = [string] $Config.run_id
+            agent_id = $agentId
+            phase = $phase
+        } | Out-Null
+}
+
 if ($env:AUTOPILOT_OSD_CLIENT_LIBRARY_ONLY -eq '1') {
     return
 }
@@ -384,6 +521,19 @@ if ($env:AUTOPILOT_OSD_CLIENT_LIBRARY_ONLY -eq '1') {
 try {
     $cfg = Read-OsdConfig
     Write-OsdLog "OSD client starting run_id=$($cfg.run_id)"
+    $engine = ''
+    if ($cfg.PSObject.Properties.Match('engine').Count -gt 0 -and $cfg.engine) {
+        $engine = [string] $cfg.engine
+    }
+    if ($cfg.PSObject.Properties.Match('api_version').Count -gt 0 -and [string] $cfg.api_version -eq '2') {
+        $engine = 'v2'
+    }
+    if ($engine -eq 'v2') {
+        Invoke-OsdV2Client -Config $cfg
+        Write-OsdLog 'OSD v2 client completed.'
+        exit 0
+    }
+
     $token = [string] $cfg.bearer_token
     $reg = Invoke-OsdRequest -Config $cfg -Path '/osd/client/register' -Method POST `
         -BearerToken $token `
@@ -401,17 +551,7 @@ try {
         Write-OsdLog "OSD step starting id=$stepId kind=$kind"
         $token = Send-StepState -Config $cfg -StepId $stepId -State running -BearerToken $token
         try {
-            switch ($kind) {
-                'install_qga' { Invoke-InstallQga }
-                'fix_recovery_partition' { Invoke-RecoveryFix }
-                'verify_qga' { Invoke-VerifyQga }
-                'capture_autopilot_hash' { Invoke-CaptureAutopilotHash -Config $cfg -BearerToken $token }
-                'handoff_to_oobe' { Invoke-HandoffToOobe }
-                'install_package' {
-                    Invoke-InstallPackage -Action $action -Config $cfg -BearerToken $token
-                }
-                default { throw "unknown OSD step kind: $kind" }
-            }
+            Invoke-OsdAction -Action $action -Config $cfg -BearerToken $token
             $token = Send-StepState -Config $cfg -StepId $stepId -State ok -BearerToken $token
             Write-OsdLog "OSD step completed id=$stepId kind=$kind"
         } catch {
