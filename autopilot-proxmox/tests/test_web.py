@@ -291,7 +291,14 @@ def test_redirect_with_error_encodes_special_chars():
 def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     """Startup creates the service_health table before routes can serve."""
     from web import app as web_app
-    from web import db_pg, jobs_pg, service_health_pg, ts_engine_pg
+    from web import (
+        db_pg,
+        device_history_pg,
+        devices_pg,
+        jobs_pg,
+        service_health_pg,
+        ts_engine_pg,
+    )
 
     calls = []
     heartbeat_seen = threading.Event()
@@ -316,6 +323,12 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     def fake_ts_init(conn):
         calls.append(("ts_init", conn.__class__.__name__))
 
+    def fake_device_history_init(conn):
+        calls.append(("device_history_init", conn.__class__.__name__))
+
+    def fake_devices_init(conn):
+        calls.append(("devices_init", conn.__class__.__name__))
+
     def fake_heartbeat(**kwargs):
         calls.append(("heartbeat", kwargs))
         heartbeat_seen.set()
@@ -326,6 +339,8 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
     monkeypatch.setattr(service_health_pg, "heartbeat", fake_heartbeat)
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
+    monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
+    monkeypatch.setattr(devices_pg, "init", fake_devices_init)
     monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "sequences.db")
     monkeypatch.setattr(web_app, "SECRETS_DIR", tmp_path / "secrets")
     monkeypatch.setattr(
@@ -337,6 +352,9 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
         assert heartbeat_seen.wait(timeout=2)
 
     assert ("service_health_init", "FakeConn") in calls
+    assert ("ts_init", "FakeConn") in calls
+    assert ("device_history_init", "FakeConn") in calls
+    assert ("devices_init", "FakeConn") in calls
     heartbeat_calls = [call for call in calls if call[0] == "heartbeat"]
     assert heartbeat_calls == [
         (

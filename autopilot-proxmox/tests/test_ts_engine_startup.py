@@ -11,7 +11,14 @@ import yaml
 def test_registered_startup_initializes_app_database_url(monkeypatch):
     from fastapi.testclient import TestClient
     from web import app as web_app
-    from web import db_pg, jobs_pg, service_health_pg, ts_engine_pg
+    from web import (
+        db_pg,
+        device_history_pg,
+        devices_pg,
+        jobs_pg,
+        service_health_pg,
+        ts_engine_pg,
+    )
 
     calls = []
 
@@ -32,12 +39,20 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     def fake_service_health_init(conn):
         calls.append(("service_health_init", conn.__class__.__name__))
 
+    def fake_device_history_init(conn):
+        calls.append(("device_history_init", conn.__class__.__name__))
+
+    def fake_devices_init(conn):
+        calls.append(("devices_init", conn.__class__.__name__))
+
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
     monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
     monkeypatch.setattr(db_pg, "connection", fake_connection)
     monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
     monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
+    monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
+    monkeypatch.setattr(devices_pg, "init", fake_devices_init)
 
     with TestClient(web_app.app):
         pass
@@ -48,6 +63,8 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         ("service_health_init", "FakeConn"),
         ("connect", "postgresql://new"),
         ("ts_init", "FakeConn"),
+        ("device_history_init", "FakeConn"),
+        ("devices_init", "FakeConn"),
     ]
 
 

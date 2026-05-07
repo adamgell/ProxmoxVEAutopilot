@@ -1,7 +1,11 @@
 from fastapi.testclient import TestClient
 
 
-def test_cockpit_shell_renders_on_dashboard(web_client: TestClient):
+def test_cockpit_shell_renders_on_dashboard(web_client: TestClient, monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
+
     res = web_client.get("/")
     assert res.status_code == 200
     body = res.text
