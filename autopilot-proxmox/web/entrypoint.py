@@ -91,7 +91,6 @@ def _run_monitor() -> None:
     run_monitor(
         lock_path=out_p / "monitor.lock",
         monitor_db_path=out_p / "device_monitor.db",
-        jobs_db_path=out_p / "jobs.db",
     )
 
 

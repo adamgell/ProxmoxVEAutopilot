@@ -16,7 +16,8 @@ import threading
 import time
 from pathlib import Path
 
-from web import jobs_db, service_health
+from web import jobs_pg as jobs_db
+from web import service_health
 from web.paths import OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT as _REPO_ROOT
 
 _log = logging.getLogger("web.monitor_main")
@@ -44,11 +45,9 @@ def _acquire_singleton_lock(path: Path) -> int | None:
 
 def run_monitor(*, lock_path: Path | str = _OUTPUT_DIR / "monitor.lock",
                 monitor_db_path: Path | str = _OUTPUT_DIR / "device_monitor.db",
-                jobs_db_path: Path | str = _OUTPUT_DIR / "jobs.db",
                 stop_event: threading.Event | None = None) -> None:
     lock_path = Path(lock_path)
     monitor_db_path = Path(monitor_db_path)
-    jobs_db_path = Path(jobs_db_path)
 
     fd = _acquire_singleton_lock(lock_path)
     if fd is None:
@@ -63,8 +62,7 @@ def run_monitor(*, lock_path: Path | str = _OUTPUT_DIR / "monitor.lock",
     _log.info("monitor singleton acquired lock on %s", lock_path)
     try:
         _run_loops(stop_event=stop_event,
-                   monitor_db_path=monitor_db_path,
-                   jobs_db_path=jobs_db_path)
+                   monitor_db_path=monitor_db_path)
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -83,7 +81,7 @@ def _install_signal_handlers() -> threading.Event:
 
 
 def _run_loops(*, stop_event: threading.Event,
-               monitor_db_path: Path, jobs_db_path: Path,
+               monitor_db_path: Path,
                sweep_interval_seconds: float = _SWEEP_INTERVAL_DEFAULT,
                reaper_interval_seconds: float = _REAPER_INTERVAL,
                heartbeat_interval_seconds: float = _HEARTBEAT_INTERVAL,
@@ -130,7 +128,7 @@ def _run_loops(*, stop_event: threading.Event,
 
         if now - last_reap >= reaper_interval_seconds:
             try:
-                n = jobs_db.reap_orphans(jobs_db_path)
+                n = jobs_db.reap_orphans()
                 if n:
                     _log.warning("reaped %d orphaned jobs", n)
             except Exception:

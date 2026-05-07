@@ -675,10 +675,9 @@ def test_osd_register_inserts_hash_capture_before_oobe_for_legacy_steps(
 
 
 def test_osd_complete_reconciles_interrupted_winpe_job(
-    web_client, test_db, tmp_path, monkeypatch,
+    web_client, test_db, monkeypatch, pg_conn,
 ):
-    from web import app as web_app
-    from web import jobs_db
+    from web import jobs_pg
     from web import winpe_endpoints
 
     monkeypatch.setattr(winpe_endpoints, "_proxmox_detach_and_set_boot",
@@ -687,21 +686,17 @@ def test_osd_complete_reconciles_interrupted_winpe_job(
         winpe_endpoints, "_proxmox_power_cycle_for_pending_config",
         lambda **kw: None,
     )
-    jobs_db_path = tmp_path / "jobs.db"
-    jobs_db.init(jobs_db_path)
-    monkeypatch.setattr(web_app, "JOBS_DB", jobs_db_path)
 
     run_id, reg = _register(web_client, test_db)
-    job = jobs_db.enqueue(
-        jobs_db_path,
+    job = jobs_pg.enqueue(
         job_id="job-interrupted",
         job_type="provision_winpe",
         playbook="playbooks/provision_proxmox_winpe.yml",
         cmd=["ansible-playbook"],
         args={"run_id": run_id},
     )
-    jobs_db.claim_next_job(jobs_db_path, worker_id="builder-1")
-    jobs_db.finalize_job(jobs_db_path, job["id"], exit_code=-15)
+    jobs_pg.claim_next_job(worker_id="builder-1")
+    jobs_pg.finalize_job(job["id"], exit_code=-15)
 
     web_client.post("/winpe/done", headers=_bearer(reg["bearer_token"]))
     pkg = web_client.get(
@@ -725,7 +720,7 @@ def test_osd_complete_reconciles_interrupted_winpe_job(
 
     r = web_client.post("/osd/client/complete", headers=_bearer(token))
     assert r.status_code == 200, r.text
-    reconciled = jobs_db.get_job(jobs_db_path, job["id"])
+    reconciled = jobs_pg.get_job(job["id"])
     assert reconciled["status"] == "complete"
     assert reconciled["exit_code"] == 0
 

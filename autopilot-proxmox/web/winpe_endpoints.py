@@ -687,10 +687,10 @@ def post_osd_complete(payload: dict = Depends(_require_bearer_token)):
         db, run_id=run_id, state="done",
     )
     try:
-        from web import app as web_app
-        from web import jobs_db
-        reconciled = jobs_db.complete_interrupted_provision_winpe_jobs_for_run(
-            web_app.JOBS_DB, run_id=run_id,
+        from web import jobs_pg
+
+        reconciled = jobs_pg.complete_interrupted_provision_winpe_jobs_for_run(
+            run_id=run_id,
         )
         if reconciled:
             LOG.info(
