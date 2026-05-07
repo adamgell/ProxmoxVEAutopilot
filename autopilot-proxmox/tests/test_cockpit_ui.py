@@ -13,7 +13,8 @@ def test_cockpit_shell_renders_on_dashboard(web_client: TestClient):
 
 def test_cloud_retire_flow_requires_typed_confirmation(web_client: TestClient, monkeypatch):
     from web import app as web_app
-    from web import devices_db
+
+    devices_db = web_app.devices_db
 
     monkeypatch.setattr(web_app, "_pve_autopilot_vms_by_serial", lambda: {})
     monkeypatch.setattr(
@@ -31,7 +32,7 @@ def test_cloud_retire_flow_requires_typed_confirmation(web_client: TestClient, m
             },
         ),
     )
-    monkeypatch.setattr(devices_db, "recent_deletions", lambda *a, **kw: [])
+    monkeypatch.setattr(devices_db, "list_deletions", lambda *a, **kw: [])
 
     res = web_client.get("/cloud")
     assert res.status_code == 200

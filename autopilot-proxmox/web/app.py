@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from web.jobs import JobManager
-from web import devices_db
+from web import devices_pg as devices_db
 from web import jobs_pg as jobs_db
 from web import monitoring_evidence
 
@@ -107,8 +107,6 @@ SECRETS_DIR = BASE_DIR / "secrets"
 SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
 JOBS_DB = BASE_DIR / "output" / "jobs.db"
 CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
-DEVICES_DB = BASE_DIR / "output" / "devices.db"
-devices_db.init(DEVICES_DB)
 DEVICE_MONITOR_DB = BASE_DIR / "output" / "device_monitor.db"
 
 SETTINGS_SCHEMA = [
@@ -844,11 +842,12 @@ def _database_url() -> str:
 
 
 def _init_app_database() -> None:
-    from web import db_pg, device_history_pg, ts_engine_pg
+    from web import db_pg, device_history_pg, devices_pg, ts_engine_pg
 
     with db_pg.connection(_database_url()) as conn:
         ts_engine_pg.init(conn)
         device_history_pg.init(conn)
+        devices_pg.init(conn)
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -5625,7 +5624,7 @@ async def _delete_pve_item(item: dict) -> None:
         item["state"] = "error"
         item["message"] = f"Proxmox delete failed: {str(e)[:400]}"
         devices_db.record_deletion(
-            DEVICES_DB, source="pve", object_id=str(vmid),
+            source="pve", object_id=str(vmid),
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="error", message=item["message"],
         )
@@ -5659,7 +5658,7 @@ async def _verify_pve_item(item: dict) -> None:
             item["state"] = "deleted"
             item["message"] = f"VM removed, verified after {attempts} attempt(s)"
             devices_db.record_deletion(
-                DEVICES_DB, source="pve", object_id=str(target_vmid),
+                source="pve", object_id=str(target_vmid),
                 serial=item.get("serial", ""), display_name=item.get("display_name", ""),
                 status="ok",
             )
@@ -5668,7 +5667,7 @@ async def _verify_pve_item(item: dict) -> None:
             item["state"] = "unverified"
             item["message"] = f"VM still present in node listing after {attempts} attempt(s)"
             devices_db.record_deletion(
-                DEVICES_DB, source="pve", object_id=str(target_vmid),
+                source="pve", object_id=str(target_vmid),
                 serial=item.get("serial", ""), display_name=item.get("display_name", ""),
                 status="ok", message=item["message"],
             )
@@ -5698,7 +5697,7 @@ async def _delete_item(item: dict) -> None:
         item["message"] = "already gone (404)"
         item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="ok", message="already gone",
         )
@@ -5714,7 +5713,7 @@ async def _delete_item(item: dict) -> None:
         item["state"] = "error"
         item["message"] = f"HTTP {status}: {err_text[:400]}"
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="error", message=item["message"],
         )
@@ -5751,7 +5750,7 @@ async def _verify_item(item: dict) -> None:
         item["state"] = "deleted"
         item["message"] = f"verified 404 after {attempts} attempt(s)"
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="ok",
         )
@@ -5762,7 +5761,7 @@ async def _verify_item(item: dict) -> None:
             f"after {attempts} attempt(s) over {budget}s"
         )
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="ok", message=item["message"],
         )
@@ -5814,7 +5813,7 @@ async def cloud_page(request: Request):
     # ?all=1 disables the Windows-only filter so iOS/Android/macOS records
     # can be inspected or deleted if needed.
     windows_only = request.query_params.get("all") != "1"
-    groups, extra = devices_db.list_grouped(DEVICES_DB, windows_only=windows_only)
+    groups, extra = devices_db.list_grouped(windows_only=windows_only)
 
     # One Proxmox API call to map serial → {vmid, status}. Attach to each
     # group so the UI can show a 'pve' line alongside the other IDs.
@@ -5830,7 +5829,7 @@ async def cloud_page(request: Request):
             "unmatched": extra["unmatched"],
             "meta": extra["meta"],
             "windows_only": windows_only,
-            "deletions": devices_db.recent_deletions(DEVICES_DB, limit=25),
+            "deletions": devices_db.list_deletions(limit=25),
         },
     )
 
@@ -5843,9 +5842,9 @@ async def cloud_sync():
         en = _graph_api_all("/devices") or []
     except Exception as e:
         return _redirect_with_error("/cloud", str(e)[:200])
-    devices_db.upsert_autopilot(DEVICES_DB, ap)
-    devices_db.upsert_intune(DEVICES_DB, it)
-    devices_db.upsert_entra(DEVICES_DB, en)
+    devices_db.upsert_autopilot(ap)
+    devices_db.upsert_intune(it)
+    devices_db.upsert_entra(en)
     return RedirectResponse(
         f"/cloud?synced=autopilot:{len(ap)},intune:{len(it)},entra:{len(en)}",
         status_code=303,
