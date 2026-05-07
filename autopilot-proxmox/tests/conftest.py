@@ -58,6 +58,11 @@ def pytest_configure(config):
         "integration: test that hits a live autopilot web UI "
         "(see tests/integration/, skipped unless --run-integration is passed).",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_app_database_startup: run the registered app database "
+        "startup handler instead of the default test bootstrap mock.",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -70,6 +75,18 @@ def pytest_collection_modifyitems(config, items):
 
 
 # --- Fixtures -----------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def app_database_startup_bootstrap(monkeypatch, request):
+    """Let endpoint TestClient lifespans start without a live PostgreSQL DB."""
+    if request.node.get_closest_marker("real_app_database_startup"):
+        return
+
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://autopilot-test")
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app, "_init_app_database", lambda: None)
+
 
 @pytest.fixture
 def tmp_secrets_dir(tmp_path: Path) -> Path:

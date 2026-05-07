@@ -7,6 +7,52 @@ import pytest
 import yaml
 
 
+@pytest.mark.real_app_database_startup
+def test_registered_startup_initializes_app_database_url(monkeypatch):
+    from fastapi.testclient import TestClient
+    from web import app as web_app
+    from web import db_pg, ts_engine_pg
+
+    calls = []
+
+    class FakeConn:
+        pass
+
+    @contextmanager
+    def fake_connection(dsn):
+        calls.append(("connect", dsn))
+        yield FakeConn()
+
+    def fake_init(conn):
+        calls.append(("init", conn.__class__.__name__))
+
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
+    monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(db_pg, "connection", fake_connection)
+    monkeypatch.setattr(ts_engine_pg, "init", fake_init)
+
+    with TestClient(web_app.app):
+        pass
+
+    assert calls == [
+        ("connect", "postgresql://new"),
+        ("init", "FakeConn"),
+    ]
+
+
+@pytest.mark.real_app_database_startup
+def test_registered_startup_requires_database_url(monkeypatch):
+    from fastapi.testclient import TestClient
+    from web import app as web_app
+
+    monkeypatch.delenv("AUTOPILOT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="Postgres database URL is required"):
+        with TestClient(web_app.app):
+            pass
+
+
 def test_app_database_startup_requires_database_url(monkeypatch):
     from web import app as web_app
 

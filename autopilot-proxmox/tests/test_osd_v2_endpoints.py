@@ -106,6 +106,7 @@ def pg_conn(pg_dsn):
 def osd_v2_client(pg_dsn, monkeypatch):
     from web import app as web_app
 
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
     monkeypatch.setenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", pg_dsn)
     return TestClient(web_app.app)
 
