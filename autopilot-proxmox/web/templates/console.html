@@ -1,38 +1,87 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 {# Title is VMID + device serial (VM name in Proxmox). Hyphens and any
    other chars in the serial are preserved verbatim. #}
-<title>{{ vmid }}{% if serial %} · {{ serial }}{% endif %}</title>
+<title>{{ vmid }}{% if serial %} - {{ serial }}{% endif %}</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: Verdana, Tahoma, Arial, sans-serif; }
-  #topbar { background: #336699; color: #fff; padding: 6px 12px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
-  #topbar a { color: #fff; }
-  #topbar .actions button { background: #264d73; color: #fff; border: 1px solid #1a365d; padding: 2px 8px; font-size: 11px; cursor: pointer; margin-left: 4px; }
-  #topbar .actions button:hover { background: #1a365d; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #05070d;
+    color: #edf4ff;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  body {
+    background:
+      radial-gradient(circle at 18% -10%, rgba(59,183,255,0.18), transparent 30rem),
+      linear-gradient(180deg, #07101c 0%, #05070d 64%);
+  }
+  #topbar {
+    min-height: 46px;
+    background: rgba(5, 8, 15, 0.92);
+    color: #fff;
+    padding: 7px 12px;
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    border-bottom: 1px solid rgba(142, 163, 191, 0.18);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.32);
+  }
+  #topbar a { color: #7ccffc; }
+  #topbar .actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  #topbar .actions button {
+    background: rgba(59,183,255,0.16);
+    color: #fff;
+    border: 1px solid rgba(59,183,255,0.34);
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  #topbar .actions button:hover { background: rgba(59,183,255,0.28); }
   #status { font-family: monospace; font-size: 11px; }
-  #screen { width: 100vw; height: calc(100vh - 32px); background: #000; }
+  #screen { width: 100vw; height: calc(100vh - 46px); background: #000; }
   .status-ok { color: #c8e6c9; }
   .status-warn { color: #ffecb3; }
   .status-err { color: #ffcdd2; }
 
   /* Collapsible controls panel below the topbar */
-  #panel { background: #222; border-bottom: 1px solid #000; padding: 4px 12px; font-size: 11px; display: none; }
-  #panel.open { display: block; }
-  body.panel-open #screen { height: calc(100vh - 32px - var(--panel-h, 88px)); }
-  #panel .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 3px 0; }
-  #panel .row + .row { border-top: 1px solid #333; }
-  #panel .group { display: flex; gap: 4px; align-items: center; padding-right: 10px; border-right: 1px solid #444; }
-  #panel .group:last-child { border-right: none; }
-  #panel button { background: #336699; color: #fff; border: 1px solid #264d73; padding: 2px 8px; font-size: 11px; cursor: pointer; }
-  #panel button:hover { background: #264d73; }
-  #panel button.danger { background: #992222; border-color: #661111; }
-  #panel button.danger:hover { background: #661111; }
-  #panel input[type="text"], #panel input[type="password"] {
-    background: #111; color: #ddd; border: 1px solid #555; padding: 2px 4px; font-size: 11px;
+  #panel {
+    background: rgba(13,18,30,0.98);
+    border-bottom: 1px solid rgba(142, 163, 191, 0.18);
+    padding: 8px 12px;
+    font-size: 11px;
+    display: none;
   }
-  #panel .badge { padding: 1px 6px; font-weight: bold; border: 1px solid #444; }
+  #panel.open { display: block; }
+  body.panel-open #screen { height: calc(100vh - 46px - var(--panel-h, 88px)); }
+  #panel .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 3px 0; }
+  #panel .row + .row { border-top: 1px solid rgba(142, 163, 191, 0.16); }
+  #panel .group { display: flex; gap: 5px; align-items: center; padding-right: 10px; border-right: 1px solid rgba(142, 163, 191, 0.18); }
+  #panel .group:last-child { border-right: none; }
+  #panel button {
+    background: rgba(59,183,255,0.16);
+    color: #fff;
+    border: 1px solid rgba(59,183,255,0.34);
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  #panel button:hover { background: rgba(59,183,255,0.28); }
+  #panel button.danger { background: rgba(255,121,95,0.18); border-color: rgba(255,121,95,0.42); }
+  #panel button.danger:hover { background: rgba(255,121,95,0.30); }
+  #panel input[type="text"], #panel input[type="password"] {
+    background: #05070d; color: #edf4ff; border: 1px solid rgba(142,163,191,0.3); border-radius:5px; padding: 3px 6px; font-size: 11px;
+  }
+  #panel .badge { padding: 1px 7px; font-weight: bold; border: 1px solid rgba(255,255,255,0.1); border-radius:999px; }
   #panel .badge.running { background: #1b4d1b; color: #c8e6c9; }
   #panel .badge.stopped { background: #4d1b1b; color: #ffcdd2; }
   #panel .badge.other   { background: #4d4d1b; color: #ffecb3; }
@@ -40,19 +89,22 @@
   #panel #flash.err { color: #ffcdd2; }
   #presets-table { border-collapse: collapse; margin-top: 2px; }
   #presets-table td { padding: 1px 6px; border: none; color: #ddd; vertical-align: middle; }
-  #presets-table code { background: #111; padding: 1px 4px; border: 1px solid #333; }
-  #topbar .actions .toggle-btn { background: #1a365d; }
+  #presets-table code { background: #05070d; padding: 1px 4px; border: 1px solid rgba(142,163,191,0.18); border-radius:4px; }
+  #topbar .actions .toggle-btn { background: rgba(255,255,255,0.08); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body>
 <div id="topbar">
   <div>
     VM {{ vmid }}
-    {% if serial %} · <b>{{ serial }}</b>{% endif %}
-    · node {{ node }}
-    · <a href="/vms">back to VMs</a>
+    {% if serial %} / <b>{{ serial }}</b>{% endif %}
+    / node {{ node }}
+    / <a href="/vms">back to VMs</a>
   </div>
-  <div id="status" class="status-warn">initializing…</div>
+  <div id="status" class="status-warn">initializing...</div>
   <div class="actions">
     <button class="toggle-btn" onclick="togglePanel();" title="Toggle controls panel">Controls</button>
     <button onclick="sendCtrlAltDel();" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
@@ -90,7 +142,7 @@
     </div>
   </div>
   <div class="row" style="flex-direction:column; align-items:stretch;">
-    <div><b>Saved presets</b> <small style="color:#888;">— stored in this browser's localStorage only</small></div>
+    <div><b>Saved presets</b> <small style="color:#888;">stored in this browser's localStorage only</small></div>
     <table id="presets-table"><tbody id="presets-body"></tbody></table>
     <div class="group" style="border:none;">
       <input type="text" id="new-label" placeholder="label" style="width:160px;">
@@ -116,7 +168,7 @@ function setStatus(text, cls) {
 }
 
 async function connect() {
-  setStatus('requesting VNC ticket…', 'status-warn');
+  setStatus('requesting VNC ticket...', 'status-warn');
   let ticket;
   try {
     const r = await fetch('/api/vms/' + VMID + '/vnc-init');
@@ -135,7 +187,7 @@ async function connect() {
                 '?port=' + encodeURIComponent(ticket.port) +
                 '&vncticket=' + encodeURIComponent(ticket.ticket);
 
-  setStatus('opening console websocket…', 'status-warn');
+  setStatus('opening console websocket...', 'status-warn');
   if (rfb) { try { rfb.disconnect(); } catch (e) {} rfb = null; }
   screenEl.innerHTML = '';
 
@@ -147,7 +199,7 @@ async function connect() {
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
 
-  rfb.addEventListener('connect',      () => setStatus('connected · ' + (ticket.user || ''), 'status-ok'));
+  rfb.addEventListener('connect',      () => setStatus('connected / ' + (ticket.user || ''), 'status-ok'));
   rfb.addEventListener('disconnect',   e => setStatus('disconnected: ' + (e.detail.reason || 'closed'), 'status-err'));
   rfb.addEventListener('credentialsrequired', () => rfb.sendCredentials({ password: ticket.ticket }));
   rfb.addEventListener('securityfailure',    e => setStatus('VNC auth failed: ' + (e.detail.reason || ''), 'status-err'));
@@ -186,7 +238,7 @@ function togglePanel() {
 window.togglePanel = togglePanel;
 
 async function doAction(action) {
-  flash(action + '…');
+  flash(action + '...');
   try {
     const r = await fetch(`/api/vms/${VMID}/action/${action}`, { method: 'POST' });
     const j = await r.json();
@@ -210,7 +262,7 @@ window.sendKey = sendKey;
 
 async function typeText(text, pressEnter) {
   if (!text) return;
-  flash('Typing…');
+  flash('Typing...');
   const fd = new FormData();
   fd.append('text', text);
   if (pressEnter) fd.append('press_enter', '1');
@@ -264,12 +316,12 @@ function renderPresets() {
   const body = document.getElementById('presets-body');
   body.innerHTML = '';
   loadPresets().forEach((p, i) => {
-    const displayVal = p.masked ? '•'.repeat(Math.min(p.value.length, 20)) : p.value;
+    const displayVal = p.masked ? '*'.repeat(Math.min(p.value.length, 20)) : p.value;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${escapeHtml(p.label)}</td>
       <td><code>${escapeHtml(displayVal)}</code></td>
-      <td>${p.enter ? '↵' : ''}</td>
+      <td>${p.enter ? 'Enter' : ''}</td>
       <td>
         <button data-i="${i}" data-a="type">Type</button>
         <button data-i="${i}" data-a="mask">${p.masked ? 'Show' : 'Mask'}</button>

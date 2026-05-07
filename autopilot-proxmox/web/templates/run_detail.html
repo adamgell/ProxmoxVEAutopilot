@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block content %}
+{{ page_head("Run " ~ run.id, run.provision_path) }}
+<div class="cockpit-panel" style="padding:16px;">
+  <dl class="row">
+    <dt class="col-sm-2">VMID</dt><dd class="col-sm-10">{{ run.vmid or '-' }}</dd>
+    <dt class="col-sm-2">VM UUID</dt><dd class="col-sm-10"><code>{{ run.vm_uuid or '-' }}</code></dd>
+    <dt class="col-sm-2">State</dt><dd class="col-sm-10"><span class="badge bg-info">{{ run.state }}</span></dd>
+    <dt class="col-sm-2">Started</dt><dd class="col-sm-10">{{ run.started_at }}</dd>
+    {% if run.finished_at %}
+    <dt class="col-sm-2">Finished</dt><dd class="col-sm-10">{{ run.finished_at }}</dd>
+    {% endif %}
+    {% if run.last_error %}
+    <dt class="col-sm-2">Last error</dt><dd class="col-sm-10"><pre>{{ run.last_error }}</pre></dd>
+    {% endif %}
+  </dl>
+
+  <h2>Steps</h2>
+  <table class="table table-sm">
+    <thead>
+      <tr>
+        <th>#</th><th>Phase</th><th>Kind</th><th>State</th>
+        <th>Started</th><th>Finished</th><th>Error</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in steps %}
+      <tr>
+        <td>{{ s.order_index }}</td>
+        <td>{{ s.phase }}</td>
+        <td><code>{{ s.kind }}</code></td>
+        <td>
+          {% if s.state == 'ok' %}<span class="badge ok">ok</span>
+          {% elif s.state == 'error' %}<span class="badge error">error</span>
+          {% elif s.state == 'running' %}<span class="badge pending">running</span>
+          {% else %}<span class="badge unknown">{{ s.state }}</span>{% endif %}
+        </td>
+        <td>{{ s.started_at or '' }}</td>
+        <td>{{ s.finished_at or '' }}</td>
+        <td>{% if s.error %}<pre>{{ s.error }}</pre>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

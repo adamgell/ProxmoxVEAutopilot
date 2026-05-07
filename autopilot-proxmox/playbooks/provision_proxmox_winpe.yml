@@ -1,0 +1,2 @@
+---
+- import_playbook: _provision_proxmox_winpe_vm.yml

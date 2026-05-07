@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
-# Badge values map 1:1 to CSS classes + icons in the template.
-BADGE_OK = "ok"          # ✅
-BADGE_WARN = "warn"      # ⚠️
-BADGE_MISSING = "missing"  # ❌
-BADGE_PENDING = "pending"  # ⏳ (e.g., Entra hasn't synced the AD object yet)
-BADGE_ERROR = "error"    # 🔴 probe itself errored
+# Badge values map 1:1 to CSS classes and text labels in the template.
+BADGE_OK = "ok"
+BADGE_WARN = "warn"
+BADGE_MISSING = "missing"
+BADGE_PENDING = "pending"  # e.g., Entra has not synced the AD object yet
+BADGE_ERROR = "error"      # probe itself errored
 BADGE_UNKNOWN = "unknown"  # greyed-out when we haven't probed
 
 
@@ -51,9 +51,9 @@ def classify_ad(probe_row: Optional[dict]) -> str:
         return BADGE_UNKNOWN
     errs = _parse_json(probe_row.get("probe_errors_json"), {})
     if errs.get("ad_per_ou"):
-        # Every configured OU errored? → red. Some subset? → warn.
+        # Every configured OU errored? Red. Some subset? Warn.
         # We don't have the full enabled-OU list on the probe row so
-        # presence of any ad error counts as warn — the detail page
+        # presence of any ad error counts as warn; the detail page
         # has the per-OU breakdown.
         return BADGE_WARN
     count = int(probe_row.get("ad_match_count") or 0)
@@ -139,7 +139,7 @@ class DashboardRow:
     ad_badge: str
     ad_count: int
     ad_cn: str                 # distinguishedName's CN or cn attr
-    # Entra column — display name + trust type surface naming drift
+    # Entra column: display name + trust type surface naming drift
     # between VM name / AD cn / Entra displayName / Intune deviceName.
     entra_badge: str
     entra_count: int
@@ -159,7 +159,7 @@ def build_dashboard_rows(latest: list[dict],
     into dashboard rows with badges assigned.
 
     ``ad_first_seen`` is a ``{vmid: iso_timestamp}`` dict from the
-    caller — used to apply the sync-pending window on the Entra
+    caller, used to apply the sync-pending window on the Entra
     badge."""
     out = []
     for entry in latest:

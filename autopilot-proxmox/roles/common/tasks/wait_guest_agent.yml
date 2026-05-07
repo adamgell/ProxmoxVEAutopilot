@@ -6,4 +6,18 @@
 # Optional overrides: guest_agent_timeout_seconds, guest_agent_poll_interval_seconds
 
 - name: "Wait for guest agent via {{ hypervisor_type | default('proxmox') }} backend"
-  ansible.builtin.include_tasks: "_{{ hypervisor_type | default('proxmox') }}_wait_guest_agent.yml"
+  ansible.builtin.include_tasks: >-
+    {{
+      (
+        (role_path ~ '/../common/tasks/')
+        if (role_path is defined)
+        else (playbook_dir ~ '/../roles/common/tasks/')
+      )
+      ~ '_'
+      ~ (
+        'proxmox'
+        if ((hypervisor_type | default('proxmox')) in ['proxmox', 'pve'])
+        else (hypervisor_type | default('proxmox'))
+      )
+      ~ '_wait_guest_agent.yml'
+    }}

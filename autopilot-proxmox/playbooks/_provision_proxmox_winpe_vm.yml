@@ -1,0 +1,198 @@
+---
+# WinPE provisioning path. Clones a configured-but-empty template
+# (winpe_blank_template_vmid), POSTs vmid + vm_uuid to Flask, attaches
+# three ISOs (WinPE, Windows source, VirtIO), sets boot order, starts
+# the VM, and waits for the run state to advance through Windows setup.
+#
+# Required extra vars (passed in by web/app.py):
+#   run_id            int    pre-created provisioning_runs row id
+#   sequence_id       int
+#   autopilot_base_url str   e.g. http://192.168.2.4:5000
+#
+# Optional:
+#   vm_oem_profile, vm_disk_size_gb, vm_memory_mb, etc.
+#       (inherit from inventory unless overridden)
+
+- name: Provision a Proxmox VM via WinPE
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # The clone role reads `proxmox_template_vmid` (set in inventory).
+    # Override it for this run so the role clones the WinPE blank
+    # template, not the sysprepped Windows template.
+    proxmox_template_vmid: "{{ winpe_blank_template_vmid }}"
+    # Skip Panther offline-injection: we serve the unattend over HTTP
+    # at boot via /winpe/unattend/<run_id>.
+    _skip_panther_injection: true
+    # Keep SMBIOS1 identity from the selected OEM profile, but skip the
+    # root-only Type 3 SMBIOS file/args path. WinPE does not prefetch a
+    # root@pam ticket and does not need chassis-type emulation to boot.
+    _skip_chassis_type_smbios_file: true
+    # Defer the role's "Start VM" task until after we attach all three
+    # ISOs. Otherwise the role boots the VM with no media, BIOS finds
+    # nothing on scsi0, and we lose the WinPE entry path.
+    vm_start_after_create: false
+  pre_tasks:
+    - name: Validate WinPE path is configured
+      ansible.builtin.assert:
+        that:
+          - winpe_blank_template_vmid is not none
+          - proxmox_winpe_iso is not none
+          - proxmox_windows_iso is not none and (proxmox_windows_iso | length) > 0
+          - autopilot_winpe_token_secret | length > 0
+        fail_msg: >-
+          WinPE provisioning requires the following inventory values to
+          be set: winpe_blank_template_vmid (the empty template), and
+          proxmox_winpe_iso and proxmox_windows_iso, plus
+          vault_autopilot_winpe_token_secret.
+
+  tasks:
+    - name: Clone the WinPE blank template (skips Panther injection, no auto-start)
+      ansible.builtin.include_role:
+        name: proxmox_vm_clone
+
+    - name: Read cloned VM config for WinPE hardware validation
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      register: _winpe_clone_config
+
+    - name: Fail if WinPE clone has no VirtIO SCSI boot disk
+      ansible.builtin.fail:
+        msg: "WinPE clone {{ vm_vmid }} has no scsi0 disk for VirtIO boot testing."
+      when: (_winpe_clone_config.json.data.scsi0 | default('')) | length == 0
+
+    - name: POST run identity to Flask
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/winpe/run/{{ run_id }}/identity"
+        method: POST
+        body_format: json
+        body:
+          vmid: "{{ vm_vmid | int }}"
+          vm_uuid: "{{ _vm_identity.uuid }}"
+        status_code: [200]
+
+    - name: Attach WinPE ISO at ide2
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          ide2: "{{ proxmox_winpe_iso }},media=cdrom"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Attach Windows source ISO at sata0
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          sata0: "{{ proxmox_windows_iso }},media=cdrom"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Attach VirtIO drivers ISO at ide3
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          ide3: "{{ proxmox_virtio_iso }},media=cdrom"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      when: proxmox_virtio_iso is defined and (proxmox_virtio_iso | length) > 0
+
+    - name: Set boot order to ide2 first then scsi0
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          boot: "order=ide2;scsi0"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Start VM
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/start"
+        method: POST
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+
+    - name: Wait for WinPE phase to hand off to Windows Setup
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_for_run_state.yml"
+      vars:
+        _wfrs_run_id: "{{ run_id | int }}"
+        _wfrs_accepted_states:
+          - awaiting_windows_setup
+          - failed
+        _wfrs_timeout: 2400
+        _wfrs_poll_interval: 10
+
+    - name: Fail if the WinPE run failed
+      ansible.builtin.fail:
+        msg: "WinPE run {{ run_id }} failed: {{ _wfrs_run.last_error | default('unknown') }}"
+      when: _wfrs_final_state == 'failed'
+
+    - name: Wait for OSD client to complete Windows Setup continuation
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/common/tasks/wait_for_run_state.yml"
+      when: proxmox_winpe_expect_guest_agent | default(false) | bool
+      vars:
+        _wfrs_run_id: "{{ run_id | int }}"
+        _wfrs_accepted_states:
+          - done
+          - failed
+        _wfrs_timeout: 3600
+        _wfrs_poll_interval: 15
+
+    - name: Fail if the OSD client run failed
+      ansible.builtin.fail:
+        msg: "OSD client run {{ run_id }} failed: {{ _wfrs_run.last_error | default('unknown') }}"
+      when:
+        - proxmox_winpe_expect_guest_agent | default(false) | bool
+        - _wfrs_final_state == 'failed'
+
+    # Hash capture is QGA-driven (Push scripts -> Execute -> Retrieve CSV)
+    # and lives in roles/hash_capture. The clone path runs this role at
+    # the equivalent point post-Specialize. M1 keeps hash capture in
+    # OOBE/QGA-time (NOT pre-OS WinPE); M2 moves it into phase 0.
+    - name: Capture Autopilot hash via QGA (M1 hash path)
+      ansible.builtin.include_role:
+        name: hash_capture
+      when:
+        - capture_hardware_hash | default(true) | bool
+        - (sequence_hash_capture_phase | default('oobe')) == 'oobe'
+        - proxmox_winpe_expect_guest_agent | default(false) | bool
+
+    - name: Detach VirtIO ISO post-Specialize
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          delete: "ide3"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      when: proxmox_virtio_iso is defined and (proxmox_virtio_iso | length) > 0
+
+    - name: Mark run done
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/runs/{{ run_id }}/complete"
+        method: POST
+        status_code: [200]

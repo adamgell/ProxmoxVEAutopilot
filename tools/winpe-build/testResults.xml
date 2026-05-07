@@ -1,0 +1,115 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<test-results xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="nunit_schema_2.5.xsd" name="Pester" total="34" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0" date="2026-05-04" time="16:02:25">
+  <environment cwd="/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/winpe-deploy/tools/winpe-build" clr-version="10.0.7" platform="Darwin" user-domain="" user="Adam.Gell" nunit-version="2.5.8.0" os-version="25.4.0" machine-name="BigMac26.home.gell.one" />
+  <culture-info current-culture="en-US" current-uiculture="en-US" />
+  <test-suite type="TestFixture" name="Pester" executed="True" result="Success" success="True" time="0.4702" asserts="0" description="Pester">
+    <results>
+      <test-suite type="TestFixture" name="/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/winpe-deploy/tools/winpe-build/tests/build-winpe.Tests.ps1" executed="True" result="Success" success="True" time="0.1911" asserts="0" description="/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/winpe-deploy/tools/winpe-build/tests/build-winpe.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="build-winpe.ps1 parameter validation" executed="True" result="Success" success="True" time="0.087" asserts="0" description="build-winpe.ps1 parameter validation">
+            <results>
+              <test-case description="accepts -Arch amd64" name="build-winpe.ps1 parameter validation.accepts -Arch amd64" time="0.0482" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="accepts -Arch arm64" name="build-winpe.ps1 parameter validation.accepts -Arch arm64" time="0.0024" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects unknown -Arch values" name="build-winpe.ps1 parameter validation.rejects unknown -Arch values" time="0.0114" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="emits a manifest path to stdout when -DryRun is set" name="build-winpe.ps1 parameter validation.emits a manifest path to stdout when -DryRun is set" time="0.0043" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/winpe-deploy/tools/winpe-build/tests/Invoke-AutopilotWinPE.Tests.ps1" executed="True" result="Success" success="True" time="0.2791" asserts="0" description="/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/winpe-deploy/tools/winpe-build/tests/Invoke-AutopilotWinPE.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Read-AgentConfig" executed="True" result="Success" success="True" time="0.0374" asserts="0" description="Read-AgentConfig">
+            <results>
+              <test-case description="returns the parsed config from a JSON file" name="Read-AgentConfig.returns the parsed config from a JSON file" time="0.033" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws on missing file" name="Read-AgentConfig.throws on missing file" time="0.0031" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Write-AgentLog" executed="True" result="Success" success="True" time="0.0469" asserts="0" description="Write-AgentLog">
+            <results>
+              <test-case description="appends to the log file with a timestamp prefix" name="Write-AgentLog.appends to the log file with a timestamp prefix" time="0.0059" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-VMIdentity" executed="True" result="Success" success="True" time="0.0673" asserts="0" description="Get-VMIdentity">
+            <results>
+              <test-case description="returns uuid and mac from injected resolvers" name="Get-VMIdentity.returns uuid and mac from injected resolvers" time="0.0041" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="normalizes uuid to lowercase" name="Get-VMIdentity.normalizes uuid to lowercase" time="0.0019" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws when resolver returns empty" name="Get-VMIdentity.throws when resolver returns empty" time="0.0042" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-OrchestratorRequest" executed="True" result="Success" success="True" time="0.1111" asserts="0" description="Invoke-OrchestratorRequest">
+            <results>
+              <test-case description="sends a POST with bearer header when token provided" name="Invoke-OrchestratorRequest.sends a POST with bearer header when token provided" time="0.0215" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="omits bearer header when token is null" name="Invoke-OrchestratorRequest.omits bearer header when token is null" time="0.0026" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="falls back to FallbackBaseUrl when BaseUrl exhausts retries" name="Invoke-OrchestratorRequest.falls back to FallbackBaseUrl when BaseUrl exhausts retries" time="0.0108" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="retries on transient failure up to MaxAttempts then throws" name="Invoke-OrchestratorRequest.retries on transient failure up to MaxAttempts then throws" time="0.0073" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-ActionLoop" executed="True" result="Success" success="True" time="0.1292" asserts="0" description="Invoke-ActionLoop">
+            <results>
+              <test-case description="runs each action and refreshes the bearer token from step results" name="Invoke-ActionLoop.runs each action and refreshes the bearer token from step results" time="0.0082" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="aborts the loop on handler failure and posts state=error" name="Invoke-ActionLoop.aborts the loop on handler failure and posts state=error" time="0.0063" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="fails fast when no handler is registered for a kind" name="Invoke-ActionLoop.fails fast when no handler is registered for a kind" time="0.0023" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-PartitionDisk" executed="True" result="Success" success="True" time="0.1446" asserts="0" description="Invoke-Action-PartitionDisk">
+            <results>
+              <test-case description="emits a diskpart script with Recovery before C: for layout=recovery_before_c" name="Invoke-Action-PartitionDisk.emits a diskpart script with Recovery before C: for layout=recovery_before_c" time="0.0118" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects unknown layout values" name="Invoke-Action-PartitionDisk.rejects unknown layout values" time="0.0024" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-ApplyWim" executed="True" result="Success" success="True" time="0.1532" asserts="0" description="Invoke-Action-ApplyWim">
+            <results>
+              <test-case description="invokes dism /apply-image with index resolved by metadata name" name="Invoke-Action-ApplyWim.invokes dism /apply-image with index resolved by metadata name" time="0.0045" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws on dism non-zero exit" name="Invoke-Action-ApplyWim.throws on dism non-zero exit" time="0.0028" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-InjectDrivers" executed="True" result="Success" success="True" time="0.1642" asserts="0" description="Invoke-Action-InjectDrivers">
+            <results>
+              <test-case description="invokes dism /add-driver against the VirtIO ISO root with /recurse" name="Invoke-Action-InjectDrivers.invokes dism /add-driver against the VirtIO ISO root with /recurse" time="0.0077" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws when the VirtIO source cannot be located" name="Invoke-Action-InjectDrivers.throws when the VirtIO source cannot be located" time="0.0021" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-ValidateBootDrivers" executed="True" result="Success" success="True" time="0.1725" asserts="0" description="Invoke-Action-ValidateBootDrivers">
+            <results>
+              <test-case description="passes when all required INFs are present" name="Invoke-Action-ValidateBootDrivers.passes when all required INFs are present" time="0.0037" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws listing every missing INF" name="Invoke-Action-ValidateBootDrivers.throws listing every missing INF" time="0.0022" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="_GetInjectedDriverInfs (parses dism /Format:List output)" executed="True" result="Success" success="True" time="0.1827" asserts="0" description="_GetInjectedDriverInfs (parses dism /Format:List output)">
+            <results>
+              <test-case description="extracts the leaf INF name from each &quot;Original File Name&quot; line" name="_GetInjectedDriverInfs (parses dism /Format:List output).extracts the leaf INF name from each &quot;Original File Name&quot; line" time="0.009" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-StageAutopilotConfig" executed="True" result="Success" success="True" time="0.2046" asserts="0" description="Invoke-Action-StageAutopilotConfig">
+            <results>
+              <test-case description="fetches /winpe/autopilot-config and writes it to V:\Windows\Provisioning\Autopilot" name="Invoke-Action-StageAutopilotConfig.fetches /winpe/autopilot-config and writes it to V:\Windows\Provisioning\Autopilot" time="0.013" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="creates the directory tree if missing" name="Invoke-Action-StageAutopilotConfig.creates the directory tree if missing" time="0.0071" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-BakeBootEntry" executed="True" result="Success" success="True" time="0.21" asserts="0" description="Invoke-Action-BakeBootEntry">
+            <results>
+              <test-case description="invokes bcdboot V:\Windows /s S: /f UEFI" name="Invoke-Action-BakeBootEntry.invokes bcdboot V:\Windows /s S: /f UEFI" time="0.0022" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws on non-zero exit" name="Invoke-Action-BakeBootEntry.throws on non-zero exit" time="0.0021" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-StageUnattend" executed="True" result="Success" success="True" time="0.2181" asserts="0" description="Invoke-Action-StageUnattend">
+            <results>
+              <test-case description="fetches /winpe/unattend and writes V:\Windows\Panther\unattend.xml" name="Invoke-Action-StageUnattend.fetches /winpe/unattend and writes V:\Windows\Panther\unattend.xml" time="0.0065" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-Action-CaptureHash" executed="True" result="Success" success="True" time="0.24" asserts="0" description="Invoke-Action-CaptureHash">
+            <results>
+              <test-case description="invokes Get-WindowsAutopilotInfo, parses CSV, and POSTs to /winpe/hash" name="Invoke-Action-CaptureHash.invokes Get-WindowsAutopilotInfo, parses CSV, and POSTs to /winpe/hash" time="0.0128" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws when the capture script fails" name="Invoke-Action-CaptureHash.throws when the capture script fails" time="0.0029" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Start-AutopilotWinPE" executed="True" result="Success" success="True" time="0.2531" asserts="0" description="Start-AutopilotWinPE">
+            <results>
+              <test-case description="registers, runs the action loop, calls /winpe/done, then reboots" name="Start-AutopilotWinPE.registers, runs the action loop, calls /winpe/done, then reboots" time="0.0119" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+    </results>
+  </test-suite>
+</test-results>

@@ -76,10 +76,23 @@
            (_clone_config.json.data.args | default('') | trim),
            (_smbios_args | default('') | trim),
          ] | reject('equalto', '') | list) }}
+    _args_write_required: >-
+      {{ ((_smbios_args | default('') | trim) | length) > 0 }}
 
 - name: Assemble args value
   ansible.builtin.set_fact:
     _merged_args: "{{ _args_tokens | join(' ') }}"
+
+- name: Fail if args write needs root@pam ticket
+  ansible.builtin.fail:
+    msg: >-
+      VM {{ vm_vmid }} needs QEMU args updated but root@pam ticket
+      variables are missing. Set vault_proxmox_root_password so the
+      controller can fetch _proxmox_root_ticket/_proxmox_root_csrf_token,
+      or disable the sequence/profile option that requires QEMU args.
+  when:
+    - _args_write_required | default(false) | bool
+    - _proxmox_root_ticket is not defined or _proxmox_root_csrf_token is not defined
 
 - name: Apply args via root@pam ticket
   ansible.builtin.uri:
@@ -89,8 +102,8 @@
     body:
       args: "{{ _merged_args }}"
     headers:
-      Cookie: "PVEAuthCookie={{ _proxmox_root_ticket }}"
-      CSRFPreventionToken: "{{ _proxmox_root_csrf_token }}"
+      Cookie: "PVEAuthCookie={{ _proxmox_root_ticket | default('') }}"
+      CSRFPreventionToken: "{{ _proxmox_root_csrf_token | default('') }}"
     validate_certs: "{{ proxmox_validate_certs }}"
     status_code: [200]
   register: _args_result
@@ -98,4 +111,7 @@
   delay: "{{ clone_config_delay | default(5) }}"
   until: _args_result.status == 200
   no_log: true
-  when: _merged_args | default('') | length > 0
+  when:
+    - _args_write_required | default(false) | bool
+    - _proxmox_root_ticket is defined
+    - _proxmox_root_csrf_token is defined

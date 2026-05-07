@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS task_sequences (
     is_default INTEGER NOT NULL DEFAULT 0,
     produces_autopilot_hash INTEGER NOT NULL DEFAULT 0,
     target_os TEXT NOT NULL DEFAULT 'windows',
+    hash_capture_phase TEXT NOT NULL DEFAULT 'oobe' CHECK (hash_capture_phase IN ('winpe','oobe')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -59,6 +60,35 @@ CREATE TABLE IF NOT EXISTS answer_iso_cache (
     compiled_at TEXT NOT NULL,
     last_used_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS provisioning_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vmid INTEGER,
+    sequence_id INTEGER NOT NULL REFERENCES task_sequences(id),
+    provision_path TEXT NOT NULL CHECK (provision_path IN ('clone','winpe')),
+    state TEXT NOT NULL,
+    vm_uuid TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    last_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_provisioning_runs_vm_uuid_state
+    ON provisioning_runs(vm_uuid, state);
+
+CREATE TABLE IF NOT EXISTS provisioning_run_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES provisioning_runs(id) ON DELETE CASCADE,
+    order_index INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    state TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    UNIQUE (run_id, order_index)
+);
 """
 
 
@@ -93,6 +123,14 @@ def init(db_path: Path) -> None:
             conn.execute(
                 "UPDATE task_sequences SET target_os='windows' "
                 "WHERE target_os IS NULL OR target_os=''"
+            )
+        # --- Migration: add hash_capture_phase column (pre-existing DBs)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(task_sequences)")}
+        if "hash_capture_phase" not in cols:
+            conn.execute(
+                "ALTER TABLE task_sequences "
+                "ADD COLUMN hash_capture_phase TEXT NOT NULL DEFAULT 'oobe' "
+                "CHECK (hash_capture_phase IN ('winpe','oobe'))"
             )
 
 
@@ -216,6 +254,7 @@ def _row_to_sequence(row: sqlite3.Row) -> dict:
         "is_default": bool(row["is_default"]),
         "produces_autopilot_hash": bool(row["produces_autopilot_hash"]),
         "target_os": row["target_os"],
+        "hash_capture_phase": row["hash_capture_phase"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -236,15 +275,19 @@ def create_sequence(db_path, *, name: str, description: str,
                     is_default: bool = False,
                     produces_autopilot_hash: bool = False,
                     target_os: str = "windows",
+                    hash_capture_phase: str = "oobe",
                     steps: Optional[list[dict]] = None) -> int:
+    if hash_capture_phase not in ("winpe", "oobe"):
+        raise ValueError(f"invalid hash_capture_phase: {hash_capture_phase!r}")
     now = _now()
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO task_sequences "
             "(name, description, is_default, produces_autopilot_hash, "
-            " target_os, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " target_os, hash_capture_phase, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (name, description, int(is_default), int(produces_autopilot_hash),
-             target_os, now, now),
+             target_os, hash_capture_phase, now, now),
         )
         new_id = cur.lastrowid
         # Demote any other defaults AFTER the insert succeeds so a failed
@@ -267,7 +310,10 @@ def update_sequence(db_path, seq_id: int, *,
                     description: Optional[str] = None,
                     is_default: Optional[bool] = None,
                     produces_autopilot_hash: Optional[bool] = None,
-                    target_os: Optional[str] = None) -> None:
+                    target_os: Optional[str] = None,
+                    hash_capture_phase: Optional[str] = None) -> None:
+    if hash_capture_phase is not None and hash_capture_phase not in ("winpe", "oobe"):
+        raise ValueError(f"invalid hash_capture_phase: {hash_capture_phase!r}")
     now = _now()
     updates, args = [], []
     if name is not None:
@@ -281,6 +327,8 @@ def update_sequence(db_path, seq_id: int, *,
         updates.append("is_default = ?"); args.append(int(is_default))
     if target_os is not None:
         updates.append("target_os = ?"); args.append(target_os)
+    if hash_capture_phase is not None:
+        updates.append("hash_capture_phase = ?"); args.append(hash_capture_phase)
     if not updates:
         return
     updates.append("updated_at = ?"); args.append(now)
@@ -371,6 +419,8 @@ def duplicate_sequence(db_path, seq_id: int, *, new_name: str) -> int:
         db_path, name=new_name, description=seq["description"],
         is_default=False,
         produces_autopilot_hash=seq["produces_autopilot_hash"],
+        target_os=seq.get("target_os", "windows"),
+        hash_capture_phase=seq["hash_capture_phase"],
     )
     set_sequence_steps(db_path, new_id, [
         {"step_type": s["step_type"], "params": s["params"], "enabled": s["enabled"]}
@@ -707,3 +757,193 @@ def seed_defaults(db_path, cipher) -> None:
             target_os="ubuntu",
             steps=ubuntu_apt_cache_steps,
         )
+
+
+def create_provisioning_run(db_path, *,
+                            sequence_id: int,
+                            provision_path: str) -> int:
+    if provision_path not in ("clone", "winpe"):
+        raise ValueError(f"invalid provision_path: {provision_path!r}")
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO provisioning_runs "
+            "(sequence_id, provision_path, state, started_at) "
+            "VALUES (?, ?, 'queued', ?)",
+            (sequence_id, provision_path, _now()),
+        )
+        return cur.lastrowid
+
+
+def get_provisioning_run(db_path, run_id: int) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM provisioning_runs WHERE id=?", (run_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _normalize_uuid(vm_uuid: str) -> str:
+    """Canonical UUID form for DB writes and lookups: lowercase, stripped.
+    The Ansible role's _vm_identity.uuid is upper-case; WMI in WinPE
+    typically returns lower-case but is documented as case-insensitive.
+    Persist one form so an exact-match WHERE clause can be used."""
+    return (vm_uuid or "").strip().lower()
+
+
+def set_provisioning_run_identity(db_path, *,
+                                  run_id: int,
+                                  vmid: int,
+                                  vm_uuid: str) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE provisioning_runs "
+            "SET vmid=?, vm_uuid=?, state='awaiting_winpe' "
+            "WHERE id=? AND state='queued'",
+            (vmid, _normalize_uuid(vm_uuid), run_id),
+        )
+
+
+def find_run_by_uuid_state(db_path, *,
+                           vm_uuid: str,
+                           state: str) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM provisioning_runs "
+            "WHERE vm_uuid=? AND state=? "
+            "ORDER BY id DESC LIMIT 1",
+            (_normalize_uuid(vm_uuid), state),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_provisioning_run_state(db_path, *,
+                                  run_id: int,
+                                  state: str,
+                                  last_error: Optional[str] = None) -> None:
+    with _connect(db_path) as conn:
+        if state in ("done", "failed"):
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state=?, last_error=?, finished_at=? "
+                "WHERE id=?",
+                (state, last_error, _now(), run_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state=?, last_error=? WHERE id=?",
+                (state, last_error, run_id),
+            )
+
+
+def append_run_step(db_path, *,
+                    run_id: int,
+                    phase: str,
+                    kind: str,
+                    params: dict) -> dict:
+    with _connect(db_path) as conn:
+        nxt = conn.execute(
+            "SELECT COALESCE(MAX(order_index)+1, 0) "
+            "FROM provisioning_run_steps WHERE run_id=?",
+            (run_id,),
+        ).fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO provisioning_run_steps "
+            "(run_id, order_index, phase, kind, params_json, state) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
+            (run_id, nxt, phase, kind, json.dumps(params, sort_keys=True)),
+        )
+        sid = cur.lastrowid
+        row = conn.execute(
+            "SELECT * FROM provisioning_run_steps WHERE id=?", (sid,)
+        ).fetchone()
+        return dict(row)
+
+
+def update_run_step_state(db_path, *,
+                          step_id: int,
+                          state: str,
+                          error: Optional[str] = None) -> None:
+    with _connect(db_path) as conn:
+        if state == "running":
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state='running', started_at=COALESCE(started_at, ?), "
+                "finished_at=NULL, error=NULL "
+                "WHERE id=?",
+                (_now(), step_id),
+            )
+        elif state in ("ok", "error"):
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state=?, finished_at=?, error=? WHERE id=?",
+                (state, _now(), error, step_id),
+            )
+        else:
+            raise ValueError(f"invalid step state: {state!r}")
+
+
+def list_run_steps(db_path, run_id: int) -> list[dict]:
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM provisioning_run_steps "
+            "WHERE run_id=? ORDER BY order_index",
+            (run_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_run_step(db_path, step_id: int) -> Optional[dict]:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM provisioning_run_steps WHERE id=?", (step_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def sweep_stale_runs(db_path, *, ttl_seconds: int = 1800) -> int:
+    """Mark any run whose newest step has been 'running' for longer
+    than ttl_seconds as failed. Returns the count of runs flipped.
+
+    Called inline by /api/runs/<id> reads and /winpe/register so we
+    do not need a background reaper. ttl_seconds = 30 min by default
+    (covers a slow apply_wim + driver inject on cold storage; tighten
+    if your hardware allows).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ttl_seconds)
+    cutoff_iso = cutoff.isoformat(timespec="seconds")
+    flipped = 0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT r.id AS run_id, MAX(s.started_at) AS last_started "
+            "FROM provisioning_runs r "
+            "JOIN provisioning_run_steps s ON s.run_id = r.id "
+            "WHERE r.state IN ("
+            "'awaiting_winpe','awaiting_windows_setup',"
+            "'awaiting_osd_client','awaiting_specialize') "
+            "  AND s.state = 'running' "
+            "GROUP BY r.id "
+            "HAVING last_started IS NOT NULL AND last_started < ?",
+            (cutoff_iso,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE provisioning_runs "
+                "SET state='failed', last_error=?, finished_at=? "
+                "WHERE id=? AND state IN ("
+                "'awaiting_winpe','awaiting_windows_setup',"
+                "'awaiting_osd_client','awaiting_specialize')",
+                (
+                    f"stale; no step update for >{ttl_seconds//60} min",
+                    _now(), row["run_id"],
+                ),
+            )
+            conn.execute(
+                "UPDATE provisioning_run_steps "
+                "SET state='error', finished_at=?, error='stale: agent silent' "
+                "WHERE run_id=? AND state='running'",
+                (_now(), row["run_id"]),
+            )
+            flipped += 1
+    return flipped

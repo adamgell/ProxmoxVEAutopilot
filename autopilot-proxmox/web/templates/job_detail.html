@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head %}
 {% block title %}Job {{ job.id }} - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 <style>
@@ -7,7 +8,7 @@
      disabled appearance here. */
   .action-btn-upload[disabled] { opacity: 0.5; cursor: not-allowed; }
 </style>
-<h2>Job: {{ job.id }}</h2>
+{{ page_head("Job " ~ job.id, "Live log cockpit, metadata, pause gates, resume controls, and emergency stop for this run.") }}
 <table>
 <tr><td style="width:120px;"><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
 <tr><td><b>Status</b></td><td>
@@ -139,7 +140,7 @@ async function resumeTemplate() {
     var r = await fetch('/api/jobs/{{ job.id }}/resume-template-build', {method: 'POST'});
     if (r.ok) {
       s.style.color = 'var(--ok-fg)';
-      s.textContent = 'Resumed. Sysprep should start within a few seconds — watch the log below.';
+      s.textContent = 'Resumed. Sysprep should start within a few seconds - watch the log below.';
       return;
     }
     if (r.status === 503) {
@@ -147,7 +148,7 @@ async function resumeTemplate() {
       // the API in practice); auto-retry once after 3s instead of
       // showing the generic failure banner.
       s.style.color = 'var(--warn-fg)';
-      s.textContent = 'services still initializing — retrying in 3s…';
+      s.textContent = 'services still initializing - retrying in 3s...';
       setTimeout(resumeTemplate, 3000);
       return;
     }

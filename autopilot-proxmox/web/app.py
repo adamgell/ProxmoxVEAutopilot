@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import csv
 import json
 import os
 import sqlite3
@@ -12,7 +13,7 @@ from typing import Optional
 
 import requests
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -77,6 +78,16 @@ def _sanitize_input(value):
     if not re.match(r'^[\w\-\.]*$', str(value)):
         raise ValueError(f"Invalid input: {value!r} — only alphanumeric, hyphens, underscores, dots allowed")
     return str(value)
+
+
+def _optional_text(value) -> str:
+    """Normalize optional form/default values without rendering YAML null as text."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() in ("none", "null"):
+        return ""
+    return text
 
 
 def _safe_path(base_dir, filename):
@@ -268,8 +279,58 @@ def _load_vault():
 
 def _vault_presence() -> dict[str, bool]:
     """Return {key: True} for every vault key whose value is non-empty.
-    Safe to render in HTML — carries no secret material."""
+    Safe to render in HTML -- carries no secret material."""
     return {k: bool(v) for k, v in _load_vault().items()}
+
+
+def _looks_like_jinja(value: str) -> bool:
+    return isinstance(value, str) and ("{{" in value or "{%" in value)
+
+
+def _bridge_winpe_vars_to_env() -> None:
+    """Mirror WinPE-relevant settings into os.environ so the WinPE
+    modules (which read env to stay decoupled from _load_vars at import
+    time) see real values. Vault-rendered fields come from _load_vault
+    directly because _load_vars returns Jinja strings literally."""
+    raw_vars = _load_vars()
+    vault = _load_vault()
+
+    # Token secret lives in vault.yml (vars.yml only references it via
+    # Jinja). Read straight from _load_vault to skip the unrendered
+    # indirection. Use setdefault so tests that pre-seed the env are not
+    # overwritten by the bridge.
+    secret = vault.get("vault_autopilot_winpe_token_secret") or ""
+    if secret:
+        os.environ.setdefault("AUTOPILOT_WINPE_TOKEN_SECRET", secret)
+
+    # Plain integer in vars.yml (no Jinja).
+    blank = raw_vars.get("winpe_blank_template_vmid")
+    if blank not in (None, "", "null"):
+        os.environ.setdefault("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", str(blank))
+
+    # Plain string ("isos:iso/...") in vars.yml.
+    iso = raw_vars.get("proxmox_winpe_iso") or ""
+    if iso and not _looks_like_jinja(iso):
+        os.environ.setdefault("AUTOPILOT_WINPE_ISO", iso)
+
+    # Plain string in vars.yml.
+    allow = raw_vars.get("autopilot_winpe_identity_allowlist") or ""
+    if allow and not _looks_like_jinja(allow):
+        os.environ.setdefault("AUTOPILOT_WINPE_IDENTITY_ALLOWLIST", allow)
+
+
+def _winpe_enabled() -> bool:
+    """The provision UI shows the WinPE option only when the inventory
+    has wired up a blank template VMID, a WinPE ISO, and the token
+    signing secret. The bridge in _bridge_winpe_vars_to_env() exports
+    these as env vars at startup (see Task F2 step 4); we read the env
+    so the test suite can flip the flag without monkeypatching the
+    inventory loader."""
+    return bool(
+        os.environ.get("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID")
+        and os.environ.get("AUTOPILOT_WINPE_ISO")
+        and os.environ.get("AUTOPILOT_WINPE_TOKEN_SECRET")
+    )
 
 
 def _fetch_settings_options():
@@ -400,6 +461,7 @@ def _save_vault(updates):
 
 app = FastAPI(title="Proxmox VE Autopilot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates.env.filters["tojson"] = lambda x, indent=None: json.dumps(x, indent=indent)
 job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
     jobs_db_path=JOBS_DB,
@@ -409,6 +471,16 @@ from web import sequences_db, crypto as _crypto
 from web import sequence_compiler
 from web import device_history_db, device_monitor
 from web import auth as _auth
+
+from web.winpe_endpoints import (
+    router as _winpe_router,
+    api_router as _winpe_api_router,
+    osd_router as _osd_router,
+)
+_bridge_winpe_vars_to_env()
+app.include_router(_winpe_router)
+app.include_router(_osd_router)
+app.include_router(_winpe_api_router)
 
 
 # ---------------------------------------------------------------------------
@@ -1799,9 +1871,13 @@ def get_hash_files():
         stat = f.stat()
         serial = ""
         try:
-            lines = f.read_text().strip().splitlines()
-            if len(lines) >= 2:
-                serial = lines[1].split(",")[0]
+            # Use csv.reader so quoted fields with embedded commas
+            # (rare but possible from agent-captured BIOS strings)
+            # round-trip correctly into the displayed serial.
+            with f.open("r", encoding="utf-8", newline="") as fh:
+                rows = list(csv.reader(fh))
+            if len(rows) >= 2 and rows[1]:
+                serial = rows[1][0]
         except Exception:
             pass
         vm_name = f.stem.replace("_hwid", "")
@@ -1826,9 +1902,15 @@ def get_hash_files():
 def compute_duration(job):
     if not job.get("started"):
         return None
-    start = datetime.fromisoformat(job["started"])
+    # Older job rows were written with naive UTC timestamps; newer code
+    # writes offset-aware. Treat naive values as UTC so subtraction
+    # against datetime.now(timezone.utc) doesn't raise.
+    def _as_utc(s: str) -> datetime:
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    start = _as_utc(job["started"])
     if job.get("ended"):
-        end = datetime.fromisoformat(job["ended"])
+        end = _as_utc(job["ended"])
     elif job["status"] == "running":
         end = datetime.now(timezone.utc)
     else:
@@ -1881,11 +1963,11 @@ async def provision_page(request: Request):
         "memory_mb":    cfg.get("vm_memory_mb", 4096),
         "disk_size_gb": cfg.get("vm_disk_size_gb", 64),
         "count":        cfg.get("vm_count", 1),
-        "serial_prefix": cfg.get("vm_serial_prefix", ""),
-        "group_tag":    cfg.get("vm_group_tag", ""),
+        "serial_prefix": _optional_text(cfg.get("vm_serial_prefix", "")),
+        "group_tag":    _optional_text(cfg.get("vm_group_tag", "")),
         "oem_profile":  cfg.get("vm_oem_profile", ""),
         "template_vmid": cfg.get("proxmox_template_vmid", ""),
-        "hostname_pattern": cfg.get("vm_hostname_pattern", "autopilot-{serial}"),
+        "hostname_pattern": _optional_text(cfg.get("vm_hostname_pattern", "")) or "autopilot-{serial}",
     }
     return templates.TemplateResponse("provision.html", {
         "request": request,
@@ -1893,6 +1975,7 @@ async def provision_page(request: Request):
         "defaults": defaults,
         "template_disk_gb": template_disk,
         "sequences": sequences_db.list_sequences(SEQUENCES_DB),
+        "winpe_enabled": _winpe_enabled(),
     })
 
 
@@ -2540,6 +2623,25 @@ async def vms_page(request: Request, error: str = ""):
 
 # --- API Endpoints ---
 
+
+def _launch_provision_job(playbook_path: str, extra_vars: dict | None = None):
+    """Launch an ansible-playbook run for the WinPE provision path.
+
+    Builds a ``-e key=value`` command list from extra_vars, enqueues a job
+    via job_manager, and returns a JSONResponse so the WinPE branch of
+    start_provision can early-return with HTTP 200. The test suite
+    monkeypatches this function to intercept launches without touching the
+    real Ansible or Proxmox infra."""
+    extra_vars = extra_vars or {}
+    cmd = ["ansible-playbook", str(BASE_DIR / playbook_path)]
+    for key, value in extra_vars.items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        cmd += ["-e", f"{key}={value}"]
+    job = job_manager.start("provision_winpe", cmd, args=dict(extra_vars))
+    return JSONResponse({"ok": True, "job_id": job["id"]})
+
+
 def _keys_in_extra_args(tokens: list) -> set[str]:
     """Return the set of Ansible variable keys already carried as -e pairs.
 
@@ -2608,8 +2710,40 @@ async def start_provision(
     sequence_id: int = Form(None),
     hostname_pattern: str = Form("autopilot-{serial}"),
     chassis_type_override: int = Form(0),
+    boot_mode: str = Form("clone"),
 ):
     profile = _sanitize_input(profile)
+    boot_mode = (boot_mode or "clone").lower()
+    if boot_mode not in ("clone", "winpe"):
+        raise HTTPException(
+            status_code=400, detail=f"unknown boot_mode: {boot_mode!r}",
+        )
+    if boot_mode == "winpe":
+        if not _winpe_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "WinPE provisioning is not configured. Set "
+                    "winpe_blank_template_vmid, proxmox_winpe_iso, and "
+                    "vault_autopilot_winpe_token_secret in inventory and "
+                    "restart the container."
+                ),
+            )
+        if not sequence_id:
+            raise HTTPException(
+                status_code=400,
+                detail="WinPE provisioning requires a sequence_id",
+            )
+        if int(count) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "WinPE provisioning supports count=1 in M1; "
+                    "see docs/superpowers/plans/...-winpe-orchestrated-deploy.md"
+                ),
+            )
+    serial_prefix = _optional_text(serial_prefix)
+    group_tag = _optional_text(group_tag)
     if group_tag:
         group_tag = _sanitize_input(group_tag)
     if serial_prefix:
@@ -2646,19 +2780,22 @@ async def start_provision(
     # host: otherwise Ansible will emit `args: -smbios file=<missing>`
     # and QEMU fails to start the VM with a confusing "cannot open".
     # Surface the real cause + seed instructions as a 400 here.
-    from web import proxmox_snippets
-    for _ct in _chassis_types_to_stage:
-        try:
-            proxmox_snippets.require_chassis_type_binary(
-                node=_node, storage=_snippets_storage, chassis_type=_ct,
-            )
-        except proxmox_snippets.ChassisBinaryMissing as _e:
-            raise HTTPException(status_code=400, detail=str(_e)) from _e
-        except Exception as _e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"could not query chassis-type binary for type {_ct}: {_e}",
-            ) from _e
+    # WinPE path uses a blank template VM and never sets the QEMU args
+    # SMBIOS file, so this check is skipped entirely for winpe boot mode.
+    if boot_mode != "winpe":
+        from web import proxmox_snippets
+        for _ct in _chassis_types_to_stage:
+            try:
+                proxmox_snippets.require_chassis_type_binary(
+                    node=_node, storage=_snippets_storage, chassis_type=_ct,
+                )
+            except proxmox_snippets.ChassisBinaryMissing as _e:
+                raise HTTPException(status_code=400, detail=str(_e)) from _e
+            except Exception as _e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"could not query chassis-type binary for type {_ct}: {_e}",
+                ) from _e
 
     # Proxmox hardcodes 'args' as root-only (PVE::API2::Qemu
     # check_vm_modify_config_perm: literal eq match against 'root@pam').
@@ -2672,7 +2809,10 @@ async def start_provision(
     # file passthrough) and sequence-based provisions (per-VM answer
     # floppy attachment). Either path triggers the root@pam ticket
     # flow; both share the same vault_proxmox_root_password.
-    if _chassis_types_to_stage or sequence_id:
+    needs_root_ticket = (boot_mode != "winpe" and bool(_chassis_types_to_stage)) or (
+        bool(sequence_id) and boot_mode != "winpe"
+    )
+    if needs_root_ticket:
         _root_pw = cfg.get("vault_proxmox_root_password", "")
         if not _root_pw:
             raise HTTPException(
@@ -2753,44 +2893,92 @@ async def start_provision(
             vars_yml=_load_vars(),
         )
 
-        # Compile to a per-VM unattend and materialize it as a FAT12
-        # floppy image on the Proxmox host. Windows Setup on a
-        # sysprep-d clone lands on the floppy (position 4 of the
-        # answer-file search) because position 5 (read-only CD) is
-        # unreliable in online specialize. Two provisions whose
-        # compiled unattend matches byte-for-byte share one floppy.
-        from web import unattend_renderer, answer_floppy_cache
-        _unattend_xml = unattend_renderer.render_unattend(compiled)
-        _root_user = cfg.get("vault_proxmox_root_username") or "root@pam"
-        _root_password = cfg.get("vault_proxmox_root_password") or ""
-        _root_ssh_user = _root_user.split("@", 1)[0] or "root"
-        if not _root_password:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Sequence-based provisioning needs vault_proxmox_root_password "
-                    "set in vault.yml (Settings → Credentials). The web backend "
-                    "SSHes to the Proxmox host as root to build the per-VM "
-                    "answer floppy and to set the VM's args field."
-                ),
-            )
-        _ssh_runner = answer_floppy_cache.make_sshpass_runner(
-            host=cfg.get("proxmox_host", ""),
-            password=_root_password,
-            user=_root_ssh_user,
-        )
-        try:
-            _answer_floppy_path = answer_floppy_cache.ensure_floppy(
-                db_path=SEQUENCES_DB,
-                unattend_bytes=_unattend_xml.encode("utf-8"),
-                ssh=_ssh_runner,
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"answer-floppy build failed: {e}",
-            ) from e
         _causes_reboot_count = compiled.causes_reboot_count
+        if boot_mode != "winpe":
+            # Compile to a per-VM unattend and materialize it as a FAT12
+            # floppy image on the Proxmox host. Windows Setup on a
+            # sysprep-d clone lands on the floppy (position 4 of the
+            # answer-file search) because position 5 (read-only CD) is
+            # unreliable in online specialize. Two provisions whose
+            # compiled unattend matches byte-for-byte share one floppy.
+            from web import unattend_renderer, answer_floppy_cache
+            _unattend_xml = unattend_renderer.render_unattend(compiled)
+            _root_user = cfg.get("vault_proxmox_root_username") or "root@pam"
+            _root_password = cfg.get("vault_proxmox_root_password") or ""
+            _root_ssh_user = _root_user.split("@", 1)[0] or "root"
+            if not _root_password:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Sequence-based provisioning needs vault_proxmox_root_password "
+                        "set in vault.yml (Settings → Credentials). The web backend "
+                        "SSHes to the Proxmox host as root to build the per-VM "
+                        "answer floppy and to set the VM's args field."
+                    ),
+                )
+            _ssh_runner = answer_floppy_cache.make_sshpass_runner(
+                host=cfg.get("proxmox_host", ""),
+                password=_root_password,
+                user=_root_ssh_user,
+            )
+            try:
+                _answer_floppy_path = answer_floppy_cache.ensure_floppy(
+                    db_path=SEQUENCES_DB,
+                    unattend_bytes=_unattend_xml.encode("utf-8"),
+                    ssh=_ssh_runner,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"answer-floppy build failed: {e}",
+                ) from e
+
+    # WinPE path: create run record and hand off to the WinPE playbook.
+    # This early-return exits before any clone-specific logic below.
+    if boot_mode == "winpe":
+        run_id = sequences_db.create_provisioning_run(
+            SEQUENCES_DB,
+            sequence_id=int(sequence_id),
+            provision_path="winpe",
+        )
+        winpe_extra = dict(resolved_vars)
+        winpe_extra.update({
+            "run_id": run_id,
+            "sequence_id": int(sequence_id),
+            "vm_count": int(count),
+            "_skip_chassis_type_smbios_file": True,
+            # The installed Windows image uses VirtIO devices and the
+            # VirtIO ISO remains attached for QGA installation by the
+            # OSD client, so let the playbook observe the guest after
+            # first boot instead of declaring success at /winpe/done.
+            "sequence_hash_capture_phase": seq.get("hash_capture_phase", "oobe"),
+            "proxmox_winpe_expect_guest_agent": True,
+            "autopilot_base_url": os.environ.get(
+                "AUTOPILOT_BASE_URL", "http://127.0.0.1:5000"),
+            "_causes_reboot_count": _causes_reboot_count,
+        })
+        # Form overrides last (highest precedence).
+        winpe_extra["vm_oem_profile"] = profile
+        for key, val in (
+            ("vm_cores", cores), ("vm_memory_mb", memory_mb),
+            ("vm_disk_size_gb", disk_size_gb),
+            ("vm_serial_prefix", serial_prefix),
+            ("vm_group_tag", group_tag),
+            ("hostname_pattern", hostname_pattern),
+        ):
+            if val:
+                winpe_extra[key] = val
+        if chassis_type_override and int(chassis_type_override) > 0:
+            winpe_extra["chassis_type_override"] = int(chassis_type_override)
+        _launch_provision_job(
+            playbook_path="playbooks/provision_proxmox_winpe.yml",
+            extra_vars=winpe_extra,
+        )
+        # Aligns with WINPE_E2E_RUNBOOK step 4 ("Open /runs/<id>") so an
+        # operator submitting the form lands on the timeline page instead
+        # of seeing the raw JSON job-id payload the clone path returns.
+        return RedirectResponse(f"/runs/{run_id}", status_code=303)
+    # Existing clone path continues below unchanged.
 
     # Sequence-driven extras: per-VM answer floppy path + reboot-cycle
     # count + root ticket for the args PUT.
@@ -4464,6 +4652,63 @@ async def api_fleet_summary():
     return out
 
 
+@app.get("/api/cockpit/summary")
+async def api_cockpit_summary():
+    """Aggregate the existing dashboard data sources for the cockpit UI.
+
+    This is intentionally a read-only composition endpoint: it reuses the
+    jobs manager, service-health table, and monitoring DB instead of adding
+    UI-specific persistence.
+    """
+    running = await api_running_jobs()
+    recent = await api_recent_jobs(limit=6)
+    services = await api_services()
+    fleet = await api_fleet_summary()
+
+    monitoring = {"devices": 0, "ad": 0, "entra": 0, "intune": 0}
+    try:
+        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+        monitoring["devices"] = len(latest)
+        for row in latest:
+            probe = row.get("probe") or {}
+            if probe.get("ad_found"):
+                monitoring["ad"] += 1
+            if probe.get("entra_found"):
+                monitoring["entra"] += 1
+            if probe.get("intune_found"):
+                monitoring["intune"] += 1
+    except Exception:
+        pass
+
+    service_rows = services.get("services") if isinstance(services, dict) else []
+    service_count = len(service_rows or [])
+    stale_services = 0
+    for svc in service_rows or []:
+        age = svc.get("age_seconds")
+        if age is not None and age > 120:
+            stale_services += 1
+
+    readiness_parts = []
+    if fleet.get("total"):
+        for key in ("ad_joined_pct", "autopilot_pct", "intune_pct"):
+            if key in fleet:
+                readiness_parts.append(int(fleet[key]))
+    if service_count:
+        readiness_parts.append(max(0, round(100 * (service_count - stale_services) / service_count)))
+    if running.get("running_count", 0) == 0:
+        readiness_parts.append(100)
+
+    readiness = round(sum(readiness_parts) / len(readiness_parts)) if readiness_parts else 0
+    return {
+        "readiness_score": readiness,
+        "jobs": running,
+        "recent_jobs": recent.get("jobs", []),
+        "services": services,
+        "fleet": fleet,
+        "monitoring": monitoring,
+    }
+
+
 @app.get("/api/jobs/{job_id}")
 async def api_get_job(job_id: str):
     job = job_manager.get_job(job_id)
@@ -5672,6 +5917,7 @@ class _SequenceCreate(BaseModel):
     target_os: str = "windows"
     is_default: bool = False
     produces_autopilot_hash: bool = False
+    hash_capture_phase: str = "oobe"
     steps: list[_StepIn] = []
 
 
@@ -5681,6 +5927,7 @@ class _SequenceUpdate(BaseModel):
     target_os: Optional[str] = None
     is_default: Optional[bool] = None
     produces_autopilot_hash: Optional[bool] = None
+    hash_capture_phase: Optional[str] = None
     steps: Optional[list[_StepIn]] = None
 
 
@@ -5710,6 +5957,7 @@ def api_sequences_create(body: _SequenceCreate):
             is_default=body.is_default,
             produces_autopilot_hash=body.produces_autopilot_hash,
             target_os=body.target_os,
+            hash_capture_phase=body.hash_capture_phase,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
@@ -5734,6 +5982,7 @@ def api_sequences_update(seq_id: int, body: _SequenceUpdate):
             is_default=body.is_default,
             produces_autopilot_hash=body.produces_autopilot_hash,
             target_os=body.target_os,
+            hash_capture_phase=body.hash_capture_phase,
         )
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e):
@@ -5814,6 +6063,18 @@ def _make_root_ssh_runner():
     user = (cfg.get("vault_proxmox_root_username") or "root@pam").split("@", 1)[0]
     return answer_floppy_cache.make_sshpass_runner(
         host=cfg.get("proxmox_host", ""), password=pw, user=user or "root",
+    )
+
+
+@app.get("/runs/{run_id}", response_class=HTMLResponse)
+def run_detail_page(run_id: int, request: Request):
+    run = sequences_db.get_provisioning_run(SEQUENCES_DB, run_id)
+    if run is None:
+        raise HTTPException(status_code=404)
+    steps = sequences_db.list_run_steps(SEQUENCES_DB, run_id=run_id)
+    return templates.TemplateResponse(
+        "run_detail.html",
+        {"request": request, "run": run, "steps": steps},
     )
 
 
@@ -6463,6 +6724,14 @@ async def api_monitoring_keytab_refresh_now():
     except Exception as e:
         raise HTTPException(500, f"refresh failed: {e}") from e
     return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+
+
+@app.post("/api/monitoring/sweep-now", status_code=202)
+async def api_monitoring_sweep_now(background_tasks: BackgroundTasks):
+    """Queue one monitor sweep using the same helper as the monitor container."""
+    from web import monitor_main
+    background_tasks.add_task(monitor_main._do_sweep_tick, DEVICE_MONITOR_DB)
+    return {"ok": True, "queued": True}
 
 
 @app.get("/api/monitoring/keytab/health")

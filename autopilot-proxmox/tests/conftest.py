@@ -32,6 +32,8 @@ import os
 # Tests never go through Entra — flip the auth bypass BEFORE web.app
 # is imported so the env check in app.py picks it up.
 os.environ.setdefault("AUTOPILOT_AUTH_BYPASS", "1")
+os.environ.setdefault("AUTOPILOT_WINPE_TOKEN_SECRET", "test-token-secret")
+os.environ.setdefault("AUTOPILOT_WINPE_IDENTITY_ALLOWLIST", "testclient,127.0.0.1")
 
 from pathlib import Path
 

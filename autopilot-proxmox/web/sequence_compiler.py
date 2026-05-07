@@ -58,6 +58,20 @@ class CompiledSequence:
     causes_reboot_count: int = 0
 
 
+@dataclass
+class CompiledWinPEPhase:
+    actions: list = field(default_factory=list)
+    requires_windows_iso: bool = True
+    requires_virtio_iso: bool = False
+    expected_reboot_count: int = 1
+    autopilot_enabled: bool = False
+    # Note: actual AutopilotConfigurationFile.json bytes are NOT carried
+    # on this struct. The /winpe/autopilot-config/<run_id> endpoint reads
+    # them from autopilot_config_path at request time (matching what
+    # roles/autopilot_inject does today) so updates to the file take
+    # effect without recompiling existing runs.
+
+
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
@@ -491,3 +505,69 @@ def resolve_provision_vars(
             continue
         merged[key] = value
     return merged
+
+
+# ---------------------------------------------------------------------------
+# WinPE phase compiler
+# ---------------------------------------------------------------------------
+
+def _sequence_has_autopilot(sequence: dict) -> bool:
+    for step in sequence.get("steps", []) or []:
+        if not step.get("enabled", True):
+            continue
+        if step.get("step_type") == "autopilot_entra":
+            return True
+    return False
+
+
+def compile_winpe(sequence: dict,
+                  resolver: Optional[Callable] = None,
+                  ) -> "CompiledWinPEPhase":
+    """Compile the phase-0 (WinPE) action list for a sequence.
+
+    Returns the canonical action list every WinPE run executes. The
+    ordering is fixed; operator-authored steps do not appear in this
+    output (they flow through compile() and become FLC entries).
+    """
+    out = CompiledWinPEPhase()
+
+    capture_hash_in_winpe = (
+        bool(sequence.get("produces_autopilot_hash"))
+        and sequence.get("hash_capture_phase") == "winpe"
+    )
+
+    if capture_hash_in_winpe:
+        out.actions.append({"kind": "capture_hash", "params": {}})
+
+    out.actions.append({
+        "kind": "partition_disk",
+        "params": {"layout": "recovery_before_c"},
+    })
+    out.actions.append({
+        "kind": "apply_wim",
+        "params": {"image_index_metadata_name": "Windows 11 Enterprise"},
+    })
+    out.actions.append({
+        "kind": "apply_driver_package",
+        "params": {
+            "architecture": "amd64",
+            "required_infs": [
+                "vioscsi.inf",
+                "viostor.inf",
+                "netkvm.inf",
+                "vioser.inf",
+                "balloon.inf",
+            ],
+            # SATA/e1000e stock-image isolation runs deliberately omit
+            # VirtIO media. Treat missing media as a logged skip instead
+            # of failing those first-boot diagnostics.
+            "optional": True,
+        },
+    })
+    out.actions.append({"kind": "prepare_windows_setup", "params": {}})
+    out.actions.append({"kind": "stage_osd_client", "params": {}})
+
+    out.actions.append({"kind": "bake_boot_entry", "params": {}})
+    out.actions.append({"kind": "handoff_to_windows_setup", "params": {}})
+
+    return out

@@ -6,7 +6,7 @@
 # "proxmox" (default) → _proxmox_guest_exec.yml (Proxmox REST API + QEMU GA)
 # "utm"               → _utm_guest_exec.yml (SSH + PowerShell, macOS/ARM64)
 # Overridden at provision time by web/app.py via -e hypervisor_type=...
-hypervisor_type: utm
+hypervisor_type: pve
 
 # =============================================================================
 # UTM (macOS/ARM64) backend — used when hypervisor_type: utm
@@ -65,6 +65,32 @@ proxmox_answer_iso: "isos:iso/autounattend.iso"
 # Template settings (for clone provisioning)
 # =============================================================================
 proxmox_template_vmid: 105
+
+# =============================================================================
+# WinPE provisioning (phase-0 deploy path)
+# =============================================================================
+# VMID of an empty/clean Proxmox template the WinPE path clones from.
+# Configure once after running tools/winpe-build/build-winpe.ps1 and
+# uploading the ISO to proxmox_iso_storage. Leave null to disable the
+# WinPE option in the web UI.
+winpe_blank_template_vmid: 9001
+
+# Path of the most recent WinPE ISO in Proxmox storage notation.
+# Example: "isos:iso/winpe-autopilot-amd64-83793f7eb931ecee.iso"
+proxmox_winpe_iso: "isos:iso/winpe-autopilot-amd64-6e9f6a8833faa41a.iso"
+
+# HMAC secret for /winpe/* bearer tokens. Sourced from vault.
+autopilot_winpe_token_secret: "{{ vault_autopilot_winpe_token_secret | default('') }}"
+
+# Comma-separated list of hostnames/IPs allowed to call
+# /winpe/run/<id>/identity (Ansible controllers).
+# CAVEAT: matched against request.client.host. When Flask runs behind a
+# reverse proxy this resolves to the proxy IP, not the original Ansible
+# client, which silently bypasses the allowlist. Either keep the
+# controller and Flask on the same host (the default deployment shape)
+# or extend _check_identity_caller in web/winpe_endpoints.py to honor
+# X-Forwarded-For from a trusted proxy.
+autopilot_winpe_identity_allowlist: "127.0.0.1,localhost,192.168.2.50,192.168.2.4"
 
 # =============================================================================
 # VM defaults

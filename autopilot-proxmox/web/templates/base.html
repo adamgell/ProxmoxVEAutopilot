@@ -18,8 +18,7 @@
   try {
     var saved = null;
     try { saved = localStorage.getItem('autopilot_theme'); } catch (e) {}
-    var prefers = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var theme = saved || (prefers ? 'dark' : 'light');
+    var theme = saved || 'dark';
     if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
   } catch (e) {}
 })();
@@ -197,10 +196,10 @@ h1, h2, h3, h4 {
   font-family: "IBM Plex Sans", sans-serif;
   color: var(--ink);
   margin: 0 0 12px 0;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 h1 { font-size: 22px; font-weight: 600; }
-h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.005em;
+h2 { font-size: 16px; font-weight: 600; letter-spacing: 0;
      margin-top: 20px; padding-bottom: 8px;
      border-bottom: 1px solid var(--line); }
 h3 { font-size: 13.5px; font-weight: 600; color: var(--ink); }
@@ -265,7 +264,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
              border-radius: 6px; }
 .brand-stack { display: flex; flex-direction: column; line-height: 1.1; }
 .brand-title {
-  font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
+  font-size: 14px; font-weight: 600; letter-spacing: 0;
   color: #ffffff;
 }
 .brand-subtitle {
@@ -910,7 +909,584 @@ pre {
    users who've opted out. */
 @media (prefers-reduced-motion: reduce) {
   body { animation: none; }
-  * { transition: none !important; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
+
+/* -----------------------------------------------------------------
+   Full-app cockpit shell.  The markup below keeps every existing
+   route and Jinja block intact, then surrounds it with the accepted
+   dark Ops Deck IA: sticky command bar, grouped rail, dense panels,
+   live-row affordances, drawers, and toast lanes.
+   ----------------------------------------------------------------- */
+.cockpit-shell {
+  --cockpit-bg: #05070d;
+  --cockpit-panel: rgba(13, 18, 30, 0.92);
+  --cockpit-panel-2: rgba(17, 24, 39, 0.84);
+  --cockpit-panel-3: rgba(23, 31, 47, 0.78);
+  --cockpit-line: rgba(142, 163, 191, 0.18);
+  --cockpit-line-strong: rgba(142, 163, 191, 0.32);
+  --cockpit-ink: #edf4ff;
+  --cockpit-muted: #9aa9bc;
+  --cockpit-soft: #65758d;
+  --cockpit-blue: #3bb7ff;
+  --cockpit-green: #9fe36b;
+  --cockpit-amber: #ffd166;
+  --cockpit-red: #ff795f;
+  --cockpit-violet: #a78bfa;
+  color-scheme: dark;
+  color: var(--cockpit-ink);
+  background:
+    radial-gradient(circle at 18% -10%, rgba(59, 183, 255, 0.18), transparent 30rem),
+    radial-gradient(circle at 82% 0%, rgba(159, 227, 107, 0.08), transparent 28rem),
+    linear-gradient(180deg, #07101c 0%, var(--cockpit-bg) 46rem);
+  min-height: 100vh;
+}
+.cockpit-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.75), transparent 78%);
+  z-index: -1;
+}
+.cockpit-shell #header {
+  background: rgba(5, 8, 15, 0.86);
+  border-bottom: 1px solid rgba(142, 163, 191, 0.16);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+.cockpit-shell #header::after {
+  height: 1px;
+  opacity: 0.55;
+}
+.cockpit-shell .header-inner {
+  max-width: 1800px;
+  min-height: 64px;
+  gap: 14px;
+  padding: 0 18px;
+}
+.cockpit-shell #nav {
+  display: none;
+}
+.cockpit-shell .nav-hamburger,
+.cockpit-shell .nav-drawer {
+  display: none !important;
+}
+.cockpit-shell .brand {
+  min-width: 218px;
+}
+.cockpit-shell .brand img {
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 0 0 4px rgba(59,183,255,0.08), 0 8px 28px rgba(0,0,0,0.32);
+}
+.cockpit-shell .brand-subtitle {
+  color: rgba(237, 244, 255, 0.5);
+}
+.cockpit-command {
+  flex: 1 1 420px;
+  max-width: 740px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 220px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(142, 163, 191, 0.2);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.055);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.cockpit-command:focus-within {
+  border-color: rgba(59, 183, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(59, 183, 255, 0.14);
+}
+.cockpit-command-slash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 5px;
+  color: var(--cockpit-blue);
+  background: rgba(59, 183, 255, 0.12);
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+}
+.cockpit-command input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #f7fbff;
+  padding: 0;
+  box-shadow: none;
+  font-size: 13px;
+}
+.cockpit-command input:focus {
+  box-shadow: none;
+}
+.cockpit-command input::placeholder {
+  color: rgba(237,244,255,0.48);
+}
+.cockpit-command kbd {
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 5px;
+  color: rgba(237,244,255,0.64);
+  background: rgba(0,0,0,0.25);
+  padding: 1px 6px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+}
+.cockpit-shell .theme-toggle,
+.cockpit-shell .user-chip {
+  background: rgba(255,255,255,0.065);
+  border-color: rgba(142, 163, 191, 0.18);
+}
+.cockpit-frame {
+  width: min(1800px, 100%);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  align-items: start;
+}
+.cockpit-rail {
+  position: sticky;
+  top: 82px;
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(13,18,30,0.92), rgba(8,12,21,0.88));
+  box-shadow: 0 18px 54px rgba(0,0,0,0.26);
+}
+.cockpit-rail-section + .cockpit-rail-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(142,163,191,0.12);
+}
+.cockpit-rail-label {
+  display: block;
+  margin: 0 0 7px 8px;
+  color: rgba(237,244,255,0.38);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cockpit-rail-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin: 2px 0;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: rgba(237,244,255,0.72);
+  text-decoration: none;
+  font-weight: 600;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+.cockpit-rail-link:hover {
+  color: #ffffff;
+  text-decoration: none;
+  background: rgba(255,255,255,0.055);
+  border-color: rgba(142,163,191,0.16);
+  transform: translateX(2px);
+}
+.cockpit-rail-link.is-active {
+  color: #ffffff;
+  background: linear-gradient(90deg, rgba(59,183,255,0.2), rgba(159,227,107,0.07));
+  border-color: rgba(59,183,255,0.36);
+  box-shadow: inset 3px 0 0 var(--cockpit-blue);
+}
+.cockpit-rail-link span[aria-hidden] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  color: var(--cockpit-blue);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+.cockpit-shell #content {
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.cockpit-shell #content > h1,
+.cockpit-shell #content > h2,
+.cockpit-shell #content > h3,
+.cockpit-shell .page-head,
+.cockpit-panel,
+.cockpit-card,
+.cockpit-section,
+.cockpit-shell #content > form,
+.cockpit-shell #content > table,
+.cockpit-shell #content > .card,
+.cockpit-shell #content > .card-panel,
+.cockpit-shell #content > .monitor-shell,
+.cockpit-shell #content > .monitor-status,
+.cockpit-shell #content > .detail-grid,
+.cockpit-shell #content > .filter-bar,
+.cockpit-shell #content > .empty-state {
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: var(--cockpit-panel);
+  box-shadow: 0 18px 54px rgba(0,0,0,0.22);
+}
+.cockpit-shell #content > h1,
+.cockpit-shell #content > h2,
+.cockpit-shell #content > h3 {
+  margin: 0 0 14px 0;
+  padding: 18px 20px;
+  border-bottom-color: var(--cockpit-line);
+}
+.cockpit-shell .page-head {
+  align-items: center;
+  padding: 18px 20px;
+  margin: 0 0 14px;
+}
+.cockpit-shell .page-head h1 {
+  font-size: 24px;
+}
+.cockpit-shell .page-head-titles .subtitle,
+.cockpit-shell .subtitle,
+.cockpit-shell small,
+.cockpit-shell label {
+  color: var(--cockpit-muted);
+}
+.cockpit-shell #content > form,
+.cockpit-shell #content > table,
+.cockpit-shell #content > .card,
+.cockpit-shell #content > .card-panel,
+.cockpit-shell #content > .monitor-shell,
+.cockpit-shell #content > .detail-grid,
+.cockpit-shell #content > .filter-bar,
+.cockpit-shell #content > .empty-state {
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.cockpit-shell .detail-grid {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.cockpit-shell .detail-grid > *,
+.cockpit-shell .panel,
+.cockpit-shell .card-panel,
+.cockpit-shell .monitor-card,
+.cockpit-shell .stat-card,
+.cockpit-shell .data-card,
+.cockpit-shell .settings-card {
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: var(--cockpit-panel-2);
+  box-shadow: 0 14px 42px rgba(0,0,0,0.2);
+}
+.cockpit-shell table {
+  overflow: hidden;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: rgba(6, 10, 18, 0.58);
+}
+.cockpit-shell thead th,
+.cockpit-shell th {
+  position: static;
+  color: rgba(237,244,255,0.56);
+  background: rgba(255,255,255,0.045);
+  border-bottom-color: var(--cockpit-line);
+  letter-spacing: 0.07em;
+}
+.cockpit-shell td {
+  border-bottom-color: rgba(142,163,191,0.11);
+}
+.cockpit-shell tbody tr:nth-child(even) td {
+  background: rgba(255,255,255,0.018);
+}
+.cockpit-shell tbody tr:hover td,
+.cockpit-shell tbody tr.is-selected td {
+  background: rgba(59,183,255,0.08);
+}
+.cockpit-shell tbody tr.is-selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--cockpit-blue);
+}
+.cockpit-shell input[type="text"],
+.cockpit-shell input[type="number"],
+.cockpit-shell input[type="password"],
+.cockpit-shell input[type="email"],
+.cockpit-shell input[type="search"],
+.cockpit-shell select,
+.cockpit-shell textarea {
+  color: var(--cockpit-ink);
+  background: rgba(5, 8, 15, 0.76);
+  border-color: var(--cockpit-line-strong);
+}
+.cockpit-shell input::placeholder,
+.cockpit-shell textarea::placeholder {
+  color: rgba(237,244,255,0.38);
+}
+.cockpit-shell input[type="submit"],
+.cockpit-shell button,
+.cockpit-shell .btn {
+  border-color: rgba(142,163,191,0.2);
+  color: #f8fbff;
+  background: linear-gradient(180deg, rgba(59,183,255,0.22), rgba(59,183,255,0.12));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 24px rgba(0,0,0,0.18);
+}
+.cockpit-shell input[type="submit"]:hover,
+.cockpit-shell button:hover,
+.cockpit-shell .btn:hover {
+  background: linear-gradient(180deg, rgba(59,183,255,0.32), rgba(59,183,255,0.18));
+}
+.cockpit-shell .btn-secondary,
+.cockpit-shell button.secondary {
+  background: rgba(255,255,255,0.06);
+}
+.cockpit-shell .badge,
+.cockpit-shell .chip,
+.cockpit-shell .update-pill {
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.cockpit-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px;
+}
+.cockpit-col-3 { grid-column: span 3; }
+.cockpit-col-4 { grid-column: span 4; }
+.cockpit-col-5 { grid-column: span 5; }
+.cockpit-col-6 { grid-column: span 6; }
+.cockpit-col-7 { grid-column: span 7; }
+.cockpit-col-8 { grid-column: span 8; }
+.cockpit-col-12 { grid-column: span 12; }
+.cockpit-metric {
+  padding: 14px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: var(--cockpit-panel-2);
+}
+.cockpit-metric-label {
+  color: var(--cockpit-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cockpit-metric-value {
+  margin-top: 6px;
+  color: #ffffff;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+.cockpit-metric-note {
+  margin-top: 7px;
+  color: var(--cockpit-muted);
+  font-size: 12px;
+}
+.lifecycle-rail,
+.cockpit-lifecycle {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+.lifecycle-step,
+.cockpit-lifecycle-step {
+  position: relative;
+  min-height: 52px;
+  padding: 10px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 7px;
+  background: rgba(255,255,255,0.035);
+}
+.lifecycle-step::after,
+.cockpit-lifecycle-step::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 7px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--cockpit-blue), rgba(159,227,107,0.65));
+  opacity: 0.72;
+}
+.cockpit-pulse {
+  animation: cockpit-pulse 2.1s ease-in-out infinite;
+}
+@keyframes cockpit-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,183,255,0.0); }
+  50% { box-shadow: 0 0 0 7px rgba(59,183,255,0.10); }
+}
+.cockpit-scanline {
+  position: relative;
+  overflow: hidden;
+}
+.cockpit-scanline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(59,183,255,0.11), transparent);
+  animation: cockpit-scan 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes cockpit-scan {
+  0% { transform: translateX(-100%); }
+  55%, 100% { transform: translateX(100%); }
+}
+.cockpit-toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 10px;
+  z-index: 900;
+  width: min(360px, calc(100vw - 36px));
+}
+.cockpit-toast {
+  padding: 12px 14px;
+  border: 1px solid var(--cockpit-line-strong);
+  border-radius: 8px;
+  color: var(--cockpit-ink);
+  background: rgba(8, 13, 23, 0.94);
+  box-shadow: 0 18px 54px rgba(0,0,0,0.36);
+  animation: cockpit-toast-in 180ms ease-out;
+}
+.cockpit-toast strong {
+  display: block;
+  margin-bottom: 3px;
+}
+@keyframes cockpit-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.cockpit-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: rgba(0,0,0,0.48);
+  z-index: 800;
+}
+.cockpit-drawer-backdrop.is-open {
+  display: block;
+}
+.cockpit-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(520px, 100vw);
+  height: 100%;
+  padding: 20px;
+  border-left: 1px solid var(--cockpit-line);
+  background: linear-gradient(180deg, rgba(13,18,30,0.98), rgba(5,8,15,0.98));
+  box-shadow: -22px 0 70px rgba(0,0,0,0.4);
+  transform: translateX(100%);
+  transition: transform 180ms ease-out;
+  overflow: auto;
+}
+.cockpit-drawer-backdrop.is-open .cockpit-drawer {
+  transform: translateX(0);
+}
+.cockpit-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--cockpit-line);
+}
+.cockpit-drawer-head h2 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.cockpit-drawer-close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+}
+@media (max-width: 1000px) {
+  .cockpit-frame {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+  .cockpit-rail {
+    position: static;
+    max-height: none;
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding: 10px;
+  }
+  .cockpit-rail-section {
+    flex: 0 0 auto;
+    min-width: 190px;
+  }
+  .cockpit-rail-section + .cockpit-rail-section {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+    border-left: 1px solid rgba(142,163,191,0.12);
+    padding-left: 12px;
+  }
+}
+@media (max-width: 760px) {
+  .cockpit-shell .header-inner {
+    min-height: auto;
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+  .cockpit-shell .brand {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .cockpit-command {
+    order: 5;
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .cockpit-grid {
+    grid-template-columns: 1fr;
+  }
+  .cockpit-col-3,
+  .cockpit-col-4,
+  .cockpit-col-5,
+  .cockpit-col-6,
+  .cockpit-col-7,
+  .cockpit-col-8,
+  .cockpit-col-12 {
+    grid-column: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-pulse,
+  .cockpit-scanline::after {
+    animation: none !important;
+  }
 }
 
 /* -----------------------------------------------------------------
@@ -1070,7 +1646,7 @@ pre {
 }
 </style>
 </head>
-<body>
+<body class="cockpit-shell {% block body_class %}{% endblock %}">
 <header id="header">
   <div class="header-inner">
     <a class="brand" href="/">
@@ -1080,6 +1656,13 @@ pre {
         <span class="brand-subtitle">Operator Console</span>
       </div>
     </a>
+    <div class="cockpit-command" role="search">
+      <span class="cockpit-command-slash" aria-hidden="true">/</span>
+      <input id="cockpitCommand" type="search"
+             placeholder="Command, route, VMID, job, artifact"
+             autocomplete="off" aria-label="Global command search">
+      <kbd>Ctrl K</kbd>
+    </div>
     <nav id="nav" aria-label="Primary">
       <div class="nav-item" data-route="/">
         <a class="nav-tab" href="/">Dashboard</a>
@@ -1196,9 +1779,39 @@ pre {
   </div>
 </header>
 
-<main id="content">
-{% block content %}{% endblock %}
-</main>
+<div class="cockpit-frame">
+  <aside class="cockpit-rail" aria-label="Cockpit navigation">
+    <div class="cockpit-rail-section">
+      <span class="cockpit-rail-label">Command</span>
+      <a class="cockpit-rail-link" data-route="/" href="/"><span aria-hidden="true">01</span>Dashboard</a>
+      <a class="cockpit-rail-link" data-route="/jobs" href="/jobs"><span aria-hidden="true">02</span>Jobs</a>
+      <a class="cockpit-rail-link" data-route="/monitoring" href="/monitoring"><span aria-hidden="true">03</span>Monitoring</a>
+    </div>
+    <div class="cockpit-rail-section">
+      <span class="cockpit-rail-label">Build</span>
+      <a class="cockpit-rail-link" data-route="/provision" href="/provision"><span aria-hidden="true">04</span>Provision VMs</a>
+      <a class="cockpit-rail-link" data-route="/template" href="/template"><span aria-hidden="true">05</span>Build Template</a>
+      <a class="cockpit-rail-link" data-route="/sequences" href="/sequences"><span aria-hidden="true">06</span>Sequences</a>
+    </div>
+    <div class="cockpit-rail-section">
+      <span class="cockpit-rail-label">Fleet</span>
+      <a class="cockpit-rail-link" data-route="/vms" href="/vms"><span aria-hidden="true">07</span>VM Fleet</a>
+      <a class="cockpit-rail-link" data-route="/cloud" href="/cloud"><span aria-hidden="true">08</span>Cloud Devices</a>
+      <a class="cockpit-rail-link" data-route="/hashes" href="/hashes"><span aria-hidden="true">09</span>Hashes</a>
+      <a class="cockpit-rail-link" data-route="/answer-isos" href="/answer-isos"><span aria-hidden="true">10</span>Answer ISOs</a>
+    </div>
+    <div class="cockpit-rail-section">
+      <span class="cockpit-rail-label">Control</span>
+      <a class="cockpit-rail-link" data-route="/credentials" href="/credentials"><span aria-hidden="true">11</span>Credentials</a>
+      <a class="cockpit-rail-link" data-route="/settings" href="/settings"><span aria-hidden="true">12</span>Settings</a>
+      <a class="cockpit-rail-link" data-route="/monitoring/settings" href="/monitoring/settings"><span aria-hidden="true">13</span>Monitor Settings</a>
+    </div>
+  </aside>
+
+  <main id="content" tabindex="-1">
+  {% block content %}{% endblock %}
+  </main>
+</div>
 
 <footer id="footer">
   <span class="build">
@@ -1210,6 +1823,17 @@ pre {
   <span id="updateStatus"></span>
   <span style="margin-left:auto;opacity:0.6;">&copy; 2026 Proxmox VE Autopilot</span>
 </footer>
+
+<div id="cockpitToastStack" class="cockpit-toast-stack" aria-live="polite" aria-atomic="false"></div>
+<div id="cockpitDrawerBackdrop" class="cockpit-drawer-backdrop" aria-hidden="true">
+  <aside class="cockpit-drawer" role="dialog" aria-modal="true" aria-labelledby="cockpitDrawerTitle">
+    <div class="cockpit-drawer-head">
+      <h2 id="cockpitDrawerTitle">Command</h2>
+      <button class="cockpit-drawer-close" type="button" data-cockpit-close aria-label="Close drawer">×</button>
+    </div>
+    <div id="cockpitDrawerBody"></div>
+  </aside>
+</div>
 
 <!-- Self-update progress overlay (hidden by default) -->
 <div id="updateOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;color:#fff;font-family:monospace;padding:40px;overflow:auto;">
@@ -1452,6 +2076,228 @@ pre {
     markActive();
     wireDropdowns();
     wireDrawer();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
+// -----------------------------------------------------------------------
+// Cockpit interaction primitives.  These are deliberately small and
+// framework-free: command search, active rail, row selection, shared
+// drawers, toasts, lightweight table filters, and confirmation gates.
+// Route-specific pages can opt in with data attributes without changing
+// backend contracts or form targets.
+// -----------------------------------------------------------------------
+(function() {
+  function routeScore(path, route) {
+    if (!route) return -1;
+    if (route === '/') return path === '/' ? 1 : -1;
+    return (path === route || path.indexOf(route + '/') === 0) ? route.length : -1;
+  }
+
+  function markRail() {
+    var path = location.pathname;
+    var best = null;
+    var bestScore = -1;
+    document.querySelectorAll('.cockpit-rail-link[data-route]').forEach(function(link) {
+      var score = routeScore(path, link.getAttribute('data-route'));
+      if (score > bestScore) {
+        bestScore = score;
+        best = link;
+      }
+    });
+    if (best) best.classList.add('is-active');
+  }
+
+  function ensureToastStack() {
+    var stack = document.getElementById('cockpitToastStack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.id = 'cockpitToastStack';
+      stack.className = 'cockpit-toast-stack';
+      stack.setAttribute('aria-live', 'polite');
+      document.body.appendChild(stack);
+    }
+    return stack;
+  }
+
+  function toast(title, body, type) {
+    var stack = ensureToastStack();
+    var el = document.createElement('div');
+    el.className = 'cockpit-toast cockpit-toast-' + (type || 'info');
+    el.innerHTML = '<strong></strong><span></span>';
+    el.querySelector('strong').textContent = title || 'Cockpit';
+    el.querySelector('span').textContent = body || '';
+    stack.appendChild(el);
+    window.setTimeout(function() {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+      window.setTimeout(function() { el.remove(); }, 180);
+    }, 3600);
+    return el;
+  }
+
+  function openDrawer(title, bodyHtml) {
+    var backdrop = document.getElementById('cockpitDrawerBackdrop');
+    var titleEl = document.getElementById('cockpitDrawerTitle');
+    var bodyEl = document.getElementById('cockpitDrawerBody');
+    if (!backdrop || !titleEl || !bodyEl) return;
+    titleEl.textContent = title || 'Command';
+    bodyEl.innerHTML = bodyHtml || '';
+    backdrop.classList.add('is-open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    var close = backdrop.querySelector('[data-cockpit-close]');
+    if (close) close.focus();
+  }
+
+  function closeDrawer() {
+    var backdrop = document.getElementById('cockpitDrawerBackdrop');
+    if (!backdrop) return;
+    backdrop.classList.remove('is-open');
+    backdrop.setAttribute('aria-hidden', 'true');
+  }
+
+  function commandPaletteHtml() {
+    var groups = {};
+    document.querySelectorAll('.cockpit-rail-section').forEach(function(section) {
+      var label = section.querySelector('.cockpit-rail-label');
+      var groupName = label ? label.textContent : 'Routes';
+      groups[groupName] = Array.prototype.slice.call(section.querySelectorAll('.cockpit-rail-link')).map(function(link) {
+        return {
+          href: link.getAttribute('href'),
+          text: link.textContent.replace(/^\d+\s*/, '').trim()
+        };
+      });
+    });
+    var html = '<div class="cockpit-grid">';
+    Object.keys(groups).forEach(function(group) {
+      html += '<div class="cockpit-metric cockpit-col-6"><div class="cockpit-metric-label">' + group + '</div>';
+      groups[group].forEach(function(item) {
+        html += '<p style="margin:10px 0 0"><a class="btn" href="' + item.href + '">' + item.text + '</a></p>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function filterRows(query, root) {
+    var q = (query || '').trim().toLowerCase();
+    var rows = (root || document).querySelectorAll('tbody tr');
+    var visible = 0;
+    rows.forEach(function(row) {
+      var match = !q || row.textContent.toLowerCase().indexOf(q) !== -1;
+      row.style.display = match ? '' : 'none';
+      if (match) visible += 1;
+    });
+    return visible;
+  }
+
+  function wireCommand() {
+    var input = document.getElementById('cockpitCommand');
+    if (!input) return;
+    document.addEventListener('keydown', function(e) {
+      var key = (e.key || '').toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && key === 'k') {
+        e.preventDefault();
+        input.focus();
+        input.select();
+      }
+      if (e.key === 'Escape') closeDrawer();
+    });
+    input.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var q = input.value.trim().toLowerCase();
+      if (!q) {
+        openDrawer('Command Palette', commandPaletteHtml());
+        return;
+      }
+      var links = Array.prototype.slice.call(document.querySelectorAll('.cockpit-rail-link[href]'));
+      var hit = links.find(function(link) {
+        return link.textContent.toLowerCase().indexOf(q) !== -1 ||
+               link.getAttribute('href').toLowerCase().indexOf(q) !== -1;
+      });
+      if (hit) {
+        location.href = hit.getAttribute('href');
+        return;
+      }
+      var count = filterRows(q, document.getElementById('content'));
+      toast('Filter applied', count + ' visible rows matched "' + input.value.trim() + '".', 'info');
+    });
+  }
+
+  function wireDataControls() {
+    document.addEventListener('input', function(e) {
+      var el = e.target.closest && e.target.closest('[data-cockpit-filter]');
+      if (!el) return;
+      var target = el.getAttribute('data-cockpit-filter');
+      var root = target ? document.querySelector(target) : document;
+      filterRows(el.value, root || document);
+    });
+
+    document.addEventListener('click', function(e) {
+      var drawerTrigger = e.target.closest && e.target.closest('[data-cockpit-drawer]');
+      if (drawerTrigger) {
+        e.preventDefault();
+        openDrawer(
+          drawerTrigger.getAttribute('data-drawer-title') || drawerTrigger.textContent.trim() || 'Command',
+          drawerTrigger.getAttribute('data-drawer-body') || '<p class="subtitle">Command staged. Wire this control to the existing backend endpoint when the page slice is converted.</p>'
+        );
+        return;
+      }
+      if (e.target.closest && e.target.closest('[data-cockpit-close]')) {
+        e.preventDefault();
+        closeDrawer();
+        return;
+      }
+      var toastTrigger = e.target.closest && e.target.closest('[data-cockpit-toast]');
+      if (toastTrigger) {
+        toast(toastTrigger.getAttribute('data-toast-title') || 'Command staged',
+              toastTrigger.getAttribute('data-toast-body') || 'The command packet was accepted by the cockpit UI.',
+              toastTrigger.getAttribute('data-toast-type') || 'info');
+      }
+      var row = e.target.closest && e.target.closest('tbody tr');
+      if (row && !e.target.closest('a,button,input,select,textarea,label')) {
+        var table = row.closest('table');
+        if (table) {
+          table.querySelectorAll('tbody tr.is-selected').forEach(function(other) {
+            if (other !== row) other.classList.remove('is-selected', 'cockpit-pulse');
+          });
+        }
+        row.classList.toggle('is-selected');
+        row.classList.toggle('cockpit-pulse', row.classList.contains('is-selected'));
+      }
+      var backdrop = document.getElementById('cockpitDrawerBackdrop');
+      if (backdrop && e.target === backdrop) closeDrawer();
+    });
+
+    document.addEventListener('submit', function(e) {
+      var form = e.target.closest && e.target.closest('[data-confirm-text]');
+      if (!form) return;
+      var required = form.getAttribute('data-confirm-text') || '';
+      var input = form.querySelector('[data-confirm-input]');
+      if (!input || input.value !== required) {
+        e.preventDefault();
+        toast('Confirmation required', 'Type "' + required + '" before submitting this destructive command.', 'warn');
+      }
+    });
+  }
+
+  window.CockpitUI = {
+    toast: toast,
+    openDrawer: openDrawer,
+    closeDrawer: closeDrawer,
+    filterRows: filterRows
+  };
+
+  function init() {
+    markRail();
+    wireCommand();
+    wireDataControls();
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

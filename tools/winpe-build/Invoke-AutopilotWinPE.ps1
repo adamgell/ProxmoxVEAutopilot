@@ -1,0 +1,909 @@
+# Invoke-AutopilotWinPE.ps1
+#
+# In-WinPE phase-0 agent. Boots a Proxmox VM into Windows by:
+#   register -> capture_hash (optional) -> partition_disk -> apply_wim ->
+#   apply_driver_package -> prepare_windows_setup -> stage_osd_client ->
+#   bake_boot_entry -> handoff_to_windows_setup -> done -> reboot.
+#
+# Designed for PowerShell 5.1 (WinPE-bundled). Sourced by Pester tests
+# during development; running it from startnet.cmd at WinPE boot drives
+# the live flow.
+#
+# IMPLEMENTATION NOTES
+#
+# Set-StrictMode is intentionally NOT enabled at file scope. Pester's
+# `BeforeAll { . $script:AgentPath }` dot-sources this file into the
+# test runspace, where strict mode then bleeds into Pester's own
+# scaffolding and trips spurious "uninitialized variable" errors on
+# variables Pester populates via parameter binding. Production WinPE
+# runs the agent via `powershell -File`, not dot-sourced, so removing
+# strict mode does not affect production safety. Individual functions
+# that need stricter checking can opt in locally.
+
+function Read-AgentConfig {
+    param([Parameter(Mandatory)] [string] $Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "config not found: $Path"
+    }
+    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+}
+
+function Write-AgentLog {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [ValidateSet('DEBUG','INFO','WARN','ERROR')] [string] $Level,
+        [Parameter(Mandatory)] [string] $Message
+    )
+    $ts = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffK')
+    $line = "$ts [$Level] $Message"
+    Add-Content -LiteralPath $Path -Value $line -Encoding UTF8
+    Write-Host $line
+}
+
+function Resolve-MacAddress {
+    param(
+        [scriptblock] $AdapterResolver = {
+            Get-CimInstance -ClassName Win32_NetworkAdapter
+        },
+        [scriptblock] $IpAdapterResolver = {
+            Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration
+        }
+    )
+
+    # WinPE can expose the VirtIO NIC before DHCP flips
+    # Win32_NetworkAdapterConfiguration.IPEnabled to true. Prefer the
+    # physical adapter MAC first, then fall back to IP-enabled config.
+    $adapter = @(& $AdapterResolver) |
+        Where-Object {
+            $_.MACAddress -and
+            (
+                $_.PhysicalAdapter -eq $true -or
+                $_.NetEnabled -eq $true -or
+                $_.Name -match 'VirtIO|Ethernet|Network'
+            )
+        } |
+        Sort-Object InterfaceIndex, Index |
+        Select-Object -First 1
+    if ($adapter) { return $adapter.MACAddress }
+
+    $ipAdapter = @(& $IpAdapterResolver) |
+        Where-Object { $_.IPEnabled -eq $true -and $_.MACAddress } |
+        Sort-Object InterfaceIndex, Index |
+        Select-Object -First 1
+    if ($ipAdapter) { return $ipAdapter.MACAddress }
+
+    return $null
+}
+
+function Get-VMIdentity {
+    param(
+        [scriptblock] $UuidResolver = { (Get-CimInstance Win32_ComputerSystemProduct).UUID },
+        [scriptblock] $MacResolver  = {
+            Resolve-MacAddress
+        }
+    )
+    $uuid = & $UuidResolver
+    $mac  = & $MacResolver
+    if ([string]::IsNullOrWhiteSpace($uuid)) { throw "could not read SMBIOS UUID" }
+    if ([string]::IsNullOrWhiteSpace($mac))  { throw "could not read MAC address"  }
+    return [pscustomobject]@{
+        vm_uuid = $uuid.ToString().ToLowerInvariant()
+        mac     = $mac.ToString()
+    }
+}
+
+function Invoke-OrchestratorRequest {
+    param(
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [ValidateSet('GET','POST')] [string] $Method,
+        [hashtable] $Body,
+        [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [int] $MaxAttempts = 5,
+        [int] $RetryDelayMs = 2000,
+        [int] $TimeoutSec = 30,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $headers = @{}
+    if ($BearerToken) { $headers.Authorization = "Bearer $BearerToken" }
+    $payload = $null
+    if ($Body) { $payload = $Body | ConvertTo-Json -Depth 10 -Compress }
+
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
+    $lastErr = $null
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + '/' + $Path.TrimStart('/')
+        for ($i = 1; $i -le $MaxAttempts; $i++) {
+            try {
+                return & $RestInvoker $uri $Method $headers $payload 'application/json' $TimeoutSec
+            } catch {
+                $lastErr = $_
+                if ($i -lt $MaxAttempts) { Start-Sleep -Milliseconds $RetryDelayMs }
+            }
+        }
+    }
+    throw $lastErr
+}
+
+function _ReportStepState {
+    param(
+        [string] $BaseUrl, [string] $BearerToken, [int] $StepId,
+        [string] $State, [string] $ErrorMessage,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker
+    )
+    $body = @{ state = $State }
+    if ($ErrorMessage) { $body.error = $ErrorMessage }
+    $reqArgs = @{
+        BaseUrl = $BaseUrl
+        Path = "/winpe/step/$StepId/result"
+        Method = 'POST'
+        Body = $body
+        BearerToken = $BearerToken
+        RestInvoker = $RestInvoker
+    }
+    if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+    $r = Invoke-OrchestratorRequest @reqArgs
+    if ($r.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $r.bearer_token) {
+        return $r.bearer_token
+    }
+    return $BearerToken
+}
+
+function ConvertTo-AgentValue {
+    param([AllowNull()] [object] $Value)
+    if ($null -eq $Value) { return $null }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $out = @{}
+        foreach ($key in $Value.Keys) {
+            $out[$key] = ConvertTo-AgentValue -Value $Value[$key]
+        }
+        return $out
+    }
+
+    if ($Value -is [pscustomobject]) {
+        $out = @{}
+        foreach ($prop in $Value.PSObject.Properties) {
+            $out[$prop.Name] = ConvertTo-AgentValue -Value $prop.Value
+        }
+        return $out
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += ConvertTo-AgentValue -Value $item
+        }
+        return $items
+    }
+
+    return $Value
+}
+
+function ConvertTo-AgentParams {
+    param([AllowNull()] [object] $Params)
+    if ($null -eq $Params) { return @{} }
+
+    $converted = ConvertTo-AgentValue -Value $Params
+    if ($converted -is [hashtable]) { return $converted }
+
+    throw "step params must be a JSON object"
+}
+
+function Invoke-ActionLoop {
+    param(
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [Parameter(Mandatory)] [object[]] $Actions,
+        [Parameter(Mandatory)] [hashtable] $Handlers,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $token = $BearerToken
+    foreach ($action in $Actions) {
+        $kind = $action.kind
+        $stepId = [int] $action.step_id
+        if (-not $Handlers.ContainsKey($kind)) {
+            $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+                -StepId $stepId -State 'error' `
+                -ErrorMessage "no handler for kind: $kind" `
+                -FallbackBaseUrl $FallbackBaseUrl `
+                -RestInvoker $RestInvoker
+            throw "no handler registered for kind: $kind"
+        }
+        $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+            -StepId $stepId -State 'running' `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -RestInvoker $RestInvoker
+        try {
+            # Handlers receive the CURRENT token (post-running-refresh)
+            # rather than capturing the original via closure, so a long
+            # apply_wim followed by stage_unattend GETs use a fresh
+            # token, not one that may have expired during the apply.
+            $params = ConvertTo-AgentParams -Params $action.params
+            $null = & $Handlers[$kind] $params $token
+        } catch {
+            $msg = $_.Exception.Message
+            $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+                -StepId $stepId -State 'error' -ErrorMessage $msg `
+                -FallbackBaseUrl $FallbackBaseUrl `
+                -RestInvoker $RestInvoker
+            throw
+        }
+        $token = _ReportStepState -BaseUrl $BaseUrl -BearerToken $token `
+            -StepId $stepId -State 'ok' `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -RestInvoker $RestInvoker
+    }
+    return $token
+}
+
+$script:DiskpartScriptRecoveryBeforeC = @'
+select disk 0
+clean
+convert gpt
+create partition efi size=100
+format fs=fat32 quick label="EFI"
+assign letter=S
+create partition msr size=16
+create partition primary size=1024
+format fs=ntfs quick label="Recovery"
+set id="de94bba4-06d1-4d40-a16a-bfd50179d6ac"
+gpt attributes=0x8000000000000001
+create partition primary
+format fs=ntfs quick label="Windows"
+assign letter=V
+exit
+'@
+
+function Invoke-Action-PartitionDisk {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DiskpartRunner = { param($script)
+            $tmp = [System.IO.Path]::GetTempFileName()
+            try {
+                Set-Content -LiteralPath $tmp -Value $script -Encoding ASCII
+                & diskpart.exe /s $tmp
+                if ($LASTEXITCODE -ne 0) { throw "diskpart failed: $LASTEXITCODE" }
+            } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
+    )
+    switch ($Params.layout) {
+        'recovery_before_c' {
+            & $DiskpartRunner $script:DiskpartScriptRecoveryBeforeC
+        }
+        default { throw "partition_disk: unknown layout '$($Params.layout)'" }
+    }
+}
+
+function _RunDism {
+    param([string[]] $DismArgs)
+    $stdout = & dism.exe @DismArgs 2>&1 | Out-String
+    return @{ ExitCode = $LASTEXITCODE; Stdout = $stdout; Stderr = '' }
+}
+
+function _ResolveSourceWim {
+    foreach ($drive in @('D','E','F','G','H')) {
+        $p = "$($drive):\sources\install.wim"
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    throw "could not find sources\install.wim on attached CD-ROMs"
+}
+
+function _ResolveIndexByName {
+    param([string] $Wim, [string] $Name)
+    $out = (& dism.exe /Get-WimInfo /WimFile:$Wim) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "dism /Get-WimInfo failed: $LASTEXITCODE" }
+    # Parse blocks. dism output:
+    #   Index : 6
+    #   Name : Windows 11 Enterprise
+    $current = $null
+    foreach ($line in ($out -split "`r?`n")) {
+        if ($line -match '^\s*Index\s*:\s*(\d+)\s*$') { $current = [int]$Matches[1] }
+        elseif ($line -match '^\s*Name\s*:\s*(.+?)\s*$' -and $Matches[1] -eq $Name) {
+            return $current
+        }
+    }
+    throw "no image index matched name: $Name"
+}
+
+function Invoke-Action-ApplyWim {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DismRunner = { param($a) _RunDism -DismArgs $a },
+        [scriptblock] $SourceWimResolver = { _ResolveSourceWim },
+        [scriptblock] $IndexResolver = { param($wim, $name)
+            _ResolveIndexByName -Wim $wim -Name $name
+        }
+    )
+    $name = [string] $Params.image_index_metadata_name
+    if ([string]::IsNullOrWhiteSpace($name)) { throw "apply_wim: missing image_index_metadata_name" }
+    $wim = & $SourceWimResolver
+    $index = & $IndexResolver $wim $name
+    $dismArgs = @(
+        '/Apply-Image',
+        "/ImageFile:$wim",
+        "/Index:$index",
+        '/ApplyDir:V:\'
+    )
+    $r = & $DismRunner $dismArgs
+    if ($r.ExitCode -ne 0) {
+        throw "dism /Apply-Image failed (exit $($r.ExitCode)): $($r.Stdout)"
+    }
+}
+
+function _ResolveVirtioPath {
+    foreach ($drive in @('D','E','F','G','H','I')) {
+        $marker = "$($drive):\virtio-win_license.txt"
+        if (Test-Path -LiteralPath $marker) { return "$($drive):\" }
+        $marker = "$($drive):\NetKVM"
+        if (Test-Path -LiteralPath $marker) { return "$($drive):\" }
+    }
+    throw "could not find VirtIO ISO on any attached CD-ROM (D-I)"
+}
+
+function Resolve-VirtioInf {
+    param(
+        [Parameter(Mandatory)] [string] $Root,
+        [Parameter(Mandatory)] [string] $InfName,
+        [string] $Arch = 'amd64'
+    )
+    $candidates = @(Get-ChildItem -LiteralPath $Root -Recurse -Filter $InfName -ErrorAction SilentlyContinue)
+    $preferred = $candidates |
+        Where-Object {
+            $normalized = $_.FullName -replace '/', '\'
+            $normalized -match "\\w11\\$Arch\\|\\$Arch\\w11\\"
+        } |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($preferred) { return $preferred.FullName }
+
+    $fallback = $candidates |
+        Where-Object {
+            $normalized = $_.FullName -replace '/', '\'
+            $normalized -match "\\$Arch\\"
+        } |
+        Sort-Object FullName |
+        Select-Object -First 1
+    if ($fallback) { return $fallback.FullName }
+
+    throw "could not find VirtIO driver $InfName for $Arch under $Root"
+}
+
+function Invoke-Action-InjectDrivers {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DismRunner = { param($a) _RunDism -DismArgs $a },
+        [scriptblock] $VirtioPathResolver = { _ResolveVirtioPath }
+    )
+    try {
+        $virtioRoot = & $VirtioPathResolver
+    } catch {
+        if ($Params.ContainsKey('optional') -and [bool] $Params.optional) {
+            Write-Host "apply_driver_package: VirtIO media not found; optional step skipped."
+            return
+        }
+        throw
+    }
+    $arch = 'amd64'
+    if ($Params.ContainsKey('architecture') -and $Params.architecture) {
+        $arch = [string] $Params.architecture
+    }
+    $requiredInfs = @($Params.required_infs)
+    if ($requiredInfs.Count -eq 0) {
+        $requiredInfs = @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')
+    }
+
+    foreach ($infName in $requiredInfs) {
+        $infPath = Resolve-VirtioInf -Root $virtioRoot -InfName $infName -Arch $arch
+        $dismArgs = @(
+            '/Image:V:\',
+            '/Add-Driver',
+            "/Driver:$infPath",
+            '/ForceUnsigned'
+        )
+        $r = & $DismRunner $dismArgs
+        if ($r.ExitCode -ne 0) {
+            throw "dism /Add-Driver failed for $infName (exit $($r.ExitCode)): $($r.Stdout)"
+        }
+    }
+}
+
+function Invoke-Action-PrepareWindowsSetup {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [string] $PantherDirOverride,
+        [scriptblock] $WebInvoker = { param($Uri,$Headers,$TimeoutSec)
+            Invoke-WebRequest -Uri $Uri -Method GET -Headers $Headers `
+                -TimeoutSec $TimeoutSec -UseBasicParsing
+        },
+        [scriptblock] $RegRunner = { param($a)
+            $stdout = & reg.exe @a 2>&1 | Out-String
+            return @{ ExitCode = $LASTEXITCODE; Stdout = $stdout }
+        }
+    )
+    Invoke-Action-StageUnattend `
+        -Params @{} `
+        -BaseUrl $BaseUrl `
+        -RunId $RunId `
+        -BearerToken $BearerToken `
+        -FallbackBaseUrl $FallbackBaseUrl `
+        -PantherDirOverride $PantherDirOverride `
+        -WebInvoker $WebInvoker
+
+    $hive = 'V:\Windows\System32\Config\SYSTEM'
+    $mount = 'HKLM\APVEOFFLINESYSTEM'
+    $loaded = $false
+    try {
+        $r = & $RegRunner @('load', $mount, $hive)
+        if ($r.ExitCode -ne 0) {
+            throw "reg load failed (exit $($r.ExitCode)): $($r.Stdout)"
+        }
+        $loaded = $true
+
+        # ConfigMgr normalizes offline state before mini-setup. The most
+        # important part for this flow is clearing WinPE drive-letter
+        # residue so Windows assigns the deployed OS volume as C:.
+        $null = & $RegRunner @('delete', "$mount\MountedDevices", '/f')
+    } finally {
+        if ($loaded) {
+            $r = & $RegRunner @('unload', $mount)
+            if ($r.ExitCode -ne 0) {
+                throw "reg unload failed (exit $($r.ExitCode)): $($r.Stdout)"
+            }
+        }
+    }
+}
+
+function _GetInjectedDriverInfs {
+    # /Format:Table truncates "Original File Name" and pads columns
+    # unpredictably across DISM versions, so a tail-of-line regex
+    # silently returns nothing on real output and validate_boot_drivers
+    # incorrectly fails every run. /Format:List emits each driver as a
+    # block of "Key : Value" lines; "Original File Name : <path>" is
+    # the original INF path (e.g. "E:\NetKVM\w11\amd64\netkvm.inf"),
+    # which we tail-split on \ to get the leaf filename.
+    $out = (& dism.exe /Image:V:\ /Get-Drivers /Format:List) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "dism /Get-Drivers failed: $LASTEXITCODE" }
+    $infs = @()
+    foreach ($line in ($out -split "`r?`n")) {
+        if ($line -match '^\s*Original File Name\s*:\s*(.+\\)?(\S+\.inf)\s*$') {
+            $infs += $Matches[2].ToLowerInvariant()
+        }
+    }
+    return $infs
+}
+
+function Invoke-Action-ValidateBootDrivers {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $DriverInfResolver = { _GetInjectedDriverInfs }
+    )
+    $required = @($Params.required_infs) | ForEach-Object { $_.ToLowerInvariant() }
+    $present = @(& $DriverInfResolver) | ForEach-Object { $_.ToLowerInvariant() }
+    $missing = $required | Where-Object { $_ -notin $present }
+    if ($missing.Count -gt 0) {
+        throw "validate_boot_drivers: missing INFs: $($missing -join ', ')"
+    }
+}
+
+function Invoke-Action-StageAutopilotConfig {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        # WebInvoker takes ($Uri, $Headers, $TimeoutSec) and returns an
+        # object whose .Content is byte[] (or a string). Default uses
+        # Invoke-WebRequest which preserves the response body byte-for-
+        # byte without the JSON auto-parsing that Invoke-RestMethod
+        # would do for application/json responses.
+        [scriptblock] $WebInvoker = { param($Uri,$Headers,$TimeoutSec)
+            Invoke-WebRequest -Uri $Uri -Method GET -Headers $Headers `
+                -TimeoutSec $TimeoutSec -UseBasicParsing
+        }
+    )
+    $guestPath = [string] $Params.guest_path
+    if ([string]::IsNullOrWhiteSpace($guestPath)) {
+        throw "stage_autopilot_config: missing guest_path"
+    }
+
+    $headers = @{ Authorization = "Bearer $BearerToken" }
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
+    $lastErr = $null
+    $response = $null
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + "/winpe/autopilot-config/$RunId"
+        try {
+            $response = & $WebInvoker $uri $headers 30
+            break
+        } catch {
+            $lastErr = $_
+        }
+    }
+    if ($response -eq $null) { throw $lastErr }
+
+    $dir = Split-Path -Parent $guestPath
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    # $response.Content from Invoke-WebRequest is byte[] when the
+    # response Content-Type is binary, and string for text. We always
+    # want the raw bytes regardless of how PS classified it.
+    if ($response.Content -is [byte[]]) {
+        [System.IO.File]::WriteAllBytes($guestPath, $response.Content)
+    } elseif ($response.Content -is [string]) {
+        [System.IO.File]::WriteAllBytes(
+            $guestPath, [System.Text.Encoding]::UTF8.GetBytes($response.Content)
+        )
+    } else {
+        # PSObject from a mock test - pull RawContent or fall back to ToString
+        [System.IO.File]::WriteAllText($guestPath, [string] $response.Content)
+    }
+}
+
+function _RunBcdboot {
+    param([string[]] $BcdbootArgs)
+    $stdout = & bcdboot.exe @BcdbootArgs 2>&1 | Out-String
+    return @{ ExitCode = $LASTEXITCODE; Stdout = $stdout }
+}
+
+function Invoke-Action-BakeBootEntry {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [scriptblock] $BcdbootRunner = { param($a) _RunBcdboot -BcdbootArgs $a }
+    )
+    $bcdArgs = @('V:\Windows', '/s', 'S:', '/f', 'UEFI')
+    $r = & $BcdbootRunner $bcdArgs
+    if ($r.ExitCode -ne 0) {
+        throw "bcdboot failed (exit $($r.ExitCode)): $($r.Stdout)"
+    }
+}
+
+function Invoke-Action-StageUnattend {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [string] $PantherDirOverride,
+        # WebInvoker bypasses Invoke-RestMethod's auto-parsing of
+        # application/xml responses (which would deserialize into an
+        # [xml] document and write the type name to disk).
+        [scriptblock] $WebInvoker = { param($Uri,$Headers,$TimeoutSec)
+            Invoke-WebRequest -Uri $Uri -Method GET -Headers $Headers `
+                -TimeoutSec $TimeoutSec -UseBasicParsing
+        }
+    )
+    $dir = if ($PantherDirOverride) { $PantherDirOverride } else { 'V:\Windows\Panther' }
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    $headers = @{ Authorization = "Bearer $BearerToken" }
+    $bases = @($BaseUrl)
+    if ($FallbackBaseUrl) { $bases += $FallbackBaseUrl }
+
+    $lastErr = $null
+    $response = $null
+    foreach ($base in $bases) {
+        $uri = ($base.TrimEnd('/')) + "/winpe/unattend/$RunId"
+        try {
+            $response = & $WebInvoker $uri $headers 30
+            break
+        } catch {
+            $lastErr = $_
+        }
+    }
+    if ($response -eq $null) { throw $lastErr }
+
+    $out = Join-Path $dir 'unattend.xml'
+    if ($response.Content -is [byte[]]) {
+        [System.IO.File]::WriteAllBytes($out, $response.Content)
+    } elseif ($response.Content -is [string]) {
+        [System.IO.File]::WriteAllBytes(
+            $out, [System.Text.Encoding]::UTF8.GetBytes($response.Content)
+        )
+    } elseif ($response.Content -is [System.Xml.XmlNode]) {
+        [System.IO.File]::WriteAllText($out, $response.Content.OuterXml)
+    } else {
+        [System.IO.File]::WriteAllText($out, [string] $response.Content)
+    }
+}
+
+function Invoke-Action-StageOsdClient {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $package = Invoke-OrchestratorRequest `
+        -BaseUrl $BaseUrl `
+        -Path "/osd/client/package/$RunId" `
+        -Method GET `
+        -BearerToken $BearerToken `
+        -FallbackBaseUrl $FallbackBaseUrl `
+        -RestInvoker $RestInvoker
+
+    if ($null -eq $package) {
+        throw "stage_osd_client: package response was empty"
+    }
+    $packageType = $package.GetType().FullName
+    if ($package.PSObject.Properties.Match('run_id').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string] $package.run_id)) {
+        throw "stage_osd_client: package missing run_id response_type=$packageType"
+    }
+    try {
+        $packageRunId = [int] $package.run_id
+    } catch {
+        throw "stage_osd_client: package run_id is not numeric response_type=$packageType actual=$($package.run_id)"
+    }
+    if ($packageRunId -ne $RunId) {
+        throw "stage_osd_client: package run_id mismatch expected=$RunId actual=$($package.run_id)"
+    }
+    if ([string]::IsNullOrWhiteSpace([string] $package.bearer_token)) {
+        throw "stage_osd_client: package missing bearer_token response_type=$packageType"
+    }
+    if ($package.PSObject.Properties.Match('files').Count -eq 0 -or $null -eq $package.files -or @($package.files).Count -eq 0) {
+        throw "stage_osd_client: package missing nonempty files array response_type=$packageType"
+    }
+
+    $fileIndex = 0
+    foreach ($file in @($package.files)) {
+        $fileIndex += 1
+        $path = [string] $file.path
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            throw "stage_osd_client: package file[$fileIndex] missing path response_type=$packageType"
+        }
+        if ([string]::IsNullOrWhiteSpace([string] $file.content_b64)) {
+            throw "stage_osd_client: package file[$fileIndex] missing content_b64 for $path response_type=$packageType"
+        }
+        $providerPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
+        $dir = Split-Path -Parent $providerPath
+        if (-not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllBytes(
+            $providerPath,
+            [System.Convert]::FromBase64String([string] $file.content_b64)
+        )
+    }
+
+    $configDir = 'V:\ProgramData\ProxmoxVEAutopilot\OSD'
+    if (-not (Test-Path -LiteralPath $configDir)) {
+        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+    $config = @{
+        flask_base_url = $BaseUrl
+        run_id = $RunId
+        bearer_token = [string] $package.bearer_token
+    }
+    if ($FallbackBaseUrl) { $config.flask_base_url_fallback = $FallbackBaseUrl }
+    $config | ConvertTo-Json -Depth 5 |
+        Set-Content -LiteralPath (Join-Path $configDir 'osd-config.json') -Encoding UTF8
+}
+
+function Invoke-Action-CaptureHash {
+    param(
+        [Parameter(Mandatory)] [hashtable] $Params,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [scriptblock] $CaptureRunner = { param($outputPath)
+            $script = 'X:\autopilot\Get-WindowsAutopilotInfo.ps1'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+                -OutputFile $outputPath
+            return @{ ExitCode = $LASTEXITCODE }
+        },
+        [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+            Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers `
+                -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
+        }
+    )
+    $tmp = [System.IO.Path]::GetTempFileName() + '.csv'
+    try {
+        $r = & $CaptureRunner $tmp
+        if ($r.ExitCode -ne 0) {
+            throw "Get-WindowsAutopilotInfo capture failed (exit $($r.ExitCode))"
+        }
+        $row = Import-Csv -LiteralPath $tmp | Select-Object -First 1
+        $body = @{
+            serial_number = $row.'Device Serial Number'
+            product_id    = $row.'Windows Product ID'
+            hardware_hash = $row.'Hardware Hash'
+        }
+        $reqArgs = @{
+            BaseUrl = $BaseUrl
+            Path = "/winpe/hash"
+            Method = 'POST'
+            Body = $body
+            BearerToken = $BearerToken
+            RestInvoker = $RestInvoker
+        }
+        if ($FallbackBaseUrl) { $reqArgs.FallbackBaseUrl = $FallbackBaseUrl }
+        Invoke-OrchestratorRequest @reqArgs
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Start-AutopilotWinPE {
+    param(
+        [string] $ConfigPath = 'X:\autopilot\config.json',
+        [string] $LogPath = 'X:\Windows\Temp\autopilot-winpe.log',
+        [scriptblock] $RestInvoker = $null,
+        [scriptblock] $RebootRunner = { & wpeutil.exe reboot },
+        [scriptblock] $UuidResolver = $null,
+        [scriptblock] $MacResolver = $null,
+        [scriptblock] $PartitionRunner = $null,
+        [scriptblock] $DismRunner = $null,
+        [scriptblock] $BcdbootRunner = $null,
+        [scriptblock] $VirtioPathResolver = $null,
+        [scriptblock] $SourceWimResolver = $null,
+        [scriptblock] $IndexResolver = $null,
+        [scriptblock] $DriverInfResolver = $null,
+        [scriptblock] $RegRunner = $null,
+        [switch] $DryRun,
+        [string] $PantherDirOverride
+    )
+    $cfg = Read-AgentConfig -Path $ConfigPath
+    Write-AgentLog -Path $LogPath -Level INFO -Message "agent starting build_sha=$($cfg.build_sha)"
+
+    $idArgs = @{}
+    if ($UuidResolver) { $idArgs.UuidResolver = $UuidResolver }
+    if ($MacResolver)  { $idArgs.MacResolver  = $MacResolver }
+    $id = Get-VMIdentity @idArgs
+    Write-AgentLog -Path $LogPath -Level INFO -Message "vm_uuid=$($id.vm_uuid) mac=$($id.mac)"
+    if ($DryRun) {
+        Write-AgentLog -Path $LogPath -Level INFO -Message 'dry run complete; skipping register/action/reboot'
+        return $id
+    }
+
+    $fallbackUrl = $null
+    if ($cfg.PSObject.Properties.Match('flask_base_url_fallback').Count -gt 0) {
+        $fallbackUrl = $cfg.flask_base_url_fallback
+    }
+    $reqArgs = @{
+        BaseUrl = $cfg.flask_base_url
+        Path = '/winpe/register'
+        Method = 'POST'
+        Body = @{ vm_uuid = $id.vm_uuid; mac = $id.mac; build_sha = $cfg.build_sha }
+    }
+    if ($fallbackUrl) { $reqArgs.FallbackBaseUrl = $fallbackUrl }
+    if ($RestInvoker) { $reqArgs.RestInvoker = $RestInvoker }
+    $reg = Invoke-OrchestratorRequest @reqArgs
+
+    $token = $reg.bearer_token
+    $runId = [int] $reg.run_id
+
+    $handlers = @{
+        'partition_disk' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($PartitionRunner) { $a.DiskpartRunner = $PartitionRunner }
+            Invoke-Action-PartitionDisk @a
+        }
+        'apply_wim' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)        { $a.DismRunner = $DismRunner }
+            if ($SourceWimResolver) { $a.SourceWimResolver = $SourceWimResolver }
+            if ($IndexResolver)     { $a.IndexResolver = $IndexResolver }
+            Invoke-Action-ApplyWim @a
+        }
+        'inject_drivers' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)         { $a.DismRunner = $DismRunner }
+            if ($VirtioPathResolver) { $a.VirtioPathResolver = $VirtioPathResolver }
+            Invoke-Action-InjectDrivers @a
+        }
+        'apply_driver_package' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DismRunner)         { $a.DismRunner = $DismRunner }
+            if ($VirtioPathResolver) { $a.VirtioPathResolver = $VirtioPathResolver }
+            Invoke-Action-InjectDrivers @a
+        }
+        'validate_boot_drivers' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($DriverInfResolver) { $a.DriverInfResolver = $DriverInfResolver }
+            Invoke-Action-ValidateBootDrivers @a
+        }
+        'stage_autopilot_config' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            Invoke-Action-StageAutopilotConfig @a
+        }
+        'bake_boot_entry' = { param($p, $tok)
+            $a = @{ Params = $p }
+            if ($BcdbootRunner) { $a.BcdbootRunner = $BcdbootRunner }
+            Invoke-Action-BakeBootEntry @a
+        }
+        'prepare_windows_setup' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            if ($RegRunner)          { $a.RegRunner = $RegRunner }
+            Invoke-Action-PrepareWindowsSetup @a
+        }
+        'stage_unattend' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            Invoke-Action-StageUnattend @a
+        }
+        'stage_osd_client' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-StageOsdClient @a
+        }
+        'handoff_to_windows_setup' = { param($p, $tok)
+            Write-Host 'handoff_to_windows_setup: controller will detach WinPE media and reboot.'
+        }
+        'capture_hash' = { param($p, $tok)
+            $a = @{
+                Params = $p; BaseUrl = $cfg.flask_base_url
+                RunId = $runId; BearerToken = $tok
+            }
+            if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($RestInvoker) { $a.RestInvoker = $RestInvoker }
+            Invoke-Action-CaptureHash @a
+        }
+    }
+
+    $loopArgs = @{
+        BaseUrl = $cfg.flask_base_url
+        BearerToken = $token
+        Actions = $reg.actions
+        Handlers = $handlers
+    }
+    if ($fallbackUrl) { $loopArgs.FallbackBaseUrl = $fallbackUrl }
+    if ($RestInvoker) { $loopArgs.RestInvoker = $RestInvoker }
+    $token = Invoke-ActionLoop @loopArgs
+
+    $doneArgs = @{
+        BaseUrl = $cfg.flask_base_url; Path = '/winpe/done'
+        Method = 'POST'; Body = @{}; BearerToken = $token
+    }
+    if ($fallbackUrl) { $doneArgs.FallbackBaseUrl = $fallbackUrl }
+    if ($RestInvoker) { $doneArgs.RestInvoker = $RestInvoker }
+    Invoke-OrchestratorRequest @doneArgs
+
+    Write-AgentLog -Path $LogPath -Level INFO -Message 'rebooting'
+    & $RebootRunner
+}

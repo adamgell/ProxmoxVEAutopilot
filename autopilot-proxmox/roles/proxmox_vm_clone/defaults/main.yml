@@ -8,3 +8,10 @@ vm_custom_serial: null
 vm_serial_prefix: null
 clone_config_retries: 6
 clone_config_delay: 5
+# When true, the Panther offline-inject step is skipped. Used by the
+# WinPE provisioning path, which serves the unattend over HTTP at boot
+# instead of injecting it into the cloned disk's filesystem.
+_skip_panther_injection: false
+# When true, OEM profile chassis_type is ignored for the root-only
+# SMBIOS Type 3 file/args path. SMBIOS1 identity is still applied.
+_skip_chassis_type_smbios_file: false

@@ -1,208 +1,656 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, alert, empty_state %}
 {% block title %}Monitoring - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 
+{% set badge_labels = {
+  'ok': 'OK',
+  'warn': 'Check',
+  'missing': 'Missing',
+  'pending': 'Pending',
+  'error': 'Error',
+  'unknown': 'Unknown'
+} %}
+{% set total_rows = rows | length %}
+{% set metrics = namespace(
+  running=0,
+  stopped=0,
+  guest_identity=0,
+  ad_ok=0,
+  entra_ok=0,
+  entra_pending=0,
+  intune_ok=0,
+  identity_ready=0,
+  attention=0
+) %}
+{% for r in rows %}
+  {% if r.pve_status == 'running' %}{% set metrics.running = metrics.running + 1 %}{% endif %}
+  {% if r.pve_status == 'stopped' %}{% set metrics.stopped = metrics.stopped + 1 %}{% endif %}
+  {% if r.win_name or r.serial %}{% set metrics.guest_identity = metrics.guest_identity + 1 %}{% endif %}
+  {% if r.ad_badge == 'ok' %}{% set metrics.ad_ok = metrics.ad_ok + 1 %}{% endif %}
+  {% if r.entra_badge == 'ok' %}{% set metrics.entra_ok = metrics.entra_ok + 1 %}{% endif %}
+  {% if r.entra_badge == 'pending' %}{% set metrics.entra_pending = metrics.entra_pending + 1 %}{% endif %}
+  {% if r.intune_badge == 'ok' %}{% set metrics.intune_ok = metrics.intune_ok + 1 %}{% endif %}
+  {% if r.ad_badge == 'ok' and r.entra_badge == 'ok' and r.intune_badge == 'ok' %}
+    {% set metrics.identity_ready = metrics.identity_ready + 1 %}
+  {% endif %}
+  {% if r.ad_badge in ['warn', 'missing', 'error'] or
+        r.entra_badge in ['warn', 'missing', 'error'] or
+        r.intune_badge in ['warn', 'missing', 'error'] or
+        r.pve_status not in ['running', 'stopped'] %}
+    {% set metrics.attention = metrics.attention + 1 %}
+  {% endif %}
+{% endfor %}
+{% set ready_pct = (((metrics.identity_ready * 100 / total_rows) | round(0)) | int) if total_rows else 0 %}
+{% set service_counts = namespace(ok=0, degraded=0, dead=0) %}
+{% for s in service_health %}
+  {% if s.status == 'ok' %}{% set service_counts.ok = service_counts.ok + 1 %}{% endif %}
+  {% if s.status == 'degraded' %}{% set service_counts.degraded = service_counts.degraded + 1 %}{% endif %}
+  {% if s.status not in ['ok', 'degraded'] %}{% set service_counts.dead = service_counts.dead + 1 %}{% endif %}
+{% endfor %}
+
 <style>
-  /* Status badges on this page.  base.html ships a pill-shaped
-     `.badge` (border-radius 999px, inline-flex) for the header chip
-     look; here we want a sharper rectangular tag that fits the dense
-     table rows, so we re-declare geometry and size — but all COLORS
-     come from the shared theme tokens so dark mode picks them up
-     automatically. */
-  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
-           font-size: 11px; line-height: 1.4; font-weight: 600;
-           border: 1px solid transparent; }
-  .badge.ok      { background: var(--ok-bg);      color: var(--ok-fg); }
-  .badge.warn    { background: var(--warn-bg);    color: var(--warn-fg); }
-  .badge.missing { background: var(--bad-bg);     color: var(--bad-fg); }
-  .badge.pending { background: var(--neutral-bg); color: var(--neutral-fg); }
-  .badge.error   { background: var(--bad-bg);     color: var(--bad-fg); }
-  .badge.unknown { background: var(--neutral-bg); color: var(--neutral-fg); }
-  /* Softer borders — 25% mix fades to panel in either theme.  Keeps
-     the tag shape without the heavy outline that reads as "loud" on
-     dark mode. */
-  .badge.ok, .badge.warn, .badge.missing,
-  .badge.pending, .badge.error, .badge.unknown {
-    border-color: color-mix(in srgb, currentColor 30%, transparent);
+  .monitoring-page {
+    display: grid;
+    gap: 18px;
   }
 
-  .count-pill { font-size: 10px; opacity: 0.75; margin-left: 3px; }
-
-  /* Source-name row (the CN/DN/displayName echoed under each badge).
-     Muted ink in either theme; flips to warn-tint when it doesn't
-     match the Windows hostname so naming drift is visible. */
-  .source-name { font-size: 11px; color: var(--ink-muted);
-                 font-family: "IBM Plex Mono", ui-monospace, monospace;
-                 margin-top: 2px; word-break: break-all; }
-  .source-name.mismatch {
-    color: var(--warn-fg); font-weight: 600;
-    background: var(--warn-bg); padding: 0 3px;
-    border-radius: 2px; display: inline-block;
+  .cockpit-command-bar {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background:
+      linear-gradient(90deg,
+        color-mix(in srgb, var(--ms-blue-dark) 10%, transparent),
+        transparent 44%),
+      var(--surface-muted);
+  }
+  .cockpit-command-copy {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+  }
+  .cockpit-command-kicker {
+    font-size: 10.5px;
+    color: var(--ink-muted);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .cockpit-command-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .cockpit-command-meta {
+    color: var(--ink-muted);
+    font-size: 12.5px;
+  }
+  .cockpit-command-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+  }
+  .cockpit-action {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 6px 11px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    color: var(--ink);
+    font-size: 12.5px;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .cockpit-action:hover {
+    background: var(--hover);
+    color: var(--ink);
+    text-decoration: none;
+    border-color: var(--ms-blue-dark);
+  }
+  .cockpit-action.primary {
+    background: var(--slate-800);
+    color: #ffffff;
+    border-color: var(--slate-900);
+  }
+  .cockpit-action.primary:hover {
+    background: var(--slate-900);
+    color: #ffffff;
   }
 
+  .cockpit-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .metric-tile {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    padding: 13px 14px;
+    min-width: 0;
+  }
+  .metric-label {
+    color: var(--ink-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .metric-value {
+    margin-top: 4px;
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 30px;
+    line-height: 1;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .metric-foot {
+    margin-top: 6px;
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+  .metric-tile.is-attention {
+    border-color: color-mix(in srgb, var(--warn-fg) 32%, var(--line));
+    background:
+      linear-gradient(180deg,
+        color-mix(in srgb, var(--warn-bg) 45%, transparent),
+        var(--panel));
+  }
+  .readiness-track {
+    margin-top: 10px;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+  }
+  .readiness-fill {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, var(--ms-blue-dark), var(--ms-green-dark));
+  }
+
+  .cockpit-section {
+    display: grid;
+    gap: 10px;
+  }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .section-head h2 {
+    margin: 0;
+    padding: 0;
+    border: none;
+    font-size: 14px;
+  }
+  .section-note {
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+
+  .lifecycle-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .lifecycle-lane {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    background: var(--panel);
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .lifecycle-lane::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--line-strong);
+  }
+  .lifecycle-lane.is-ok::before { background: var(--ok-fg); }
+  .lifecycle-lane.is-warn::before { background: var(--warn-fg); }
+  .lifecycle-lane.is-bad::before { background: var(--bad-fg); }
+  .lane-label {
+    color: var(--ink-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .lane-value {
+    margin-top: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .lane-detail {
+    margin-top: 6px;
+    color: var(--ink-muted);
+    font-size: 12px;
+    min-height: 36px;
+  }
+
+  .service-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .service-card {
+    display: grid;
+    gap: 5px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    padding: 11px 12px;
+    min-width: 0;
+  }
+  .service-card.ok { border-left: 3px solid var(--ok-fg); }
+  .service-card.degraded { border-left: 3px solid var(--warn-fg); }
+  .service-card.dead { border-left: 3px solid var(--bad-fg); }
+  .service-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .service-name {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .service-detail,
+  .service-meta {
+    color: var(--ink-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .fleet-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+  }
+  .fleet-table {
+    margin: 0;
+    min-width: 980px;
+  }
+  .fleet-table th {
+    top: 0;
+  }
+  .identity-cell {
+    min-width: 190px;
+  }
+  .vm-link {
+    font-weight: 600;
+  }
+  .row-subtle {
+    display: block;
+    margin-top: 2px;
+    color: var(--ink-muted);
+    font-size: 11.5px;
+  }
   .pve-running { color: var(--ok-fg); font-weight: 600; }
-  .pve-stopped { color: var(--ink-muted); }
-  .pve-other   { color: var(--warn-fg); font-weight: 600; }
-
-  /* Keytab-health banner variants.  base.html already styles the
-     neutral `.monitor-status`; add .is-warn / .is-bad modifiers so
-     the Kerberos probe banner can pick a tint without inline styles
-     (which wouldn't theme-swap). */
-  .monitor-status.is-warn {
-    background: var(--warn-bg) !important;
-    border-color: var(--warn-fg) !important;
-    color: var(--warn-fg) !important;
+  .pve-stopped { color: var(--ink-muted); font-weight: 600; }
+  .pve-other { color: var(--warn-fg); font-weight: 600; }
+  .source-name {
+    display: block;
+    max-width: 190px;
+    margin-top: 4px;
+    color: var(--ink-muted);
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    overflow-wrap: anywhere;
   }
-  .monitor-status.is-bad {
-    background: var(--bad-bg) !important;
-    border-color: var(--bad-fg) !important;
-    color: var(--bad-fg) !important;
+  .source-name.mismatch {
+    display: inline-block;
+    color: var(--warn-fg);
+    font-weight: 600;
+    background: var(--warn-bg);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+  .count-pill {
+    margin-left: 4px;
+  }
+  .row-lifecycle {
+    display: grid;
+    gap: 6px;
+    min-width: 126px;
+  }
+  .row-lifecycle-label {
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    font-weight: 600;
+  }
+  .stage-rail {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 3px;
+  }
+  .stage-dot {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--neutral-bg);
+    border: 1px solid color-mix(in srgb, var(--neutral-fg) 25%, transparent);
+  }
+  .stage-dot.ok {
+    background: var(--ok-bg);
+    border-color: color-mix(in srgb, var(--ok-fg) 30%, transparent);
+  }
+  .stage-dot.warn,
+  .stage-dot.pending {
+    background: var(--warn-bg);
+    border-color: color-mix(in srgb, var(--warn-fg) 30%, transparent);
+  }
+  .stage-dot.missing,
+  .stage-dot.error {
+    background: var(--bad-bg);
+    border-color: color-mix(in srgb, var(--bad-fg) 30%, transparent);
+  }
+  .stage-dot.unknown {
+    background: var(--neutral-bg);
+  }
+
+  @media (max-width: 1050px) {
+    .cockpit-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .lifecycle-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 720px) {
+    .cockpit-command-bar {
+      display: grid;
+    }
+    .cockpit-command-actions {
+      justify-content: flex-start;
+    }
+    .cockpit-metrics,
+    .lifecycle-grid,
+    .service-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
 
-<h2>Device monitoring</h2>
+<div class="monitoring-page">
+  {{ page_head(
+    "Device monitoring cockpit",
+    "Operate the VM lifecycle from hypervisor state through Windows identity, AD, Entra, and Intune."
+  ) }}
 
-{% if service_health %}
-<h3 style="margin-top: 0;">Services</h3>
-<table style="margin-bottom: 20px;">
-  <thead>
-    <tr>
-      <th>Service</th>
-      <th>Version</th>
-      <th>Heartbeat</th>
-      <th>Detail</th>
-      <th>Status</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for s in service_health %}
-    <tr>
-      <td><code>{{ s.service_id }}</code></td>
-      <td><code>{{ s.version_sha }}</code></td>
-      <td title="last heartbeat: {{ s.last_heartbeat }}">{{ s.age_seconds }}s ago</td>
-      <td>{{ s.detail }}</td>
-      <td>
-        {% if s.status == 'ok' %}
-          <span class="badge ok">OK</span>
-        {% elif s.status == 'degraded' %}
-          <span class="badge warn">degraded</span>
+  <section class="cockpit-command-bar" aria-label="Monitoring controls">
+    <div class="cockpit-command-copy">
+      <div class="cockpit-command-kicker">Lifecycle operations</div>
+      <div class="cockpit-command-title">VM operating cockpit</div>
+      <div class="cockpit-command-meta">
+        Monitor
+        {% if settings.enabled %}
+          <span class="badge ok">enabled</span>
         {% else %}
-          <span class="badge missing">dead</span>
+          <span class="badge missing">disabled</span>
         {% endif %}
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
+        with a {{ settings.interval_seconds }}s sweep across
+        {{ search_ous | length }} OU{% if search_ous | length != 1 %}s{% endif %}.
+        {% if settings.interval_seconds < 900 %}
+          <span class="badge warn" title="Not tested below 15 minutes. Upstream AD to Entra sync cadence is approximately 30 minutes.">aggressive</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="cockpit-command-actions">
+      <a class="cockpit-action primary" href="/provision">Provision VMs</a>
+      <a class="cockpit-action" href="/template">Build template</a>
+      <a class="cockpit-action" href="/jobs">Jobs</a>
+      <button class="cockpit-action" type="button" onclick="queueSweepNow();">Sweep now</button>
+      <a class="cockpit-action" href="/monitoring/settings">Configure</a>
+    </div>
+  </section>
+  <script>
+  async function queueSweepNow() {
+    try {
+      var r = await fetch('/api/monitoring/sweep-now', {method: 'POST'});
+      if (r.ok && window.CockpitUI) {
+        window.CockpitUI.toast('Sweep queued', 'The monitor container will run one lifecycle sweep.', 'ok');
+      } else if (!r.ok) {
+        alert('Sweep request failed: ' + r.status);
+      }
+    } catch (e) {
+      alert('Sweep request failed: ' + e);
+    }
+  }
+  </script>
 
-{% if keytab and keytab.last_probe_status and keytab.last_probe_status not in ('ok','unchecked') %}
-<div class="monitor-status {{ 'is-warn' if keytab.last_probe_status in ('stale','kvno-mismatch') else 'is-bad' }}">
-  <strong>{{ '⚠️' if keytab.last_probe_status in ('stale','kvno-mismatch') else '🔴' }}
-   Kerberos keytab: {{ keytab.last_probe_status }}</strong>
-  — {{ keytab.last_probe_message or 'no details' }}
-  · <a href="/monitoring/settings#keytab">settings → Keytab health</a>
-  {% if keytab.last_probe_status in ('missing', 'broken') %}
-  · AD probes currently suspended
+  {% if keytab and keytab.last_probe_status and keytab.last_probe_status not in ('ok', 'unchecked') %}
+    {% set keytab_level = 'warn' if keytab.last_probe_status in ('stale', 'kvno-mismatch') else 'bad' %}
+    {% call alert(level=keytab_level) %}
+      <strong>Kerberos keytab: {{ keytab.last_probe_status }}</strong>
+      - {{ keytab.last_probe_message or 'no details' }}.
+      <a href="/monitoring/settings#keytab">Review keytab health</a>
+      {% if keytab.last_probe_status in ('missing', 'broken') %}
+        - AD probes are currently suspended.
+      {% endif %}
+    {% endcall %}
   {% endif %}
+
+  <section class="cockpit-metrics" aria-label="Fleet summary">
+    <article class="metric-tile">
+      <div class="metric-label">VMs tracked</div>
+      <div class="metric-value">{{ total_rows }}</div>
+      <div class="metric-foot">{{ metrics.running }} running, {{ metrics.stopped }} stopped</div>
+    </article>
+    <article class="metric-tile">
+      <div class="metric-label">Identity ready</div>
+      <div class="metric-value">{{ metrics.identity_ready }}</div>
+      <div class="readiness-track" aria-hidden="true">
+        <div class="readiness-fill" style="width: {{ ready_pct }}%;"></div>
+      </div>
+      <div class="metric-foot">{{ ready_pct }}% clear through AD, Entra, and Intune</div>
+    </article>
+    <article class="metric-tile{% if metrics.attention %} is-attention{% endif %}">
+      <div class="metric-label">Needs attention</div>
+      <div class="metric-value">{{ metrics.attention }}</div>
+      <div class="metric-foot">Missing, duplicate, or errored lifecycle signals</div>
+    </article>
+    <article class="metric-tile">
+      <div class="metric-label">Services</div>
+      <div class="metric-value">{{ service_health | length }}</div>
+      <div class="metric-foot">{{ service_counts.ok }} OK, {{ service_counts.degraded }} degraded, {{ service_counts.dead }} dead</div>
+    </article>
+  </section>
+
+  <section class="cockpit-section" aria-labelledby="lifecycle-heading">
+    <div class="section-head">
+      <h2 id="lifecycle-heading">Lifecycle lanes</h2>
+      <div class="section-note">From VM power state to managed endpoint compliance</div>
+    </div>
+    <div class="lifecycle-grid">
+      <article class="lifecycle-lane {{ 'is-ok' if metrics.running == total_rows and total_rows else 'is-warn' }}">
+        <div class="lane-label">Provisioned</div>
+        <div class="lane-value">{{ metrics.running }}/{{ total_rows }}</div>
+        <div class="lane-detail">Running in Proxmox and visible to the monitor.</div>
+      </article>
+      <article class="lifecycle-lane {{ 'is-ok' if metrics.guest_identity == total_rows and total_rows else 'is-warn' }}">
+        <div class="lane-label">Guest identity</div>
+        <div class="lane-value">{{ metrics.guest_identity }}/{{ total_rows }}</div>
+        <div class="lane-detail">Windows name or serial captured from the guest.</div>
+      </article>
+      <article class="lifecycle-lane {{ 'is-ok' if metrics.ad_ok == total_rows and total_rows else 'is-warn' }}">
+        <div class="lane-label">AD joined</div>
+        <div class="lane-value">{{ metrics.ad_ok }}/{{ total_rows }}</div>
+        <div class="lane-detail">Single active computer object found in scope.</div>
+      </article>
+      <article class="lifecycle-lane {{ 'is-ok' if metrics.entra_ok == total_rows and total_rows else 'is-warn' }}">
+        <div class="lane-label">Entra synced</div>
+        <div class="lane-value">{{ metrics.entra_ok }}/{{ total_rows }}</div>
+        <div class="lane-detail">{{ metrics.entra_pending }} pending inside the expected sync window.</div>
+      </article>
+      <article class="lifecycle-lane {{ 'is-ok' if metrics.intune_ok == total_rows and total_rows else 'is-warn' }}">
+        <div class="lane-label">Intune compliant</div>
+        <div class="lane-value">{{ metrics.intune_ok }}/{{ total_rows }}</div>
+        <div class="lane-detail">Endpoint record exists and reports compliant.</div>
+      </article>
+    </div>
+  </section>
+
+  {% if service_health %}
+  <section class="cockpit-section" aria-labelledby="service-heading">
+    <div class="section-head">
+      <h2 id="service-heading">Service health</h2>
+      <div class="section-note">Heartbeat status for web, builder, and monitor workers</div>
+    </div>
+    <div class="service-grid">
+      {% for s in service_health %}
+      <article class="service-card {{ s.status if s.status in ['ok', 'degraded'] else 'dead' }}">
+        <div class="service-card-head">
+          <span class="service-name">{{ s.service_id }}</span>
+          {% if s.status == 'ok' %}
+            <span class="badge ok">OK</span>
+          {% elif s.status == 'degraded' %}
+            <span class="badge warn">degraded</span>
+          {% else %}
+            <span class="badge missing">dead</span>
+          {% endif %}
+        </div>
+        <div class="service-detail">{{ s.detail or 'idle' }}</div>
+        <div class="service-meta">
+          {{ s.age_seconds }}s since heartbeat
+          <span class="row-subtle"><code>{{ s.version_sha }}</code></span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="cockpit-section" aria-labelledby="fleet-heading">
+    <div class="section-head">
+      <h2 id="fleet-heading">Fleet lifecycle table</h2>
+      <div class="section-note">{{ total_rows }} VM{% if total_rows != 1 %}s{% endif %} in the current sweep view</div>
+    </div>
+
+    {% if not rows %}
+      {{ empty_state(
+        "No devices probed yet.",
+        action_href="/monitoring/settings",
+        action_label="Adjust monitoring settings",
+        hint="The background monitor runs every " ~ settings.interval_seconds ~ " seconds. Check back after the first sweep completes."
+      ) }}
+    {% else %}
+    <div class="fleet-table-wrap">
+      <table class="fleet-table">
+        <thead>
+          <tr>
+            <th>VM</th>
+            <th>Lifecycle</th>
+            <th>PVE</th>
+            <th>Windows</th>
+            <th>Serial</th>
+            <th>AD</th>
+            <th>Entra</th>
+            <th>Intune</th>
+            <th>Last checked</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+          {% set ready = r.ad_badge == 'ok' and r.entra_badge == 'ok' and r.intune_badge == 'ok' %}
+          {% set row_attention = r.ad_badge in ['warn', 'missing', 'error'] or r.entra_badge in ['warn', 'missing', 'error'] or r.intune_badge in ['warn', 'missing', 'error'] %}
+          <tr>
+            <td class="identity-cell">
+              <a class="vm-link" href="/devices/{{ r.vmid }}">{{ r.vm_name or '(unnamed)' }}</a>
+              <span class="row-subtle">VMID {{ r.vmid }} on {{ r.node or 'unknown node' }}</span>
+            </td>
+            <td>
+              <div class="row-lifecycle">
+                <span class="row-lifecycle-label">
+                  {% if ready %}Ready{% elif row_attention %}Needs check{% else %}In progress{% endif %}
+                </span>
+                <div class="stage-rail" aria-label="Lifecycle progress">
+                  <span class="stage-dot {{ 'ok' if r.pve_status == 'running' else ('unknown' if not r.pve_status else 'warn') }}" title="PVE {{ r.pve_status or 'unknown' }}"></span>
+                  <span class="stage-dot {{ 'ok' if r.win_name or r.serial else 'unknown' }}" title="Guest identity"></span>
+                  <span class="stage-dot {{ r.ad_badge }}" title="AD {{ badge_labels.get(r.ad_badge, r.ad_badge) }}"></span>
+                  <span class="stage-dot {{ r.entra_badge }}" title="Entra {{ badge_labels.get(r.entra_badge, r.entra_badge) }}"></span>
+                  <span class="stage-dot {{ r.intune_badge }}" title="Intune {{ badge_labels.get(r.intune_badge, r.intune_badge) }}"></span>
+                </div>
+              </div>
+            </td>
+            <td class="{% if r.pve_status == 'running' %}pve-running{% elif r.pve_status == 'stopped' %}pve-stopped{% else %}pve-other{% endif %}">
+              {{ r.pve_status or 'unknown' }}
+            </td>
+            <td>{{ r.win_name or 'unknown' }}</td>
+            <td>{{ r.serial or 'unknown' }}</td>
+            <td>
+              <span class="badge {{ r.ad_badge }}" title="{{ r.ad_count }} AD match{% if r.ad_count != 1 %}es{% endif %}">
+                {{ badge_labels.get(r.ad_badge, r.ad_badge) }}
+                {% if r.ad_count > 1 %}<span class="count-pill">x{{ r.ad_count }}</span>{% endif %}
+              </span>
+              {% if r.ad_cn %}
+                <span class="source-name {% if r.win_name and r.ad_cn|lower != r.win_name|lower %}mismatch{% endif %}"
+                      title="{% if r.win_name and r.ad_cn|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
+                  {{ r.ad_cn }}
+                </span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge {{ r.entra_badge }}" title="{{ r.entra_trust_type or 'no match' }} ({{ r.entra_count }})">
+                {{ badge_labels.get(r.entra_badge, r.entra_badge) }}
+                {% if r.entra_trust_type %}<span class="count-pill">{{ r.entra_trust_type }}</span>{% endif %}
+                {% if r.entra_count > 1 %}<span class="count-pill">x{{ r.entra_count }}</span>{% endif %}
+              </span>
+              {% if r.entra_display_name %}
+                <span class="source-name {% if r.win_name and r.entra_display_name|lower != r.win_name|lower %}mismatch{% endif %}"
+                      title="{% if r.win_name and r.entra_display_name|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
+                  {{ r.entra_display_name }}
+                </span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge {{ r.intune_badge }}" title="{{ r.intune_compliance or 'no match' }} ({{ r.intune_count }})">
+                {{ badge_labels.get(r.intune_badge, r.intune_badge) }}
+                {% if r.intune_compliance %}<span class="count-pill">{{ r.intune_compliance }}</span>{% endif %}
+                {% if r.intune_count > 1 %}<span class="count-pill">x{{ r.intune_count }}</span>{% endif %}
+              </span>
+              {% if r.intune_device_name %}
+                <span class="source-name {% if r.win_name and r.intune_device_name|lower != r.win_name|lower %}mismatch{% endif %}"
+                      title="{% if r.win_name and r.intune_device_name|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
+                  {{ r.intune_device_name }}
+                </span>
+              {% endif %}
+            </td>
+            <td>
+              <time datetime="{{ r.last_checked }}"
+                    data-utc="{{ r.last_checked }}"
+                    title="{{ r.last_checked }}">{{ r.last_checked }}</time>
+            </td>
+            <td><a class="cockpit-action" href="/devices/{{ r.vmid }}">Inspect</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
 </div>
-{% endif %}
-
-<div class="monitor-status">
-  <strong>Status:</strong>
-  {% if settings.enabled %}
-    <span class="badge ok">enabled</span>
-  {% else %}
-    <span class="badge missing">disabled</span>
-  {% endif %}
-  · sweep every {{ settings.interval_seconds }}s
-  {% if settings.interval_seconds < 900 %}
-    <span class="badge warn" title="Not tested below 15 minutes — upstream AD→Entra sync cadence is ~30min.">aggressive</span>
-  {% endif %}
-  · searching {{ search_ous | length }} OU{% if search_ous | length != 1 %}s{% endif %}
-  (<a href="/monitoring/settings">configure</a>)
-</div>
-
-{% if not rows %}
-  <p>No devices probed yet. The background monitor runs every
-  {{ settings.interval_seconds }} seconds — check back after the first
-  sweep completes. You can also
-  <a href="/monitoring/settings">adjust settings</a>
-  (interval, AD credential, search OUs).</p>
-{% else %}
-
-<table>
-  <tr>
-    <th>VMID</th>
-    <th>Name</th>
-    <th>Node</th>
-    <th>PVE</th>
-    <th>Windows name</th>
-    <th>Serial</th>
-    <th>AD</th>
-    <th>Entra</th>
-    <th>Intune</th>
-    <th>Last checked</th>
-    <th>Actions</th>
-  </tr>
-  {% for r in rows %}
-  <tr>
-    <td>{{ r.vmid }}</td>
-    <td><a href="/devices/{{ r.vmid }}">{{ r.vm_name or '(unnamed)' }}</a></td>
-    <td>{{ r.node }}</td>
-    <td class="{% if r.pve_status == 'running' %}pve-running{% elif r.pve_status == 'stopped' %}pve-stopped{% else %}pve-other{% endif %}">
-      {{ r.pve_status or '—' }}
-    </td>
-    <td>{{ r.win_name or '—' }}</td>
-    <td>{{ r.serial or '—' }}</td>
-    <td>
-      <span class="badge {{ r.ad_badge }}" title="{{ r.ad_count }} AD match{% if r.ad_count != 1 %}es{% endif %}">
-        {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.ad_badge] }}
-        {% if r.ad_count > 1 %}<span class="count-pill">×{{ r.ad_count }}</span>{% endif %}
-      </span>
-      {% if r.ad_cn %}
-        <div class="source-name {% if r.win_name and r.ad_cn|lower != r.win_name|lower %}mismatch{% endif %}"
-             title="{% if r.win_name and r.ad_cn|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
-          {{ r.ad_cn }}
-        </div>
-      {% endif %}
-    </td>
-    <td>
-      <span class="badge {{ r.entra_badge }}" title="{{ r.entra_trust_type or 'no match' }} ({{ r.entra_count }})">
-        {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.entra_badge] }}
-        {% if r.entra_trust_type %}<span class="count-pill">{{ r.entra_trust_type }}</span>{% endif %}
-        {% if r.entra_count > 1 %}<span class="count-pill">×{{ r.entra_count }}</span>{% endif %}
-      </span>
-      {% if r.entra_display_name %}
-        <div class="source-name {% if r.win_name and r.entra_display_name|lower != r.win_name|lower %}mismatch{% endif %}"
-             title="{% if r.win_name and r.entra_display_name|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
-          {{ r.entra_display_name }}
-        </div>
-      {% endif %}
-    </td>
-    <td>
-      <span class="badge {{ r.intune_badge }}" title="{{ r.intune_compliance or 'no match' }} ({{ r.intune_count }})">
-        {{ {'ok':'✅','warn':'⚠️','missing':'❌','pending':'⏳','error':'🔴','unknown':'—'}[r.intune_badge] }}
-        {% if r.intune_compliance %}<span class="count-pill">{{ r.intune_compliance }}</span>{% endif %}
-        {% if r.intune_count > 1 %}<span class="count-pill">×{{ r.intune_count }}</span>{% endif %}
-      </span>
-      {% if r.intune_device_name %}
-        <div class="source-name {% if r.win_name and r.intune_device_name|lower != r.win_name|lower %}mismatch{% endif %}"
-             title="{% if r.win_name and r.intune_device_name|lower != r.win_name|lower %}naming drift: Windows says {{ r.win_name }}{% endif %}">
-          {{ r.intune_device_name }}
-        </div>
-      {% endif %}
-    </td>
-    <td>
-      <time datetime="{{ r.last_checked }}"
-            data-utc="{{ r.last_checked }}"
-            title="{{ r.last_checked }}">{{ r.last_checked }}</time>
-    </td>
-    <td><a href="/devices/{{ r.vmid }}">Detail</a></td>
-  </tr>
-  {% endfor %}
-</table>
-
-{% endif %}
 
 {% endblock %}

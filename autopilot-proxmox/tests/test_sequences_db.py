@@ -329,3 +329,29 @@ def test_seed_default_sequence_b1_compiles_cleanly(db_path, key_path):
     seq = sequences_db.get_sequence(db_path, default_id)
     compiled = sequence_compiler.compile(seq)  # must not raise
     assert compiled.autopilot_enabled is True
+
+
+def test_hash_capture_phase_column_exists_after_init(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(task_sequences)")}
+    assert "hash_capture_phase" in cols
+
+
+def test_hash_capture_phase_default_is_oobe(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    sequences_db.create_sequence(
+        db_path, name="t", description="", target_os="windows",
+        produces_autopilot_hash=False, is_default=False,
+    )
+    seqs = sequences_db.list_sequences(db_path)
+    assert seqs[0]["hash_capture_phase"] == "oobe"
+
+
+def test_hash_capture_phase_migration_idempotent(db_path):
+    from web import sequences_db
+    sequences_db.init(db_path)
+    sequences_db.init(db_path)  # must not raise on existing column

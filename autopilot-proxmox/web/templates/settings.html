@@ -1,12 +1,13 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, alert %}
 {% block title %}Settings - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Settings</h2>
+{{ page_head("Settings", "Control-plane configuration, Proxmox/UTM defaults, vault-backed secrets, and inventory-dependent options.") }}
 {% if saved %}
-<p style="background: var(--ok-bg); border: 1px solid var(--ok-fg); padding: 8px; color: var(--ok-fg);">Settings saved successfully.</p>
+{{ alert("Settings saved successfully.", level="ok") }}
 {% endif %}
 
-<p style="color:var(--ink-muted); max-width: 820px;">
+<p class="subtitle" style="max-width: 820px;">
   Values under <b>Credentials (vault.yml)</b> are stored on disk in
   <code>inventory/group_vars/all/vault.yml</code>. Secret fields show
   <span class="badge badge-green">set</span> when a value is present;

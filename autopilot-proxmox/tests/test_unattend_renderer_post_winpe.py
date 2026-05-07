@@ -1,0 +1,96 @@
+"""Tests for the post_winpe unattend template (no windowsPE pass)."""
+from pathlib import Path
+
+import pytest
+
+
+_TEMPLATE = Path(__file__).resolve().parent.parent / "files" / "autounattend.post_winpe.xml.j2"
+
+
+def test_template_file_exists():
+    assert _TEMPLATE.is_file(), f"missing: {_TEMPLATE}"
+
+
+def test_template_has_no_windowsPE_pass():
+    text = _TEMPLATE.read_text()
+    assert 'pass="windowsPE"' not in text, (
+        "post_winpe template must not contain the windowsPE settings block"
+    )
+
+
+def test_template_has_specialize_pass():
+    text = _TEMPLATE.read_text()
+    assert 'pass="specialize"' in text
+
+
+def test_template_has_oobeSystem_pass():
+    text = _TEMPLATE.read_text()
+    assert 'pass="oobeSystem"' in text
+
+
+def test_template_has_no_disk_config_or_image_install():
+    """Setup's windowsPE pass owns DiskConfiguration / ImageInstall.
+    The post_winpe path bypasses Setup, so neither block must remain.
+    Drivers come from phase-0 dism /add-driver against the VirtIO ISO,
+    not from a PnpCustomizations pass in the unattend."""
+    text = _TEMPLATE.read_text()
+    assert "<DiskConfiguration>" not in text
+    assert "<ImageInstall>" not in text
+    assert "Microsoft-Windows-PnpCustomizationsWinPE" not in text
+
+
+def test_template_jinja_blocks_match_full_template():
+    """post_winpe must accept the same {{ ... }} block names so renderer
+    code path is unified."""
+    full = (_TEMPLATE.parent / "autounattend.xml.j2").read_text()
+    pw = _TEMPLATE.read_text()
+    for var in ("oobe_user_accounts", "oobe_auto_logon",
+                "specialize_computer_name",
+                "specialize_identification_component",
+                "extra_first_logon_commands"):
+        assert f"{{{{ {var} }}}}" in pw or f"{{{{{var}}}}}" in pw, (
+            f"post_winpe template missing placeholder for {var}"
+        )
+        # same placeholder must exist in the full template (sanity check)
+        assert f"{{{{ {var} }}}}" in full or f"{{{{{var}}}}}" in full
+
+
+def test_render_default_phase_layout_is_full(monkeypatch):
+    """phase_layout default 'full' must use the existing template path."""
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    out = unattend_renderer.render_unattend(CompiledSequence())
+    assert 'pass="windowsPE"' in out
+
+
+def test_render_phase_layout_post_winpe_uses_new_template():
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    out = unattend_renderer.render_unattend(
+        CompiledSequence(), phase_layout="post_winpe",
+    )
+    assert 'pass="windowsPE"' not in out
+    assert 'pass="specialize"' in out
+
+
+def test_post_winpe_qga_install_is_not_in_specialize():
+    """The ConfigMgr-style path keeps specialize/OOBE focused on mini-setup.
+    QGA is now an OSD client step launched by SetupComplete."""
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    out = unattend_renderer.render_unattend(
+        CompiledSequence(), phase_layout="post_winpe",
+    )
+    assert "qemu-ga-x86_64.msi" not in out
+    assert "D E F G H I" not in out
+    assert "<Path>cmd.exe /c sc config QEMU-GA start= auto &amp;&amp; net start QEMU-GA</Path>" not in out
+    assert "Ensure QEMU-GA service is set to auto-start</Description>" not in out
+
+
+def test_render_phase_layout_invalid_raises():
+    from web import unattend_renderer
+    from web.sequence_compiler import CompiledSequence
+    with pytest.raises(ValueError):
+        unattend_renderer.render_unattend(
+            CompiledSequence(), phase_layout="bogus",
+        )

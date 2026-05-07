@@ -14,3 +14,6 @@ docs/superpowers/
 
 # Session artifacts from Claude Code superpowers tooling
 .superpowers/
+
+# Local worktrees for parallel feature work
+.worktrees/

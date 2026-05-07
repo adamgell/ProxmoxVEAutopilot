@@ -1,13 +1,26 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head %}
 {% block title %}Provision VMs - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Provision VMs from Template
-  <small style="color:var(--ink-soft);font-weight:normal;font-size:11px;">
-    Template VMID: {{ defaults.template_vmid or '—' }}{% if template_disk_gb %} · template disk {{ template_disk_gb }} GB{% endif %}
-    · <a href="/settings">change defaults</a>
-  </small>
-</h2>
-<p style="color:var(--ink-muted);font-size:11px;">Fields are pre-filled from <a href="/settings">Settings</a>. Override here for this provision run only.</p>
+{{ page_head("Provision VMs", "Clone or WinPE stage new virtual machines with sequence, OEM, identity, and hardware controls.") }}
+<section class="cockpit-grid" style="margin-bottom:14px;">
+  <div class="cockpit-metric cockpit-col-4 cockpit-scanline">
+    <div class="cockpit-metric-label">Template VMID</div>
+    <div class="cockpit-metric-value">{{ defaults.template_vmid or '—' }}</div>
+    <div class="cockpit-metric-note">{% if template_disk_gb %}minimum disk {{ template_disk_gb }} GB{% else %}no disk telemetry{% endif %}</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-4">
+    <div class="cockpit-metric-label">Default Count</div>
+    <div class="cockpit-metric-value">{{ defaults.count }}</div>
+    <div class="cockpit-metric-note">override per command packet</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-4">
+    <div class="cockpit-metric-label">Hostname Pattern</div>
+    <div class="cockpit-metric-value" style="font-size:19px;">{{ defaults.hostname_pattern | default('autopilot-{serial}') }}</div>
+    <div class="cockpit-metric-note"><a href="/settings">Change defaults</a></div>
+  </div>
+</section>
+<p class="subtitle">Provision VMs from Template. Fields are pre-filled from <a href="/settings">Settings</a>; override here for this run only.</p>
 
 <form method="POST" action="/api/jobs/provision">
 <table border="0" cellpadding="3">
@@ -85,6 +98,24 @@
   <td><input type="text" name="group_tag" value="{{ defaults.group_tag }}" size="30">
     <small style="color:var(--ink-soft);">default: {{ defaults.group_tag or '—' }}</small></td>
 </tr>
+{% if winpe_enabled %}
+<tr>
+  <td><b>Boot mode:</b></td>
+  <td>
+    <select name="boot_mode">
+      <option value="clone" selected>Clone (default)</option>
+      <option value="winpe">WinPE (blank-disk image-apply)</option>
+    </select>
+    <small style="color:var(--ink-soft);">
+      WinPE boots a custom WinPE ISO, partitions the disk, applies
+      install.wim, and hands off to Specialize. Requires
+      <code>winpe_blank_template_vmid</code>,
+      <code>proxmox_winpe_iso</code>, and
+      <code>vault_autopilot_winpe_token_secret</code> in inventory.
+    </small>
+  </td>
+</tr>
+{% endif %}
 <tr>
   <td></td>
   <td><input type="submit" value="Provision VMs"></td>

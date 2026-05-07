@@ -1,31 +1,92 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, empty_state %}
 {% block title %}Jobs - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-<h2>Job History</h2>
+{{ page_head("Jobs", "Live queue, worker state, pause gates, and execution history.") }}
+
+{% set running_count = jobs | selectattr("status", "equalto", "running") | list | length %}
+{% set failed_count = jobs | selectattr("status", "equalto", "failed") | list | length %}
+{% set paused_count = jobs | selectattr("paused") | list | length %}
+{% set complete_count = jobs | selectattr("status", "equalto", "complete") | list | length %}
+
+<section class="cockpit-grid" style="margin-bottom:14px;">
+  <div class="cockpit-metric cockpit-col-3 cockpit-scanline">
+    <div class="cockpit-metric-label">Active Work</div>
+    <div class="cockpit-metric-value">{{ running_count }}</div>
+    <div class="cockpit-metric-note">{{ paused_count }} pause gates armed</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Completed</div>
+    <div class="cockpit-metric-value">{{ complete_count }}</div>
+    <div class="cockpit-metric-note">successful lifecycle runs</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Failed</div>
+    <div class="cockpit-metric-value">{{ failed_count }}</div>
+    <div class="cockpit-metric-note">need operator review</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Total Jobs</div>
+    <div class="cockpit-metric-value">{{ jobs | length }}</div>
+    <div class="cockpit-metric-note">newest first</div>
+  </div>
+</section>
+
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <label style="flex:1 1 280px;">Filter jobs
+      <input type="search" data-cockpit-filter="#jobs-table" placeholder="job id, playbook, status, target" style="width:100%;margin-top:6px;">
+    </label>
+    <button type="button" data-cockpit-drawer
+            data-drawer-title="Queue Actions"
+            data-drawer-body="<p class='subtitle'>Use the table to open a job, resume a paused template build from its detail page, or request a kill on a running job.</p><div class='cockpit-lifecycle'><div class='cockpit-lifecycle-step'>Queued</div><div class='cockpit-lifecycle-step'>Running</div><div class='cockpit-lifecycle-step'>Paused</div><div class='cockpit-lifecycle-step'>Complete</div></div>">
+      Queue Actions
+    </button>
+  </div>
+</section>
+
 {% if jobs %}
-<table>
-<tr><th>ID</th><th>Playbook</th><th>Status</th><th>Started</th><th>Duration</th><th>Args</th></tr>
-{% for job in jobs %}
-<tr>
-  <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
-  <td>{{ job.playbook }}</td>
-  <td>
-{%- if job.paused %}<span class="badge warn" title="Template build paused — waiting for operator Resume">PAUSED</span>
-{%- elif job.status == 'pending' %}<span class="badge" style="background:var(--neutral-bg);color:var(--neutral-fg);" title="Waiting for a builder to claim this job">PENDING</span>
-{%- elif job.status == 'running' %}<span class="status-green">RUNNING</span>
-{%- elif job.status == 'complete' %}<span class="status-green">OK</span>
-{%- elif job.status == 'orphaned' %}<span class="badge warn" title="Builder stopped heartbeating; subprocess fate unknown">ORPHANED</span>
-{%- elif job.status == 'failed' %}<span class="status-red">FAILED</span>
-{%- else %}<span class="status-red">{{ job.status | upper }}</span>
-{%- endif %}
-  </td>
-  <td>{{ job.started[:19] }}</td>
-  <td>{{ job.duration or '' }}</td>
-  <td><code style="font-size:11px;">{{ job.args | tojson }}</code></td>
-</tr>
-{% endfor %}
+<table id="jobs-table" class="cockpit-scanline">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Playbook</th>
+      <th>Status</th>
+      <th>Started</th>
+      <th>Duration</th>
+      <th>Args</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for job in jobs %}
+    <tr>
+      <td><a class="mono" href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
+      <td>{{ job.playbook }}</td>
+      <td>
+        {%- if job.paused -%}
+          <span class="badge warn" title="Template build paused - waiting for operator Resume">PAUSED</span>
+        {%- elif job.status == 'pending' -%}
+          <span class="badge unknown" title="Waiting for a builder to claim this job">PENDING</span>
+        {%- elif job.status == 'running' -%}
+          <span class="badge pending">RUNNING</span>
+        {%- elif job.status == 'complete' -%}
+          <span class="badge ok">OK</span>
+        {%- elif job.status == 'orphaned' -%}
+          <span class="badge warn" title="Builder stopped heartbeating; subprocess fate unknown">ORPHANED</span>
+        {%- elif job.status == 'failed' -%}
+          <span class="badge error">FAILED</span>
+        {%- else -%}
+          <span class="badge error">{{ job.status | upper }}</span>
+        {%- endif -%}
+      </td>
+      <td>{{ job.started[:19] }}</td>
+      <td>{{ job.duration or '' }}</td>
+      <td><code style="font-size:11px;">{{ job.args | tojson }}</code></td>
+    </tr>
+  {% endfor %}
+  </tbody>
 </table>
 {% else %}
-<p><i>No jobs yet.</i></p>
+{{ empty_state("No jobs yet.", action_href="/provision", action_label="Provision VMs", hint="Jobs will appear here as soon as provisioning, template, hash, cloud, or sequence commands are queued.") }}
 {% endif %}
 {% endblock %}

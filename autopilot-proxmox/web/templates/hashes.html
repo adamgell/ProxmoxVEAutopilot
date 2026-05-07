@@ -1,14 +1,15 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, alert, empty_state %}
 {% block title %}Hashes - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 {% if uploaded %}
-<p style="background:var(--ok-bg);border:1px solid var(--ok-fg);padding:8px;color:var(--ok-fg);">Upload job(s) started. Check <a href="/jobs">Jobs</a> for progress.</p>
+{{ alert("Upload job(s) started. Check Jobs for progress.", level="ok") }}
 {% endif %}
 {% if error %}
-<p style="background:var(--bad-bg);border:1px solid var(--bad-fg);padding:8px;color:var(--bad-fg);">{{ error }}</p>
+{{ alert(error, level="bad") }}
 {% endif %}
 
-<h2>Hardware Hashes</h2>
+{{ page_head("Hardware Hashes", "Artifact shelf for captured Autopilot CSVs, group tags, uploads, and pruning.") }}
 
 <h3>Import Hash Files</h3>
 <form method="POST" action="/api/hashes/upload" enctype="multipart/form-data" style="margin-bottom:15px;">
@@ -82,7 +83,7 @@
   <span id="selcount" style="color:var(--ink-soft);font-size:10px;margin-left:8px;">0 selected</span>
 </div>
 {% else %}
-<p><i>No hash files yet. <a href="/provision">Provision some VMs</a> to capture hashes, or import CSV files above.</i></p>
+{{ empty_state("No hash files yet.", action_href="/provision", action_label="Provision VMs", hint="Provision VMs to capture hashes, or import CSV files above.") }}
 {% endif %}
 
 <script>

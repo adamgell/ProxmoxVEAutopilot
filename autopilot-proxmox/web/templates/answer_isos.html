@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head, alert, empty_state %}
 {% block title %}Answer Floppies{% endblock %}
 {% block content %}
-<h2>Answer floppy cache</h2>
+{{ page_head("Answer ISO Cache", "Compiled autounattend payloads, Proxmox snippet paths, usage state, and prune controls.") }}
 
 <p style="color:var(--ink-muted);">
   Each provisioned sequence compiles to an
@@ -57,10 +58,10 @@
 </p>
 </form>
 {% else %}
-<p><i>Cache is empty — no per-VM answer floppies have been compiled yet.</i></p>
+{{ empty_state("Cache is empty - no per-VM answer floppies have been compiled yet.") }}
 {% endif %}
 
 {% if error %}
-<p><span class="status-red">Error:</span> {{ error }}</p>
+{{ alert(error, level="bad") }}
 {% endif %}
 {% endblock %}

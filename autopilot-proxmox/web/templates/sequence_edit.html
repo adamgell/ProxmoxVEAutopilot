@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_head %}
 {% block title %}{% if seq %}Edit{% else %}New{% endif %} Sequence{% endblock %}
 {% block content %}
-<h2>{% if seq %}Edit sequence: {{ seq.name }}{% else %}New task sequence{% endif %}</h2>
+{{ page_head(("Edit sequence: " ~ seq.name) if seq else "New task sequence", "Step cards, target OS gates, credentials, reboot markers, and hash capture phase.") }}
 
 <form id="seq-form">
 <table border="0" cellpadding="3">
@@ -21,6 +22,15 @@
 <tr><td><b>Autopilot hash?</b></td>
     <td><label><input type="checkbox" id="produces_autopilot_hash"
         {% if seq and seq.produces_autopilot_hash %}checked{% endif %}> VMs provisioned with this sequence produce an Autopilot hash</label></td></tr>
+<tr><td><b>Hash capture phase</b></td>
+    <td>
+      <select class="form-select" id="hash_capture_phase" name="hash_capture_phase">
+        <option value="oobe" {% if not seq or seq.hash_capture_phase == "oobe" %}selected{% endif %}>OOBE (default; QGA / hash_capture role)</option>
+        <option value="winpe" {% if seq and seq.hash_capture_phase == "winpe" %}selected{% endif %}>WinPE (pre-OS)</option>
+      </select>
+      <small style="color:var(--ink-muted);">WinPE phase requires a build (M2) with Get-WindowsAutopilotInfo.ps1
+      baked in. Default OOBE matches today's clone-path behavior.</small>
+    </td></tr>
 </table>
 </form>
 
@@ -74,7 +84,7 @@ async function loadCreds() {
 function flash(msg, isErr) {
   const el = document.getElementById('flash');
   el.textContent = msg;
-  el.style.color = isErr ? '#c00' : '#060';
+  el.style.color = isErr ? 'var(--bad-fg)' : 'var(--ok-fg)';
   setTimeout(() => { el.textContent = ''; }, 4000);
 }
 
@@ -83,18 +93,18 @@ function render() {
   host.innerHTML = '';
   stepsState.forEach((s, i) => {
     const card = document.createElement('div');
-    card.style.cssText = 'border:1px solid #ccc;padding:6px;margin:4px 0;background:#fafafa;';
+    card.style.cssText = 'border:1px solid var(--cockpit-line);padding:12px;margin:8px 0;background:var(--cockpit-panel-2);border-radius:8px;';
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div><b>${i+1}. ${escHtml(s.step_type)}</b>
-          <small style="color:#666;margin-left:8px;">${summary(s)}</small></div>
+          <small style="color:var(--ink-muted);margin-left:8px;">${summary(s)}</small></div>
         <div>
-          <button type="button" onclick="move(${i},-1)" ${i===0?'disabled':''}>↑</button>
-          <button type="button" onclick="move(${i},1)" ${i===stepsState.length-1?'disabled':''}>↓</button>
+          <button type="button" onclick="move(${i},-1)" ${i===0?'disabled':''}>Up</button>
+          <button type="button" onclick="move(${i},1)" ${i===stepsState.length-1?'disabled':''}>Down</button>
           <label style="margin-left:8px;font-size:11px;">
             <input type="checkbox" ${s.enabled?'checked':''} onchange="toggleEnabled(${i},this.checked)"> enabled
           </label>
-          <button type="button" onclick="remove(${i})" style="margin-left:8px;">✕</button>
+          <button type="button" onclick="remove(${i})" style="margin-left:8px;">Remove</button>
         </div>
       </div>
       <div style="padding:4px 0;">${paramsForm(s, i)}</div>
@@ -118,7 +128,7 @@ function summary(s) {
     case 'join_ad_domain': {
       const cred = creds.find(c => c.id === p.credential_id);
       return (cred ? `creds: ${cred.name}` : '(credential not set)') +
-             (p.ou_path ? ` · ${p.ou_path}` : '');
+             (p.ou_path ? ` / ${p.ou_path}` : '');
     }
     case 'rename_computer': return p.pattern || '(pattern not set)';
     case 'run_script': return p.name || '(script name not set)';
@@ -136,7 +146,7 @@ function paramsForm(s, i) {
         <select ${onI('oem_profile')}>
           <option value="">(use vars.yml default)</option>
           ${Object.keys(oemProfiles).map(k =>
-            `<option value="${k}" ${p.oem_profile===k?'selected':''}>${k} — ${escHtml(oemProfiles[k].manufacturer)} ${escHtml(oemProfiles[k].product)}</option>`).join('')}
+            `<option value="${k}" ${p.oem_profile===k?'selected':''}>${k} - ${escHtml(oemProfiles[k].manufacturer)} ${escHtml(oemProfiles[k].product)}</option>`).join('')}
         </select></label>`;
     case 'local_admin':
     case 'join_ad_domain': {
@@ -167,7 +177,7 @@ function paramsForm(s, i) {
     case 'autopilot_hybrid':
     case 'wait_guest_agent':
     default:
-      return `<small style="color:#666;">(no parameters)</small>`;
+      return `<small style="color:var(--ink-muted);">(no parameters)</small>`;
   }
 }
 
@@ -191,6 +201,7 @@ async function save() {
     target_os: document.getElementById('target_os').value,
     is_default: document.getElementById('is_default').checked,
     produces_autopilot_hash: document.getElementById('produces_autopilot_hash').checked,
+    hash_capture_phase: document.getElementById('hash_capture_phase').value,
     steps: stepsState.map(s => ({
       step_type: s.step_type, params: s.params, enabled: s.enabled,
     })),
