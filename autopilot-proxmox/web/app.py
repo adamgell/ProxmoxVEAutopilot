@@ -806,7 +806,10 @@ def _init_sequences_db() -> None:
 
 
 def _init_jobs_database() -> None:
-    jobs_db.init()
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        jobs_db.init(conn)
 
 
 @app.on_event("startup")

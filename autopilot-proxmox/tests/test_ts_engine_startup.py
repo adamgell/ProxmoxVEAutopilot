@@ -11,7 +11,7 @@ import yaml
 def test_registered_startup_initializes_app_database_url(monkeypatch):
     from fastapi.testclient import TestClient
     from web import app as web_app
-    from web import db_pg, ts_engine_pg
+    from web import db_pg, jobs_pg, ts_engine_pg
 
     calls = []
 
@@ -23,20 +23,26 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         calls.append(("connect", dsn))
         yield FakeConn()
 
-    def fake_init(conn):
-        calls.append(("init", conn.__class__.__name__))
+    def fake_ts_init(conn):
+        calls.append(("ts_init", conn.__class__.__name__))
+
+    def fake_jobs_init(conn):
+        calls.append(("jobs_init", conn.__class__.__name__))
 
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
     monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
     monkeypatch.setattr(db_pg, "connection", fake_connection)
-    monkeypatch.setattr(ts_engine_pg, "init", fake_init)
+    monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
+    monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
 
     with TestClient(web_app.app):
         pass
 
     assert calls == [
         ("connect", "postgresql://new"),
-        ("init", "FakeConn"),
+        ("jobs_init", "FakeConn"),
+        ("connect", "postgresql://new"),
+        ("ts_init", "FakeConn"),
     ]
 
 
