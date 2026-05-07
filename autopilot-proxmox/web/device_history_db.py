@@ -616,25 +616,40 @@ def update_keytab_refresh(db_path: Path, *,
 
 def latest_per_vmid(db_path: Path) -> list[dict]:
     """For the /monitoring dashboard: latest pve_snapshot + device_probe
-    per vmid. Unknown rows come back as None so VMs that have only
-    PVE data (guest agent down) still appear."""
+    for the newest completed sweep only. Unknown rows come back as None
+    so VMs that have only PVE data (guest agent down) still appear.
+
+    Deliberately binding both PVE and probe rows to the same sweep keeps
+    retired/deleted E2E VMs and stale guest identity data off the live
+    dashboard while preserving full history for device detail pages."""
     with _connect(db_path) as conn:
+        latest_sweep = conn.execute(
+            "SELECT id FROM monitoring_sweeps "
+            "WHERE ended_at IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if latest_sweep is None:
+            return []
+
         rows = conn.execute(
             "SELECT vmid, MAX(checked_at) AS last_checked "
-            "FROM pve_snapshots GROUP BY vmid"
+            "FROM pve_snapshots WHERE sweep_id = ? GROUP BY vmid",
+            (int(latest_sweep["id"]),),
         ).fetchall()
         out = []
         for r in rows:
             vmid = int(r["vmid"])
             pve = conn.execute(
                 "SELECT * FROM pve_snapshots "
-                "WHERE vmid = ? ORDER BY checked_at DESC LIMIT 1",
-                (vmid,),
+                "WHERE sweep_id = ? AND vmid = ? "
+                "ORDER BY checked_at DESC LIMIT 1",
+                (int(latest_sweep["id"]), vmid),
             ).fetchone()
             probe = conn.execute(
                 "SELECT * FROM device_probes "
-                "WHERE vmid = ? ORDER BY checked_at DESC LIMIT 1",
-                (vmid,),
+                "WHERE sweep_id = ? AND vmid = ? "
+                "ORDER BY checked_at DESC LIMIT 1",
+                (int(latest_sweep["id"]), vmid),
             ).fetchone()
             out.append({
                 "vmid": vmid,
