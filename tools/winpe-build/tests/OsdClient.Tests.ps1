@@ -43,12 +43,21 @@ Describe 'OsdClient.ps1 contract' {
         $script:Body | Should -Match "'install_qga' \{ Invoke-InstallQga \}"
         $script:Body | Should -Match "'fix_recovery_partition' \{ Invoke-RecoveryFix \}"
         $script:Body | Should -Match "'verify_qga' \{ Invoke-VerifyQga \}"
+        $script:Body | Should -Match "'capture_autopilot_hash' \{ Invoke-CaptureAutopilotHash"
         $script:Body | Should -Match "'handoff_to_oobe' \{ Invoke-HandoffToOobe \}"
         $script:Body | Should -Match 'qemu-ga-x86_64\.msi'
         $script:Body | Should -Match 'Get-Service -Name QEMU-GA'
         $script:Body | Should -Match 'WaitForStatus'
         $script:Body | Should -Match 'FixRecoveryPartition\.ps1'
         $script:Body | Should -Match 'Pre-OOBE gate passed'
+    }
+
+    It 'captures and uploads the Autopilot hash before OOBE handoff' {
+        $script:Body | Should -Match 'function Invoke-CaptureAutopilotHash'
+        $script:Body | Should -Match 'Get-WindowsAutopilotInfo\.ps1'
+        $script:Body | Should -Match '/osd/client/hash'
+        $script:Body | Should -Match 'Import-Csv'
+        $script:Body | Should -Match 'Hardware Hash'
     }
 
     It 'supports generic install_package content actions' {

@@ -443,8 +443,12 @@ def get_osd_client_package(run_id: int,
     osd_client = files_dir / "osd-client" / "OsdClient.ps1"
     setup_complete = files_dir / "SetupComplete.cmd"
     recovery_fix = files_dir / "FixRecoveryPartition.ps1"
-    missing = [str(p) for p in (osd_client, setup_complete, recovery_fix)
-               if not p.is_file()]
+    autopilot_info = files_dir / "Get-WindowsAutopilotInfo.ps1"
+    missing = [
+        str(p)
+        for p in (osd_client, setup_complete, recovery_fix, autopilot_info)
+        if not p.is_file()
+    ]
     if missing:
         raise HTTPException(
             status_code=500,
@@ -473,6 +477,13 @@ def get_osd_client_package(run_id: int,
                 ),
                 "content_b64": _content_b64(recovery_fix),
             },
+            {
+                "path": (
+                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD"
+                    r"\Get-WindowsAutopilotInfo.ps1"
+                ),
+                "content_b64": _content_b64(autopilot_info),
+            },
         ],
     }
 
@@ -486,8 +497,19 @@ _DEFAULT_OSD_ACTIONS = (
     {"kind": "install_qga", "params": {}},
     {"kind": "fix_recovery_partition", "params": {}},
     {"kind": "verify_qga", "params": {}},
+    {"kind": "capture_autopilot_hash", "params": {}},
     {"kind": "handoff_to_oobe", "params": {}},
 )
+
+_REQUIRED_OSD_COMPLETION_KINDS = {
+    "install_qga",
+    "fix_recovery_partition",
+    "verify_qga",
+    "capture_autopilot_hash",
+    "handoff_to_oobe",
+}
+
+_DEFAULT_OSD_ORDER = [action["kind"] for action in _DEFAULT_OSD_ACTIONS]
 
 
 def _build_osd_actions_for_run(db: str, run_id: int) -> list[dict]:
@@ -520,6 +542,9 @@ def _ensure_osd_actions_for_run(db: str, run_id: int) -> list[dict]:
                 db, run_id=run_id, phase="osd",
                 kind=action["kind"], params=action["params"],
             )
+    sequences_db.reorder_run_phase_steps(
+        db, run_id=run_id, phase="osd", ordered_kinds=_DEFAULT_OSD_ORDER,
+    )
 
     return [
         {"step_id": s["id"], "kind": s["kind"],
@@ -640,6 +665,16 @@ def post_osd_complete(payload: dict = Depends(_require_bearer_token)):
             status_code=409,
             detail=f"OSD client cannot complete with incomplete steps: {names}",
         )
+    completed_kinds = {s["kind"] for s in osd_steps}
+    missing_kinds = sorted(_REQUIRED_OSD_COMPLETION_KINDS - completed_kinds)
+    if missing_kinds:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "OSD client cannot complete before required steps are ok: "
+                + ", ".join(missing_kinds)
+            ),
+        )
     handoff = [s for s in osd_steps if s["kind"] == "handoff_to_oobe"]
     if not handoff or handoff[-1]["state"] != "ok":
         raise HTTPException(
@@ -677,7 +712,8 @@ class HashBody(BaseModel):
 
 
 def _persist_autopilot_hash(*, vmid: int, serial: str,
-                            product_id: str, hardware_hash: str) -> None:
+                            product_id: str, hardware_hash: str,
+                            source: str = "winpe") -> None:
     """Persist a captured hash by writing a CSV into HASH_DIR matching
     the column shape produced by roles/hash_capture (the QGA-time path).
     web.app.get_hash_files (line 1794) iterates HASH_DIR.glob('*.csv'),
@@ -688,7 +724,12 @@ def _persist_autopilot_hash(*, vmid: int, serial: str,
     web_app.HASH_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     safe_serial = "".join(c for c in serial if c.isalnum() or c in ("-", "_"))
-    out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-winpe.csv"
+    if not safe_serial:
+        safe_serial = "noserial"
+    safe_source = "".join(c for c in source if c.isalnum() or c in ("-", "_"))
+    if not safe_source:
+        safe_source = "hash"
+    out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-{safe_source}.csv"
     with out.open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["Device Serial Number",
@@ -709,6 +750,24 @@ def post_hash(body: HashBody,
         serial=body.serial_number,
         product_id=body.product_id,
         hardware_hash=body.hardware_hash,
+        source="winpe",
+    )
+    return {"ok": True}
+
+
+@osd_router.post("/hash")
+def post_osd_hash(body: HashBody,
+                  payload: dict = Depends(_require_bearer_token)):
+    db = _db_path()
+    run = sequences_db.get_provisioning_run(db, int(payload["run_id"]))
+    if run is None or run["vmid"] is None:
+        raise HTTPException(status_code=404, detail="run not found or no vmid yet")
+    _persist_autopilot_hash(
+        vmid=int(run["vmid"]),
+        serial=body.serial_number,
+        product_id=body.product_id,
+        hardware_hash=body.hardware_hash,
+        source="osd",
     )
     return {"ok": True}
 

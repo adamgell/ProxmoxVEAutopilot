@@ -136,6 +136,11 @@ def _create_run(
             version="107.0",
             sha256="d" * 64,
             source_uri="https://content.local/qga-107.msi",
+            metadata={
+                "install_command": (
+                    "msiexec.exe /i {path} /qn /norestart"
+                )
+            },
         )
     version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
     run_id = ts_engine_pg.create_run_from_version(
@@ -254,8 +259,50 @@ def test_full_os_action_includes_manifest_content(osd_v2_client, pg_conn):
                 "\\qemu-guest-agent\\107.0"
             ),
             "status": "pending",
+            "metadata": {
+                "install_command": (
+                    "msiexec.exe /i {path} /qn /norestart"
+                )
+            },
         }
     ]
+
+
+def test_agent_can_fetch_full_content_manifest(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+    ).json()
+
+    manifest = osd_v2_client.get(
+        f"/osd/v2/agent/content-manifest/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    )
+
+    assert manifest.status_code == 200, manifest.text
+    body = manifest.json()
+    assert body["schema_version"] == 1
+    assert body["run_id"] == run_id
+    assert body["items"][0]["logical_name"] == "qemu-guest-agent"
+    assert body["items"][0]["sha256"] == "d" * 64
+    assert body["items"][0]["metadata"]["install_command"].startswith(
+        "msiexec.exe"
+    )
+
+
+def test_operator_can_fetch_run_content_manifest(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn)
+
+    manifest = osd_v2_client.get(
+        f"/api/osd/v2/runs/{run_id}/content-manifest",
+    )
+
+    assert manifest.status_code == 200, manifest.text
+    body = manifest.json()
+    assert body["schema_version"] == 1
+    assert body["run_id"] == run_id
+    assert body["items"][0]["logical_name"] == "qemu-guest-agent"
 
 
 def test_action_includes_required_reboot_behavior(osd_v2_client, pg_conn):
