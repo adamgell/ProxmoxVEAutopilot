@@ -57,6 +57,11 @@ class MonitorContext:
     """``(win_name) -> list of Graph device objects`` (may be empty)."""
     graph_find_intune_device: Callable[[str], list[dict]]
     """``(serial_number) -> list of managedDevice objects``."""
+    graph_find_entra_device_by_device_id: Callable[[str], list[dict]] = field(
+        default_factory=lambda: lambda _device_id: []
+    )
+    """``(deviceId) -> list of Graph device objects``. Used to follow
+    Intune.managedDevice.azureADDeviceId when displayName lookup misses."""
     # Testability
     now: Callable[[], str] = field(
         default_factory=lambda: lambda:
@@ -271,6 +276,19 @@ def probe_intune_for_serial(ctx: MonitorContext,
     return ctx.graph_find_intune_device(serial)
 
 
+def probe_entra_for_device_ids(ctx: MonitorContext,
+                               device_ids: list[str]) -> list[dict]:
+    """Return Entra device objects for Intune azureADDeviceId values."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for device_id in device_ids:
+        if not device_id or device_id in seen:
+            continue
+        seen.add(device_id)
+        out.extend(ctx.graph_find_entra_device_by_device_id(device_id))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -419,6 +437,15 @@ def sweep(ctx: MonitorContext,
                 intune = probe_intune_for_serial(ctx, serial)
             except Exception as e:
                 intune_err = f"{type(e).__name__}: {e}"
+        if not entra and intune and entra_err is None:
+            ids = [
+                d.get("azureADDeviceId") or d.get("azure_ad_device_id") or ""
+                for d in intune
+            ]
+            try:
+                entra = probe_entra_for_device_ids(ctx, ids)
+            except Exception as e:
+                entra_err = f"{type(e).__name__}: {e}"
 
         probe_row = _build_probe_row(
             vmid, vm_name, guest,

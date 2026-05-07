@@ -1280,6 +1280,22 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
         )
         return list(body.get("value", []) or [])
 
+    def _graph_find_entra_device_by_device_id(device_id: str) -> list[dict]:
+        q = device_monitor._quote_graph_string(device_id)
+        url = (
+            "https://graph.microsoft.com/v1.0/devices"
+            f"?$filter=deviceId eq '{q}'"
+            "&$select=id,displayName,deviceId,trustType,accountEnabled,"
+            "approximateLastSignInDateTime,operatingSystem,"
+            "operatingSystemVersion,registrationDateTime,deviceOwnership,"
+            "onPremisesSyncEnabled,onPremisesLastSyncDateTime,"
+            "onPremisesSecurityIdentifier,physicalIds,alternativeSecurityIds"
+        )
+        body = device_monitor._graph_get(
+            url, tenant_id=tenant, client_id=client, client_secret=secret,
+        )
+        return list(body.get("value", []) or [])
+
     def _graph_find_intune_device(serial: str) -> list[dict]:
         q = device_monitor._quote_graph_string(serial)
         url = (
@@ -1302,6 +1318,7 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
         ad_search=_ad_search,
         graph_find_entra_device=_graph_find_entra_device,
         graph_find_intune_device=_graph_find_intune_device,
+        graph_find_entra_device_by_device_id=_graph_find_entra_device_by_device_id,
     )
 
 
