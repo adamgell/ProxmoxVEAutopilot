@@ -6,37 +6,38 @@ import pytest
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch):
+def client(tmp_path: Path, pg_conn):
     from fastapi.testclient import TestClient
-    from web import app as app_module, device_history_db
+    from web import app as app_module, device_history_pg
     db_path = tmp_path / "device_monitor.db"
-    monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", db_path)
-    device_history_db.init(db_path)
+    device_history_pg.reset_for_tests(pg_conn)
+    device_history_pg.init(pg_conn)
     with TestClient(app_module.app) as c:
         yield c, db_path
 
 
 def _seed_healthy_vm(db, vmid=116):
-    from web import device_history_db
-    sweep1 = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, sweep1, {
+    from web import device_history_pg
+    sweep1 = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(sweep1, {
         "vmid": vmid, "status": "stopped", "node": "pve2",
         "name": "Gell-EC41E7EB", "config_digest": "d1",
         "checked_at": "2026-04-20T23:41:00+00:00",
     })
-    device_history_db.insert_device_probe(db, sweep1, {
+    device_history_pg.insert_device_probe(sweep1, {
         "vmid": vmid, "win_name": "", "serial": "",
         "ad_matches_json": "[]", "entra_matches_json": "[]",
         "intune_matches_json": "[]",
         "checked_at": "2026-04-20T23:41:00+00:00",
     })
-    sweep2 = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, sweep2, {
+    device_history_pg.finish_sweep(sweep1, vm_count=1)
+    sweep2 = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(sweep2, {
         "vmid": vmid, "status": "running", "node": "pve2",
         "name": "Gell-EC41E7EB", "config_digest": "d1",
         "checked_at": "2026-04-20T23:42:00+00:00",
     })
-    device_history_db.insert_device_probe(db, sweep2, {
+    device_history_pg.insert_device_probe(sweep2, {
         "vmid": vmid, "win_name": "GELL-EC41E7EB",
         "serial": "Gell-EC41E7EB",
         "ad_matches_json": json.dumps([{
@@ -71,6 +72,7 @@ def _seed_healthy_vm(db, vmid=116):
         }]),
         "checked_at": "2026-04-20T23:52:00+00:00",
     })
+    device_history_pg.finish_sweep(sweep2, vm_count=1)
 
 
 def test_device_detail_happy_path_renders_all_columns(client):
@@ -110,14 +112,14 @@ def test_device_detail_shows_link_broken_warning(client):
     the link-broken event on the timeline AND the linkage strip shows
     ✗ for that row."""
     c, db = client
-    from web import device_history_db
-    sweep = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, sweep, {
+    from web import device_history_pg
+    sweep = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(sweep, {
         "vmid": 42, "status": "running", "node": "pve2",
         "name": "Broken", "config_digest": "x",
         "checked_at": "2026-04-20T23:00:00+00:00",
     })
-    device_history_db.insert_device_probe(db, sweep, {
+    device_history_pg.insert_device_probe(sweep, {
         "vmid": 42, "win_name": "BROKEN", "serial": "S42",
         "ad_matches_json": json.dumps([{
             "objectGUID": "G1", "objectSid": "S-AD-CORRECT",
@@ -132,14 +134,15 @@ def test_device_detail_shows_link_broken_warning(client):
         "intune_matches_json": "[]",
         "checked_at": "2026-04-20T23:05:00+00:00",
     })
+    device_history_pg.finish_sweep(sweep, vm_count=1)
     # Second probe so the detector can diff and emit link-broken.
-    sweep2 = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, sweep2, {
+    sweep2 = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(sweep2, {
         "vmid": 42, "status": "running", "node": "pve2",
         "name": "Broken", "config_digest": "x",
         "checked_at": "2026-04-20T23:20:00+00:00",
     })
-    device_history_db.insert_device_probe(db, sweep2, {
+    device_history_pg.insert_device_probe(sweep2, {
         "vmid": 42, "win_name": "BROKEN", "serial": "S42",
         "ad_matches_json": json.dumps([{
             "objectGUID": "G1", "objectSid": "S-AD-CORRECT",
@@ -154,11 +157,51 @@ def test_device_detail_shows_link_broken_warning(client):
         "intune_matches_json": "[]",
         "checked_at": "2026-04-20T23:20:00+00:00",
     })
+    device_history_pg.finish_sweep(sweep2, vm_count=1)
     r = c.get("/devices/42")
     assert r.status_code == 200
     assert "link-broken" in r.text
     # Linkage strip shows ✗ (the check is False for SID mismatch).
     assert "lk-bad" in r.text
+
+
+def test_device_detail_ignores_in_progress_sweep_for_latest_pair(client):
+    c, _ = client
+    from web import device_history_pg
+
+    completed = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(completed, {
+        "vmid": 77,
+        "status": "running",
+        "node": "pve2",
+        "name": "COMPLETED-NAME",
+        "config_digest": "complete",
+        "checked_at": "2026-05-07T15:00:00+00:00",
+    })
+    device_history_pg.insert_device_probe(completed, {
+        "vmid": 77,
+        "win_name": "COMPLETED-WIN",
+        "serial": "COMPLETED-SERIAL",
+        "checked_at": "2026-05-07T15:00:05+00:00",
+    })
+    device_history_pg.finish_sweep(completed, vm_count=1)
+
+    in_progress = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(in_progress, {
+        "vmid": 77,
+        "status": "running",
+        "node": "pve2",
+        "name": "IN-PROGRESS-NAME",
+        "config_digest": "in-progress",
+        "checked_at": "2026-05-07T15:10:00+00:00",
+    })
+
+    r = c.get("/devices/77")
+
+    assert r.status_code == 200
+    assert "COMPLETED-NAME" in r.text
+    assert "COMPLETED-WIN" in r.text
+    assert "IN-PROGRESS-NAME" not in r.text
 
 
 # ---------------------------------------------------------------------------

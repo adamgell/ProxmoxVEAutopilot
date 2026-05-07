@@ -636,26 +636,57 @@ def latest_device_probe(vmid: int) -> dict | None:
     return _probe_dict(row)
 
 
-def history_for_vmid(vmid: int, *, limit: int = 50) -> dict:
+def history_for_vmid(
+    vmid: int,
+    *,
+    limit: int = 50,
+    completed_only: bool = False,
+) -> dict:
     with db_pg.connection() as conn:
-        pve = conn.execute(
-            """
-            SELECT * FROM pve_snapshots
-            WHERE vmid = %s
-            ORDER BY checked_at DESC, id DESC
-            LIMIT %s
-            """,
-            (int(vmid), int(limit)),
-        ).fetchall()
-        probes = conn.execute(
-            """
-            SELECT * FROM device_probes
-            WHERE vmid = %s
-            ORDER BY checked_at DESC, id DESC
-            LIMIT %s
-            """,
-            (int(vmid), int(limit)),
-        ).fetchall()
+        if completed_only:
+            pve = conn.execute(
+                """
+                SELECT p.*
+                FROM pve_snapshots p
+                JOIN monitoring_sweeps s ON s.id = p.sweep_id
+                WHERE p.vmid = %s
+                  AND s.ended_at IS NOT NULL
+                ORDER BY p.checked_at DESC, p.id DESC
+                LIMIT %s
+                """,
+                (int(vmid), int(limit)),
+            ).fetchall()
+            probes = conn.execute(
+                """
+                SELECT pr.*
+                FROM device_probes pr
+                JOIN monitoring_sweeps s ON s.id = pr.sweep_id
+                WHERE pr.vmid = %s
+                  AND s.ended_at IS NOT NULL
+                ORDER BY pr.checked_at DESC, pr.id DESC
+                LIMIT %s
+                """,
+                (int(vmid), int(limit)),
+            ).fetchall()
+        else:
+            pve = conn.execute(
+                """
+                SELECT * FROM pve_snapshots
+                WHERE vmid = %s
+                ORDER BY checked_at DESC, id DESC
+                LIMIT %s
+                """,
+                (int(vmid), int(limit)),
+            ).fetchall()
+            probes = conn.execute(
+                """
+                SELECT * FROM device_probes
+                WHERE vmid = %s
+                ORDER BY checked_at DESC, id DESC
+                LIMIT %s
+                """,
+                (int(vmid), int(limit)),
+            ).fetchall()
     return {
         "pve_snapshots": [_pve_dict(r) for r in pve],
         "device_probes": [_probe_dict(r) for r in probes],
@@ -758,6 +789,56 @@ def latest_per_vmid() -> list[dict]:
             "probe": _probe_dict(row["probe"]) if row["probe"] else None,
         })
     return out
+
+
+def latest_completed_pair_for_vmid(vmid: int) -> dict | None:
+    """Latest completed-sweep PVE row and same-sweep probe for one VMID."""
+    with db_pg.connection() as conn:
+        row = conn.execute(
+            """
+            WITH latest_sweep AS (
+                SELECT s.id
+                FROM monitoring_sweeps s
+                JOIN pve_snapshots p ON p.sweep_id = s.id
+                WHERE s.ended_at IS NOT NULL
+                  AND p.vmid = %s
+                ORDER BY s.id DESC
+                LIMIT 1
+            ),
+            latest_pve AS (
+                SELECT p.*
+                FROM pve_snapshots p
+                JOIN latest_sweep ls ON ls.id = p.sweep_id
+                WHERE p.vmid = %s
+                ORDER BY p.checked_at DESC, p.id DESC
+                LIMIT 1
+            ),
+            latest_probe AS (
+                SELECT pr.*
+                FROM device_probes pr
+                JOIN latest_sweep ls ON ls.id = pr.sweep_id
+                WHERE pr.vmid = %s
+                ORDER BY pr.checked_at DESC, pr.id DESC
+                LIMIT 1
+            )
+            SELECT
+                p.vmid,
+                p.checked_at AS last_checked,
+                to_jsonb(p) AS pve,
+                to_jsonb(pr) AS probe
+            FROM latest_pve p
+            LEFT JOIN latest_probe pr ON pr.vmid = p.vmid
+            """,
+            (int(vmid), int(vmid), int(vmid)),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "vmid": int(row["vmid"]),
+        "last_checked": _iso(row["last_checked"]) or "",
+        "pve": _pve_dict(row["pve"]),
+        "probe": _probe_dict(row["probe"]) if row["probe"] else None,
+    }
 
 
 def ad_first_seen_map() -> dict[int, str]:

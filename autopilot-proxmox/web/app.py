@@ -6802,15 +6802,16 @@ def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
 @app.get("/devices/{vmid}", response_class=HTMLResponse)
 def page_device_detail(request: Request, vmid: int):
     from web import device_regression, monitoring_view
-    pve = device_history_db.latest_pve_snapshot(vmid)
-    probe = device_history_db.latest_device_probe(vmid)
-    if pve is None and probe is None:
+    latest_pair = device_history_db.latest_completed_pair_for_vmid(vmid)
+    if latest_pair is None:
         raise HTTPException(404, f"no monitoring data for vmid {vmid}")
 
-    pve_dict = dict(pve) if pve else None
-    probe_dict = dict(probe) if probe else None
+    pve_dict = latest_pair.get("pve")
+    probe_dict = latest_pair.get("probe")
 
-    history = device_history_db.history_for_vmid(vmid, limit=50)
+    history = device_history_db.history_for_vmid(
+        vmid, limit=50, completed_only=True,
+    )
     # Detector wants oldest-first for correct transition ordering.
     timeline = device_regression.build_timeline(
         list(reversed(history["pve_snapshots"])),
