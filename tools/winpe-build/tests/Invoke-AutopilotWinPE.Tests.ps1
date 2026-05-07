@@ -640,6 +640,70 @@ Describe 'Invoke-Action-StageOsdClient' {
         }
     }
 
+    It 'writes server-authored v2 osd-config.json' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-osd-v2-$(New-Guid)"
+        $driveCreated = $false
+        try {
+            if (Get-PSDrive -Name V -ErrorAction SilentlyContinue) {
+                throw 'test requires unused V: PSDrive'
+            }
+            New-PSDrive -Name V -PSProvider FileSystem -Root $tmp.FullName | Out-Null
+            $uuid = '11111111-2222-3333-4444-555555555555'
+            $clientBytes = [System.Text.Encoding]::UTF8.GetBytes('Write-Host ok')
+            $script:stageOsdUri = $null
+            $rest = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                $script:stageOsdUri = $Uri
+                return [pscustomobject]@{
+                    schema_version = 2
+                    engine = 'v2'
+                    api_version = 2
+                    run_id = $uuid
+                    bearer_token = 'v2-token'
+                    config_path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json'
+                    config = [pscustomobject]@{
+                        engine = 'v2'
+                        api_version = 2
+                        flask_base_url = ''
+                        run_id = $uuid
+                        phase = 'full_os'
+                        agent_id = 'osd-fullos-11111111'
+                        bearer_token = 'v2-token'
+                    }
+                    files = @(
+                        [pscustomobject]@{
+                            path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                            content_b64 = [System.Convert]::ToBase64String($clientBytes)
+                        }
+                    )
+                }
+            }
+
+            Invoke-Action-StageOsdClient `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId $uuid `
+                -BearerToken 'tok' -FallbackBaseUrl 'http://fallback:5000' `
+                -RestInvoker $rest
+
+            $script:stageOsdUri | Should -Match '/osd/v2/agent/package/11111111-2222-3333-4444-555555555555\?phase=full_os$'
+            $cfg = Get-Content 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json' -Raw |
+                ConvertFrom-Json
+            $cfg.engine | Should -Be 'v2'
+            $cfg.api_version | Should -Be 2
+            $cfg.run_id | Should -Be $uuid
+            $cfg.phase | Should -Be 'full_os'
+            $cfg.agent_id | Should -Be 'osd-fullos-11111111'
+            $cfg.bearer_token | Should -Be 'v2-token'
+            $cfg.flask_base_url | Should -Be 'http://x:5000'
+            $cfg.flask_base_url_fallback | Should -Be 'http://fallback:5000'
+        } finally {
+            if ($driveCreated) {
+                Remove-PSDrive -Name V -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            $script:stageOsdUri = $null
+        }
+    }
+
     It 'writes OSD package files and osd-config.json under the applied OS' {
         $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-osd-$(New-Guid)"
         $driveCreated = $false
@@ -853,6 +917,150 @@ Describe 'Start-AutopilotWinPE' {
             $script:rebootCalled | Should -BeTrue
         } finally {
             Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'preserves UUID run_id while dispatching stage_osd_client' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-start-osd-v2-$(New-Guid)"
+        $driveCreated = $false
+        $script:posted = @()
+        $script:rebootCalled = $false
+        $uuid = '11111111-2222-3333-4444-555555555555'
+        try {
+            if (Get-PSDrive -Name V -ErrorAction SilentlyContinue) {
+                throw 'test requires unused V: PSDrive'
+            }
+            New-PSDrive -Name V -PSProvider FileSystem -Root $tmp.FullName | Out-Null
+            $driveCreated = $true
+            $clientBytes = [System.Text.Encoding]::UTF8.GetBytes('Write-Host ok')
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                $script:posted += "$Method $Uri"
+                if ($Uri -match '/register$') {
+                    return [pscustomobject]@{
+                        run_id = $uuid
+                        bearer_token = 't1'
+                        actions = @(
+                            [pscustomobject]@{
+                                step_id = 1
+                                kind = 'stage_osd_client'
+                                params = @{}
+                            }
+                        )
+                    }
+                } elseif ($Uri -match '/osd/v2/agent/package/.+\?phase=full_os$') {
+                    return [pscustomobject]@{
+                        schema_version = 2
+                        engine = 'v2'
+                        api_version = 2
+                        run_id = $uuid
+                        bearer_token = 'v2-token'
+                        config = [pscustomobject]@{
+                            engine = 'v2'
+                            api_version = 2
+                            flask_base_url = ''
+                            run_id = $uuid
+                            phase = 'full_os'
+                            agent_id = 'osd-fullos-11111111'
+                            bearer_token = 'v2-token'
+                        }
+                        files = @(
+                            [pscustomobject]@{
+                                path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                                content_b64 = [System.Convert]::ToBase64String($clientBytes)
+                            }
+                        )
+                    }
+                } elseif ($Uri -match '/step/1/result$') {
+                    return [pscustomobject]@{ ok = $true; bearer_token = 't2' }
+                } elseif ($Uri -match '/done$') {
+                    return [pscustomobject]@{ ok = $true }
+                }
+                throw "unexpected URI $Uri"
+            }
+            $tmpCfg = [System.IO.Path]::GetTempFileName()
+            Set-Content -LiteralPath $tmpCfg -Value '{"flask_base_url":"http://x:5000","build_sha":"DEV"}' -Encoding UTF8
+
+            Start-AutopilotWinPE `
+                -ConfigPath $tmpCfg `
+                -LogPath ([System.IO.Path]::GetTempFileName()) `
+                -RestInvoker $invoker `
+                -RebootRunner { $script:rebootCalled = $true } `
+                -UuidResolver { 'fake-uuid' } `
+                -MacResolver { 'aa:bb' }
+
+            ($script:posted -join '|') | Should -Match '/osd/v2/agent/package/11111111-2222-3333-4444-555555555555\?phase=full_os'
+            ($script:posted -join '|') | Should -Match 'POST.*/done'
+            $script:rebootCalled | Should -BeTrue
+            $cfg = Get-Content 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json' -Raw |
+                ConvertFrom-Json
+            $cfg.run_id | Should -Be $uuid
+        } finally {
+            if ($driveCreated) {
+                Remove-PSDrive -Name V -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            if ($tmpCfg) {
+                Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'preserves UUID run_id while dispatching stage_unattend before OSD staging' {
+        $script:posted = @()
+        $script:webGets = @()
+        $script:rebootCalled = $false
+        $uuid = '11111111-2222-3333-4444-555555555555'
+        $tmpCfg = [System.IO.Path]::GetTempFileName()
+        $tmpPanther = New-Item -Type Directory -Path "$env:TEMP/wpe-start-unattend-v2-$(New-Guid)"
+        try {
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                $script:posted += "$Method $Uri"
+                if ($Uri -match '/register$') {
+                    return [pscustomobject]@{
+                        run_id = $uuid
+                        bearer_token = 't1'
+                        actions = @(
+                            [pscustomobject]@{
+                                step_id = 1
+                                kind = 'stage_unattend'
+                                params = @{}
+                            }
+                        )
+                    }
+                } elseif ($Uri -match '/step/1/result$') {
+                    return [pscustomobject]@{ ok = $true; bearer_token = 't2' }
+                } elseif ($Uri -match '/done$') {
+                    return [pscustomobject]@{ ok = $true }
+                }
+                throw "unexpected URI $Uri"
+            }
+            $web = {
+                param($Uri,$Headers,$TimeoutSec)
+                $script:webGets += $Uri
+                return [pscustomobject]@{ Content = '<unattend>ok</unattend>' }
+            }
+            Set-Content -LiteralPath $tmpCfg -Value '{"flask_base_url":"http://x:5000","build_sha":"DEV"}' -Encoding UTF8
+
+            Start-AutopilotWinPE `
+                -ConfigPath $tmpCfg `
+                -LogPath ([System.IO.Path]::GetTempFileName()) `
+                -RestInvoker $invoker `
+                -WebInvoker $web `
+                -RebootRunner { $script:rebootCalled = $true } `
+                -UuidResolver { 'fake-uuid' } `
+                -MacResolver { 'aa:bb' } `
+                -PantherDirOverride $tmpPanther.FullName
+
+            ($script:webGets -join '|') | Should -Match '/winpe/unattend/11111111-2222-3333-4444-555555555555$'
+            (Get-Content (Join-Path $tmpPanther.FullName 'unattend.xml') -Raw) |
+                Should -Match '<unattend>ok</unattend>'
+            ($script:posted -join '|') | Should -Match 'POST.*/done'
+            $script:rebootCalled | Should -BeTrue
+        } finally {
+            Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+            Remove-Item $tmpPanther -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

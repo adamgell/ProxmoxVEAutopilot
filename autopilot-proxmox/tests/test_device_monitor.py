@@ -10,10 +10,11 @@ import pytest
 
 
 @pytest.fixture
-def db(tmp_path: Path):
-    from web import device_history_db
+def db(tmp_path: Path, pg_conn):
+    from web import device_history_pg
     db_path = tmp_path / "device_monitor.db"
-    device_history_db.init(db_path)
+    device_history_pg.reset_for_tests(pg_conn)
+    device_history_pg.init(pg_conn)
     return db_path
 
 
@@ -132,10 +133,11 @@ def test_probe_pve_status_lock_come_from_vm_list_entry():
 
 
 def test_ad_probe_unions_matches_from_two_ous(db):
-    from web import device_history_db
+    from web import device_history_pg
     from web.device_monitor import probe_ad_for_win_name
-    device_history_db.add_search_ou(
-        db, dn="OU=OtherSite,DC=home,DC=gell,DC=one", label="OtherSite",
+    device_history_pg.add_search_ou(
+        dn="OU=OtherSite,DC=home,DC=gell,DC=one",
+        label="OtherSite",
     )
     calls = []
 
@@ -150,7 +152,7 @@ def test_ad_probe_unions_matches_from_two_ous(db):
         return []
 
     ctx = _make_ctx(db, ad_search=fake_search)
-    ous = device_history_db.list_enabled_search_ous(db)
+    ous = device_history_pg.list_enabled_search_ous()
     matches, errors = probe_ad_for_win_name(ctx, "X", ous)
     assert len(matches) == 2
     assert errors == {}
@@ -166,10 +168,11 @@ def test_ad_probe_unions_matches_from_two_ous(db):
 
 def test_ad_probe_isolates_per_ou_errors(db):
     """A permission error on one OU must not block the other."""
-    from web import device_history_db
+    from web import device_history_pg
     from web.device_monitor import probe_ad_for_win_name
-    device_history_db.add_search_ou(
-        db, dn="OU=Forbidden,DC=home,DC=gell,DC=one", label="Forbidden",
+    device_history_pg.add_search_ou(
+        dn="OU=Forbidden,DC=home,DC=gell,DC=one",
+        label="Forbidden",
     )
 
     def fake_search(search_base, win_name):
@@ -178,7 +181,7 @@ def test_ad_probe_isolates_per_ou_errors(db):
         return [{"distinguishedName": "CN=X,OU=Devices,OU=WorkspaceLabs,DC=home,DC=gell,DC=one"}]
 
     ctx = _make_ctx(db, ad_search=fake_search)
-    ous = device_history_db.list_enabled_search_ous(db)
+    ous = device_history_pg.list_enabled_search_ous()
     matches, errors = probe_ad_for_win_name(ctx, "X", ous)
     assert len(matches) == 1
     assert matches[0]["source_ou_label"] == "WorkspaceLabs"
@@ -187,10 +190,10 @@ def test_ad_probe_isolates_per_ou_errors(db):
 
 
 def test_ad_probe_empty_result_is_not_an_error(db):
-    from web import device_history_db
+    from web import device_history_pg
     from web.device_monitor import probe_ad_for_win_name
     ctx = _make_ctx(db, ad_search=lambda dn, n: [])
-    ous = device_history_db.list_enabled_search_ous(db)
+    ous = device_history_pg.list_enabled_search_ous()
     matches, errors = probe_ad_for_win_name(ctx, "Missing", ous)
     assert matches == []
     assert errors == {}
@@ -213,7 +216,7 @@ def _fake_config(vmid):
 
 
 def test_sweep_writes_pve_and_probe_rows_for_autopilot_vms(db):
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
     vms = [
         {"vmid": 116, "name": "Gell-EC41E7EB", "node": "pve2",
          "status": "running", "tags": "autopilot"},
@@ -241,7 +244,7 @@ def test_sweep_writes_pve_and_probe_rows_for_autopilot_vms(db):
     assert sweep_id >= 1
 
     # Only the autopilot-tagged VM got a row.
-    rows = device_history_db.latest_per_vmid(db)
+    rows = device_history_pg.latest_per_vmid()
     assert [r["vmid"] for r in rows] == [116]
     r = rows[0]
     # Name comes from the Proxmox config dict, not the VM list entry —
@@ -251,14 +254,14 @@ def test_sweep_writes_pve_and_probe_rows_for_autopilot_vms(db):
     assert r["probe"]["ad_match_count"] == 1
     assert r["probe"]["entra_found"] == 1
     assert r["probe"]["intune_found"] == 1
-    ad = json.loads(r["probe"]["ad_matches_json"])
+    ad = r["probe"]["ad_matches_json"]
     assert ad[0]["source_ou_dn"] == "OU=WorkspaceLabs,DC=home,DC=gell,DC=one"
 
 
 def test_sweep_backfills_entra_from_intune_azure_ad_device_id(db):
     """When displayName lookup misses, Intune's azureADDeviceId is the
     authoritative edge back to the Entra device object."""
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
 
     vms = [{"vmid": 108, "name": "Gell-60F03E42", "node": "pve2",
             "status": "running", "tags": "autopilot"}]
@@ -290,16 +293,16 @@ def test_sweep_backfills_entra_from_intune_azure_ad_device_id(db):
 
     device_monitor.sweep(ctx)
 
-    row = device_history_db.latest_device_probe(db, 108)
+    row = device_history_pg.latest_device_probe(108)
     assert row["entra_found"] == 1
     assert row["entra_match_count"] == 1
     assert lookup_ids == ["6a0ba1f9-0090-4683-aee3-31a6abc1e4ad"]
-    entra = json.loads(row["entra_matches_json"])
+    entra = row["entra_matches_json"]
     assert entra[0]["trustType"] == "AzureAd"
 
 
 def test_sweep_includes_vmids_from_extra_in_scope_even_without_tag(db):
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
     vms = [{"vmid": 999, "name": "Gell-LEGACY", "node": "pve2",
             "status": "running", "tags": "other"}]
     ctx = _make_ctx(
@@ -310,15 +313,15 @@ def test_sweep_includes_vmids_from_extra_in_scope_even_without_tag(db):
         ad_search=lambda dn, name: [],
     )
     sweep_id = device_monitor.sweep(ctx, extra_in_scope_vmids={999})
-    rows = device_history_db.latest_per_vmid(db)
+    rows = device_history_pg.latest_per_vmid()
     assert [r["vmid"] for r in rows] == [999]
 
 
 def test_latest_per_vmid_hides_vms_not_seen_in_latest_sweep(db):
-    from web import device_history_db
+    from web import device_history_pg
 
-    old_sweep = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, old_sweep, {
+    old_sweep = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(old_sweep, {
         "vmid": 118,
         "status": "running",
         "node": "pve2",
@@ -326,16 +329,16 @@ def test_latest_per_vmid_hides_vms_not_seen_in_latest_sweep(db):
         "config_digest": "old",
         "checked_at": "2026-05-05T20:02:14+00:00",
     })
-    device_history_db.insert_device_probe(db, old_sweep, {
+    device_history_pg.insert_device_probe(old_sweep, {
         "vmid": 118,
         "win_name": "OLD-E2E",
         "serial": "OLD-SERIAL",
         "checked_at": "2026-05-05T20:02:15+00:00",
     })
-    device_history_db.finish_sweep(db, old_sweep, vm_count=1)
+    device_history_pg.finish_sweep(old_sweep, vm_count=1)
 
-    current_sweep = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, current_sweep, {
+    current_sweep = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(current_sweep, {
         "vmid": 116,
         "status": "running",
         "node": "pve2",
@@ -343,24 +346,24 @@ def test_latest_per_vmid_hides_vms_not_seen_in_latest_sweep(db):
         "config_digest": "current",
         "checked_at": "2026-05-07T15:13:44+00:00",
     })
-    device_history_db.insert_device_probe(db, current_sweep, {
+    device_history_pg.insert_device_probe(current_sweep, {
         "vmid": 116,
         "win_name": "CURRENT",
         "serial": "CURRENT-SERIAL",
         "checked_at": "2026-05-07T15:13:48+00:00",
     })
-    device_history_db.finish_sweep(db, current_sweep, vm_count=1)
+    device_history_pg.finish_sweep(current_sweep, vm_count=1)
 
-    rows = device_history_db.latest_per_vmid(db)
+    rows = device_history_pg.latest_per_vmid()
     assert [r["vmid"] for r in rows] == [116]
     assert rows[0]["probe"]["win_name"] == "CURRENT"
 
 
 def test_latest_per_vmid_does_not_pair_current_pve_with_stale_probe(db):
-    from web import device_history_db
+    from web import device_history_pg
 
-    old_sweep = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, old_sweep, {
+    old_sweep = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(old_sweep, {
         "vmid": 116,
         "status": "running",
         "node": "pve2",
@@ -368,16 +371,16 @@ def test_latest_per_vmid_does_not_pair_current_pve_with_stale_probe(db):
         "config_digest": "old",
         "checked_at": "2026-05-07T14:00:00+00:00",
     })
-    device_history_db.insert_device_probe(db, old_sweep, {
+    device_history_pg.insert_device_probe(old_sweep, {
         "vmid": 116,
         "win_name": "STALE-WINDOWS-NAME",
         "serial": "STALE-SERIAL",
         "checked_at": "2026-05-07T14:00:05+00:00",
     })
-    device_history_db.finish_sweep(db, old_sweep, vm_count=1)
+    device_history_pg.finish_sweep(old_sweep, vm_count=1)
 
-    current_sweep = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, current_sweep, {
+    current_sweep = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(current_sweep, {
         "vmid": 116,
         "status": "running",
         "node": "pve2",
@@ -385,15 +388,15 @@ def test_latest_per_vmid_does_not_pair_current_pve_with_stale_probe(db):
         "config_digest": "current",
         "checked_at": "2026-05-07T15:13:44+00:00",
     })
-    device_history_db.finish_sweep(db, current_sweep, vm_count=1)
+    device_history_pg.finish_sweep(current_sweep, vm_count=1)
 
-    rows = device_history_db.latest_per_vmid(db)
+    rows = device_history_pg.latest_per_vmid()
     assert [r["vmid"] for r in rows] == [116]
     assert rows[0]["probe"] is None
 
 
 def test_sweep_records_pve_list_failure_on_sweep_row(db):
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
 
     def boom():
         raise ConnectionError("pve down")
@@ -401,23 +404,45 @@ def test_sweep_records_pve_list_failure_on_sweep_row(db):
     ctx = _make_ctx(db, list_pve_vms=boom)
     sweep_id = device_monitor.sweep(ctx)
     # No per-VM rows written.
-    assert device_history_db.latest_per_vmid(db) == []
-    # Sweep row carries the error.
-    import sqlite3
-    conn = sqlite3.connect(db)
-    row = conn.execute(
-        "SELECT errors_json FROM monitoring_sweeps WHERE id = ?",
-        (sweep_id,),
-    ).fetchone()
-    errors = json.loads(row[0])
+    assert device_history_pg.latest_per_vmid() == []
+    # Sweep row carries the error and is marked complete.
+    status = device_history_pg.latest_sweep_status()
+    assert status["id"] == sweep_id
+    assert status["running"] is False
+    errors = status["errors_json"]
     assert "pve_list" in errors
     assert "ConnectionError" in errors["pve_list"]
+
+
+def test_sweep_finalizes_when_storage_insert_fails(db, monkeypatch):
+    from web import device_history_pg, device_monitor
+
+    vms = [{"vmid": 7, "name": "Gell-TEST", "node": "pve2",
+            "status": "running", "tags": "autopilot"}]
+    ctx = _make_ctx(
+        db,
+        list_pve_vms=lambda: vms,
+        fetch_pve_config=lambda vmid, node: _fake_config(vmid),
+    )
+
+    def fail_insert(*args, **kwargs):
+        raise RuntimeError("postgres write failed")
+
+    monkeypatch.setattr(device_history_pg, "insert_pve_snapshot", fail_insert)
+
+    sweep_id = device_monitor.sweep(ctx)
+
+    status = device_history_pg.latest_sweep_status()
+    assert status["id"] == sweep_id
+    assert status["running"] is False
+    assert status["vm_count"] == 0
+    assert "postgres write failed" in status["errors_json"]["sweep"]
 
 
 def test_sweep_records_per_source_errors_on_probe_row(db):
     """When Graph / LDAP fail on one VM, the probe row still gets
     written — with the failure captured in probe_errors_json."""
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
     vms = [{"vmid": 7, "name": "Gell-TEST", "node": "pve2",
             "status": "running", "tags": "autopilot"}]
     ctx = _make_ctx(
@@ -432,9 +457,9 @@ def test_sweep_records_per_source_errors_on_probe_row(db):
         graph_find_intune_device=lambda s: (_ for _ in ()).throw(RuntimeError("intune 503")),
     )
     device_monitor.sweep(ctx)
-    row = device_history_db.latest_device_probe(db, 7)
+    row = device_history_pg.latest_device_probe(7)
     assert row is not None
-    errs = json.loads(row["probe_errors_json"])
+    errs = row["probe_errors_json"]
     assert "graph 503" in errs["entra"]
     assert "intune 503" in errs["intune"]
     assert row["ad_found"] == 0
@@ -445,7 +470,7 @@ def test_sweep_skips_directory_probes_when_vm_stopped(db):
     """Stopped VM → PVE snapshot still taken, but AD/Entra/Intune
     skipped (no live guest to ask for serial) and probe_errors_json
     records why."""
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
     vms = [{"vmid": 8, "name": "Gell-STOP", "node": "pve2",
             "status": "stopped", "tags": "autopilot"}]
     ad_called = []
@@ -461,13 +486,13 @@ def test_sweep_skips_directory_probes_when_vm_stopped(db):
     # AD still called (we have the VM name) — that's deliberate, per
     # spec: stopped VMs are probed by last-known name.
     assert ad_called == ["Gell-STOP"]
-    probe = device_history_db.latest_device_probe(db, 8)
-    errs = json.loads(probe["probe_errors_json"])
+    probe = device_history_pg.latest_device_probe(8)
+    errs = probe["probe_errors_json"]
     assert "vm-not-running" in errs["guest"]
 
 
 def test_sweep_finalizes_vm_count(db):
-    from web import device_history_db, device_monitor
+    from web import device_history_pg, device_monitor
     vms = [
         {"vmid": i, "name": f"A{i}", "node": "pve2",
          "status": "running", "tags": "autopilot"}
@@ -481,11 +506,7 @@ def test_sweep_finalizes_vm_count(db):
         ad_search=lambda dn, name: [],
     )
     sweep_id = device_monitor.sweep(ctx)
-    import sqlite3
-    conn = sqlite3.connect(db)
-    row = conn.execute(
-        "SELECT vm_count, ended_at FROM monitoring_sweeps WHERE id = ?",
-        (sweep_id,),
-    ).fetchone()
-    assert row[0] == 3
-    assert row[1] is not None
+    status = device_history_pg.latest_sweep_status()
+    assert status["id"] == sweep_id
+    assert status["vm_count"] == 3
+    assert status["ended_at"]

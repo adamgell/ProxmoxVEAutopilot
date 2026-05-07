@@ -1,4 +1,3 @@
-import json
 import tempfile
 import threading
 import time
@@ -9,35 +8,44 @@ import pytest
 
 
 @pytest.fixture
-def tmp_env():
+def tmp_env(pg_conn):
     with tempfile.TemporaryDirectory() as d:
-        jobs_dir = Path(d) / "jobs"; jobs_dir.mkdir()
-        db_path = Path(d) / "jobs.db"
-        from web import jobs_db
-        jobs_db.init(db_path)
-        yield jobs_dir, db_path
+        jobs_dir = Path(d) / "jobs"
+        jobs_dir.mkdir()
+        output_dir = Path(d) / "output"
+        output_dir.mkdir()
+        yield jobs_dir, output_dir
 
 
 def test_builder_runs_one_job_and_exits_on_stop(tmp_env):
     """Happy path: enqueue a job, builder claims + spawns + finalizes."""
-    from web import builder, jobs_db
-    jobs_dir, db_path = tmp_env
+    from web import builder, jobs_pg as jobs_db
 
-    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
-                    playbook="x", cmd=["echo", "ok"], args={})
+    jobs_dir, output_dir = tmp_env
+    jobs_db.enqueue(
+        job_id="j1",
+        job_type="capture_hash",
+        playbook="x",
+        cmd=["echo", "ok"],
+        args={},
+    )
 
     stop = threading.Event()
 
     def _fake_run(row, log_path, db_path, worker_id, stop_event):
-        jobs_db.finalize_job(db_path, row["id"], exit_code=0)
+        jobs_db.finalize_job(row["id"], exit_code=0)
 
     with patch("web.builder._run_one_job", side_effect=_fake_run):
         t = threading.Thread(
             target=builder.run_builder,
-            kwargs={"jobs_dir": jobs_dir, "db_path": db_path,
-                    "monitor_db_path": db_path.parent / "device_monitor.db",
-                    "worker_id": "test-worker", "stop_event": stop,
-                    "poll_interval_seconds": 0.1},
+            kwargs={
+                "jobs_dir": jobs_dir,
+                "db_path": output_dir / "jobs.db",
+                "monitor_db_path": output_dir / "device_monitor.db",
+                "worker_id": "test-worker",
+                "stop_event": stop,
+                "poll_interval_seconds": 0.1,
+            },
             daemon=True,
         )
         t.start()
@@ -45,27 +53,29 @@ def test_builder_runs_one_job_and_exits_on_stop(tmp_env):
         stop.set()
         t.join(timeout=2)
 
-    assert jobs_db.get_job(db_path, "j1")["status"] == "complete"
+    assert jobs_db.get_job("j1")["status"] == "complete"
 
 
 def test_builder_run_one_job_kills_on_kill_requested(tmp_env):
-    """With kill_requested=1, the heartbeat tick should terminate the
-    subprocess."""
-    from web import builder, jobs_db
-    jobs_dir, db_path = tmp_env
+    """With kill_requested=1, the heartbeat tick should terminate the subprocess."""
+    from web import builder, jobs_pg as jobs_db
 
-    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
-                    playbook="x", cmd=["sleep", "30"], args={})
-    jobs_db.claim_next_job(db_path, worker_id="test-worker")
+    jobs_dir, output_dir = tmp_env
+    jobs_db.enqueue(
+        job_id="j1",
+        job_type="capture_hash",
+        playbook="x",
+        cmd=["sleep", "30"],
+        args={},
+    )
+    jobs_db.claim_next_job(worker_id="test-worker")
 
     proc = MagicMock()
-    # First .poll() returns None (running), second returns 0 (after terminate),
-    # third is the `finally` cleanup guard which sees it exited already.
     proc.poll.side_effect = [None, 0, 0]
     proc.terminate = MagicMock()
 
-    row = jobs_db.get_job(db_path, "j1")
-    jobs_db.request_kill(db_path, "j1")
+    row = jobs_db.get_job("j1")
+    jobs_db.request_kill("j1")
 
     stop = threading.Event()
     log_path = jobs_dir / "j1.log"
@@ -73,21 +83,23 @@ def test_builder_run_one_job_kills_on_kill_requested(tmp_env):
 
     with patch("web.builder.subprocess.Popen", return_value=proc):
         builder._run_one_job(
-            row, log_path=log_path, db_path=db_path,
-            worker_id="test-worker", stop_event=stop,
+            row,
+            log_path=log_path,
+            db_path=output_dir / "jobs.db",
+            worker_id="test-worker",
+            stop_event=stop,
             heartbeat_seconds=0.05,
         )
 
     proc.terminate.assert_called_once()
-    # Since poll returned 0 after terminate, finalize should mark complete.
-    assert jobs_db.get_job(db_path, "j1")["exit_code"] == 0
+    assert jobs_db.get_job("j1")["exit_code"] == 0
 
 
 def test_builder_idle_sleeps_when_no_jobs(tmp_env):
-    """When claim returns None, the loop sleeps and retries without
-    busy-looping."""
+    """When claim returns None, the loop sleeps and retries without busy-looping."""
     from web import builder
-    jobs_dir, db_path = tmp_env
+
+    jobs_dir, output_dir = tmp_env
     stop = threading.Event()
     claims = []
 
@@ -98,10 +110,14 @@ def test_builder_idle_sleeps_when_no_jobs(tmp_env):
     with patch("web.builder.jobs_db.claim_next_job", side_effect=_mock_claim):
         t = threading.Thread(
             target=builder.run_builder,
-            kwargs={"jobs_dir": jobs_dir, "db_path": db_path,
-                    "monitor_db_path": db_path.parent / "device_monitor.db",
-                    "worker_id": "t", "stop_event": stop,
-                    "poll_interval_seconds": 0.1},
+            kwargs={
+                "jobs_dir": jobs_dir,
+                "db_path": output_dir / "jobs.db",
+                "monitor_db_path": output_dir / "device_monitor.db",
+                "worker_id": "t",
+                "stop_event": stop,
+                "poll_interval_seconds": 0.1,
+            },
             daemon=True,
         )
         t.start()
@@ -109,80 +125,86 @@ def test_builder_idle_sleeps_when_no_jobs(tmp_env):
         stop.set()
         t.join(timeout=1)
 
-    # Should have polled ~3 times in 0.35s with 0.1s interval, not 3500.
     assert 2 <= len(claims) <= 6
 
 
-def test_builder_run_one_job_exits_cleanly_on_reap(tmp_env):
-    """If heartbeat returns 0 (row no longer 'running'), builder
-    terminates subprocess and returns without calling finalize_job."""
-    from web import builder, jobs_db
-    jobs_dir, db_path = tmp_env
-    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
-                    playbook="x", cmd=["sleep", "30"], args={})
-    jobs_db.claim_next_job(db_path, worker_id="w")
+def test_builder_run_one_job_exits_cleanly_on_reap(tmp_env, pg_conn):
+    """A reaped row terminates the subprocess and stays orphaned."""
+    from web import builder, jobs_pg as jobs_db
+
+    jobs_dir, output_dir = tmp_env
+    jobs_db.enqueue(
+        job_id="j1",
+        job_type="capture_hash",
+        playbook="x",
+        cmd=["sleep", "30"],
+        args={},
+    )
+    jobs_db.claim_next_job(worker_id="w")
 
     proc = MagicMock()
-    # Still running on first poll; the finally guard's poll returns
-    # None so we exercise the terminate-on-exit path; but we also want
-    # to confirm proc.terminate was called in the reap branch. Provide
-    # extra None values so the finally guard sees it still alive and
-    # terminates — that's fine (MagicMock.terminate is just recorded).
     proc.poll.return_value = None
     proc.terminate = MagicMock()
 
-    row = jobs_db.get_job(db_path, "j1")
-    # Simulate an external reap before builder's first heartbeat tick.
-    import sqlite3
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("UPDATE jobs SET status='orphaned' WHERE id=?", ("j1",))
+    row = jobs_db.get_job("j1")
+    pg_conn.execute("UPDATE jobs SET status='orphaned' WHERE id=%s", ("j1",))
+    pg_conn.commit()
 
     stop = threading.Event()
-    log_path = jobs_dir / "j1.log"; log_path.touch()
+    log_path = jobs_dir / "j1.log"
+    log_path.touch()
     with patch("web.builder.subprocess.Popen", return_value=proc):
         builder._run_one_job(
-            row, log_path=log_path, db_path=db_path,
-            worker_id="w", stop_event=stop, heartbeat_seconds=0.01,
+            row,
+            log_path=log_path,
+            db_path=output_dir / "jobs.db",
+            worker_id="w",
+            stop_event=stop,
+            heartbeat_seconds=0.01,
         )
-    # terminate should have been called (reap branch + finally guard)
     assert proc.terminate.called
-    # Status stays orphaned (not overwritten by finalize).
-    assert jobs_db.get_job(db_path, "j1")["status"] == "orphaned"
+    assert jobs_db.get_job("j1")["status"] == "orphaned"
 
 
 def test_builder_swallows_transient_db_errors(tmp_env):
-    """Transient OperationalError during heartbeat must not kill the
-    worker — just log and retry next tick."""
-    from web import builder, jobs_db
-    import sqlite3
-    jobs_dir, db_path = tmp_env
-    jobs_db.enqueue(db_path, job_id="j1", job_type="capture_hash",
-                    playbook="x", cmd=["sleep", "30"], args={})
-    jobs_db.claim_next_job(db_path, worker_id="w")
+    """Transient heartbeat DB errors are logged and retried."""
+    from web import builder, jobs_pg as jobs_db
+
+    jobs_dir, output_dir = tmp_env
+    jobs_db.enqueue(
+        job_id="j1",
+        job_type="capture_hash",
+        playbook="x",
+        cmd=["sleep", "30"],
+        args={},
+    )
+    jobs_db.claim_next_job(worker_id="w")
 
     proc = MagicMock()
-    # One poll returns None (running), second returns 0 after natural exit,
-    # third is finally guard (already exited).
     proc.poll.side_effect = [None, 0, 0]
 
-    row = jobs_db.get_job(db_path, "j1")
-    # Make touch_heartbeat raise the first call, succeed the second.
+    row = jobs_db.get_job("j1")
     call_count = {"n": 0}
     real_touch = jobs_db.touch_heartbeat
 
-    def flaky_touch(db, jid):
+    def flaky_touch(jid, worker_id):
         call_count["n"] += 1
         if call_count["n"] == 1:
-            raise sqlite3.OperationalError("database is locked")
-        return real_touch(db, jid)
+            raise RuntimeError("database is locked")
+        return real_touch(jid, worker_id)
 
     stop = threading.Event()
-    log_path = jobs_dir / "j1.log"; log_path.touch()
-    with patch("web.builder.subprocess.Popen", return_value=proc), \
-         patch("web.builder.jobs_db.touch_heartbeat", side_effect=flaky_touch):
+    log_path = jobs_dir / "j1.log"
+    log_path.touch()
+    with patch("web.builder.subprocess.Popen", return_value=proc), patch(
+        "web.builder.jobs_db.touch_heartbeat", side_effect=flaky_touch
+    ):
         builder._run_one_job(
-            row, log_path=log_path, db_path=db_path,
-            worker_id="w", stop_event=stop, heartbeat_seconds=0.01,
+            row,
+            log_path=log_path,
+            db_path=output_dir / "jobs.db",
+            worker_id="w",
+            stop_event=stop,
+            heartbeat_seconds=0.01,
         )
-    # Subprocess completed naturally; row should be 'complete'.
-    assert jobs_db.get_job(db_path, "j1")["status"] == "complete"
+    assert jobs_db.get_job("j1")["status"] == "complete"

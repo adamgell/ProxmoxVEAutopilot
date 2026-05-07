@@ -1,4 +1,4 @@
-"""Builder worker loop. Claims Ansible jobs from jobs.db and runs them.
+"""Builder worker loop. Claims Ansible jobs from Postgres and runs them.
 
 Lifecycle:
     1. Poll claim_next_job every `poll_interval_seconds` (default 2s).
@@ -20,7 +20,8 @@ import time
 import uuid
 from pathlib import Path
 
-from web import jobs_db, service_health
+from web import jobs_pg as jobs_db
+from web import service_health_pg as service_health
 from web.paths import JOBS_DIR as _JOBS_DIR, OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT
 
 _log = logging.getLogger("web.builder")
@@ -93,7 +94,7 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
         except Exception:
             _log.exception("failed to spawn subprocess for job %s", row["id"])
             try:
-                jobs_db.finalize_job(db_path, row["id"], exit_code=-1)
+                jobs_db.finalize_job(row["id"], exit_code=-1)
             except Exception:
                 _log.exception("finalize_job failed for %s", row["id"])
             return
@@ -105,7 +106,7 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
             if exit_code is not None:
                 break
             try:
-                n = jobs_db.touch_heartbeat(db_path, row["id"])
+                n = jobs_db.touch_heartbeat(row["id"], worker_id)
                 if n == 0:
                     _log.warning(
                         "job %s no longer in 'running' state — "
@@ -114,7 +115,7 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
                     )
                     reaped = True
                     break
-                current = jobs_db.get_job(db_path, row["id"])
+                current = jobs_db.get_job(row["id"])
                 if current and current.get("kill_requested"):
                     _log.info("kill_requested on %s — terminating",
                               row["id"])
@@ -136,7 +137,7 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
 
         if not reaped:
             try:
-                n = jobs_db.finalize_job(db_path, row["id"], exit_code=exit_code)
+                n = jobs_db.finalize_job(row["id"], exit_code=exit_code)
                 if n == 0:
                     _log.warning(
                         "finalize_job for %s found row already terminal "
@@ -178,19 +179,20 @@ def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
     _log.info("builder %s starting (poll=%ss heartbeat=%ss)",
               worker_id, poll_interval_seconds, heartbeat_seconds)
 
-    service_health.init(monitor_db_path)
-    service_health.heartbeat(monitor_db_path,
-                             service_id=worker_id, service_type="builder",
-                             version_sha=version, detail="starting")
+    service_health.init()
+    service_health.heartbeat(
+        service_id=worker_id, service_type="builder",
+        version_sha=version, detail="starting",
+    )
 
     last_service_heartbeat = 0.0
     while not stop_event.is_set():
-        row = jobs_db.claim_next_job(db_path, worker_id=worker_id)
+        row = jobs_db.claim_next_job(worker_id=worker_id)
         now = time.monotonic()
         if now - last_service_heartbeat >= 10.0:
             detail = f"running {row['id']}" if row else "idle"
             service_health.heartbeat(
-                monitor_db_path, service_id=worker_id,
+                service_id=worker_id,
                 service_type="builder", version_sha=version, detail=detail,
             )
             last_service_heartbeat = now
@@ -204,7 +206,7 @@ def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
         _run_one_job(row, log_path=log_path, db_path=db_path,
                      worker_id=worker_id, stop_event=stop_event)
         service_health.heartbeat(
-            monitor_db_path, service_id=worker_id,
+            service_id=worker_id,
             service_type="builder", version_sha=version, detail="idle",
         )
 

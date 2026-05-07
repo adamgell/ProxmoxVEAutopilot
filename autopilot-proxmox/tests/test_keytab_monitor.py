@@ -23,11 +23,11 @@ def _fake_runner(responses):
 
 
 @pytest.fixture
-def db_path(tmp_path):
-    from web import device_history_db
-    p = tmp_path / "d.db"
-    device_history_db.init(p)
-    return p
+def db_path(tmp_path, pg_conn):
+    from web import device_history_pg
+    device_history_pg.reset_for_tests(pg_conn)
+    device_history_pg.init(pg_conn)
+    return tmp_path / "unused-device-monitor.db"
 
 
 def test_probe_missing_file_returns_missing(tmp_path):
@@ -145,7 +145,7 @@ def test_probe_age_red_approaching_rotation(tmp_path):
 
 
 def test_record_probe_writes_to_db(db_path):
-    from web import keytab_monitor, device_history_db
+    from web import keytab_monitor, device_history_pg
     r = keytab_monitor.KeytabProbeResult(
         status="ok", message="test",
         keytab_path="/etc/krb5.keytab",
@@ -155,15 +155,15 @@ def test_record_probe_writes_to_db(db_path):
         kinit_ok=True, kinit_error=None,
     )
     keytab_monitor.record_probe(db_path, r)
-    h = device_history_db.get_keytab_health(db_path)
+    h = device_history_pg.get_keytab_health()
     assert h["last_probe_status"] == "ok"
     assert h["keytab_kvno_local"] == 7
     assert h["keytab_principal"] == "svc-apmon$@HOME.GELL.ONE"
-    assert h["last_kinit_ok"] == 1
+    assert h["last_kinit_ok"] is True
 
 
 def test_refresh_writes_to_db_on_failure(db_path, tmp_path):
-    from web import keytab_monitor, device_history_db
+    from web import keytab_monitor, device_history_pg
     # Runner returns non-zero for kinit — the refresher should
     # mark last_refresh_ok=0 and not raise.
     run, _ = _fake_runner({
@@ -179,8 +179,8 @@ def test_refresh_writes_to_db_on_failure(db_path, tmp_path):
         gmsa_sam="svc-apmon", run_cmd=run,
     )
     assert ok is False
-    h = device_history_db.get_keytab_health(db_path)
-    assert h["last_refresh_ok"] == 0
+    h = device_history_pg.get_keytab_health()
+    assert h["last_refresh_ok"] is False
     assert "kinit" in (h["last_refresh_message"] or "").lower()
 
 

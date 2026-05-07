@@ -3,7 +3,6 @@ import base64
 import csv
 import json
 import os
-import sqlite3
 import subprocess
 import time
 import urllib3
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+import psycopg
 import yaml
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
@@ -20,8 +20,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from web.jobs import JobManager
-from web import devices_db
-from web import jobs_db
+from web import devices_pg as devices_db
+from web import jobs_pg as jobs_db
 from web import monitoring_evidence
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -44,6 +44,10 @@ def _redirect_with_error(path: str, error: str) -> RedirectResponse:
     return RedirectResponse(f"{path}?error={quote_plus(str(error))}", status_code=303)
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    return isinstance(exc, psycopg.errors.UniqueViolation) or "unique" in str(exc).lower()
+
+
 def _load_version() -> dict:
     """Read the build SHA + timestamp baked in at image build time."""
     version_file = os.environ.get("APP_VERSION_FILE", str(BASE_DIR / "VERSION"))
@@ -64,12 +68,9 @@ _LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, 
 
 # Two flags, one per startup hook. /healthz gates on BOTH so
 # docker-compose `depends_on: service_healthy` can't release
-# builder/monitor after only one hook has completed — FastAPI runs
-# startup hooks in registration order, so a single shared flag flipped
-# True at the end of EITHER hook would leave a race window where the
-# jobs.db migration (second hook) hasn't finished yet. Keeping
-# sequences-init and jobs-init as separate functions matters because
-# the jobs migration reads rows that sequences-init seeds.
+# builder/monitor after only one hook has completed. FastAPI runs
+# startup hooks in registration order, so keep sequence init and job init
+# as separate checkpoints.
 _SEQUENCES_READY = False
 _JOBS_READY = False
 
@@ -103,11 +104,11 @@ PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
 SECRETS_DIR = BASE_DIR / "secrets"
-SEQUENCES_DB = BASE_DIR / "output" / "sequences.db"
-JOBS_DB = BASE_DIR / "output" / "jobs.db"
+# Legacy call sites still pass these handles into the compatibility layer;
+# the backing store is Postgres via web.db_pg, not local database files.
+SEQUENCES_DB = None
+JOBS_DB = None
 CREDENTIAL_KEY = SECRETS_DIR / "credential_key"
-DEVICES_DB = BASE_DIR / "output" / "devices.db"
-devices_db.init(DEVICES_DB)
 DEVICE_MONITOR_DB = BASE_DIR / "output" / "device_monitor.db"
 
 SETTINGS_SCHEMA = [
@@ -465,12 +466,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["tojson"] = lambda x, indent=None: json.dumps(x, indent=indent)
 job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
-    jobs_db_path=JOBS_DB,
 )
 
-from web import sequences_db, crypto as _crypto
+from web import sequences_pg as sequences_db, crypto as _crypto
 from web import sequence_compiler
-from web import device_history_db, device_monitor
+from web import device_history_pg as device_history_db, device_monitor
 from web import auth as _auth
 
 from web.winpe_endpoints import (
@@ -799,21 +799,26 @@ _auth.install_session_middleware(
 @app.on_event("startup")
 def _init_sequences_db() -> None:
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
-    sequences_db.init(SEQUENCES_DB)
-    sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
-    device_history_db.init(DEVICE_MONITOR_DB)
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        sequences_db.init(conn)
+        sequences_db.seed_defaults(conn, _cipher())
     global _SEQUENCES_READY
     _SEQUENCES_READY = True
 
 
+def _init_jobs_database() -> None:
+    from web import db_pg, service_health_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        jobs_db.init(conn)
+        service_health_pg.init(conn)
+
+
 @app.on_event("startup")
 def _init_jobs_db_and_migrate() -> None:
-    from web import jobs_db, jobs_migration
-    jobs_db.init(JOBS_DB)
-    jobs_migration.migrate_legacy_index(
-        jobs_dir=Path(job_manager.jobs_dir),
-        db_path=JOBS_DB,
-    )
+    _init_jobs_database()
     global _JOBS_READY
     _JOBS_READY = True
 
@@ -835,6 +840,21 @@ def _ts_engine_database_url() -> str:
     return os.environ.get("AUTOPILOT_TS_ENGINE_DATABASE_URL", "").strip()
 
 
+def _database_url() -> str:
+    from web import db_pg
+
+    return db_pg.database_url()
+
+
+def _init_app_database() -> None:
+    from web import db_pg, device_history_pg, devices_pg, ts_engine_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        ts_engine_pg.init(conn)
+        device_history_pg.init(conn)
+        devices_pg.init(conn)
+
+
 def _init_ts_engine_database_if_configured() -> bool:
     dsn = _ts_engine_database_url()
     if not dsn:
@@ -848,7 +868,7 @@ def _init_ts_engine_database_if_configured() -> bool:
 
 @app.on_event("startup")
 def _init_ts_engine_pg() -> None:
-    _init_ts_engine_database_if_configured()
+    _init_app_database()
 
 
 # Note: the periodic device-monitor sweep + keytab-refresh loop used
@@ -880,21 +900,25 @@ def _load_version_sha() -> str:
 async def _start_health_heartbeat() -> None:
     import asyncio
     import logging as _logging
-    from web import service_health
-    service_health.init(DEVICE_MONITOR_DB)
+    from web import service_health_pg as service_health
+    logger = _logging.getLogger("web.health")
+    initialized = False
 
     async def _loop():
+        nonlocal initialized
         while True:
             try:
+                if not initialized:
+                    service_health.init()
+                    initialized = True
                 service_health.heartbeat(
-                    DEVICE_MONITOR_DB,
                     service_id="web",
                     service_type="web",
                     version_sha=_load_version_sha(),
                     detail="idle",
                 )
             except Exception:
-                _logging.getLogger("web.health").exception("heartbeat failed")
+                logger.exception("heartbeat failed")
             await asyncio.sleep(10)
 
     global _HEALTH_TASK
@@ -938,7 +962,19 @@ def _run_keytab_checks() -> None:
         keytab_path=keytab_path, principal=principal,
         ldap_host=ldap_host, gmsa_dn=gmsa_dn,
     )
-    keytab_monitor.record_probe(DEVICE_MONITOR_DB, probe)
+    device_history_db.update_keytab_probe(
+        keytab_path=probe.keytab_path,
+        keytab_mtime=probe.keytab_mtime,
+        keytab_principal=probe.keytab_principal,
+        keytab_kvno_local=probe.keytab_kvno_local,
+        keytab_kvno_ad=probe.keytab_kvno_ad,
+        last_probe_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        last_probe_status=probe.status,
+        last_probe_message=probe.message,
+        last_kinit_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        last_kinit_ok=probe.kinit_ok,
+        last_kinit_error=probe.kinit_error,
+    )
     _log.info("keytab probe: %s (%s)", probe.status, probe.message)
 
     # Refresh when:
@@ -946,7 +982,7 @@ def _run_keytab_checks() -> None:
     #     or STALE — STALE means refresher just slipped a bit, normal
     #     daily cadence will catch it), OR
     #   - last_refresh_at is >24h ago (daily cadence).
-    current = device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    current = device_history_db.get_keytab_health() or {}
     last_refresh_at = current.get("last_refresh_at")
     last_refresh_ok = current.get("last_refresh_ok")
     needs_refresh = probe.status in (
@@ -974,7 +1010,7 @@ def _run_keytab_checks() -> None:
     admin_pw = cred.get("password") or ""
     if not admin_user or not admin_pw:
         device_history_db.update_keytab_refresh(
-            DEVICE_MONITOR_DB, ok=False,
+            ok=False,
             message=(
                 "no AD credential configured for keytab refresh "
                 "(set monitoring_settings.ad_credential_id to a "
@@ -1013,14 +1049,8 @@ def _vm_provisioning_vmids() -> set:
     """VMIDs that were provisioned through this system — stays
     in-scope for the monitor even if the ``autopilot`` tag was
     later stripped off."""
-    import sqlite3
     try:
-        conn = sqlite3.connect(SEQUENCES_DB)
-        try:
-            rows = conn.execute("SELECT vmid FROM vm_provisioning").fetchall()
-        finally:
-            conn.close()
-        return {int(r[0]) for r in rows}
+        return sequences_db.list_vm_provisioning_vmids(SEQUENCES_DB)
     except Exception:
         return set()
 
@@ -1328,14 +1358,14 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
 def _resolve_ad_credential() -> dict:
     """Look up the configured AD credential. Returns
     ``{username, password}`` or ``{}`` if unconfigured."""
-    s = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    s = device_history_db.get_settings()
     cred_id = s.ad_credential_id
     if not cred_id:
         return {}
     try:
         # sequences_db.get_credential signature is (db, cipher, id) —
         # earlier revision had (db, id, cipher), which raised a silent
-        # sqlite3 bind error and dropped all AD probes.
+        # database bind error and dropped all AD probes.
         cred = sequences_db.get_credential(
             SEQUENCES_DB, _cipher(), int(cred_id),
         )
@@ -2545,7 +2575,7 @@ def _vms_from_monitor_snapshot() -> list[dict]:
     and let the explicit Refresh button do live collection when needed.
     """
     try:
-        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+        latest = device_history_db.latest_per_vmid()
     except Exception:
         return []
 
@@ -2637,30 +2667,10 @@ def _vms_from_monitor_snapshot() -> list[dict]:
 
 
 def _latest_monitor_sweep_status() -> dict | None:
-    if not Path(DEVICE_MONITOR_DB).exists():
-        return None
     try:
-        conn = sqlite3.connect(str(DEVICE_MONITOR_DB))
-        conn.row_factory = sqlite3.Row
-        try:
-            row = conn.execute(
-                "SELECT id, started_at, ended_at, vm_count "
-                "FROM monitoring_sweeps ORDER BY id DESC LIMIT 1",
-            ).fetchone()
-        finally:
-            conn.close()
+        return device_history_db.latest_sweep_status()
     except Exception:
         return None
-    if not row:
-        return None
-    ended_at = row["ended_at"] or ""
-    return {
-        "id": int(row["id"]),
-        "started_at": row["started_at"] or "",
-        "ended_at": ended_at,
-        "vm_count": int(row["vm_count"] or 0),
-        "running": not bool(ended_at),
-    }
 
 
 def _fetch_vms_payload_live():
@@ -2705,7 +2715,7 @@ async def _refresh_vms_cache_bg() -> None:
         _VMS_CACHE["refreshing"] = False
 
 
-async def _run_monitor_sweep_and_refresh_vms_cache(db_path: Path) -> None:
+async def _run_monitor_sweep_and_refresh_vms_cache() -> None:
     """Run an operator-requested sweep, then replace the /vms cache from it."""
     import asyncio
     import logging as _logging
@@ -2713,7 +2723,7 @@ async def _run_monitor_sweep_and_refresh_vms_cache(db_path: Path) -> None:
 
     _VMS_CACHE["refreshing"] = True
     try:
-        await asyncio.to_thread(monitor_main._do_sweep_tick, db_path)
+        await asyncio.to_thread(monitor_main._do_sweep_tick)
         _VMS_CACHE.update({
             "data": None,
             "devices": None,
@@ -4639,13 +4649,13 @@ async def kill_job(job_id: str):
     """Request termination. Flips kill_requested=1 on the job row; the
     builder owning the job will see it on its next heartbeat cycle
     (~5s max) and SIGTERM the subprocess. Redirects to /jobs/<id>."""
-    row = jobs_db.get_job(JOBS_DB, job_id)
+    row = jobs_db.get_job(job_id)
     if row is None:
         raise HTTPException(404, f"job {job_id} not found")
     if row["status"] != "running":
         # Already done; ignore quietly so double-clicks don't 400.
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
-    jobs_db.request_kill(JOBS_DB, job_id)
+    jobs_db.request_kill(job_id)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
@@ -4771,58 +4781,10 @@ async def api_running_jobs():
 
 @app.get("/api/services")
 async def api_services():
-    """Read per-service heartbeats from the ``service_health`` table.
+    """Read per-service heartbeats from the PostgreSQL service_health table."""
+    from web import service_health_pg
 
-    The table is owned by the microservice-split PR — until that
-    ships, the table won't exist. In that case we return
-    ``{"services": [], "available": false}`` so the dashboard strip
-    can hide itself gracefully without throwing a 500.
-    """
-    db_path = DEVICE_MONITOR_DB
-    if not db_path.exists():
-        return {"services": [], "available": False}
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        try:
-            exists = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='service_health'"
-            ).fetchone()
-            if not exists:
-                return {"services": [], "available": False}
-            rows = conn.execute(
-                "SELECT service_id, service_type, version_sha, "
-                "started_at, last_heartbeat, detail "
-                "FROM service_health ORDER BY service_type, service_id"
-            ).fetchall()
-        finally:
-            conn.close()
-    except Exception:
-        # Schema drift, lock contention, corrupted file — don't
-        # blow up the dashboard. Silently degrade.
-        return {"services": [], "available": False}
-
-    now = datetime.now(timezone.utc)
-    out = []
-    for r in rows:
-        age = None
-        hb = r["last_heartbeat"]
-        if hb:
-            try:
-                age = int((now - datetime.fromisoformat(hb)).total_seconds())
-            except Exception:
-                age = None
-        out.append({
-            "service_id":     r["service_id"],
-            "service_type":   r["service_type"],
-            "version_sha":    r["version_sha"],
-            "started_at":     r["started_at"],
-            "last_heartbeat": hb,
-            "detail":         r["detail"],
-            "age_seconds":    age,
-        })
-    return {"services": out, "available": True}
+    return {"services": service_health_pg.list_services(), "available": True}
 
 
 @app.get("/api/fleet/summary")
@@ -4835,57 +4797,10 @@ async def api_fleet_summary():
     intentionally omitted rather than fabricated — the dashboard
     will simply render "—" for that cell.
     """
-    db_path = DEVICE_MONITOR_DB
-    default = {"total": 0}
-    if not db_path.exists():
-        return default
     try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        try:
-            # Is the table present? (Early in a fresh install the
-            # monitor may not have run yet.)
-            has = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='device_probes'"
-            ).fetchone()
-            if not has:
-                return default
-            # Latest sweep only — older sweeps would double-count.
-            sweep_row = conn.execute(
-                "SELECT MAX(sweep_id) AS sid FROM device_probes"
-            ).fetchone()
-            sweep_id = sweep_row["sid"] if sweep_row else None
-            if not sweep_id:
-                return default
-            row = conn.execute(
-                "SELECT COUNT(*) AS total, "
-                "SUM(ad_found)     AS ad, "
-                "SUM(entra_found)  AS entra, "
-                "SUM(intune_found) AS intune "
-                "FROM device_probes WHERE sweep_id = ?",
-                (sweep_id,),
-            ).fetchone()
-        finally:
-            conn.close()
+        return device_history_db.fleet_summary()
     except Exception:
-        return default
-
-    total = int(row["total"] or 0)
-    if total == 0:
         return {"total": 0}
-    out: dict = {"total": total}
-    # Entra device == Autopilot-registered device in practice here;
-    # the spec asks for "autopilot_pct" so we surface entra_found
-    # under that key since we have no dedicated autopilot column.
-    if row["ad"] is not None:
-        out["ad_joined_pct"] = round(100 * int(row["ad"]) / total)
-    if row["entra"] is not None:
-        out["autopilot_pct"] = round(100 * int(row["entra"]) / total)
-    if row["intune"] is not None:
-        out["intune_pct"] = round(100 * int(row["intune"]) / total)
-    # mde_pct intentionally omitted — no column for it yet.
-    return out
 
 
 @app.get("/api/cockpit/summary")
@@ -4903,7 +4818,7 @@ async def api_cockpit_summary():
 
     monitoring = {"devices": 0, "ad": 0, "entra": 0, "intune": 0}
     try:
-        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+        latest = device_history_db.latest_per_vmid()
         monitoring["devices"] = len(latest)
         for row in latest:
             probe = row.get("probe") or {}
@@ -5708,7 +5623,7 @@ async def _delete_pve_item(item: dict) -> None:
         item["state"] = "error"
         item["message"] = f"Proxmox delete failed: {str(e)[:400]}"
         devices_db.record_deletion(
-            DEVICES_DB, source="pve", object_id=str(vmid),
+            source="pve", object_id=str(vmid),
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="error", message=item["message"],
         )
@@ -5742,7 +5657,7 @@ async def _verify_pve_item(item: dict) -> None:
             item["state"] = "deleted"
             item["message"] = f"VM removed, verified after {attempts} attempt(s)"
             devices_db.record_deletion(
-                DEVICES_DB, source="pve", object_id=str(target_vmid),
+                source="pve", object_id=str(target_vmid),
                 serial=item.get("serial", ""), display_name=item.get("display_name", ""),
                 status="ok",
             )
@@ -5751,7 +5666,7 @@ async def _verify_pve_item(item: dict) -> None:
             item["state"] = "unverified"
             item["message"] = f"VM still present in node listing after {attempts} attempt(s)"
             devices_db.record_deletion(
-                DEVICES_DB, source="pve", object_id=str(target_vmid),
+                source="pve", object_id=str(target_vmid),
                 serial=item.get("serial", ""), display_name=item.get("display_name", ""),
                 status="ok", message=item["message"],
             )
@@ -5781,7 +5696,7 @@ async def _delete_item(item: dict) -> None:
         item["message"] = "already gone (404)"
         item["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="ok", message="already gone",
         )
@@ -5797,7 +5712,7 @@ async def _delete_item(item: dict) -> None:
         item["state"] = "error"
         item["message"] = f"HTTP {status}: {err_text[:400]}"
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="error", message=item["message"],
         )
@@ -5834,7 +5749,7 @@ async def _verify_item(item: dict) -> None:
         item["state"] = "deleted"
         item["message"] = f"verified 404 after {attempts} attempt(s)"
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="ok",
         )
@@ -5845,7 +5760,7 @@ async def _verify_item(item: dict) -> None:
             f"after {attempts} attempt(s) over {budget}s"
         )
         devices_db.record_deletion(
-            DEVICES_DB, source=item["source"], object_id=item["object_id"],
+            source=item["source"], object_id=item["object_id"],
             serial=item.get("serial", ""), display_name=item.get("display_name", ""),
             status="ok", message=item["message"],
         )
@@ -5897,7 +5812,7 @@ async def cloud_page(request: Request):
     # ?all=1 disables the Windows-only filter so iOS/Android/macOS records
     # can be inspected or deleted if needed.
     windows_only = request.query_params.get("all") != "1"
-    groups, extra = devices_db.list_grouped(DEVICES_DB, windows_only=windows_only)
+    groups, extra = devices_db.list_grouped(windows_only=windows_only)
 
     # One Proxmox API call to map serial → {vmid, status}. Attach to each
     # group so the UI can show a 'pve' line alongside the other IDs.
@@ -5913,7 +5828,7 @@ async def cloud_page(request: Request):
             "unmatched": extra["unmatched"],
             "meta": extra["meta"],
             "windows_only": windows_only,
-            "deletions": devices_db.recent_deletions(DEVICES_DB, limit=25),
+            "deletions": devices_db.list_deletions(limit=25),
         },
     )
 
@@ -5926,9 +5841,9 @@ async def cloud_sync():
         en = _graph_api_all("/devices") or []
     except Exception as e:
         return _redirect_with_error("/cloud", str(e)[:200])
-    devices_db.upsert_autopilot(DEVICES_DB, ap)
-    devices_db.upsert_intune(DEVICES_DB, it)
-    devices_db.upsert_entra(DEVICES_DB, en)
+    devices_db.upsert_autopilot(ap)
+    devices_db.upsert_intune(it)
+    devices_db.upsert_entra(en)
     return RedirectResponse(
         f"/cloud?synced=autopilot:{len(ap)},intune:{len(it)},entra:{len(en)}",
         status_code=303,
@@ -6105,8 +6020,8 @@ async def api_credentials_create(request: Request):
             SEQUENCES_DB, _cipher(),
             name=name, type=cred_type, payload=payload,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"credential name already exists: {name}")
         raise
     return {"id": cid}
@@ -6122,8 +6037,8 @@ def api_credentials_update(cred_id: int, body: _CredentialUpdate):
             SEQUENCES_DB, _cipher(), cred_id,
             name=body.name, payload=body.payload,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"credential name already exists: {body.name}")
         raise
     return {"ok": True}
@@ -6195,8 +6110,8 @@ def api_sequences_create(body: _SequenceCreate):
             target_os=body.target_os,
             hash_capture_phase=body.hash_capture_phase,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"sequence name already exists: {body.name}")
         raise
     sequences_db.set_sequence_steps(
@@ -6220,8 +6135,8 @@ def api_sequences_update(seq_id: int, body: _SequenceUpdate):
             target_os=body.target_os,
             hash_capture_phase=body.hash_capture_phase,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"sequence name already exists: {body.name}")
         raise
     if body.steps is not None:
@@ -6241,8 +6156,8 @@ def api_sequences_duplicate(seq_id: int, body: _DuplicateReq):
         new_id = sequences_db.duplicate_sequence(
             SEQUENCES_DB, seq_id, new_name=body.new_name,
         )
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             raise HTTPException(409, f"sequence name already exists: {body.new_name}")
         raise
     return {"id": new_id}
@@ -6407,8 +6322,8 @@ async def submit_credential_new(request: Request):
             SEQUENCES_DB, _cipher(),
             name=form["name"], type=cred_type, payload=payload,
         )
-    except sqlite3.IntegrityError as e:
-        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+    except psycopg.IntegrityError as e:
+        msg = "name already exists" if _is_unique_violation(e) else str(e)
         return _redirect_with_error("/credentials/new", msg)
     except ValueError as e:
         return _redirect_with_error("/credentials/new", str(e))
@@ -6437,8 +6352,8 @@ async def submit_credential_edit(request: Request, cred_id: int):
             SEQUENCES_DB, _cipher(), cred_id,
             name=form["name"], payload=new_payload,
         )
-    except sqlite3.IntegrityError as e:
-        msg = "name already exists" if "UNIQUE" in str(e) else str(e)
+    except psycopg.IntegrityError as e:
+        msg = "name already exists" if _is_unique_violation(e) else str(e)
         return _redirect_with_error(f"/credentials/{cred_id}/edit", msg)
     except ValueError as e:
         return _redirect_with_error(f"/credentials/{cred_id}/edit", str(e))
@@ -6538,8 +6453,8 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
     new_name = form.get("new_name", "").strip() or "Copy"
     try:
         sequences_db.duplicate_sequence(SEQUENCES_DB, seq_id, new_name=new_name)
-    except sqlite3.IntegrityError as e:
-        if "UNIQUE" in str(e):
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
             return _redirect_with_error(
                 "/sequences", f"name '{new_name}' already exists")
         raise
@@ -6682,7 +6597,7 @@ class _SearchOuPatch(BaseModel):
 
 @app.get("/api/monitoring/settings")
 def api_monitoring_settings_get():
-    s = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    s = device_history_db.get_settings()
     return {
         "enabled": s.enabled,
         "interval_seconds": s.interval_seconds,
@@ -6695,7 +6610,6 @@ def api_monitoring_settings_get():
 def api_monitoring_settings_update(body: _MonitoringSettingsPatch):
     try:
         device_history_db.update_settings(
-            DEVICE_MONITOR_DB,
             enabled=body.enabled,
             interval_seconds=body.interval_seconds,
             ad_credential_id=body.ad_credential_id,
@@ -6711,7 +6625,7 @@ def api_monitoring_search_ous_list():
         {"id": o.id, "dn": o.dn, "label": o.label,
          "enabled": o.enabled, "sort_order": o.sort_order,
          "created_at": o.created_at, "updated_at": o.updated_at}
-        for o in device_history_db.list_search_ous(DEVICE_MONITOR_DB)
+        for o in device_history_db.list_search_ous()
     ]
 
 
@@ -6719,13 +6633,12 @@ def api_monitoring_search_ous_list():
 def api_monitoring_search_ous_create(body: _SearchOuCreate):
     try:
         ou_id = device_history_db.add_search_ou(
-            DEVICE_MONITOR_DB,
             dn=body.dn, label=body.label,
             enabled=body.enabled, sort_order=body.sort_order,
         )
     except device_history_db.InvalidDn as e:
         raise HTTPException(400, str(e)) from e
-    except sqlite3.IntegrityError as e:
+    except psycopg.IntegrityError as e:
         raise HTTPException(
             409, f"search OU with dn={body.dn!r} already exists",
         ) from e
@@ -6736,7 +6649,7 @@ def api_monitoring_search_ous_create(body: _SearchOuCreate):
 def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
     try:
         device_history_db.update_search_ou(
-            DEVICE_MONITOR_DB, ou_id,
+            ou_id,
             dn=body.dn, label=body.label,
             enabled=body.enabled, sort_order=body.sort_order,
         )
@@ -6744,7 +6657,7 @@ def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
         raise HTTPException(409, str(e)) from e
     except device_history_db.InvalidDn as e:
         raise HTTPException(400, str(e)) from e
-    except sqlite3.IntegrityError as e:
+    except psycopg.IntegrityError as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
@@ -6752,7 +6665,7 @@ def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
 @app.delete("/api/monitoring/search-ous/{ou_id}")
 def api_monitoring_search_ous_delete(ou_id: int):
     try:
-        device_history_db.delete_search_ou(DEVICE_MONITOR_DB, ou_id)
+        device_history_db.delete_search_ou(ou_id)
     except device_history_db.CannotDeleteLastOu as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
@@ -6766,41 +6679,30 @@ def _ad_first_seen_map() -> dict[int, str]:
     """For each vmid that has an AD match in any historical probe,
     return the earliest checked_at at which ad_found=1. Used to
     decide whether "Entra missing" is a sync-pending ⏳ or a real ❌."""
-    import sqlite3
-    conn = sqlite3.connect(DEVICE_MONITOR_DB)
     try:
-        rows = conn.execute(
-            "SELECT vmid, MIN(checked_at) FROM device_probes "
-            "WHERE ad_found = 1 GROUP BY vmid"
-        ).fetchall()
-    finally:
-        conn.close()
-    return {int(vmid): ts for vmid, ts in rows}
+        return device_history_db.ad_first_seen_map()
+    except Exception:
+        return {}
 
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
-    from web import monitoring_view, service_health
-    latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+    from web import monitoring_view, service_health_pg as service_health
+    latest = device_history_db.latest_per_vmid()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = monitoring_view.build_dashboard_rows(
         latest,
         ad_first_seen=_ad_first_seen_map(),
         now_iso=now_iso,
     )
-    settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
-    keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
-    try:
-        svc_rows = service_health.list_services(DEVICE_MONITOR_DB)
-    except sqlite3.OperationalError:
-        # service_health table may not exist yet on a freshly-initialized
-        # device_monitor.db (init() is called from the startup hook).
-        svc_rows = []
+    settings = device_history_db.get_settings()
+    keytab = device_history_db.get_keytab_health()
+    svc_rows = service_health.list_services()
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,
         "settings": settings,
-        "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
+        "search_ous": device_history_db.list_search_ous(),
         "keytab": keytab,
         "service_health": svc_rows,
     })
@@ -6818,12 +6720,11 @@ def _latest_match_or_none(json_str: str) -> dict:
 
 def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
     """Return the four cross-system checks for the top-of-page strip."""
-    import json as _json
     if not probe_row:
         return []
-    ad_matches = _json.loads(probe_row.get("ad_matches_json") or "[]")
-    entra_matches = _json.loads(probe_row.get("entra_matches_json") or "[]")
-    intune_matches = _json.loads(probe_row.get("intune_matches_json") or "[]")
+    ad_matches = _json_obj(probe_row.get("ad_matches_json"), [])
+    entra_matches = _json_obj(probe_row.get("entra_matches_json"), [])
+    intune_matches = _json_obj(probe_row.get("intune_matches_json"), [])
     serial = (probe_row.get("serial") or "").strip()
     win_name = (probe_row.get("win_name") or "").strip()
 
@@ -6899,15 +6800,16 @@ def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
 @app.get("/devices/{vmid}", response_class=HTMLResponse)
 def page_device_detail(request: Request, vmid: int):
     from web import device_regression, monitoring_view
-    pve = device_history_db.latest_pve_snapshot(DEVICE_MONITOR_DB, vmid)
-    probe = device_history_db.latest_device_probe(DEVICE_MONITOR_DB, vmid)
-    if pve is None and probe is None:
+    latest_pair = device_history_db.latest_completed_pair_for_vmid(vmid)
+    if latest_pair is None:
         raise HTTPException(404, f"no monitoring data for vmid {vmid}")
 
-    pve_dict = dict(pve) if pve else None
-    probe_dict = dict(probe) if probe else None
+    pve_dict = latest_pair.get("pve")
+    probe_dict = latest_pair.get("probe")
 
-    history = device_history_db.history_for_vmid(DEVICE_MONITOR_DB, vmid, limit=50)
+    history = device_history_db.history_for_vmid(
+        vmid, limit=50, completed_only=True,
+    )
     # Detector wants oldest-first for correct transition ordering.
     timeline = device_regression.build_timeline(
         list(reversed(history["pve_snapshots"])),
@@ -6915,10 +6817,9 @@ def page_device_detail(request: Request, vmid: int):
     )
 
     linkage = _linkage_health(pve_dict or {}, probe_dict or {})
-    import json as _json
-    ad_matches = _json.loads((probe_dict or {}).get("ad_matches_json") or "[]")
-    entra_matches = _json.loads((probe_dict or {}).get("entra_matches_json") or "[]")
-    intune_matches = _json.loads((probe_dict or {}).get("intune_matches_json") or "[]")
+    ad_matches = _json_obj((probe_dict or {}).get("ad_matches_json"), [])
+    entra_matches = _json_obj((probe_dict or {}).get("entra_matches_json"), [])
+    intune_matches = _json_obj((probe_dict or {}).get("intune_matches_json"), [])
     return templates.TemplateResponse("device_detail.html", {
         "request": request,
         "vmid": vmid,
@@ -6935,12 +6836,12 @@ def page_device_detail(request: Request, vmid: int):
 
 @app.get("/monitoring/settings", response_class=HTMLResponse)
 def page_monitoring_settings(request: Request):
-    settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
-    ous = device_history_db.list_search_ous(DEVICE_MONITOR_DB)
+    settings = device_history_db.get_settings()
+    ous = device_history_db.list_search_ous()
     # Only credentials of type domain_join are useful for AD.
     all_creds = sequences_db.list_credentials(SEQUENCES_DB)
     domain_creds = [c for c in all_creds if c.get("type") == "domain_join"]
-    keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
+    keytab = device_history_db.get_keytab_health()
     return templates.TemplateResponse("monitoring_settings.html", {
         "request": request,
         "settings": settings,
@@ -6959,18 +6860,18 @@ async def api_monitoring_keytab_refresh_now():
         await asyncio.to_thread(_run_keytab_checks)
     except Exception as e:
         raise HTTPException(500, f"refresh failed: {e}") from e
-    return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    return device_history_db.get_keytab_health() or {}
 
 
 @app.post("/api/monitoring/sweep-now", status_code=202)
 async def api_monitoring_sweep_now(background_tasks: BackgroundTasks):
     """Queue one monitor sweep using the same helper as the monitor container."""
     background_tasks.add_task(
-        _run_monitor_sweep_and_refresh_vms_cache, DEVICE_MONITOR_DB,
+        _run_monitor_sweep_and_refresh_vms_cache,
     )
     return {"ok": True, "queued": True}
 
 
 @app.get("/api/monitoring/keytab/health")
 def api_monitoring_keytab_health():
-    return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    return device_history_db.get_keytab_health() or {}

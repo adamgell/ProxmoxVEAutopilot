@@ -12,10 +12,11 @@ check_active_autopilot_work() {
     -e ACTIVE_RUN_WINDOW_HOURS="${ACTIVE_RUN_WINDOW_HOURS:-8}" \
     autopilot python - <<'PY'
 import os
-import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
+import psycopg
+from psycopg.rows import dict_row
 
 checks = []
 active_run_window_hours = float(os.environ.get("ACTIVE_RUN_WINDOW_HOURS") or 8)
@@ -35,31 +36,57 @@ def parse_dt(value):
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
 
-jobs_db = Path("/app/output/jobs.db")
-if jobs_db.exists():
-    with sqlite3.connect(jobs_db) as conn:
-        rows = conn.execute(
-            "SELECT id, job_type, status FROM jobs "
-            "WHERE status IN ('pending', 'running') "
-            "ORDER BY created_at"
-        ).fetchall()
-    checks.extend(
-        f"job {job_id} {job_type} {status}"
-        for job_id, job_type, status in rows
-    )
 
-sequences_db = Path("/app/output/sequences.db")
-if sequences_db.exists():
-    with sqlite3.connect(sequences_db) as conn:
-        rows = conn.execute(
-            "SELECT id, state, started_at FROM provisioning_runs "
-            "WHERE state NOT IN ('done', 'failed') "
-            "ORDER BY started_at"
-        ).fetchall()
-    for run_id, state, started_at in rows:
-        started = parse_dt(started_at)
-        if started and started >= active_run_cutoff:
-            checks.append(f"run {run_id} {state} started_at={started_at}")
+def table_exists(conn, name):
+    row = conn.execute("SELECT to_regclass(%s) AS table_name", (name,)).fetchone()
+    return bool(row and row["table_name"])
+
+
+dsn = (
+    os.environ.get("AUTOPILOT_DATABASE_URL")
+    or os.environ.get("AUTOPILOT_TS_ENGINE_DATABASE_URL")
+    or ""
+).strip()
+if not dsn:
+    print(
+        "AUTOPILOT_DATABASE_URL or AUTOPILOT_TS_ENGINE_DATABASE_URL is required "
+        "to check active Autopilot work",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+try:
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        if table_exists(conn, "jobs"):
+            rows = conn.execute(
+                "SELECT id, job_type, status FROM jobs "
+                "WHERE status IN ('pending', 'running') "
+                "ORDER BY created_at"
+            ).fetchall()
+            checks.extend(
+                f"job {row['id']} {row['job_type']} {row['status']}"
+                for row in rows
+            )
+
+        if table_exists(conn, "provisioning_runs"):
+            rows = conn.execute(
+                "SELECT id, state, started_at FROM provisioning_runs "
+                "WHERE state NOT IN ('done', 'failed') "
+                "ORDER BY started_at"
+            ).fetchall()
+            for row in rows:
+                started = row["started_at"]
+                if not hasattr(started, "tzinfo"):
+                    started = parse_dt(started)
+                elif started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                if started and started >= active_run_cutoff:
+                    checks.append(
+                        f"run {row['id']} {row['state']} started_at={row['started_at']}"
+                    )
+except Exception as exc:
+    print(f"failed to check active Autopilot work in Postgres: {exc}", file=sys.stderr)
+    sys.exit(2)
 
 if checks:
     print("\n".join(checks))

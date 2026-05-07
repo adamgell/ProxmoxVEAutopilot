@@ -3,7 +3,104 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 import yaml
+
+
+@pytest.mark.real_app_database_startup
+def test_registered_startup_initializes_app_database_url(monkeypatch):
+    from fastapi.testclient import TestClient
+    from web import app as web_app
+    from web import (
+        db_pg,
+        device_history_pg,
+        devices_pg,
+        jobs_pg,
+        sequences_pg,
+        service_health_pg,
+        ts_engine_pg,
+    )
+
+    calls = []
+
+    class FakeConn:
+        pass
+
+    @contextmanager
+    def fake_connection(dsn):
+        calls.append(("connect", dsn))
+        yield FakeConn()
+
+    def fake_ts_init(conn):
+        calls.append(("ts_init", conn.__class__.__name__))
+
+    def fake_jobs_init(conn):
+        calls.append(("jobs_init", conn.__class__.__name__))
+
+    def fake_sequences_init(conn):
+        calls.append(("sequences_init", conn.__class__.__name__))
+
+    def fake_seed_defaults(_handle, _cipher):
+        calls.append(("sequences_seed", "ok"))
+
+    def fake_service_health_init(conn):
+        calls.append(("service_health_init", conn.__class__.__name__))
+
+    def fake_device_history_init(conn):
+        calls.append(("device_history_init", conn.__class__.__name__))
+
+    def fake_devices_init(conn):
+        calls.append(("devices_init", conn.__class__.__name__))
+
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
+    monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(db_pg, "connection", fake_connection)
+    monkeypatch.setattr(jobs_pg, "init", fake_jobs_init)
+    monkeypatch.setattr(sequences_pg, "init", fake_sequences_init)
+    monkeypatch.setattr(sequences_pg, "seed_defaults", fake_seed_defaults)
+    monkeypatch.setattr(service_health_pg, "init", fake_service_health_init)
+    monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
+    monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
+    monkeypatch.setattr(devices_pg, "init", fake_devices_init)
+
+    with TestClient(web_app.app):
+        pass
+
+    assert calls == [
+        ("connect", "postgresql://new"),
+        ("sequences_init", "FakeConn"),
+        ("sequences_seed", "ok"),
+        ("connect", "postgresql://new"),
+        ("jobs_init", "FakeConn"),
+        ("service_health_init", "FakeConn"),
+        ("connect", "postgresql://new"),
+        ("ts_init", "FakeConn"),
+        ("device_history_init", "FakeConn"),
+        ("devices_init", "FakeConn"),
+    ]
+
+
+@pytest.mark.real_app_database_startup
+def test_registered_startup_requires_database_url(monkeypatch):
+    from fastapi.testclient import TestClient
+    from web import app as web_app
+
+    monkeypatch.delenv("AUTOPILOT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="Postgres database URL is required"):
+        with TestClient(web_app.app):
+            pass
+
+
+def test_app_database_startup_requires_database_url(monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.delenv("AUTOPILOT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="Postgres database URL is required"):
+        web_app._database_url()
 
 
 def test_ts_engine_startup_skips_when_database_url_is_unset(monkeypatch):

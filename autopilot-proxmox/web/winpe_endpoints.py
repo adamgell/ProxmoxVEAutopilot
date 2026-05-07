@@ -18,9 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import time
-import base64
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -28,7 +27,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from web import sequences_db, winpe_token
+from web import osd_package
+from web import sequences_pg as sequences_db, winpe_token
 
 
 router = APIRouter(prefix="/winpe", tags=["winpe"])
@@ -113,17 +113,12 @@ def post_register(body: RegisterBody):
     )
     if run is None:
         # Distinguish 404 (no such uuid at all) from 409 (uuid exists, wrong state)
-        with sqlite3.connect(db) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT state FROM provisioning_runs WHERE vm_uuid=? "
-                "ORDER BY id DESC LIMIT 1", (body.vm_uuid,),
-            ).fetchone()
-        if row is None:
+        state = sequences_db.get_latest_run_state_by_uuid(db, vm_uuid=body.vm_uuid)
+        if state is None:
             raise HTTPException(status_code=404, detail="no run for vm_uuid")
         raise HTTPException(
             status_code=409,
-            detail=f"run state is {row['state']!r}, expected awaiting_winpe",
+            detail=f"run state is {state!r}, expected awaiting_winpe",
         )
 
     # Idempotency: if steps already exist (re-registration), reuse them.
@@ -148,8 +143,8 @@ def post_register(body: RegisterBody):
     }
 
 
-def _require_bearer_for_run(run_id: int,
-                            authorization: Optional[str] = Header(None)) -> int:
+def _require_bearer_for_run(run_id: str,
+                            authorization: Optional[str] = Header(None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer")
     token = authorization.removeprefix("Bearer ").strip()
@@ -159,9 +154,41 @@ def _require_bearer_for_run(run_id: int,
         raise HTTPException(status_code=401, detail="token expired")
     except winpe_token.TokenError:
         raise HTTPException(status_code=401, detail="invalid token")
-    if int(payload["run_id"]) != int(run_id):
+    if str(payload["run_id"]) != str(run_id):
         raise HTTPException(status_code=403, detail="token/run mismatch")
-    return int(payload["run_id"])
+    return str(payload["run_id"])
+
+
+def _legacy_run_id_or_v2_conflict(run_id: str) -> int:
+    try:
+        return int(run_id)
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        uuid.UUID(str(run_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    from web import app as web_app
+    from web import ts_engine_pg
+
+    try:
+        database_url = web_app._database_url()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail="Task Sequence Engine v2 database is not configured",
+        )
+    with ts_engine_pg.connect(database_url) as conn:
+        try:
+            ts_engine_pg.get_run(conn, str(run_id))
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+    raise HTTPException(
+        status_code=409,
+        detail="legacy WinPE payload route does not support v2 UUID runs",
+    )
 
 
 @router.get("/sequence/{run_id}")
@@ -196,8 +223,7 @@ def _resolve_autopilot_config_path():
 
 
 def _files_dir() -> Path:
-    from web import app as web_app
-    return web_app.FILES_DIR
+    return osd_package.files_dir()
 
 
 def _credential_resolver_for_run():
@@ -211,11 +237,12 @@ def _credential_resolver_for_run():
 
 
 @router.get("/unattend/{run_id}")
-def get_unattend(run_id: int,
-                 _: int = Depends(_require_bearer_for_run)):
+def get_unattend(run_id: str,
+                 _: str = Depends(_require_bearer_for_run)):
     from web import sequence_compiler, unattend_renderer
+    legacy_run_id = _legacy_run_id_or_v2_conflict(run_id)
     db = _db_path()
-    run = sequences_db.get_provisioning_run(db, run_id)
+    run = sequences_db.get_provisioning_run(db, legacy_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     seq = sequences_db.get_sequence(db, run["sequence_id"])
@@ -232,11 +259,12 @@ def get_unattend(run_id: int,
 
 
 @router.get("/autopilot-config/{run_id}")
-def get_autopilot_config(run_id: int,
-                         _: int = Depends(_require_bearer_for_run)):
+def get_autopilot_config(run_id: str,
+                         _: str = Depends(_require_bearer_for_run)):
     from web import sequence_compiler
+    legacy_run_id = _legacy_run_id_or_v2_conflict(run_id)
     db = _db_path()
-    run = sequences_db.get_provisioning_run(db, run_id)
+    run = sequences_db.get_provisioning_run(db, legacy_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     seq = sequences_db.get_sequence(db, run["sequence_id"])
@@ -278,7 +306,7 @@ def _require_bearer_token(authorization: Optional[str] = Header(None)) -> dict:
 
 
 def _content_b64(path: Path) -> str:
-    return base64.b64encode(path.read_bytes()).decode("ascii")
+    return osd_package.content_b64(path)
 
 
 @router.post("/step/{step_id}/result")
@@ -439,52 +467,19 @@ def get_osd_client_package(run_id: int,
     longer-lived than the WinPE token because it may not be used until
     after image servicing, first boot, specialize, and SetupComplete.
     """
-    files_dir = _files_dir()
-    osd_client = files_dir / "osd-client" / "OsdClient.ps1"
-    setup_complete = files_dir / "SetupComplete.cmd"
-    recovery_fix = files_dir / "FixRecoveryPartition.ps1"
-    autopilot_info = files_dir / "Get-WindowsAutopilotInfo.ps1"
-    missing = [
-        str(p)
-        for p in (osd_client, setup_complete, recovery_fix, autopilot_info)
-        if not p.is_file()
-    ]
-    if missing:
+    try:
+        files = osd_package.osd_client_files(_files_dir())
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"OSD client package is missing files: {', '.join(missing)}",
+            detail=f"OSD client package is missing files: {exc}",
         )
     return {
         "run_id": run_id,
         "bearer_token": winpe_token.sign(
             run_id=run_id, ttl_seconds=_OSD_TOKEN_TTL,
         ),
-        "files": [
-            {
-                "path": r"V:\Windows\Setup\Scripts\SetupComplete.cmd",
-                "content_b64": _content_b64(setup_complete),
-            },
-            {
-                "path": (
-                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1"
-                ),
-                "content_b64": _content_b64(osd_client),
-            },
-            {
-                "path": (
-                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD"
-                    r"\FixRecoveryPartition.ps1"
-                ),
-                "content_b64": _content_b64(recovery_fix),
-            },
-            {
-                "path": (
-                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD"
-                    r"\Get-WindowsAutopilotInfo.ps1"
-                ),
-                "content_b64": _content_b64(autopilot_info),
-            },
-        ],
+        "files": files,
     }
 
 
@@ -687,10 +682,10 @@ def post_osd_complete(payload: dict = Depends(_require_bearer_token)):
         db, run_id=run_id, state="done",
     )
     try:
-        from web import app as web_app
-        from web import jobs_db
-        reconciled = jobs_db.complete_interrupted_provision_winpe_jobs_for_run(
-            web_app.JOBS_DB, run_id=run_id,
+        from web import jobs_pg
+
+        reconciled = jobs_pg.complete_interrupted_provision_winpe_jobs_for_run(
+            run_id=run_id,
         )
         if reconciled:
             LOG.info(

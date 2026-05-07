@@ -1,23 +1,23 @@
 """Smoke test for GET /monitoring — renders seeded state end-to-end."""
-import json
-from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch):
+def client(pg_conn):
     from fastapi.testclient import TestClient
-    from web import app as app_module, device_history_db
-    db_path = tmp_path / "device_monitor.db"
-    monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", db_path)
-    device_history_db.init(db_path)
+    from web import app as app_module, device_history_pg, service_health_pg
+    device_history_pg.reset_for_tests(pg_conn)
+    device_history_pg.init(pg_conn)
+    service_health_pg.init(pg_conn)
+    pg_conn.execute("TRUNCATE service_health")
+    pg_conn.commit()
     with TestClient(app_module.app) as c:
-        yield c, db_path
+        yield c
 
 
 def test_monitoring_page_empty_state(client):
-    c, _ = client
+    c = client
     r = c.get("/monitoring")
     assert r.status_code == 200
     assert "Device monitoring" in r.text
@@ -32,30 +32,30 @@ def test_monitoring_page_empty_state(client):
 
 
 def test_monitoring_page_renders_a_row_with_badges(client):
-    from web import device_history_db
-    c, db = client
-    sweep_id = device_history_db.start_sweep(db)
-    device_history_db.insert_pve_snapshot(db, sweep_id, {
+    from web import device_history_pg
+    c = client
+    sweep_id = device_history_pg.start_sweep()
+    device_history_pg.insert_pve_snapshot(sweep_id, {
         "vmid": 116, "status": "running", "node": "pve2",
         "name": "Gell-EC41E7EB", "config_digest": "abc",
         "checked_at": "2026-04-20T23:55:00+00:00",
     })
-    device_history_db.insert_device_probe(db, sweep_id, {
+    device_history_pg.insert_device_probe(sweep_id, {
         "vmid": 116, "win_name": "GELL-EC41E7EB",
         "serial": "Gell-EC41E7EB",
-        "ad_found": 1, "ad_match_count": 1,
-        "ad_matches_json": json.dumps([
+        "ad_found": True, "ad_match_count": 1,
+        "ad_matches_json": [
             {"distinguishedName": "CN=GELL-EC41E7EB,OU=Devices,OU=WorkspaceLabs,DC=home,DC=gell,DC=one",
              "userAccountControl": 4096},
-        ]),
-        "entra_found": 1, "entra_match_count": 1,
-        "entra_matches_json": json.dumps([{"trustType": "ServerAd"}]),
-        "intune_found": 1, "intune_match_count": 1,
-        "intune_matches_json": json.dumps([{"complianceState": "compliant"}]),
-        "probe_errors_json": "{}",
+        ],
+        "entra_found": True, "entra_match_count": 1,
+        "entra_matches_json": [{"trustType": "ServerAd"}],
+        "intune_found": True, "intune_match_count": 1,
+        "intune_matches_json": [{"complianceState": "compliant"}],
+        "probe_errors_json": {},
         "checked_at": "2026-04-20T23:55:00+00:00",
     })
-    device_history_db.finish_sweep(db, sweep_id, vm_count=1)
+    device_history_pg.finish_sweep(sweep_id, vm_count=1)
 
     r = c.get("/monitoring")
     assert r.status_code == 200
@@ -69,24 +69,21 @@ def test_monitoring_page_renders_a_row_with_badges(client):
 
 
 def test_monitoring_page_interval_warning_below_15min(client, monkeypatch):
-    from web import device_history_db
-    c, db = client
-    device_history_db.update_settings(db, interval_seconds=300)
+    from web import device_history_pg
+    c = client
+    device_history_pg.update_settings(interval_seconds=300)
     r = c.get("/monitoring")
     assert "aggressive" in r.text
 
 
 def test_monitoring_page_shows_service_health(client):
-    from web import service_health
-    c, db = client
-    service_health.init(db)
+    from web import service_health_pg as service_health
+    c = client
     service_health.heartbeat(
-        db,
         service_id="web", service_type="web",
         version_sha="abc1234", detail="idle",
     )
     service_health.heartbeat(
-        db,
         service_id="builder-xyz", service_type="builder",
         version_sha="abc1234", detail="running",
     )

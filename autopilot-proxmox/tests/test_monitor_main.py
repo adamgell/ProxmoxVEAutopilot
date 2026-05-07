@@ -30,8 +30,8 @@ def test_singleton_guard_first_instance_gets_lock():
         _os.close(fd)
 
 
-def test_run_loops_runs_reaper_on_cadence(monkeypatch):
-    """_run_loops calls reap_orphans periodically."""
+def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
+    """_run_loops reaps stale Postgres jobs periodically."""
     from web import monitor_main
     import tempfile, threading, time
     from unittest.mock import patch
@@ -39,25 +39,31 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch):
 
     with tempfile.TemporaryDirectory() as d:
         monitor_db = Path(d) / "device_monitor.db"
-        jobs_db_path = Path(d) / "jobs.db"
-        from web import jobs_db, service_health
-        jobs_db.init(jobs_db_path)
-        service_health.init(monitor_db)
+        from web import jobs_pg, service_health_pg as service_health
 
-        reaps = []
-        def _mock_reap(*a, **kw):
-            reaps.append(time.monotonic())
-            return 0
+        jobs_pg.enqueue(
+            job_id="stale",
+            job_type="hash_capture",
+            playbook="capture.yml",
+            cmd=["true"],
+            args={},
+        )
+        jobs_pg.claim_next_job(worker_id="builder-1")
+        pg_conn.execute(
+            "UPDATE jobs SET last_heartbeat = now() - interval '10 minutes' "
+            "WHERE id = %s",
+            ("stale",),
+        )
+        pg_conn.commit()
+        service_health.init(pg_conn)
 
         stop = threading.Event()
         with patch("web.monitor_main._do_sweep_tick", return_value=None), \
-             patch("web.monitor_main._do_keytab_tick", return_value=None), \
-             patch("web.monitor_main.jobs_db.reap_orphans", side_effect=_mock_reap):
+             patch("web.monitor_main._do_keytab_tick", return_value=None):
             t = threading.Thread(
                 target=monitor_main._run_loops,
                 kwargs={"stop_event": stop,
                         "monitor_db_path": monitor_db,
-                        "jobs_db_path": jobs_db_path,
                         "reaper_interval_seconds": 0.1,
                         "heartbeat_interval_seconds": 0.1,
                         "sweep_interval_seconds": 10,
@@ -68,4 +74,4 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch):
             time.sleep(0.35)
             stop.set()
             t.join(timeout=2)
-        assert 2 <= len(reaps) <= 6
+        assert jobs_pg.get_job("stale")["status"] == "orphaned"

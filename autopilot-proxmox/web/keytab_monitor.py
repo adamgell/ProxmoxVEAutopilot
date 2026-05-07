@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from web import device_history_db
+from web import device_history_pg as device_history_db
 
 log = logging.getLogger(__name__)
 
@@ -252,7 +252,6 @@ def probe_keytab(*,
 
 def record_probe(db_path: Path, r: KeytabProbeResult) -> None:
     device_history_db.update_keytab_probe(
-        db_path,
         keytab_path=r.keytab_path,
         keytab_mtime=r.keytab_mtime,
         keytab_principal=r.keytab_principal,
@@ -310,13 +309,13 @@ def refresh_keytab(*,
                 msg = (f"kinit {kinit_principal} failed: "
                        + (proc.stderr or proc.stdout or "").strip()[:300])
                 device_history_db.update_keytab_refresh(
-                    db_path, ok=False, message=msg,
+                    ok=False, message=msg,
                 )
                 return False, msg
         except Exception as e:
             msg = f"kinit subprocess failed: {e}"
             device_history_db.update_keytab_refresh(
-                db_path, ok=False, message=msg,
+                ok=False, message=msg,
             )
             return False, msg
 
@@ -342,12 +341,12 @@ def refresh_keytab(*,
     if rc != 0:
         msg = f"refresh_keytab.py failed (rc={rc}): {out[:500]}"
         device_history_db.update_keytab_refresh(
-            db_path, ok=False, message=msg,
+            ok=False, message=msg,
         )
         return False, msg
 
     msg = f"keytab rewritten at {keytab_path}"
     device_history_db.update_keytab_refresh(
-        db_path, ok=True, message=msg,
+        ok=True, message=msg,
     )
     return True, msg

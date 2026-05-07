@@ -1,9 +1,9 @@
 """Web-facing JobManager.
 
 After the Task 13 microservice split, this module is enqueue-only:
-  - start() inserts a pending row into jobs.db and returns a dict.
+  - start() inserts a pending row into Postgres and returns a dict.
   - The builder container claims and executes jobs.
-  - list/get/log delegate to jobs.db + filesystem.
+  - list/get/log delegate to the queue + filesystem.
 
 No subprocesses. No threads. No in-process callbacks.
 """
@@ -14,9 +14,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from web import jobs_pg as jobs_db
+
 
 class JobManager:
-    """Thin enqueue wrapper around jobs_db. The builder owns execution."""
+    """Thin enqueue wrapper around the Postgres job queue."""
 
     def __init__(self, jobs_dir: str = "jobs", jobs_db_path: Path | None = None):
         self.jobs_dir = jobs_dir
@@ -34,20 +36,13 @@ class JobManager:
         Returns a dict shaped like the legacy return so call sites that
         read `entry["id"]` keep working.
         """
-        if self.jobs_db_path is None:
-            raise RuntimeError(
-                "JobManager.start requires jobs_db_path — the builder "
-                "split made jobs.db the only queue."
-            )
         job_id = self._generate_id()
         # Pre-touch the log file so /jobs/<id> doesn't 500 trying to tail
         # a nonexistent file before the builder has written anything.
         log_path = os.path.join(self.jobs_dir, f"{job_id}.log")
         open(log_path, "a").close()
 
-        from web import jobs_db
         row = jobs_db.enqueue(
-            self.jobs_db_path,
             job_id=job_id,
             job_type=playbook_name,
             playbook=command[1] if len(command) > 1 else playbook_name,
@@ -66,12 +61,10 @@ class JobManager:
         }
 
     def list_jobs(self):
-        from web import jobs_db
-        return jobs_db.list_jobs(self.jobs_db_path)
+        return jobs_db.list_jobs()
 
     def get_job(self, job_id):
-        from web import jobs_db
-        return jobs_db.get_job(self.jobs_db_path, job_id)
+        return jobs_db.get_job(job_id)
 
     def get_log(self, job_id):
         path = os.path.join(self.jobs_dir, f"{job_id}.log")
@@ -96,31 +89,15 @@ class JobManager:
     def set_arg(self, job_id: str, key: str, value) -> None:
         """Attach arbitrary key/value metadata to a job.
 
-        Writes through to jobs.db's args_json column so the builder and
+        Writes through to the Postgres jobs args_json column so the builder and
         downstream readers see it.
         """
-        if self.jobs_db_path is None:
+        job = self.get_job(job_id)
+        if job is None:
             return
-        import json
-        import sqlite3
-        # Inline update to avoid plumbing a new jobs_db helper for a
-        # single call site (sequence tracking).
-        conn = sqlite3.connect(self.jobs_db_path, isolation_level=None)
-        try:
-            conn.execute("PRAGMA busy_timeout=5000")
-            row = conn.execute(
-                "SELECT args_json FROM jobs WHERE id=?", (job_id,)
-            ).fetchone()
-            if row is None:
-                return
-            args = json.loads(row[0]) if row[0] else {}
-            args[key] = value
-            conn.execute(
-                "UPDATE jobs SET args_json=? WHERE id=?",
-                (json.dumps(args), job_id),
-            )
-        finally:
-            conn.close()
+        args = dict(job.get("args") or {})
+        args[key] = value
+        jobs_db.update_job_args(job_id, args)
 
     def add_on_complete(self, job_id: str, callback) -> None:
         """Deprecated: with the builder split, callbacks ran in the

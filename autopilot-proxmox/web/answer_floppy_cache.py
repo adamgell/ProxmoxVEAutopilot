@@ -26,13 +26,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import shlex
-import sqlite3
 import subprocess
-from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator, Optional
+from typing import Callable
 
+from web import sequences_pg
 
 SNIPPETS_DIR = "/var/lib/vz/snippets"
 _FILENAME_PREFIX = "autopilot-unattend-"
@@ -61,69 +59,32 @@ def qemu_args_token(path: str) -> str:
     return f"-drive 'if=floppy,format=raw,file={path}'"
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-@contextmanager
-def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
 # ---------------------------------------------------------------------------
 # DB bookkeeping — shares the answer_iso_cache table (same semantics:
-# content-addressed per-VM answer files). Schema in sequences_db.SCHEMA.
+# content-addressed per-VM answer files). Schema in sequences_pg.SCHEMA.
 # ---------------------------------------------------------------------------
 
 
-def _lookup(db_path: Path, full_hash: str) -> Optional[dict]:
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM answer_iso_cache WHERE hash = ?", (full_hash,),
-        ).fetchone()
-    return dict(row) if row else None
+def _lookup(db_path: Path, full_hash: str) -> dict | None:
+    return sequences_pg.get_answer_iso_cache(db_path, full_hash)
 
 
 def _insert(db_path: Path, *, full_hash: str, short: str, volid: str) -> None:
-    with _connect(db_path) as conn:
-        now = _now()
-        conn.execute(
-            "INSERT INTO answer_iso_cache "
-            "(hash, short_hash, volid, compiled_at, last_used_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (full_hash, short, volid, now, now),
-        )
+    sequences_pg.insert_answer_iso_cache(
+        db_path, full_hash=full_hash, short_hash=short, volid=volid,
+    )
 
 
 def _touch(db_path: Path, full_hash: str) -> None:
-    with _connect(db_path) as conn:
-        conn.execute(
-            "UPDATE answer_iso_cache SET last_used_at = ? WHERE hash = ?",
-            (_now(), full_hash),
-        )
+    sequences_pg.touch_answer_iso_cache(db_path, full_hash)
 
 
 def _delete_row(db_path: Path, full_hash: str) -> None:
-    with _connect(db_path) as conn:
-        conn.execute(
-            "DELETE FROM answer_iso_cache WHERE hash = ?", (full_hash,),
-        )
+    sequences_pg.delete_answer_iso_cache(db_path, full_hash)
 
 
 def list_cache(db_path: Path, *, in_use_volids: set[str]) -> list[dict]:
-    with _connect(db_path) as conn:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM answer_iso_cache ORDER BY compiled_at DESC",
-        )]
-    for r in rows:
-        r["in_use"] = r["volid"] in in_use_volids
-    return rows
+    return sequences_pg.list_answer_iso_cache(db_path, in_use_volids=in_use_volids)
 
 
 # ---------------------------------------------------------------------------

@@ -106,12 +106,22 @@ def pg_conn(pg_dsn):
 def osd_v2_client(pg_dsn, monkeypatch):
     from web import app as web_app
 
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
     monkeypatch.setenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", pg_dsn)
     return TestClient(web_app.app)
 
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_database_url_prefers_autopilot_database_url(monkeypatch):
+    from web import osd_v2_endpoints
+
+    monkeypatch.setenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", "postgresql://old")
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
+
+    assert osd_v2_endpoints._database_url() == "postgresql://new"
 
 
 def _create_run(
@@ -173,6 +183,109 @@ def _create_run(
     )
     ts_engine_pg.resolve_run_content_manifest(pg_conn, run_id)
     return run_id
+
+
+def test_v2_agent_package_returns_server_authored_config(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, winpe_only=False)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+    )
+    assert reg.status_code == 200, reg.text
+    response = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os",
+        headers=_bearer(reg.json()["bearer_token"]),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == 2
+    assert body["engine"] == "v2"
+    assert body["api_version"] == 2
+    assert body["run_id"] == run_id
+    assert body["phase"] == "full_os"
+    assert body["agent_id"].startswith("osd-fullos-")
+    assert body["bearer_token"]
+    assert body["config_path"] == (
+        r"V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json"
+    )
+    assert body["config"]["engine"] == "v2"
+    assert body["config"]["api_version"] == 2
+    assert body["config"]["run_id"] == run_id
+    assert body["config"]["phase"] == "full_os"
+    assert body["config"]["agent_id"].startswith("osd-fullos-")
+    assert body["config"]["bearer_token"]
+    assert body["config"]["flask_base_url"] == ""
+    assert any(file["path"].endswith("OsdClient.ps1") for file in body["files"])
+
+
+def test_v2_agent_package_requires_bearer(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, winpe_only=False)
+
+    missing = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os"
+    )
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "missing bearer"
+
+    invalid = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os",
+        headers=_bearer("not-a-token"),
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"] == "invalid token"
+
+
+def test_v2_agent_package_rejects_token_for_another_run(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, winpe_only=True)
+    other_run_id = _create_run(pg_conn, winpe_only=True)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": other_run_id,
+            "agent_id": "osd-1",
+            "phase": "full_os",
+        },
+    )
+    assert reg.status_code == 200, reg.text
+
+    response = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os",
+        headers=_bearer(reg.json()["bearer_token"]),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "token/run mismatch"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/winpe/unattend/{run_id}",
+        "/winpe/autopilot-config/{run_id}",
+    ],
+)
+def test_legacy_winpe_payload_routes_reject_v2_uuid_runs_after_auth(
+    osd_v2_client,
+    pg_conn,
+    monkeypatch,
+    path,
+):
+    from web import winpe_token
+
+    monkeypatch.setenv("AUTOPILOT_WINPE_TOKEN_SECRET", "test-token-secret")
+    run_id = _create_run(pg_conn, winpe_only=True)
+    token = winpe_token.sign(run_id=run_id, ttl_seconds=60)
+
+    response = osd_v2_client.get(
+        path.format(run_id=run_id),
+        headers=_bearer(token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "legacy WinPE payload route does not support v2 UUID runs"
+    )
 
 
 def test_agent_register_next_logs_and_result_complete_step(osd_v2_client, pg_conn):

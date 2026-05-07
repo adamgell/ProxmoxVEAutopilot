@@ -423,7 +423,7 @@ function Invoke-Action-PrepareWindowsSetup {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [string] $PantherDirOverride,
@@ -505,7 +505,7 @@ function Invoke-Action-StageAutopilotConfig {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         # WebInvoker takes ($Uri, $Headers, $TimeoutSec) and returns an
@@ -582,7 +582,7 @@ function Invoke-Action-StageUnattend {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [string] $PantherDirOverride,
@@ -634,7 +634,7 @@ function Invoke-Action-StageOsdClient {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [scriptblock] $RestInvoker = { param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
@@ -642,9 +642,16 @@ function Invoke-Action-StageOsdClient {
                 -Body $Body -ContentType $ContentType -TimeoutSec $TimeoutSec
         }
     )
+    $runIdText = [string] $RunId
+    $isUuidRunId = $runIdText -match '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+    $packagePath = if ($isUuidRunId) {
+        "/osd/v2/agent/package/$runIdText" + '?phase=full_os'
+    } else {
+        "/osd/client/package/$runIdText"
+    }
     $package = Invoke-OrchestratorRequest `
         -BaseUrl $BaseUrl `
-        -Path "/osd/client/package/$RunId" `
+        -Path $packagePath `
         -Method GET `
         -BearerToken $BearerToken `
         -FallbackBaseUrl $FallbackBaseUrl `
@@ -657,13 +664,23 @@ function Invoke-Action-StageOsdClient {
     if ($package.PSObject.Properties.Match('run_id').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string] $package.run_id)) {
         throw "stage_osd_client: package missing run_id response_type=$packageType"
     }
-    try {
-        $packageRunId = [int] $package.run_id
-    } catch {
-        throw "stage_osd_client: package run_id is not numeric response_type=$packageType actual=$($package.run_id)"
+    $isV2Package = $false
+    if ($package.PSObject.Properties.Match('schema_version').Count -gt 0) {
+        $isV2Package = [int] $package.schema_version -eq 2
     }
-    if ($packageRunId -ne $RunId) {
-        throw "stage_osd_client: package run_id mismatch expected=$RunId actual=$($package.run_id)"
+    if ($isV2Package) {
+        if ([string] $package.run_id -ne $runIdText) {
+            throw "stage_osd_client: package run_id mismatch expected=$runIdText actual=$($package.run_id)"
+        }
+    } else {
+        try {
+            $packageRunId = [int] $package.run_id
+        } catch {
+            throw "stage_osd_client: package run_id is not numeric response_type=$packageType actual=$($package.run_id)"
+        }
+        if ($packageRunId -ne [int] $runIdText) {
+            throw "stage_osd_client: package run_id mismatch expected=$runIdText actual=$($package.run_id)"
+        }
     }
     if ([string]::IsNullOrWhiteSpace([string] $package.bearer_token)) {
         throw "stage_osd_client: package missing bearer_token response_type=$packageType"
@@ -697,12 +714,26 @@ function Invoke-Action-StageOsdClient {
     if (-not (Test-Path -LiteralPath $configDir)) {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
     }
-    $config = @{
-        flask_base_url = $BaseUrl
-        run_id = $RunId
-        bearer_token = [string] $package.bearer_token
+    if ($isV2Package) {
+        if ([string] $package.engine -ne 'v2') {
+            throw "stage_osd_client: v2 package engine mismatch actual=$($package.engine)"
+        }
+        if ($package.PSObject.Properties.Match('config').Count -eq 0 -or $null -eq $package.config) {
+            throw "stage_osd_client: v2 package missing config"
+        }
+        $config = $package.config
+        $config | Add-Member -NotePropertyName flask_base_url -NotePropertyValue $BaseUrl -Force
+        if ($FallbackBaseUrl) {
+            $config | Add-Member -NotePropertyName flask_base_url_fallback -NotePropertyValue $FallbackBaseUrl -Force
+        }
+    } else {
+        $config = @{
+            flask_base_url = $BaseUrl
+            run_id = [int] $runIdText
+            bearer_token = [string] $package.bearer_token
+        }
+        if ($FallbackBaseUrl) { $config.flask_base_url_fallback = $FallbackBaseUrl }
     }
-    if ($FallbackBaseUrl) { $config.flask_base_url_fallback = $FallbackBaseUrl }
     $config | ConvertTo-Json -Depth 5 |
         Set-Content -LiteralPath (Join-Path $configDir 'osd-config.json') -Encoding UTF8
 }
@@ -711,7 +742,7 @@ function Invoke-Action-CaptureHash {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [scriptblock] $CaptureRunner = { param($outputPath)
@@ -757,6 +788,7 @@ function Start-AutopilotWinPE {
         [string] $ConfigPath = 'X:\autopilot\config.json',
         [string] $LogPath = 'X:\Windows\Temp\autopilot-winpe.log',
         [scriptblock] $RestInvoker = $null,
+        [scriptblock] $WebInvoker = $null,
         [scriptblock] $RebootRunner = { & wpeutil.exe reboot },
         [scriptblock] $UuidResolver = $null,
         [scriptblock] $MacResolver = $null,
@@ -799,7 +831,7 @@ function Start-AutopilotWinPE {
     $reg = Invoke-OrchestratorRequest @reqArgs
 
     $token = $reg.bearer_token
-    $runId = [int] $reg.run_id
+    $runId = [string] $reg.run_id
 
     $handlers = @{
         'partition_disk' = { param($p, $tok)
@@ -837,6 +869,7 @@ function Start-AutopilotWinPE {
                 RunId = $runId; BearerToken = $tok
             }
             if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($WebInvoker)  { $a.WebInvoker = $WebInvoker }
             Invoke-Action-StageAutopilotConfig @a
         }
         'bake_boot_entry' = { param($p, $tok)
@@ -852,6 +885,7 @@ function Start-AutopilotWinPE {
             if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
             if ($RegRunner)          { $a.RegRunner = $RegRunner }
+            if ($WebInvoker)         { $a.WebInvoker = $WebInvoker }
             Invoke-Action-PrepareWindowsSetup @a
         }
         'stage_unattend' = { param($p, $tok)
@@ -861,6 +895,7 @@ function Start-AutopilotWinPE {
             }
             if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            if ($WebInvoker)         { $a.WebInvoker = $WebInvoker }
             Invoke-Action-StageUnattend @a
         }
         'stage_osd_client' = { param($p, $tok)

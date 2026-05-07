@@ -4,11 +4,12 @@ from pathlib import Path
 
 
 @pytest.fixture
-def db_path(tmp_path):
-    from web import sequences_db
-    p = tmp_path / "cache.db"
-    sequences_db.init(p)
-    return p
+def db_path(pg_conn):
+    from web import sequences_pg
+
+    sequences_pg.reset_for_tests(pg_conn)
+    sequences_pg.init(None)
+    return None
 
 
 def test_compute_hash_is_stable():

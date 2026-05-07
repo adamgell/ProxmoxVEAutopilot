@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from web import device_history_db
+from web import device_history_pg as device_history_db
 
 log = logging.getLogger(__name__)
 
@@ -357,112 +357,110 @@ def sweep(ctx: MonitorContext,
     as a no-op.
     """
     extra = extra_in_scope_vmids or set()
-    sweep_id = device_history_db.start_sweep(ctx.db_path)
+    sweep_id = device_history_db.start_sweep()
     errors: dict[str, Any] = {}
     vm_count = 0
 
     try:
-        vms = ctx.list_pve_vms()
-    except Exception as e:
-        log.exception("sweep: list_pve_vms failed")
-        errors["pve_list"] = f"{type(e).__name__}: {e}"
-        device_history_db.finish_sweep(
-            ctx.db_path, sweep_id, vm_count=0, errors=errors,
-        )
-        return sweep_id
-
-    search_ous = device_history_db.list_enabled_search_ous(ctx.db_path)
-    if not search_ous:
-        # The DAL guarantees at least one enabled OU; this path only
-        # triggers in tests that seed the DB by hand.
-        errors["search_ous"] = "no enabled search OUs configured"
-
-    in_scope = [v for v in vms
-                if _is_autopilot_vm(v) or int(v.get("vmid", 0)) in extra]
-
-    for vm in in_scope:
-        vmid = int(vm["vmid"])
-        node = vm.get("node") or ""
-        vm_name = vm.get("name")
-
-        # ---- PVE snapshot ----
-        snap: Optional[dict] = None
         try:
-            config = ctx.fetch_pve_config(vmid, node)
-            snap = probe_pve(vmid, node, config, vm_list_entry=vm,
-                             now=ctx.now())
-            device_history_db.insert_pve_snapshot(ctx.db_path, sweep_id, snap)
+            vms = ctx.list_pve_vms()
         except Exception as e:
-            log.exception("sweep vm=%s: pve config failed", vmid)
-            # Still record a row so the timeline shows the probe tried.
-            device_history_db.insert_pve_snapshot(ctx.db_path, sweep_id, {
-                "checked_at": ctx.now(), "vmid": vmid,
-                "present": 1, "node": node, "name": vm_name,
-                "status": vm.get("status"),
-                "config_digest": "",
-                "probe_error": f"{type(e).__name__}: {e}",
-            })
+            log.exception("sweep: list_pve_vms failed")
+            errors["pve_list"] = f"{type(e).__name__}: {e}"
+            return sweep_id
 
-        # ---- Directory probes ----
-        guest: Optional[dict] = None
-        guest_err: Optional[str] = None
-        if vm.get("status") == "running":
+        search_ous = device_history_db.list_enabled_search_ous()
+        if not search_ous:
+            # The DAL guarantees at least one enabled OU; this path only
+            # triggers in tests that seed the DB by hand.
+            errors["search_ous"] = "no enabled search OUs configured"
+
+        in_scope = [v for v in vms
+                    if _is_autopilot_vm(v) or int(v.get("vmid", 0)) in extra]
+
+        for vm in in_scope:
+            vmid = int(vm["vmid"])
+            node = vm.get("node") or ""
+            vm_name = vm.get("name")
+
+            # ---- PVE snapshot ----
             try:
-                guest = ctx.fetch_guest_details(vmid, node)
+                config = ctx.fetch_pve_config(vmid, node)
+                snap = probe_pve(vmid, node, config, vm_list_entry=vm,
+                                 now=ctx.now())
+                device_history_db.insert_pve_snapshot(sweep_id, snap)
             except Exception as e:
-                guest_err = f"{type(e).__name__}: {e}"
-        else:
-            guest_err = f"vm-not-running ({vm.get('status')})"
+                log.exception("sweep vm=%s: pve config failed", vmid)
+                # Still record a row so the timeline shows the probe tried.
+                device_history_db.insert_pve_snapshot(sweep_id, {
+                    "checked_at": ctx.now(), "vmid": vmid,
+                    "present": 1, "node": node, "name": vm_name,
+                    "status": vm.get("status"),
+                    "config_digest": "",
+                    "probe_error": f"{type(e).__name__}: {e}",
+                })
 
-        ad_matches: list = []
-        ad_errors: dict = {}
-        entra: list = []
-        entra_err: Optional[str] = None
-        intune: list = []
-        intune_err: Optional[str] = None
+            # ---- Directory probes ----
+            guest: Optional[dict] = None
+            guest_err: Optional[str] = None
+            if vm.get("status") == "running":
+                try:
+                    guest = ctx.fetch_guest_details(vmid, node)
+                except Exception as e:
+                    guest_err = f"{type(e).__name__}: {e}"
+            else:
+                guest_err = f"vm-not-running ({vm.get('status')})"
 
-        win_name = (guest or {}).get("win_name") or vm_name or ""
-        serial = (guest or {}).get("serial") or ""
+            ad_matches: list = []
+            ad_errors: dict = {}
+            entra: list = []
+            entra_err: Optional[str] = None
+            intune: list = []
+            intune_err: Optional[str] = None
 
-        if win_name and search_ous:
-            ad_matches, ad_errors = probe_ad_for_win_name(
-                ctx, win_name, search_ous,
+            win_name = (guest or {}).get("win_name") or vm_name or ""
+            serial = (guest or {}).get("serial") or ""
+
+            if win_name and search_ous:
+                ad_matches, ad_errors = probe_ad_for_win_name(
+                    ctx, win_name, search_ous,
+                )
+                try:
+                    entra = probe_entra_for_win_name(ctx, win_name)
+                except Exception as e:
+                    entra_err = f"{type(e).__name__}: {e}"
+            if serial:
+                try:
+                    intune = probe_intune_for_serial(ctx, serial)
+                except Exception as e:
+                    intune_err = f"{type(e).__name__}: {e}"
+            if not entra and intune and entra_err is None:
+                ids = [
+                    d.get("azureADDeviceId") or d.get("azure_ad_device_id") or ""
+                    for d in intune
+                ]
+                try:
+                    entra = probe_entra_for_device_ids(ctx, ids)
+                except Exception as e:
+                    entra_err = f"{type(e).__name__}: {e}"
+
+            probe_row = _build_probe_row(
+                vmid, vm_name, guest,
+                ad_matches, ad_errors,
+                entra, entra_err,
+                intune, intune_err,
+                guest_err,
+                ctx.now(),
             )
-            try:
-                entra = probe_entra_for_win_name(ctx, win_name)
-            except Exception as e:
-                entra_err = f"{type(e).__name__}: {e}"
-        if serial:
-            try:
-                intune = probe_intune_for_serial(ctx, serial)
-            except Exception as e:
-                intune_err = f"{type(e).__name__}: {e}"
-        if not entra and intune and entra_err is None:
-            ids = [
-                d.get("azureADDeviceId") or d.get("azure_ad_device_id") or ""
-                for d in intune
-            ]
-            try:
-                entra = probe_entra_for_device_ids(ctx, ids)
-            except Exception as e:
-                entra_err = f"{type(e).__name__}: {e}"
-
-        probe_row = _build_probe_row(
-            vmid, vm_name, guest,
-            ad_matches, ad_errors,
-            entra, entra_err,
-            intune, intune_err,
-            guest_err,
-            ctx.now(),
+            device_history_db.insert_device_probe(sweep_id, probe_row)
+            vm_count += 1
+    except Exception as e:
+        log.exception("sweep: unhandled failure")
+        errors["sweep"] = f"{type(e).__name__}: {e}"
+    finally:
+        device_history_db.finish_sweep(
+            sweep_id, vm_count=vm_count, errors=errors,
         )
-        device_history_db.insert_device_probe(
-            ctx.db_path, sweep_id, probe_row,
-        )
-        vm_count += 1
-
-    device_history_db.finish_sweep(
-        ctx.db_path, sweep_id, vm_count=vm_count, errors=errors,
-    )
     return sweep_id
 
 

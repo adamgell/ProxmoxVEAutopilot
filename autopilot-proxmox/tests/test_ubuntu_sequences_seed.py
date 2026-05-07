@@ -1,14 +1,15 @@
 """Seed: Ubuntu sequences are inserted on empty DB alongside the Windows ones."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 
 @pytest.fixture
-def db_path(tmp_path):
-    return tmp_path / "sequences.db"
+def db_path(pg_conn):
+    from web import sequences_pg
+
+    sequences_pg.reset_for_tests(pg_conn)
+    return None
 
 
 @pytest.fixture

@@ -16,7 +16,8 @@ import threading
 import time
 from pathlib import Path
 
-from web import jobs_db, service_health
+from web import jobs_pg as jobs_db
+from web import service_health_pg as service_health
 from web.paths import OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT as _REPO_ROOT
 
 _log = logging.getLogger("web.monitor_main")
@@ -43,12 +44,9 @@ def _acquire_singleton_lock(path: Path) -> int | None:
 
 
 def run_monitor(*, lock_path: Path | str = _OUTPUT_DIR / "monitor.lock",
-                monitor_db_path: Path | str = _OUTPUT_DIR / "device_monitor.db",
-                jobs_db_path: Path | str = _OUTPUT_DIR / "jobs.db",
+                monitor_db_path: Path | str | None = None,
                 stop_event: threading.Event | None = None) -> None:
     lock_path = Path(lock_path)
-    monitor_db_path = Path(monitor_db_path)
-    jobs_db_path = Path(jobs_db_path)
 
     fd = _acquire_singleton_lock(lock_path)
     if fd is None:
@@ -62,9 +60,7 @@ def run_monitor(*, lock_path: Path | str = _OUTPUT_DIR / "monitor.lock",
 
     _log.info("monitor singleton acquired lock on %s", lock_path)
     try:
-        _run_loops(stop_event=stop_event,
-                   monitor_db_path=monitor_db_path,
-                   jobs_db_path=jobs_db_path)
+        _run_loops(stop_event=stop_event)
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -83,7 +79,7 @@ def _install_signal_handlers() -> threading.Event:
 
 
 def _run_loops(*, stop_event: threading.Event,
-               monitor_db_path: Path, jobs_db_path: Path,
+               monitor_db_path: Path | None = None,
                sweep_interval_seconds: float = _SWEEP_INTERVAL_DEFAULT,
                reaper_interval_seconds: float = _REAPER_INTERVAL,
                heartbeat_interval_seconds: float = _HEARTBEAT_INTERVAL,
@@ -99,7 +95,7 @@ def _run_loops(*, stop_event: threading.Event,
     Each tick is wrapped in ``try/except`` so a transient failure in
     one (e.g., Proxmox API hiccup) never stops the others from firing.
     """
-    service_health.init(monitor_db_path)
+    service_health.init()
     version = _version_sha()
 
     last_sweep = 0.0
@@ -119,18 +115,18 @@ def _run_loops(*, stop_event: threading.Event,
         if now - last_hb >= heartbeat_interval_seconds:
             try:
                 service_health.heartbeat(
-                    monitor_db_path, service_id="monitor",
+                    service_id="monitor",
                     service_type="monitor", version_sha=version,
                     detail="running",
                 )
-                service_health.prune_dead_workers(monitor_db_path)
+                service_health.prune_dead_workers()
             except Exception:
                 _log.exception("heartbeat failed")
             last_hb = now
 
         if now - last_reap >= reaper_interval_seconds:
             try:
-                n = jobs_db.reap_orphans(jobs_db_path)
+                n = jobs_db.reap_orphans()
                 if n:
                     _log.warning("reaped %d orphaned jobs", n)
             except Exception:
@@ -139,14 +135,14 @@ def _run_loops(*, stop_event: threading.Event,
 
         if now - last_sweep >= sweep_interval_seconds:
             try:
-                _do_sweep_tick(monitor_db_path)
+                _do_sweep_tick()
             except Exception:
                 _log.exception("sweep tick failed")
             last_sweep = now
 
         if now - last_keytab >= keytab_interval_seconds:
             try:
-                _do_keytab_tick(monitor_db_path)
+                _do_keytab_tick()
             except Exception:
                 _log.exception("keytab tick failed")
             last_keytab = now
@@ -163,7 +159,7 @@ def _run_loops(*, stop_event: threading.Event,
     _log.info("monitor loops stopping")
 
 
-def _do_sweep_tick(monitor_db_path: Path) -> None:
+def _do_sweep_tick() -> None:
     """One iteration of the device-monitor sweep.
 
     Mirrors the body of :func:`web.app._device_monitor_loop`:
@@ -176,9 +172,9 @@ def _do_sweep_tick(monitor_db_path: Path) -> None:
       5. Compute ``extra_in_scope_vmids`` from the sequences DB.
       6. Call ``device_monitor.sweep(ctx, extra_in_scope_vmids=extra)``.
     """
-    from web import device_history_db, device_monitor
+    from web import device_history_pg as device_history_db, device_monitor
     try:
-        settings = device_history_db.get_settings(monitor_db_path)
+        settings = device_history_db.get_settings()
     except Exception:
         _log.exception("sweep: could not read settings")
         return
@@ -201,7 +197,7 @@ def _do_sweep_tick(monitor_db_path: Path) -> None:
     device_monitor.sweep(ctx, extra_in_scope_vmids=extra)
 
 
-def _do_keytab_tick(monitor_db_path: Path) -> None:
+def _do_keytab_tick() -> None:
     """One iteration of the keytab probe/refresh logic.
 
     Delegates to ``web.app._run_keytab_checks`` which handles probe,

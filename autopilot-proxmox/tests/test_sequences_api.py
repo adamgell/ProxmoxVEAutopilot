@@ -9,11 +9,11 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def app_env():
+def app_env(pg_conn):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         secrets = tmp / "secrets"
-        db = tmp / "sequences.db"
+        db = None
         # Reset the process-wide cipher cache so this test's patched
         # CREDENTIAL_KEY is actually used.
         import web.app as _wa
@@ -27,8 +27,9 @@ def app_env():
             jm.jobs_dir = str(tmp / "jobs")
             from web.app import app
             # Init DB without seeds so "empty" tests remain valid.
-            from web import sequences_db as _sdb
+            from web import sequences_pg as _sdb
             secrets.mkdir(parents=True, exist_ok=True)
+            _sdb.reset_for_tests(pg_conn)
             _sdb.init(db)
             yield TestClient(app)
 
@@ -554,7 +555,7 @@ def test_proxmox_args_write_requires_root_ticket_when_smbios_args_needed():
     assert "- _args_write_required | default(false) | bool" in text
 
 
-def test_startup_seeds_defaults(tmp_path):
+def test_startup_seeds_defaults(tmp_path, pg_conn):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile
     from pathlib import Path
@@ -564,7 +565,7 @@ def test_startup_seeds_defaults(tmp_path):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         secrets = tmp / "secrets"
-        db = tmp / "sequences.db"
+        db = None
         # Reset the process-wide cipher cache so this test's patched
         # CREDENTIAL_KEY is actually used.
         import web.app as _wa
@@ -577,6 +578,8 @@ def test_startup_seeds_defaults(tmp_path):
             jm.list_jobs.return_value = []
             jm.jobs_dir = str(tmp / "jobs")
             # Importing triggers @on_event("startup"); TestClient replays it.
+            from web import sequences_pg as _sdb
+            _sdb.reset_for_tests(pg_conn)
             from web.app import app
             with TestClient(app) as c:
                 got = c.get("/api/sequences").json()

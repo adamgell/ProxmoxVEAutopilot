@@ -23,7 +23,7 @@ def test_seeded_linuxesp_sequence_matches_snapshot() -> None:
         # Microsoft repo steps MUST run before install_desktop_environment —
         # ubuntu-desktop brings in NetworkManager which hijacks networkd's
         # DHCP lease mid-cloud-init, breaking any apt fetches that come
-        # after. See seed_defaults in sequences_db.py for the matching order.
+        # after. See seed_defaults in sequences_pg.py for the matching order.
         {"step_type": "install_intune_portal", "params": {}},
         {"step_type": "install_edge", "params": {}},
         {"step_type": "remove_apt_packages",
