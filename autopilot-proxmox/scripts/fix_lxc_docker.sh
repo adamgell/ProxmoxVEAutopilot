@@ -8,12 +8,32 @@ check_active_autopilot_work() {
     return 0
   fi
 
-  docker exec autopilot python - <<'PY'
+  docker exec -i \
+    -e ACTIVE_RUN_WINDOW_HOURS="${ACTIVE_RUN_WINDOW_HOURS:-8}" \
+    autopilot python - <<'PY'
+import os
 import sqlite3
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 checks = []
+active_run_window_hours = float(os.environ.get("ACTIVE_RUN_WINDOW_HOURS") or 8)
+active_run_cutoff = datetime.now(timezone.utc) - timedelta(
+    hours=active_run_window_hours,
+)
+
+
+def parse_dt(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 jobs_db = Path("/app/output/jobs.db")
 if jobs_db.exists():
@@ -32,11 +52,14 @@ sequences_db = Path("/app/output/sequences.db")
 if sequences_db.exists():
     with sqlite3.connect(sequences_db) as conn:
         rows = conn.execute(
-            "SELECT id, state FROM provisioning_runs "
+            "SELECT id, state, started_at FROM provisioning_runs "
             "WHERE state NOT IN ('done', 'failed') "
-            "ORDER BY created_at"
+            "ORDER BY started_at"
         ).fetchall()
-    checks.extend(f"run {run_id} {state}" for run_id, state in rows)
+    for run_id, state, started_at in rows:
+        started = parse_dt(started_at)
+        if started and started >= active_run_cutoff:
+            checks.append(f"run {run_id} {state} started_at={started_at}")
 
 if checks:
     print("\n".join(checks))

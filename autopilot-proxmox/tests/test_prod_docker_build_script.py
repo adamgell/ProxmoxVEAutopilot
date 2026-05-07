@@ -9,8 +9,12 @@ def test_lxc_production_build_keeps_default_bridge_network_working():
     script = FIX_LXC_DOCKER.read_text()
 
     assert "check_active_autopilot_work" in script
+    assert "docker exec -i" in script
+    assert "ACTIVE_RUN_WINDOW_HOURS" in script
+    assert "active_run_cutoff" in script
     assert "status IN ('pending', 'running')" in script
     assert "state NOT IN ('done', 'failed')" in script
+    assert "started_at" in script
     assert "FORCE_DOCKER_RESTART=1" in script
     assert "Refusing to restart Docker while Autopilot work is active" in script
     assert '"iptables": true' in script
