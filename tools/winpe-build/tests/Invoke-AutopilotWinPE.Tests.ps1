@@ -919,4 +919,90 @@ Describe 'Start-AutopilotWinPE' {
             Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'preserves UUID run_id while dispatching stage_osd_client' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-start-osd-v2-$(New-Guid)"
+        $driveCreated = $false
+        $script:posted = @()
+        $script:rebootCalled = $false
+        $uuid = '11111111-2222-3333-4444-555555555555'
+        try {
+            if (Get-PSDrive -Name V -ErrorAction SilentlyContinue) {
+                throw 'test requires unused V: PSDrive'
+            }
+            New-PSDrive -Name V -PSProvider FileSystem -Root $tmp.FullName | Out-Null
+            $driveCreated = $true
+            $clientBytes = [System.Text.Encoding]::UTF8.GetBytes('Write-Host ok')
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                $script:posted += "$Method $Uri"
+                if ($Uri -match '/register$') {
+                    return [pscustomobject]@{
+                        run_id = $uuid
+                        bearer_token = 't1'
+                        actions = @(
+                            [pscustomobject]@{
+                                step_id = 1
+                                kind = 'stage_osd_client'
+                                params = @{}
+                            }
+                        )
+                    }
+                } elseif ($Uri -match '/osd/v2/agent/package/.+\?phase=full_os$') {
+                    return [pscustomobject]@{
+                        schema_version = 2
+                        engine = 'v2'
+                        api_version = 2
+                        run_id = $uuid
+                        bearer_token = 'v2-token'
+                        config = [pscustomobject]@{
+                            engine = 'v2'
+                            api_version = 2
+                            flask_base_url = ''
+                            run_id = $uuid
+                            phase = 'full_os'
+                            agent_id = 'osd-fullos-11111111'
+                            bearer_token = 'v2-token'
+                        }
+                        files = @(
+                            [pscustomobject]@{
+                                path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                                content_b64 = [System.Convert]::ToBase64String($clientBytes)
+                            }
+                        )
+                    }
+                } elseif ($Uri -match '/step/1/result$') {
+                    return [pscustomobject]@{ ok = $true; bearer_token = 't2' }
+                } elseif ($Uri -match '/done$') {
+                    return [pscustomobject]@{ ok = $true }
+                }
+                throw "unexpected URI $Uri"
+            }
+            $tmpCfg = [System.IO.Path]::GetTempFileName()
+            Set-Content -LiteralPath $tmpCfg -Value '{"flask_base_url":"http://x:5000","build_sha":"DEV"}' -Encoding UTF8
+
+            Start-AutopilotWinPE `
+                -ConfigPath $tmpCfg `
+                -LogPath ([System.IO.Path]::GetTempFileName()) `
+                -RestInvoker $invoker `
+                -RebootRunner { $script:rebootCalled = $true } `
+                -UuidResolver { 'fake-uuid' } `
+                -MacResolver { 'aa:bb' }
+
+            ($script:posted -join '|') | Should -Match '/osd/v2/agent/package/11111111-2222-3333-4444-555555555555\?phase=full_os'
+            ($script:posted -join '|') | Should -Match 'POST.*/done'
+            $script:rebootCalled | Should -BeTrue
+            $cfg = Get-Content 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json' -Raw |
+                ConvertFrom-Json
+            $cfg.run_id | Should -Be $uuid
+        } finally {
+            if ($driveCreated) {
+                Remove-PSDrive -Name V -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            if ($tmpCfg) {
+                Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }

@@ -830,7 +830,7 @@ function Start-AutopilotWinPE {
     $reg = Invoke-OrchestratorRequest @reqArgs
 
     $token = $reg.bearer_token
-    $runId = [int] $reg.run_id
+    $runId = [string] $reg.run_id
 
     $handlers = @{
         'partition_disk' = { param($p, $tok)

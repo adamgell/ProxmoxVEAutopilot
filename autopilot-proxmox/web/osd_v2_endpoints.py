@@ -198,7 +198,12 @@ def _manifest_response(conn, run_id: str) -> dict:
 
 
 @router.get("/agent/package/{run_id}")
-def get_v2_agent_package(run_id: str, phase: str = "full_os"):
+def get_v2_agent_package(
+    run_id: str,
+    phase: str = "full_os",
+    payload: dict = Depends(_require_bearer),
+):
+    _require_run_token(run_id, payload)
     with _conn() as conn:
         try:
             ts_engine_pg.get_run(conn, run_id)

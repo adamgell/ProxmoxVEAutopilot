@@ -187,8 +187,14 @@ def _create_run(
 
 def test_v2_agent_package_returns_server_authored_config(osd_v2_client, pg_conn):
     run_id = _create_run(pg_conn, winpe_only=False)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run_id, "agent_id": "osd-1", "phase": "full_os"},
+    )
+    assert reg.status_code == 200, reg.text
     response = osd_v2_client.get(
-        f"/osd/v2/agent/package/{run_id}?phase=full_os"
+        f"/osd/v2/agent/package/{run_id}?phase=full_os",
+        headers=_bearer(reg.json()["bearer_token"]),
     )
 
     assert response.status_code == 200, response.text
@@ -211,6 +217,45 @@ def test_v2_agent_package_returns_server_authored_config(osd_v2_client, pg_conn)
     assert body["config"]["bearer_token"]
     assert body["config"]["flask_base_url"] == ""
     assert any(file["path"].endswith("OsdClient.ps1") for file in body["files"])
+
+
+def test_v2_agent_package_requires_bearer(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, winpe_only=False)
+
+    missing = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os"
+    )
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "missing bearer"
+
+    invalid = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os",
+        headers=_bearer("not-a-token"),
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"] == "invalid token"
+
+
+def test_v2_agent_package_rejects_token_for_another_run(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, winpe_only=True)
+    other_run_id = _create_run(pg_conn, winpe_only=True)
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": other_run_id,
+            "agent_id": "osd-1",
+            "phase": "full_os",
+        },
+    )
+    assert reg.status_code == 200, reg.text
+
+    response = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os",
+        headers=_bearer(reg.json()["bearer_token"]),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "token/run mismatch"
 
 
 def test_agent_register_next_logs_and_result_complete_step(osd_v2_client, pg_conn):
