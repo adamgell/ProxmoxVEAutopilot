@@ -185,6 +185,34 @@ def _create_run(
     return run_id
 
 
+def test_v2_agent_package_returns_server_authored_config(osd_v2_client, pg_conn):
+    run_id = _create_run(pg_conn, winpe_only=False)
+    response = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run_id}?phase=full_os"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == 2
+    assert body["engine"] == "v2"
+    assert body["api_version"] == 2
+    assert body["run_id"] == run_id
+    assert body["phase"] == "full_os"
+    assert body["agent_id"].startswith("osd-fullos-")
+    assert body["bearer_token"]
+    assert body["config_path"] == (
+        r"V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json"
+    )
+    assert body["config"]["engine"] == "v2"
+    assert body["config"]["api_version"] == 2
+    assert body["config"]["run_id"] == run_id
+    assert body["config"]["phase"] == "full_os"
+    assert body["config"]["agent_id"].startswith("osd-fullos-")
+    assert body["config"]["bearer_token"]
+    assert body["config"]["flask_base_url"] == ""
+    assert any(file["path"].endswith("OsdClient.ps1") for file in body["files"])
+
+
 def test_agent_register_next_logs_and_result_complete_step(osd_v2_client, pg_conn):
     from web import ts_engine_pg
 

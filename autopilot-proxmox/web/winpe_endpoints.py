@@ -20,7 +20,6 @@ import logging
 import os
 import sqlite3
 import time
-import base64
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +27,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from web import osd_package
 from web import sequences_db, winpe_token
 
 
@@ -196,8 +196,7 @@ def _resolve_autopilot_config_path():
 
 
 def _files_dir() -> Path:
-    from web import app as web_app
-    return web_app.FILES_DIR
+    return osd_package.files_dir()
 
 
 def _credential_resolver_for_run():
@@ -278,7 +277,7 @@ def _require_bearer_token(authorization: Optional[str] = Header(None)) -> dict:
 
 
 def _content_b64(path: Path) -> str:
-    return base64.b64encode(path.read_bytes()).decode("ascii")
+    return osd_package.content_b64(path)
 
 
 @router.post("/step/{step_id}/result")
@@ -439,52 +438,19 @@ def get_osd_client_package(run_id: int,
     longer-lived than the WinPE token because it may not be used until
     after image servicing, first boot, specialize, and SetupComplete.
     """
-    files_dir = _files_dir()
-    osd_client = files_dir / "osd-client" / "OsdClient.ps1"
-    setup_complete = files_dir / "SetupComplete.cmd"
-    recovery_fix = files_dir / "FixRecoveryPartition.ps1"
-    autopilot_info = files_dir / "Get-WindowsAutopilotInfo.ps1"
-    missing = [
-        str(p)
-        for p in (osd_client, setup_complete, recovery_fix, autopilot_info)
-        if not p.is_file()
-    ]
-    if missing:
+    try:
+        files = osd_package.osd_client_files(_files_dir())
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"OSD client package is missing files: {', '.join(missing)}",
+            detail=f"OSD client package is missing files: {exc}",
         )
     return {
         "run_id": run_id,
         "bearer_token": winpe_token.sign(
             run_id=run_id, ttl_seconds=_OSD_TOKEN_TTL,
         ),
-        "files": [
-            {
-                "path": r"V:\Windows\Setup\Scripts\SetupComplete.cmd",
-                "content_b64": _content_b64(setup_complete),
-            },
-            {
-                "path": (
-                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1"
-                ),
-                "content_b64": _content_b64(osd_client),
-            },
-            {
-                "path": (
-                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD"
-                    r"\FixRecoveryPartition.ps1"
-                ),
-                "content_b64": _content_b64(recovery_fix),
-            },
-            {
-                "path": (
-                    r"V:\ProgramData\ProxmoxVEAutopilot\OSD"
-                    r"\Get-WindowsAutopilotInfo.ps1"
-                ),
-                "content_b64": _content_b64(autopilot_info),
-            },
-        ],
+        "files": files,
     }
 
 

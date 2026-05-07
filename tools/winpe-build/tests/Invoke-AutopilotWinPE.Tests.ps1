@@ -640,6 +640,70 @@ Describe 'Invoke-Action-StageOsdClient' {
         }
     }
 
+    It 'writes server-authored v2 osd-config.json' {
+        $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-osd-v2-$(New-Guid)"
+        $driveCreated = $false
+        try {
+            if (Get-PSDrive -Name V -ErrorAction SilentlyContinue) {
+                throw 'test requires unused V: PSDrive'
+            }
+            New-PSDrive -Name V -PSProvider FileSystem -Root $tmp.FullName | Out-Null
+            $uuid = '11111111-2222-3333-4444-555555555555'
+            $clientBytes = [System.Text.Encoding]::UTF8.GetBytes('Write-Host ok')
+            $script:stageOsdUri = $null
+            $rest = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                $script:stageOsdUri = $Uri
+                return [pscustomobject]@{
+                    schema_version = 2
+                    engine = 'v2'
+                    api_version = 2
+                    run_id = $uuid
+                    bearer_token = 'v2-token'
+                    config_path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json'
+                    config = [pscustomobject]@{
+                        engine = 'v2'
+                        api_version = 2
+                        flask_base_url = ''
+                        run_id = $uuid
+                        phase = 'full_os'
+                        agent_id = 'osd-fullos-11111111'
+                        bearer_token = 'v2-token'
+                    }
+                    files = @(
+                        [pscustomobject]@{
+                            path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                            content_b64 = [System.Convert]::ToBase64String($clientBytes)
+                        }
+                    )
+                }
+            }
+
+            Invoke-Action-StageOsdClient `
+                -Params @{} -BaseUrl 'http://x:5000' -RunId $uuid `
+                -BearerToken 'tok' -FallbackBaseUrl 'http://fallback:5000' `
+                -RestInvoker $rest
+
+            $script:stageOsdUri | Should -Match '/osd/v2/agent/package/11111111-2222-3333-4444-555555555555\?phase=full_os$'
+            $cfg = Get-Content 'V:\ProgramData\ProxmoxVEAutopilot\OSD\osd-config.json' -Raw |
+                ConvertFrom-Json
+            $cfg.engine | Should -Be 'v2'
+            $cfg.api_version | Should -Be 2
+            $cfg.run_id | Should -Be $uuid
+            $cfg.phase | Should -Be 'full_os'
+            $cfg.agent_id | Should -Be 'osd-fullos-11111111'
+            $cfg.bearer_token | Should -Be 'v2-token'
+            $cfg.flask_base_url | Should -Be 'http://x:5000'
+            $cfg.flask_base_url_fallback | Should -Be 'http://fallback:5000'
+        } finally {
+            if ($driveCreated) {
+                Remove-PSDrive -Name V -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            $script:stageOsdUri = $null
+        }
+    }
+
     It 'writes OSD package files and osd-config.json under the applied OS' {
         $tmp = New-Item -Type Directory -Path "$env:TEMP/wpe-osd-$(New-Guid)"
         $driveCreated = $false

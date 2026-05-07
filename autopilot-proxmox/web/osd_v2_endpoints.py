@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from pydantic import BaseModel, Field
 
+from web import osd_package
 from web import ts_engine_pg, winpe_token
 
 
@@ -193,6 +194,45 @@ def _manifest_response(conn, run_id: str) -> dict:
         "schema_version": 1,
         "run_id": run_id,
         "items": ts_engine_pg.list_run_manifest(conn, run_id),
+    }
+
+
+@router.get("/agent/package/{run_id}")
+def get_v2_agent_package(run_id: str, phase: str = "full_os"):
+    with _conn() as conn:
+        try:
+            ts_engine_pg.get_run(conn, run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+    try:
+        files = osd_package.osd_client_files()
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OSD client package is missing files: {exc}",
+        )
+    agent_id = f"osd-{phase.replace('_', '')}-{run_id[:8]}"
+    token = _sign(run_id)
+    config = {
+        "engine": "v2",
+        "api_version": 2,
+        "flask_base_url": "",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "phase": phase,
+        "bearer_token": token,
+    }
+    return {
+        "schema_version": 2,
+        "engine": "v2",
+        "api_version": 2,
+        "run_id": run_id,
+        "phase": phase,
+        "agent_id": agent_id,
+        "bearer_token": token,
+        "config_path": osd_package.CONFIG_PATH,
+        "config": config,
+        "files": files,
     }
 
 
