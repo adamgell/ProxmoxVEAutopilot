@@ -117,4 +117,70 @@ Describe 'OsdClient content materialization' {
         $script:Requests[1].Body.status | Should -Be 'failed'
         $script:Requests[1].Body.error | Should -Match 'SHA256 mismatch'
     }
+
+    It 'runs a v2 package action through register next and result reporting' {
+        Mock Invoke-OsdRequest {
+            $script:Requests += [pscustomobject]@{
+                Path = $Path
+                Body = $Body
+                BearerToken = $BearerToken
+            }
+            if ($Path -eq '/osd/v2/agent/register') {
+                return [pscustomobject]@{ bearer_token = 'token-2' }
+            }
+            if ($Path -eq '/osd/v2/agent/next' -and $script:NextReturned) {
+                return [pscustomobject]@{ bearer_token = 'token-4'; actions = @() }
+            }
+            if ($Path -eq '/osd/v2/agent/next') {
+                $script:NextReturned = $true
+                return [pscustomobject]@{
+                    bearer_token = 'token-3'
+                    actions = @(
+                        [pscustomobject]@{
+                            step_id = 'step-1'
+                            kind = 'install_package'
+                            phase = 'full_os'
+                            params = [pscustomobject]@{
+                                install_command = 'msiexec.exe /i "{path}" /qn'
+                            }
+                            content = @(
+                                [pscustomobject]@{
+                                    id = 'manifest-1'
+                                    logical_name = 'notepad-plus-plus'
+                                    source_uri = 'https://content.local/npp.msi'
+                                    sha256 = ('d' * 64)
+                                    staging_path = (Join-Path $TestDrive 'Content\npp')
+                                }
+                            )
+                        }
+                    )
+                }
+            }
+            return [pscustomobject]@{ bearer_token = 'token-4' }
+        }
+        Mock Invoke-InstallPackage {}
+
+        $script:NextReturned = $false
+        $config = [pscustomobject]@{
+            run_id = 'run-1'
+            agent_id = 'osd-1'
+            phase = 'full_os'
+            bearer_token = 'token-1'
+            flask_base_url = 'https://autopilot.local'
+        }
+
+        Invoke-OsdV2Client -Config $config
+
+        $script:Requests[0].Path | Should -Be '/osd/v2/agent/register'
+        $script:Requests[0].Body.run_id | Should -Be 'run-1'
+        $script:Requests[0].Body.agent_id | Should -Be 'osd-1'
+        $script:Requests[1].Path | Should -Be '/osd/v2/agent/next'
+        $script:Requests[1].BearerToken | Should -Be 'token-2'
+        $script:Requests[2].Path | Should -Be '/osd/v2/agent/step/step-1/result'
+        $script:Requests[2].Body.status | Should -Be 'success'
+        $script:Requests[2].Body.phase | Should -Be 'full_os'
+        $script:Requests[3].Path | Should -Be '/osd/v2/agent/next'
+        $script:Requests[4].Path | Should -Be '/osd/v2/agent/phase-complete'
+        Should -Invoke Invoke-InstallPackage -Times 1 -Exactly
+    }
 }
