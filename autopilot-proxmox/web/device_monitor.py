@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from web import device_history_db
+from web import device_history_pg as device_history_db
 
 log = logging.getLogger(__name__)
 
@@ -357,7 +357,7 @@ def sweep(ctx: MonitorContext,
     as a no-op.
     """
     extra = extra_in_scope_vmids or set()
-    sweep_id = device_history_db.start_sweep(ctx.db_path)
+    sweep_id = device_history_db.start_sweep()
     errors: dict[str, Any] = {}
     vm_count = 0
 
@@ -366,12 +366,10 @@ def sweep(ctx: MonitorContext,
     except Exception as e:
         log.exception("sweep: list_pve_vms failed")
         errors["pve_list"] = f"{type(e).__name__}: {e}"
-        device_history_db.finish_sweep(
-            ctx.db_path, sweep_id, vm_count=0, errors=errors,
-        )
+        device_history_db.finish_sweep(sweep_id, vm_count=0, errors=errors)
         return sweep_id
 
-    search_ous = device_history_db.list_enabled_search_ous(ctx.db_path)
+    search_ous = device_history_db.list_enabled_search_ous()
     if not search_ous:
         # The DAL guarantees at least one enabled OU; this path only
         # triggers in tests that seed the DB by hand.
@@ -391,11 +389,11 @@ def sweep(ctx: MonitorContext,
             config = ctx.fetch_pve_config(vmid, node)
             snap = probe_pve(vmid, node, config, vm_list_entry=vm,
                              now=ctx.now())
-            device_history_db.insert_pve_snapshot(ctx.db_path, sweep_id, snap)
+            device_history_db.insert_pve_snapshot(sweep_id, snap)
         except Exception as e:
             log.exception("sweep vm=%s: pve config failed", vmid)
             # Still record a row so the timeline shows the probe tried.
-            device_history_db.insert_pve_snapshot(ctx.db_path, sweep_id, {
+            device_history_db.insert_pve_snapshot(sweep_id, {
                 "checked_at": ctx.now(), "vmid": vmid,
                 "present": 1, "node": node, "name": vm_name,
                 "status": vm.get("status"),
@@ -455,14 +453,10 @@ def sweep(ctx: MonitorContext,
             guest_err,
             ctx.now(),
         )
-        device_history_db.insert_device_probe(
-            ctx.db_path, sweep_id, probe_row,
-        )
+        device_history_db.insert_device_probe(sweep_id, probe_row)
         vm_count += 1
 
-    device_history_db.finish_sweep(
-        ctx.db_path, sweep_id, vm_count=vm_count, errors=errors,
-    )
+    device_history_db.finish_sweep(sweep_id, vm_count=vm_count, errors=errors)
     return sweep_id
 
 

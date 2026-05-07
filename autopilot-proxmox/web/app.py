@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+import psycopg
 import yaml
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
@@ -469,7 +470,7 @@ job_manager = JobManager(
 
 from web import sequences_db, crypto as _crypto
 from web import sequence_compiler
-from web import device_history_db, device_monitor
+from web import device_history_pg as device_history_db, device_monitor
 from web import auth as _auth
 
 from web.winpe_endpoints import (
@@ -800,7 +801,6 @@ def _init_sequences_db() -> None:
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     sequences_db.init(SEQUENCES_DB)
     sequences_db.seed_defaults(SEQUENCES_DB, _cipher())
-    device_history_db.init(DEVICE_MONITOR_DB)
     global _SEQUENCES_READY
     _SEQUENCES_READY = True
 
@@ -844,10 +844,11 @@ def _database_url() -> str:
 
 
 def _init_app_database() -> None:
-    from web import db_pg, ts_engine_pg
+    from web import db_pg, device_history_pg, ts_engine_pg
 
     with db_pg.connection(_database_url()) as conn:
         ts_engine_pg.init(conn)
+        device_history_pg.init(conn)
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -957,7 +958,19 @@ def _run_keytab_checks() -> None:
         keytab_path=keytab_path, principal=principal,
         ldap_host=ldap_host, gmsa_dn=gmsa_dn,
     )
-    keytab_monitor.record_probe(DEVICE_MONITOR_DB, probe)
+    device_history_db.update_keytab_probe(
+        keytab_path=probe.keytab_path,
+        keytab_mtime=probe.keytab_mtime,
+        keytab_principal=probe.keytab_principal,
+        keytab_kvno_local=probe.keytab_kvno_local,
+        keytab_kvno_ad=probe.keytab_kvno_ad,
+        last_probe_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        last_probe_status=probe.status,
+        last_probe_message=probe.message,
+        last_kinit_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        last_kinit_ok=probe.kinit_ok,
+        last_kinit_error=probe.kinit_error,
+    )
     _log.info("keytab probe: %s (%s)", probe.status, probe.message)
 
     # Refresh when:
@@ -965,7 +978,7 @@ def _run_keytab_checks() -> None:
     #     or STALE — STALE means refresher just slipped a bit, normal
     #     daily cadence will catch it), OR
     #   - last_refresh_at is >24h ago (daily cadence).
-    current = device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    current = device_history_db.get_keytab_health() or {}
     last_refresh_at = current.get("last_refresh_at")
     last_refresh_ok = current.get("last_refresh_ok")
     needs_refresh = probe.status in (
@@ -993,7 +1006,7 @@ def _run_keytab_checks() -> None:
     admin_pw = cred.get("password") or ""
     if not admin_user or not admin_pw:
         device_history_db.update_keytab_refresh(
-            DEVICE_MONITOR_DB, ok=False,
+            ok=False,
             message=(
                 "no AD credential configured for keytab refresh "
                 "(set monitoring_settings.ad_credential_id to a "
@@ -1347,7 +1360,7 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
 def _resolve_ad_credential() -> dict:
     """Look up the configured AD credential. Returns
     ``{username, password}`` or ``{}`` if unconfigured."""
-    s = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    s = device_history_db.get_settings()
     cred_id = s.ad_credential_id
     if not cred_id:
         return {}
@@ -2564,7 +2577,7 @@ def _vms_from_monitor_snapshot() -> list[dict]:
     and let the explicit Refresh button do live collection when needed.
     """
     try:
-        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+        latest = device_history_db.latest_per_vmid()
     except Exception:
         return []
 
@@ -2656,30 +2669,10 @@ def _vms_from_monitor_snapshot() -> list[dict]:
 
 
 def _latest_monitor_sweep_status() -> dict | None:
-    if not Path(DEVICE_MONITOR_DB).exists():
-        return None
     try:
-        conn = sqlite3.connect(str(DEVICE_MONITOR_DB))
-        conn.row_factory = sqlite3.Row
-        try:
-            row = conn.execute(
-                "SELECT id, started_at, ended_at, vm_count "
-                "FROM monitoring_sweeps ORDER BY id DESC LIMIT 1",
-            ).fetchone()
-        finally:
-            conn.close()
+        return device_history_db.latest_sweep_status()
     except Exception:
         return None
-    if not row:
-        return None
-    ended_at = row["ended_at"] or ""
-    return {
-        "id": int(row["id"]),
-        "started_at": row["started_at"] or "",
-        "ended_at": ended_at,
-        "vm_count": int(row["vm_count"] or 0),
-        "running": not bool(ended_at),
-    }
 
 
 def _fetch_vms_payload_live():
@@ -2724,7 +2717,7 @@ async def _refresh_vms_cache_bg() -> None:
         _VMS_CACHE["refreshing"] = False
 
 
-async def _run_monitor_sweep_and_refresh_vms_cache(db_path: Path) -> None:
+async def _run_monitor_sweep_and_refresh_vms_cache() -> None:
     """Run an operator-requested sweep, then replace the /vms cache from it."""
     import asyncio
     import logging as _logging
@@ -2732,7 +2725,7 @@ async def _run_monitor_sweep_and_refresh_vms_cache(db_path: Path) -> None:
 
     _VMS_CACHE["refreshing"] = True
     try:
-        await asyncio.to_thread(monitor_main._do_sweep_tick, db_path)
+        await asyncio.to_thread(monitor_main._do_sweep_tick)
         _VMS_CACHE.update({
             "data": None,
             "devices": None,
@@ -4806,57 +4799,10 @@ async def api_fleet_summary():
     intentionally omitted rather than fabricated — the dashboard
     will simply render "—" for that cell.
     """
-    db_path = DEVICE_MONITOR_DB
-    default = {"total": 0}
-    if not db_path.exists():
-        return default
     try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        try:
-            # Is the table present? (Early in a fresh install the
-            # monitor may not have run yet.)
-            has = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='device_probes'"
-            ).fetchone()
-            if not has:
-                return default
-            # Latest sweep only — older sweeps would double-count.
-            sweep_row = conn.execute(
-                "SELECT MAX(sweep_id) AS sid FROM device_probes"
-            ).fetchone()
-            sweep_id = sweep_row["sid"] if sweep_row else None
-            if not sweep_id:
-                return default
-            row = conn.execute(
-                "SELECT COUNT(*) AS total, "
-                "SUM(ad_found)     AS ad, "
-                "SUM(entra_found)  AS entra, "
-                "SUM(intune_found) AS intune "
-                "FROM device_probes WHERE sweep_id = ?",
-                (sweep_id,),
-            ).fetchone()
-        finally:
-            conn.close()
+        return device_history_db.fleet_summary()
     except Exception:
-        return default
-
-    total = int(row["total"] or 0)
-    if total == 0:
         return {"total": 0}
-    out: dict = {"total": total}
-    # Entra device == Autopilot-registered device in practice here;
-    # the spec asks for "autopilot_pct" so we surface entra_found
-    # under that key since we have no dedicated autopilot column.
-    if row["ad"] is not None:
-        out["ad_joined_pct"] = round(100 * int(row["ad"]) / total)
-    if row["entra"] is not None:
-        out["autopilot_pct"] = round(100 * int(row["entra"]) / total)
-    if row["intune"] is not None:
-        out["intune_pct"] = round(100 * int(row["intune"]) / total)
-    # mde_pct intentionally omitted — no column for it yet.
-    return out
 
 
 @app.get("/api/cockpit/summary")
@@ -4874,7 +4820,7 @@ async def api_cockpit_summary():
 
     monitoring = {"devices": 0, "ad": 0, "entra": 0, "intune": 0}
     try:
-        latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+        latest = device_history_db.latest_per_vmid()
         monitoring["devices"] = len(latest)
         for row in latest:
             probe = row.get("probe") or {}
@@ -6653,7 +6599,7 @@ class _SearchOuPatch(BaseModel):
 
 @app.get("/api/monitoring/settings")
 def api_monitoring_settings_get():
-    s = device_history_db.get_settings(DEVICE_MONITOR_DB)
+    s = device_history_db.get_settings()
     return {
         "enabled": s.enabled,
         "interval_seconds": s.interval_seconds,
@@ -6666,7 +6612,6 @@ def api_monitoring_settings_get():
 def api_monitoring_settings_update(body: _MonitoringSettingsPatch):
     try:
         device_history_db.update_settings(
-            DEVICE_MONITOR_DB,
             enabled=body.enabled,
             interval_seconds=body.interval_seconds,
             ad_credential_id=body.ad_credential_id,
@@ -6682,7 +6627,7 @@ def api_monitoring_search_ous_list():
         {"id": o.id, "dn": o.dn, "label": o.label,
          "enabled": o.enabled, "sort_order": o.sort_order,
          "created_at": o.created_at, "updated_at": o.updated_at}
-        for o in device_history_db.list_search_ous(DEVICE_MONITOR_DB)
+        for o in device_history_db.list_search_ous()
     ]
 
 
@@ -6690,13 +6635,12 @@ def api_monitoring_search_ous_list():
 def api_monitoring_search_ous_create(body: _SearchOuCreate):
     try:
         ou_id = device_history_db.add_search_ou(
-            DEVICE_MONITOR_DB,
             dn=body.dn, label=body.label,
             enabled=body.enabled, sort_order=body.sort_order,
         )
     except device_history_db.InvalidDn as e:
         raise HTTPException(400, str(e)) from e
-    except sqlite3.IntegrityError as e:
+    except (sqlite3.IntegrityError, psycopg.IntegrityError) as e:
         raise HTTPException(
             409, f"search OU with dn={body.dn!r} already exists",
         ) from e
@@ -6707,7 +6651,7 @@ def api_monitoring_search_ous_create(body: _SearchOuCreate):
 def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
     try:
         device_history_db.update_search_ou(
-            DEVICE_MONITOR_DB, ou_id,
+            ou_id,
             dn=body.dn, label=body.label,
             enabled=body.enabled, sort_order=body.sort_order,
         )
@@ -6715,7 +6659,7 @@ def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
         raise HTTPException(409, str(e)) from e
     except device_history_db.InvalidDn as e:
         raise HTTPException(400, str(e)) from e
-    except sqlite3.IntegrityError as e:
+    except (sqlite3.IntegrityError, psycopg.IntegrityError) as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
@@ -6723,7 +6667,7 @@ def api_monitoring_search_ous_update(ou_id: int, body: _SearchOuPatch):
 @app.delete("/api/monitoring/search-ous/{ou_id}")
 def api_monitoring_search_ous_delete(ou_id: int):
     try:
-        device_history_db.delete_search_ou(DEVICE_MONITOR_DB, ou_id)
+        device_history_db.delete_search_ou(ou_id)
     except device_history_db.CannotDeleteLastOu as e:
         raise HTTPException(409, str(e)) from e
     return {"ok": True}
@@ -6737,36 +6681,30 @@ def _ad_first_seen_map() -> dict[int, str]:
     """For each vmid that has an AD match in any historical probe,
     return the earliest checked_at at which ad_found=1. Used to
     decide whether "Entra missing" is a sync-pending ⏳ or a real ❌."""
-    import sqlite3
-    conn = sqlite3.connect(DEVICE_MONITOR_DB)
     try:
-        rows = conn.execute(
-            "SELECT vmid, MIN(checked_at) FROM device_probes "
-            "WHERE ad_found = 1 GROUP BY vmid"
-        ).fetchall()
-    finally:
-        conn.close()
-    return {int(vmid): ts for vmid, ts in rows}
+        return device_history_db.ad_first_seen_map()
+    except Exception:
+        return {}
 
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
     from web import monitoring_view, service_health_pg as service_health
-    latest = device_history_db.latest_per_vmid(DEVICE_MONITOR_DB)
+    latest = device_history_db.latest_per_vmid()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = monitoring_view.build_dashboard_rows(
         latest,
         ad_first_seen=_ad_first_seen_map(),
         now_iso=now_iso,
     )
-    settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
-    keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
+    settings = device_history_db.get_settings()
+    keytab = device_history_db.get_keytab_health()
     svc_rows = service_health.list_services()
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,
         "settings": settings,
-        "search_ous": device_history_db.list_search_ous(DEVICE_MONITOR_DB),
+        "search_ous": device_history_db.list_search_ous(),
         "keytab": keytab,
         "service_health": svc_rows,
     })
@@ -6784,12 +6722,11 @@ def _latest_match_or_none(json_str: str) -> dict:
 
 def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
     """Return the four cross-system checks for the top-of-page strip."""
-    import json as _json
     if not probe_row:
         return []
-    ad_matches = _json.loads(probe_row.get("ad_matches_json") or "[]")
-    entra_matches = _json.loads(probe_row.get("entra_matches_json") or "[]")
-    intune_matches = _json.loads(probe_row.get("intune_matches_json") or "[]")
+    ad_matches = _json_obj(probe_row.get("ad_matches_json"), [])
+    entra_matches = _json_obj(probe_row.get("entra_matches_json"), [])
+    intune_matches = _json_obj(probe_row.get("intune_matches_json"), [])
     serial = (probe_row.get("serial") or "").strip()
     win_name = (probe_row.get("win_name") or "").strip()
 
@@ -6865,15 +6802,15 @@ def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
 @app.get("/devices/{vmid}", response_class=HTMLResponse)
 def page_device_detail(request: Request, vmid: int):
     from web import device_regression, monitoring_view
-    pve = device_history_db.latest_pve_snapshot(DEVICE_MONITOR_DB, vmid)
-    probe = device_history_db.latest_device_probe(DEVICE_MONITOR_DB, vmid)
+    pve = device_history_db.latest_pve_snapshot(vmid)
+    probe = device_history_db.latest_device_probe(vmid)
     if pve is None and probe is None:
         raise HTTPException(404, f"no monitoring data for vmid {vmid}")
 
     pve_dict = dict(pve) if pve else None
     probe_dict = dict(probe) if probe else None
 
-    history = device_history_db.history_for_vmid(DEVICE_MONITOR_DB, vmid, limit=50)
+    history = device_history_db.history_for_vmid(vmid, limit=50)
     # Detector wants oldest-first for correct transition ordering.
     timeline = device_regression.build_timeline(
         list(reversed(history["pve_snapshots"])),
@@ -6881,10 +6818,9 @@ def page_device_detail(request: Request, vmid: int):
     )
 
     linkage = _linkage_health(pve_dict or {}, probe_dict or {})
-    import json as _json
-    ad_matches = _json.loads((probe_dict or {}).get("ad_matches_json") or "[]")
-    entra_matches = _json.loads((probe_dict or {}).get("entra_matches_json") or "[]")
-    intune_matches = _json.loads((probe_dict or {}).get("intune_matches_json") or "[]")
+    ad_matches = _json_obj((probe_dict or {}).get("ad_matches_json"), [])
+    entra_matches = _json_obj((probe_dict or {}).get("entra_matches_json"), [])
+    intune_matches = _json_obj((probe_dict or {}).get("intune_matches_json"), [])
     return templates.TemplateResponse("device_detail.html", {
         "request": request,
         "vmid": vmid,
@@ -6901,12 +6837,12 @@ def page_device_detail(request: Request, vmid: int):
 
 @app.get("/monitoring/settings", response_class=HTMLResponse)
 def page_monitoring_settings(request: Request):
-    settings = device_history_db.get_settings(DEVICE_MONITOR_DB)
-    ous = device_history_db.list_search_ous(DEVICE_MONITOR_DB)
+    settings = device_history_db.get_settings()
+    ous = device_history_db.list_search_ous()
     # Only credentials of type domain_join are useful for AD.
     all_creds = sequences_db.list_credentials(SEQUENCES_DB)
     domain_creds = [c for c in all_creds if c.get("type") == "domain_join"]
-    keytab = device_history_db.get_keytab_health(DEVICE_MONITOR_DB)
+    keytab = device_history_db.get_keytab_health()
     return templates.TemplateResponse("monitoring_settings.html", {
         "request": request,
         "settings": settings,
@@ -6925,18 +6861,18 @@ async def api_monitoring_keytab_refresh_now():
         await asyncio.to_thread(_run_keytab_checks)
     except Exception as e:
         raise HTTPException(500, f"refresh failed: {e}") from e
-    return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    return device_history_db.get_keytab_health() or {}
 
 
 @app.post("/api/monitoring/sweep-now", status_code=202)
 async def api_monitoring_sweep_now(background_tasks: BackgroundTasks):
     """Queue one monitor sweep using the same helper as the monitor container."""
     background_tasks.add_task(
-        _run_monitor_sweep_and_refresh_vms_cache, DEVICE_MONITOR_DB,
+        _run_monitor_sweep_and_refresh_vms_cache,
     )
     return {"ok": True, "queued": True}
 
 
 @app.get("/api/monitoring/keytab/health")
 def api_monitoring_keytab_health():
-    return device_history_db.get_keytab_health(DEVICE_MONITOR_DB) or {}
+    return device_history_db.get_keytab_health() or {}

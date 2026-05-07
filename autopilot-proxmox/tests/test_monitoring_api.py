@@ -1,23 +1,19 @@
 """Tests for the /api/monitoring/* endpoints.
 
-Uses the real FastAPI TestClient against app.py with the monitor DB
-pointed at a tmp path. The background loop is never started here —
-those tests live in test_device_monitor_loop.py."""
-from pathlib import Path
+Uses the real FastAPI TestClient against app.py and the Postgres-backed
+monitoring repository. The background loop is never started here."""
 
 import pytest
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch):
-    """Build a TestClient with DEVICE_MONITOR_DB redirected to a fresh
-    tmp DB, so the /api/monitoring/* endpoints operate in isolation."""
+def client(pg_conn):
+    """Build a TestClient with fresh Postgres monitoring tables."""
     from fastapi.testclient import TestClient
-    from web import app as app_module, device_history_db
+    from web import app as app_module, device_history_pg
 
-    db_path = tmp_path / "device_monitor.db"
-    monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", db_path)
-    device_history_db.init(db_path)
+    device_history_pg.reset_for_tests(pg_conn)
+    device_history_pg.init(pg_conn)
     with TestClient(app_module.app) as c:
         yield c
 
@@ -134,3 +130,65 @@ def test_search_ous_update_reorders_and_relabels(client):
     ous = client.get("/api/monitoring/search-ous").json()
     assert ous[0]["dn"] == "OU=OtherSite,DC=home,DC=gell,DC=one"
     assert ous[0]["label"] == "Remote"
+
+
+def test_fleet_summary_uses_latest_postgres_sweep(client):
+    from web import device_history_pg
+
+    old = device_history_pg.start_sweep()
+    device_history_pg.insert_device_probe(old, {
+        "vmid": 1,
+        "ad_found": True,
+        "ad_match_count": 1,
+        "entra_found": True,
+        "entra_match_count": 1,
+        "intune_found": True,
+        "intune_match_count": 1,
+    })
+    device_history_pg.finish_sweep(old, vm_count=1)
+
+    latest = device_history_pg.start_sweep()
+    device_history_pg.insert_device_probe(latest, {
+        "vmid": 2,
+        "ad_found": True,
+        "ad_match_count": 1,
+        "entra_found": False,
+        "entra_match_count": 0,
+        "intune_found": False,
+        "intune_match_count": 0,
+    })
+    device_history_pg.insert_device_probe(latest, {
+        "vmid": 3,
+        "ad_found": False,
+        "ad_match_count": 0,
+        "entra_found": True,
+        "entra_match_count": 1,
+        "intune_found": True,
+        "intune_match_count": 1,
+    })
+    device_history_pg.finish_sweep(latest, vm_count=2)
+
+    r = client.get("/api/fleet/summary")
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "total": 2,
+        "ad_joined_pct": 50,
+        "autopilot_pct": 50,
+        "intune_pct": 50,
+    }
+
+
+def test_latest_monitor_sweep_status_reads_postgres(client):
+    from web import app as app_module, device_history_pg
+
+    sweep = device_history_pg.start_sweep()
+    device_history_pg.finish_sweep(sweep, vm_count=4)
+
+    status = app_module._latest_monitor_sweep_status()
+
+    assert status["id"] == sweep
+    assert status["vm_count"] == 4
+    assert status["running"] is False
+    assert status["started_at"]
+    assert status["ended_at"]
