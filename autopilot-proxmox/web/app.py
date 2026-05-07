@@ -2554,7 +2554,13 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             or dsreg.get("aad_joined")
             or ""
         ).strip().lower()
-        aad_joined = aad_joined_raw in {"yes", "true", "1"}
+        aad_joined = (
+            aad_joined_raw in {"yes", "true", "1"}
+            or bool(int(probe.get("entra_found") or 0))
+        )
+
+        intune_matches = _json_obj(probe.get("intune_matches_json"), [])
+        first_intune = intune_matches[0] if intune_matches else {}
 
         ad_matches = _json_obj(probe.get("ad_matches_json"), [])
         first_ad = ad_matches[0] if ad_matches else {}
@@ -2579,6 +2585,8 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "part_of_domain": bool(int(probe.get("ad_found") or 0)),
             "aad_joined": aad_joined,
             "aad_tenant": dsreg.get("TenantName") or dsreg.get("tenant_name") or "",
+            "in_intune": bool(int(probe.get("intune_found") or 0)),
+            "intune_compliance": first_intune.get("complianceState") or "",
             "os_caption": "",
             "os_build": str(probe.get("os_build") or ""),
             "os_version": "",
@@ -2719,6 +2727,7 @@ async def vms_page(request: Request, error: str = ""):
     # Linux).
     for vm in vms:
         vm["in_autopilot"] = vm.get("serial", "") in ap_serials
+        vm["in_intune"] = bool(vm.get("in_intune"))
         vm["has_hash"] = vm.get("serial", "") in hash_serials
         prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
         seq = None
@@ -2727,8 +2736,13 @@ async def vms_page(request: Request, error: str = ""):
         vm["target_os"] = (seq or {}).get("target_os") or "windows"
         vm["sequence_name"] = (seq or {}).get("name")
 
-    # VMs not yet in Autopilot (missing)
-    missing_vms = [vm for vm in vms if not vm["in_autopilot"] and vm.get("serial")]
+    # VMs needing a registration action. A device that is already
+    # Intune MDM-enrolled via hybrid/domain-join GPO is not missing,
+    # even if it has no Windows Autopilot hardware-hash identity.
+    missing_vms = [
+        vm for vm in vms
+        if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
+    ]
 
     return templates.TemplateResponse("vms.html", {
         "request": request,

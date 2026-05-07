@@ -379,6 +379,9 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
         "win_name": "Gell-EC41E7EB",
         "serial": "Gell-EC41E7EB",
         "os_build": "26100",
+        "intune_found": 1,
+        "intune_match_count": 1,
+        "intune_matches_json": "[{\"complianceState\": \"compliant\"}]",
         "dsreg_status": "{\"AzureAdJoined\": \"YES\", \"TenantName\": \"home\"}",
     })
     device_history_db.finish_sweep(monitor_db, sweep_id, vm_count=1)
@@ -398,6 +401,8 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path):
     assert r.status_code == 200
     assert "Gell-EC41E7EB" in r.text
     assert 'data-vmid="116"' in r.text
+    assert "Intune" in r.text
+    assert "Not in Autopilot" not in r.text
     live_vms.assert_not_called()
 
 
