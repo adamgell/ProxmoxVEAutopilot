@@ -31,8 +31,8 @@ def test_template_has_oobeSystem_pass():
 def test_template_has_no_disk_config_or_image_install():
     """Setup's windowsPE pass owns DiskConfiguration / ImageInstall.
     The post_winpe path bypasses Setup, so neither block must remain.
-    Drivers come from phase-0 dism /add-driver against the VirtIO ISO,
-    not from a PnpCustomizations pass in the unattend."""
+    Drivers come from the WinPE apply_driver_package action, not from a
+    PnpCustomizations pass in the unattend."""
     text = _TEMPLATE.read_text()
     assert "<DiskConfiguration>" not in text
     assert "<ImageInstall>" not in text

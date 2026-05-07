@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from web.jobs import JobManager
 from web import devices_db
 from web import jobs_db
+from web import monitoring_evidence
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -2598,11 +2599,14 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             or first_ad.get("dnsDomain")
             or first_ad.get("userPrincipalName", "").split("@")[-1]
         )
+        join_evidence = monitoring_evidence.hostname_join_evidence({"probe": probe})
 
         out.append({
             "vmid": vmid,
             "name": name,
             "status": status,
+            "monitor_checked_at": pve.get("checked_at") or entry.get("last_checked") or "",
+            "monitor_probed_at": probe.get("checked_at") or "",
             "serial": serial,
             "oem": "",
             "hostname": probe.get("win_name") or (name if status == "running" else ""),
@@ -2614,6 +2618,9 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "part_of_domain": bool(int(probe.get("ad_found") or 0)),
             "hybrid_joined": hybrid_joined,
             "entra_id_joined": entra_id_joined,
+            "hostname_join_label": join_evidence["label"],
+            "hostname_join_title": join_evidence["title"],
+            "hostname_join_source": join_evidence["source"],
             "aad_joined": aad_joined,
             "aad_tenant": dsreg.get("TenantName") or dsreg.get("tenant_name") or "",
             "in_intune": bool(int(probe.get("intune_found") or 0)),
@@ -2625,6 +2632,33 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "last_boot": "",
         })
     return sorted(out, key=lambda v: v["vmid"])
+
+
+def _latest_monitor_sweep_status() -> dict | None:
+    if not Path(DEVICE_MONITOR_DB).exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(DEVICE_MONITOR_DB))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT id, started_at, ended_at, vm_count "
+                "FROM monitoring_sweeps ORDER BY id DESC LIMIT 1",
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    ended_at = row["ended_at"] or ""
+    return {
+        "id": int(row["id"]),
+        "started_at": row["started_at"] or "",
+        "ended_at": ended_at,
+        "vm_count": int(row["vm_count"] or 0),
+        "running": not bool(ended_at),
+    }
 
 
 def _fetch_vms_payload_live():
@@ -2664,6 +2698,32 @@ async def _refresh_vms_cache_bg() -> None:
         import logging as _logging
         _logging.getLogger("web.vms").exception(
             "/vms background refresh failed; cache left stale",
+        )
+    finally:
+        _VMS_CACHE["refreshing"] = False
+
+
+async def _run_monitor_sweep_and_refresh_vms_cache(db_path: Path) -> None:
+    """Run an operator-requested sweep, then replace the /vms cache from it."""
+    import asyncio
+    import logging as _logging
+    from web import monitor_main
+
+    _VMS_CACHE["refreshing"] = True
+    try:
+        await asyncio.to_thread(monitor_main._do_sweep_tick, db_path)
+        _VMS_CACHE.update({
+            "data": None,
+            "devices": None,
+            "hash_serials": None,
+            "fetched_at": 0.0,
+        })
+        payload = await asyncio.to_thread(_fetch_vms_payload)
+        _VMS_CACHE.update(payload)
+        _VMS_CACHE["fetched_at"] = time.monotonic()
+    except Exception:
+        _logging.getLogger("web.vms").exception(
+            "monitor sweep finished without refreshing /vms cache",
         )
     finally:
         _VMS_CACHE["refreshing"] = False
@@ -2791,6 +2851,7 @@ async def vms_page(request: Request, error: str = ""):
             if cache_age is not None else ""
         ),
         "cache_refreshing": _VMS_CACHE["refreshing"],
+        "monitor_sweep": _latest_monitor_sweep_status(),
     })
 
 
@@ -6902,8 +6963,9 @@ async def api_monitoring_keytab_refresh_now():
 @app.post("/api/monitoring/sweep-now", status_code=202)
 async def api_monitoring_sweep_now(background_tasks: BackgroundTasks):
     """Queue one monitor sweep using the same helper as the monitor container."""
-    from web import monitor_main
-    background_tasks.add_task(monitor_main._do_sweep_tick, DEVICE_MONITOR_DB)
+    background_tasks.add_task(
+        _run_monitor_sweep_and_refresh_vms_cache, DEVICE_MONITOR_DB,
+    )
     return {"ok": True, "queued": True}
 
 

@@ -23,6 +23,23 @@
         {% else %}
           Waiting for fleet cache.
         {% endif %}
+        {% if monitor_sweep %}
+          <br>
+          <small style="color:var(--ink-muted);">
+            {% if monitor_sweep.running %}
+              Monitor sweep running since
+              <time datetime="{{ monitor_sweep.started_at }}"
+                    data-utc="{{ monitor_sweep.started_at }}"
+                    title="{{ monitor_sweep.started_at }}">{{ monitor_sweep.started_at }}</time>
+            {% else %}
+              Last monitor sweep
+              <time datetime="{{ monitor_sweep.ended_at }}"
+                    data-utc="{{ monitor_sweep.ended_at }}"
+                    title="{{ monitor_sweep.ended_at }}">{{ monitor_sweep.ended_at }}</time>
+              {% if monitor_sweep.vm_count %} · {{ monitor_sweep.vm_count }} VM{% if monitor_sweep.vm_count != 1 %}s{% endif %}{% endif %}
+            {% endif %}
+          </small>
+        {% endif %}
       </div>
     </div>
     <label style="flex:1 1 280px;">Filter fleet
@@ -65,13 +82,13 @@ async function refreshVms() {
   <td>
     {{ vm.hostname or '—' }}
     {% if vm.part_of_domain and vm.domain %}
-      <br><span class="badge badge-green" title="Active Directory domain-joined">{{ vm.domain }}</span>
+      <br><span class="badge badge-green" title="{{ vm.hostname_join_title or 'Active Directory domain-joined' }}" data-join-source="{{ vm.hostname_join_source or 'ad' }}">{{ vm.domain }}</span>
     {% elif vm.hybrid_joined %}
-      <br><span class="badge badge-green" title="Hybrid Entra join reported by Entra trustType=ServerAd">{{ vm.domain or 'domain' }}</span>
+      <br><span class="badge badge-green" title="{{ vm.hostname_join_title or 'Hybrid Entra join reported by Entra trustType=ServerAd' }}" data-join-source="{{ vm.hostname_join_source or 'entra_trust_serverad' }}">{{ vm.domain or 'domain' }}</span>
     {% elif vm.entra_id_joined %}
-      <br><span class="badge badge-green" title="Entra ID joined">Entra ID</span>
+      <br><span class="badge badge-green" title="{{ vm.hostname_join_title or 'Entra ID joined' }}" data-join-source="{{ vm.hostname_join_source or 'entra_trust_azuread' }}">Entra ID</span>
     {% elif vm.status == 'running' and vm.hostname and vm.has_guest_data %}
-      <br><span class="badge badge-gray" title="Not joined to an AD domain">workgroup</span>
+      <br><span class="badge badge-gray" title="{{ vm.hostname_join_title or 'Not joined to an AD domain' }}" data-join-source="{{ vm.hostname_join_source or 'none' }}">workgroup</span>
     {% endif %}
   </td>
   <td>{{ vm.serial }}</td>
@@ -84,7 +101,27 @@ async function refreshVms() {
   <td>
     {% if vm.ip_address %}<code>{{ vm.ip_address }}</code>{% else %}—{% endif %}
   </td>
-  <td>{% if vm.status == 'running' %}<span class="status-green">{{ vm.status }}</span>{% else %}{{ vm.status }}{% endif %}</td>
+  <td>
+    {% if vm.status == 'running' %}<span class="status-green">{{ vm.status }}</span>{% else %}{{ vm.status }}{% endif %}
+    {% if vm.monitor_checked_at or vm.monitor_probed_at %}
+      <br>
+      <small style="color:var(--ink-muted);">
+        {% if vm.monitor_checked_at %}
+          Last checked
+          <time datetime="{{ vm.monitor_checked_at }}"
+                data-utc="{{ vm.monitor_checked_at }}"
+                title="{{ vm.monitor_checked_at }}">{{ vm.monitor_checked_at }}</time>
+        {% endif %}
+        {% if vm.monitor_probed_at %}
+          {% if vm.monitor_checked_at %}<br>{% endif %}
+          Last probed
+          <time datetime="{{ vm.monitor_probed_at }}"
+                data-utc="{{ vm.monitor_probed_at }}"
+                title="{{ vm.monitor_probed_at }}">{{ vm.monitor_probed_at }}</time>
+        {% endif %}
+      </small>
+    {% endif %}
+  </td>
   <td style="white-space:nowrap;">
     {% if vm.target_os == 'ubuntu' %}
       {% set enroll_tags = [] %}

@@ -277,6 +277,7 @@ def test_latest_per_vmid_joins_pve_and_probe(db):
         "config_digest": "y",
         "checked_at": "2026-04-20T10:00:00+00:00",
     })
+    device_history_db.finish_sweep(db, sweep, vm_count=2)
     rows = device_history_db.latest_per_vmid(db)
     by_vmid = {r["vmid"]: r for r in rows}
     assert by_vmid[109]["probe"] is not None
