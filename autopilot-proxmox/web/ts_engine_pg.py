@@ -1688,4 +1688,6 @@ def _append_event(
 
 def connect(dsn: str) -> Connection:
     """Return a dict-row psycopg connection for engine callers."""
-    return psycopg.connect(dsn, row_factory=dict_row)
+    from web import db_pg
+
+    return db_pg.connect(dsn)

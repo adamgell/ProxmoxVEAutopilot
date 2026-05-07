@@ -3,7 +3,18 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 import yaml
+
+
+def test_app_database_startup_requires_database_url(monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.delenv("AUTOPILOT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="Postgres database URL is required"):
+        web_app._database_url()
 
 
 def test_ts_engine_startup_skips_when_database_url_is_unset(monkeypatch):

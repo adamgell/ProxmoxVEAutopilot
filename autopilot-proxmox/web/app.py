@@ -835,6 +835,19 @@ def _ts_engine_database_url() -> str:
     return os.environ.get("AUTOPILOT_TS_ENGINE_DATABASE_URL", "").strip()
 
 
+def _database_url() -> str:
+    from web import db_pg
+
+    return db_pg.database_url()
+
+
+def _init_app_database() -> None:
+    from web import db_pg, ts_engine_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        ts_engine_pg.init(conn)
+
+
 def _init_ts_engine_database_if_configured() -> bool:
     dsn = _ts_engine_database_url()
     if not dsn:
@@ -848,7 +861,7 @@ def _init_ts_engine_database_if_configured() -> bool:
 
 @app.on_event("startup")
 def _init_ts_engine_pg() -> None:
-    _init_ts_engine_database_if_configured()
+    _init_app_database()
 
 
 # Note: the periodic device-monitor sweep + keytab-refresh loop used
