@@ -1005,4 +1005,62 @@ Describe 'Start-AutopilotWinPE' {
             }
         }
     }
+
+    It 'preserves UUID run_id while dispatching stage_unattend before OSD staging' {
+        $script:posted = @()
+        $script:webGets = @()
+        $script:rebootCalled = $false
+        $uuid = '11111111-2222-3333-4444-555555555555'
+        $tmpCfg = [System.IO.Path]::GetTempFileName()
+        $tmpPanther = New-Item -Type Directory -Path "$env:TEMP/wpe-start-unattend-v2-$(New-Guid)"
+        try {
+            $invoker = {
+                param($Uri,$Method,$Headers,$Body,$ContentType,$TimeoutSec)
+                $script:posted += "$Method $Uri"
+                if ($Uri -match '/register$') {
+                    return [pscustomobject]@{
+                        run_id = $uuid
+                        bearer_token = 't1'
+                        actions = @(
+                            [pscustomobject]@{
+                                step_id = 1
+                                kind = 'stage_unattend'
+                                params = @{}
+                            }
+                        )
+                    }
+                } elseif ($Uri -match '/step/1/result$') {
+                    return [pscustomobject]@{ ok = $true; bearer_token = 't2' }
+                } elseif ($Uri -match '/done$') {
+                    return [pscustomobject]@{ ok = $true }
+                }
+                throw "unexpected URI $Uri"
+            }
+            $web = {
+                param($Uri,$Headers,$TimeoutSec)
+                $script:webGets += $Uri
+                return [pscustomobject]@{ Content = '<unattend>ok</unattend>' }
+            }
+            Set-Content -LiteralPath $tmpCfg -Value '{"flask_base_url":"http://x:5000","build_sha":"DEV"}' -Encoding UTF8
+
+            Start-AutopilotWinPE `
+                -ConfigPath $tmpCfg `
+                -LogPath ([System.IO.Path]::GetTempFileName()) `
+                -RestInvoker $invoker `
+                -WebInvoker $web `
+                -RebootRunner { $script:rebootCalled = $true } `
+                -UuidResolver { 'fake-uuid' } `
+                -MacResolver { 'aa:bb' } `
+                -PantherDirOverride $tmpPanther.FullName
+
+            ($script:webGets -join '|') | Should -Match '/winpe/unattend/11111111-2222-3333-4444-555555555555$'
+            (Get-Content (Join-Path $tmpPanther.FullName 'unattend.xml') -Raw) |
+                Should -Match '<unattend>ok</unattend>'
+            ($script:posted -join '|') | Should -Match 'POST.*/done'
+            $script:rebootCalled | Should -BeTrue
+        } finally {
+            Remove-Item $tmpCfg -Force -ErrorAction SilentlyContinue
+            Remove-Item $tmpPanther -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }

@@ -423,7 +423,7 @@ function Invoke-Action-PrepareWindowsSetup {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [string] $PantherDirOverride,
@@ -505,7 +505,7 @@ function Invoke-Action-StageAutopilotConfig {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         # WebInvoker takes ($Uri, $Headers, $TimeoutSec) and returns an
@@ -582,7 +582,7 @@ function Invoke-Action-StageUnattend {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [string] $PantherDirOverride,
@@ -742,7 +742,7 @@ function Invoke-Action-CaptureHash {
     param(
         [Parameter(Mandatory)] [hashtable] $Params,
         [Parameter(Mandatory)] [string] $BaseUrl,
-        [Parameter(Mandatory)] [int] $RunId,
+        [Parameter(Mandatory)] [string] $RunId,
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl,
         [scriptblock] $CaptureRunner = { param($outputPath)
@@ -788,6 +788,7 @@ function Start-AutopilotWinPE {
         [string] $ConfigPath = 'X:\autopilot\config.json',
         [string] $LogPath = 'X:\Windows\Temp\autopilot-winpe.log',
         [scriptblock] $RestInvoker = $null,
+        [scriptblock] $WebInvoker = $null,
         [scriptblock] $RebootRunner = { & wpeutil.exe reboot },
         [scriptblock] $UuidResolver = $null,
         [scriptblock] $MacResolver = $null,
@@ -868,6 +869,7 @@ function Start-AutopilotWinPE {
                 RunId = $runId; BearerToken = $tok
             }
             if ($fallbackUrl) { $a.FallbackBaseUrl = $fallbackUrl }
+            if ($WebInvoker)  { $a.WebInvoker = $WebInvoker }
             Invoke-Action-StageAutopilotConfig @a
         }
         'bake_boot_entry' = { param($p, $tok)
@@ -883,6 +885,7 @@ function Start-AutopilotWinPE {
             if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
             if ($RegRunner)          { $a.RegRunner = $RegRunner }
+            if ($WebInvoker)         { $a.WebInvoker = $WebInvoker }
             Invoke-Action-PrepareWindowsSetup @a
         }
         'stage_unattend' = { param($p, $tok)
@@ -892,6 +895,7 @@ function Start-AutopilotWinPE {
             }
             if ($fallbackUrl)        { $a.FallbackBaseUrl = $fallbackUrl }
             if ($PantherDirOverride) { $a.PantherDirOverride = $PantherDirOverride }
+            if ($WebInvoker)         { $a.WebInvoker = $WebInvoker }
             Invoke-Action-StageUnattend @a
         }
         'stage_osd_client' = { param($p, $tok)
