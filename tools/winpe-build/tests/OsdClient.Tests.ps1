@@ -42,10 +42,13 @@ Describe 'OsdClient.ps1 contract' {
     It 'runs QGA and recovery fix as explicit OSD steps' {
         $script:Body | Should -Match "'install_qga' \{ Invoke-InstallQga \}"
         $script:Body | Should -Match "'fix_recovery_partition' \{ Invoke-RecoveryFix \}"
+        $script:Body | Should -Match "'verify_qga' \{ Invoke-VerifyQga \}"
+        $script:Body | Should -Match "'handoff_to_oobe' \{ Invoke-HandoffToOobe \}"
         $script:Body | Should -Match 'qemu-ga-x86_64\.msi'
         $script:Body | Should -Match 'Get-Service -Name QEMU-GA'
         $script:Body | Should -Match 'WaitForStatus'
         $script:Body | Should -Match 'FixRecoveryPartition\.ps1'
+        $script:Body | Should -Match 'Pre-OOBE gate passed'
     }
 
     It 'supports generic install_package content actions' {

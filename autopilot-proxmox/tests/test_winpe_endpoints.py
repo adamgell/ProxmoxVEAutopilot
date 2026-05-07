@@ -560,12 +560,14 @@ def test_osd_register_moves_to_client_state_and_creates_steps(
     assert [a["kind"] for a in body["actions"]] == [
         "install_qga",
         "fix_recovery_partition",
+        "verify_qga",
+        "handoff_to_oobe",
     ]
     from web import sequences_db
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "awaiting_osd_client"
     steps = sequences_db.list_run_steps(test_db, run_id)
-    assert [s["phase"] for s in steps[-2:]] == ["osd", "osd"]
+    assert [s["phase"] for s in steps[-4:]] == ["osd", "osd", "osd", "osd"]
 
 
 def test_osd_step_result_and_complete_mark_run_done(
@@ -647,6 +649,30 @@ def test_osd_complete_requires_registered_ok_steps(
     )
     assert r.status_code == 409
     assert "incomplete steps" in r.text
+
+
+def test_osd_complete_requires_oobe_handoff_step(web_client, test_db):
+    from web import sequences_db
+    run_id, reg = _register(web_client, test_db)
+    pkg = web_client.get(
+        f"/osd/client/package/{run_id}",
+        headers=_bearer(reg["bearer_token"]),
+    ).json()
+    sequences_db.update_provisioning_run_state(
+        test_db, run_id=run_id, state="awaiting_osd_client",
+    )
+    for kind in ("install_qga", "fix_recovery_partition", "verify_qga"):
+        step = sequences_db.append_run_step(
+            test_db, run_id=run_id, phase="osd", kind=kind, params={},
+        )
+        sequences_db.update_run_step_state(test_db, step_id=step["id"], state="ok")
+
+    r = web_client.post(
+        "/osd/client/complete",
+        headers=_bearer(pkg["bearer_token"]),
+    )
+    assert r.status_code == 409
+    assert "handoff_to_oobe" in r.text
 
 
 def test_osd_register_done_run_returns_no_actions(web_client, test_db):

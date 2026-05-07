@@ -123,23 +123,43 @@ function Invoke-InstallQga {
     if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
         throw "QEMU Guest Agent installer failed with exit $($proc.ExitCode)"
     }
+    Invoke-VerifyQga
+    Write-OsdLog 'QEMU Guest Agent install/start command completed.'
+}
+
+function Invoke-VerifyQga {
+    Write-OsdLog 'Verifying QEMU Guest Agent service before OOBE handoff.'
+
+    $svc = Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        throw 'QEMU Guest Agent service is not registered'
+    }
+
+    $serviceInfo = Get-CimInstance -ClassName Win32_Service `
+        -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
+    if ($serviceInfo) {
+        Write-OsdLog (
+            "QEMU Guest Agent service state=$($serviceInfo.State) " +
+            "start_mode=$($serviceInfo.StartMode) path=$($serviceInfo.PathName)"
+        )
+    }
+
     & sc.exe config QEMU-GA start= auto | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "QEMU Guest Agent service config failed with exit $LASTEXITCODE"
     }
-    $svc = Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue
-    if (-not $svc) {
-        throw "QEMU Guest Agent service was not registered after install"
-    }
+
+    $svc = Get-Service -Name QEMU-GA -ErrorAction Stop
     if ($svc.Status -ne 'Running') {
         Start-Service -Name QEMU-GA
-        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
     }
+
     $svc = Get-Service -Name QEMU-GA -ErrorAction Stop
     if ($svc.Status -ne 'Running') {
         throw "QEMU Guest Agent service did not reach Running state; status=$($svc.Status)"
     }
-    Write-OsdLog 'QEMU Guest Agent install/start command completed.'
+    Write-OsdLog "QEMU Guest Agent verified running; status=$($svc.Status)"
 }
 
 function Invoke-RecoveryFix {
@@ -217,6 +237,11 @@ function Invoke-InstallPackage {
     Write-OsdLog "Package install completed exit=$($proc.ExitCode)"
 }
 
+function Invoke-HandoffToOobe {
+    Invoke-VerifyQga
+    Write-OsdLog 'Pre-OOBE gate passed; handing off to OOBE.'
+}
+
 try {
     $cfg = Read-OsdConfig
     Write-OsdLog "OSD client starting run_id=$($cfg.run_id)"
@@ -240,6 +265,8 @@ try {
             switch ($kind) {
                 'install_qga' { Invoke-InstallQga }
                 'fix_recovery_partition' { Invoke-RecoveryFix }
+                'verify_qga' { Invoke-VerifyQga }
+                'handoff_to_oobe' { Invoke-HandoffToOobe }
                 'install_package' { Invoke-InstallPackage -Action $action }
                 default { throw "unknown OSD step kind: $kind" }
             }
