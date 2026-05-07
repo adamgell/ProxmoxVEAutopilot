@@ -99,6 +99,38 @@ class ContentVersionCreateBody(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class SequenceCreateBody(BaseModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+
+
+class SequenceStepCreateBody(BaseModel):
+    name: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    phase: str = Field(default="any", min_length=1)
+    position: int = Field(ge=0)
+    parent_id: Optional[str] = None
+    enabled: bool = True
+    condition: dict = Field(default_factory=dict)
+    variables: dict = Field(default_factory=dict)
+    params: dict = Field(default_factory=dict)
+    content_refs: list[str] = Field(default_factory=list)
+    continue_on_error: bool = False
+    retry_count: int = Field(default=0, ge=0)
+    retry_delay_seconds: int = Field(default=10, ge=0)
+    timeout_seconds: Optional[int] = Field(default=None, ge=0)
+    reboot_behavior: str = Field(
+        default="none",
+        pattern=r"^(none|optional|required|deferred)$",
+    )
+
+
+class SequenceRunCreateBody(BaseModel):
+    resolve_content: bool = False
+    deployment_target: dict = Field(default_factory=dict)
+    run_variables: dict = Field(default_factory=dict)
+
+
 def _database_url() -> str:
     from web import app as web_app
 
@@ -379,6 +411,100 @@ def get_run_content_staging(run_id: str):
             "run_id": run_id,
             "items": ts_engine_pg.list_run_content_staging(conn, run_id),
         }
+
+
+@api_router.post("/sequences", status_code=201)
+def create_sequence(body: SequenceCreateBody):
+    with _conn() as conn:
+        sequence_id = ts_engine_pg.create_sequence(
+            conn,
+            name=body.name,
+            description=body.description,
+        )
+    return {
+        "id": sequence_id,
+        "name": body.name,
+        "description": body.description,
+    }
+
+
+@api_router.post("/sequences/{sequence_id}/steps", status_code=201)
+def create_sequence_step(sequence_id: str, body: SequenceStepCreateBody):
+    with _conn() as conn:
+        try:
+            step_id = ts_engine_pg.add_step(
+                conn,
+                sequence_id=sequence_id,
+                parent_id=body.parent_id,
+                name=body.name,
+                kind=body.kind,
+                phase=body.phase,
+                position=body.position,
+                enabled=body.enabled,
+                condition=body.condition,
+                variables=body.variables,
+                params=body.params,
+                content_refs=body.content_refs,
+                continue_on_error=body.continue_on_error,
+                retry_count=body.retry_count,
+                retry_delay_seconds=body.retry_delay_seconds,
+                timeout_seconds=body.timeout_seconds,
+                reboot_behavior=body.reboot_behavior,
+            )
+        except ForeignKeyViolation:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="sequence or parent not found")
+        except UniqueViolation:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="step position already exists")
+    return {
+        "id": step_id,
+        "sequence_id": sequence_id,
+        "parent_id": body.parent_id,
+        "name": body.name,
+        "kind": body.kind,
+        "phase": body.phase,
+        "position": body.position,
+        "enabled": body.enabled,
+        "condition": body.condition,
+        "variables": body.variables,
+        "params": body.params,
+        "content_refs": body.content_refs,
+        "continue_on_error": body.continue_on_error,
+        "retry_count": body.retry_count,
+        "retry_delay_seconds": body.retry_delay_seconds,
+        "timeout_seconds": body.timeout_seconds,
+        "reboot_behavior": body.reboot_behavior,
+    }
+
+
+@api_router.post("/sequences/{sequence_id}/runs", status_code=201)
+def create_sequence_run(sequence_id: str, body: SequenceRunCreateBody):
+    with _conn() as conn:
+        try:
+            sequence_version_id = ts_engine_pg.compile_sequence(conn, sequence_id)
+            run_id = ts_engine_pg.create_run_from_version(
+                conn,
+                sequence_version_id=sequence_version_id,
+                deployment_target=body.deployment_target,
+                run_variables=body.run_variables,
+                resolve_content=body.resolve_content,
+            )
+            run = ts_engine_pg.get_run(conn, run_id)
+            content_items = len(ts_engine_pg.list_run_manifest(conn, run_id))
+        except ForeignKeyViolation:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="sequence not found")
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "run_id": run_id,
+        "sequence_id": sequence_id,
+        "sequence_version_id": sequence_version_id,
+        "state": run["state"],
+        "content_items": content_items,
+    }
 
 
 @api_router.get("/content/items")

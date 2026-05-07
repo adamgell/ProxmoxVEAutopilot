@@ -682,6 +682,100 @@ def test_content_manifest_api_returns_v1_manifest(osd_v2_client, pg_conn):
     }
 
 
+def test_sequence_api_creates_package_run_with_resolved_content(osd_v2_client, pg_conn):
+    item = osd_v2_client.post(
+        "/api/content/items",
+        json={
+            "name": "notepad-plus-plus",
+            "content_type": "package",
+            "description": "Notepad++ installer",
+        },
+    )
+    assert item.status_code == 201, item.text
+    version = osd_v2_client.post(
+        f"/api/content/items/{item.json()['id']}/versions",
+        json={
+            "version": "8.6.7",
+            "sha256": "f" * 64,
+            "size_bytes": 4096,
+            "source_uri": "https://content.local/npp.8.6.7.x64.msi",
+            "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
+        },
+    )
+    assert version.status_code == 201, version.text
+
+    sequence = osd_v2_client.post(
+        "/api/osd/v2/sequences",
+        json={"name": "Install Apps", "description": "Package smoke"},
+    )
+    assert sequence.status_code == 201, sequence.text
+    step = osd_v2_client.post(
+        f"/api/osd/v2/sequences/{sequence.json()['id']}/steps",
+        json={
+            "name": "Install Notepad++",
+            "kind": "install_package",
+            "phase": "full_os",
+            "position": 0,
+            "params": {"install_command": "msiexec.exe /i {path} /qn"},
+            "content_refs": ["notepad-plus-plus"],
+            "retry_count": 1,
+            "retry_delay_seconds": 5,
+        },
+    )
+    assert step.status_code == 201, step.text
+    assert step.json()["content_refs"] == ["notepad-plus-plus"]
+
+    run = osd_v2_client.post(
+        f"/api/osd/v2/sequences/{sequence.json()['id']}/runs",
+        json={
+            "resolve_content": True,
+            "deployment_target": {"vmid": 121, "vm_uuid": "vm-121"},
+        },
+    )
+    assert run.status_code == 201, run.text
+    assert run.json()["content_items"] == 1
+
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run.json()["run_id"],
+            "agent_id": "osd-1",
+            "phase": "full_os",
+        },
+    ).json()
+    nxt = osd_v2_client.post(
+        "/osd/v2/agent/next",
+        json={
+            "run_id": run.json()["run_id"],
+            "agent_id": "osd-1",
+            "phase": "full_os",
+        },
+        headers=_bearer(reg["bearer_token"]),
+    )
+    assert nxt.status_code == 200, nxt.text
+    action = nxt.json()["actions"][0]
+    assert action["kind"] == "install_package"
+    assert action["retry_count"] == 1
+    assert action["retry_delay_seconds"] == 5
+    assert action["content"] == [
+        {
+            "id": action["content"][0]["id"],
+            "logical_name": "notepad-plus-plus",
+            "content_type": "package",
+            "version": "8.6.7",
+            "sha256": "f" * 64,
+            "source_uri": "https://content.local/npp.8.6.7.x64.msi",
+            "required_phase": "full_os",
+            "staging_path": (
+                "C:\\ProgramData\\ProxmoxVEAutopilot\\Content"
+                "\\notepad-plus-plus\\8.6.7"
+            ),
+            "status": "pending",
+            "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
+        }
+    ]
+
+
 def test_content_api_rejects_invalid_sha(osd_v2_client, pg_conn):
     item = osd_v2_client.post(
         "/api/osd/v2/content/items",
