@@ -141,6 +141,7 @@ def _action_from_step(conn, step: dict) -> dict:
     return {
         "step_id": step["id"],
         "kind": step["kind"],
+        "phase": step["phase"],
         "attempt": step["attempt"],
         "timeout_seconds": step["timeout_seconds"],
         "retry_count": step["retry_count"],

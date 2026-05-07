@@ -297,6 +297,7 @@ def test_full_os_action_includes_manifest_content(osd_v2_client, pg_conn):
     assert nxt.status_code == 200, nxt.text
     action = nxt.json()["actions"][0]
     assert action["kind"] == "install_qga"
+    assert action["phase"] == "full_os"
     assert action["reboot_behavior"] == "none"
     assert action["retry_count"] == 0
     assert action["retry_delay_seconds"] == 10
