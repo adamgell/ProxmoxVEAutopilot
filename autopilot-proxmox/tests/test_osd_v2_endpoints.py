@@ -258,6 +258,36 @@ def test_v2_agent_package_rejects_token_for_another_run(osd_v2_client, pg_conn):
     assert response.json()["detail"] == "token/run mismatch"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/winpe/unattend/{run_id}",
+        "/winpe/autopilot-config/{run_id}",
+    ],
+)
+def test_legacy_winpe_payload_routes_reject_v2_uuid_runs_after_auth(
+    osd_v2_client,
+    pg_conn,
+    monkeypatch,
+    path,
+):
+    from web import winpe_token
+
+    monkeypatch.setenv("AUTOPILOT_WINPE_TOKEN_SECRET", "test-token-secret")
+    run_id = _create_run(pg_conn, winpe_only=True)
+    token = winpe_token.sign(run_id=run_id, ttl_seconds=60)
+
+    response = osd_v2_client.get(
+        path.format(run_id=run_id),
+        headers=_bearer(token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "legacy WinPE payload route does not support v2 UUID runs"
+    )
+
+
 def test_agent_register_next_logs_and_result_complete_step(osd_v2_client, pg_conn):
     from web import ts_engine_pg
 

@@ -20,6 +20,7 @@ import logging
 import os
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -148,8 +149,8 @@ def post_register(body: RegisterBody):
     }
 
 
-def _require_bearer_for_run(run_id: int,
-                            authorization: Optional[str] = Header(None)) -> int:
+def _require_bearer_for_run(run_id: str,
+                            authorization: Optional[str] = Header(None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer")
     token = authorization.removeprefix("Bearer ").strip()
@@ -159,9 +160,41 @@ def _require_bearer_for_run(run_id: int,
         raise HTTPException(status_code=401, detail="token expired")
     except winpe_token.TokenError:
         raise HTTPException(status_code=401, detail="invalid token")
-    if int(payload["run_id"]) != int(run_id):
+    if str(payload["run_id"]) != str(run_id):
         raise HTTPException(status_code=403, detail="token/run mismatch")
-    return int(payload["run_id"])
+    return str(payload["run_id"])
+
+
+def _legacy_run_id_or_v2_conflict(run_id: str) -> int:
+    try:
+        return int(run_id)
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        uuid.UUID(str(run_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    from web import app as web_app
+    from web import ts_engine_pg
+
+    try:
+        database_url = web_app._database_url()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail="Task Sequence Engine v2 database is not configured",
+        )
+    with ts_engine_pg.connect(database_url) as conn:
+        try:
+            ts_engine_pg.get_run(conn, str(run_id))
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+    raise HTTPException(
+        status_code=409,
+        detail="legacy WinPE payload route does not support v2 UUID runs",
+    )
 
 
 @router.get("/sequence/{run_id}")
@@ -210,11 +243,12 @@ def _credential_resolver_for_run():
 
 
 @router.get("/unattend/{run_id}")
-def get_unattend(run_id: int,
-                 _: int = Depends(_require_bearer_for_run)):
+def get_unattend(run_id: str,
+                 _: str = Depends(_require_bearer_for_run)):
     from web import sequence_compiler, unattend_renderer
+    legacy_run_id = _legacy_run_id_or_v2_conflict(run_id)
     db = _db_path()
-    run = sequences_db.get_provisioning_run(db, run_id)
+    run = sequences_db.get_provisioning_run(db, legacy_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     seq = sequences_db.get_sequence(db, run["sequence_id"])
@@ -231,11 +265,12 @@ def get_unattend(run_id: int,
 
 
 @router.get("/autopilot-config/{run_id}")
-def get_autopilot_config(run_id: int,
-                         _: int = Depends(_require_bearer_for_run)):
+def get_autopilot_config(run_id: str,
+                         _: str = Depends(_require_bearer_for_run)):
     from web import sequence_compiler
+    legacy_run_id = _legacy_run_id_or_v2_conflict(run_id)
     db = _db_path()
-    run = sequences_db.get_provisioning_run(db, run_id)
+    run = sequences_db.get_provisioning_run(db, legacy_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     seq = sequences_db.get_sequence(db, run["sequence_id"])
