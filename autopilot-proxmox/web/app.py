@@ -806,7 +806,21 @@ async def qga_recovery_script():
 
 @app.get("/api/qga/recovery-command.txt")
 async def qga_recovery_command(request: Request):
-    script_url = f"{str(request.base_url).rstrip('/')}/api/qga/recovery-script.ps1"
+    proto = (
+        request.headers.get("x-forwarded-proto")
+        or request.url.scheme
+        or "https"
+    ).split(",", 1)[0].strip()
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+    ).split(",", 1)[0].strip()
+    if host and host not in {"127.0.0.1:5000", "localhost:5000"}:
+        base_url = f"{proto}://{host}"
+    else:
+        base_url = str(request.base_url).rstrip("/")
+    script_url = f"{base_url}/api/qga/recovery-script.ps1"
     command = "\n".join([
         "$script = Join-Path $env:TEMP 'QgaWatchdogRecovery.ps1'",
         (
@@ -6708,15 +6722,89 @@ def _make_root_ssh_runner(host: str | None = None):
     )
 
 
+def _winpe_actions_for_sequence(seq: dict | None) -> list[dict]:
+    if not seq:
+        return []
+    if (seq.get("target_os") or "windows") != "windows":
+        return []
+    try:
+        phase = sequence_compiler.compile_winpe(seq)
+    except sequence_compiler.CompilerError:
+        return []
+    return phase.actions
+
+
+def _sequence_rows_for_ui(seqs: list[dict]) -> list[dict]:
+    rows = []
+    for seq in seqs:
+        actions = _winpe_actions_for_sequence(seq)
+        rows.append({
+            **seq,
+            "winpe_actions": actions,
+            "winpe_action_kinds": [a["kind"] for a in actions],
+        })
+    return rows
+
+
+def _run_steps_for_display(run: dict, seq: dict | None) -> list[dict]:
+    steps = sequences_db.list_run_steps(SEQUENCES_DB, run_id=run["id"])
+    if steps or run.get("provision_path") != "winpe":
+        return steps
+    return [
+        {
+            "id": None,
+            "run_id": run["id"],
+            "order_index": idx,
+            "phase": "winpe",
+            "kind": action["kind"],
+            "params_json": json.dumps(action.get("params") or {}, sort_keys=True),
+            "state": "planned",
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "is_preview": True,
+        }
+        for idx, action in enumerate(_winpe_actions_for_sequence(seq))
+    ]
+
+
+def _step_counts(steps: list[dict]) -> dict:
+    return {
+        "total": len(steps),
+        "ok": sum(1 for step in steps if step["state"] == "ok"),
+        "running": sum(1 for step in steps if step["state"] == "running"),
+        "error": sum(1 for step in steps if step["state"] == "error"),
+        "planned": sum(1 for step in steps if step["state"] in ("planned", "pending")),
+    }
+
+
+@app.get("/runs", response_class=HTMLResponse)
+def runs_page(request: Request):
+    runs = sequences_db.list_provisioning_runs(
+        SEQUENCES_DB, provision_path="winpe",
+    )
+    return templates.TemplateResponse(
+        "runs.html",
+        {"request": request, "runs": runs},
+    )
+
+
 @app.get("/runs/{run_id}", response_class=HTMLResponse)
 def run_detail_page(run_id: int, request: Request):
     run = sequences_db.get_provisioning_run(SEQUENCES_DB, run_id)
     if run is None:
         raise HTTPException(status_code=404)
-    steps = sequences_db.list_run_steps(SEQUENCES_DB, run_id=run_id)
+    seq = sequences_db.get_sequence(SEQUENCES_DB, run["sequence_id"])
+    steps = _run_steps_for_display(run, seq)
+    run = {**run, "sequence_name": (seq or {}).get("name", "")}
     return templates.TemplateResponse(
         "run_detail.html",
-        {"request": request, "run": run, "steps": steps},
+        {
+            "request": request,
+            "run": run,
+            "steps": steps,
+            "step_counts": _step_counts(steps),
+        },
     )
 
 
@@ -6924,7 +7012,9 @@ def _now_iso() -> str:
 def page_sequences(request: Request, error: str = ""):
     seqs = sequences_db.list_sequences(SEQUENCES_DB)
     return templates.TemplateResponse("sequences.html", {
-        "request": request, "sequences": seqs, "error": error,
+        "request": request,
+        "sequences": _sequence_rows_for_ui(seqs),
+        "error": error,
     })
 
 

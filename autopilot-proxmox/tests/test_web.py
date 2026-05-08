@@ -142,13 +142,19 @@ def test_qga_recovery_script_download(client):
 
 
 def test_qga_recovery_command_download(client):
-    response = client.get("/api/qga/recovery-command.txt")
+    response = client.get(
+        "/api/qga/recovery-command.txt",
+        headers={
+            "host": "autopilot.gell.one",
+            "x-forwarded-proto": "https",
+        },
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert "attachment;" in response.headers["content-disposition"]
     assert "QgaWatchdogRecovery-command.txt" in response.headers["content-disposition"]
-    assert "/api/qga/recovery-script.ps1" in response.text
+    assert "https://autopilot.gell.one/api/qga/recovery-script.ps1" in response.text
     assert "-TaskIntervalMinutes 5 -RestartIntervalMinutes 10" in response.text
 
 
