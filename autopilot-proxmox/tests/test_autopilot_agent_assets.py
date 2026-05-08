@@ -40,6 +40,7 @@ def test_wix_installer_creates_delayed_auto_localsystem_service():
     assert 'Start="auto"' in wxs
     assert 'Name="DelayedAutoStart"' in wxs
     assert 'Value="1"' in wxs
+    assert 'Id="ProgramFiles6432Folder"' in wxs
     assert "MajorUpgrade" in wxs
 
 
@@ -49,6 +50,8 @@ def test_signing_scripts_use_artifact_signing_without_storing_credentials():
     sign_script = _read("autopilot-agent/scripts/Sign-AutopilotAgent.ps1")
 
     assert "Remove-Item -Recurse -Force" in build_script
+    assert "InstallerPlatform" in build_script
+    assert '"win-arm64" { "arm64" }' in build_script
     assert "az account show" in env_script
     assert "az account get-access-token" in env_script
     assert "$LASTEXITCODE" in env_script

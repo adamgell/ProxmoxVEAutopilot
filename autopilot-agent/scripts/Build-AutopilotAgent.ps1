@@ -12,6 +12,11 @@ $project = Join-Path $repoRoot "src\AutopilotAgent\AutopilotAgent.csproj"
 $installer = Join-Path $repoRoot "installer\AutopilotAgent.Installer.wixproj"
 
 foreach ($rid in $RuntimeIdentifiers) {
+    $installerPlatform = switch ($rid) {
+        "win-x64" { "x64" }
+        "win-arm64" { "arm64" }
+        default { throw "Unsupported installer runtime identifier: $rid" }
+    }
     $publishDir = Join-Path $OutputRoot "publish\$rid"
     $msiDir = Join-Path $OutputRoot "msi\$rid"
     New-Item -ItemType Directory -Force -Path $publishDir, $msiDir | Out-Null
@@ -31,6 +36,7 @@ foreach ($rid in $RuntimeIdentifiers) {
         -c $Configuration `
         -p:AutopilotAgentVersion=$Version `
         -p:RuntimeIdentifier=$rid `
+        -p:InstallerPlatform=$installerPlatform `
         -p:PublishDir=$publishDir `
         -o $msiDir
 }

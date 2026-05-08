@@ -18,7 +18,7 @@
     <Property Id="AUTOPILOT_VMID" Secure="yes" />
     <Property Id="AUTOPILOT_VM_UUID" Secure="yes" />
 
-    <StandardDirectory Id="ProgramFilesFolder">
+    <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="ManufacturerFolder" Name="ProxmoxVEAutopilot">
         <Directory Id="INSTALLFOLDER" Name="AutopilotAgent" />
       </Directory>
