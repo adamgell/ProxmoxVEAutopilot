@@ -2968,19 +2968,38 @@ def _ppm_to_png(ppm_bytes: bytes) -> bytes:
         return out.getvalue()
 
 
+def _resolve_proxmox_node_host(node: str) -> str:
+    try:
+        rows = _proxmox_api("/cluster/status") or []
+    except Exception:
+        rows = []
+    for row in rows:
+        if (
+            isinstance(row, dict)
+            and row.get("type") == "node"
+            and row.get("name") == node
+            and row.get("ip")
+        ):
+            return str(row["ip"])
+    cfg = _load_proxmox_config()
+    if node == cfg.get("proxmox_node"):
+        return cfg.get("proxmox_host", node)
+    return node
+
+
 def _capture_vm_screenshot_png(vmid: int) -> bytes:
     """Capture the VM display plane through QEMU monitor screendump.
 
     This deliberately does not use QGA so screenshots still work during
     WinPE, OOBE, boot failures, and bugcheck screens.
     """
-    ssh = _make_root_ssh_runner()
+    node = _resolve_vm_node(vmid)
+    ssh = _make_root_ssh_runner(host=_resolve_proxmox_node_host(node))
     if ssh is None:
         raise RuntimeError(
             "root SSH is required for screenshot capture; configure "
             "vault_proxmox_root_password"
         )
-    node = _resolve_vm_node(vmid)
     remote_path = f"/tmp/pveautopilot-screenshot-{vmid}-{uuid4().hex}.ppm"
     monitor_command = f"screendump {remote_path}"
     cmd = (
@@ -6576,7 +6595,7 @@ def _referenced_answer_floppy_paths() -> set[str]:
     return refs
 
 
-def _make_root_ssh_runner():
+def _make_root_ssh_runner(host: str | None = None):
     """Construct the SshRunner used by the floppy cache. None when the
     root password isn't configured (prune/list still work, just without
     the ability to verify/remove remote files)."""
@@ -6587,7 +6606,7 @@ def _make_root_ssh_runner():
     from web import answer_floppy_cache
     user = (cfg.get("vault_proxmox_root_username") or "root@pam").split("@", 1)[0]
     return answer_floppy_cache.make_sshpass_runner(
-        host=cfg.get("proxmox_host", ""), password=pw, user=user or "root",
+        host=host or cfg.get("proxmox_host", ""), password=pw, user=user or "root",
     )
 
 

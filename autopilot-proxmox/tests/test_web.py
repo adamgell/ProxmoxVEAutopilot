@@ -1010,6 +1010,51 @@ def test_live_websocket_screenshot_result_and_image_url(web_client, monkeypatch)
     assert image.content == b"\x89PNG\r\n\x1a\nfake"
 
 
+def test_screenshot_capture_ssh_targets_resolved_vm_node(monkeypatch):
+    from web import app as app_module
+    from web import answer_floppy_cache
+
+    runner_hosts = []
+    ssh_commands = []
+
+    monkeypatch.setattr(
+        app_module,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_host": "192.168.2.200",
+            "proxmox_node": "pve2",
+            "vault_proxmox_root_password": "secret",
+            "vault_proxmox_root_username": "root@pam",
+        },
+    )
+    monkeypatch.setattr(app_module, "_resolve_vm_node", lambda vmid: "pve2")
+    monkeypatch.setattr(
+        app_module,
+        "_proxmox_api",
+        lambda path: [
+            {"type": "cluster", "name": "homelab"},
+            {"type": "node", "name": "pve1", "ip": "192.168.2.200"},
+            {"type": "node", "name": "pve2", "ip": "192.168.2.48"},
+        ] if path == "/cluster/status" else [],
+    )
+    monkeypatch.setattr(app_module, "_ppm_to_png", lambda ppm: b"png")
+
+    def fake_runner(*, host, password, user):
+        runner_hosts.append(host)
+
+        def ssh(cmd):
+            ssh_commands.append(cmd)
+            return 0, b"P6\n1 1\n255\n\x00\x00\x00", b""
+
+        return ssh
+
+    monkeypatch.setattr(answer_floppy_cache, "make_sshpass_runner", fake_runner)
+
+    assert app_module._capture_vm_screenshot_png(106) == b"png"
+    assert runner_hosts == ["192.168.2.48"]
+    assert "/nodes/pve2/qemu/106/monitor" in ssh_commands[0]
+
+
 def test_live_websocket_screenshot_failure_keeps_socket_open(web_client, monkeypatch):
     from web import app as app_module
 
