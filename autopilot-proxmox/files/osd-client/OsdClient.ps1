@@ -186,22 +186,78 @@ function Invoke-VerifyQga {
         )
     }
 
-    & sc.exe config QEMU-GA start= auto | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "QEMU Guest Agent service config failed with exit $LASTEXITCODE"
-    }
+    Set-QgaServiceCommandLine
 
     $svc = Get-Service -Name QEMU-GA -ErrorAction Stop
-    if ($svc.Status -ne 'Running') {
+    if ($svc.Status -eq 'Running') {
+        Restart-Service -Name QEMU-GA -Force -ErrorAction Stop
+    } else {
         Start-Service -Name QEMU-GA
-        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
     }
+    (Get-Service -Name QEMU-GA -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
 
     $svc = Get-Service -Name QEMU-GA -ErrorAction Stop
     if ($svc.Status -ne 'Running') {
         throw "QEMU Guest Agent service did not reach Running state; status=$($svc.Status)"
     }
     Write-OsdLog "QEMU Guest Agent verified running; status=$($svc.Status)"
+}
+
+function Get-QgaExecutablePath {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Qemu-ga\qemu-ga.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Qemu-ga\qemu-ga.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+
+    $svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
+    if ($svcInfo -and $svcInfo.PathName) {
+        if ($svcInfo.PathName -match '"([^"]*qemu-ga\.exe)"') {
+            return $Matches[1]
+        }
+        if ($svcInfo.PathName -match '([^\s]*qemu-ga\.exe)') {
+            return $Matches[1]
+        }
+    }
+
+    throw 'qemu-ga.exe was not found under Program Files and could not be parsed from the service command line.'
+}
+
+function Get-QgaServiceCommandLine {
+    param(
+        [Parameter(Mandatory)] [string] $ExePath,
+        [Parameter(Mandatory)] [string] $StateDir,
+        [Parameter(Mandatory)] [string] $LogFile
+    )
+
+    return ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "{1}" -l "{2}"' -f $ExePath, $StateDir, $LogFile)
+}
+
+function Set-QgaServiceCommandLine {
+    $stateDir = Join-Path $env:ProgramData 'qemu-ga'
+    $logFile = Join-Path $stateDir 'qemu-ga.log'
+    if (-not (Test-Path -LiteralPath $stateDir)) {
+        New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    }
+
+    $exePath = Get-QgaExecutablePath
+    $binPath = Get-QgaServiceCommandLine -ExePath $exePath -StateDir $stateDir -LogFile $logFile
+
+    & sc.exe config QEMU-GA binPath= $binPath | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "QEMU Guest Agent service command-line configuration failed with exit $LASTEXITCODE"
+    }
+
+    & sc.exe config QEMU-GA start= delayed-auto | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "QEMU Guest Agent delayed-auto configuration failed with exit $LASTEXITCODE"
+    }
+
+    Write-OsdLog "QEMU Guest Agent service command line configured: $binPath"
 }
 
 function Get-OsdActionIntParam {
@@ -232,6 +288,8 @@ function Get-QgaWatchdogScriptContent {
 `$root = Join-Path `$env:ProgramData 'ProxmoxVEAutopilot\OSD'
 `$logPath = Join-Path `$root 'qga-watchdog.log'
 `$statePath = Join-Path `$root 'qga-watchdog-last-restart.txt'
+`$qgaStateDir = Join-Path `$env:ProgramData 'qemu-ga'
+`$qgaLogPath = Join-Path `$qgaStateDir 'qemu-ga.log'
 `$restartIntervalMinutes = $RestartIntervalMinutes
 
 function Add-WatchdogLog {
@@ -244,6 +302,56 @@ function Add-WatchdogLog {
     } catch {}
 }
 
+function Get-QgaExecutablePath {
+    `$candidates = @(
+        (Join-Path `$env:ProgramFiles 'Qemu-ga\qemu-ga.exe'),
+        (Join-Path `${env:ProgramFiles(x86)} 'Qemu-ga\qemu-ga.exe')
+    )
+    foreach (`$candidate in `$candidates) {
+        if (`$candidate -and (Test-Path -LiteralPath `$candidate)) {
+            return `$candidate
+        }
+    }
+    `$svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
+    if (`$svcInfo -and `$svcInfo.PathName) {
+        if (`$svcInfo.PathName -match '"([^"]*qemu-ga\.exe)"') {
+            return `$Matches[1]
+        }
+        if (`$svcInfo.PathName -match '([^\s]*qemu-ga\.exe)') {
+            return `$Matches[1]
+        }
+    }
+    return `$null
+}
+
+function Set-QgaServiceCommandLine {
+    try {
+        if (-not (Test-Path -LiteralPath `$qgaStateDir)) {
+            New-Item -ItemType Directory -Path `$qgaStateDir -Force | Out-Null
+        }
+        `$exePath = Get-QgaExecutablePath
+        if (-not `$exePath) {
+            Add-WatchdogLog 'qemu-ga.exe not found; cannot enforce service command line.'
+            return `$false
+        }
+        `$desired = ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "{1}" -l "{2}"' -f `$exePath, `$qgaStateDir, `$qgaLogPath)
+        `$svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
+        if (`$svcInfo -and `$svcInfo.PathName -eq `$desired) {
+            return `$false
+        }
+        & sc.exe config QEMU-GA binPath= `$desired | Out-Null
+        if (`$LASTEXITCODE -eq 0) {
+            & sc.exe config QEMU-GA start= delayed-auto | Out-Null
+            Add-WatchdogLog 'Corrected QEMU-GA service command line.'
+            return `$true
+        }
+        Add-WatchdogLog "Failed to correct QEMU-GA service command line: exit `$LASTEXITCODE"
+    } catch {
+        Add-WatchdogLog "Failed to correct QEMU-GA service command line: `$(`$_.Exception.Message)"
+    }
+    return `$false
+}
+
 try {
     `$svc = Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue
     if (-not `$svc) {
@@ -251,10 +359,12 @@ try {
         exit 0
     }
 
+    `$serviceCommandLineChanged = Set-QgaServiceCommandLine
+
     `$svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
     if (`$svcInfo -and `$svcInfo.StartMode -ne 'Auto') {
-        & sc.exe config QEMU-GA start= auto | Out-Null
-        Add-WatchdogLog 'Set QEMU-GA service startup to auto.'
+        & sc.exe config QEMU-GA start= delayed-auto | Out-Null
+        Add-WatchdogLog 'Set QEMU-GA service startup to delayed-auto.'
     }
 
     if (`$svc.Status -ne 'Running') {
@@ -262,6 +372,14 @@ try {
         (Get-Service -Name QEMU-GA -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
         Set-Content -LiteralPath `$statePath -Value (Get-Date -Format o) -Encoding ASCII
         Add-WatchdogLog 'Started QEMU-GA service.'
+        exit 0
+    }
+
+    if (`$serviceCommandLineChanged) {
+        Restart-Service -Name QEMU-GA -Force -ErrorAction Stop
+        (Get-Service -Name QEMU-GA -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+        Set-Content -LiteralPath `$statePath -Value (Get-Date -Format o) -Encoding ASCII
+        Add-WatchdogLog 'Restarted QEMU-GA after service command-line correction.'
         exit 0
     }
 

@@ -135,6 +135,8 @@ def test_qga_recovery_script_download(client):
     assert "attachment;" in response.headers["content-disposition"]
     assert "QgaWatchdogRecovery.ps1" in response.headers["content-disposition"]
     assert "Restart-Service -Name QEMU-GA" in response.text
+    assert "--retry-path" in response.text
+    assert r"\\.\Global\org.qemu.guest_agent.0" in response.text
     assert "\\ProxmoxVEAutopilot\\QgaWatchdog" in response.text
 
 
