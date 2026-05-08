@@ -1158,6 +1158,36 @@ def test_live_fleet_qga_failure_backoff_skips_repeat_probe(monkeypatch):
     app_module._LIVE_QGA_FAILURES.clear()
 
 
+@pytest.mark.anyio
+async def test_live_qga_probe_handler_uses_only_agent_info(monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setattr(app_module, "_resolve_vm_node", lambda vmid: "pve2")
+
+    get_paths = []
+
+    def fake_get(path):
+        get_paths.append(path)
+        if path == "/nodes/pve2/qemu/106/agent/info":
+            return {"result": {"version": "110.0.2", "supported_commands": []}}
+        raise AssertionError(f"unexpected GET {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_get)
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_guest_windows_details",
+        lambda node, vmid: (_ for _ in ()).throw(
+            AssertionError("qga_probe must not run guest Windows details")
+        ),
+    )
+
+    result = await app_module._live_qga_probe_handler(106)
+
+    assert result["qga"] == "ready"
+    assert result["version"] == "110.0.2"
+    assert get_paths == ["/nodes/pve2/qemu/106/agent/info"]
+
+
 def test_screenshot_capture_ssh_targets_resolved_vm_node(monkeypatch):
     from web import app as app_module
     from web import answer_floppy_cache

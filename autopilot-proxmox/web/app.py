@@ -3223,7 +3223,22 @@ async def _live_refresh_handler(scope: str) -> list[dict]:
 
 async def _live_qga_probe_handler(vmid: int) -> dict:
     node = _resolve_vm_node(vmid)
-    return await asyncio.to_thread(_fetch_guest_windows_details, node, vmid)
+    data = await asyncio.to_thread(
+        _proxmox_api, f"/nodes/{node}/qemu/{vmid}/agent/info",
+    )
+    result = data.get("result") if isinstance(data, dict) else {}
+    if not isinstance(result, dict):
+        result = {}
+    supported = result.get("supported_commands") or []
+    return {
+        "qga": "ready",
+        "node": node,
+        "vmid": vmid,
+        "version": result.get("version"),
+        "supported_command_count": (
+            len(supported) if isinstance(supported, list) else 0
+        ),
+    }
 
 
 def _get_live_hub() -> LiveHub:
