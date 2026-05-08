@@ -457,6 +457,52 @@ hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
   flex-shrink: 0;
   border: 1px solid rgba(255,255,255,0.08);
 }
+.live-socket-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: rgba(255,255,255,0.065);
+  color: rgba(255,255,255,0.8);
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+  border: 1px solid rgba(142, 163, 191, 0.18);
+  white-space: nowrap;
+}
+.live-socket-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255,255,255,0.35);
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.08);
+}
+.live-socket-chip[data-state="connected"] {
+  color: #bff07a;
+  border-color: rgba(127,186,0,0.34);
+}
+.live-socket-chip[data-state="connected"] .live-socket-dot {
+  background: var(--ms-green);
+  box-shadow: 0 0 0 2px rgba(127,186,0,0.22), 0 0 12px rgba(127,186,0,0.5);
+}
+.live-socket-chip[data-state="connecting"],
+.live-socket-chip[data-state="reconnecting"] {
+  color: #ffd876;
+  border-color: rgba(255,185,0,0.28);
+}
+.live-socket-chip[data-state="connecting"] .live-socket-dot,
+.live-socket-chip[data-state="reconnecting"] .live-socket-dot {
+  background: var(--ms-yellow);
+  box-shadow: 0 0 0 2px rgba(255,185,0,0.18);
+}
+.live-socket-chip[data-state="offline"],
+.live-socket-chip[data-state="unsupported"] {
+  color: #ff9475;
+  border-color: rgba(242,80,34,0.28);
+}
+.live-socket-chip[data-state="offline"] .live-socket-dot,
+.live-socket-chip[data-state="unsupported"] .live-socket-dot {
+  background: var(--ms-red);
+  box-shadow: 0 0 0 2px rgba(242,80,34,0.18);
+}
 
 /* Theme toggle in the header — same chrome as the user-chip so it
    reads as a peer control.  Lives OUTSIDE the chip because logged-out
@@ -1048,6 +1094,7 @@ pre {
   font-weight: 500;
 }
 .cockpit-shell .theme-toggle,
+.cockpit-shell .live-socket-chip,
 .cockpit-shell .user-chip {
   background: rgba(255,255,255,0.065);
   border-color: rgba(142, 163, 191, 0.18);
@@ -1769,6 +1816,11 @@ pre {
         <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
       </svg>
     </button>
+    <span id="liveSocketIndicator" class="live-socket-chip" data-state="connecting"
+          title="Live WebSocket connecting" aria-live="polite">
+      <span class="live-socket-dot" aria-hidden="true"></span>
+      <span id="liveSocketIndicatorLabel">Live: connecting</span>
+    </span>
     {% if request and request.session and request.session.get('user') %}
     <span class="user-chip">
       <span class="user-dot" aria-hidden="true"></span>
@@ -1869,6 +1921,83 @@ pre {
       try { localStorage.setItem('autopilot_theme', 'dark'); } catch (e) {}
     }
   });
+})();
+
+// -----------------------------------------------------------------------
+// Topbar live WebSocket indicator.  This uses the same /api/live/ws
+// endpoint as the realtime pages and reconnects with a small backoff so
+// operators can see whether the browser still has a live control plane.
+// -----------------------------------------------------------------------
+(function() {
+  var chip = document.getElementById('liveSocketIndicator');
+  var label = document.getElementById('liveSocketIndicatorLabel');
+  if (!chip || !label) return;
+
+  var socket = null;
+  var reconnectTimer = null;
+  var reconnectDelay = 1000;
+  var closedByPage = false;
+
+  function setState(state) {
+    var text = {
+      connecting: 'Live: connecting',
+      connected: 'Live: connected',
+      reconnecting: 'Live: reconnecting',
+      offline: 'Live: offline',
+      unsupported: 'Live: unsupported'
+    }[state] || 'Live: unknown';
+    chip.dataset.state = state;
+    chip.title = 'WebSocket ' + text.replace('Live: ', '');
+    label.textContent = text;
+  }
+
+  function scheduleReconnect() {
+    if (closedByPage || reconnectTimer) return;
+    setState('reconnecting');
+    reconnectTimer = window.setTimeout(function() {
+      reconnectTimer = null;
+      connect();
+      reconnectDelay = Math.min(reconnectDelay * 1.7, 10000);
+    }, reconnectDelay);
+  }
+
+  function connect() {
+    if (!window.WebSocket) {
+      setState('unsupported');
+      return;
+    }
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    setState(reconnectDelay > 1000 ? 'reconnecting' : 'connecting');
+    var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    socket = new WebSocket(scheme + location.host + '/api/live/ws');
+    socket.addEventListener('open', function() {
+      reconnectDelay = 1000;
+      setState('connected');
+    });
+    socket.addEventListener('message', function(ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+      if (msg.type === 'hello' || msg.type === 'heartbeat') setState('connected');
+    });
+    socket.addEventListener('close', function() {
+      socket = null;
+      if (closedByPage) return;
+      setState('offline');
+      scheduleReconnect();
+    });
+    socket.addEventListener('error', function() {
+      setState('offline');
+    });
+  }
+
+  window.addEventListener('beforeunload', function() {
+    closedByPage = true;
+    if (reconnectTimer) window.clearTimeout(reconnectTimer);
+    if (socket) socket.close();
+  });
+  connect();
 })();
 
 // -----------------------------------------------------------------------
