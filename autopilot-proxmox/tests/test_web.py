@@ -976,6 +976,68 @@ def test_live_hub_disables_automatic_qga_polling():
     assert hub.qga_interval_seconds is None
 
 
+def test_monitor_context_guest_details_avoid_qga_by_default(monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.delenv("AUTOPILOT_MONITOR_QGA_DETAILS", raising=False)
+    monkeypatch.setattr(app_module, "_load_proxmox_config", lambda: {})
+
+    def fake_proxmox_api(path):
+        if path == "/nodes/pve2/qemu/106/config":
+            return {
+                "name": "Gell-E9C0C757",
+                "tags": "autopilot",
+                "smbios1": "uuid=11111111-2222-3333-4444-555555555555",
+            }
+        raise AssertionError(f"unexpected Proxmox API call {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_proxmox_api)
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_guest_windows_details",
+        lambda _node, _vmid: (_ for _ in ()).throw(
+            AssertionError("monitor should not guest-exec by default")
+        ),
+    )
+
+    ctx = app_module._build_live_monitor_context()
+    guest = ctx.fetch_guest_details(106, "pve2")
+
+    assert guest["win_name"] == "Gell-E9C0C757"
+    assert guest["serial"] == "Gell-E9C0C757"
+    assert guest["uuid"] == "11111111-2222-3333-4444-555555555555"
+
+
+def test_monitor_context_guest_details_can_opt_into_qga(monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setenv("AUTOPILOT_MONITOR_QGA_DETAILS", "1")
+    monkeypatch.setattr(app_module, "_load_proxmox_config", lambda: {})
+
+    def fake_proxmox_api(path):
+        if path == "/nodes/pve2/qemu/106/config":
+            return {"name": "Gell-E9C0C757", "tags": "autopilot"}
+        raise AssertionError(f"unexpected Proxmox API call {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_proxmox_api)
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_guest_windows_details",
+        lambda _node, _vmid: {
+            "Name": "WINDOWS-RENAMED",
+            "SerialNumber": "Gell-E9C0C757",
+            "OSBuild": "26100",
+        },
+    )
+
+    ctx = app_module._build_live_monitor_context()
+    guest = ctx.fetch_guest_details(106, "pve2")
+
+    assert guest["win_name"] == "WINDOWS-RENAMED"
+    assert guest["serial"] == "Gell-E9C0C757"
+    assert guest["os_build"] == "26100"
+
+
 def test_live_websocket_rejects_unauthenticated_client(web_client):
     from starlette.websockets import WebSocketDisconnect
     from web import app as app_module

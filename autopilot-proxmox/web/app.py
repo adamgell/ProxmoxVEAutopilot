@@ -1139,19 +1139,17 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
     def _fetch_guest_details(vmid: int, node: str):
         # Two-tier fallback so serial/name are populated even when the
         # guest agent is down:
-        #   1. guest-exec for the authoritative Windows-side values
-        #      (what the OS actually sees — catches renames, drift)
-        #   2. PVE config.smbios1 for the "what we provisioned" baseline
+        #   1. PVE config/name for the "what we provisioned" baseline
         #      — always available, proves-out Intune lookups even for
         #      stopped VMs that match by serial.
+        #   2. Optional guest-exec for authoritative Windows-side values
+        #      (renames, OS build, dsreg). This is disabled by default:
+        #      repeated background QGA RPCs can wedge Windows qemu-ga.
         raw = {}
-        try:
-            raw = _fetch_guest_windows_details(node, vmid) or {}  # type: ignore[name-defined]
-        except NameError:
-            raw = {}
-        except Exception:
-            raw = {}
-        # Fall back to PVE config when guest-exec is unavailable.
+        use_qga_details = str(
+            os.environ.get("AUTOPILOT_MONITOR_QGA_DETAILS") or ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
         # Note: for autopilot provisions the `smbios1` config field
         # holds the TEMPLATE's default values (e.g., Gell-1F02ADE6) —
         # the real per-VM SMBIOS serial lives in the binary file
@@ -1163,6 +1161,15 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
             cfg = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config") or {}
         except Exception:
             cfg = {}
+
+        if use_qga_details:
+            try:
+                raw = _fetch_guest_windows_details(node, vmid) or {}  # type: ignore[name-defined]
+            except NameError:
+                raw = {}
+            except Exception:
+                raw = {}
+
         smbios1 = cfg.get("smbios1", "")
         uuid_fallback = _decode_smbios_field(smbios1, "uuid")
         vm_name_fallback = cfg.get("name")
