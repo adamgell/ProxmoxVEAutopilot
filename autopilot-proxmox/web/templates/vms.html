@@ -486,13 +486,17 @@ function openScreenshotModal(vmid, imageUrl) {
   var modal = document.createElement('div');
   modal.id = 'vm-screenshot-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;';
+  var safeUrl = _htmlEsc(imageUrl);
   modal.innerHTML =
-    '<div style="background:var(--panel);border:1px solid var(--line);border-radius:6px;max-width:min(1100px,96vw);max-height:94vh;padding:12px;color:var(--ink);box-shadow:0 12px 40px rgba(0,0,0,0.45);">'
+    '<div style="background:var(--panel);border:1px solid var(--line);border-radius:6px;width:max-content;max-width:calc(100vw - 48px);max-height:94vh;padding:12px;color:var(--ink);box-shadow:0 12px 40px rgba(0,0,0,0.45);box-sizing:border-box;overflow:auto;">'
     + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">'
     + '<strong>VM ' + _htmlEsc(String(vmid)) + ' screenshot</strong>'
+    + '<div style="display:flex;align-items:center;gap:8px;">'
+    + '<a href="' + safeUrl + '" download="vm-' + _htmlEsc(String(vmid)) + '-screenshot.png" target="_blank" rel="noopener" class="action-btn" style="text-decoration:none;padding:7px 10px;">Download</a>'
     + '<button type="button" id="vmScreenshotClose">Close</button>'
     + '</div>'
-    + '<img src="' + _htmlEsc(imageUrl) + '" alt="VM screenshot" style="display:block;max-width:calc(96vw - 48px);max-height:calc(94vh - 70px);background:#000;border:1px solid var(--line);">';
+    + '</div>'
+    + '<img src="' + safeUrl + '" alt="VM screenshot" style="display:block;width:auto;height:auto;max-width:calc(100vw - 80px);max-height:calc(94vh - 76px);background:#000;border:1px solid var(--line);box-sizing:border-box;">';
   document.body.appendChild(modal);
   document.getElementById('vmScreenshotClose').onclick = function() { modal.remove(); };
   modal.addEventListener('click', function(ev) { if (ev.target === modal) modal.remove(); });

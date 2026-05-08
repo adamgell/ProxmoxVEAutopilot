@@ -221,12 +221,15 @@ function openScreenshot(imageUrl) {
   modal.id = 'console-screenshot-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;';
   modal.innerHTML = `
-    <div style="background:#0d121e;border:1px solid rgba(142,163,191,0.28);border-radius:6px;max-width:min(1100px,96vw);max-height:94vh;padding:12px;color:#edf4ff;box-shadow:0 12px 40px rgba(0,0,0,0.45);">
+    <div style="background:#0d121e;border:1px solid rgba(142,163,191,0.28);border-radius:6px;width:max-content;max-width:calc(100vw - 48px);max-height:94vh;padding:12px;color:#edf4ff;box-shadow:0 12px 40px rgba(0,0,0,0.45);box-sizing:border-box;overflow:auto;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
         <strong>VM ${VMID} screenshot</strong>
-        <button type="button" id="consoleScreenshotClose">Close</button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <a href="${imageUrl}" download="vm-${VMID}-screenshot.png" target="_blank" rel="noopener" style="border:1px solid rgba(142,163,191,0.38);background:#173654;color:#edf4ff;border-radius:5px;padding:7px 10px;text-decoration:none;">Download</a>
+          <button type="button" id="consoleScreenshotClose">Close</button>
+        </div>
       </div>
-      <img src="${imageUrl}" alt="VM screenshot" style="display:block;max-width:calc(96vw - 48px);max-height:calc(94vh - 70px);background:#000;border:1px solid rgba(142,163,191,0.28);">
+      <img src="${imageUrl}" alt="VM screenshot" style="display:block;width:auto;height:auto;max-width:calc(100vw - 80px);max-height:calc(94vh - 76px);background:#000;border:1px solid rgba(142,163,191,0.28);box-sizing:border-box;">
     </div>`;
   document.body.appendChild(modal);
   document.getElementById('consoleScreenshotClose').onclick = () => modal.remove();

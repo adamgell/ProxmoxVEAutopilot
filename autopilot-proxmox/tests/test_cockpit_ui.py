@@ -82,6 +82,8 @@ def test_console_page_preserves_existing_api_contracts(web_client: TestClient, m
     assert "/api/live/ws" in body
     assert "screenshot.request" in body
     assert "requestScreenshot" in body
+    assert 'download="vm-${VMID}-screenshot.png"' in body
+    assert "width:max-content" in body
 
 
 def test_console_resolves_actual_vm_node_for_serial(web_client: TestClient, monkeypatch):
