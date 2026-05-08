@@ -40,7 +40,7 @@ $script:WixPath = Resolve-RequiredCommand wix
 az account show | Out-Null
 
 $dotnetRuntimes = dotnet --list-runtimes
-if ($dotnetRuntimes -notmatch "Microsoft\.NETCore\.App 8\.") {
+if (-not ($dotnetRuntimes | Where-Object { $_ -match "^Microsoft\.NETCore\.App 8\." })) {
     throw ".NET 8 runtime is required for AutopilotAgent validation."
 }
 
