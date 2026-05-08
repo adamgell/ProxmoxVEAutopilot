@@ -471,6 +471,7 @@ job_manager = JobManager(
     jobs_dir=str(BASE_DIR / "jobs"),
 )
 
+from web import agent_telemetry_pg
 from web import sequences_pg as sequences_db, crypto as _crypto
 from web import sequence_compiler
 from web import device_history_pg as device_history_db, device_monitor
@@ -486,6 +487,7 @@ from web.osd_v2_endpoints import (
     api_router as _osd_v2_api_router,
     content_api_router as _content_api_router,
 )
+from web.agent_v1_endpoints import router as _agent_v1_router
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
 app.include_router(_osd_router)
@@ -493,6 +495,7 @@ app.include_router(_osd_v2_router)
 app.include_router(_osd_v2_api_router)
 app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
+app.include_router(_agent_v1_router)
 
 
 # ---------------------------------------------------------------------------
@@ -902,12 +905,19 @@ def _database_url() -> str:
 
 
 def _init_app_database() -> None:
-    from web import db_pg, device_history_pg, devices_pg, ts_engine_pg
+    from web import (
+        agent_telemetry_pg,
+        db_pg,
+        device_history_pg,
+        devices_pg,
+        ts_engine_pg,
+    )
 
     with db_pg.connection(_database_url()) as conn:
         ts_engine_pg.init(conn)
         device_history_pg.init(conn)
         devices_pg.init(conn)
+        agent_telemetry_pg.init(conn)
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -2781,6 +2791,10 @@ def _vms_from_monitor_snapshot() -> list[dict]:
         latest = device_history_db.latest_per_vmid()
     except Exception:
         return []
+    try:
+        agent_latest = agent_telemetry_pg.latest_by_vmid()
+    except Exception:
+        agent_latest = {}
 
     out: list[dict] = []
     for entry in latest:
@@ -2792,8 +2806,9 @@ def _vms_from_monitor_snapshot() -> list[dict]:
         tags = (pve.get("tags_csv") or "").replace(",", ";")
         smbios1 = pve.get("smbios1") or ""
         args = pve.get("args") or ""
+        agent = agent_latest.get(vmid) or {}
 
-        serial = probe.get("serial") or ""
+        serial = probe.get("serial") or agent.get("serial_number") or ""
         if not serial:
             if "smbios file=" in args and name.lower().startswith("gell-"):
                 serial = name
@@ -2847,7 +2862,11 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "monitor_probed_at": probe.get("checked_at") or "",
             "serial": serial,
             "oem": "",
-            "hostname": probe.get("win_name") or (name if status == "running" else ""),
+            "hostname": (
+                probe.get("win_name")
+                or agent.get("computer_name")
+                or (name if status == "running" else "")
+            ),
             "mem_mb": int(pve.get("memory_mb") or 0),
             "cpus": pve.get("cores") or "",
             "tags": tags,

@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from web import device_history_pg as device_history_db
 from web import devices_pg as devices_db
+from web import agent_telemetry_pg
 from web import jobs_pg as jobs_db
 from web import sequences_pg as sequences_db
 from web import service_health_pg as service_health
 
 __all__ = [
+    "agent_telemetry_pg",
     "device_history_db",
     "devices_db",
     "jobs_db",

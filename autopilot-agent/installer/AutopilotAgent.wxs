@@ -1,0 +1,63 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+      Name="AutopilotAgent"
+      Manufacturer="ProxmoxVEAutopilot"
+      Version="$(var.AutopilotAgentVersion)"
+      UpgradeCode="{1B0134AB-8C4D-4D3B-AE90-629466D5B0E4}"
+      Scope="perMachine">
+    <MajorUpgrade
+        DowngradeErrorMessage="A newer version of AutopilotAgent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="AUTOPILOT_SERVER_URL" Secure="yes" />
+    <Property Id="AUTOPILOT_BOOTSTRAP_TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="AUTOPILOT_AGENT_ID" Secure="yes" />
+    <Property Id="AUTOPILOT_RUN_ID" Secure="yes" />
+    <Property Id="AUTOPILOT_PHASE" Secure="yes" />
+    <Property Id="AUTOPILOT_VMID" Secure="yes" />
+    <Property Id="AUTOPILOT_VM_UUID" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="ManufacturerFolder" Name="ProxmoxVEAutopilot">
+        <Directory Id="INSTALLFOLDER" Name="AutopilotAgent" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="ProductFeature" Title="AutopilotAgent" Level="1">
+      <ComponentGroupRef Id="AutopilotAgentComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AutopilotAgentComponents" Directory="INSTALLFOLDER">
+      <Component Id="AutopilotAgentExe" Guid="{3DA14C61-F5DC-4BB8-9642-A88D1F0560AF}">
+        <File
+            Id="AutopilotAgentExeFile"
+            Source="$(var.PublishDir)\AutopilotAgent.exe"
+            KeyPath="yes" />
+        <ServiceInstall
+            Id="AutopilotAgentServiceInstall"
+            Name="AutopilotAgent"
+            DisplayName="AutopilotAgent"
+            Description="ProxmoxVEAutopilot persistent provisioning and telemetry agent."
+            Type="ownProcess"
+            Start="auto"
+            ErrorControl="normal"
+            Account="LocalSystem" />
+        <util:ServiceConfig
+            ServiceName="AutopilotAgent"
+            DelayedAutoStart="yes"
+            OnInstall="yes"
+            OnReinstall="yes" />
+        <ServiceControl
+            Id="AutopilotAgentServiceControl"
+            Name="AutopilotAgent"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

@@ -17,3 +17,8 @@ docs/superpowers/
 
 # Local worktrees for parallel feature work
 .worktrees/
+
+# .NET build/signing output
+bin/
+obj/
+autopilot-agent/artifacts/

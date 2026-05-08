@@ -42,7 +42,8 @@ log = logging.getLogger(__name__)
 # /osd/client/* carry their own bearer-token checks after registration.
 # /osd/v2/* is the phase-neutral task sequence agent protocol and uses
 # the same HMAC bearer-token model. /api/runs/* is polled by the local
-# Ansible controller during WinPE provisioning.
+# Ansible controller during WinPE provisioning. /api/agent/v1/* is the
+# persistent Windows agent protocol and validates its own bearer tokens.
 _EXEMPT_PREFIXES = (
     "/auth/",
     "/healthz",
@@ -52,6 +53,7 @@ _EXEMPT_PREFIXES = (
     "/winpe/",
     "/osd/client/",
     "/osd/v2/",
+    "/api/agent/v1/",
     "/api/runs/",
     "/static/",
     "/favicon.ico",
