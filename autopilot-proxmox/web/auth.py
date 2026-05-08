@@ -17,8 +17,8 @@ set, only users whose ID-token ``groups`` claim contains that GUID
 are allowed. Otherwise, any signed-in user in the tenant is allowed.
 
 Exempt routes (always public): ``/auth/*``, ``/healthz``,
-``/api/version``. Static files and the login template itself are
-served without auth too.
+``/api/version``, and the QGA recovery script. Static files and the
+login template itself are served without auth too.
 """
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ _EXEMPT_PREFIXES = (
     "/auth/",
     "/healthz",
     "/api/version",
+    "/api/qga/recovery-script.ps1",
     "/winpe/",
     "/osd/client/",
     "/osd/v2/",

@@ -138,6 +138,12 @@ def test_qga_recovery_script_download(client):
     assert "\\ProxmoxVEAutopilot\\QgaWatchdog" in response.text
 
 
+def test_qga_recovery_script_is_auth_exempt():
+    from web import auth
+
+    assert auth.is_exempt_path("/api/qga/recovery-script.ps1")
+
+
 def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
     """Ubuntu-provisioned VMs get a Check Enrollment button and their
     Capture Hash button is rendered disabled (no Autopilot hash on Linux).
