@@ -204,6 +204,162 @@ function Invoke-VerifyQga {
     Write-OsdLog "QEMU Guest Agent verified running; status=$($svc.Status)"
 }
 
+function Get-OsdActionIntParam {
+    param(
+        [object] $Action,
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [int] $Default
+    )
+
+    if (-not $Action -or $Action.PSObject.Properties.Match('params').Count -eq 0 -or -not $Action.params) {
+        return $Default
+    }
+    if ($Action.params.PSObject.Properties.Match($Name).Count -eq 0 -or $null -eq $Action.params.$Name) {
+        return $Default
+    }
+    try {
+        return [int] $Action.params.$Name
+    } catch {
+        throw "OSD action parameter $Name must be an integer"
+    }
+}
+
+function Get-QgaWatchdogScriptContent {
+    param([Parameter(Mandatory)] [int] $RestartIntervalMinutes)
+
+    return @"
+`$ErrorActionPreference = 'SilentlyContinue'
+`$root = Join-Path `$env:ProgramData 'ProxmoxVEAutopilot\OSD'
+`$logPath = Join-Path `$root 'qga-watchdog.log'
+`$statePath = Join-Path `$root 'qga-watchdog-last-restart.txt'
+`$restartIntervalMinutes = $RestartIntervalMinutes
+
+function Add-WatchdogLog {
+    param([Parameter(Mandatory)] [string] `$Message)
+    try {
+        if (-not (Test-Path -LiteralPath `$root)) {
+            New-Item -ItemType Directory -Path `$root -Force | Out-Null
+        }
+        Add-Content -LiteralPath `$logPath -Value "`$(Get-Date -Format o) `$Message" -Encoding UTF8
+    } catch {}
+}
+
+try {
+    `$svc = Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue
+    if (-not `$svc) {
+        Add-WatchdogLog 'QEMU-GA service missing.'
+        exit 0
+    }
+
+    `$svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
+    if (`$svcInfo -and `$svcInfo.StartMode -ne 'Auto') {
+        & sc.exe config QEMU-GA start= auto | Out-Null
+        Add-WatchdogLog 'Set QEMU-GA service startup to auto.'
+    }
+
+    if (`$svc.Status -ne 'Running') {
+        Start-Service -Name QEMU-GA -ErrorAction Stop
+        (Get-Service -Name QEMU-GA -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+        Set-Content -LiteralPath `$statePath -Value (Get-Date -Format o) -Encoding ASCII
+        Add-WatchdogLog 'Started QEMU-GA service.'
+        exit 0
+    }
+
+    if (`$restartIntervalMinutes -gt 0) {
+        `$shouldRestart = `$false
+        if (-not (Test-Path -LiteralPath `$statePath)) {
+            `$shouldRestart = `$true
+        } else {
+            try {
+                `$lastRestart = [datetime]::Parse((Get-Content -LiteralPath `$statePath -Raw).Trim())
+                if ((New-TimeSpan -Start `$lastRestart -End (Get-Date)).TotalMinutes -ge `$restartIntervalMinutes) {
+                    `$shouldRestart = `$true
+                }
+            } catch {
+                `$shouldRestart = `$true
+            }
+        }
+
+        if (`$shouldRestart) {
+            Restart-Service -Name QEMU-GA -Force -ErrorAction Stop
+            (Get-Service -Name QEMU-GA -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+            Set-Content -LiteralPath `$statePath -Value (Get-Date -Format o) -Encoding ASCII
+            Add-WatchdogLog "Recycled QEMU-GA service after `$restartIntervalMinutes minute interval."
+        }
+    }
+} catch {
+    Add-WatchdogLog "QGA watchdog error: `$(`$_.Exception.Message)"
+}
+"@
+}
+
+function Set-QgaServiceRecovery {
+    & sc.exe failure QEMU-GA reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "QEMU Guest Agent service recovery configuration failed with exit $LASTEXITCODE"
+    }
+    & sc.exe failureflag QEMU-GA 1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "QEMU Guest Agent service failure flag configuration failed with exit $LASTEXITCODE"
+    }
+}
+
+function Register-QgaWatchdogTask {
+    param(
+        [Parameter(Mandatory)] [string] $ScriptPath,
+        [Parameter(Mandatory)] [int] $TaskIntervalMinutes
+    )
+
+    $taskRun = "powershell.exe -ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`""
+    $args = @(
+        '/Create',
+        '/TN', '\ProxmoxVEAutopilot\QgaWatchdog',
+        '/SC', 'MINUTE',
+        '/MO', [string] $TaskIntervalMinutes,
+        '/RU', 'SYSTEM',
+        '/RL', 'HIGHEST',
+        '/F',
+        '/TR', $taskRun
+    )
+    & schtasks.exe @args | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "QGA watchdog scheduled task registration failed with exit $LASTEXITCODE"
+    }
+}
+
+function Invoke-InstallQgaWatchdog {
+    param([object] $Action)
+
+    $taskIntervalMinutes = Get-OsdActionIntParam -Action $Action `
+        -Name 'task_interval_minutes' -Default 5
+    $restartIntervalMinutes = Get-OsdActionIntParam -Action $Action `
+        -Name 'restart_interval_minutes' -Default 30
+
+    if ($taskIntervalMinutes -lt 1) {
+        throw 'task_interval_minutes must be at least 1'
+    }
+    if ($restartIntervalMinutes -lt 0) {
+        throw 'restart_interval_minutes must be 0 or greater'
+    }
+
+    Invoke-VerifyQga
+
+    $watchdogPath = Join-Path $OsdRoot 'QgaWatchdog.ps1'
+    $statePath = Join-Path $OsdRoot 'qga-watchdog-last-restart.txt'
+    $watchdog = Get-QgaWatchdogScriptContent -RestartIntervalMinutes $restartIntervalMinutes
+    Set-Content -LiteralPath $watchdogPath -Value $watchdog -Encoding UTF8
+    Set-Content -LiteralPath $statePath -Value (Get-Date -Format o) -Encoding ASCII
+
+    Set-QgaServiceRecovery
+    Register-QgaWatchdogTask -ScriptPath $watchdogPath `
+        -TaskIntervalMinutes $taskIntervalMinutes
+
+    Write-OsdLog (
+        "QGA watchdog installed task_interval_minutes=$taskIntervalMinutes " +
+        "restart_interval_minutes=$restartIntervalMinutes path=$watchdogPath"
+    )
+}
+
 function Invoke-RecoveryFix {
     $script = Join-Path $OsdRoot 'FixRecoveryPartition.ps1'
     if (-not (Test-Path -LiteralPath $script)) {
@@ -410,6 +566,7 @@ function Invoke-OsdAction {
         'install_qga' { Invoke-InstallQga }
         'fix_recovery_partition' { Invoke-RecoveryFix }
         'verify_qga' { Invoke-VerifyQga }
+        'install_qga_watchdog' { Invoke-InstallQgaWatchdog -Action $Action }
         'capture_autopilot_hash' {
             Invoke-CaptureAutopilotHash -Config $Config -BearerToken $BearerToken
         }

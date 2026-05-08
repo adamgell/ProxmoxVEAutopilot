@@ -492,6 +492,10 @@ _DEFAULT_OSD_ACTIONS = (
     {"kind": "install_qga", "params": {}},
     {"kind": "fix_recovery_partition", "params": {}},
     {"kind": "verify_qga", "params": {}},
+    {
+        "kind": "install_qga_watchdog",
+        "params": {"task_interval_minutes": 5, "restart_interval_minutes": 30},
+    },
     {"kind": "capture_autopilot_hash", "params": {}},
     {"kind": "handoff_to_oobe", "params": {}},
 )
@@ -500,6 +504,7 @@ _REQUIRED_OSD_COMPLETION_KINDS = {
     "install_qga",
     "fix_recovery_partition",
     "verify_qga",
+    "install_qga_watchdog",
     "capture_autopilot_hash",
     "handoff_to_oobe",
 }

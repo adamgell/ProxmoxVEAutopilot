@@ -183,4 +183,34 @@ Describe 'OsdClient content materialization' {
         $script:Requests[4].Path | Should -Be '/osd/v2/agent/phase-complete'
         Should -Invoke Invoke-InstallPackage -Times 1 -Exactly
     }
+
+    It 'installs the QGA watchdog script and scheduled task' {
+        Mock Invoke-VerifyQga {}
+        Mock Set-QgaServiceRecovery {}
+        Mock Register-QgaWatchdogTask {}
+
+        $action = [pscustomobject]@{
+            params = [pscustomobject]@{
+                task_interval_minutes = 7
+                restart_interval_minutes = 31
+            }
+        }
+
+        Invoke-InstallQgaWatchdog -Action $action
+
+        $watchdogPath = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\OSD\QgaWatchdog.ps1'
+        $statePath = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\OSD\qga-watchdog-last-restart.txt'
+        Test-Path -LiteralPath $watchdogPath | Should -BeTrue
+        Test-Path -LiteralPath $statePath | Should -BeTrue
+        $watchdog = Get-Content -LiteralPath $watchdogPath -Raw
+        $watchdog | Should -Match 'QEMU-GA'
+        $watchdog | Should -Match 'Restart-Service -Name QEMU-GA'
+        $watchdog | Should -Match 'restartIntervalMinutes = 31'
+
+        Should -Invoke Invoke-VerifyQga -Times 1 -Exactly
+        Should -Invoke Set-QgaServiceRecovery -Times 1 -Exactly
+        Should -Invoke Register-QgaWatchdogTask -Times 1 -Exactly -ParameterFilter {
+            $ScriptPath -eq $watchdogPath -and $TaskIntervalMinutes -eq 7
+        }
+    }
 }

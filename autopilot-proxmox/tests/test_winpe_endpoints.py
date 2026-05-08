@@ -10,6 +10,15 @@ CONFIGMGR_WINPE_SPINE = [
     "stage_osd_client",
 ]
 
+DEFAULT_OSD_ACTIONS = [
+    "install_qga",
+    "fix_recovery_partition",
+    "verify_qga",
+    "install_qga_watchdog",
+    "capture_autopilot_hash",
+    "handoff_to_oobe",
+]
+
 
 def _create_seq(client, **overrides):
     """Helper: create a sequence via the existing API and return its id.
@@ -576,20 +585,14 @@ def test_osd_register_moves_to_client_state_and_creates_steps(
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert [a["kind"] for a in body["actions"]] == [
-        "install_qga",
-        "fix_recovery_partition",
-        "verify_qga",
-        "capture_autopilot_hash",
-        "handoff_to_oobe",
-    ]
+    assert [a["kind"] for a in body["actions"]] == DEFAULT_OSD_ACTIONS
     from web import sequences_db
     run = sequences_db.get_provisioning_run(test_db, run_id)
     assert run["state"] == "awaiting_osd_client"
     steps = sequences_db.list_run_steps(test_db, run_id)
-    assert [s["phase"] for s in steps[-5:]] == [
-        "osd", "osd", "osd", "osd", "osd",
-    ]
+    assert [s["phase"] for s in steps[-len(DEFAULT_OSD_ACTIONS):]] == [
+        "osd",
+    ] * len(DEFAULT_OSD_ACTIONS)
 
 
 def test_osd_step_result_and_complete_mark_run_done(
@@ -665,13 +668,7 @@ def test_osd_register_inserts_hash_capture_before_oobe_for_legacy_steps(
     )
 
     assert r.status_code == 200, r.text
-    assert [a["kind"] for a in r.json()["actions"]] == [
-        "install_qga",
-        "fix_recovery_partition",
-        "verify_qga",
-        "capture_autopilot_hash",
-        "handoff_to_oobe",
-    ]
+    assert [a["kind"] for a in r.json()["actions"]] == DEFAULT_OSD_ACTIONS
 
 
 def test_osd_complete_reconciles_interrupted_winpe_job(
