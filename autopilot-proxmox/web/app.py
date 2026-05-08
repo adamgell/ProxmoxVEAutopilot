@@ -3223,9 +3223,37 @@ async def _live_refresh_handler(scope: str) -> list[dict]:
 
 async def _live_qga_probe_handler(vmid: int) -> dict:
     node = _resolve_vm_node(vmid)
-    data = await asyncio.to_thread(
-        _proxmox_api, f"/nodes/{node}/qemu/{vmid}/agent/info",
-    )
+    failure = _LIVE_QGA_FAILURES.get(vmid) or {}
+    now = time.monotonic()
+    retry_at = float(failure.get("retry_at") or 0)
+    if retry_at > now:
+        return {
+            "qga": "unavailable",
+            "node": node,
+            "vmid": vmid,
+            "qga_error": failure.get("error") or "QGA unavailable",
+            "qga_retry_in_seconds": max(0, int(retry_at - now)),
+        }
+
+    try:
+        data = await asyncio.to_thread(
+            _proxmox_api, f"/nodes/{node}/qemu/{vmid}/agent/info",
+        )
+    except Exception as exc:
+        _LIVE_QGA_FAILURES[vmid] = {
+            "error": str(exc),
+            "failed_at": now,
+            "retry_at": now + _LIVE_QGA_FAILURE_BACKOFF_SECONDS,
+        }
+        return {
+            "qga": "unavailable",
+            "node": node,
+            "vmid": vmid,
+            "qga_error": str(exc),
+            "qga_retry_in_seconds": _LIVE_QGA_FAILURE_BACKOFF_SECONDS,
+        }
+
+    _LIVE_QGA_FAILURES.pop(vmid, None)
     result = data.get("result") if isinstance(data, dict) else {}
     if not isinstance(result, dict):
         result = {}

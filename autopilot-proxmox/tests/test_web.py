@@ -1162,6 +1162,7 @@ def test_live_fleet_qga_failure_backoff_skips_repeat_probe(monkeypatch):
 async def test_live_qga_probe_handler_uses_only_agent_info(monkeypatch):
     from web import app as app_module
 
+    app_module._LIVE_QGA_FAILURES.clear()
     monkeypatch.setattr(app_module, "_resolve_vm_node", lambda vmid: "pve2")
 
     get_paths = []
@@ -1186,6 +1187,35 @@ async def test_live_qga_probe_handler_uses_only_agent_info(monkeypatch):
     assert result["qga"] == "ready"
     assert result["version"] == "110.0.2"
     assert get_paths == ["/nodes/pve2/qemu/106/agent/info"]
+    app_module._LIVE_QGA_FAILURES.clear()
+
+
+@pytest.mark.anyio
+async def test_live_qga_probe_handler_backs_off_after_failure(monkeypatch):
+    from web import app as app_module
+
+    app_module._LIVE_QGA_FAILURES.clear()
+    monkeypatch.setattr(app_module, "_resolve_vm_node", lambda vmid: "pve2")
+
+    get_paths = []
+
+    def fake_get(path):
+        get_paths.append(path)
+        if path == "/nodes/pve2/qemu/107/agent/info":
+            raise RuntimeError("QEMU guest agent is not running")
+        raise AssertionError(f"unexpected GET {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_get)
+
+    first = await app_module._live_qga_probe_handler(107)
+    second = await app_module._live_qga_probe_handler(107)
+
+    assert first["qga"] == "unavailable"
+    assert "QEMU guest agent is not running" in first["qga_error"]
+    assert second["qga"] == "unavailable"
+    assert second["qga_retry_in_seconds"] > 0
+    assert get_paths == ["/nodes/pve2/qemu/107/agent/info"]
+    app_module._LIVE_QGA_FAILURES.clear()
 
 
 def test_screenshot_capture_ssh_targets_resolved_vm_node(monkeypatch):
