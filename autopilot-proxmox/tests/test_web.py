@@ -1013,6 +1013,7 @@ def test_live_websocket_screenshot_result_and_image_url(web_client, monkeypatch)
 def test_live_fleet_qga_check_uses_agent_info(monkeypatch):
     from web import app as app_module
 
+    app_module._LIVE_QGA_FAILURES.clear()
     app_module._VMS_CACHE.update({
         "data": [{"vmid": 106}],
         "devices": ([], None),
@@ -1050,6 +1051,43 @@ def test_live_fleet_qga_check_uses_agent_info(monkeypatch):
     assert rows[0]["qga"] == "ready"
     assert rows[0]["hostname"] == "Gell-106"
     assert "/nodes/pve2/qemu/106/agent/info" in get_paths
+
+
+def test_live_fleet_qga_failure_backoff_skips_repeat_probe(monkeypatch):
+    from web import app as app_module
+
+    app_module._LIVE_QGA_FAILURES.clear()
+    app_module._VMS_CACHE.update({
+        "data": [{"vmid": 106}],
+        "devices": ([], None),
+        "hash_serials": set(),
+        "fetched_at": 1.0,
+        "refreshing": False,
+    })
+    monkeypatch.setattr(app_module, "_resolve_vm_node", lambda vmid: "pve2")
+
+    get_paths = []
+
+    def fake_get(path):
+        get_paths.append(path)
+        if path == "/nodes/pve2/qemu/106/status/current":
+            return {"status": "running", "qmpstatus": "running"}
+        if path == "/nodes/pve2/qemu/106/agent/info":
+            raise RuntimeError("QEMU guest agent is not running")
+        raise AssertionError(f"unexpected GET {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_get)
+
+    first = app_module._live_collect_fleet_patch(set(), include_qga=True)
+    second = app_module._live_collect_fleet_patch(set(), include_qga=True)
+
+    assert first[0]["qga"] == "unavailable"
+    assert "QEMU guest agent is not running" in first[0]["qga_error"]
+    assert second[0]["qga"] == "unavailable"
+    assert "QEMU guest agent is not running" in second[0]["qga_error"]
+    assert second[0]["qga_retry_in_seconds"] > 0
+    assert get_paths.count("/nodes/pve2/qemu/106/agent/info") == 1
+    app_module._LIVE_QGA_FAILURES.clear()
 
 
 def test_screenshot_capture_ssh_targets_resolved_vm_node(monkeypatch):

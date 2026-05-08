@@ -2925,6 +2925,8 @@ async def api_vms_refresh():
 _SCREENSHOT_CACHE: dict[str, dict] = {}
 _SCREENSHOT_TTL_SECONDS = 120
 _LIVE_HUB: LiveHub | None = None
+_LIVE_QGA_FAILURE_BACKOFF_SECONDS = 60.0
+_LIVE_QGA_FAILURES: dict[int, dict] = {}
 
 
 def _purge_expired_screenshots() -> None:
@@ -3164,8 +3166,18 @@ def _live_collect_fleet_patch(vmids: set[int], include_qga: bool) -> list[dict]:
         except Exception as exc:
             row.update({"status_error": str(exc), "qga": "unknown"})
         if include_qga and row.get("status") == "running":
+            failure = _LIVE_QGA_FAILURES.get(vmid) or {}
+            now = time.monotonic()
+            retry_at = float(failure.get("retry_at") or 0)
+            if retry_at > now:
+                row["qga"] = "unavailable"
+                row["qga_error"] = failure.get("error") or "QGA unavailable"
+                row["qga_retry_in_seconds"] = max(0, int(retry_at - now))
+                rows.append(row)
+                continue
             try:
                 _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/info")
+                _LIVE_QGA_FAILURES.pop(vmid, None)
                 row["qga"] = "ready"
                 try:
                     host_data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/get-host-name")
@@ -3184,6 +3196,11 @@ def _live_collect_fleet_patch(vmids: set[int], include_qga: bool) -> list[dict]:
             except Exception as exc:
                 row["qga"] = "unavailable"
                 row["qga_error"] = str(exc)
+                _LIVE_QGA_FAILURES[vmid] = {
+                    "error": str(exc),
+                    "failed_at": now,
+                    "retry_at": now + _LIVE_QGA_FAILURE_BACKOFF_SECONDS,
+                }
         elif include_qga:
             row["qga"] = "not_running"
         rows.append(row)
