@@ -1365,8 +1365,8 @@ def test_vms_page_includes_live_socket_and_screenshot_action(client):
     assert response.status_code == 200
     assert "/api/live/ws" in response.text
     assert "data-vm-action=\"screenshot\"" in response.text
-    assert "/api/qga/recovery-script.ps1" in response.text
-    assert "Download QGA recovery script" in response.text
+    assert "/api/qga/recovery-command.txt" in response.text
+    assert "Download QGA recovery command" in response.text
     assert "data-live-vmid=\"114\"" in response.text
     assert '<table id="vm-fleet-table" data-disable-row-pulse="true">' in response.text
     assert '<table id="vm-fleet-table" class="cockpit-scanline">' not in response.text
