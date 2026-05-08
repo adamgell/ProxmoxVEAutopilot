@@ -77,9 +77,12 @@ function Set-QgaServiceCommandLine {
     $exePath = Get-QgaExecutablePath
     $binPath = Get-QgaServiceCommandLine -ExePath $exePath -StateDir $StateDir -LogFile $LogFile
 
-    & sc.exe config QEMU-GA binPath= $binPath | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "QEMU-GA service command-line configuration failed with exit $LASTEXITCODE."
+    $svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction Stop
+    $changeResult = Invoke-CimMethod -InputObject $svcInfo -MethodName Change -Arguments @{
+        PathName = $binPath
+    }
+    if ($changeResult.ReturnValue -ne 0) {
+        throw "QEMU-GA service command-line configuration failed with Win32_Service.Change return $($changeResult.ReturnValue)."
     }
 
     & sc.exe config QEMU-GA start= delayed-auto | Out-Null
@@ -153,13 +156,15 @@ function Set-QgaServiceCommandLine {
         if (`$svcInfo -and `$svcInfo.PathName -eq `$desired) {
             return `$false
         }
-        & sc.exe config QEMU-GA binPath= `$desired | Out-Null
-        if (`$LASTEXITCODE -eq 0) {
+        `$changeResult = Invoke-CimMethod -InputObject `$svcInfo -MethodName Change -Arguments @{
+            PathName = `$desired
+        }
+        if (`$changeResult.ReturnValue -eq 0) {
             & sc.exe config QEMU-GA start= delayed-auto | Out-Null
             Add-WatchdogLog "Corrected QEMU-GA service command line."
             return `$true
         }
-        Add-WatchdogLog "Failed to correct QEMU-GA service command line: exit `$LASTEXITCODE"
+        Add-WatchdogLog "Failed to correct QEMU-GA service command line: Win32_Service.Change return `$(`$changeResult.ReturnValue)"
     } catch {
         Add-WatchdogLog "Failed to correct QEMU-GA service command line: `$(`$_.Exception.Message)"
     }

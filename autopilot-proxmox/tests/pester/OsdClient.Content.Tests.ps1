@@ -208,6 +208,9 @@ Describe 'OsdClient content materialization' {
         $watchdog | Should -Match '--retry-path'
         $watchdog | Should -Match '--block-rpcs=guest-network-get-interfaces'
         $watchdog | Should -Match 'org\.qemu\.guest_agent\.0'
+        $watchdog | Should -Match 'Invoke-CimMethod'
+        $watchdog | Should -Match 'MethodName Change'
+        $watchdog | Should -Not -Match 'sc\.exe config QEMU-GA binPath='
         $watchdog | Should -Match 'restartIntervalMinutes = 31'
 
         Should -Invoke Invoke-VerifyQga -Times 1 -Exactly

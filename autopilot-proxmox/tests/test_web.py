@@ -139,6 +139,9 @@ def test_qga_recovery_script_download(client):
     assert "--block-rpcs=guest-network-get-interfaces" in response.text
     assert r"\\.\Global\org.qemu.guest_agent.0" in response.text
     assert "\\ProxmoxVEAutopilot\\QgaWatchdog" in response.text
+    assert "Invoke-CimMethod" in response.text
+    assert "MethodName Change" in response.text
+    assert "sc.exe config QEMU-GA binPath=" not in response.text
 
 
 def test_qga_recovery_command_download(client):
