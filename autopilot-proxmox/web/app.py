@@ -3165,7 +3165,7 @@ def _live_collect_fleet_patch(vmids: set[int], include_qga: bool) -> list[dict]:
             row.update({"status_error": str(exc), "qga": "unknown"})
         if include_qga and row.get("status") == "running":
             try:
-                _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/ping")
+                _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/info")
                 row["qga"] = "ready"
                 try:
                     host_data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/get-host-name")

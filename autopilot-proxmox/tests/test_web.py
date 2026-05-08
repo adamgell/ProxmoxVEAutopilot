@@ -1010,6 +1010,48 @@ def test_live_websocket_screenshot_result_and_image_url(web_client, monkeypatch)
     assert image.content == b"\x89PNG\r\n\x1a\nfake"
 
 
+def test_live_fleet_qga_check_uses_agent_info(monkeypatch):
+    from web import app as app_module
+
+    app_module._VMS_CACHE.update({
+        "data": [{"vmid": 106}],
+        "devices": ([], None),
+        "hash_serials": set(),
+        "fetched_at": 1.0,
+        "refreshing": False,
+    })
+    monkeypatch.setattr(app_module, "_resolve_vm_node", lambda vmid: "pve2")
+
+    get_paths = []
+
+    def fake_get(path):
+        get_paths.append(path)
+        if path == "/nodes/pve2/qemu/106/status/current":
+            return {"status": "running", "qmpstatus": "running"}
+        if path == "/nodes/pve2/qemu/106/agent/info":
+            return {"result": {"supported_commands": []}}
+        if path == "/nodes/pve2/qemu/106/agent/get-host-name":
+            return {"result": {"host-name": "Gell-106"}}
+        if path == "/nodes/pve2/qemu/106/agent/network-get-interfaces":
+            return {"result": []}
+        raise AssertionError(f"unexpected GET {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_get)
+    monkeypatch.setattr(
+        app_module,
+        "_proxmox_api_post",
+        lambda path, data=None: (_ for _ in ()).throw(
+            AssertionError(f"unexpected POST {path}")
+        ),
+    )
+
+    rows = app_module._live_collect_fleet_patch(set(), include_qga=True)
+
+    assert rows[0]["qga"] == "ready"
+    assert rows[0]["hostname"] == "Gell-106"
+    assert "/nodes/pve2/qemu/106/agent/info" in get_paths
+
+
 def test_screenshot_capture_ssh_targets_resolved_vm_node(monkeypatch):
     from web import app as app_module
     from web import answer_floppy_cache
@@ -1129,3 +1171,4 @@ def test_vms_page_includes_live_socket_and_screenshot_action(client):
     assert "data-live-vmid=\"114\"" in response.text
     assert "download=\"vm-' + _htmlEsc(String(vmid)) + '-screenshot.png\"" in response.text
     assert "width:max-content" in response.text
+    assert "qga.title = row.qga_error || ''" in response.text

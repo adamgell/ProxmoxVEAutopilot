@@ -468,7 +468,10 @@ function patchFleetRow(row) {
   }
   if (row.qga) {
     var qga = tr.querySelector('[data-live-qga]');
-    if (qga) qga.textContent = ' / QGA ' + row.qga;
+    if (qga) {
+      qga.textContent = ' / QGA ' + row.qga;
+      qga.title = row.qga_error || '';
+    }
   }
   if (row.ip_address) {
     var ip = tr.querySelector('[data-live-field="ip"]');
