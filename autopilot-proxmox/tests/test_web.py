@@ -1010,7 +1010,7 @@ def test_live_websocket_screenshot_result_and_image_url(web_client, monkeypatch)
     assert image.content == b"\x89PNG\r\n\x1a\nfake"
 
 
-def test_live_fleet_qga_check_uses_agent_info(monkeypatch):
+def test_live_fleet_qga_check_uses_only_agent_info(monkeypatch):
     from web import app as app_module
 
     app_module._LIVE_QGA_FAILURES.clear()
@@ -1031,10 +1031,6 @@ def test_live_fleet_qga_check_uses_agent_info(monkeypatch):
             return {"status": "running", "qmpstatus": "running"}
         if path == "/nodes/pve2/qemu/106/agent/info":
             return {"result": {"supported_commands": []}}
-        if path == "/nodes/pve2/qemu/106/agent/get-host-name":
-            return {"result": {"host-name": "Gell-106"}}
-        if path == "/nodes/pve2/qemu/106/agent/network-get-interfaces":
-            return {"result": []}
         raise AssertionError(f"unexpected GET {path}")
 
     monkeypatch.setattr(app_module, "_proxmox_api", fake_get)
@@ -1049,8 +1045,9 @@ def test_live_fleet_qga_check_uses_agent_info(monkeypatch):
     rows = app_module._live_collect_fleet_patch(set(), include_qga=True)
 
     assert rows[0]["qga"] == "ready"
-    assert rows[0]["hostname"] == "Gell-106"
     assert "/nodes/pve2/qemu/106/agent/info" in get_paths
+    assert not any("/agent/get-host-name" in path for path in get_paths)
+    assert not any("/agent/network-get-interfaces" in path for path in get_paths)
 
 
 def test_live_fleet_qga_failure_backoff_skips_repeat_probe(monkeypatch):

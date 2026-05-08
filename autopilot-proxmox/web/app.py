@@ -3176,23 +3176,12 @@ def _live_collect_fleet_patch(vmids: set[int], include_qga: bool) -> list[dict]:
                 rows.append(row)
                 continue
             try:
+                # Keep the background live loop to a cheap health check.
+                # Deeper QGA calls such as guest-exec and
+                # network-get-interfaces can wedge unstable Windows agents.
                 _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/info")
                 _LIVE_QGA_FAILURES.pop(vmid, None)
                 row["qga"] = "ready"
-                try:
-                    host_data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/get-host-name")
-                    host = host_data.get("result", host_data) if isinstance(host_data, dict) else {}
-                    if isinstance(host, dict) and host.get("host-name"):
-                        row["hostname"] = host.get("host-name")
-                except Exception:
-                    pass
-                try:
-                    network = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
-                    ip = _live_first_ipv4(network if isinstance(network, dict) else {})
-                    if ip:
-                        row["ip_address"] = ip
-                except Exception:
-                    pass
             except Exception as exc:
                 row["qga"] = "unavailable"
                 row["qga_error"] = str(exc)
