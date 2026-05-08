@@ -967,6 +967,15 @@ def test_live_websocket_clients_share_one_collector(web_client, monkeypatch):
             assert app_module._get_live_hub().collector_starts == 1
 
 
+def test_live_hub_disables_automatic_qga_polling():
+    from web import app as app_module
+
+    app_module._LIVE_HUB = None
+    hub = app_module._get_live_hub()
+
+    assert hub.qga_interval_seconds is None
+
+
 def test_live_websocket_rejects_unauthenticated_client(web_client):
     from starlette.websockets import WebSocketDisconnect
     from web import app as app_module

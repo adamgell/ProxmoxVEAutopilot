@@ -3228,6 +3228,10 @@ def _get_live_hub() -> LiveHub:
             refresh_handler=_live_refresh_handler,
             qga_probe_handler=_live_qga_probe_handler,
             screenshot_handler=_live_screenshot_handler,
+            # Keep recurring live updates off the QGA transport. Windows
+            # qemu-ga can wedge under repeated background RPCs; explicit
+            # qga_probe requests are still available for operator-driven checks.
+            qga_interval_seconds=None,
         )
     return _LIVE_HUB
 

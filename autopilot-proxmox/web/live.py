@@ -47,7 +47,7 @@ class LiveHub:
         qga_probe_handler: QgaProbeHandler,
         screenshot_handler: ScreenshotHandler,
         poll_interval_seconds: float = 2.0,
-        qga_interval_seconds: float = 10.0,
+        qga_interval_seconds: float | None = None,
     ):
         self.snapshot_provider = snapshot_provider
         self.patch_provider = patch_provider
@@ -212,7 +212,10 @@ class LiveHub:
                 break
             topics = set().union(*(c.topics for c in self.clients)) if self.clients else set()
             vmids = set().union(*(c.vmids for c in self.clients)) if self.clients else set()
-            include_qga = (time.monotonic() - self._last_qga_at) >= self.qga_interval_seconds
+            include_qga = (
+                self.qga_interval_seconds is not None
+                and (time.monotonic() - self._last_qga_at) >= self.qga_interval_seconds
+            )
             if include_qga:
                 self._last_qga_at = time.monotonic()
             if topics:
