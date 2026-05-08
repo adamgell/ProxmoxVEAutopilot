@@ -140,10 +140,22 @@ def test_qga_recovery_script_download(client):
     assert "\\ProxmoxVEAutopilot\\QgaWatchdog" in response.text
 
 
+def test_qga_recovery_command_download(client):
+    response = client.get("/api/qga/recovery-command.txt")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "attachment;" in response.headers["content-disposition"]
+    assert "QgaWatchdogRecovery-command.txt" in response.headers["content-disposition"]
+    assert "/api/qga/recovery-script.ps1" in response.text
+    assert "-TaskIntervalMinutes 5 -RestartIntervalMinutes 10" in response.text
+
+
 def test_qga_recovery_script_is_auth_exempt():
     from web import auth
 
     assert auth.is_exempt_path("/api/qga/recovery-script.ps1")
+    assert auth.is_exempt_path("/api/qga/recovery-command.txt")
 
 
 def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):

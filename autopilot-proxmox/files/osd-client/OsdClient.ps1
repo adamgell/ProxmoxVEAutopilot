@@ -451,7 +451,7 @@ function Invoke-InstallQgaWatchdog {
     $taskIntervalMinutes = Get-OsdActionIntParam -Action $Action `
         -Name 'task_interval_minutes' -Default 5
     $restartIntervalMinutes = Get-OsdActionIntParam -Action $Action `
-        -Name 'restart_interval_minutes' -Default 30
+        -Name 'restart_interval_minutes' -Default 10
 
     if ($taskIntervalMinutes -lt 1) {
         throw 'task_interval_minutes must be at least 1'

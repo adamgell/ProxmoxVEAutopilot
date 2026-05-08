@@ -804,6 +804,31 @@ async def qga_recovery_script():
     )
 
 
+@app.get("/api/qga/recovery-command.txt")
+async def qga_recovery_command(request: Request):
+    script_url = f"{str(request.base_url).rstrip('/')}/api/qga/recovery-script.ps1"
+    command = "\n".join([
+        "$script = Join-Path $env:TEMP 'QgaWatchdogRecovery.ps1'",
+        (
+            "Invoke-WebRequest -UseBasicParsing "
+            f"-Uri '{script_url}' -OutFile $script"
+        ),
+        (
+            "powershell.exe -ExecutionPolicy Bypass -NoProfile "
+            "-File $script -TaskIntervalMinutes 5 -RestartIntervalMinutes 10"
+        ),
+        "",
+    ])
+    return Response(
+        command,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="QgaWatchdogRecovery-command.txt"',
+        },
+    )
+
+
 # SessionMiddleware is the LAST middleware registered so it sits OUTER-
 # most in Starlette's stack — runs before every other middleware +
 # handler, so request.session is ready when _require_auth checks it.

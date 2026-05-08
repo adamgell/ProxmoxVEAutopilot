@@ -1,6 +1,6 @@
 param(
     [int] $TaskIntervalMinutes = 5,
-    [int] $RestartIntervalMinutes = 30
+    [int] $RestartIntervalMinutes = 10
 )
 
 $ErrorActionPreference = 'Stop'

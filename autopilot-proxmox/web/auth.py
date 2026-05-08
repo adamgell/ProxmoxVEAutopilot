@@ -48,6 +48,7 @@ _EXEMPT_PREFIXES = (
     "/healthz",
     "/api/version",
     "/api/qga/recovery-script.ps1",
+    "/api/qga/recovery-command.txt",
     "/winpe/",
     "/osd/client/",
     "/osd/v2/",

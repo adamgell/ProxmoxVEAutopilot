@@ -494,7 +494,7 @@ _DEFAULT_OSD_ACTIONS = (
     {"kind": "verify_qga", "params": {}},
     {
         "kind": "install_qga_watchdog",
-        "params": {"task_interval_minutes": 5, "restart_interval_minutes": 30},
+        "params": {"task_interval_minutes": 5, "restart_interval_minutes": 10},
     },
     {"kind": "capture_autopilot_hash", "params": {}},
     {"kind": "handoff_to_oobe", "params": {}},
