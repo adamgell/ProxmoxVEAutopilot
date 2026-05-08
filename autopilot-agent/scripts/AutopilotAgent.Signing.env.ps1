@@ -12,7 +12,8 @@ param(
     [string]$ArtifactsRoot = (Join-Path $PSScriptRoot "..\artifacts"),
     [string]$SignToolPath,
     [string]$ArtifactSigningDlibPath,
-    [string]$TimestampUrl = "http://timestamp.acs.microsoft.com/"
+    [string]$TimestampUrl = "http://timestamp.acs.microsoft.com/",
+    [string]$AuthScope = "https://codesigning.azure.net/.default"
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +39,12 @@ $script:AzureCliPath = Resolve-RequiredCommand az
 $script:DotNetPath = Resolve-RequiredCommand dotnet
 $script:WixPath = Resolve-RequiredCommand wix
 az account show | Out-Null
+try {
+    az account get-access-token --scope $AuthScope --output none | Out-Null
+}
+catch {
+    throw "Azure CLI is logged in, but cannot mint an Artifact Signing token. Run: az login --tenant <tenant-id> --scope `"$AuthScope`""
+}
 
 $dotnetRuntimes = dotnet --list-runtimes
 if (-not ($dotnetRuntimes | Where-Object { $_ -match "^Microsoft\.NETCore\.App 8\." })) {

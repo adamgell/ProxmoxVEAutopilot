@@ -50,6 +50,8 @@ def test_signing_scripts_use_artifact_signing_without_storing_credentials():
 
     assert "Remove-Item -Recurse -Force" in build_script
     assert "az account show" in env_script
+    assert "az account get-access-token" in env_script
+    assert "https://codesigning.azure.net/.default" in env_script
     assert "dotnet --list-runtimes" in env_script
     assert "Where-Object" in env_script
     assert "metadata.json" in env_script
