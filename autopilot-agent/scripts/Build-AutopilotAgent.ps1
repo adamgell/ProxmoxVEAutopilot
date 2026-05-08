@@ -23,6 +23,10 @@ foreach ($rid in $RuntimeIdentifiers) {
         -p:AutopilotAgentVersion=$Version `
         -o $publishDir
 
+    # WiX uses project-level obj state for output naming. Clean it between
+    # RIDs so win-x64 and win-arm64 MSIs do not collide in incremental builds.
+    Remove-Item -Recurse -Force (Join-Path (Split-Path $installer) "obj") -ErrorAction SilentlyContinue
+
     dotnet build $installer `
         -c $Configuration `
         -p:AutopilotAgentVersion=$Version `

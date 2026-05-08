@@ -44,9 +44,11 @@ def test_wix_installer_creates_delayed_auto_localsystem_service():
 
 
 def test_signing_scripts_use_artifact_signing_without_storing_credentials():
+    build_script = _read("autopilot-agent/scripts/Build-AutopilotAgent.ps1")
     env_script = _read("autopilot-agent/scripts/AutopilotAgent.Signing.env.ps1")
     sign_script = _read("autopilot-agent/scripts/Sign-AutopilotAgent.ps1")
 
+    assert "Remove-Item -Recurse -Force" in build_script
     assert "az account show" in env_script
     assert "metadata.json" in env_script
     assert "CodeSigningAccountName" in env_script
