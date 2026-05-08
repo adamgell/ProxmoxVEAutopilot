@@ -3053,6 +3053,8 @@
               !e.target.closest("a,button,input,select,textarea,label")
             ) {
               var table = row.closest("table");
+              var disableRowPulse =
+                table && table.getAttribute("data-disable-row-pulse") === "true";
               if (table) {
                 table
                   .querySelectorAll("tbody tr.is-selected")
@@ -3064,7 +3066,7 @@
               row.classList.toggle("is-selected");
               row.classList.toggle(
                 "cockpit-pulse",
-                row.classList.contains("is-selected"),
+                !disableRowPulse && row.classList.contains("is-selected"),
               );
             }
             var backdrop = document.getElementById("cockpitDrawerBackdrop");

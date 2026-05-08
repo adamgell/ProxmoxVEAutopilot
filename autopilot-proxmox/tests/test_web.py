@@ -1169,6 +1169,8 @@ def test_vms_page_includes_live_socket_and_screenshot_action(client):
     assert "/api/live/ws" in response.text
     assert "data-vm-action=\"screenshot\"" in response.text
     assert "data-live-vmid=\"114\"" in response.text
+    assert '<table id="vm-fleet-table" data-disable-row-pulse="true">' in response.text
+    assert '<table id="vm-fleet-table" class="cockpit-scanline">' not in response.text
     assert "download=\"vm-' + _htmlEsc(String(vmid)) + '-screenshot.png\"" in response.text
     assert "width:max-content" in response.text
     assert "qga.title = row.qga_error || ''" in response.text
