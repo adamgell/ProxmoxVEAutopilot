@@ -45,11 +45,12 @@
             Start="auto"
             ErrorControl="normal"
             Account="LocalSystem" />
-        <util:ServiceConfig
-            ServiceName="AutopilotAgent"
-            DelayedAutoStart="yes"
-            OnInstall="yes"
-            OnReinstall="yes" />
+        <RegistryValue
+            Root="HKLM"
+            Key="SYSTEM\CurrentControlSet\Services\AutopilotAgent"
+            Name="DelayedAutoStart"
+            Type="integer"
+            Value="1" />
         <ServiceControl
             Id="AutopilotAgentServiceControl"
             Name="AutopilotAgent"

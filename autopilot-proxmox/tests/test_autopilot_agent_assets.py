@@ -38,7 +38,8 @@ def test_wix_installer_creates_delayed_auto_localsystem_service():
     assert 'DisplayName="AutopilotAgent"' in wxs
     assert 'Account="LocalSystem"' in wxs
     assert 'Start="auto"' in wxs
-    assert 'DelayedAutoStart="yes"' in wxs
+    assert 'Name="DelayedAutoStart"' in wxs
+    assert 'Value="1"' in wxs
     assert "MajorUpgrade" in wxs
 
 
