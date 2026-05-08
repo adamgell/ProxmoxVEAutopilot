@@ -133,7 +133,7 @@ def test_qga_recovery_script_download(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert "attachment;" in response.headers["content-disposition"]
-    assert "QgaWatchdogRecovery.ps1" in response.headers["content-disposition"]
+    assert "recovery-script.ps1" in response.headers["content-disposition"]
     assert "Restart-Service -Name QEMU-GA" in response.text
     assert "--retry-path" in response.text
     assert "--block-rpcs=guest-network-get-interfaces" in response.text
@@ -155,6 +155,7 @@ def test_qga_recovery_command_download(client):
     assert "attachment;" in response.headers["content-disposition"]
     assert "QgaWatchdogRecovery-command.txt" in response.headers["content-disposition"]
     assert "https://autopilot.gell.one/api/qga/recovery-script.ps1" in response.text
+    assert "Join-Path $env:TEMP 'recovery-script.ps1'" in response.text
     assert "-TaskIntervalMinutes 5 -RestartIntervalMinutes 10" in response.text
 
 

@@ -742,7 +742,7 @@ async def healthz():
 
 _BLISS_JPG = BASE_DIR / "files" / "bliss.jpg"
 _LOGO_SVG = BASE_DIR / "files" / "logo.svg"
-_QGA_RECOVERY_SCRIPT = BASE_DIR / "files" / "qga-recovery" / "QgaWatchdogRecovery.ps1"
+_QGA_RECOVERY_SCRIPT = BASE_DIR / "files" / "qga-recovery" / "recovery-script.ps1"
 
 
 @app.get("/auth/logo")
@@ -799,7 +799,7 @@ async def qga_recovery_script():
     return FileResponse(
         _QGA_RECOVERY_SCRIPT,
         media_type="text/plain; charset=utf-8",
-        filename="QgaWatchdogRecovery.ps1",
+        filename="recovery-script.ps1",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -822,7 +822,7 @@ async def qga_recovery_command(request: Request):
         base_url = str(request.base_url).rstrip("/")
     script_url = f"{base_url}/api/qga/recovery-script.ps1"
     command = "\n".join([
-        "$script = Join-Path $env:TEMP 'QgaWatchdogRecovery.ps1'",
+        "$script = Join-Path $env:TEMP 'recovery-script.ps1'",
         (
             "Invoke-WebRequest -UseBasicParsing "
             f"-Uri '{script_url}' -OutFile $script"
