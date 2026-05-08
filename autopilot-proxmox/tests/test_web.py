@@ -1076,6 +1076,58 @@ def test_monitor_context_guest_details_can_opt_into_qga(monkeypatch):
     assert guest["os_build"] == "26100"
 
 
+def test_legacy_vms_fallback_avoids_qga_by_default(monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.delenv("AUTOPILOT_MONITOR_QGA_DETAILS", raising=False)
+    monkeypatch.setattr(
+        app_module,
+        "_load_proxmox_config",
+        lambda: {"proxmox_node": "pve2", "ldap_host": "dns.home.gell.one"},
+    )
+
+    def fake_proxmox_api(path):
+        if path == "/nodes/pve2/qemu":
+            return [{
+                "vmid": 106,
+                "name": "Gell-E9C0C757",
+                "status": "running",
+                "tags": "autopilot",
+                "maxmem": 4 * 1024 * 1024 * 1024,
+                "cpus": 2,
+            }]
+        if path == "/nodes/pve2/qemu/106/config":
+            return {
+                "name": "Gell-E9C0C757",
+                "tags": "autopilot",
+                "args": "-smbios file=/var/lib/vz/snippets/autopilot-smbios-vm-106.bin",
+                "smbios1": "serial=template-default,uuid=11111111-2222-3333-4444-555555555555",
+            }
+        if "/agent/" in path:
+            raise AssertionError(f"legacy /vms fallback must not call QGA by default: {path}")
+        raise AssertionError(f"unexpected Proxmox API call {path}")
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_proxmox_api)
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_guest_windows_details",
+        lambda _node, _vmid: (_ for _ in ()).throw(
+            AssertionError("legacy /vms fallback must not guest-exec by default")
+        ),
+    )
+    monkeypatch.setattr(
+        app_module.socket,
+        "gethostbyname",
+        lambda _host: (_ for _ in ()).throw(OSError("dns unavailable in test")),
+    )
+
+    rows = app_module.get_autopilot_vms()
+
+    assert rows[0]["vmid"] == 106
+    assert rows[0]["hostname"] == "Gell-E9C0C757"
+    assert rows[0]["ip_address"] == ""
+
+
 def test_live_websocket_rejects_unauthenticated_client(web_client):
     from starlette.websockets import WebSocketDisconnect
     from web import app as app_module

@@ -1160,6 +1160,15 @@ def _guid_bytes_to_str(b: bytes) -> str:
         return b.hex()
 
 
+def _qga_detail_probing_enabled() -> bool:
+    return str(os.environ.get("AUTOPILOT_MONITOR_QGA_DETAILS") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _build_live_monitor_context() -> "device_monitor.MonitorContext":
     """Wire the real I/O backends: Proxmox API for VM list + config,
     existing _guest_exec helper for Windows probes, ldap3 for AD,
@@ -1198,9 +1207,7 @@ def _build_live_monitor_context() -> "device_monitor.MonitorContext":
         #      (renames, OS build, dsreg). This is disabled by default:
         #      repeated background QGA RPCs can wedge Windows qemu-ga.
         raw = {}
-        use_qga_details = str(
-            os.environ.get("AUTOPILOT_MONITOR_QGA_DETAILS") or ""
-        ).strip().lower() in {"1", "true", "yes", "on"}
+        use_qga_details = _qga_detail_probing_enabled()
 
         # Note: for autopilot provisions the `smbios1` config field
         # holds the TEMPLATE's default values (e.g., Gell-1F02ADE6) —
@@ -1753,7 +1760,12 @@ def get_autopilot_vms():
         for vmid, config in pool.map(lambda vm: fetch_config(vm["vmid"]), autopilot_vms):
             configs[vmid] = config
 
-    # Fetch guest agent hostnames for running VMs
+    use_qga_details = _qga_detail_probing_enabled()
+
+    # Fetch guest agent hostnames for running VMs. Disabled by default
+    # because even cheap QGA calls can contribute to instability when
+    # Windows qemu-ga is wedged; monitor snapshots and DNS provide the
+    # normal /vms data path.
     running_vmids = [vm["vmid"] for vm in autopilot_vms if vm.get("status") == "running"]
     hostnames = {}
     def fetch_hostname(vmid):
@@ -1766,7 +1778,7 @@ def get_autopilot_vms():
         except Exception:
             return vmid, ""
 
-    if running_vmids:
+    if use_qga_details and running_vmids:
         with ThreadPoolExecutor(max_workers=10) as pool:
             for vmid, hostname in pool.map(fetch_hostname, running_vmids):
                 hostnames[vmid] = hostname
@@ -1777,7 +1789,7 @@ def get_autopilot_vms():
     # ThreadPoolExecutor. Non-Windows VMs or VMs without guest agent
     # readiness return {} and render as blank — expected.
     guest_details: dict = {}
-    if running_vmids:
+    if use_qga_details and running_vmids:
         with ThreadPoolExecutor(max_workers=10) as pool:
             for vmid, details in pool.map(
                 lambda v: (v, _fetch_guest_windows_details(node, v)),
@@ -1786,11 +1798,11 @@ def get_autopilot_vms():
                 guest_details[vmid] = details
 
     # Fallback IP sources, in order:
-    #   1. QEMU guest agent's network-get-interfaces — cheaper than
-    #      PowerShell exec, answers whenever the base agent is up.
-    #   2. AD DNS lookup against the DC — works even when the guest
+    #   1. AD DNS lookup against the DC — works even when the guest
     #      agent is entirely dead, as long as the VM is
     #      domain-joined and auto-registered its A record.
+    #   2. Optional QEMU guest agent network-get-interfaces when
+    #      AUTOPILOT_MONITOR_QGA_DETAILS is explicitly enabled.
     ip_fallback: dict[int, str] = {}
     def fetch_ip(vmid):
         try:
@@ -1813,7 +1825,7 @@ def get_autopilot_vms():
                 if ip and not (ip.startswith("127.") or ip.startswith("169.254.")):
                     return vmid, ip
         return vmid, ""
-    if running_vmids:
+    if use_qga_details and running_vmids:
         with ThreadPoolExecutor(max_workers=10) as pool:
             for vmid, ip in pool.map(fetch_ip, running_vmids):
                 ip_fallback[vmid] = ip
