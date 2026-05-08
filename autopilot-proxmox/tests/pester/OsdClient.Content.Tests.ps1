@@ -206,6 +206,7 @@ Describe 'OsdClient content materialization' {
         $watchdog | Should -Match 'QEMU-GA'
         $watchdog | Should -Match 'Restart-Service -Name QEMU-GA'
         $watchdog | Should -Match '--retry-path'
+        $watchdog | Should -Match '--block-rpcs=guest-network-get-interfaces'
         $watchdog | Should -Match 'org\.qemu\.guest_agent\.0'
         $watchdog | Should -Match 'restartIntervalMinutes = 31'
 

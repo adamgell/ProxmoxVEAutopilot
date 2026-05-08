@@ -64,7 +64,7 @@ function Get-QgaServiceCommandLine {
         [Parameter(Mandatory)] [string] $LogFile
     )
 
-    return ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "{1}" -l "{2}"' -f $ExePath, $StateDir, $LogFile)
+    return ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path --block-rpcs=guest-network-get-interfaces -t "{1}" -l "{2}"' -f $ExePath, $StateDir, $LogFile)
 }
 
 function Set-QgaServiceCommandLine {
@@ -148,7 +148,7 @@ function Set-QgaServiceCommandLine {
             Add-WatchdogLog 'qemu-ga.exe not found; cannot enforce service command line.'
             return `$false
         }
-        `$desired = ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "{1}" -l "{2}"' -f `$exePath, `$qgaStateDir, `$qgaLogPath)
+        `$desired = ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path --block-rpcs=guest-network-get-interfaces -t "{1}" -l "{2}"' -f `$exePath, `$qgaStateDir, `$qgaLogPath)
         `$svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
         if (`$svcInfo -and `$svcInfo.PathName -eq `$desired) {
             return `$false
