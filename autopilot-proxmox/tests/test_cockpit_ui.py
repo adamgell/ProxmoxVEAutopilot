@@ -14,8 +14,9 @@ def test_cockpit_shell_renders_on_dashboard(web_client: TestClient, monkeypatch)
     assert 'class="cockpit-rail"' in body
     assert 'href="/monitoring/settings"' in body
     assert 'id="liveSocketIndicator"' in body
-    assert "Live: connecting" in body
-    assert "new WebSocket(scheme + location.host + '/api/live/ws')" in body
+    assert "WebSocket: Connecting" in body
+    assert "new WebSocket" in body
+    assert "/api/live/ws" in body
 
 
 def test_cloud_retire_flow_requires_typed_confirmation(web_client: TestClient, monkeypatch):

@@ -2293,11 +2293,11 @@
           id="liveSocketIndicator"
           class="live-socket-chip"
           data-state="connecting"
-          title="Live WebSocket connecting"
+          title="WebSocket Connecting"
           aria-live="polite"
         >
           <span class="live-socket-dot" aria-hidden="true"></span>
-          <span id="liveSocketIndicatorLabel">Live: connecting</span>
+          <span id="liveSocketIndicatorLabel">WebSocket: Connecting</span>
         </span>
         {% if request and request.session and request.session.get('user') %}
         <span class="user-chip">
@@ -2519,14 +2519,14 @@
         function setState(state) {
           var text =
             {
-              connecting: "WebSocket: connecting",
-              connected: "WebSocket: connected",
-              reconnecting: "WebSocket: reconnecting",
-              offline: "WebSocket: offline",
-              unsupported: "WebSocket: unsupported",
-            }[state] || "WebSocket: unknown";
+              connecting: "WebSocket: Connecting",
+              connected: "WebSocket: Connected",
+              reconnecting: "WebSocket: Reconnecting",
+              offline: "WebSocket: Offline",
+              unsupported: "WebSocket: Unsupported",
+            }[state] || "WebSocket: Unknown";
           chip.dataset.state = state;
-          chip.title = "WebSocket " + text.replace("Live: ", "");
+          chip.title = text.replace(":", "");
           label.textContent = text;
         }
 
