@@ -127,6 +127,17 @@ def test_jobs_page_uses_live_jobs_websocket(client):
     assert 'topics: [\'jobs\']' in response.text
 
 
+def test_qga_recovery_script_download(client):
+    response = client.get("/api/qga/recovery-script.ps1")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "attachment;" in response.headers["content-disposition"]
+    assert "QgaWatchdogRecovery.ps1" in response.headers["content-disposition"]
+    assert "Restart-Service -Name QEMU-GA" in response.text
+    assert "\\ProxmoxVEAutopilot\\QgaWatchdog" in response.text
+
+
 def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
     """Ubuntu-provisioned VMs get a Check Enrollment button and their
     Capture Hash button is rendered disabled (no Autopilot hash on Linux).

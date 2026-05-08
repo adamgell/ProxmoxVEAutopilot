@@ -742,6 +742,7 @@ async def healthz():
 
 _BLISS_JPG = BASE_DIR / "files" / "bliss.jpg"
 _LOGO_SVG = BASE_DIR / "files" / "logo.svg"
+_QGA_RECOVERY_SCRIPT = BASE_DIR / "files" / "qga-recovery" / "QgaWatchdogRecovery.ps1"
 
 
 @app.get("/auth/logo")
@@ -788,6 +789,18 @@ async def auth_bliss():
         headers={
             "Cache-Control": "public, max-age=86400, immutable",
         },
+    )
+
+
+@app.get("/api/qga/recovery-script.ps1")
+async def qga_recovery_script():
+    if not _QGA_RECOVERY_SCRIPT.exists():
+        raise HTTPException(404, "QGA recovery script not baked into image")
+    return FileResponse(
+        _QGA_RECOVERY_SCRIPT,
+        media_type="text/plain; charset=utf-8",
+        filename="QgaWatchdogRecovery.ps1",
+        headers={"Cache-Control": "no-store"},
     )
 
 
