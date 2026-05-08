@@ -53,9 +53,11 @@ def test_signing_scripts_use_artifact_signing_without_storing_credentials():
     assert "dotnet --list-runtimes" in env_script
     assert "Where-Object" in env_script
     assert "metadata.json" in env_script
+    assert "UTF8Encoding" in env_script
     assert "CodeSigningAccountName" in env_script
     assert "CertificateProfileName" in env_script
     assert "AZURE_CLIENT_SECRET" not in env_script
+    assert "DotNetRootForSigning" in sign_script
     assert "/dlib" in sign_script
     assert "/dmdf" in sign_script
     assert "/fd SHA256" in sign_script

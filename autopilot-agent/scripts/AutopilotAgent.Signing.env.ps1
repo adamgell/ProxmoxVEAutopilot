@@ -93,7 +93,12 @@ $metadata = [ordered]@{
         "InteractiveBrowserCredential"
     )
 }
-$metadata | ConvertTo-Json -Depth 4 | Set-Content -Path $ArtifactSigningMetadataPath -Encoding UTF8
+$metadataJson = $metadata | ConvertTo-Json -Depth 4
+[System.IO.File]::WriteAllText(
+    $ArtifactSigningMetadataPath,
+    $metadataJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 Write-Host "AutopilotAgent signing environment ready."
 Write-Host "Metadata: $ArtifactSigningMetadataPath"

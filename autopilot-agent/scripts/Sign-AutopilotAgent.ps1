@@ -4,6 +4,7 @@ param(
     [string]$SignToolPath = $script:SignToolPath,
     [string]$ArtifactSigningDlibPath = $script:ArtifactSigningDlibPath,
     [string]$MetadataPath = $script:ArtifactSigningMetadataPath,
+    [string]$DotNetRootForSigning,
     [string]$TimestampUrl = $(if ($script:TimestampUrl) { $script:TimestampUrl } else { "http://timestamp.acs.microsoft.com/" })
 )
 
@@ -17,6 +18,14 @@ foreach ($required in @(
     if (-not $required.Path -or -not (Test-Path $required.Path)) {
         throw "$($required.Name) was not found: $($required.Path)"
     }
+}
+
+if ($DotNetRootForSigning) {
+    if (-not (Test-Path $DotNetRootForSigning)) {
+        throw "Signing .NET root was not found: $DotNetRootForSigning"
+    }
+    $env:DOTNET_ROOT = (Resolve-Path $DotNetRootForSigning).Path
+    $env:PATH = "$env:DOTNET_ROOT;$env:PATH"
 }
 
 $targets = Get-ChildItem $ArtifactsRoot -Recurse -File |
