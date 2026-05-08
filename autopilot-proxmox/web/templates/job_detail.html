@@ -11,7 +11,7 @@
 {{ page_head("Job " ~ job.id, "Live log cockpit, metadata, pause gates, resume controls, and emergency stop for this run.") }}
 <table>
 <tr><td style="width:120px;"><b>Playbook</b></td><td>{{ job.playbook }}</td></tr>
-<tr><td><b>Status</b></td><td>
+<tr><td><b>Status</b></td><td id="job-status-cell" data-job-id="{{ job.id }}">
 {%- if job.paused %}<span class="badge warn" style="font-size:12px;padding:2px 10px;">PAUSED — awaiting Resume</span>
 {%- elif job.status == 'pending' %}<span class="badge" style="background:var(--neutral-bg);color:var(--neutral-fg);font-size:12px;padding:2px 10px;">PENDING — waiting for builder</span>
 {%- elif job.status == 'running' %}<span class="status-green">RUNNING</span>
@@ -76,7 +76,7 @@
        * PAUSED — Ansible is blocking on the signal file. Full-color
          card, live Resume button. -->
 {% if job.paused %}
-<div style="margin:10px 0; padding:10px 14px; background:var(--warn-bg); color:var(--warn-fg); border:1px solid var(--warn-fg); border-radius:4px;">
+<div id="pause-card" data-pause-state="paused" style="margin:10px 0; padding:10px 14px; background:var(--warn-bg); color:var(--warn-fg); border:1px solid var(--warn-fg); border-radius:4px;">
   <b>Paused for software install.</b>
   RDP or <a href="/api/vms/{{ job.args.vm_vmid }}/console" target="_blank">Console</a>
   into the VM, install whatever you need, then click Resume.
@@ -104,7 +104,7 @@
   <span id="resumeStatus" style="margin-left:10px; font-size:12px;"></span>
 </div>
 {% else %}
-<div style="margin:10px 0; padding:10px 14px; background:var(--surface-muted); border:1px solid var(--line); border-radius:4px; color:var(--ink-muted);">
+<div id="pause-card" data-pause-state="armed" style="margin:10px 0; padding:10px 14px; background:var(--surface-muted); border:1px solid var(--line); border-radius:4px; color:var(--ink-muted);">
   <b>Pause gate armed.</b>
   <span id="resumeHint">Waiting for Windows install and OOBE to complete before the pause kicks in — typically 20–25 minutes from job start. This page auto-refreshes once paused; the Resume button will enable itself then.</span>
   <br>
@@ -114,23 +114,6 @@
   </button>
   <span style="margin-left:10px; font-size:12px; color:var(--ink-soft);">not yet paused</span>
 </div>
-<script>
-// Light poll — the job_detail page's WebSocket streams log but doesn't
-// rebuild the status badge.  We want the PAUSED-state transition to
-// surface within a reasonable window even if the operator has tabbed
-// away, so use setInterval (self-re-arming) plus a visibilitychange
-// handler that forces an immediate reload on tab refocus.  The old
-// one-shot setTimeout + document.hidden guard meant a hidden tab at
-// the 15s mark would never reload and the page stayed stale forever.
-(function() {
-  setInterval(function() {
-    if (!document.hidden) window.location.reload();
-  }, 15000);
-  document.addEventListener('visibilitychange', function() {
-    if (!document.hidden) window.location.reload();
-  });
-})();
-</script>
 {% endif %}
 <script>
 async function resumeTemplate() {
@@ -169,6 +152,59 @@ async function resumeTemplate() {
 {% endif %}
 <h3>Output</h3>
 <div class="terminal" id="output">{{ log_content }}</div>
+<script>
+function jobDetailStatusHtml(job) {
+  if (job.paused) return '<span class="badge warn" style="font-size:12px;padding:2px 10px;">PAUSED — awaiting Resume</span>';
+  if (job.status === 'pending') return '<span class="badge" style="background:var(--neutral-bg);color:var(--neutral-fg);font-size:12px;padding:2px 10px;">PENDING — waiting for builder</span>';
+  if (job.status === 'running') return '<span class="status-green">RUNNING</span>';
+  if (job.status === 'complete') return '<span class="status-green">OK</span>';
+  if (job.status === 'orphaned') return '<span class="badge warn" style="font-size:12px;padding:2px 10px;">ORPHANED — builder lost contact</span>';
+  if (job.status === 'failed') return '<span class="status-red">FAILED' + (job.exit_code == null ? '' : ' (exit ' + job.exit_code + ')') + '</span>';
+  return '<span class="status-red">UNKNOWN (' + String(job.status || 'unknown') + ')</span>';
+}
+function applyJobDetailLive(payload) {
+  var jobs = payload && payload.table && payload.table.jobs || [];
+  var job = jobs.find(function(j) { return j.id === '{{ job.id }}'; });
+  if (!job) return;
+  var statusCell = document.getElementById('job-status-cell');
+  if (statusCell) statusCell.innerHTML = jobDetailStatusHtml(job);
+  var pauseCard = document.getElementById('pause-card');
+  if (pauseCard && job.paused && pauseCard.dataset.pauseState !== 'paused') {
+    pauseCard.dataset.pauseState = 'paused';
+    pauseCard.style.background = 'var(--warn-bg)';
+    pauseCard.style.color = 'var(--warn-fg)';
+    pauseCard.style.borderColor = 'var(--warn-fg)';
+    var btn = document.getElementById('resumeBtn');
+    if (btn) {
+      btn.disabled = false;
+      btn.removeAttribute('aria-disabled');
+    }
+    var hint = document.getElementById('resumeHint');
+    if (hint) {
+      hint.textContent = 'Pause gate reached. Install software in the VM, then click Resume.';
+    }
+  }
+}
+function connectLiveJobDetail() {
+  if (!window.WebSocket) return;
+  var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  var live = new WebSocket(scheme + location.host + '/api/live/ws');
+  live.addEventListener('open', function() {
+    live.send(JSON.stringify({type: 'subscribe', topics: ['jobs']}));
+  });
+  live.addEventListener('message', function(ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.topic === 'jobs' && (msg.type === 'snapshot' || msg.type === 'patch')) {
+      applyJobDetailLive(msg.data || {});
+    }
+  });
+  live.addEventListener('close', function() {
+    setTimeout(connectLiveJobDetail, 3000);
+  });
+}
+connectLiveJobDetail();
+</script>
 {% if job.status == 'running' %}
 <script>
 var output = document.getElementById('output');
@@ -181,9 +217,7 @@ ws.onmessage = function(event) {
   output.scrollTop = output.scrollHeight;
 };
 ws.onclose = function() {
-  if (gotData) {
-    setTimeout(function() { window.location.reload(); }, 1000);
-  }
+  if (gotData) output.textContent += "\n[log stream closed]\n";
 };
 </script>
 {% endif %}

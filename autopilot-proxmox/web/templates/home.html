@@ -719,13 +719,46 @@
     safeFetch("/api/version").then(renderStripMeta).catch(function() {});
   }
 
+  function applyLiveJobs(payload) {
+    if (!payload) return;
+    renderLive(payload.running || {});
+    renderRecent(payload.recent || {});
+  }
+
+  var liveDashboardConnected = false;
+  function connectLiveDashboard() {
+    if (!window.WebSocket) return false;
+    var scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
+    var ws = new WebSocket(scheme + window.location.host + "/api/live/ws");
+    var connected = false;
+    ws.addEventListener("open", function() {
+      connected = true;
+      liveDashboardConnected = true;
+      ws.send(JSON.stringify({type: "subscribe", topics: ["jobs"]}));
+    });
+    ws.addEventListener("message", function(ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+      if (msg.topic === "jobs" && (msg.type === "snapshot" || msg.type === "patch")) {
+        applyLiveJobs(msg.data || {});
+      }
+    });
+    ws.addEventListener("close", function() {
+      liveDashboardConnected = false;
+      if (connected) setTimeout(connectLiveDashboard, 3000);
+    });
+    return true;
+  }
+
   // Initial paint + poll schedules.
   refreshServices();
   refreshVersion();
-  refreshLive();
+  if (!connectLiveDashboard()) refreshLive();
   refreshFleet();
   setInterval(refreshServices, 10000);
-  setInterval(refreshLive, 5000);
+  setInterval(function() {
+    if (!window.WebSocket || !liveDashboardConnected) refreshLive();
+  }, 5000);
   setInterval(refreshFleet, 30000);
 
 {% if hypervisor_type == "utm" %}

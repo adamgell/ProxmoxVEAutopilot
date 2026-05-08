@@ -83,6 +83,50 @@ def test_job_detail_not_found(client):
     assert response.status_code == 404
 
 
+def test_job_detail_uses_live_jobs_websocket(client):
+    from web.app import job_manager
+
+    job_manager.get_job.return_value = {
+        "id": "JLIVE",
+        "playbook": "template.yml",
+        "status": "running",
+        "started": "2026-05-07T12:00:00+00:00",
+        "ended": None,
+        "exit_code": None,
+        "args": {"pause_enabled": True, "pause_signal_path": "/tmp/pause"},
+    }
+    job_manager.get_log.return_value = "TASK [still building]\nok\n"
+
+    response = client.get("/jobs/JLIVE")
+
+    assert response.status_code == 200
+    assert "/api/live/ws" in response.text
+    assert "applyJobDetailLive" in response.text
+    assert 'topics: [\'jobs\']' in response.text
+    assert "window.location.reload()" not in response.text
+
+
+def test_jobs_page_uses_live_jobs_websocket(client):
+    from web.app import job_manager
+
+    job_manager.list_jobs.return_value = [{
+        "id": "JOBS1",
+        "playbook": "capture.yml",
+        "status": "running",
+        "started": "2026-05-07T12:00:00+00:00",
+        "ended": None,
+        "exit_code": None,
+        "args": {},
+    }]
+
+    response = client.get("/jobs")
+
+    assert response.status_code == 200
+    assert "/api/live/ws" in response.text
+    assert "applyLiveJobsTable" in response.text
+    assert 'topics: [\'jobs\']' in response.text
+
+
 def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
     """Ubuntu-provisioned VMs get a Check Enrollment button and their
     Capture Hash button is rendered disabled (no Autopilot hash on Linux).
@@ -610,6 +654,79 @@ def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeyp
     assert "stale-vm" not in r.text
 
 
+def test_vms_refresh_preserves_monitor_join_evidence_over_live_fallback(
+    client, tmp_path, monkeypatch, pg_conn,
+):
+    """The Refresh button must not replace a Postgres monitor snapshot with
+    older live-row shaping that lacks Entra/domain evidence fields."""
+    from web import app as app_module, device_history_db
+
+    monitor_db = tmp_path / "device_monitor.db"
+    device_history_db.reset_for_tests(pg_conn)
+    device_history_db.init()
+    sweep_id = device_history_db.start_sweep()
+    device_history_db.insert_pve_snapshot(sweep_id, {
+        "vmid": 108,
+        "node": "pve2",
+        "name": "Gell-60F03E42",
+        "status": "running",
+        "tags_csv": "autopilot",
+        "config_digest": "digest",
+    })
+    device_history_db.insert_device_probe(sweep_id, {
+        "vmid": 108,
+        "vm_name": "Gell-60F03E42",
+        "win_name": "Gell-60F03E42",
+        "serial": "Gell-60F03E42",
+        "entra_found": 1,
+        "entra_match_count": 1,
+        "entra_matches_json": json.dumps([{"trustType": "AzureAd"}]),
+    })
+    device_history_db.finish_sweep(sweep_id, vm_count=1)
+
+    app_module._VMS_CACHE.update({
+        "data": [{
+            "vmid": 108,
+            "name": "Gell-60F03E42",
+            "status": "running",
+            "serial": "Gell-60F03E42",
+            "hostname": "Gell-60F03E42",
+            "tags": "autopilot",
+            "part_of_domain": False,
+            "hybrid_joined": False,
+            "entra_joined": False,
+        }],
+        "devices": ([], None),
+        "hash_serials": set(),
+        "fetched_at": app_module.time.monotonic(),
+        "refreshing": False,
+    })
+    stale_live_rows = [{
+        "vmid": 108,
+        "name": "Gell-60F03E42",
+        "status": "running",
+        "serial": "Gell-60F03E42",
+        "hostname": "Gell-60F03E42",
+        "tags": "autopilot",
+        "part_of_domain": False,
+        "hybrid_joined": False,
+        "entra_joined": False,
+    }]
+
+    monkeypatch.setattr(app_module, "DEVICE_MONITOR_DB", monitor_db)
+    monkeypatch.setattr(app_module, "get_autopilot_vms", lambda: stale_live_rows)
+    monkeypatch.setattr(app_module, "get_autopilot_devices", lambda: ([], None))
+    monkeypatch.setattr(app_module, "get_hash_files", lambda: [])
+
+    r = client.post("/api/vms/refresh")
+    assert r.status_code == 200
+
+    r = client.get("/vms")
+    assert r.status_code == 200
+    assert ">Entra ID<" in r.text
+    assert ">workgroup<" not in r.text
+
+
 def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path, pg_conn):
     """If Entra reports trustType=ServerAd, the hostname badge should show
     domain evidence instead of falling through to workgroup."""
@@ -785,3 +902,183 @@ def test_detect_template_pause_anchored_on_task_header(client):
     job = {"args": {"pause_enabled": True, "pause_signal_path": "/x"}}
     log = "TASK [PAUSE — install software in VMID 108 now, then click Resume]\nok\n"
     assert _detect_template_pause(job, log) is True
+
+
+def test_live_websocket_hello_and_fleet_snapshot(web_client, monkeypatch):
+    from web import app as app_module
+
+    app_module._LIVE_HUB = None
+    app_module._VMS_CACHE.update({
+        "data": [{
+            "vmid": 108,
+            "name": "Gell-60F03E42",
+            "status": "running",
+            "hostname": "Gell-60F03E42",
+            "entra_id_joined": True,
+            "hostname_join_label": "Entra ID",
+        }],
+        "devices": ([], None),
+        "hash_serials": set(),
+        "fetched_at": 1.0,
+        "refreshing": False,
+    })
+    monkeypatch.setattr(app_module, "_latest_monitor_sweep_status", lambda: {"running": False})
+
+    async def fake_payload():
+        return app_module._VMS_CACHE, 0.0
+
+    async def empty_patches(_topics, _vmids, _include_qga):
+        return []
+
+    monkeypatch.setattr(app_module, "_get_vms_payload", fake_payload)
+    monkeypatch.setattr(app_module, "_live_patch_provider", empty_patches)
+
+    with web_client.websocket_connect("/api/live/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        ws.send_json({"type": "subscribe", "topics": ["fleet"], "vmids": [108]})
+        snapshot = ws.receive_json()
+        while snapshot["type"] != "snapshot" or snapshot.get("topic") != "fleet":
+            snapshot = ws.receive_json()
+
+    assert snapshot["type"] == "snapshot"
+    assert snapshot["topic"] == "fleet"
+    assert snapshot["data"]["rows"][0]["vmid"] == 108
+    assert snapshot["data"]["rows"][0]["hostname_join_label"] == "Entra ID"
+
+
+def test_live_websocket_clients_share_one_collector(web_client, monkeypatch):
+    from web import app as app_module
+
+    app_module._LIVE_HUB = None
+
+    async def empty_snapshots(_topics, _vmids):
+        return []
+
+    async def empty_patches(_topics, _vmids, _include_qga):
+        return []
+
+    monkeypatch.setattr(app_module, "_live_snapshot_provider", empty_snapshots)
+    monkeypatch.setattr(app_module, "_live_patch_provider", empty_patches)
+
+    with web_client.websocket_connect("/api/live/ws") as ws1:
+        assert ws1.receive_json()["type"] == "hello"
+        with web_client.websocket_connect("/api/live/ws") as ws2:
+            assert ws2.receive_json()["type"] == "hello"
+            assert app_module._get_live_hub().collector_starts == 1
+
+
+def test_live_websocket_rejects_unauthenticated_client(web_client):
+    from starlette.websockets import WebSocketDisconnect
+    from web import app as app_module
+
+    with patch.object(app_module, "_AUTH_BYPASS", False):
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with web_client.websocket_connect("/api/live/ws"):
+                pass
+
+    assert exc.value.code == 1008
+
+
+def test_live_websocket_screenshot_result_and_image_url(web_client, monkeypatch):
+    from web import app as app_module
+
+    app_module._LIVE_HUB = None
+    monkeypatch.setattr(
+        app_module,
+        "_capture_vm_screenshot_png",
+        lambda vmid: b"\x89PNG\r\n\x1a\nfake",
+    )
+
+    with web_client.websocket_connect("/api/live/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        ws.send_json({
+            "type": "screenshot.request",
+            "correlation_id": "shot-1",
+            "vmid": 114,
+            "format": "png",
+        })
+        result = ws.receive_json()
+
+    assert result["type"] == "screenshot.result"
+    assert result["correlation_id"] == "shot-1"
+    assert result["vmid"] == 114
+    assert result["image_url"].startswith("/api/live/screenshots/")
+
+    image = web_client.get(result["image_url"])
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.content == b"\x89PNG\r\n\x1a\nfake"
+
+
+def test_live_websocket_screenshot_failure_keeps_socket_open(web_client, monkeypatch):
+    from web import app as app_module
+
+    app_module._LIVE_HUB = None
+
+    def fail(_vmid):
+        raise RuntimeError("display plane unavailable")
+
+    monkeypatch.setattr(app_module, "_capture_vm_screenshot_png", fail)
+
+    with web_client.websocket_connect("/api/live/ws") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        ws.send_json({
+            "type": "screenshot.request",
+            "correlation_id": "shot-2",
+            "vmid": 114,
+            "format": "png",
+        })
+        error = ws.receive_json()
+        ws.send_json({"type": "not-real", "correlation_id": "still-open"})
+        still_open = ws.receive_json()
+
+    assert error["type"] == "error"
+    assert error["error"] == "screenshot_failed"
+    assert "display plane unavailable" in error["detail"]
+    assert still_open["error"] == "unknown_message_type"
+
+
+def test_live_screenshot_url_expires(web_client):
+    from web import app as app_module
+
+    stored = app_module._store_screenshot(vmid=114, png_bytes=b"png")
+    screenshot_id = stored["image_url"].rsplit("/", 1)[-1]
+    app_module._SCREENSHOT_CACHE[screenshot_id]["expires_at_monotonic"] = 0
+
+    response = web_client.get(stored["image_url"])
+
+    assert response.status_code == 404
+
+
+def test_vms_page_includes_live_socket_and_screenshot_action(client):
+    fake_vms = [{
+        "vmid": 114,
+        "name": "LAB-E3DF41BD",
+        "status": "running",
+        "serial": "LAB-E3DF41BD",
+        "oem": "",
+        "hostname": "LAB-E3DF41BD",
+        "mem_mb": 4096,
+        "cpus": 2,
+        "tags": "autopilot",
+        "in_intune": False,
+        "in_autopilot": False,
+        "aad_joined": False,
+        "part_of_domain": False,
+    }]
+    async def fake_payload():
+        return ({
+            "data": fake_vms,
+            "devices": ([], None),
+            "hash_serials": set(),
+            "fetched_at": 1.0,
+            "refreshing": False,
+        }, 0.0)
+
+    with patch("web.app._get_vms_payload", fake_payload):
+        response = client.get("/vms")
+
+    assert response.status_code == 200
+    assert "/api/live/ws" in response.text
+    assert "data-vm-action=\"screenshot\"" in response.text
+    assert "data-live-vmid=\"114\"" in response.text

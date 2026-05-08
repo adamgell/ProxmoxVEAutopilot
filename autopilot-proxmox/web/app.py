@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import csv
+import io
 import json
 import os
 import subprocess
@@ -9,19 +10,21 @@ import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import requests
 import psycopg
 import yaml
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from web.jobs import JobManager
 from web import devices_pg as devices_db
 from web import jobs_pg as jobs_db
+from web.live import LiveHub, utc_now_iso
 from web import monitoring_evidence
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -1504,6 +1507,36 @@ def _proxmox_api_delete(path):
     return resp.json().get("data", {})
 
 
+def _configured_proxmox_node() -> str:
+    cfg = _load_proxmox_config()
+    return cfg.get("proxmox_node", "pve")
+
+
+def _resolve_vm_node(vmid: int) -> str:
+    """Return the current Proxmox node for a VMID from cluster inventory.
+
+    Operator actions must not assume the configured default node. In a
+    multi-node cluster, stale/default node selection makes console and QMP
+    calls fail with "configuration file ... does not exist" even when the VM
+    exists on another node.
+    """
+    try:
+        rows = _proxmox_api("/cluster/resources?type=vm") or []
+    except Exception:
+        return _configured_proxmox_node()
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            row_vmid = int(row.get("vmid"))
+        except (TypeError, ValueError):
+            continue
+        if row_vmid == int(vmid) and row.get("node"):
+            return str(row["node"])
+    raise ValueError(f"VM {vmid} not found in Proxmox cluster inventory")
+
+
 def _decode_smbios_serial(smbios1):
     """Extract and decode the serial from a Proxmox smbios1 config string."""
     import base64 as b64mod
@@ -2000,6 +2033,116 @@ def compute_duration(job):
     return f"{seconds}s"
 
 
+_JOB_EXPECTED_SECONDS = {
+    "provision.yml":      20 * 60,
+    "template.yml":       45 * 60,
+    "capture.yml":         3 * 60,
+    "upload.yml":          2 * 60,
+    "bulk-capture.yml":   10 * 60,
+    "cloud-delete.yml":    5 * 60,
+}
+
+
+def _job_target(args: dict) -> str:
+    return (
+        args.get("hostname_pattern")
+        or args.get("vm_name")
+        or args.get("template_name")
+        or args.get("serial")
+        or args.get("sequence_name")
+        or ""
+    )
+
+
+def _job_paused(job: dict) -> bool:
+    if job.get("status") != "running":
+        return False
+    if not (job.get("args") or {}).get("pause_enabled"):
+        return False
+    tail = job_manager.get_log(job["id"])[-4096:]
+    return _detect_template_pause(job, tail)
+
+
+def _job_table_rows(limit: int = 200) -> list[dict]:
+    rows = []
+    for job in job_manager.list_jobs()[:limit]:
+        item = dict(job)
+        item["duration"] = compute_duration(item)
+        item["paused"] = _job_paused(item)
+        rows.append(item)
+    return rows
+
+
+def _recent_jobs_payload(limit: int = 5) -> dict:
+    try:
+        limit = max(1, min(int(limit), 50))
+    except (TypeError, ValueError):
+        limit = 5
+    out = []
+    for j in job_manager.list_jobs()[:limit]:
+        args = j.get("args") or {}
+        out.append({
+            "id": j["id"],
+            "playbook": j.get("playbook"),
+            "status": j.get("status"),
+            "started": j.get("started"),
+            "ended": j.get("ended"),
+            "duration": compute_duration(j),
+            "target": _job_target(args),
+        })
+    return {"jobs": out}
+
+
+def _running_jobs_payload() -> dict:
+    now = datetime.now(timezone.utc)
+    running = []
+    queued = 0
+    for j in job_manager.list_jobs():
+        status = j.get("status")
+        if status == "pending":
+            queued += 1
+            continue
+        if status != "running":
+            continue
+        started_iso = j.get("started")
+        elapsed = 0
+        if started_iso:
+            try:
+                elapsed = int(
+                    (now - datetime.fromisoformat(started_iso)).total_seconds()
+                )
+            except Exception:
+                elapsed = 0
+        pb = j.get("playbook") or ""
+        exp = _JOB_EXPECTED_SECONDS.get(pb, 0)
+        pct = min(99, int(elapsed / exp * 100)) if exp > 0 else 50
+        running.append({
+            "id": j["id"],
+            "playbook": pb,
+            "target": _job_target(j.get("args") or {}),
+            "started": started_iso,
+            "elapsed_seconds": elapsed,
+            "progress_pct": pct,
+            "paused": _job_paused(j),
+        })
+    return {
+        "running": running,
+        "running_count": len(running),
+        "queued_count": queued,
+    }
+
+
+def _live_jobs_payload() -> dict:
+    return {
+        "running": _running_jobs_payload(),
+        "recent": _recent_jobs_payload(limit=5),
+        "table": {
+            "jobs": _job_table_rows(),
+        },
+        "generated_at": utc_now_iso(),
+    }
+
+
 # --- HTML Pages ---
 
 @app.get("/", response_class=HTMLResponse)
@@ -2088,18 +2231,7 @@ async def hashes_page(request: Request, uploaded: str = "", error: str = ""):
 
 @app.get("/jobs", response_class=HTMLResponse)
 async def jobs_page(request: Request):
-    jobs = job_manager.list_jobs()
-    for job in jobs:
-        job["duration"] = compute_duration(job)
-        # Only running jobs can be paused; reading the log for finished
-        # jobs is pointless (and the most recent N-lines read is cheap
-        # enough for the handful that are actually live). Slicing to
-        # the last 4 KiB keeps the scan O(1) regardless of log size.
-        if job["status"] == "running" and (job.get("args") or {}).get("pause_enabled"):
-            tail = job_manager.get_log(job["id"])[-4096:]
-            job["paused"] = _detect_template_pause(job, tail)
-        else:
-            job["paused"] = False
+    jobs = _job_table_rows()
     return templates.TemplateResponse("jobs.html", {
         "request": request,
         "jobs": jobs,
@@ -2632,6 +2764,9 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             or first_ad.get("userPrincipalName", "").split("@")[-1]
         )
         join_evidence = monitoring_evidence.hostname_join_evidence({"probe": probe})
+        evidence_label = join_evidence["label"]
+        evidence_is_domain = evidence_label == "domain"
+        evidence_is_entra = evidence_label == "Entra ID"
 
         out.append({
             "vmid": vmid,
@@ -2646,9 +2781,10 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "cpus": pve.get("cores") or "",
             "tags": tags,
             "has_guest_data": bool(probe),
-            "domain": domain or ("domain" if hybrid_joined else ""),
-            "part_of_domain": bool(int(probe.get("ad_found") or 0)),
+            "domain": domain or ("domain" if evidence_is_domain else ""),
+            "part_of_domain": evidence_is_domain,
             "hybrid_joined": hybrid_joined,
+            "entra_joined": evidence_is_entra,
             "entra_id_joined": entra_id_joined,
             "hostname_join_label": join_evidence["label"],
             "hostname_join_title": join_evidence["title"],
@@ -2702,7 +2838,7 @@ async def _refresh_vms_cache_bg() -> None:
         return
     _VMS_CACHE["refreshing"] = True
     try:
-        payload = await asyncio.to_thread(_fetch_vms_payload_live)
+        payload = await asyncio.to_thread(_fetch_vms_payload)
         _VMS_CACHE.update(payload)
         _VMS_CACHE["fetched_at"] = time.monotonic()
     except Exception:
@@ -2784,6 +2920,325 @@ async def api_vms_refresh():
     data."""
     await _refresh_vms_cache_bg()
     return {"ok": True, "fetched_at": _VMS_CACHE["fetched_at"]}
+
+
+_SCREENSHOT_CACHE: dict[str, dict] = {}
+_SCREENSHOT_TTL_SECONDS = 120
+_LIVE_HUB: LiveHub | None = None
+
+
+def _purge_expired_screenshots() -> None:
+    now = time.monotonic()
+    expired = [
+        sid for sid, item in _SCREENSHOT_CACHE.items()
+        if item["expires_at_monotonic"] <= now
+    ]
+    for sid in expired:
+        _SCREENSHOT_CACHE.pop(sid, None)
+
+
+def _store_screenshot(*, vmid: int, png_bytes: bytes) -> dict:
+    _purge_expired_screenshots()
+    screenshot_id = uuid4().hex
+    captured_at = utc_now_iso()
+    _SCREENSHOT_CACHE[screenshot_id] = {
+        "vmid": vmid,
+        "content": png_bytes,
+        "content_type": "image/png",
+        "captured_at": captured_at,
+        "expires_at_monotonic": time.monotonic() + _SCREENSHOT_TTL_SECONDS,
+    }
+    return {
+        "vmid": vmid,
+        "image_url": f"/api/live/screenshots/{screenshot_id}",
+        "content_type": "image/png",
+        "captured_at": captured_at,
+        "expires_at": datetime.fromtimestamp(
+            time.time() + _SCREENSHOT_TTL_SECONDS, timezone.utc,
+        ).isoformat(),
+    }
+
+
+def _ppm_to_png(ppm_bytes: bytes) -> bytes:
+    from PIL import Image
+
+    with Image.open(io.BytesIO(ppm_bytes)) as img:
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+
+
+def _capture_vm_screenshot_png(vmid: int) -> bytes:
+    """Capture the VM display plane through QEMU monitor screendump.
+
+    This deliberately does not use QGA so screenshots still work during
+    WinPE, OOBE, boot failures, and bugcheck screens.
+    """
+    ssh = _make_root_ssh_runner()
+    if ssh is None:
+        raise RuntimeError(
+            "root SSH is required for screenshot capture; configure "
+            "vault_proxmox_root_password"
+        )
+    node = _resolve_vm_node(vmid)
+    remote_path = f"/tmp/pveautopilot-screenshot-{vmid}-{uuid4().hex}.ppm"
+    monitor_command = f"screendump {remote_path}"
+    cmd = (
+        f"pvesh create /nodes/{shlex.quote(str(node))}/qemu/{int(vmid)}/monitor "
+        f"--command {shlex.quote(monitor_command)} >/dev/null "
+        f"&& cat {shlex.quote(remote_path)}; "
+        f"rc=$?; rm -f {shlex.quote(remote_path)}; exit $rc"
+    )
+    rc, stdout, stderr = ssh(cmd)
+    if rc != 0:
+        detail = (stderr or stdout or b"").decode(errors="replace").strip()
+        raise RuntimeError(f"screendump failed for VM {vmid}: {detail or rc}")
+    if not stdout.startswith(b"P6") and not stdout.startswith(b"P3"):
+        raise RuntimeError("screendump did not return PPM image data")
+    return _ppm_to_png(stdout)
+
+
+async def _live_screenshot_handler(vmid: int, fmt: str) -> dict:
+    if fmt.lower() != "png":
+        raise ValueError("only png screenshots are supported")
+    png = await asyncio.to_thread(_capture_vm_screenshot_png, vmid)
+    return _store_screenshot(vmid=vmid, png_bytes=png)
+
+
+def _live_first_ipv4(network_data: dict) -> str:
+    interfaces = network_data.get("result", network_data)
+    if not isinstance(interfaces, list):
+        return ""
+    for iface in interfaces:
+        for addr in iface.get("ip-addresses", []) or []:
+            ip = addr.get("ip-address") or ""
+            if addr.get("ip-address-type") == "ipv4" and not ip.startswith("127."):
+                return ip
+    return ""
+
+
+async def _live_snapshot_provider(topics: set[str], vmids: set[int]) -> list[dict]:
+    topics = topics or {"fleet"}
+    messages: list[dict] = []
+    if "fleet" in topics:
+        cache, cache_age = await _get_vms_payload()
+        rows = list(cache["data"] or [])
+        if vmids:
+            rows = [row for row in rows if int(row.get("vmid") or 0) in vmids]
+        messages.append({
+            "type": "snapshot",
+            "topic": "fleet",
+            "data": {
+                "rows": rows,
+                "monitor_sweep": _latest_monitor_sweep_status() or {},
+                "cache_age_seconds": None if cache_age == float("inf") else round(cache_age, 1),
+                "refreshing": bool(_VMS_CACHE["refreshing"]),
+                "generated_at": utc_now_iso(),
+            },
+        })
+    if "jobs" in topics:
+        messages.append({
+            "type": "snapshot",
+            "topic": "jobs",
+            "data": await asyncio.to_thread(_live_jobs_payload),
+        })
+    if "runs" in topics:
+        messages.append({
+            "type": "snapshot",
+            "topic": "runs",
+            "data": {
+                "runs": await asyncio.to_thread(_live_recent_ts_runs),
+                "generated_at": utc_now_iso(),
+            },
+        })
+    return messages
+
+
+def _live_recent_ts_runs(limit: int = 50) -> list[dict]:
+    try:
+        from web import db_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, state, phase, vmid, computer_name, serial_number,
+                       cursor_step_id, started_at, completed_at, last_error
+                FROM ts_provisioning_runs
+                ORDER BY started_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+    except Exception:
+        return []
+    return [
+        {
+            "id": str(row["id"]),
+            "state": row["state"],
+            "phase": row["phase"],
+            "vmid": row["vmid"],
+            "computer_name": row["computer_name"],
+            "serial_number": row["serial_number"],
+            "cursor_step_id": str(row["cursor_step_id"]) if row["cursor_step_id"] else None,
+            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+            "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+            "last_error": row["last_error"],
+        }
+        for row in rows
+    ]
+
+
+async def _live_patch_provider(
+    topics: set[str], vmids: set[int], include_qga: bool,
+) -> list[dict]:
+    messages: list[dict] = []
+    if "fleet" in topics:
+        rows = await asyncio.to_thread(_live_collect_fleet_patch, vmids, include_qga)
+        if rows:
+            messages.append({
+                "type": "patch",
+                "topic": "fleet",
+                "rows": rows,
+                "generated_at": utc_now_iso(),
+            })
+    if "jobs" in topics:
+        messages.append({
+            "type": "patch",
+            "topic": "jobs",
+            "data": await asyncio.to_thread(_live_jobs_payload),
+        })
+    if "runs" in topics:
+        messages.append({
+            "type": "patch",
+            "topic": "runs",
+            "runs": await asyncio.to_thread(_live_recent_ts_runs),
+            "generated_at": utc_now_iso(),
+        })
+    return messages
+
+
+def _live_collect_fleet_patch(vmids: set[int], include_qga: bool) -> list[dict]:
+    cached_rows = list(_VMS_CACHE.get("data") or [])
+    if not cached_rows:
+        cached_rows = _vms_from_monitor_snapshot()
+    if vmids:
+        target_vmids = sorted(vmids)
+    else:
+        target_vmids = sorted(
+            int(row.get("vmid") or 0) for row in cached_rows if row.get("vmid")
+        )
+    rows: list[dict] = []
+    for vmid in target_vmids:
+        row: dict = {"vmid": vmid}
+        try:
+            node = _resolve_vm_node(vmid)
+            status = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/status/current")
+            if isinstance(status, dict):
+                row.update({
+                    "status": status.get("status"),
+                    "qmpstatus": status.get("qmpstatus"),
+                    "uptime": status.get("uptime", 0),
+                    "cpu": status.get("cpu", 0),
+                    "mem": status.get("mem", 0),
+                    "maxmem": status.get("maxmem", 0),
+                })
+        except Exception as exc:
+            row.update({"status_error": str(exc), "qga": "unknown"})
+        if include_qga and row.get("status") == "running":
+            try:
+                _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/ping")
+                row["qga"] = "ready"
+                try:
+                    host_data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/get-host-name")
+                    host = host_data.get("result", host_data) if isinstance(host_data, dict) else {}
+                    if isinstance(host, dict) and host.get("host-name"):
+                        row["hostname"] = host.get("host-name")
+                except Exception:
+                    pass
+                try:
+                    network = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces")
+                    ip = _live_first_ipv4(network if isinstance(network, dict) else {})
+                    if ip:
+                        row["ip_address"] = ip
+                except Exception:
+                    pass
+            except Exception as exc:
+                row["qga"] = "unavailable"
+                row["qga_error"] = str(exc)
+        elif include_qga:
+            row["qga"] = "not_running"
+        rows.append(row)
+    return rows
+
+
+async def _live_refresh_handler(scope: str) -> list[dict]:
+    if scope == "fleet":
+        await _run_monitor_sweep_and_refresh_vms_cache()
+    elif scope in {"jobs", "runs"}:
+        pass
+    else:
+        raise ValueError(f"unsupported refresh scope: {scope}")
+    finished = {
+        "type": "event",
+        "topic": "fleet" if scope == "fleet" else scope,
+        "event": "sweep_finished" if scope == "fleet" else "refresh_finished",
+        "scope": scope,
+        "generated_at": utc_now_iso(),
+    }
+    snapshots = await _live_snapshot_provider({scope} if scope != "fleet" else {"fleet"}, set())
+    return [finished, *snapshots]
+
+
+async def _live_qga_probe_handler(vmid: int) -> dict:
+    node = _resolve_vm_node(vmid)
+    return await asyncio.to_thread(_fetch_guest_windows_details, node, vmid)
+
+
+def _get_live_hub() -> LiveHub:
+    global _LIVE_HUB
+    if _LIVE_HUB is None:
+        _LIVE_HUB = LiveHub(
+            snapshot_provider=_live_snapshot_provider,
+            patch_provider=_live_patch_provider,
+            refresh_handler=_live_refresh_handler,
+            qga_probe_handler=_live_qga_probe_handler,
+            screenshot_handler=_live_screenshot_handler,
+        )
+    return _LIVE_HUB
+
+
+def _websocket_authenticated(websocket: WebSocket) -> bool:
+    if _AUTH_BYPASS:
+        return True
+    try:
+        return bool(websocket.session.get("user"))
+    except Exception:
+        return False
+
+
+@app.websocket("/api/live/ws")
+async def live_websocket(websocket: WebSocket):
+    if not _websocket_authenticated(websocket):
+        await websocket.close(code=1008, reason="authentication required")
+        return
+    await _get_live_hub().connect(websocket)
+
+
+@app.get("/api/live/screenshots/{screenshot_id}")
+async def live_screenshot(screenshot_id: str):
+    _purge_expired_screenshots()
+    item = _SCREENSHOT_CACHE.get(screenshot_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    return Response(
+        content=item["content"],
+        media_type=item["content_type"],
+        headers={
+            "Cache-Control": "private, max-age=120",
+            "X-VMID": str(item["vmid"]),
+            "X-Captured-At": item["captured_at"],
+        },
+    )
 
 
 @app.get("/vms", response_class=HTMLResponse)
@@ -4070,8 +4525,10 @@ async def vm_console(vmid: int):
 
 @app.get("/vms/{vmid}/console", response_class=HTMLResponse)
 async def vm_console_page(request: Request, vmid: int):
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
+    try:
+        node = _resolve_vm_node(vmid)
+    except Exception:
+        node = _configured_proxmox_node()
     # VM 'name' in Proxmox is the device serial for provisioned VMs (the
     # provisioning flow renames it to the generated serial post-clone).
     serial = ""
@@ -4093,9 +4550,8 @@ async def vm_vnc_init(vmid: int):
     """Request a websocket-mode VNC ticket from Proxmox. Returns the
     port + short-lived ticket the browser needs to open the VNC stream
     (via our /api/vms/{vmid}/vnc-ws proxy)."""
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         # websocket=1 tells Proxmox to issue a ticket valid for the
         # /vncwebsocket endpoint (different from the default TCP ticket).
         data = _proxmox_api_post(
@@ -4132,7 +4588,13 @@ async def vm_vnc_websocket(websocket: WebSocket, vmid: int):
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
     pve_port = cfg.get("proxmox_port", 8006)
-    node = cfg.get("proxmox_node", "pve")
+    node = websocket.query_params.get("node")
+    if not node:
+        try:
+            node = _resolve_vm_node(vmid)
+        except Exception as exc:
+            await websocket.close(code=1008, reason=str(exc)[:100])
+            return
     token_id = cfg.get("vault_proxmox_api_token_id", "")
     token_secret = cfg.get("vault_proxmox_api_token_secret", "")
 
@@ -4145,7 +4607,7 @@ async def vm_vnc_websocket(websocket: WebSocket, vmid: int):
 
     from urllib.parse import quote
     upstream_url = (
-        f"wss://{host}:{pve_port}/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket"
+        f"wss://{host}:{pve_port}/api2/json/nodes/{quote(str(node), safe='')}/qemu/{vmid}/vncwebsocket"
         f"?port={quote(port)}&vncticket={quote(vncticket)}"
     )
     auth_header = [("Authorization", f"PVEAPIToken={token_id}={token_secret}")]
@@ -4199,9 +4661,8 @@ async def vm_vnc_websocket(websocket: WebSocket, vmid: int):
 
 @app.post("/api/vms/{vmid}/start")
 async def vm_start(vmid: int):
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
     except Exception as e:
         return _redirect_with_error("/vms", f"Start failed: {e}")
@@ -4210,9 +4671,8 @@ async def vm_start(vmid: int):
 
 @app.post("/api/vms/{vmid}/shutdown")
 async def vm_shutdown(vmid: int):
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/shutdown")
     except Exception as e:
         return _redirect_with_error("/vms", f"Shutdown failed: {e}")
@@ -4221,9 +4681,8 @@ async def vm_shutdown(vmid: int):
 
 @app.post("/api/vms/{vmid}/stop")
 async def vm_stop(vmid: int):
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
     except Exception as e:
         return _redirect_with_error("/vms", f"Force stop failed: {e}")
@@ -4232,9 +4691,8 @@ async def vm_stop(vmid: int):
 
 @app.post("/api/vms/{vmid}/reset")
 async def vm_reset(vmid: int):
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/reset")
     except Exception as e:
         return _redirect_with_error("/vms", f"Reset failed: {e}")
@@ -4244,9 +4702,8 @@ async def vm_reset(vmid: int):
 @app.post("/api/vms/{vmid}/delete")
 async def vm_delete(vmid: int):
     import time
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         # Stop VM first if running
         try:
             _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
@@ -4290,9 +4747,11 @@ for sym, key in _PLAIN_SYMBOLS.items():
 async def vm_typetext(vmid: int, text: str = Form(...)):
     """Type a string into a VM via QMP sendkey (works without guest agent)."""
     import time
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     errors = []
+    try:
+        node = _resolve_vm_node(vmid)
+    except Exception as e:
+        return _redirect_with_error("/vms", f"Type failed: {e}")
     for ch in text:
         key = _CHAR_TO_KEYS.get(ch)
         if not key:
@@ -4311,9 +4770,8 @@ async def vm_typetext(vmid: int, text: str = Form(...)):
 @app.post("/api/vms/{vmid}/sendkey")
 async def vm_sendkey(vmid: int, key: str = Form(...)):
     """Send a single key combo to a VM (e.g. ctrl-alt-del, ret, tab)."""
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
     except Exception as e:
         return _redirect_with_error("/vms", f"Sendkey failed: {e}")
@@ -4325,9 +4783,8 @@ async def vm_sendkey(vmid: int, key: str = Form(...)):
 @app.get("/api/vms/{vmid}/status-json")
 async def vm_status_json(vmid: int):
     """Current VM status as JSON, for the console page to poll."""
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         data = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/status/current")
     except Exception as e:
         return {"error": str(e)}
@@ -4351,9 +4808,8 @@ async def vm_action_json(vmid: int, action: str):
     """Power action via Proxmox status endpoint. Returns JSON (no redirect)."""
     if action not in _POWER_ACTIONS:
         return {"error": f"invalid action: {action}"}
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/{action}")
     except Exception as e:
         return {"error": str(e)}
@@ -4364,8 +4820,6 @@ async def vm_action_json(vmid: int, action: str):
 async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form("")):
     """Type text via QMP sendkey. Returns JSON."""
     import time
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     skipped = []
     keys = []
     for ch in text:
@@ -4377,6 +4831,10 @@ async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form(
     if press_enter:
         keys.append("ret")
     sent = 0
+    try:
+        node = _resolve_vm_node(vmid)
+    except Exception as e:
+        return {"ok": False, "sent": sent, "error": str(e)}
     for key in keys:
         try:
             _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
@@ -4390,9 +4848,8 @@ async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form(
 @app.post("/api/vms/{vmid}/key")
 async def vm_key_json(vmid: int, key: str = Form(...)):
     """Single QEMU keyname (e.g. 'ctrl-alt-delete'). Returns JSON."""
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
     except Exception as e:
         return {"error": str(e)}
@@ -4440,9 +4897,8 @@ def _sanitize_windows_hostname(raw: str) -> str:
 async def vm_rename_suggest(vmid: int):
     """Return the suggested target name + source so the UI can show a
     preview before the operator commits. Free of side effects."""
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         suggested = _suggested_rename_for_vm(vmid, node)
     except Exception as e:
         raise HTTPException(500, f"probe failed: {e}") from e
@@ -4464,9 +4920,8 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
     Updates the Proxmox VM name to match so /vms, /devices, and
     monitoring stay in sync.
     """
-    cfg = _load_proxmox_config()
-    node = cfg.get("proxmox_node", "pve")
     try:
+        node = _resolve_vm_node(vmid)
         target = (new_name or "").strip()
         if not target:
             target = _suggested_rename_for_vm(vmid, node)
@@ -4683,35 +5138,7 @@ async def api_recent_jobs(limit: int = 5):
     duration string so the client doesn't need to know about
     started/ended ISO parsing.
     """
-    try:
-        limit = max(1, min(int(limit), 50))
-    except (TypeError, ValueError):
-        limit = 5
-    jobs = job_manager.list_jobs()[:limit]
-    out = []
-    for j in jobs:
-        args = j.get("args") or {}
-        # Best-effort "target" label — the thing the job is acting
-        # on. Different job types stash different keys, so try a
-        # handful in priority order and fall back to "—".
-        target = (
-            args.get("hostname_pattern")
-            or args.get("vm_name")
-            or args.get("template_name")
-            or args.get("serial")
-            or args.get("sequence_name")
-            or ""
-        )
-        out.append({
-            "id": j["id"],
-            "playbook": j.get("playbook"),
-            "status": j.get("status"),
-            "started": j.get("started"),
-            "ended": j.get("ended"),
-            "duration": compute_duration(j),
-            "target": target,
-        })
-    return {"jobs": out}
+    return _recent_jobs_payload(limit=limit)
 
 
 @app.get("/api/jobs/running")
@@ -4723,60 +5150,7 @@ async def api_running_jobs():
     per-playbook expected-seconds table; if the job type isn't
     known, we fall back to 50% so the bar still moves.
     """
-    # Expected seconds per playbook type — rough order-of-magnitude
-    # numbers pulled from recent successful runs. Accurate enough
-    # for a progress bar; the dashboard is not a scheduler.
-    expected = {
-        "provision.yml":      20 * 60,
-        "template.yml":       45 * 60,
-        "capture.yml":         3 * 60,
-        "upload.yml":          2 * 60,
-        "bulk-capture.yml":   10 * 60,
-        "cloud-delete.yml":    5 * 60,
-    }
-    now = datetime.now(timezone.utc)
-    running = []
-    queued = 0
-    for j in job_manager.list_jobs():
-        if j.get("status") != "running":
-            continue
-        started_iso = j.get("started")
-        elapsed = 0
-        if started_iso:
-            try:
-                elapsed = int(
-                    (now - datetime.fromisoformat(started_iso)).total_seconds()
-                )
-            except Exception:
-                elapsed = 0
-        pb = j.get("playbook") or ""
-        exp = expected.get(pb, 0)
-        if exp > 0:
-            pct = min(99, int(elapsed / exp * 100))
-        else:
-            pct = 50
-        args = j.get("args") or {}
-        target = (
-            args.get("hostname_pattern")
-            or args.get("vm_name")
-            or args.get("template_name")
-            or args.get("serial")
-            or args.get("sequence_name")
-            or ""
-        )
-        running.append({
-            "id": j["id"],
-            "playbook": pb,
-            "target": target,
-            "started": started_iso,
-            "elapsed_seconds": elapsed,
-            "progress_pct": pct,
-        })
-    return {
-        "running": running,
-        "running_count": len(running),
-        "queued_count": queued,
-    }
+    return _running_jobs_payload()
 
 
 @app.get("/api/services")

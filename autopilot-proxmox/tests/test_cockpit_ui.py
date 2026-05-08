@@ -79,3 +79,60 @@ def test_console_page_preserves_existing_api_contracts(web_client: TestClient, m
     assert "/api/vms/${VMID}/action/${action}" in body
     assert "/api/vms/${VMID}/type" in body
     assert "/api/vms/${VMID}/key" in body
+    assert "/api/live/ws" in body
+    assert "screenshot.request" in body
+    assert "requestScreenshot" in body
+
+
+def test_console_resolves_actual_vm_node_for_serial(web_client: TestClient, monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {"proxmox_node": "pve2"})
+
+    def fake_proxmox_api(path):
+        if path == "/cluster/resources?type=vm":
+            return [{"type": "qemu", "vmid": 100, "node": "pve1"}]
+        assert path == "/nodes/pve1/qemu/100/config"
+        return {"name": "SERIAL-100"}
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+
+    res = web_client.get("/vms/100/console")
+
+    assert res.status_code == 200
+    assert "SERIAL-100" in res.text
+
+
+def test_vnc_init_uses_actual_vm_node(web_client: TestClient, monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {"proxmox_node": "pve2"})
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_api",
+        lambda path: [{"type": "qemu", "vmid": 100, "node": "pve1"}],
+    )
+
+    def fake_post(path, data=None):
+        assert path == "/nodes/pve1/qemu/100/vncproxy"
+        return {"port": 5900, "ticket": "ticket-100", "user": "root@pam"}
+
+    monkeypatch.setattr(web_app, "_proxmox_api_post", fake_post)
+
+    res = web_client.get("/api/vms/100/vnc-init")
+
+    assert res.status_code == 200
+    assert res.json()["node"] == "pve1"
+
+
+def test_home_page_uses_live_jobs_websocket(web_client: TestClient, monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
+
+    res = web_client.get("/")
+    assert res.status_code == 200
+    body = res.text
+    assert "/api/live/ws" in body
+    assert 'topics: ["jobs"]' in body
+    assert "applyLiveJobs" in body

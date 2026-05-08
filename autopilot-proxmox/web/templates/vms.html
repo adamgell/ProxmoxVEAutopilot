@@ -45,11 +45,16 @@
     <label style="flex:1 1 280px;">Filter fleet
       <input type="search" data-cockpit-filter="#vm-fleet-table" placeholder="vmid, name, serial, enrollment, IP" style="width:100%;margin-top:6px;">
     </label>
-    <button type="button" onclick="refreshVms();">Refresh</button>
+    <button id="fleet-refresh-btn" type="button" onclick="refreshVms();">Refresh</button>
   </div>
 </section>
 <script>
 async function refreshVms() {
+  if (window.liveFleetSocket && window.liveFleetSocket.readyState === WebSocket.OPEN) {
+    document.getElementById('fleet-refresh-btn').disabled = true;
+    window.liveFleetSocket.send(JSON.stringify({type: 'refresh', scope: 'fleet'}));
+    return;
+  }
   const r = await fetch('/api/vms/refresh', {method: 'POST'});
   if (r.ok) location.reload();
 }
@@ -70,7 +75,7 @@ async function refreshVms() {
   <th>Actions</th>
 </tr>
 {% for vm in vms %}
-<tr>
+<tr data-live-vmid="{{ vm.vmid }}">
   <td>{% if vm.status == 'running' %}<input type="checkbox" name="vmids" value="{{ vm.vmid }}:{{ vm.name }}">{% else %}<input type="checkbox" disabled>{% endif %}</td>
   <td><a href="/devices/{{ vm.vmid }}" title="Open monitoring detail (PVE / AD / Entra / Intune)">{{ vm.vmid }}</a></td>
   <td>
@@ -79,8 +84,8 @@ async function refreshVms() {
       <br><small style="color:var(--ink-muted);" title="Provisioned from this sequence">sequence: {{ vm.sequence_name }}</small>
     {% endif %}
   </td>
-  <td>
-    {{ vm.hostname or '—' }}
+  <td data-live-field="hostname">
+    <span data-live-hostname>{{ vm.hostname or '—' }}</span>
     {% if vm.part_of_domain and vm.domain %}
       <br><span class="badge badge-green" title="{{ vm.hostname_join_title or 'Active Directory domain-joined' }}" data-join-source="{{ vm.hostname_join_source or 'ad' }}">{{ vm.domain }}</span>
     {% elif vm.hybrid_joined %}
@@ -98,11 +103,12 @@ async function refreshVms() {
       <br><small style="color:var(--ink-muted);">{{ vm.os_caption | replace('Microsoft ', '') }}{% if vm.os_build %} · build {{ vm.os_build }}{% endif %}</small>
     {% endif %}
   </td>
-  <td>
+  <td data-live-field="ip">
     {% if vm.ip_address %}<code>{{ vm.ip_address }}</code>{% else %}—{% endif %}
   </td>
-  <td>
-    {% if vm.status == 'running' %}<span class="status-green">{{ vm.status }}</span>{% else %}{{ vm.status }}{% endif %}
+  <td data-live-field="status">
+    <span data-live-status class="{% if vm.status == 'running' %}status-green{% endif %}">{{ vm.status }}</span>
+    <span data-live-qga style="color:var(--ink-muted);"></span>
     {% if vm.monitor_checked_at or vm.monitor_probed_at %}
       <br>
       <small style="color:var(--ink-muted);">
@@ -197,6 +203,10 @@ async function refreshVms() {
       <button class="action-btn" type="button" title="Send Enter" style="color:var(--ms-blue-dark);"
               data-vm-action="sendkey-ret" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,10 4,15 9,20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
+      <button class="action-btn" type="button" title="Screenshot" style="color:var(--ms-blue-dark);"
+              data-vm-action="screenshot" data-vmid="{{ vm.vmid }}" data-vm-name="{{ vm.name }}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
       </button>
       <span style="color:var(--line);margin:0 2px;">|</span>
     {% else %}
@@ -445,6 +455,90 @@ function postAction(url, fields) {
   f.submit();
 }
 
+function patchFleetRow(row) {
+  if (!row || !row.vmid) return;
+  var tr = document.querySelector('tr[data-live-vmid="' + row.vmid + '"]');
+  if (!tr) return;
+  if (row.status) {
+    var status = tr.querySelector('[data-live-status]');
+    if (status) {
+      status.textContent = row.status;
+      status.className = row.status === 'running' ? 'status-green' : '';
+    }
+  }
+  if (row.qga) {
+    var qga = tr.querySelector('[data-live-qga]');
+    if (qga) qga.textContent = ' / QGA ' + row.qga;
+  }
+  if (row.ip_address) {
+    var ip = tr.querySelector('[data-live-field="ip"]');
+    if (ip) ip.innerHTML = '<code>' + _htmlEsc(row.ip_address) + '</code>';
+  }
+  if (row.hostname) {
+    var host = tr.querySelector('[data-live-hostname]');
+    if (host) host.textContent = row.hostname;
+  }
+}
+
+function openScreenshotModal(vmid, imageUrl) {
+  var existing = document.getElementById('vm-screenshot-modal');
+  if (existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'vm-screenshot-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;';
+  modal.innerHTML =
+    '<div style="background:var(--panel);border:1px solid var(--line);border-radius:6px;max-width:min(1100px,96vw);max-height:94vh;padding:12px;color:var(--ink);box-shadow:0 12px 40px rgba(0,0,0,0.45);">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">'
+    + '<strong>VM ' + _htmlEsc(String(vmid)) + ' screenshot</strong>'
+    + '<button type="button" id="vmScreenshotClose">Close</button>'
+    + '</div>'
+    + '<img src="' + _htmlEsc(imageUrl) + '" alt="VM screenshot" style="display:block;max-width:calc(96vw - 48px);max-height:calc(94vh - 70px);background:#000;border:1px solid var(--line);">';
+  document.body.appendChild(modal);
+  document.getElementById('vmScreenshotClose').onclick = function() { modal.remove(); };
+  modal.addEventListener('click', function(ev) { if (ev.target === modal) modal.remove(); });
+}
+
+function connectLiveFleet() {
+  if (!window.WebSocket) return;
+  var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  var ws = new WebSocket(scheme + location.host + '/api/live/ws');
+  window.liveFleetSocket = ws;
+  ws.addEventListener('open', function() {
+    ws.send(JSON.stringify({type: 'subscribe', topics: ['fleet', 'jobs', 'runs']}));
+  });
+  ws.addEventListener('message', function(ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.type === 'patch' && msg.topic === 'fleet') {
+      (msg.rows || []).forEach(patchFleetRow);
+      return;
+    }
+    if (msg.type === 'snapshot' && msg.topic === 'fleet') {
+      (msg.data && msg.data.rows || []).forEach(patchFleetRow);
+      return;
+    }
+    if (msg.type === 'event' && msg.event === 'sweep_started') {
+      var btn = document.getElementById('fleet-refresh-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
+      return;
+    }
+    if (msg.type === 'event' && msg.event === 'sweep_finished') {
+      var doneBtn = document.getElementById('fleet-refresh-btn');
+      if (doneBtn) { doneBtn.disabled = false; doneBtn.textContent = 'Refresh'; }
+      return;
+    }
+    if (msg.type === 'screenshot.result' && msg.image_url) {
+      openScreenshotModal(msg.vmid, msg.image_url);
+      return;
+    }
+    if (msg.type === 'error' && msg.error === 'screenshot_failed') {
+      alert('Screenshot failed: ' + (msg.detail || 'unknown error'));
+      return;
+    }
+  });
+}
+connectLiveFleet();
+
 // -----------------------------------------------------------------------
 // Delegated click handler for every VM action button.
 // We route through data-* attributes (HTML-context-safe) instead of
@@ -495,6 +589,18 @@ document.addEventListener('click', function(ev) {
       break;
     case 'sendkey-ret':
       postAction('/api/vms/' + vmid + '/sendkey', {key: 'ret'});
+      break;
+    case 'screenshot':
+      if (window.liveFleetSocket && window.liveFleetSocket.readyState === WebSocket.OPEN) {
+        window.liveFleetSocket.send(JSON.stringify({
+          type: 'screenshot.request',
+          correlation_id: 'vm-' + vmid + '-' + Date.now(),
+          vmid: Number(vmid),
+          format: 'png'
+        }));
+      } else {
+        alert('Live WebSocket is not connected yet.');
+      }
       break;
   }
 });

@@ -245,6 +245,28 @@ def test_run_content_manifest_is_resolved_per_run(pg_conn):
     ]
 
 
+def test_content_records_validate_content_type_and_reboot_behavior(pg_conn):
+    from web import ts_engine_pg
+
+    with pytest.raises(ValueError, match="content_type must be one of"):
+        ts_engine_pg.create_content_item(
+            pg_conn, name="bad-content", content_type="blob"
+        )
+
+    item_id = ts_engine_pg.create_content_item(
+        pg_conn, name="valid-package", content_type="package"
+    )
+    with pytest.raises(ValueError, match="reboot_behavior must be one of"):
+        ts_engine_pg.create_content_version(
+            pg_conn,
+            content_item_id=item_id,
+            version="1.0",
+            sha256="f" * 64,
+            source_uri="https://content.local/valid-package.msi",
+            reboot_behavior="surprise",
+        )
+
+
 def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
     from web import ts_engine_pg
 
@@ -302,6 +324,62 @@ def test_content_manifest_can_be_pinned_from_step_content_refs(pg_conn):
             "metadata": {"install_command": "msiexec.exe /i {path} /qn"},
         }
     ]
+
+
+def test_claimed_package_step_includes_resolved_content_manifest(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Package Action")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Install package",
+        kind="install_package",
+        phase="full_os",
+        position=0,
+        params={"install_command": "msiexec.exe /i {path} /qn"},
+        content_refs=["notepad-plus-plus"],
+    )
+    item_id = ts_engine_pg.create_content_item(
+        pg_conn, name="notepad-plus-plus", content_type="package"
+    )
+    ts_engine_pg.create_content_version(
+        pg_conn,
+        content_item_id=item_id,
+        version="8.6.0",
+        sha256="9" * 64,
+        source_uri="https://content.local/npp.msi",
+        size_bytes=4096,
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn,
+        sequence_version_id=version_id,
+        resolve_content=True,
+    )
+
+    claim = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="osd-1"
+    )
+
+    assert claim["kind"] == "install_package"
+    assert claim["params_json"] == {
+        "install_command": "msiexec.exe /i {path} /qn",
+    }
+    assert len(claim["content"]) == 1
+    content = claim["content"][0]
+    assert content["logical_name"] == "notepad-plus-plus"
+    assert content["content_type"] == "package"
+    assert content["version"] == "8.6.0"
+    assert content["sha256"] == "9" * 64
+    assert content["source_uri"] == "https://content.local/npp.msi"
+    assert content["required_phase"] == "full_os"
+    assert content["staging_path"] == (
+        "C:\\ProgramData\\ProxmoxVEAutopilot\\Content"
+        "\\notepad-plus-plus\\8.6.0"
+    )
+    assert content["status"] == "pending"
 
 
 def test_manifest_item_staging_state_tracks_attempts_and_errors(pg_conn):

@@ -21,6 +21,8 @@ from psycopg.types.json import Jsonb
 
 
 SCHEMA_VERSION = 1
+CONTENT_TYPES = frozenset({"app", "package", "script", "driver", "os_image"})
+REBOOT_BEHAVIORS = frozenset({"none", "optional", "required", "deferred"})
 
 
 SCHEMA = """
@@ -176,7 +178,7 @@ CREATE TABLE IF NOT EXISTS ts_run_step_logs (
 CREATE TABLE IF NOT EXISTS ts_content_items (
     id uuid PRIMARY KEY,
     name text NOT NULL UNIQUE,
-    content_type text NOT NULL,
+    content_type text NOT NULL CHECK (content_type IN ('app', 'package', 'script', 'driver', 'os_image')),
     description text,
     enabled boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
@@ -192,7 +194,7 @@ CREATE TABLE IF NOT EXISTS ts_content_versions (
     source_uri text NOT NULL,
     architecture text NOT NULL DEFAULT 'any',
     target_os text NOT NULL DEFAULT 'any',
-    reboot_behavior text NOT NULL DEFAULT 'none',
+    reboot_behavior text NOT NULL DEFAULT 'none' CHECK (reboot_behavior IN ('none', 'optional', 'required', 'deferred')),
     conditions_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL,
@@ -768,6 +770,9 @@ def create_content_item(
     content_type: str,
     description: str = "",
 ) -> str:
+    if content_type not in CONTENT_TYPES:
+        allowed = ", ".join(sorted(CONTENT_TYPES))
+        raise ValueError(f"content_type must be one of: {allowed}")
     item_id = _new_id()
     now = _now()
     conn.execute(
@@ -797,6 +802,9 @@ def create_content_version(
     metadata: Optional[dict] = None,
     created_by: Optional[str] = None,
 ) -> str:
+    if reboot_behavior not in REBOOT_BEHAVIORS:
+        allowed = ", ".join(sorted(REBOOT_BEHAVIORS))
+        raise ValueError(f"reboot_behavior must be one of: {allowed}")
     version_id = _new_id()
     conn.execute(
         """
@@ -1421,7 +1429,9 @@ def claim_next_step(
         "SELECT * FROM ts_run_plan_steps WHERE id = %s",
         (row["id"],),
     ).fetchone()
-    return _normalize_step(claimed)
+    normalized = _normalize_step(claimed)
+    normalized["content"] = content_for_step(conn, normalized["id"])
+    return normalized
 
 
 def get_step(conn: Connection, step_id: str) -> dict:

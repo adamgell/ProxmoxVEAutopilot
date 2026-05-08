@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_head, empty_state %}
+{% from "_macros.html" import page_head %}
 {% block title %}Jobs - Proxmox VE Autopilot{% endblock %}
 {% block content %}
 {{ page_head("Jobs", "Live queue, worker state, pause gates, and execution history.") }}
@@ -12,22 +12,22 @@
 <section class="cockpit-grid" style="margin-bottom:14px;">
   <div class="cockpit-metric cockpit-col-3 cockpit-scanline">
     <div class="cockpit-metric-label">Active Work</div>
-    <div class="cockpit-metric-value">{{ running_count }}</div>
-    <div class="cockpit-metric-note">{{ paused_count }} pause gates armed</div>
+    <div id="jobs-running-count" class="cockpit-metric-value">{{ running_count }}</div>
+    <div id="jobs-paused-count" class="cockpit-metric-note">{{ paused_count }} pause gates armed</div>
   </div>
   <div class="cockpit-metric cockpit-col-3">
     <div class="cockpit-metric-label">Completed</div>
-    <div class="cockpit-metric-value">{{ complete_count }}</div>
+    <div id="jobs-complete-count" class="cockpit-metric-value">{{ complete_count }}</div>
     <div class="cockpit-metric-note">successful lifecycle runs</div>
   </div>
   <div class="cockpit-metric cockpit-col-3">
     <div class="cockpit-metric-label">Failed</div>
-    <div class="cockpit-metric-value">{{ failed_count }}</div>
+    <div id="jobs-failed-count" class="cockpit-metric-value">{{ failed_count }}</div>
     <div class="cockpit-metric-note">need operator review</div>
   </div>
   <div class="cockpit-metric cockpit-col-3">
     <div class="cockpit-metric-label">Total Jobs</div>
-    <div class="cockpit-metric-value">{{ jobs | length }}</div>
+    <div id="jobs-total-count" class="cockpit-metric-value">{{ jobs | length }}</div>
     <div class="cockpit-metric-note">newest first</div>
   </div>
 </section>
@@ -45,7 +45,6 @@
   </div>
 </section>
 
-{% if jobs %}
 <table id="jobs-table" class="cockpit-scanline">
   <thead>
     <tr>
@@ -58,11 +57,12 @@
     </tr>
   </thead>
   <tbody>
+  {% if jobs %}
   {% for job in jobs %}
-    <tr>
+    <tr data-job-id="{{ job.id }}">
       <td><a class="mono" href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
       <td>{{ job.playbook }}</td>
-      <td>
+      <td data-job-field="status">
         {%- if job.paused -%}
           <span class="badge warn" title="Template build paused - waiting for operator Resume">PAUSED</span>
         {%- elif job.status == 'pending' -%}
@@ -80,13 +80,78 @@
         {%- endif -%}
       </td>
       <td>{{ job.started[:19] }}</td>
-      <td>{{ job.duration or '' }}</td>
+      <td data-job-field="duration">{{ job.duration or '' }}</td>
       <td><code style="font-size:11px;">{{ job.args | tojson }}</code></td>
     </tr>
   {% endfor %}
+  {% else %}
+    <tr><td colspan="6" style="color:var(--ink-muted);text-align:center;padding:16px;">No jobs yet.</td></tr>
+  {% endif %}
   </tbody>
 </table>
-{% else %}
-{{ empty_state("No jobs yet.", action_href="/provision", action_label="Provision VMs", hint="Jobs will appear here as soon as provisioning, template, hash, cloud, or sequence commands are queued.") }}
-{% endif %}
+<script>
+function jobsEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    function(c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; });
+}
+function jobsStatusBadge(job) {
+  if (job.paused) return '<span class="badge warn" title="Template build paused - waiting for operator Resume">PAUSED</span>';
+  if (job.status === 'pending') return '<span class="badge unknown" title="Waiting for a builder to claim this job">PENDING</span>';
+  if (job.status === 'running') return '<span class="badge pending">RUNNING</span>';
+  if (job.status === 'complete') return '<span class="badge ok">OK</span>';
+  if (job.status === 'orphaned') return '<span class="badge warn" title="Builder stopped heartbeating; subprocess fate unknown">ORPHANED</span>';
+  if (job.status === 'failed') return '<span class="badge error">FAILED</span>';
+  return '<span class="badge error">' + jobsEsc(String(job.status || 'unknown').toUpperCase()) + '</span>';
+}
+function renderJobsTable(jobs) {
+  var tbody = document.querySelector('#jobs-table tbody');
+  if (!tbody) return;
+  if (!jobs.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--ink-muted);text-align:center;padding:16px;">No jobs yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = jobs.map(function(job) {
+    return '<tr data-job-id="' + jobsEsc(job.id) + '">' +
+      '<td><a class="mono" href="/jobs/' + encodeURIComponent(job.id) + '">' + jobsEsc(job.id) + '</a></td>' +
+      '<td>' + jobsEsc(job.playbook || '') + '</td>' +
+      '<td data-job-field="status">' + jobsStatusBadge(job) + '</td>' +
+      '<td>' + jobsEsc(String(job.started || '').slice(0, 19)) + '</td>' +
+      '<td data-job-field="duration">' + jobsEsc(job.duration || '') + '</td>' +
+      '<td><code style="font-size:11px;">' + jobsEsc(JSON.stringify(job.args || {})) + '</code></td>' +
+      '</tr>';
+  }).join('');
+}
+function applyLiveJobsTable(payload) {
+  var jobs = payload && payload.table && payload.table.jobs || [];
+  var running = jobs.filter(function(j) { return j.status === 'running'; }).length;
+  var failed = jobs.filter(function(j) { return j.status === 'failed'; }).length;
+  var complete = jobs.filter(function(j) { return j.status === 'complete'; }).length;
+  var paused = jobs.filter(function(j) { return !!j.paused; }).length;
+  document.getElementById('jobs-running-count').textContent = running;
+  document.getElementById('jobs-paused-count').textContent = paused + ' pause gates armed';
+  document.getElementById('jobs-complete-count').textContent = complete;
+  document.getElementById('jobs-failed-count').textContent = failed;
+  document.getElementById('jobs-total-count').textContent = jobs.length;
+  renderJobsTable(jobs);
+}
+function connectLiveJobsPage() {
+  if (!window.WebSocket) return;
+  var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  var ws = new WebSocket(scheme + location.host + '/api/live/ws');
+  ws.addEventListener('open', function() {
+    ws.send(JSON.stringify({type: 'subscribe', topics: ['jobs']}));
+  });
+  ws.addEventListener('message', function(ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.topic === 'jobs' && (msg.type === 'snapshot' || msg.type === 'patch')) {
+      applyLiveJobsTable(msg.data || {});
+    }
+  });
+  ws.addEventListener('close', function() {
+    setTimeout(connectLiveJobsPage, 3000);
+  });
+}
+connectLiveJobsPage();
+</script>
 {% endblock %}

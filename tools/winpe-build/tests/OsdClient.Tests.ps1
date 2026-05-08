@@ -43,7 +43,8 @@ Describe 'OsdClient.ps1 contract' {
         $script:Body | Should -Match "'install_qga' \{ Invoke-InstallQga \}"
         $script:Body | Should -Match "'fix_recovery_partition' \{ Invoke-RecoveryFix \}"
         $script:Body | Should -Match "'verify_qga' \{ Invoke-VerifyQga \}"
-        $script:Body | Should -Match "'capture_autopilot_hash' \{ Invoke-CaptureAutopilotHash"
+        $script:Body | Should -Match "'capture_autopilot_hash' \{"
+        $script:Body | Should -Match 'Invoke-CaptureAutopilotHash -Config \$Config -BearerToken \$BearerToken'
         $script:Body | Should -Match "'handoff_to_oobe' \{ Invoke-HandoffToOobe \}"
         $script:Body | Should -Match 'qemu-ga-x86_64\.msi'
         $script:Body | Should -Match 'Get-Service -Name QEMU-GA'
@@ -62,7 +63,8 @@ Describe 'OsdClient.ps1 contract' {
 
     It 'supports generic install_package content actions' {
         $script:Body | Should -Match 'function Invoke-InstallPackage'
-        $script:Body | Should -Match "'install_package' \{ Invoke-InstallPackage -Action"
+        $script:Body | Should -Match "'install_package' \{"
+        $script:Body | Should -Match 'Invoke-InstallPackage -Action \$Action -Config \$Config -BearerToken \$BearerToken'
         $script:Body | Should -Match 'Invoke-WebRequest'
         $script:Body | Should -Match 'Get-FileHash'
         $script:Body | Should -Match 'Start-Process'

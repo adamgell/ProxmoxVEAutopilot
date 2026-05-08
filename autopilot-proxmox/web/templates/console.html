@@ -109,6 +109,7 @@
     <button class="toggle-btn" onclick="togglePanel();" title="Toggle controls panel">Controls</button>
     <button onclick="sendCtrlAltDel();" title="Send Ctrl+Alt+Del">Ctrl+Alt+Del</button>
     <button onclick="rfbInstance && rfbInstance.focus();" title="Give the console keyboard focus">Focus</button>
+    <button onclick="requestScreenshot();" title="Capture a one-shot console screenshot">Screenshot</button>
     <button onclick="reconnect();" title="Fetch a new ticket and reconnect">Reconnect</button>
   </div>
 </div>
@@ -161,6 +162,7 @@ const VMID = {{ vmid }};
 const statusEl = document.getElementById('status');
 const screenEl = document.getElementById('screen');
 let rfb = null;
+let liveWs = null;
 
 function setStatus(text, cls) {
   statusEl.textContent = text;
@@ -185,7 +187,8 @@ async function connect() {
   const wsScheme = (location.protocol === 'https:') ? 'wss://' : 'ws://';
   const wsUrl = wsScheme + location.host + '/api/vms/' + VMID + '/vnc-ws' +
                 '?port=' + encodeURIComponent(ticket.port) +
-                '&vncticket=' + encodeURIComponent(ticket.ticket);
+                '&vncticket=' + encodeURIComponent(ticket.ticket) +
+                '&node=' + encodeURIComponent(ticket.node || '');
 
   setStatus('opening console websocket...', 'status-warn');
   if (rfb) { try { rfb.disconnect(); } catch (e) {} rfb = null; }
@@ -210,6 +213,58 @@ window.reconnect      = () => connect();
 window.rfbInstance    = null;
 
 connect().then(() => { window.rfbInstance = rfb; });
+
+function openScreenshot(imageUrl) {
+  const existing = document.getElementById('console-screenshot-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'console-screenshot-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;';
+  modal.innerHTML = `
+    <div style="background:#0d121e;border:1px solid rgba(142,163,191,0.28);border-radius:6px;max-width:min(1100px,96vw);max-height:94vh;padding:12px;color:#edf4ff;box-shadow:0 12px 40px rgba(0,0,0,0.45);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+        <strong>VM ${VMID} screenshot</strong>
+        <button type="button" id="consoleScreenshotClose">Close</button>
+      </div>
+      <img src="${imageUrl}" alt="VM screenshot" style="display:block;max-width:calc(96vw - 48px);max-height:calc(94vh - 70px);background:#000;border:1px solid rgba(142,163,191,0.28);">
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('consoleScreenshotClose').onclick = () => modal.remove();
+  modal.addEventListener('click', ev => { if (ev.target === modal) modal.remove(); });
+}
+
+function ensureLiveWs() {
+  if (liveWs && liveWs.readyState === WebSocket.OPEN) return liveWs;
+  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  liveWs = new WebSocket(scheme + location.host + '/api/live/ws');
+  liveWs.addEventListener('open', () => {
+    liveWs.send(JSON.stringify({type: 'subscribe', topics: ['fleet'], vmids: [VMID]}));
+  });
+  liveWs.addEventListener('message', ev => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'screenshot.result' && msg.image_url) {
+      setStatus('screenshot captured', 'status-ok');
+      openScreenshot(msg.image_url);
+    } else if (msg.type === 'error' && msg.error === 'screenshot_failed') {
+      setStatus('screenshot failed: ' + (msg.detail || 'unknown'), 'status-err');
+    }
+  });
+  return liveWs;
+}
+
+window.requestScreenshot = () => {
+  const ws = ensureLiveWs();
+  const send = () => ws.send(JSON.stringify({
+    type: 'screenshot.request',
+    correlation_id: 'console-' + VMID + '-' + Date.now(),
+    vmid: VMID,
+    format: 'png',
+  }));
+  setStatus('requesting screenshot...', 'status-warn');
+  if (ws.readyState === WebSocket.OPEN) send();
+  else ws.addEventListener('open', send, {once: true});
+};
 
 // --- Controls panel: power, type-text, presets ---
 const PANEL_KEY = 'pveautopilot_console_panel_open_v1';
