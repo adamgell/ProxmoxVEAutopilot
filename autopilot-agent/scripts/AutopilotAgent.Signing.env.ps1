@@ -39,10 +39,8 @@ $script:AzureCliPath = Resolve-RequiredCommand az
 $script:DotNetPath = Resolve-RequiredCommand dotnet
 $script:WixPath = Resolve-RequiredCommand wix
 az account show | Out-Null
-try {
-    az account get-access-token --scope $AuthScope --output none | Out-Null
-}
-catch {
+az account get-access-token --scope $AuthScope --output none | Out-Null
+if ($LASTEXITCODE -ne 0) {
     throw "Azure CLI is logged in, but cannot mint an Artifact Signing token. Run: az login --tenant <tenant-id> --scope `"$AuthScope`""
 }
 
