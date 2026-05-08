@@ -1,69 +1,75 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<!-- Hint to the UA so native widgets (scrollbars, form controls,
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <!-- Hint to the UA so native widgets (scrollbars, form controls,
      `<select>` menus) pick up dark styling automatically alongside
      our own tokens. -->
-<meta name="color-scheme" content="light dark">
-<title>{% block title %}Proxmox VE Autopilot{% endblock %}</title>
-<link rel="icon" type="image/svg+xml" href="/auth/logo">
-<!-- Apply the saved theme BEFORE the body paints to avoid a
+    <meta name="color-scheme" content="light dark" />
+    <title>{% block title %}Proxmox VE Autopilot{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/auth/logo" />
+    <!-- Apply the saved theme BEFORE the body paints to avoid a
      flash-of-light when an operator who prefers dark mode loads the
      page.  Synchronous; tiny; guarded against disabled localStorage
      (private windows, etc.). -->
-<script>
-(function() {
-  try {
-    var saved = null;
-    try { saved = localStorage.getItem('autopilot_theme'); } catch (e) {}
-    var theme = saved || 'dark';
-    if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-  } catch (e) {}
-})();
-</script>
-<!--
+    <script>
+      (function () {
+        try {
+          var saved = null;
+          try {
+            saved = localStorage.getItem("autopilot_theme");
+          } catch (e) {}
+          var theme = saved || "dark";
+          if (theme === "dark")
+            document.documentElement.setAttribute("data-theme", "dark");
+        } catch (e) {}
+      })();
+    </script>
+    <!--
   Typography: IBM Plex Sans + Mono.  Plex has real engineering
   weight (IBM designed it in-house for their product UI) so it
   reads as "infrastructure tool" rather than "SaaS dashboard."
   Mono is reserved for SIDs / GUIDs / DNs / IP addrs — the places
   where tabular alignment genuinely matters.
 -->
-<link rel="preconnect" href="https://fonts.bunny.net">
-<link href="https://fonts.bunny.net/css?family=ibm-plex-sans:400,500,600,700|ibm-plex-mono:400,500&display=swap" rel="stylesheet">
-<style>
-/* -----------------------------------------------------------------
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link
+      href="https://fonts.bunny.net/css?family=ibm-plex-sans:400,500,600,700|ibm-plex-mono:400,500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* -----------------------------------------------------------------
    Design tokens.  MS-palette accents + slate-navy chrome (same
    #1E1F26 as the logo background) + Bliss-sky page wash so the
    authenticated app feels continuous with the login page.
    ----------------------------------------------------------------- */
-:root {
-  --slate-900: #1E1F26;
-  --slate-800: #262831;
-  --slate-700: #2f323d;
-  --slate-600: #434654;
-  --slate-500: #6b7080;
+      :root {
+        --slate-900: #1e1f26;
+        --slate-800: #262831;
+        --slate-700: #2f323d;
+        --slate-600: #434654;
+        --slate-500: #6b7080;
 
-  --ink: #1a1f2b;
-  --ink-muted: #5a6573;
-  --ink-soft: #8892a0;
+        --ink: #1a1f2b;
+        --ink-muted: #5a6573;
+        --ink-soft: #8892a0;
 
-  --line: #e3e7ec;
-  --line-strong: #c9d0d8;
-  --stripe: #f8fafb;
-  --hover: #eef5fc;
-  --panel: #ffffff;
+        --line: #e3e7ec;
+        --line-strong: #c9d0d8;
+        --stripe: #f8fafb;
+        --hover: #eef5fc;
+        --panel: #ffffff;
 
-  /* Surfaces below --panel in the visual hierarchy.  --surface-muted
+        /* Surfaces below --panel in the visual hierarchy.  --surface-muted
      is the soft gray behind table headers, <pre> blocks, and the
      monitor-status strip.  --input-bg is the fill for text inputs —
      white on light, slate on dark.  Both get redefined under
      [data-theme="dark"] so every downstream rule inherits for free. */
-  --surface-muted: #f3f6f9;
-  --input-bg:      #ffffff;
+        --surface-muted: #f3f6f9;
+        --input-bg: #ffffff;
 
-  /* Microsoft brand palette.  The bright values match the chevrons
+        /* Microsoft brand palette.  The bright values match the chevrons
      on /auth/logo and the Sign-in button on the login page — use
      them for DECORATIVE elements (logo backgrounds, the header
      rainbow accent, the live-dot on the user chip).  For
@@ -73,2537 +79,3253 @@
      white (#00A4EF = 2.8:1 for text, below the 4.5:1 AA bar; bright
      green is even worse at 2.4:1).  The -dark values clear
      AA (4.5:1+) for small text and UI components alike. */
-  --ms-red:    #F25022;
-  --ms-green:  #7FBA00;
-  --ms-blue:   #00A4EF;
-  --ms-yellow: #FFB900;
+        --ms-red: #f25022;
+        --ms-green: #7fba00;
+        --ms-blue: #00a4ef;
+        --ms-yellow: #ffb900;
 
-  --ms-red-dark:    #bb3c17;  /* 4.9:1 on white — buttons/text */
-  --ms-green-dark:  #4a7500;  /* 5.2:1 on white — buttons/text */
-  --ms-blue-dark:   #0069a8;  /* 5.9:1 on white — focus + links */
-  --ms-yellow-dark: #8a6400;  /* 5.4:1 on white — text only */
+        --ms-red-dark: #bb3c17; /* 4.9:1 on white — buttons/text */
+        --ms-green-dark: #4a7500; /* 5.2:1 on white — buttons/text */
+        --ms-blue-dark: #0069a8; /* 5.9:1 on white — focus + links */
+        --ms-yellow-dark: #8a6400; /* 5.4:1 on white — text only */
 
-  /* Semantic pill tints.  Every pair below is manually verified at
+        /* Semantic pill tints.  Every pair below is manually verified at
      ≥4.5:1 (WCAG AA for small text).  Keep the relationship when
      adding new tints — never a bright MS color + white text. */
-  --ok-bg:      #e4f4d9;  --ok-fg:      #2e5500;   /* 7.4:1 */
-  --warn-bg:    #fff3cf;  --warn-fg:    #6a4600;   /* 7.1:1 */
-  --bad-bg:     #fce3dc;  --bad-fg:     #8a1d07;   /* 7.0:1 */
-  --info-bg:    #dcecfb;  --info-fg:    #054e75;   /* 7.3:1 */
-  --neutral-bg: #e7ebef;  --neutral-fg: #3a4452;   /* 8.1:1 */
+        --ok-bg: #e4f4d9;
+        --ok-fg: #2e5500; /* 7.4:1 */
+        --warn-bg: #fff3cf;
+        --warn-fg: #6a4600; /* 7.1:1 */
+        --bad-bg: #fce3dc;
+        --bad-fg: #8a1d07; /* 7.0:1 */
+        --info-bg: #dcecfb;
+        --info-fg: #054e75; /* 7.3:1 */
+        --neutral-bg: #e7ebef;
+        --neutral-fg: #3a4452; /* 8.1:1 */
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --shadow-1: 0 1px 2px rgba(23,32,47,0.06);
-  --shadow-2: 0 1px 3px rgba(23,32,47,0.08), 0 8px 24px rgba(23,32,47,0.06);
-  --shadow-3: 0 2px 6px rgba(23,32,47,0.10), 0 16px 40px rgba(23,32,47,0.10);
+        --radius-sm: 4px;
+        --radius-md: 6px;
+        --radius-lg: 10px;
+        --shadow-1: 0 1px 2px rgba(23, 32, 47, 0.06);
+        --shadow-2:
+          0 1px 3px rgba(23, 32, 47, 0.08), 0 8px 24px rgba(23, 32, 47, 0.06);
+        --shadow-3:
+          0 2px 6px rgba(23, 32, 47, 0.1), 0 16px 40px rgba(23, 32, 47, 0.1);
 
-  /* Page-wash gradient — split out as a var so dark mode can swap
+        /* Page-wash gradient — split out as a var so dark mode can swap
      it without re-declaring the entire body rule. */
-  --page-wash:
-    linear-gradient(180deg,
-      rgba(166,207,245,0.35) 0%,
-      rgba(166,207,245,0.12) 200px,
-      rgba(255,255,255,0)    400px),
-    #eef2f5;
-}
+        --page-wash:
+          linear-gradient(
+            180deg,
+            rgba(166, 207, 245, 0.35) 0%,
+            rgba(166, 207, 245, 0.12) 200px,
+            rgba(255, 255, 255, 0) 400px
+          ),
+          #eef2f5;
+      }
 
-/* =================================================================
+      /* =================================================================
    Dark theme.  Activated by <html data-theme="dark"> (set by the
    nav-bar toggle which persists to localStorage + falls back to
    prefers-color-scheme: dark).  Same token names, different values
    — every rule below the :root block reads from these so none of
    the per-component CSS needs to care.
    ================================================================= */
-html[data-theme="dark"] {
-  --slate-900: #0a0d14;           /* page bg */
-  --slate-800: #11151e;           /* panel bg / buttons */
-  --slate-700: #1a1f2b;           /* header, deep panels */
-  --slate-600: #262b39;           /* elevated cards */
-  --slate-500: #353a48;           /* borders */
+      html[data-theme="dark"] {
+        --slate-900: #0a0d14; /* page bg */
+        --slate-800: #11151e; /* panel bg / buttons */
+        --slate-700: #1a1f2b; /* header, deep panels */
+        --slate-600: #262b39; /* elevated cards */
+        --slate-500: #353a48; /* borders */
 
-  --ink:        #e6ebf2;          /* primary text */
-  --ink-muted:  #9aa4b2;          /* secondary text — 7.1:1 on panel */
-  --ink-soft:   #6b7686;          /* disabled/hint — UI use only */
+        --ink: #e6ebf2; /* primary text */
+        --ink-muted: #9aa4b2; /* secondary text — 7.1:1 on panel */
+        --ink-soft: #6b7686; /* disabled/hint — UI use only */
 
-  --line:        #262b39;         /* subtle borders between rows */
-  --line-strong: #353a48;
-  --stripe:      #151925;         /* zebra stripe on tables */
-  --hover:       #1e2635;         /* row hover — soft blue tint */
-  --panel:       #11151e;         /* cards + #content */
+        --line: #262b39; /* subtle borders between rows */
+        --line-strong: #353a48;
+        --stripe: #151925; /* zebra stripe on tables */
+        --hover: #1e2635; /* row hover — soft blue tint */
+        --panel: #11151e; /* cards + #content */
 
-  --surface-muted: #1a1f2b;       /* table head, pre, monitor-status */
-  --input-bg:      #0e1220;       /* text inputs — a shade below panel */
+        --surface-muted: #1a1f2b; /* table head, pre, monitor-status */
+        --input-bg: #0e1220; /* text inputs — a shade below panel */
 
-  /* MS palette stays identical — still the decorative DNA of the
+        /* MS palette stays identical — still the decorative DNA of the
      product — but the dark variants here are *lighter* than the
      light-mode -dark tokens so they maintain contrast on a dark
      panel instead of a white one. */
-  --ms-red-dark:    #ff7a55;      /* 5.0:1 on slate-800 */
-  --ms-green-dark:  #8fce1a;      /* 7.2:1 on slate-800 */
-  --ms-blue-dark:   #4ec0ff;      /* 7.4:1 on slate-800 */
-  --ms-yellow-dark: #ffcf3a;      /* 10.1:1 on slate-800 */
+        --ms-red-dark: #ff7a55; /* 5.0:1 on slate-800 */
+        --ms-green-dark: #8fce1a; /* 7.2:1 on slate-800 */
+        --ms-blue-dark: #4ec0ff; /* 7.4:1 on slate-800 */
+        --ms-yellow-dark: #ffcf3a; /* 10.1:1 on slate-800 */
 
-  /* Tints for badges: translucent so they read as glass against
+        /* Tints for badges: translucent so they read as glass against
      the slate panel rather than bright poster paint. */
-  --ok-bg:      rgba(127,186,0,0.18);   --ok-fg:      #a8e64a;  /* 7.8:1 */
-  --warn-bg:    rgba(255,185,0,0.18);   --warn-fg:    #ffd876;  /* 10:1 */
-  --bad-bg:     rgba(242,80,34,0.18);   --bad-fg:     #ff9475;  /* 5.6:1 */
-  --info-bg:    rgba(0,164,239,0.18);   --info-fg:    #7ccffc;  /* 8.7:1 */
-  --neutral-bg: rgba(255,255,255,0.06); --neutral-fg: #b8c0cc;  /* 9.4:1 */
+        --ok-bg: rgba(127, 186, 0, 0.18);
+        --ok-fg: #a8e64a; /* 7.8:1 */
+        --warn-bg: rgba(255, 185, 0, 0.18);
+        --warn-fg: #ffd876; /* 10:1 */
+        --bad-bg: rgba(242, 80, 34, 0.18);
+        --bad-fg: #ff9475; /* 5.6:1 */
+        --info-bg: rgba(0, 164, 239, 0.18);
+        --info-fg: #7ccffc; /* 8.7:1 */
+        --neutral-bg: rgba(255, 255, 255, 0.06);
+        --neutral-fg: #b8c0cc; /* 9.4:1 */
 
-  --shadow-1: 0 1px 2px rgba(0,0,0,0.5);
-  --shadow-2: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.5);
-  --shadow-3: 0 2px 6px rgba(0,0,0,0.5), 0 16px 40px rgba(0,0,0,0.6);
+        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+        --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.5);
+        --shadow-3:
+          0 2px 6px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.6);
 
-  /* Dark-mode page wash — swaps the Bliss-sky light wash for a
+        /* Dark-mode page wash — swaps the Bliss-sky light wash for a
      subtle deep-blue glow from the top, keeping the "sky at top"
      memory of the original without the daylight. */
-  --page-wash:
-    radial-gradient(ellipse 1200px 600px at 50% -20%,
-      rgba(0,105,168,0.25) 0%,
-      rgba(0,105,168,0.0)  60%),
-    #0a0d14;
-}
+        --page-wash:
+          radial-gradient(
+            ellipse 1200px 600px at 50% -20%,
+            rgba(0, 105, 168, 0.25) 0%,
+            rgba(0, 105, 168, 0) 60%
+          ),
+          #0a0d14;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Page + type reset.  Bliss-adjacent sky wash at the top of every
    page fades to neutral by row 400; keeps the login-page mood
    without making data tables sit on a photo.
    ----------------------------------------------------------------- */
-*, *::before, *::after { box-sizing: border-box; }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
 
-html, body { height: auto; }
-body {
-  margin: 0;
-  font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  font-size: 13.5px;
-  line-height: 1.5;
-  color: var(--ink);
-  background: var(--page-wash);
-  background-attachment: fixed;
-  min-height: 100vh;
-  animation: page-in 180ms ease-out;
-}
-@keyframes page-in {
-  from { opacity: 0; transform: translateY(2px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+      html,
+      body {
+        height: auto;
+      }
+      body {
+        margin: 0;
+        font-family:
+          "IBM Plex Sans",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        font-size: 13.5px;
+        line-height: 1.5;
+        color: var(--ink);
+        background: var(--page-wash);
+        background-attachment: fixed;
+        min-height: 100vh;
+        animation: page-in 180ms ease-out;
+      }
+      @keyframes page-in {
+        from {
+          opacity: 0;
+          transform: translateY(2px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
 
-/* Headings — tighter letter-spacing, heavier weight, real hierarchy. */
-h1, h2, h3, h4 {
-  font-family: "IBM Plex Sans", sans-serif;
-  color: var(--ink);
-  margin: 0 0 12px 0;
-  letter-spacing: 0;
-}
-h1 { font-size: 22px; font-weight: 600; }
-h2 { font-size: 16px; font-weight: 600; letter-spacing: 0;
-     margin-top: 20px; padding-bottom: 8px;
-     border-bottom: 1px solid var(--line); }
-h3 { font-size: 13.5px; font-weight: 600; color: var(--ink); }
-h4 { font-size: 12.5px; font-weight: 600; color: var(--ink-muted);
-     text-transform: uppercase; letter-spacing: 0.04em; }
+      /* Headings — tighter letter-spacing, heavier weight, real hierarchy. */
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-family: "IBM Plex Sans", sans-serif;
+        color: var(--ink);
+        margin: 0 0 12px 0;
+        letter-spacing: 0;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      h2 {
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0;
+        margin-top: 20px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      h3 {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      h4 {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--ink-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
 
-a { color: var(--ms-blue-dark); text-decoration: none; }
-a:hover { color: var(--ink); text-decoration: underline;
-          text-decoration-color: var(--ms-blue); text-underline-offset: 2px; }
-a:visited { color: var(--ms-blue-dark); }
+      a {
+        color: var(--ms-blue-dark);
+        text-decoration: none;
+      }
+      a:hover {
+        color: var(--ink);
+        text-decoration: underline;
+        text-decoration-color: var(--ms-blue);
+        text-underline-offset: 2px;
+      }
+      a:visited {
+        color: var(--ms-blue-dark);
+      }
 
-code, .mono {
-  font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.92em;
-  background: var(--stripe);
-  padding: 1px 5px;
-  border-radius: 3px;
-  color: var(--ink);
-}
+      code,
+      .mono {
+        font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.92em;
+        background: var(--stripe);
+        padding: 1px 5px;
+        border-radius: 3px;
+        color: var(--ink);
+      }
 
-hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
+      hr {
+        border: none;
+        border-top: 1px solid var(--line);
+        margin: 16px 0;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Header — sticky slate bar with the mark + wordmark + nav tabs +
    signed-in user.  Subtle MS-palette accent strip at the bottom
    edge (red-green-blue-yellow) ties the header to the logo.
    ----------------------------------------------------------------- */
-#header {
-  position: sticky; top: 0; z-index: 50;
-  background: var(--slate-900);
-  color: #ffffff;
-  box-shadow: 0 1px 0 rgba(0,0,0,0.25), var(--shadow-2);
-}
-#header::after {
-  /* 2px rainbow accent — the same color sequence as the chevron
+      #header {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: var(--slate-900);
+        color: #ffffff;
+        box-shadow:
+          0 1px 0 rgba(0, 0, 0, 0.25),
+          var(--shadow-2);
+      }
+      #header::after {
+        /* 2px rainbow accent — the same color sequence as the chevron
      logo (red, green, blue) plus a yellow closer.  Turns the
      header into a recognisable brand element even without reading
      the wordmark. */
-  content: "";
-  display: block; height: 2px;
-  background: linear-gradient(90deg,
-    var(--ms-red)    0%,   var(--ms-red)    25%,
-    var(--ms-green)  25%,  var(--ms-green)  50%,
-    var(--ms-blue)   50%,  var(--ms-blue)   75%,
-    var(--ms-yellow) 75%,  var(--ms-yellow) 100%);
-  opacity: 0.85;
-}
-.header-inner {
-  max-width: 1500px; margin: 0 auto;
-  padding: 0 20px;
-  min-height: 56px;
-  display: flex; align-items: center; gap: 24px;
-}
-.brand {
-  display: flex; align-items: center; gap: 11px;
-  color: #ffffff; text-decoration: none;
-  flex-shrink: 0;
-}
-.brand:hover { text-decoration: none; color: #ffffff; }
-.brand img { width: 32px; height: 32px; display: block;
-             box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-             border-radius: 6px; }
-.brand-stack { display: flex; flex-direction: column; line-height: 1.1; }
-.brand-title {
-  font-size: 14px; font-weight: 600; letter-spacing: 0;
-  color: #ffffff;
-}
-.brand-subtitle {
-  font-size: 10.5px; font-weight: 400; letter-spacing: 0.02em;
-  color: rgba(255,255,255,0.55); text-transform: uppercase;
-  margin-top: 1px;
-}
+        content: "";
+        display: block;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          var(--ms-red) 0%,
+          var(--ms-red) 25%,
+          var(--ms-green) 25%,
+          var(--ms-green) 50%,
+          var(--ms-blue) 50%,
+          var(--ms-blue) 75%,
+          var(--ms-yellow) 75%,
+          var(--ms-yellow) 100%
+        );
+        opacity: 0.85;
+      }
+      .header-inner {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 0 20px;
+        min-height: 56px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        color: #ffffff;
+        text-decoration: none;
+        flex-shrink: 0;
+      }
+      .brand:hover {
+        text-decoration: none;
+        color: #ffffff;
+      }
+      .brand img {
+        width: 32px;
+        height: 32px;
+        display: block;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        border-radius: 6px;
+      }
+      .brand-stack {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.1;
+      }
+      .brand-title {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: #ffffff;
+      }
+      .brand-subtitle {
+        font-size: 10.5px;
+        font-weight: 400;
+        letter-spacing: 0.02em;
+        color: rgba(255, 255, 255, 0.55);
+        text-transform: uppercase;
+        margin-top: 1px;
+      }
 
-#nav {
-  display: flex; align-items: stretch;
-  flex: 1;
-  min-height: 56px;
-  /* No overflow clipping here — dropdown panels rendered by the
+      #nav {
+        display: flex;
+        align-items: stretch;
+        flex: 1;
+        min-height: 56px;
+        /* No overflow clipping here — dropdown panels rendered by the
      .nav-item children need to escape the nav box vertically.
      A clipping context on either axis (overflow-x:auto was the
      previous value) truncates the panel.  The 6-tab grouped nav
      fits comfortably; the mobile hamburger takes over under 700px. */
-}
+      }
 
-/* Each top-level tab lives in a .nav-item (which may also host a
+      /* Each top-level tab lives in a .nav-item (which may also host a
    dropdown panel).  .nav-tab is the clickable element itself — it
    can be <a> (leaf tabs) or <button> (parents with dropdowns). */
-.nav-item { position: relative; display: flex; align-items: stretch; }
-.nav-tab {
-  display: inline-flex; align-items: center;
-  padding: 0 13px;
-  font-family: "IBM Plex Sans", sans-serif;
-  font-size: 13px; font-weight: 500;
-  color: rgba(255,255,255,0.72);
-  white-space: nowrap;
-  border: none;
-  border-bottom: 2px solid transparent;
-  transition: color 120ms, border-color 120ms, background 120ms;
-  text-decoration: none;
-  position: relative;
-  background: transparent;
-  cursor: pointer;
-  letter-spacing: inherit;
-  height: 100%;
-  min-height: 56px;
-  border-radius: 0;
-  gap: 6px;
-}
-.nav-tab:hover {
-  color: #ffffff;
-  background: rgba(255,255,255,0.04);
-  text-decoration: none;
-}
-.nav-tab.is-active {
-  color: #ffffff;
-  border-bottom-color: var(--ms-blue);
-  background: rgba(0,164,239,0.08);
-}
-.nav-tab:focus-visible {
-  outline: 2px solid var(--ms-blue);
-  outline-offset: -2px;
-}
-.nav-caret {
-  display: inline-block;
-  width: 8px; height: 8px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg) translate(-1px, -1px);
-  transition: transform 120ms;
-  opacity: 0.75;
-}
-.nav-item.is-open .nav-caret {
-  transform: rotate(-135deg) translate(-1px, -1px);
-}
+      .nav-item {
+        position: relative;
+        display: flex;
+        align-items: stretch;
+      }
+      .nav-tab {
+        display: inline-flex;
+        align-items: center;
+        padding: 0 13px;
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.72);
+        white-space: nowrap;
+        border: none;
+        border-bottom: 2px solid transparent;
+        transition:
+          color 120ms,
+          border-color 120ms,
+          background 120ms;
+        text-decoration: none;
+        position: relative;
+        background: transparent;
+        cursor: pointer;
+        letter-spacing: inherit;
+        height: 100%;
+        min-height: 56px;
+        border-radius: 0;
+        gap: 6px;
+      }
+      .nav-tab:hover {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.04);
+        text-decoration: none;
+      }
+      .nav-tab.is-active {
+        color: #ffffff;
+        border-bottom-color: var(--ms-blue);
+        background: rgba(0, 164, 239, 0.08);
+      }
+      .nav-tab:focus-visible {
+        outline: 2px solid var(--ms-blue);
+        outline-offset: -2px;
+      }
+      .nav-caret {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-right: 1.5px solid currentColor;
+        border-bottom: 1.5px solid currentColor;
+        transform: rotate(45deg) translate(-1px, -1px);
+        transition: transform 120ms;
+        opacity: 0.75;
+      }
+      .nav-item.is-open .nav-caret {
+        transform: rotate(-135deg) translate(-1px, -1px);
+      }
 
-/* Dropdown panel — slate-tinted card anchored to the tab. */
-.nav-dropdown {
-  display: none;
-  position: absolute;
-  top: 100%; left: 0;
-  min-width: 200px;
-  background: var(--slate-800);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-top: none;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  padding: 6px 0;
-  margin: 0;
-  list-style: none;
-  box-shadow: var(--shadow-2);
-  z-index: 60;
-}
-.nav-item.is-open > .nav-dropdown { display: block; }
-.nav-dropdown a {
-  display: block;
-  padding: 7px 16px;
-  color: rgba(255,255,255,0.82);
-  font-size: 13px; font-weight: 500;
-  text-decoration: none;
-  white-space: nowrap;
-  border-left: 2px solid transparent;
-  transition: background 120ms, color 120ms, border-color 120ms;
-}
-.nav-dropdown a:hover,
-.nav-dropdown a:focus-visible {
-  background: rgba(255,255,255,0.06);
-  color: #ffffff;
-  text-decoration: none;
-  outline: none;
-}
-.nav-dropdown a.is-active {
-  color: #ffffff;
-  background: rgba(0,164,239,0.12);
-  border-left-color: var(--ms-blue);
-}
+      /* Dropdown panel — slate-tinted card anchored to the tab. */
+      .nav-dropdown {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        min-width: 200px;
+        background: var(--slate-800);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-top: none;
+        border-radius: 0 0 var(--radius-md) var(--radius-md);
+        padding: 6px 0;
+        margin: 0;
+        list-style: none;
+        box-shadow: var(--shadow-2);
+        z-index: 60;
+      }
+      .nav-item.is-open > .nav-dropdown {
+        display: block;
+      }
+      .nav-dropdown a {
+        display: block;
+        padding: 7px 16px;
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 13px;
+        font-weight: 500;
+        text-decoration: none;
+        white-space: nowrap;
+        border-left: 2px solid transparent;
+        transition:
+          background 120ms,
+          color 120ms,
+          border-color 120ms;
+      }
+      .nav-dropdown a:hover,
+      .nav-dropdown a:focus-visible {
+        background: rgba(255, 255, 255, 0.06);
+        color: #ffffff;
+        text-decoration: none;
+        outline: none;
+      }
+      .nav-dropdown a.is-active {
+        color: #ffffff;
+        background: rgba(0, 164, 239, 0.12);
+        border-left-color: var(--ms-blue);
+      }
 
-/* Hamburger: desktop hides it, mobile drawer swaps in. */
-.nav-hamburger {
-  display: none;
-  align-items: center; justify-content: center;
-  width: 36px; height: 36px;
-  margin-left: auto;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.9);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  padding: 0;
-}
-.nav-hamburger:hover { background: rgba(255,255,255,0.15); color: #ffffff; }
-.nav-hamburger:focus-visible { outline: 2px solid var(--ms-blue); outline-offset: 2px; }
-.nav-hamburger svg { display: block; }
+      /* Hamburger: desktop hides it, mobile drawer swaps in. */
+      .nav-hamburger {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        margin-left: auto;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.9);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        padding: 0;
+      }
+      .nav-hamburger:hover {
+        background: rgba(255, 255, 255, 0.15);
+        color: #ffffff;
+      }
+      .nav-hamburger:focus-visible {
+        outline: 2px solid var(--ms-blue);
+        outline-offset: 2px;
+      }
+      .nav-hamburger svg {
+        display: block;
+      }
 
-/* Mobile drawer — hidden by default; shown via .is-open under 700px. */
-.nav-drawer {
-  display: none;
-  position: absolute;
-  top: 100%; left: 0; right: 0;
-  background: var(--slate-900);
-  border-top: 1px solid rgba(255,255,255,0.08);
-  box-shadow: var(--shadow-2);
-  padding: 8px 0 10px;
-  z-index: 55;
-  max-height: calc(100vh - 56px);
-  overflow-y: auto;
-}
-.nav-drawer.is-open { display: block; }
-.nav-drawer a {
-  display: block;
-  padding: 10px 20px;
-  color: rgba(255,255,255,0.82);
-  font-size: 14px; font-weight: 500;
-  text-decoration: none;
-  border-left: 3px solid transparent;
-}
-.nav-drawer a:hover,
-.nav-drawer a:focus-visible {
-  background: rgba(255,255,255,0.05);
-  color: #ffffff;
-  text-decoration: none;
-  outline: none;
-}
-.nav-drawer a.is-active {
-  color: #ffffff;
-  background: rgba(0,164,239,0.1);
-  border-left-color: var(--ms-blue);
-}
-.nav-drawer-group-label {
-  display: block;
-  padding: 10px 20px 4px;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,0.4);
-}
-.nav-drawer-group a { padding-left: 32px; }
+      /* Mobile drawer — hidden by default; shown via .is-open under 700px. */
+      .nav-drawer {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--slate-900);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: var(--shadow-2);
+        padding: 8px 0 10px;
+        z-index: 55;
+        max-height: calc(100vh - 56px);
+        overflow-y: auto;
+      }
+      .nav-drawer.is-open {
+        display: block;
+      }
+      .nav-drawer a {
+        display: block;
+        padding: 10px 20px;
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 14px;
+        font-weight: 500;
+        text-decoration: none;
+        border-left: 3px solid transparent;
+      }
+      .nav-drawer a:hover,
+      .nav-drawer a:focus-visible {
+        background: rgba(255, 255, 255, 0.05);
+        color: #ffffff;
+        text-decoration: none;
+        outline: none;
+      }
+      .nav-drawer a.is-active {
+        color: #ffffff;
+        background: rgba(0, 164, 239, 0.1);
+        border-left-color: var(--ms-blue);
+      }
+      .nav-drawer-group-label {
+        display: block;
+        padding: 10px 20px 4px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.4);
+      }
+      .nav-drawer-group a {
+        padding-left: 32px;
+      }
 
-@media (max-width: 700px) {
-  #nav { display: none; }
-  .nav-hamburger { display: inline-flex; }
-  /* Let the header be a positioning context for the full-width drawer. */
-  #header { position: sticky; }
-}
-@media (min-width: 701px) {
-  .nav-drawer { display: none !important; }
-}
+      @media (max-width: 700px) {
+        #nav {
+          display: none;
+        }
+        .nav-hamburger {
+          display: inline-flex;
+        }
+        /* Let the header be a positioning context for the full-width drawer. */
+        #header {
+          position: sticky;
+        }
+      }
+      @media (min-width: 701px) {
+        .nav-drawer {
+          display: none !important;
+        }
+      }
 
-.user-chip {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.92);
-  padding: 5px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  flex-shrink: 0;
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.live-socket-chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  background: rgba(255,255,255,0.065);
-  color: rgba(255,255,255,0.8);
-  padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  flex-shrink: 0;
-  border: 1px solid rgba(142, 163, 191, 0.18);
-  white-space: nowrap;
-}
-.live-socket-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: rgba(255,255,255,0.35);
-  box-shadow: 0 0 0 2px rgba(255,255,255,0.08);
-}
-.live-socket-chip[data-state="connected"] {
-  color: #bff07a;
-  border-color: rgba(127,186,0,0.34);
-}
-.live-socket-chip[data-state="connected"] .live-socket-dot {
-  background: var(--ms-green);
-  box-shadow: 0 0 0 2px rgba(127,186,0,0.22), 0 0 12px rgba(127,186,0,0.5);
-}
-.live-socket-chip[data-state="connecting"],
-.live-socket-chip[data-state="reconnecting"] {
-  color: #ffd876;
-  border-color: rgba(255,185,0,0.28);
-}
-.live-socket-chip[data-state="connecting"] .live-socket-dot,
-.live-socket-chip[data-state="reconnecting"] .live-socket-dot {
-  background: var(--ms-yellow);
-  box-shadow: 0 0 0 2px rgba(255,185,0,0.18);
-}
-.live-socket-chip[data-state="offline"],
-.live-socket-chip[data-state="unsupported"] {
-  color: #ff9475;
-  border-color: rgba(242,80,34,0.28);
-}
-.live-socket-chip[data-state="offline"] .live-socket-dot,
-.live-socket-chip[data-state="unsupported"] .live-socket-dot {
-  background: var(--ms-red);
-  box-shadow: 0 0 0 2px rgba(242,80,34,0.18);
-}
+      .user-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.92);
+        padding: 5px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        flex-shrink: 0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .live-socket-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        background: rgba(255, 255, 255, 0.065);
+        color: rgba(255, 255, 255, 0.8);
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        flex-shrink: 0;
+        border: 1px solid rgba(142, 163, 191, 0.18);
+        white-space: nowrap;
+      }
+      .live-socket-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.35);
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+      }
+      .live-socket-chip[data-state="connected"] {
+        color: #bff07a;
+        border-color: rgba(127, 186, 0, 0.34);
+      }
+      .live-socket-chip[data-state="connected"] .live-socket-dot {
+        background: var(--ms-green);
+        box-shadow:
+          0 0 0 2px rgba(127, 186, 0, 0.22),
+          0 0 12px rgba(127, 186, 0, 0.5);
+      }
+      .live-socket-chip[data-state="connecting"],
+      .live-socket-chip[data-state="reconnecting"] {
+        color: #ffd876;
+        border-color: rgba(255, 185, 0, 0.28);
+      }
+      .live-socket-chip[data-state="connecting"] .live-socket-dot,
+      .live-socket-chip[data-state="reconnecting"] .live-socket-dot {
+        background: var(--ms-yellow);
+        box-shadow: 0 0 0 2px rgba(255, 185, 0, 0.18);
+      }
+      .live-socket-chip[data-state="offline"],
+      .live-socket-chip[data-state="unsupported"] {
+        color: #ff9475;
+        border-color: rgba(242, 80, 34, 0.28);
+      }
+      .live-socket-chip[data-state="offline"] .live-socket-dot,
+      .live-socket-chip[data-state="unsupported"] .live-socket-dot {
+        background: var(--ms-red);
+        box-shadow: 0 0 0 2px rgba(242, 80, 34, 0.18);
+      }
 
-/* Theme toggle in the header — same chrome as the user-chip so it
+      /* Theme toggle in the header — same chrome as the user-chip so it
    reads as a peer control.  Lives OUTSIDE the chip because logged-out
    users should still be able to flip themes. */
-.theme-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.85);
-  border-radius: 999px;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 120ms, color 120ms;
-  padding: 0;
-}
-.theme-toggle:hover {
-  background: rgba(255,255,255,0.15);
-  color: #ffffff;
-}
-.theme-toggle:focus-visible {
-  outline: 2px solid var(--ms-blue);
-  outline-offset: 2px;
-}
-.theme-toggle svg { display: block; }
-/* Swap icons based on current theme: show the moon (flip to dark)
+      .theme-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.85);
+        border-radius: 999px;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition:
+          background 120ms,
+          color 120ms;
+        padding: 0;
+      }
+      .theme-toggle:hover {
+        background: rgba(255, 255, 255, 0.15);
+        color: #ffffff;
+      }
+      .theme-toggle:focus-visible {
+        outline: 2px solid var(--ms-blue);
+        outline-offset: 2px;
+      }
+      .theme-toggle svg {
+        display: block;
+      }
+      /* Swap icons based on current theme: show the moon (flip to dark)
    when light-mode is active; show the sun (flip to light) when
    dark-mode is active. */
-.theme-toggle .theme-icon-sun  { display: none; }
-.theme-toggle .theme-icon-moon { display: block; }
-html[data-theme="dark"] .theme-toggle .theme-icon-sun  { display: block; }
-html[data-theme="dark"] .theme-toggle .theme-icon-moon { display: none; }
-.user-chip a {
-  color: rgba(255,255,255,0.7);
-  font-size: 11px;
-}
-.user-chip a:hover { color: #ffffff; }
-.user-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--ms-green);
-  box-shadow: 0 0 0 2px rgba(127,186,0,0.2);
-}
+      .theme-toggle .theme-icon-sun {
+        display: none;
+      }
+      .theme-toggle .theme-icon-moon {
+        display: block;
+      }
+      html[data-theme="dark"] .theme-toggle .theme-icon-sun {
+        display: block;
+      }
+      html[data-theme="dark"] .theme-toggle .theme-icon-moon {
+        display: none;
+      }
+      .user-chip a {
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 11px;
+      }
+      .user-chip a:hover {
+        color: #ffffff;
+      }
+      .user-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ms-green);
+        box-shadow: 0 0 0 2px rgba(127, 186, 0, 0.2);
+      }
 
-#nav { white-space: nowrap; }
+      #nav {
+        white-space: nowrap;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Content region + panel containers.  Old templates dump their
    markup directly into #content; we wrap it in a generous
    white panel with soft shadow so forms/tables feel contained.
    ----------------------------------------------------------------- */
-#content {
-  max-width: 1500px;
-  margin: 28px auto 40px;
-  padding: 0 20px;
-}
-#content > * { /* first-level children float on the sky wash */ }
+      #content {
+        max-width: 1500px;
+        margin: 28px auto 40px;
+        padding: 0 20px;
+      }
+      #content > * {
+        /* first-level children float on the sky wash */
+      }
 
-/* Any <h2> creates a new section; wrap its following sibling area
+      /* Any <h2> creates a new section; wrap its following sibling area
    in a visual panel via a preceding pseudo-rule.  Simpler: the
    container gets padded + shadowed as a whole.  We don't wrap the
    markup — just let the page look like an extended panel area. */
-#content {
-  /* panel-like inner card without wrapping the content */
-  background: var(--panel);
-  border-radius: var(--radius-lg);
-  padding: 24px 28px;
-  box-shadow: var(--shadow-2);
-  border: 1px solid var(--line);
-}
+      #content {
+        /* panel-like inner card without wrapping the content */
+        background: var(--panel);
+        border-radius: var(--radius-lg);
+        padding: 24px 28px;
+        box-shadow: var(--shadow-2);
+        border: 1px solid var(--line);
+      }
 
-/* Pages that use their own .card / .panel classes (e.g. the
+      /* Pages that use their own .card / .panel classes (e.g. the
    monitoring dashboard) get consistent styling too. */
-.monitor-status {
-  background: var(--surface-muted) !important;
-  border: 1px solid var(--line) !important;
-  padding: 10px 14px !important;
-  border-radius: var(--radius-md) !important;
-  color: var(--ink-muted) !important;
-  font-size: 13px;
-}
+      .monitor-status {
+        background: var(--surface-muted) !important;
+        border: 1px solid var(--line) !important;
+        padding: 10px 14px !important;
+        border-radius: var(--radius-md) !important;
+        color: var(--ink-muted) !important;
+        font-size: 13px;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Tables.  Slim borders, zebra via soft tint, small-caps header
    labels, tight-but-breathable padding.  Works with every existing
    table markup in the codebase — no classes required.
    ----------------------------------------------------------------- */
-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: 13px;
-  margin: 10px 0 18px;
-}
-thead th, th {
-  background: var(--surface-muted);
-  color: var(--ink-muted);
-  padding: 9px 12px;
-  text-align: left;
-  font-weight: 600;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.055em;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  position: sticky; top: 0;
-}
-th:first-child { border-top-left-radius: 6px; }
-th:last-child  { border-top-right-radius: 6px; }
-td {
-  padding: 9px 12px;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  vertical-align: middle;
-  color: var(--ink);
-}
-tbody tr:nth-child(even) td {
-  background: var(--stripe);
-}
-tbody tr:hover td {
-  background: var(--hover);
-}
-tbody tr:last-child td { border-bottom: none; }
+      table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 13px;
+        margin: 10px 0 18px;
+      }
+      thead th,
+      th {
+        background: var(--surface-muted);
+        color: var(--ink-muted);
+        padding: 9px 12px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.055em;
+        border: none;
+        border-bottom: 1px solid var(--line);
+        position: sticky;
+        top: 0;
+      }
+      th:first-child {
+        border-top-left-radius: 6px;
+      }
+      th:last-child {
+        border-top-right-radius: 6px;
+      }
+      td {
+        padding: 9px 12px;
+        border: none;
+        border-bottom: 1px solid var(--line);
+        vertical-align: middle;
+        color: var(--ink);
+      }
+      tbody tr:nth-child(even) td {
+        background: var(--stripe);
+      }
+      tbody tr:hover td {
+        background: var(--hover);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Forms.  Consistent input chrome, MS-blue focus ring.
    ----------------------------------------------------------------- */
-input[type="text"], input[type="number"], input[type="password"],
-input[type="email"], input[type="search"], select, textarea {
-  font-family: "IBM Plex Sans", sans-serif;
-  font-size: 13px;
-  color: var(--ink);
-  background: var(--input-bg);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  transition: border-color 120ms, box-shadow 120ms;
-  min-width: 160px;
-}
-input:focus, select:focus, textarea:focus {
-  outline: none;
-  border-color: var(--ms-blue-dark);   /* AA UI component contrast */
-  box-shadow: 0 0 0 3px rgba(0,105,168,0.22);  /* blue-dark @ 22% */
-}
-input[type="checkbox"], input[type="radio"] {
-  accent-color: var(--ms-blue);
-  width: 14px; height: 14px; vertical-align: middle;
-}
+      input[type="text"],
+      input[type="number"],
+      input[type="password"],
+      input[type="email"],
+      input[type="search"],
+      select,
+      textarea {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 13px;
+        color: var(--ink);
+        background: var(--input-bg);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-md);
+        padding: 6px 10px;
+        transition:
+          border-color 120ms,
+          box-shadow 120ms;
+        min-width: 160px;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: none;
+        border-color: var(--ms-blue-dark); /* AA UI component contrast */
+        box-shadow: 0 0 0 3px rgba(0, 105, 168, 0.22); /* blue-dark @ 22% */
+      }
+      input[type="checkbox"],
+      input[type="radio"] {
+        accent-color: var(--ms-blue);
+        width: 14px;
+        height: 14px;
+        vertical-align: middle;
+      }
 
-label { font-size: 12.5px; color: var(--ink-muted); font-weight: 500; }
+      label {
+        font-size: 12.5px;
+        color: var(--ink-muted);
+        font-weight: 500;
+      }
 
-input[type="submit"], button, .btn {
-  font-family: "IBM Plex Sans", sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.005em;
-  color: #ffffff;
-  background: var(--slate-800);
-  border: 1px solid var(--slate-900);
-  padding: 6px 14px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background 120ms, box-shadow 120ms, transform 80ms;
-}
-input[type="submit"]:hover, button:hover, .btn:hover {
-  background: var(--slate-900);
-}
-input[type="submit"]:active, button:active, .btn:active { transform: translateY(0.5px); }
-input[type="submit"]:focus-visible, button:focus-visible, .btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(0,105,168,0.45);   /* blue-dark @ 45% */
-}
+      input[type="submit"],
+      button,
+      .btn {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.005em;
+        color: #ffffff;
+        background: var(--slate-800);
+        border: 1px solid var(--slate-900);
+        padding: 6px 14px;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition:
+          background 120ms,
+          box-shadow 120ms,
+          transform 80ms;
+      }
+      input[type="submit"]:hover,
+      button:hover,
+      .btn:hover {
+        background: var(--slate-900);
+      }
+      input[type="submit"]:active,
+      button:active,
+      .btn:active {
+        transform: translateY(0.5px);
+      }
+      input[type="submit"]:focus-visible,
+      button:focus-visible,
+      .btn:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(0, 105, 168, 0.45); /* blue-dark @ 45% */
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Status text + badges.  Keep every class the existing templates
    use (.badge, .badge-green, .badge-gray, .ok, .warn, .missing,
    .pending, .error, .unknown, .status-green, .status-red) and
    reroute them to the MS palette.
    ----------------------------------------------------------------- */
-.status-green { color: var(--ok-fg); font-weight: 600; }
-.status-red   { color: var(--bad-fg); font-weight: 600; }
+      .status-green {
+        color: var(--ok-fg);
+        font-weight: 600;
+      }
+      .status-red {
+        color: var(--bad-fg);
+        font-weight: 600;
+      }
 
-.badge {
-  display: inline-flex; align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-.badge.ok, .badge-green        { background: var(--ok-bg);      color: var(--ok-fg); }
-.badge.warn                    { background: var(--warn-bg);    color: var(--warn-fg); }
-.badge.missing, .badge.error   { background: var(--bad-bg);     color: var(--bad-fg); }
-.badge.pending, .badge-blue    { background: var(--info-bg);    color: var(--info-fg); }
-.badge.unknown, .badge-gray    { background: var(--neutral-bg); color: var(--neutral-fg); }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        line-height: 1.4;
+        white-space: nowrap;
+      }
+      .badge.ok,
+      .badge-green {
+        background: var(--ok-bg);
+        color: var(--ok-fg);
+      }
+      .badge.warn {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+      }
+      .badge.missing,
+      .badge.error {
+        background: var(--bad-bg);
+        color: var(--bad-fg);
+      }
+      .badge.pending,
+      .badge-blue {
+        background: var(--info-bg);
+        color: var(--info-fg);
+      }
+      .badge.unknown,
+      .badge-gray {
+        background: var(--neutral-bg);
+        color: var(--neutral-fg);
+      }
 
-.count-pill {
-  font-size: 10.5px;
-  font-weight: 500;
-  opacity: 0.75;
-  margin-left: 4px;
-}
+      .count-pill {
+        font-size: 10.5px;
+        font-weight: 500;
+        opacity: 0.75;
+        margin-left: 4px;
+      }
 
-/* Chip family used on /vms for ubuntu tags etc. */
-.chip {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 500;
-  background: var(--info-bg);
-  color: var(--info-fg);
-  margin-right: 4px;
-}
-.chip.chip-enroll-mde     { background: var(--bad-bg);  color: var(--bad-fg); }
-.chip.chip-enroll-intune  { background: var(--info-bg); color: var(--info-fg); }
+      /* Chip family used on /vms for ubuntu tags etc. */
+      .chip {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 500;
+        background: var(--info-bg);
+        color: var(--info-fg);
+        margin-right: 4px;
+      }
+      .chip.chip-enroll-mde {
+        background: var(--bad-bg);
+        color: var(--bad-fg);
+      }
+      .chip.chip-enroll-intune {
+        background: var(--info-bg);
+        color: var(--info-fg);
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Action buttons (the icon buttons next to each VM row).  Kept
    compact — icon-only — but chrome is modernised.
    ----------------------------------------------------------------- */
-.action-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  padding: 4px 5px;
-  cursor: pointer;
-  position: relative;
-  transition: background 120ms, border-color 120ms, transform 80ms;
-  color: var(--ink);
-}
-.action-btn:hover {
-  background: var(--hover);
-  border-color: var(--ms-blue-dark);
-}
-.action-btn:active { transform: translateY(0.5px); }
-.action-btn.danger:hover {
-  background: var(--bad-bg);
-  border-color: var(--ms-red-dark);
-}
-.action-btn:disabled, .action-btn[disabled] {
-  opacity: 0.4; cursor: not-allowed;
-}
-.actions-cell {
-  white-space: nowrap;
-  display: inline-flex; gap: 4px; align-items: center;
-}
+      .action-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--panel);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        padding: 4px 5px;
+        cursor: pointer;
+        position: relative;
+        transition:
+          background 120ms,
+          border-color 120ms,
+          transform 80ms;
+        color: var(--ink);
+      }
+      .action-btn:hover {
+        background: var(--hover);
+        border-color: var(--ms-blue-dark);
+      }
+      .action-btn:active {
+        transform: translateY(0.5px);
+      }
+      .action-btn.danger:hover {
+        background: var(--bad-bg);
+        border-color: var(--ms-red-dark);
+      }
+      .action-btn:disabled,
+      .action-btn[disabled] {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .actions-cell {
+        white-space: nowrap;
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
 
-/* CSS tooltip on .action-btn[title] — kept from the original.  New
+      /* CSS tooltip on .action-btn[title] — kept from the original.  New
    chrome matches the slate system. */
-.action-btn[title]:hover::after {
-  content: attr(title);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--slate-900);
-  color: #ffffff;
-  padding: 4px 9px;
-  border-radius: 4px;
-  font-size: 11px; font-weight: 400;
-  font-family: "IBM Plex Sans", sans-serif;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: 100;
-  box-shadow: var(--shadow-2);
-}
-.action-btn[title]:hover::before {
-  content: "";
-  position: absolute;
-  bottom: calc(100% + 2px);
-  left: 50%;
-  transform: translateX(-50%);
-  border: 4px solid transparent;
-  border-top-color: var(--slate-900);
-  pointer-events: none;
-  z-index: 100;
-}
+      .action-btn[title]:hover::after {
+        content: attr(title);
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--slate-900);
+        color: #ffffff;
+        padding: 4px 9px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 400;
+        font-family: "IBM Plex Sans", sans-serif;
+        white-space: nowrap;
+        pointer-events: none;
+        z-index: 100;
+        box-shadow: var(--shadow-2);
+      }
+      .action-btn[title]:hover::before {
+        content: "";
+        position: absolute;
+        bottom: calc(100% + 2px);
+        left: 50%;
+        transform: translateX(-50%);
+        border: 4px solid transparent;
+        border-top-color: var(--slate-900);
+        pointer-events: none;
+        z-index: 100;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Legacy "emergency" and "upload/delete" buttons (used on the
    Autopilot/Intune actions pane).  Keep the semantics via MS red.
    ----------------------------------------------------------------- */
-.emergency-btn, .action-btn-delete {
-  /* Darker red so white text clears AA (small-text) contrast. */
-  background: var(--ms-red-dark) !important;
-  border-color: #9c3212 !important;
-  color: #ffffff !important;
-  font-weight: 600 !important;
-  font-size: 13px !important;
-  padding: 6px 16px !important;
-  border-radius: var(--radius-md) !important;
-}
-.emergency-btn:hover, .action-btn-delete:hover {
-  background: #9c3212 !important;
-}
-.action-btn-upload {
-  background: var(--slate-800);
-  color: #ffffff;
-  border: 1px solid var(--slate-900);
-  padding: 6px 14px;
-  font-family: "IBM Plex Sans", sans-serif;
-  font-size: 13px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-weight: 500;
-}
-.action-btn-upload:hover { background: var(--slate-900); }
+      .emergency-btn,
+      .action-btn-delete {
+        /* Darker red so white text clears AA (small-text) contrast. */
+        background: var(--ms-red-dark) !important;
+        border-color: #9c3212 !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        font-size: 13px !important;
+        padding: 6px 16px !important;
+        border-radius: var(--radius-md) !important;
+      }
+      .emergency-btn:hover,
+      .action-btn-delete:hover {
+        background: #9c3212 !important;
+      }
+      .action-btn-upload {
+        background: var(--slate-800);
+        color: #ffffff;
+        border: 1px solid var(--slate-900);
+        padding: 6px 14px;
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 13px;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-weight: 500;
+      }
+      .action-btn-upload:hover {
+        background: var(--slate-900);
+      }
 
-/* Terminal / log boxes keep their monospace dark aesthetic, now
+      /* Terminal / log boxes keep their monospace dark aesthetic, now
    with rounded corners + better colors. */
-.terminal {
-  background: #0d1017;
-  color: #9be596;
-  padding: 14px 16px;
-  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-y: auto;
-  max-height: 600px;
-  border: 1px solid #1f2530;
-  border-radius: var(--radius-md);
-}
+      .terminal {
+        background: #0d1017;
+        color: #9be596;
+        padding: 14px 16px;
+        font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        overflow-y: auto;
+        max-height: 600px;
+        border: 1px solid #1f2530;
+        border-radius: var(--radius-md);
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Footer.  Muted strip outside the content panel; build chip +
    update button + status.
    ----------------------------------------------------------------- */
-#footer {
-  max-width: 1500px;
-  margin: 0 auto 28px;
-  padding: 12px 24px;
-  font-size: 11.5px;
-  color: var(--ink-muted);
-  display: flex; align-items: center; gap: 14px;
-  flex-wrap: wrap;
-  background: transparent;
-  border: none;
-}
-#footer .build {
-  display: inline-flex; align-items: center; gap: 8px;
-}
-#footer code#buildSha {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 11px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 2px 7px;
-  border-radius: 3px;
-  color: var(--ink);
-}
-#footer #updateBtn {
-  font-family: "IBM Plex Sans", sans-serif;
-  font-size: 11px;
-  background: var(--panel);
-  color: var(--ink);
-  border: 1px solid var(--line-strong);
-  padding: 3px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background 120ms, border-color 120ms;
-}
-#footer #updateBtn:hover {
-  background: var(--hover);
-  border-color: var(--ms-blue);
-}
-/* "Update to X" mode — the renderBadge JS adds .is-ready instead
+      #footer {
+        max-width: 1500px;
+        margin: 0 auto 28px;
+        padding: 12px 24px;
+        font-size: 11.5px;
+        color: var(--ink-muted);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        background: transparent;
+        border: none;
+      }
+      #footer .build {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #footer code#buildSha {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 2px 7px;
+        border-radius: 3px;
+        color: var(--ink);
+      }
+      #footer #updateBtn {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 11px;
+        background: var(--panel);
+        color: var(--ink);
+        border: 1px solid var(--line-strong);
+        padding: 3px 10px;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition:
+          background 120ms,
+          border-color 120ms;
+      }
+      #footer #updateBtn:hover {
+        background: var(--hover);
+        border-color: var(--ms-blue);
+      }
+      /* "Update to X" mode — the renderBadge JS adds .is-ready instead
    of mutating inline styles so the color can follow the theme. */
-#footer #updateBtn.is-ready {
-  background: var(--ms-green-dark);
-  color: #ffffff;
-  border-color: var(--ms-green-dark);
-  font-weight: 600;
-}
-#footer #updateBtn.is-ready:hover {
-  filter: brightness(0.92);
-}
+      #footer #updateBtn.is-ready {
+        background: var(--ms-green-dark);
+        color: #ffffff;
+        border-color: var(--ms-green-dark);
+        font-weight: 600;
+      }
+      #footer #updateBtn.is-ready:hover {
+        filter: brightness(0.92);
+      }
 
-/* Update-available badge in the footer → make it look active
+      /* Update-available badge in the footer → make it look active
    without being obnoxious.  These classes replace the inline-styled
    pills renderBadge used to emit, so badge colors track the theme. */
-#updateBadge a { font-family: "IBM Plex Sans", sans-serif; }
-.update-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 2px 9px; border-radius: 999px;
-  font-size: 11px; font-weight: 600;
-  text-decoration: none;
-  font-family: "IBM Plex Sans", sans-serif;
-  border: 1px solid transparent;
-}
-.update-pill.warn {
-  background: var(--warn-bg); color: var(--warn-fg);
-  border-color: var(--warn-fg);
-  border-color: color-mix(in srgb, var(--warn-fg) 25%, transparent);
-}
-.update-pill.ok {
-  background: var(--ok-bg); color: var(--ok-fg);
-  border-color: color-mix(in srgb, var(--ok-fg) 25%, transparent);
-}
-.update-pill.info { background: var(--info-bg); color: var(--info-fg); }
-.update-pill.neutral {
-  background: transparent; color: var(--ink-muted);
-  font-weight: 500;
-}
+      #updateBadge a {
+        font-family: "IBM Plex Sans", sans-serif;
+      }
+      .update-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        text-decoration: none;
+        font-family: "IBM Plex Sans", sans-serif;
+        border: 1px solid transparent;
+      }
+      .update-pill.warn {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+        border-color: var(--warn-fg);
+        border-color: color-mix(in srgb, var(--warn-fg) 25%, transparent);
+      }
+      .update-pill.ok {
+        background: var(--ok-bg);
+        color: var(--ok-fg);
+        border-color: color-mix(in srgb, var(--ok-fg) 25%, transparent);
+      }
+      .update-pill.info {
+        background: var(--info-bg);
+        color: var(--info-fg);
+      }
+      .update-pill.neutral {
+        background: transparent;
+        color: var(--ink-muted);
+        font-weight: 500;
+      }
 
-/* Self-update overlay — restyled to match the system. */
-#updateOverlay {
-  font-family: "IBM Plex Mono", monospace !important;
-  background: rgba(14,18,28,0.92) !important;
-}
-#updateOverlay h2 { font-family: "IBM Plex Sans", sans-serif !important; }
-#updateOverlay pre {
-  background: #0d1017 !important;
-  border: 1px solid #1f2530 !important;
-  border-radius: 6px !important;
-  color: #9be596 !important;
-}
+      /* Self-update overlay — restyled to match the system. */
+      #updateOverlay {
+        font-family: "IBM Plex Mono", monospace !important;
+        background: rgba(14, 18, 28, 0.92) !important;
+      }
+      #updateOverlay h2 {
+        font-family: "IBM Plex Sans", sans-serif !important;
+      }
+      #updateOverlay pre {
+        background: #0d1017 !important;
+        border: 1px solid #1f2530 !important;
+        border-radius: 6px !important;
+        color: #9be596 !important;
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Utility + per-page accent helpers.  Small shared tweaks that
    the existing templates already reach for inline.
    ----------------------------------------------------------------- */
-.bc, .subtitle {
-  color: var(--ink-muted);
-  font-size: 12px;
-}
-small { color: var(--ink-muted); }
-pre {
-  background: var(--surface-muted);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow: auto;
-}
+      .bc,
+      .subtitle {
+        color: var(--ink-muted);
+        font-size: 12px;
+      }
+      small {
+        color: var(--ink-muted);
+      }
+      pre {
+        background: var(--surface-muted);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow: auto;
+      }
 
-/* Focus-visible everywhere — not a keyboard-hostile lab tool. */
-:focus-visible {
-  outline: 2px solid var(--ms-blue-dark);   /* 5.9:1 UI contrast */
-  outline-offset: 2px;
-}
+      /* Focus-visible everywhere — not a keyboard-hostile lab tool. */
+      :focus-visible {
+        outline: 2px solid var(--ms-blue-dark); /* 5.9:1 UI contrast */
+        outline-offset: 2px;
+      }
 
-/* Respect OS-level motion preference — no page-in animation for
+      /* Respect OS-level motion preference — no page-in animation for
    users who've opted out. */
-@media (prefers-reduced-motion: reduce) {
-  body { animation: none; }
-  *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition: none !important;
-  }
-}
+      @media (prefers-reduced-motion: reduce) {
+        body {
+          animation: none;
+        }
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          scroll-behavior: auto !important;
+          transition: none !important;
+        }
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Full-app cockpit shell.  The markup below keeps every existing
    route and Jinja block intact, then surrounds it with the accepted
    dark Ops Deck IA: sticky command bar, grouped rail, dense panels,
    live-row affordances, drawers, and toast lanes.
    ----------------------------------------------------------------- */
-.cockpit-shell {
-  --cockpit-bg: #05070d;
-  --cockpit-panel: rgba(13, 18, 30, 0.92);
-  --cockpit-panel-2: rgba(17, 24, 39, 0.84);
-  --cockpit-panel-3: rgba(23, 31, 47, 0.78);
-  --cockpit-line: rgba(142, 163, 191, 0.18);
-  --cockpit-line-strong: rgba(142, 163, 191, 0.32);
-  --cockpit-ink: #edf4ff;
-  --cockpit-muted: #9aa9bc;
-  --cockpit-soft: #65758d;
-  --cockpit-blue: #3bb7ff;
-  --cockpit-green: #9fe36b;
-  --cockpit-amber: #ffd166;
-  --cockpit-red: #ff795f;
-  --cockpit-violet: #a78bfa;
-  color-scheme: dark;
-  color: var(--cockpit-ink);
-  background:
-    radial-gradient(circle at 18% -10%, rgba(59, 183, 255, 0.18), transparent 30rem),
-    radial-gradient(circle at 82% 0%, rgba(159, 227, 107, 0.08), transparent 28rem),
-    linear-gradient(180deg, #07101c 0%, var(--cockpit-bg) 46rem);
-  min-height: 100vh;
-}
-.cockpit-shell::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
-  background-size: 46px 46px;
-  mask-image: linear-gradient(180deg, rgba(0,0,0,0.75), transparent 78%);
-  z-index: -1;
-}
-.cockpit-shell #header {
-  background: rgba(5, 8, 15, 0.86);
-  border-bottom: 1px solid rgba(142, 163, 191, 0.16);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(18px) saturate(140%);
-}
-.cockpit-shell #header::after {
-  height: 1px;
-  opacity: 0.55;
-}
-.cockpit-shell .header-inner {
-  max-width: 1800px;
-  min-height: 64px;
-  gap: 14px;
-  padding: 0 18px;
-}
-.cockpit-shell #nav {
-  display: none;
-}
-.cockpit-shell .nav-hamburger,
-.cockpit-shell .nav-drawer {
-  display: none !important;
-}
-.cockpit-shell .brand {
-  min-width: 218px;
-}
-.cockpit-shell .brand img {
-  border: 1px solid rgba(255,255,255,0.12);
-  box-shadow: 0 0 0 4px rgba(59,183,255,0.08), 0 8px 28px rgba(0,0,0,0.32);
-}
-.cockpit-shell .brand-subtitle {
-  color: rgba(237, 244, 255, 0.5);
-}
-.cockpit-command {
-  flex: 1 1 420px;
-  max-width: 740px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 220px;
-  height: 38px;
-  padding: 0 10px;
-  border: 1px solid rgba(142, 163, 191, 0.2);
-  border-radius: 8px;
-  background: rgba(255,255,255,0.055);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-}
-.cockpit-command:focus-within {
-  border-color: rgba(59, 183, 255, 0.72);
-  box-shadow: 0 0 0 3px rgba(59, 183, 255, 0.14);
-}
-.cockpit-command-slash {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 21px;
-  height: 21px;
-  border-radius: 5px;
-  color: var(--cockpit-blue);
-  background: rgba(59, 183, 255, 0.12);
-  font-family: "IBM Plex Mono", monospace;
-  font-weight: 600;
-}
-.cockpit-command input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: #f7fbff;
-  padding: 0;
-  box-shadow: none;
-  font-size: 13px;
-}
-.cockpit-command input:focus {
-  box-shadow: none;
-}
-.cockpit-command input::placeholder {
-  color: rgba(237,244,255,0.48);
-}
-.cockpit-command kbd {
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 5px;
-  color: rgba(237,244,255,0.64);
-  background: rgba(0,0,0,0.25);
-  padding: 1px 6px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
-  font-weight: 500;
-}
-.cockpit-shell .theme-toggle,
-.cockpit-shell .live-socket-chip,
-.cockpit-shell .user-chip {
-  background: rgba(255,255,255,0.065);
-  border-color: rgba(142, 163, 191, 0.18);
-}
-.cockpit-frame {
-  width: min(1800px, 100%);
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: 228px minmax(0, 1fr);
-  gap: 18px;
-  padding: 18px;
-  align-items: start;
-}
-.cockpit-rail {
-  position: sticky;
-  top: 82px;
-  max-height: calc(100vh - 100px);
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--cockpit-line);
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(13,18,30,0.92), rgba(8,12,21,0.88));
-  box-shadow: 0 18px 54px rgba(0,0,0,0.26);
-}
-.cockpit-rail-section + .cockpit-rail-section {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(142,163,191,0.12);
-}
-.cockpit-rail-label {
-  display: block;
-  margin: 0 0 7px 8px;
-  color: rgba(237,244,255,0.38);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.cockpit-rail-link {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 34px;
-  margin: 2px 0;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  color: rgba(237,244,255,0.72);
-  text-decoration: none;
-  font-weight: 600;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
-}
-.cockpit-rail-link:hover {
-  color: #ffffff;
-  text-decoration: none;
-  background: rgba(255,255,255,0.055);
-  border-color: rgba(142,163,191,0.16);
-  transform: translateX(2px);
-}
-.cockpit-rail-link.is-active {
-  color: #ffffff;
-  background: linear-gradient(90deg, rgba(59,183,255,0.2), rgba(159,227,107,0.07));
-  border-color: rgba(59,183,255,0.36);
-  box-shadow: inset 3px 0 0 var(--cockpit-blue);
-}
-.cockpit-rail-link span[aria-hidden] {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  color: var(--cockpit-blue);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 12px;
-}
-.cockpit-shell #content {
-  max-width: none;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-.cockpit-shell #content > h1,
-.cockpit-shell #content > h2,
-.cockpit-shell #content > h3,
-.cockpit-shell .page-head,
-.cockpit-panel,
-.cockpit-card,
-.cockpit-section,
-.cockpit-shell #content > form,
-.cockpit-shell #content > table,
-.cockpit-shell #content > .card,
-.cockpit-shell #content > .card-panel,
-.cockpit-shell #content > .monitor-shell,
-.cockpit-shell #content > .monitor-status,
-.cockpit-shell #content > .detail-grid,
-.cockpit-shell #content > .filter-bar,
-.cockpit-shell #content > .empty-state {
-  border: 1px solid var(--cockpit-line);
-  border-radius: 8px;
-  background: var(--cockpit-panel);
-  box-shadow: 0 18px 54px rgba(0,0,0,0.22);
-}
-.cockpit-shell #content > h1,
-.cockpit-shell #content > h2,
-.cockpit-shell #content > h3 {
-  margin: 0 0 14px 0;
-  padding: 18px 20px;
-  border-bottom-color: var(--cockpit-line);
-}
-.cockpit-shell .page-head {
-  align-items: center;
-  padding: 18px 20px;
-  margin: 0 0 14px;
-}
-.cockpit-shell .page-head h1 {
-  font-size: 24px;
-}
-.cockpit-shell .page-head-titles .subtitle,
-.cockpit-shell .subtitle,
-.cockpit-shell small,
-.cockpit-shell label {
-  color: var(--cockpit-muted);
-}
-.cockpit-shell #content > form,
-.cockpit-shell #content > table,
-.cockpit-shell #content > .card,
-.cockpit-shell #content > .card-panel,
-.cockpit-shell #content > .monitor-shell,
-.cockpit-shell #content > .detail-grid,
-.cockpit-shell #content > .filter-bar,
-.cockpit-shell #content > .empty-state {
-  padding: 16px;
-  margin-bottom: 14px;
-}
-.cockpit-shell .detail-grid {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-}
-.cockpit-shell .detail-grid > *,
-.cockpit-shell .panel,
-.cockpit-shell .card-panel,
-.cockpit-shell .monitor-card,
-.cockpit-shell .stat-card,
-.cockpit-shell .data-card,
-.cockpit-shell .settings-card {
-  border: 1px solid var(--cockpit-line);
-  border-radius: 8px;
-  background: var(--cockpit-panel-2);
-  box-shadow: 0 14px 42px rgba(0,0,0,0.2);
-}
-.cockpit-shell table {
-  overflow: hidden;
-  border: 1px solid var(--cockpit-line);
-  border-radius: 8px;
-  background: rgba(6, 10, 18, 0.58);
-}
-.cockpit-shell thead th,
-.cockpit-shell th {
-  position: static;
-  color: rgba(237,244,255,0.56);
-  background: rgba(255,255,255,0.045);
-  border-bottom-color: var(--cockpit-line);
-  letter-spacing: 0.07em;
-}
-.cockpit-shell td {
-  border-bottom-color: rgba(142,163,191,0.11);
-}
-.cockpit-shell tbody tr:nth-child(even) td {
-  background: rgba(255,255,255,0.018);
-}
-.cockpit-shell tbody tr:hover td,
-.cockpit-shell tbody tr.is-selected td {
-  background: rgba(59,183,255,0.08);
-}
-.cockpit-shell tbody tr.is-selected td:first-child {
-  box-shadow: inset 3px 0 0 var(--cockpit-blue);
-}
-.cockpit-shell input[type="text"],
-.cockpit-shell input[type="number"],
-.cockpit-shell input[type="password"],
-.cockpit-shell input[type="email"],
-.cockpit-shell input[type="search"],
-.cockpit-shell select,
-.cockpit-shell textarea {
-  color: var(--cockpit-ink);
-  background: rgba(5, 8, 15, 0.76);
-  border-color: var(--cockpit-line-strong);
-}
-.cockpit-shell input::placeholder,
-.cockpit-shell textarea::placeholder {
-  color: rgba(237,244,255,0.38);
-}
-.cockpit-shell input[type="submit"],
-.cockpit-shell button,
-.cockpit-shell .btn {
-  border-color: rgba(142,163,191,0.2);
-  color: #f8fbff;
-  background: linear-gradient(180deg, rgba(59,183,255,0.22), rgba(59,183,255,0.12));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 24px rgba(0,0,0,0.18);
-}
-.cockpit-shell input[type="submit"]:hover,
-.cockpit-shell button:hover,
-.cockpit-shell .btn:hover {
-  background: linear-gradient(180deg, rgba(59,183,255,0.32), rgba(59,183,255,0.18));
-}
-.cockpit-shell .btn-secondary,
-.cockpit-shell button.secondary {
-  background: rgba(255,255,255,0.06);
-}
-.cockpit-shell .badge,
-.cockpit-shell .chip,
-.cockpit-shell .update-pill {
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.cockpit-grid {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 14px;
-}
-.cockpit-col-3 { grid-column: span 3; }
-.cockpit-col-4 { grid-column: span 4; }
-.cockpit-col-5 { grid-column: span 5; }
-.cockpit-col-6 { grid-column: span 6; }
-.cockpit-col-7 { grid-column: span 7; }
-.cockpit-col-8 { grid-column: span 8; }
-.cockpit-col-12 { grid-column: span 12; }
-.cockpit-metric {
-  padding: 14px;
-  border: 1px solid var(--cockpit-line);
-  border-radius: 8px;
-  background: var(--cockpit-panel-2);
-}
-.cockpit-metric-label {
-  color: var(--cockpit-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.cockpit-metric-value {
-  margin-top: 6px;
-  color: #ffffff;
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1;
-}
-.cockpit-metric-note {
-  margin-top: 7px;
-  color: var(--cockpit-muted);
-  font-size: 12px;
-}
-.lifecycle-rail,
-.cockpit-lifecycle {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 8px;
-}
-.lifecycle-step,
-.cockpit-lifecycle-step {
-  position: relative;
-  min-height: 52px;
-  padding: 10px;
-  border: 1px solid var(--cockpit-line);
-  border-radius: 7px;
-  background: rgba(255,255,255,0.035);
-}
-.lifecycle-step::after,
-.cockpit-lifecycle-step::after {
-  content: "";
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 7px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--cockpit-blue), rgba(159,227,107,0.65));
-  opacity: 0.72;
-}
-.cockpit-pulse {
-  animation: cockpit-pulse 2.1s ease-in-out infinite;
-}
-@keyframes cockpit-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(59,183,255,0.0); }
-  50% { box-shadow: 0 0 0 7px rgba(59,183,255,0.10); }
-}
-.cockpit-scanline {
-  position: relative;
-  overflow: hidden;
-}
-.cockpit-scanline::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(59,183,255,0.11), transparent);
-  animation: cockpit-scan 3.8s ease-in-out infinite;
-  pointer-events: none;
-}
-@keyframes cockpit-scan {
-  0% { transform: translateX(-100%); }
-  55%, 100% { transform: translateX(100%); }
-}
-.cockpit-toast-stack {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  display: grid;
-  gap: 10px;
-  z-index: 900;
-  width: min(360px, calc(100vw - 36px));
-}
-.cockpit-toast {
-  padding: 12px 14px;
-  border: 1px solid var(--cockpit-line-strong);
-  border-radius: 8px;
-  color: var(--cockpit-ink);
-  background: rgba(8, 13, 23, 0.94);
-  box-shadow: 0 18px 54px rgba(0,0,0,0.36);
-  animation: cockpit-toast-in 180ms ease-out;
-}
-.cockpit-toast strong {
-  display: block;
-  margin-bottom: 3px;
-}
-@keyframes cockpit-toast-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.cockpit-drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  display: none;
-  background: rgba(0,0,0,0.48);
-  z-index: 800;
-}
-.cockpit-drawer-backdrop.is-open {
-  display: block;
-}
-.cockpit-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: min(520px, 100vw);
-  height: 100%;
-  padding: 20px;
-  border-left: 1px solid var(--cockpit-line);
-  background: linear-gradient(180deg, rgba(13,18,30,0.98), rgba(5,8,15,0.98));
-  box-shadow: -22px 0 70px rgba(0,0,0,0.4);
-  transform: translateX(100%);
-  transition: transform 180ms ease-out;
-  overflow: auto;
-}
-.cockpit-drawer-backdrop.is-open .cockpit-drawer {
-  transform: translateX(0);
-}
-.cockpit-drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--cockpit-line);
-}
-.cockpit-drawer-head h2 {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.cockpit-drawer-close {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: 999px;
-}
-@media (max-width: 1000px) {
-  .cockpit-frame {
-    grid-template-columns: 1fr;
-    padding: 12px;
-  }
-  .cockpit-rail {
-    position: static;
-    max-height: none;
-    display: flex;
-    gap: 12px;
-    overflow-x: auto;
-    padding: 10px;
-  }
-  .cockpit-rail-section {
-    flex: 0 0 auto;
-    min-width: 190px;
-  }
-  .cockpit-rail-section + .cockpit-rail-section {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: 0;
-    border-left: 1px solid rgba(142,163,191,0.12);
-    padding-left: 12px;
-  }
-}
-@media (max-width: 760px) {
-  .cockpit-shell .header-inner {
-    min-height: auto;
-    padding: 10px 12px;
-    flex-wrap: wrap;
-  }
-  .cockpit-shell .brand {
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-  .cockpit-command {
-    order: 5;
-    flex-basis: 100%;
-    max-width: none;
-  }
-  .cockpit-grid {
-    grid-template-columns: 1fr;
-  }
-  .cockpit-col-3,
-  .cockpit-col-4,
-  .cockpit-col-5,
-  .cockpit-col-6,
-  .cockpit-col-7,
-  .cockpit-col-8,
-  .cockpit-col-12 {
-    grid-column: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .cockpit-pulse,
-  .cockpit-scanline::after {
-    animation: none !important;
-  }
-}
+      .cockpit-shell {
+        --cockpit-bg: #05070d;
+        --cockpit-panel: rgba(13, 18, 30, 0.92);
+        --cockpit-panel-2: rgba(17, 24, 39, 0.84);
+        --cockpit-panel-3: rgba(23, 31, 47, 0.78);
+        --cockpit-line: rgba(142, 163, 191, 0.18);
+        --cockpit-line-strong: rgba(142, 163, 191, 0.32);
+        --cockpit-ink: #edf4ff;
+        --cockpit-muted: #9aa9bc;
+        --cockpit-soft: #65758d;
+        --cockpit-blue: #3bb7ff;
+        --cockpit-green: #9fe36b;
+        --cockpit-amber: #ffd166;
+        --cockpit-red: #ff795f;
+        --cockpit-violet: #a78bfa;
+        color-scheme: dark;
+        color: var(--cockpit-ink);
+        background:
+          radial-gradient(
+            circle at 18% -10%,
+            rgba(59, 183, 255, 0.18),
+            transparent 30rem
+          ),
+          radial-gradient(
+            circle at 82% 0%,
+            rgba(159, 227, 107, 0.08),
+            transparent 28rem
+          ),
+          linear-gradient(180deg, #07101c 0%, var(--cockpit-bg) 46rem);
+        min-height: 100vh;
+      }
+      .cockpit-shell::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.018) 1px,
+            transparent 1px
+          );
+        background-size: 46px 46px;
+        mask-image: linear-gradient(
+          180deg,
+          rgba(0, 0, 0, 0.75),
+          transparent 78%
+        );
+        z-index: -1;
+      }
+      .cockpit-shell #header {
+        background: rgba(5, 8, 15, 0.86);
+        border-bottom: 1px solid rgba(142, 163, 191, 0.16);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
+        backdrop-filter: blur(18px) saturate(140%);
+      }
+      .cockpit-shell #header::after {
+        height: 1px;
+        opacity: 0.55;
+      }
+      .cockpit-shell .header-inner {
+        max-width: 1800px;
+        min-height: 64px;
+        gap: 14px;
+        padding: 0 18px;
+      }
+      .cockpit-shell #nav {
+        display: none;
+      }
+      .cockpit-shell .nav-hamburger,
+      .cockpit-shell .nav-drawer {
+        display: none !important;
+      }
+      .cockpit-shell .brand {
+        min-width: 218px;
+      }
+      .cockpit-shell .brand img {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow:
+          0 0 0 4px rgba(59, 183, 255, 0.08),
+          0 8px 28px rgba(0, 0, 0, 0.32);
+      }
+      .cockpit-shell .brand-subtitle {
+        color: rgba(237, 244, 255, 0.5);
+      }
+      .cockpit-command {
+        flex: 1 1 420px;
+        max-width: 740px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 220px;
+        height: 38px;
+        padding: 0 10px;
+        border: 1px solid rgba(142, 163, 191, 0.2);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.055);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+      .cockpit-command:focus-within {
+        border-color: rgba(59, 183, 255, 0.72);
+        box-shadow: 0 0 0 3px rgba(59, 183, 255, 0.14);
+      }
+      .cockpit-command-slash {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 21px;
+        height: 21px;
+        border-radius: 5px;
+        color: var(--cockpit-blue);
+        background: rgba(59, 183, 255, 0.12);
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 600;
+      }
+      .cockpit-command input {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        background: transparent;
+        color: #f7fbff;
+        padding: 0;
+        box-shadow: none;
+        font-size: 13px;
+      }
+      .cockpit-command input:focus {
+        box-shadow: none;
+      }
+      .cockpit-command input::placeholder {
+        color: rgba(237, 244, 255, 0.48);
+      }
+      .cockpit-command kbd {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 5px;
+        color: rgba(237, 244, 255, 0.64);
+        background: rgba(0, 0, 0, 0.25);
+        padding: 1px 6px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        font-weight: 500;
+      }
+      .cockpit-shell .theme-toggle,
+      .cockpit-shell .live-socket-chip,
+      .cockpit-shell .user-chip {
+        background: rgba(255, 255, 255, 0.065);
+        border-color: rgba(142, 163, 191, 0.18);
+      }
+      .cockpit-frame {
+        width: min(1800px, 100%);
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 228px minmax(0, 1fr);
+        gap: 18px;
+        padding: 18px;
+        align-items: start;
+      }
+      .cockpit-rail {
+        position: sticky;
+        top: 82px;
+        max-height: calc(100vh - 100px);
+        overflow: auto;
+        padding: 12px;
+        border: 1px solid var(--cockpit-line);
+        border-radius: 8px;
+        background: linear-gradient(
+          180deg,
+          rgba(13, 18, 30, 0.92),
+          rgba(8, 12, 21, 0.88)
+        );
+        box-shadow: 0 18px 54px rgba(0, 0, 0, 0.26);
+      }
+      .cockpit-rail-section + .cockpit-rail-section {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(142, 163, 191, 0.12);
+      }
+      .cockpit-rail-label {
+        display: block;
+        margin: 0 0 7px 8px;
+        color: rgba(237, 244, 255, 0.38);
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .cockpit-rail-link {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 34px;
+        margin: 2px 0;
+        padding: 8px 10px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: rgba(237, 244, 255, 0.72);
+        text-decoration: none;
+        font-weight: 600;
+        transition:
+          background 140ms ease,
+          border-color 140ms ease,
+          color 140ms ease,
+          transform 140ms ease;
+      }
+      .cockpit-rail-link:hover {
+        color: #ffffff;
+        text-decoration: none;
+        background: rgba(255, 255, 255, 0.055);
+        border-color: rgba(142, 163, 191, 0.16);
+        transform: translateX(2px);
+      }
+      .cockpit-rail-link.is-active {
+        color: #ffffff;
+        background: linear-gradient(
+          90deg,
+          rgba(59, 183, 255, 0.2),
+          rgba(159, 227, 107, 0.07)
+        );
+        border-color: rgba(59, 183, 255, 0.36);
+        box-shadow: inset 3px 0 0 var(--cockpit-blue);
+      }
+      .cockpit-rail-link span[aria-hidden] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        color: var(--cockpit-blue);
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+      }
+      .cockpit-shell #content {
+        max-width: none;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .cockpit-shell #content > h1,
+      .cockpit-shell #content > h2,
+      .cockpit-shell #content > h3,
+      .cockpit-shell .page-head,
+      .cockpit-panel,
+      .cockpit-card,
+      .cockpit-section,
+      .cockpit-shell #content > form,
+      .cockpit-shell #content > table,
+      .cockpit-shell #content > .card,
+      .cockpit-shell #content > .card-panel,
+      .cockpit-shell #content > .monitor-shell,
+      .cockpit-shell #content > .monitor-status,
+      .cockpit-shell #content > .detail-grid,
+      .cockpit-shell #content > .filter-bar,
+      .cockpit-shell #content > .empty-state {
+        border: 1px solid var(--cockpit-line);
+        border-radius: 8px;
+        background: var(--cockpit-panel);
+        box-shadow: 0 18px 54px rgba(0, 0, 0, 0.22);
+      }
+      .cockpit-shell #content > h1,
+      .cockpit-shell #content > h2,
+      .cockpit-shell #content > h3 {
+        margin: 0 0 14px 0;
+        padding: 18px 20px;
+        border-bottom-color: var(--cockpit-line);
+      }
+      .cockpit-shell .page-head {
+        align-items: center;
+        padding: 18px 20px;
+        margin: 0 0 14px;
+      }
+      .cockpit-shell .page-head h1 {
+        font-size: 24px;
+      }
+      .cockpit-shell .page-head-titles .subtitle,
+      .cockpit-shell .subtitle,
+      .cockpit-shell small,
+      .cockpit-shell label {
+        color: var(--cockpit-muted);
+      }
+      .cockpit-shell #content > form,
+      .cockpit-shell #content > table,
+      .cockpit-shell #content > .card,
+      .cockpit-shell #content > .card-panel,
+      .cockpit-shell #content > .monitor-shell,
+      .cockpit-shell #content > .detail-grid,
+      .cockpit-shell #content > .filter-bar,
+      .cockpit-shell #content > .empty-state {
+        padding: 16px;
+        margin-bottom: 14px;
+      }
+      .cockpit-shell .detail-grid {
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+      }
+      .cockpit-shell .detail-grid > *,
+      .cockpit-shell .panel,
+      .cockpit-shell .card-panel,
+      .cockpit-shell .monitor-card,
+      .cockpit-shell .stat-card,
+      .cockpit-shell .data-card,
+      .cockpit-shell .settings-card {
+        border: 1px solid var(--cockpit-line);
+        border-radius: 8px;
+        background: var(--cockpit-panel-2);
+        box-shadow: 0 14px 42px rgba(0, 0, 0, 0.2);
+      }
+      .cockpit-shell table {
+        overflow: hidden;
+        border: 1px solid var(--cockpit-line);
+        border-radius: 8px;
+        background: rgba(6, 10, 18, 0.58);
+      }
+      .cockpit-shell thead th,
+      .cockpit-shell th {
+        position: static;
+        color: rgba(237, 244, 255, 0.56);
+        background: rgba(255, 255, 255, 0.045);
+        border-bottom-color: var(--cockpit-line);
+        letter-spacing: 0.07em;
+      }
+      .cockpit-shell td {
+        border-bottom-color: rgba(142, 163, 191, 0.11);
+      }
+      .cockpit-shell tbody tr:nth-child(even) td {
+        background: rgba(255, 255, 255, 0.018);
+      }
+      .cockpit-shell tbody tr:hover td,
+      .cockpit-shell tbody tr.is-selected td {
+        background: rgba(59, 183, 255, 0.08);
+      }
+      .cockpit-shell tbody tr.is-selected td:first-child {
+        box-shadow: inset 3px 0 0 var(--cockpit-blue);
+      }
+      .cockpit-shell input[type="text"],
+      .cockpit-shell input[type="number"],
+      .cockpit-shell input[type="password"],
+      .cockpit-shell input[type="email"],
+      .cockpit-shell input[type="search"],
+      .cockpit-shell select,
+      .cockpit-shell textarea {
+        color: var(--cockpit-ink);
+        background: rgba(5, 8, 15, 0.76);
+        border-color: var(--cockpit-line-strong);
+      }
+      .cockpit-shell input::placeholder,
+      .cockpit-shell textarea::placeholder {
+        color: rgba(237, 244, 255, 0.38);
+      }
+      .cockpit-shell input[type="submit"],
+      .cockpit-shell button,
+      .cockpit-shell .btn {
+        border-color: rgba(142, 163, 191, 0.2);
+        color: #f8fbff;
+        background: linear-gradient(
+          180deg,
+          rgba(59, 183, 255, 0.22),
+          rgba(59, 183, 255, 0.12)
+        );
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.08),
+          0 8px 24px rgba(0, 0, 0, 0.18);
+      }
+      .cockpit-shell input[type="submit"]:hover,
+      .cockpit-shell button:hover,
+      .cockpit-shell .btn:hover {
+        background: linear-gradient(
+          180deg,
+          rgba(59, 183, 255, 0.32),
+          rgba(59, 183, 255, 0.18)
+        );
+      }
+      .cockpit-shell .btn-secondary,
+      .cockpit-shell button.secondary {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .cockpit-shell .badge,
+      .cockpit-shell .chip,
+      .cockpit-shell .update-pill {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .cockpit-grid {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 14px;
+      }
+      .cockpit-col-3 {
+        grid-column: span 3;
+      }
+      .cockpit-col-4 {
+        grid-column: span 4;
+      }
+      .cockpit-col-5 {
+        grid-column: span 5;
+      }
+      .cockpit-col-6 {
+        grid-column: span 6;
+      }
+      .cockpit-col-7 {
+        grid-column: span 7;
+      }
+      .cockpit-col-8 {
+        grid-column: span 8;
+      }
+      .cockpit-col-12 {
+        grid-column: span 12;
+      }
+      .cockpit-metric {
+        padding: 14px;
+        border: 1px solid var(--cockpit-line);
+        border-radius: 8px;
+        background: var(--cockpit-panel-2);
+      }
+      .cockpit-metric-label {
+        color: var(--cockpit-muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .cockpit-metric-value {
+        margin-top: 6px;
+        color: #ffffff;
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1;
+      }
+      .cockpit-metric-note {
+        margin-top: 7px;
+        color: var(--cockpit-muted);
+        font-size: 12px;
+      }
+      .lifecycle-rail,
+      .cockpit-lifecycle {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+        gap: 8px;
+      }
+      .lifecycle-step,
+      .cockpit-lifecycle-step {
+        position: relative;
+        min-height: 52px;
+        padding: 10px;
+        border: 1px solid var(--cockpit-line);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+      .lifecycle-step::after,
+      .cockpit-lifecycle-step::after {
+        content: "";
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: 7px;
+        height: 2px;
+        border-radius: 999px;
+        background: linear-gradient(
+          90deg,
+          var(--cockpit-blue),
+          rgba(159, 227, 107, 0.65)
+        );
+        opacity: 0.72;
+      }
+      .cockpit-pulse {
+        animation: cockpit-pulse 2.1s ease-in-out infinite;
+      }
+      @keyframes cockpit-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(59, 183, 255, 0);
+        }
+        50% {
+          box-shadow: 0 0 0 7px rgba(59, 183, 255, 0.1);
+        }
+      }
+      .cockpit-scanline {
+        position: relative;
+        overflow: hidden;
+      }
+      .cockpit-scanline::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(59, 183, 255, 0.11),
+          transparent
+        );
+        animation: cockpit-scan 3.8s ease-in-out infinite;
+        pointer-events: none;
+      }
+      @keyframes cockpit-scan {
+        0% {
+          transform: translateX(-100%);
+        }
+        55%,
+        100% {
+          transform: translateX(100%);
+        }
+      }
+      .cockpit-toast-stack {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        display: grid;
+        gap: 10px;
+        z-index: 900;
+        width: min(360px, calc(100vw - 36px));
+      }
+      .cockpit-toast {
+        padding: 12px 14px;
+        border: 1px solid var(--cockpit-line-strong);
+        border-radius: 8px;
+        color: var(--cockpit-ink);
+        background: rgba(8, 13, 23, 0.94);
+        box-shadow: 0 18px 54px rgba(0, 0, 0, 0.36);
+        animation: cockpit-toast-in 180ms ease-out;
+      }
+      .cockpit-toast strong {
+        display: block;
+        margin-bottom: 3px;
+      }
+      @keyframes cockpit-toast-in {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .cockpit-drawer-backdrop {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: rgba(0, 0, 0, 0.48);
+        z-index: 800;
+      }
+      .cockpit-drawer-backdrop.is-open {
+        display: block;
+      }
+      .cockpit-drawer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: min(520px, 100vw);
+        height: 100%;
+        padding: 20px;
+        border-left: 1px solid var(--cockpit-line);
+        background: linear-gradient(
+          180deg,
+          rgba(13, 18, 30, 0.98),
+          rgba(5, 8, 15, 0.98)
+        );
+        box-shadow: -22px 0 70px rgba(0, 0, 0, 0.4);
+        transform: translateX(100%);
+        transition: transform 180ms ease-out;
+        overflow: auto;
+      }
+      .cockpit-drawer-backdrop.is-open .cockpit-drawer {
+        transform: translateX(0);
+      }
+      .cockpit-drawer-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--cockpit-line);
+      }
+      .cockpit-drawer-head h2 {
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+      .cockpit-drawer-close {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 999px;
+      }
+      @media (max-width: 1000px) {
+        .cockpit-frame {
+          grid-template-columns: 1fr;
+          padding: 12px;
+        }
+        .cockpit-rail {
+          position: static;
+          max-height: none;
+          display: flex;
+          gap: 12px;
+          overflow-x: auto;
+          padding: 10px;
+        }
+        .cockpit-rail-section {
+          flex: 0 0 auto;
+          min-width: 190px;
+        }
+        .cockpit-rail-section + .cockpit-rail-section {
+          margin-top: 0;
+          padding-top: 0;
+          border-top: 0;
+          border-left: 1px solid rgba(142, 163, 191, 0.12);
+          padding-left: 12px;
+        }
+      }
+      @media (max-width: 760px) {
+        .cockpit-shell .header-inner {
+          min-height: auto;
+          padding: 10px 12px;
+          flex-wrap: wrap;
+        }
+        .cockpit-shell .brand {
+          min-width: 0;
+          flex: 1 1 auto;
+        }
+        .cockpit-command {
+          order: 5;
+          flex-basis: 100%;
+          max-width: none;
+        }
+        .cockpit-grid {
+          grid-template-columns: 1fr;
+        }
+        .cockpit-col-3,
+        .cockpit-col-4,
+        .cockpit-col-5,
+        .cockpit-col-6,
+        .cockpit-col-7,
+        .cockpit-col-8,
+        .cockpit-col-12 {
+          grid-column: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .cockpit-pulse,
+        .cockpit-scanline::after {
+          animation: none !important;
+        }
+      }
 
-/* -----------------------------------------------------------------
+      /* -----------------------------------------------------------------
    Shared page-pattern components.  Consumed via macros in
    templates/_macros.html (page_head / alert / filter_bar /
    empty_state / detail_grid).  Every color reads from an existing
    token so dark mode is free.
    ----------------------------------------------------------------- */
 
-/* .page-head — top-of-page title block.  H1 + subtitle on the left,
+      /* .page-head — top-of-page title block.  H1 + subtitle on the left,
    optional CTA button flush right.  Bottom-bordered so it acts as
    a section header for whatever follows. */
-.page-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
-  padding-bottom: 12px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--line);
-}
-.page-head-titles { min-width: 0; flex: 1 1 auto; }
-.page-head-titles h1 { margin: 0 0 2px 0; }
-.page-head-titles .subtitle {
-  color: var(--ink-muted);
-  font-size: 12.5px;
-}
-.page-head-action { flex: 0 0 auto; }
+      .page-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+        padding-bottom: 12px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .page-head-titles {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      .page-head-titles h1 {
+        margin: 0 0 2px 0;
+      }
+      .page-head-titles .subtitle {
+        color: var(--ink-muted);
+        font-size: 12.5px;
+      }
+      .page-head-action {
+        flex: 0 0 auto;
+      }
 
-/* .alert — semantic banner.  Left-aligned dot pseudo-element acts
+      /* .alert — semantic banner.  Left-aligned dot pseudo-element acts
    as the "icon" without requiring inline SVG; its color is driven
    by the matching --*-fg token so dark mode tracks automatically. */
-.alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  margin: 0 0 14px 0;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  line-height: 1.45;
-  border: 1px solid transparent;
-}
-.alert-dot {
-  flex: 0 0 auto;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  margin-top: 6px;
-  background: currentColor;
-  opacity: 0.85;
-}
-.alert-body { flex: 1 1 auto; min-width: 0; }
-.alert-body strong { font-weight: 600; }
-.alert-close {
-  flex: 0 0 auto;
-  background: transparent;
-  color: inherit;
-  border: none;
-  padding: 0 4px;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.7;
-}
-.alert-close:hover { opacity: 1; background: transparent; }
-.alert-ok {
-  background: var(--ok-bg);
-  color: var(--ok-fg);
-  border-color: color-mix(in srgb, var(--ok-fg) 20%, transparent);
-}
-.alert-warn {
-  background: var(--warn-bg);
-  color: var(--warn-fg);
-  border-color: color-mix(in srgb, var(--warn-fg) 20%, transparent);
-}
-.alert-bad {
-  background: var(--bad-bg);
-  color: var(--bad-fg);
-  border-color: color-mix(in srgb, var(--bad-fg) 20%, transparent);
-}
-.alert-info {
-  background: var(--info-bg);
-  color: var(--info-fg);
-  border-color: color-mix(in srgb, var(--info-fg) 20%, transparent);
-}
-.alert-neutral {
-  background: var(--neutral-bg);
-  color: var(--neutral-fg);
-  border-color: color-mix(in srgb, var(--neutral-fg) 20%, transparent);
-}
+      .alert {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 14px;
+        margin: 0 0 14px 0;
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        line-height: 1.45;
+        border: 1px solid transparent;
+      }
+      .alert-dot {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-top: 6px;
+        background: currentColor;
+        opacity: 0.85;
+      }
+      .alert-body {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .alert-body strong {
+        font-weight: 600;
+      }
+      .alert-close {
+        flex: 0 0 auto;
+        background: transparent;
+        color: inherit;
+        border: none;
+        padding: 0 4px;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0.7;
+      }
+      .alert-close:hover {
+        opacity: 1;
+        background: transparent;
+      }
+      .alert-ok {
+        background: var(--ok-bg);
+        color: var(--ok-fg);
+        border-color: color-mix(in srgb, var(--ok-fg) 20%, transparent);
+      }
+      .alert-warn {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+        border-color: color-mix(in srgb, var(--warn-fg) 20%, transparent);
+      }
+      .alert-bad {
+        background: var(--bad-bg);
+        color: var(--bad-fg);
+        border-color: color-mix(in srgb, var(--bad-fg) 20%, transparent);
+      }
+      .alert-info {
+        background: var(--info-bg);
+        color: var(--info-fg);
+        border-color: color-mix(in srgb, var(--info-fg) 20%, transparent);
+      }
+      .alert-neutral {
+        background: var(--neutral-bg);
+        color: var(--neutral-fg);
+        border-color: color-mix(in srgb, var(--neutral-fg) 20%, transparent);
+      }
 
-/* .filter-bar — horizontal row of filter <select>s.  Wraps on narrow
+      /* .filter-bar — horizontal row of filter <select>s.  Wraps on narrow
    viewports; right-aligned result count when provided. */
-.filter-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 0 0 14px 0;
-  padding: 10px 12px;
-  background: var(--surface-muted);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.filter-bar-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--ink-muted);
-}
-.filter-bar-item select { min-width: 120px; }
-.filter-bar-label {
-  font-weight: 500;
-  color: var(--ink-muted);
-}
-.filter-bar-count {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--ink-muted);
-}
+      .filter-bar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 0 0 14px 0;
+        padding: 10px 12px;
+        background: var(--surface-muted);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+      }
+      .filter-bar-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        color: var(--ink-muted);
+      }
+      .filter-bar-item select {
+        min-width: 120px;
+      }
+      .filter-bar-label {
+        font-weight: 500;
+        color: var(--ink-muted);
+      }
+      .filter-bar-count {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--ink-muted);
+      }
 
-/* .empty-state — centered "nothing here yet" block.  Vertical padding
+      /* .empty-state — centered "nothing here yet" block.  Vertical padding
    keeps it breathing; max-width keeps the prose readable. */
-.empty-state {
-  max-width: 460px;
-  margin: 0 auto;
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--ink-muted);
-}
-.empty-state-message {
-  margin: 0 0 14px 0;
-  font-size: 13.5px;
-  line-height: 1.5;
-  color: var(--ink);
-}
-.empty-state .btn { display: inline-block; }
-.empty-state-hint {
-  margin: 14px 0 0 0;
-  font-size: 12px;
-  color: var(--ink-soft);
-}
+      .empty-state {
+        max-width: 460px;
+        margin: 0 auto;
+        padding: 40px 20px;
+        text-align: center;
+        color: var(--ink-muted);
+      }
+      .empty-state-message {
+        margin: 0 0 14px 0;
+        font-size: 13.5px;
+        line-height: 1.5;
+        color: var(--ink);
+      }
+      .empty-state .btn {
+        display: inline-block;
+      }
+      .empty-state-hint {
+        margin: 14px 0 0 0;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
 
-/* .detail-grid — two-column layout for detail pages: 340px metadata
+      /* .detail-grid — two-column layout for detail pages: 340px metadata
    column on the left, flexible active/log area on the right.  Stacks
    below ~800px so it survives narrow viewports. */
-.detail-grid {
-  display: grid;
-  grid-template-columns: 340px 1fr;
-  gap: 20px;
-  align-items: start;
-}
-@media (max-width: 800px) {
-  .detail-grid { grid-template-columns: 1fr; }
-}
-</style>
-</head>
-<body class="cockpit-shell {% block body_class %}{% endblock %}">
-<header id="header">
-  <div class="header-inner">
-    <a class="brand" href="/">
-      <img src="/auth/logo" alt="">
-      <div class="brand-stack">
-        <span class="brand-title">Proxmox VE Autopilot</span>
-        <span class="brand-subtitle">Operator Console</span>
-      </div>
-    </a>
-    <div class="cockpit-command" role="search">
-      <span class="cockpit-command-slash" aria-hidden="true">/</span>
-      <input id="cockpitCommand" type="search"
-             placeholder="Command, route, VMID, job, artifact"
-             autocomplete="off" aria-label="Global command search">
-      <kbd>Ctrl K</kbd>
-    </div>
-    <nav id="nav" aria-label="Primary">
-      <div class="nav-item" data-route="/">
-        <a class="nav-tab" href="/">Dashboard</a>
-      </div>
-
-      <div class="nav-item" data-dropdown="provision"
-           data-routes="/provision,/template,/sequences,/answer-isos">
-        <button class="nav-tab" type="button"
-                aria-haspopup="menu" aria-expanded="false"
-                aria-controls="nav-dd-provision">
-          Provision<span class="nav-caret" aria-hidden="true"></span>
-        </button>
-        <ul class="nav-dropdown" id="nav-dd-provision" role="menu">
-          <li role="none"><a role="menuitem" href="/provision">Provision VMs</a></li>
-          <li role="none"><a role="menuitem" href="/template">Build Template</a></li>
-          <li role="none"><a role="menuitem" href="/sequences">Sequences</a></li>
-          <li role="none"><a role="menuitem" href="/answer-isos">Answer ISOs</a></li>
-        </ul>
-      </div>
-
-      <div class="nav-item" data-dropdown="fleet"
-           data-routes="/vms,/hashes,/cloud">
-        <button class="nav-tab" type="button"
-                aria-haspopup="menu" aria-expanded="false"
-                aria-controls="nav-dd-fleet">
-          Fleet<span class="nav-caret" aria-hidden="true"></span>
-        </button>
-        <ul class="nav-dropdown" id="nav-dd-fleet" role="menu">
-          <li role="none"><a role="menuitem" href="/vms">Devices</a></li>
-          <li role="none"><a role="menuitem" href="/hashes">Hashes</a></li>
-          <li role="none"><a role="menuitem" href="/cloud">Cloud</a></li>
-        </ul>
-      </div>
-
-      <div class="nav-item" data-route="/jobs">
-        <a class="nav-tab" href="/jobs">Jobs</a>
-      </div>
-
-      <div class="nav-item" data-route="/monitoring">
-        <a class="nav-tab" href="/monitoring">Monitoring</a>
-      </div>
-
-      <div class="nav-item" data-dropdown="settings"
-           data-routes="/credentials,/settings">
-        <button class="nav-tab" type="button"
-                aria-haspopup="menu" aria-expanded="false"
-                aria-controls="nav-dd-settings">
-          Settings<span class="nav-caret" aria-hidden="true"></span>
-        </button>
-        <ul class="nav-dropdown" id="nav-dd-settings" role="menu">
-          <li role="none"><a role="menuitem" href="/credentials">Credentials</a></li>
-          <li role="none"><a role="menuitem" href="/settings">General</a></li>
-        </ul>
-      </div>
-    </nav>
-    <button id="navHamburger" class="nav-hamburger" type="button"
-            aria-label="Toggle navigation menu" aria-expanded="false"
-            aria-controls="navDrawer">
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
-           viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-           aria-hidden="true">
-        <line x1="3" y1="6" x2="21" y2="6"/>
-        <line x1="3" y1="12" x2="21" y2="12"/>
-        <line x1="3" y1="18" x2="21" y2="18"/>
-      </svg>
-    </button>
-    <div id="navDrawer" class="nav-drawer" aria-label="Mobile navigation">
-      <a href="/" data-route="/">Dashboard</a>
-      <div class="nav-drawer-group">
-        <span class="nav-drawer-group-label">Provision</span>
-        <a href="/provision" data-route="/provision">Provision VMs</a>
-        <a href="/template" data-route="/template">Build Template</a>
-        <a href="/sequences" data-route="/sequences">Sequences</a>
-        <a href="/answer-isos" data-route="/answer-isos">Answer ISOs</a>
-      </div>
-      <div class="nav-drawer-group">
-        <span class="nav-drawer-group-label">Fleet</span>
-        <a href="/vms" data-route="/vms">Devices</a>
-        <a href="/hashes" data-route="/hashes">Hashes</a>
-        <a href="/cloud" data-route="/cloud">Cloud</a>
-      </div>
-      <a href="/jobs" data-route="/jobs">Jobs</a>
-      <a href="/monitoring" data-route="/monitoring">Monitoring</a>
-      <div class="nav-drawer-group">
-        <span class="nav-drawer-group-label">Settings</span>
-        <a href="/credentials" data-route="/credentials">Credentials</a>
-        <a href="/settings" data-route="/settings">General</a>
-      </div>
-    </div>
-    <button id="themeToggle" class="theme-toggle" type="button"
-            aria-label="Toggle dark mode" title="Toggle theme">
-      <svg class="theme-icon-moon" xmlns="http://www.w3.org/2000/svg"
-           width="14" height="14" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-      </svg>
-      <svg class="theme-icon-sun" xmlns="http://www.w3.org/2000/svg"
-           width="14" height="14" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="4"/>
-        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-      </svg>
-    </button>
-    <span id="liveSocketIndicator" class="live-socket-chip" data-state="connecting"
-          title="Live WebSocket connecting" aria-live="polite">
-      <span class="live-socket-dot" aria-hidden="true"></span>
-      <span id="liveSocketIndicatorLabel">Live: connecting</span>
-    </span>
-    {% if request and request.session and request.session.get('user') %}
-    <span class="user-chip">
-      <span class="user-dot" aria-hidden="true"></span>
-      {{ request.session['user'].get('name') or request.session['user'].get('email') or 'signed in' }}
-      · <a href="/auth/logout">Log out</a>
-    </span>
-    {% endif %}
-  </div>
-</header>
-
-<div class="cockpit-frame">
-  <aside class="cockpit-rail" aria-label="Cockpit navigation">
-    <div class="cockpit-rail-section">
-      <span class="cockpit-rail-label">Command</span>
-      <a class="cockpit-rail-link" data-route="/" href="/"><span aria-hidden="true">01</span>Dashboard</a>
-      <a class="cockpit-rail-link" data-route="/jobs" href="/jobs"><span aria-hidden="true">02</span>Jobs</a>
-      <a class="cockpit-rail-link" data-route="/monitoring" href="/monitoring"><span aria-hidden="true">03</span>Monitoring</a>
-    </div>
-    <div class="cockpit-rail-section">
-      <span class="cockpit-rail-label">Build</span>
-      <a class="cockpit-rail-link" data-route="/provision" href="/provision"><span aria-hidden="true">04</span>Provision VMs</a>
-      <a class="cockpit-rail-link" data-route="/template" href="/template"><span aria-hidden="true">05</span>Build Template</a>
-      <a class="cockpit-rail-link" data-route="/sequences" href="/sequences"><span aria-hidden="true">06</span>Sequences</a>
-    </div>
-    <div class="cockpit-rail-section">
-      <span class="cockpit-rail-label">Fleet</span>
-      <a class="cockpit-rail-link" data-route="/vms" href="/vms"><span aria-hidden="true">07</span>VM Fleet</a>
-      <a class="cockpit-rail-link" data-route="/cloud" href="/cloud"><span aria-hidden="true">08</span>Cloud Devices</a>
-      <a class="cockpit-rail-link" data-route="/hashes" href="/hashes"><span aria-hidden="true">09</span>Hashes</a>
-      <a class="cockpit-rail-link" data-route="/answer-isos" href="/answer-isos"><span aria-hidden="true">10</span>Answer ISOs</a>
-    </div>
-    <div class="cockpit-rail-section">
-      <span class="cockpit-rail-label">Control</span>
-      <a class="cockpit-rail-link" data-route="/credentials" href="/credentials"><span aria-hidden="true">11</span>Credentials</a>
-      <a class="cockpit-rail-link" data-route="/settings" href="/settings"><span aria-hidden="true">12</span>Settings</a>
-      <a class="cockpit-rail-link" data-route="/monitoring/settings" href="/monitoring/settings"><span aria-hidden="true">13</span>Monitor Settings</a>
-    </div>
-  </aside>
-
-  <main id="content" tabindex="-1">
-  {% block content %}{% endblock %}
-  </main>
-</div>
-
-<footer id="footer">
-  <span class="build">
-    <span>Build</span>
-    <code id="buildSha">…</code>
-  </span>
-  <span id="updateBadge"></span>
-  <button id="updateBtn" type="button" onclick="onUpdateClick();">Check for updates</button>
-  <span id="updateStatus"></span>
-  <span style="margin-left:auto;opacity:0.6;">&copy; 2026 Proxmox VE Autopilot</span>
-</footer>
-
-<div id="cockpitToastStack" class="cockpit-toast-stack" aria-live="polite" aria-atomic="false"></div>
-<div id="cockpitDrawerBackdrop" class="cockpit-drawer-backdrop" aria-hidden="true">
-  <aside class="cockpit-drawer" role="dialog" aria-modal="true" aria-labelledby="cockpitDrawerTitle">
-    <div class="cockpit-drawer-head">
-      <h2 id="cockpitDrawerTitle">Command</h2>
-      <button class="cockpit-drawer-close" type="button" data-cockpit-close aria-label="Close drawer">×</button>
-    </div>
-    <div id="cockpitDrawerBody"></div>
-  </aside>
-</div>
-
-<!-- Self-update progress overlay (hidden by default) -->
-<div id="updateOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;color:#fff;font-family:monospace;padding:40px;overflow:auto;">
-  <h2 style="color:#fff;margin:0 0 10px 0;">Updating autopilot…</h2>
-  <div id="updateStage" style="color:#ffc;margin-bottom:10px;">starting sidecar…</div>
-  <pre id="updateLog" style="background:#111;color:#ddd;padding:10px;border:1px solid #444;max-height:60vh;overflow:auto;font-size:12px;"></pre>
-  <div id="updateFooter" style="margin-top:12px;color:#aaa;font-size:12px;">
-    The container will restart when the new image is pulled.
-    The browser connection will drop briefly — this page will auto-reload once the new build is reachable.
-  </div>
-</div>
-<script>
-// -----------------------------------------------------------------------
-// Active-nav highlighter.  Compares location.pathname against each
-// nav link's href; the closest-matching prefix wins.  Runs on
-// DOMContentLoaded so no flash of unhighlighted nav.
-// -----------------------------------------------------------------------
-// -----------------------------------------------------------------------
-// Theme toggle.  The initial theme is already applied by the inline
-// script in <head> so there's no flash-of-light; this only handles
-// the click → persist → re-paint cycle.
-// -----------------------------------------------------------------------
-(function() {
-  var btn = document.getElementById('themeToggle');
-  if (!btn) return;
-  btn.addEventListener('click', function() {
-    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    if (isDark) {
-      document.documentElement.removeAttribute('data-theme');
-      try { localStorage.setItem('autopilot_theme', 'light'); } catch (e) {}
-    } else {
-      document.documentElement.setAttribute('data-theme', 'dark');
-      try { localStorage.setItem('autopilot_theme', 'dark'); } catch (e) {}
-    }
-  });
-})();
-
-// -----------------------------------------------------------------------
-// Topbar live WebSocket indicator.  This uses the same /api/live/ws
-// endpoint as the realtime pages and reconnects with a small backoff so
-// operators can see whether the browser still has a live control plane.
-// -----------------------------------------------------------------------
-(function() {
-  var chip = document.getElementById('liveSocketIndicator');
-  var label = document.getElementById('liveSocketIndicatorLabel');
-  if (!chip || !label) return;
-
-  var socket = null;
-  var reconnectTimer = null;
-  var reconnectDelay = 1000;
-  var closedByPage = false;
-
-  function setState(state) {
-    var text = {
-      connecting: 'Live: connecting',
-      connected: 'Live: connected',
-      reconnecting: 'Live: reconnecting',
-      offline: 'Live: offline',
-      unsupported: 'Live: unsupported'
-    }[state] || 'Live: unknown';
-    chip.dataset.state = state;
-    chip.title = 'WebSocket ' + text.replace('Live: ', '');
-    label.textContent = text;
-  }
-
-  function scheduleReconnect() {
-    if (closedByPage || reconnectTimer) return;
-    setState('reconnecting');
-    reconnectTimer = window.setTimeout(function() {
-      reconnectTimer = null;
-      connect();
-      reconnectDelay = Math.min(reconnectDelay * 1.7, 10000);
-    }, reconnectDelay);
-  }
-
-  function connect() {
-    if (!window.WebSocket) {
-      setState('unsupported');
-      return;
-    }
-    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-    setState(reconnectDelay > 1000 ? 'reconnecting' : 'connecting');
-    var scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    socket = new WebSocket(scheme + location.host + '/api/live/ws');
-    socket.addEventListener('open', function() {
-      reconnectDelay = 1000;
-      setState('connected');
-    });
-    socket.addEventListener('message', function(ev) {
-      var msg;
-      try { msg = JSON.parse(ev.data); } catch (_) { return; }
-      if (msg.type === 'hello' || msg.type === 'heartbeat') setState('connected');
-    });
-    socket.addEventListener('close', function() {
-      socket = null;
-      if (closedByPage) return;
-      setState('offline');
-      scheduleReconnect();
-    });
-    socket.addEventListener('error', function() {
-      setState('offline');
-    });
-  }
-
-  window.addEventListener('beforeunload', function() {
-    closedByPage = true;
-    if (reconnectTimer) window.clearTimeout(reconnectTimer);
-    if (socket) socket.close();
-  });
-  connect();
-})();
-
-// -----------------------------------------------------------------------
-// Nav: active-tab detection + click-to-open dropdowns + mobile drawer.
-//   - Active detection walks each .nav-item's data-routes (parents) or
-//     data-route (leaf) and picks the longest match against the current
-//     path.  The parent tab AND the matching dropdown item both get
-//     `.is-active` so the user can see their place even before opening
-//     the menu.
-//   - Dropdowns are click-to-open (no hover).  Closing happens on
-//     outside click, Escape, another dropdown being opened, or a link
-//     click inside the panel.
-//   - Keyboard: Enter/Space opens; ArrowDown/ArrowUp moves between
-//     menuitems inside the panel; Escape closes and returns focus to
-//     the parent button.
-//   - Mobile (≤700px): hamburger toggles the full-width drawer.  Same
-//     close triggers (outside click, link click, Escape).
-// -----------------------------------------------------------------------
-(function() {
-  var path = location.pathname;
-
-  // Longest-prefix match against a comma-separated list of routes.
-  function routeMatches(routesAttr) {
-    if (!routesAttr) return -1;
-    var best = -1;
-    routesAttr.split(',').forEach(function(r) {
-      r = r.trim();
-      if (!r) return;
-      var hit = (r === '/') ? (path === '/') : (path === r || path.indexOf(r + '/') === 0 || path === r);
-      // Allow trailing-slash variants: /template/ and /template both match /template.
-      if (!hit && r !== '/' && path.indexOf(r) === 0) {
-        var next = path.charAt(r.length);
-        if (next === '' || next === '/' || next === '?') hit = true;
+      .detail-grid {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 20px;
+        align-items: start;
       }
-      if (hit && r.length > best) best = r.length;
-    });
-    return best;
-  }
+      @media (max-width: 800px) {
+        .detail-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body class="cockpit-shell {% block body_class %}{% endblock %}">
+    <header id="header">
+      <div class="header-inner">
+        <a class="brand" href="/">
+          <img src="/auth/logo" alt="" />
+          <div class="brand-stack">
+            <span class="brand-title">Proxmox VE Autopilot</span>
+            <span class="brand-subtitle">Operator Console</span>
+          </div>
+        </a>
+        <div class="cockpit-command" role="search">
+          <span class="cockpit-command-slash" aria-hidden="true">/</span>
+          <input
+            id="cockpitCommand"
+            type="search"
+            placeholder="Command, route, VMID, job, artifact"
+            autocomplete="off"
+            aria-label="Global command search"
+          />
+          <kbd>Ctrl K</kbd>
+        </div>
+        <nav id="nav" aria-label="Primary">
+          <div class="nav-item" data-route="/">
+            <a class="nav-tab" href="/">Dashboard</a>
+          </div>
 
-  function markActive() {
-    var items = document.querySelectorAll('#nav .nav-item');
-    var bestItem = null, bestLen = -1;
-    items.forEach(function(item) {
-      var routes = item.getAttribute('data-routes') || item.getAttribute('data-route') || '';
-      var len = routeMatches(routes);
-      if (len > bestLen) { bestLen = len; bestItem = item; }
-    });
-    if (bestItem) {
-      var tab = bestItem.querySelector('.nav-tab');
-      if (tab) tab.classList.add('is-active');
-      // Highlight the matching dropdown item too, if any.
-      var dd = bestItem.querySelector('.nav-dropdown');
-      if (dd) {
-        var ddBest = null, ddBestLen = -1;
-        dd.querySelectorAll('a[href]').forEach(function(a) {
-          var href = a.getAttribute('href');
-          var len = routeMatches(href);
-          if (len > ddBestLen) { ddBestLen = len; ddBest = a; }
+          <div
+            class="nav-item"
+            data-dropdown="provision"
+            data-routes="/provision,/template,/sequences,/answer-isos"
+          >
+            <button
+              class="nav-tab"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="nav-dd-provision"
+            >
+              Provision<span class="nav-caret" aria-hidden="true"></span>
+            </button>
+            <ul class="nav-dropdown" id="nav-dd-provision" role="menu">
+              <li role="none">
+                <a role="menuitem" href="/provision">Provision VMs</a>
+              </li>
+              <li role="none">
+                <a role="menuitem" href="/template">Build Template</a>
+              </li>
+              <li role="none">
+                <a role="menuitem" href="/sequences">Sequences</a>
+              </li>
+              <li role="none">
+                <a role="menuitem" href="/answer-isos">Answer ISOs</a>
+              </li>
+            </ul>
+          </div>
+
+          <div
+            class="nav-item"
+            data-dropdown="fleet"
+            data-routes="/vms,/hashes,/cloud"
+          >
+            <button
+              class="nav-tab"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="nav-dd-fleet"
+            >
+              Fleet<span class="nav-caret" aria-hidden="true"></span>
+            </button>
+            <ul class="nav-dropdown" id="nav-dd-fleet" role="menu">
+              <li role="none"><a role="menuitem" href="/vms">Devices</a></li>
+              <li role="none"><a role="menuitem" href="/hashes">Hashes</a></li>
+              <li role="none"><a role="menuitem" href="/cloud">Cloud</a></li>
+            </ul>
+          </div>
+
+          <div class="nav-item" data-route="/jobs">
+            <a class="nav-tab" href="/jobs">Jobs</a>
+          </div>
+
+          <div class="nav-item" data-route="/monitoring">
+            <a class="nav-tab" href="/monitoring">Monitoring</a>
+          </div>
+
+          <div
+            class="nav-item"
+            data-dropdown="settings"
+            data-routes="/credentials,/settings"
+          >
+            <button
+              class="nav-tab"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="nav-dd-settings"
+            >
+              Settings<span class="nav-caret" aria-hidden="true"></span>
+            </button>
+            <ul class="nav-dropdown" id="nav-dd-settings" role="menu">
+              <li role="none">
+                <a role="menuitem" href="/credentials">Credentials</a>
+              </li>
+              <li role="none">
+                <a role="menuitem" href="/settings">General</a>
+              </li>
+            </ul>
+          </div>
+        </nav>
+        <button
+          id="navHamburger"
+          class="nav-hamburger"
+          type="button"
+          aria-label="Toggle navigation menu"
+          aria-expanded="false"
+          aria-controls="navDrawer"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <div id="navDrawer" class="nav-drawer" aria-label="Mobile navigation">
+          <a href="/" data-route="/">Dashboard</a>
+          <div class="nav-drawer-group">
+            <span class="nav-drawer-group-label">Provision</span>
+            <a href="/provision" data-route="/provision">Provision VMs</a>
+            <a href="/template" data-route="/template">Build Template</a>
+            <a href="/sequences" data-route="/sequences">Sequences</a>
+            <a href="/answer-isos" data-route="/answer-isos">Answer ISOs</a>
+          </div>
+          <div class="nav-drawer-group">
+            <span class="nav-drawer-group-label">Fleet</span>
+            <a href="/vms" data-route="/vms">Devices</a>
+            <a href="/hashes" data-route="/hashes">Hashes</a>
+            <a href="/cloud" data-route="/cloud">Cloud</a>
+          </div>
+          <a href="/jobs" data-route="/jobs">Jobs</a>
+          <a href="/monitoring" data-route="/monitoring">Monitoring</a>
+          <div class="nav-drawer-group">
+            <span class="nav-drawer-group-label">Settings</span>
+            <a href="/credentials" data-route="/credentials">Credentials</a>
+            <a href="/settings" data-route="/settings">General</a>
+          </div>
+        </div>
+        <button
+          id="themeToggle"
+          class="theme-toggle"
+          type="button"
+          aria-label="Toggle dark mode"
+          title="Toggle theme"
+        >
+          <svg
+            class="theme-icon-moon"
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+          <svg
+            class="theme-icon-sun"
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="4" />
+            <path
+              d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+            />
+          </svg>
+        </button>
+        <span
+          id="liveSocketIndicator"
+          class="live-socket-chip"
+          data-state="connecting"
+          title="Live WebSocket connecting"
+          aria-live="polite"
+        >
+          <span class="live-socket-dot" aria-hidden="true"></span>
+          <span id="liveSocketIndicatorLabel">Live: connecting</span>
+        </span>
+        {% if request and request.session and request.session.get('user') %}
+        <span class="user-chip">
+          <span class="user-dot" aria-hidden="true"></span>
+          {{ request.session['user'].get('name') or
+          request.session['user'].get('email') or 'signed in' }} ·
+          <a href="/auth/logout">Log out</a>
+        </span>
+        {% endif %}
+      </div>
+    </header>
+
+    <div class="cockpit-frame">
+      <aside class="cockpit-rail" aria-label="Cockpit navigation">
+        <div class="cockpit-rail-section">
+          <span class="cockpit-rail-label">Command</span>
+          <a class="cockpit-rail-link" data-route="/" href="/"
+            ><span aria-hidden="true">01</span>Dashboard</a
+          >
+          <a class="cockpit-rail-link" data-route="/jobs" href="/jobs"
+            ><span aria-hidden="true">02</span>Jobs</a
+          >
+          <a
+            class="cockpit-rail-link"
+            data-route="/monitoring"
+            href="/monitoring"
+            ><span aria-hidden="true">03</span>Monitoring</a
+          >
+        </div>
+        <div class="cockpit-rail-section">
+          <span class="cockpit-rail-label">Build</span>
+          <a class="cockpit-rail-link" data-route="/provision" href="/provision"
+            ><span aria-hidden="true">04</span>Provision VMs</a
+          >
+          <a class="cockpit-rail-link" data-route="/template" href="/template"
+            ><span aria-hidden="true">05</span>Build Template</a
+          >
+          <a class="cockpit-rail-link" data-route="/sequences" href="/sequences"
+            ><span aria-hidden="true">06</span>Sequences</a
+          >
+        </div>
+        <div class="cockpit-rail-section">
+          <span class="cockpit-rail-label">Fleet</span>
+          <a class="cockpit-rail-link" data-route="/vms" href="/vms"
+            ><span aria-hidden="true">07</span>VM Fleet</a
+          >
+          <a class="cockpit-rail-link" data-route="/cloud" href="/cloud"
+            ><span aria-hidden="true">08</span>Cloud Devices</a
+          >
+          <a class="cockpit-rail-link" data-route="/hashes" href="/hashes"
+            ><span aria-hidden="true">09</span>Hashes</a
+          >
+          <a
+            class="cockpit-rail-link"
+            data-route="/answer-isos"
+            href="/answer-isos"
+            ><span aria-hidden="true">10</span>Answer ISOs</a
+          >
+        </div>
+        <div class="cockpit-rail-section">
+          <span class="cockpit-rail-label">Control</span>
+          <a
+            class="cockpit-rail-link"
+            data-route="/credentials"
+            href="/credentials"
+            ><span aria-hidden="true">11</span>Credentials</a
+          >
+          <a class="cockpit-rail-link" data-route="/settings" href="/settings"
+            ><span aria-hidden="true">12</span>Settings</a
+          >
+          <a
+            class="cockpit-rail-link"
+            data-route="/monitoring/settings"
+            href="/monitoring/settings"
+            ><span aria-hidden="true">13</span>Monitor Settings</a
+          >
+        </div>
+      </aside>
+
+      <main id="content" tabindex="-1">{% block content %}{% endblock %}</main>
+    </div>
+
+    <footer id="footer">
+      <span class="build">
+        <span>Build</span>
+        <code id="buildSha">…</code>
+      </span>
+      <span id="updateBadge"></span>
+      <button id="updateBtn" type="button" onclick="onUpdateClick()">
+        Check for updates
+      </button>
+      <span id="updateStatus"></span>
+      <span style="margin-left: auto; opacity: 0.6"
+        >&copy; 2026 Proxmox VE Autopilot</span
+      >
+    </footer>
+
+    <div
+      id="cockpitToastStack"
+      class="cockpit-toast-stack"
+      aria-live="polite"
+      aria-atomic="false"
+    ></div>
+    <div
+      id="cockpitDrawerBackdrop"
+      class="cockpit-drawer-backdrop"
+      aria-hidden="true"
+    >
+      <aside
+        class="cockpit-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cockpitDrawerTitle"
+      >
+        <div class="cockpit-drawer-head">
+          <h2 id="cockpitDrawerTitle">Command</h2>
+          <button
+            class="cockpit-drawer-close"
+            type="button"
+            data-cockpit-close
+            aria-label="Close drawer"
+          >
+            ×
+          </button>
+        </div>
+        <div id="cockpitDrawerBody"></div>
+      </aside>
+    </div>
+
+    <!-- Self-update progress overlay (hidden by default) -->
+    <div
+      id="updateOverlay"
+      style="
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.85);
+        z-index: 9999;
+        color: #fff;
+        font-family: monospace;
+        padding: 40px;
+        overflow: auto;
+      "
+    >
+      <h2 style="color: #fff; margin: 0 0 10px 0">Updating autopilot…</h2>
+      <div id="updateStage" style="color: #ffc; margin-bottom: 10px">
+        starting sidecar…
+      </div>
+      <pre
+        id="updateLog"
+        style="
+          background: #111;
+          color: #ddd;
+          padding: 10px;
+          border: 1px solid #444;
+          max-height: 60vh;
+          overflow: auto;
+          font-size: 12px;
+        "
+      ></pre>
+      <div
+        id="updateFooter"
+        style="margin-top: 12px; color: #aaa; font-size: 12px"
+      >
+        The container will restart when the new image is pulled. The browser
+        connection will drop briefly — this page will auto-reload once the new
+        build is reachable.
+      </div>
+    </div>
+    <script>
+      // -----------------------------------------------------------------------
+      // Active-nav highlighter.  Compares location.pathname against each
+      // nav link's href; the closest-matching prefix wins.  Runs on
+      // DOMContentLoaded so no flash of unhighlighted nav.
+      // -----------------------------------------------------------------------
+      // -----------------------------------------------------------------------
+      // Theme toggle.  The initial theme is already applied by the inline
+      // script in <head> so there's no flash-of-light; this only handles
+      // the click → persist → re-paint cycle.
+      // -----------------------------------------------------------------------
+      (function () {
+        var btn = document.getElementById("themeToggle");
+        if (!btn) return;
+        btn.addEventListener("click", function () {
+          var isDark =
+            document.documentElement.getAttribute("data-theme") === "dark";
+          if (isDark) {
+            document.documentElement.removeAttribute("data-theme");
+            try {
+              localStorage.setItem("autopilot_theme", "light");
+            } catch (e) {}
+          } else {
+            document.documentElement.setAttribute("data-theme", "dark");
+            try {
+              localStorage.setItem("autopilot_theme", "dark");
+            } catch (e) {}
+          }
         });
-        if (ddBest) ddBest.classList.add('is-active');
-      }
-    }
-    // Mobile drawer links — same longest-prefix logic.
-    var drawerLinks = document.querySelectorAll('#navDrawer a[data-route]');
-    var dBest = null, dBestLen = -1;
-    drawerLinks.forEach(function(a) {
-      var len = routeMatches(a.getAttribute('data-route'));
-      if (len > dBestLen) { dBestLen = len; dBest = a; }
-    });
-    if (dBest) dBest.classList.add('is-active');
-  }
+      })();
 
-  // ---- Dropdowns ----
-  function closeAllDropdowns(except) {
-    document.querySelectorAll('#nav .nav-item.is-open').forEach(function(item) {
-      if (item === except) return;
-      item.classList.remove('is-open');
-      var btn = item.querySelector('.nav-tab');
-      if (btn && btn.tagName === 'BUTTON') btn.setAttribute('aria-expanded', 'false');
-    });
-  }
-  function openDropdown(item) {
-    closeAllDropdowns(item);
-    item.classList.add('is-open');
-    var btn = item.querySelector('.nav-tab');
-    if (btn) btn.setAttribute('aria-expanded', 'true');
-  }
-  function toggleDropdown(item) {
-    if (item.classList.contains('is-open')) closeAllDropdowns();
-    else openDropdown(item);
-  }
+      // -----------------------------------------------------------------------
+      // Topbar live WebSocket indicator.  This uses the same /api/live/ws
+      // endpoint as the realtime pages and reconnects with a small backoff so
+      // operators can see whether the browser still has a live control plane.
+      // -----------------------------------------------------------------------
+      (function () {
+        var chip = document.getElementById("liveSocketIndicator");
+        var label = document.getElementById("liveSocketIndicatorLabel");
+        if (!chip || !label) return;
 
-  function wireDropdowns() {
-    var parents = document.querySelectorAll('#nav .nav-item[data-dropdown]');
-    parents.forEach(function(item) {
-      var btn = item.querySelector('.nav-tab');
-      var menu = item.querySelector('.nav-dropdown');
-      if (!btn || !menu) return;
+        var socket = null;
+        var reconnectTimer = null;
+        var reconnectDelay = 1000;
+        var closedByPage = false;
 
-      btn.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        toggleDropdown(item);
-      });
-
-      btn.addEventListener('keydown', function(e) {
-        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          openDropdown(item);
-          var first = menu.querySelector('a[role="menuitem"]');
-          if (first) first.focus();
-        } else if (e.key === 'Escape') {
-          closeAllDropdowns();
+        function setState(state) {
+          var text =
+            {
+              connecting: "WebSocket: connecting",
+              connected: "WebSocket: connected",
+              reconnecting: "WebSocket: reconnecting",
+              offline: "WebSocket: offline",
+              unsupported: "WebSocket: unsupported",
+            }[state] || "WebSocket: unknown";
+          chip.dataset.state = state;
+          chip.title = "WebSocket " + text.replace("Live: ", "");
+          label.textContent = text;
         }
-      });
 
-      // Arrow-key navigation inside the menu.
-      menu.addEventListener('keydown', function(e) {
-        var items = Array.prototype.slice.call(menu.querySelectorAll('a[role="menuitem"]'));
-        var idx = items.indexOf(document.activeElement);
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          var next = items[(idx + 1) % items.length];
-          if (next) next.focus();
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          var prev = items[(idx - 1 + items.length) % items.length];
-          if (prev) prev.focus();
-        } else if (e.key === 'Home') {
-          e.preventDefault();
-          if (items[0]) items[0].focus();
-        } else if (e.key === 'End') {
-          e.preventDefault();
-          if (items.length) items[items.length - 1].focus();
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          closeAllDropdowns();
-          btn.focus();
-        } else if (e.key === 'Tab') {
-          // Let Tab close the menu naturally.
-          closeAllDropdowns();
+        function scheduleReconnect() {
+          if (closedByPage || reconnectTimer) return;
+          setState("reconnecting");
+          reconnectTimer = window.setTimeout(function () {
+            reconnectTimer = null;
+            connect();
+            reconnectDelay = Math.min(reconnectDelay * 1.7, 10000);
+          }, reconnectDelay);
         }
-      });
 
-      // Close when a menu item is clicked (so the browser navigates
-      // with a clean state).
-      menu.querySelectorAll('a').forEach(function(a) {
-        a.addEventListener('click', function() { closeAllDropdowns(); });
-      });
-    });
-
-    // Outside click.
-    document.addEventListener('click', function(e) {
-      if (!e.target.closest || !e.target.closest('#nav .nav-item[data-dropdown]')) {
-        closeAllDropdowns();
-      }
-    });
-    // Global Escape.
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') {
-        closeAllDropdowns();
-        closeDrawer();
-      }
-    });
-  }
-
-  // ---- Mobile drawer ----
-  function openDrawer() {
-    var d = document.getElementById('navDrawer');
-    var b = document.getElementById('navHamburger');
-    if (!d || !b) return;
-    d.classList.add('is-open');
-    b.setAttribute('aria-expanded', 'true');
-  }
-  function closeDrawer() {
-    var d = document.getElementById('navDrawer');
-    var b = document.getElementById('navHamburger');
-    if (!d || !b) return;
-    d.classList.remove('is-open');
-    b.setAttribute('aria-expanded', 'false');
-  }
-  function wireDrawer() {
-    var btn = document.getElementById('navHamburger');
-    var drawer = document.getElementById('navDrawer');
-    if (!btn || !drawer) return;
-    btn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      if (drawer.classList.contains('is-open')) closeDrawer();
-      else openDrawer();
-    });
-    // Link click inside drawer → close.
-    drawer.querySelectorAll('a').forEach(function(a) {
-      a.addEventListener('click', function() { closeDrawer(); });
-    });
-    // Outside click.
-    document.addEventListener('click', function(e) {
-      if (!drawer.classList.contains('is-open')) return;
-      if (e.target === btn || btn.contains(e.target)) return;
-      if (drawer.contains(e.target)) return;
-      closeDrawer();
-    });
-  }
-
-  function init() {
-    markActive();
-    wireDropdowns();
-    wireDrawer();
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-})();
-
-// -----------------------------------------------------------------------
-// Cockpit interaction primitives.  These are deliberately small and
-// framework-free: command search, active rail, row selection, shared
-// drawers, toasts, lightweight table filters, and confirmation gates.
-// Route-specific pages can opt in with data attributes without changing
-// backend contracts or form targets.
-// -----------------------------------------------------------------------
-(function() {
-  function routeScore(path, route) {
-    if (!route) return -1;
-    if (route === '/') return path === '/' ? 1 : -1;
-    return (path === route || path.indexOf(route + '/') === 0) ? route.length : -1;
-  }
-
-  function markRail() {
-    var path = location.pathname;
-    var best = null;
-    var bestScore = -1;
-    document.querySelectorAll('.cockpit-rail-link[data-route]').forEach(function(link) {
-      var score = routeScore(path, link.getAttribute('data-route'));
-      if (score > bestScore) {
-        bestScore = score;
-        best = link;
-      }
-    });
-    if (best) best.classList.add('is-active');
-  }
-
-  function ensureToastStack() {
-    var stack = document.getElementById('cockpitToastStack');
-    if (!stack) {
-      stack = document.createElement('div');
-      stack.id = 'cockpitToastStack';
-      stack.className = 'cockpit-toast-stack';
-      stack.setAttribute('aria-live', 'polite');
-      document.body.appendChild(stack);
-    }
-    return stack;
-  }
-
-  function toast(title, body, type) {
-    var stack = ensureToastStack();
-    var el = document.createElement('div');
-    el.className = 'cockpit-toast cockpit-toast-' + (type || 'info');
-    el.innerHTML = '<strong></strong><span></span>';
-    el.querySelector('strong').textContent = title || 'Cockpit';
-    el.querySelector('span').textContent = body || '';
-    stack.appendChild(el);
-    window.setTimeout(function() {
-      el.style.opacity = '0';
-      el.style.transform = 'translateY(8px)';
-      window.setTimeout(function() { el.remove(); }, 180);
-    }, 3600);
-    return el;
-  }
-
-  function openDrawer(title, bodyHtml) {
-    var backdrop = document.getElementById('cockpitDrawerBackdrop');
-    var titleEl = document.getElementById('cockpitDrawerTitle');
-    var bodyEl = document.getElementById('cockpitDrawerBody');
-    if (!backdrop || !titleEl || !bodyEl) return;
-    titleEl.textContent = title || 'Command';
-    bodyEl.innerHTML = bodyHtml || '';
-    backdrop.classList.add('is-open');
-    backdrop.setAttribute('aria-hidden', 'false');
-    var close = backdrop.querySelector('[data-cockpit-close]');
-    if (close) close.focus();
-  }
-
-  function closeDrawer() {
-    var backdrop = document.getElementById('cockpitDrawerBackdrop');
-    if (!backdrop) return;
-    backdrop.classList.remove('is-open');
-    backdrop.setAttribute('aria-hidden', 'true');
-  }
-
-  function commandPaletteHtml() {
-    var groups = {};
-    document.querySelectorAll('.cockpit-rail-section').forEach(function(section) {
-      var label = section.querySelector('.cockpit-rail-label');
-      var groupName = label ? label.textContent : 'Routes';
-      groups[groupName] = Array.prototype.slice.call(section.querySelectorAll('.cockpit-rail-link')).map(function(link) {
-        return {
-          href: link.getAttribute('href'),
-          text: link.textContent.replace(/^\d+\s*/, '').trim()
-        };
-      });
-    });
-    var html = '<div class="cockpit-grid">';
-    Object.keys(groups).forEach(function(group) {
-      html += '<div class="cockpit-metric cockpit-col-6"><div class="cockpit-metric-label">' + group + '</div>';
-      groups[group].forEach(function(item) {
-        html += '<p style="margin:10px 0 0"><a class="btn" href="' + item.href + '">' + item.text + '</a></p>';
-      });
-      html += '</div>';
-    });
-    html += '</div>';
-    return html;
-  }
-
-  function filterRows(query, root) {
-    var q = (query || '').trim().toLowerCase();
-    var rows = (root || document).querySelectorAll('tbody tr');
-    var visible = 0;
-    rows.forEach(function(row) {
-      var match = !q || row.textContent.toLowerCase().indexOf(q) !== -1;
-      row.style.display = match ? '' : 'none';
-      if (match) visible += 1;
-    });
-    return visible;
-  }
-
-  function wireCommand() {
-    var input = document.getElementById('cockpitCommand');
-    if (!input) return;
-    document.addEventListener('keydown', function(e) {
-      var key = (e.key || '').toLowerCase();
-      if ((e.metaKey || e.ctrlKey) && key === 'k') {
-        e.preventDefault();
-        input.focus();
-        input.select();
-      }
-      if (e.key === 'Escape') closeDrawer();
-    });
-    input.addEventListener('keydown', function(e) {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      var q = input.value.trim().toLowerCase();
-      if (!q) {
-        openDrawer('Command Palette', commandPaletteHtml());
-        return;
-      }
-      var links = Array.prototype.slice.call(document.querySelectorAll('.cockpit-rail-link[href]'));
-      var hit = links.find(function(link) {
-        return link.textContent.toLowerCase().indexOf(q) !== -1 ||
-               link.getAttribute('href').toLowerCase().indexOf(q) !== -1;
-      });
-      if (hit) {
-        location.href = hit.getAttribute('href');
-        return;
-      }
-      var count = filterRows(q, document.getElementById('content'));
-      toast('Filter applied', count + ' visible rows matched "' + input.value.trim() + '".', 'info');
-    });
-  }
-
-  function wireDataControls() {
-    document.addEventListener('input', function(e) {
-      var el = e.target.closest && e.target.closest('[data-cockpit-filter]');
-      if (!el) return;
-      var target = el.getAttribute('data-cockpit-filter');
-      var root = target ? document.querySelector(target) : document;
-      filterRows(el.value, root || document);
-    });
-
-    document.addEventListener('click', function(e) {
-      var drawerTrigger = e.target.closest && e.target.closest('[data-cockpit-drawer]');
-      if (drawerTrigger) {
-        e.preventDefault();
-        openDrawer(
-          drawerTrigger.getAttribute('data-drawer-title') || drawerTrigger.textContent.trim() || 'Command',
-          drawerTrigger.getAttribute('data-drawer-body') || '<p class="subtitle">Command staged. Wire this control to the existing backend endpoint when the page slice is converted.</p>'
-        );
-        return;
-      }
-      if (e.target.closest && e.target.closest('[data-cockpit-close]')) {
-        e.preventDefault();
-        closeDrawer();
-        return;
-      }
-      var toastTrigger = e.target.closest && e.target.closest('[data-cockpit-toast]');
-      if (toastTrigger) {
-        toast(toastTrigger.getAttribute('data-toast-title') || 'Command staged',
-              toastTrigger.getAttribute('data-toast-body') || 'The command packet was accepted by the cockpit UI.',
-              toastTrigger.getAttribute('data-toast-type') || 'info');
-      }
-      var row = e.target.closest && e.target.closest('tbody tr');
-      if (row && !e.target.closest('a,button,input,select,textarea,label')) {
-        var table = row.closest('table');
-        if (table) {
-          table.querySelectorAll('tbody tr.is-selected').forEach(function(other) {
-            if (other !== row) other.classList.remove('is-selected', 'cockpit-pulse');
+        function connect() {
+          if (!window.WebSocket) {
+            setState("unsupported");
+            return;
+          }
+          if (
+            socket &&
+            (socket.readyState === WebSocket.OPEN ||
+              socket.readyState === WebSocket.CONNECTING)
+          ) {
+            return;
+          }
+          setState(reconnectDelay > 1000 ? "reconnecting" : "connecting");
+          var scheme = location.protocol === "https:" ? "wss://" : "ws://";
+          socket = new WebSocket(scheme + location.host + "/api/live/ws");
+          socket.addEventListener("open", function () {
+            reconnectDelay = 1000;
+            setState("connected");
+          });
+          socket.addEventListener("message", function (ev) {
+            var msg;
+            try {
+              msg = JSON.parse(ev.data);
+            } catch (_) {
+              return;
+            }
+            if (msg.type === "hello" || msg.type === "heartbeat")
+              setState("connected");
+          });
+          socket.addEventListener("close", function () {
+            socket = null;
+            if (closedByPage) return;
+            setState("offline");
+            scheduleReconnect();
+          });
+          socket.addEventListener("error", function () {
+            setState("offline");
           });
         }
-        row.classList.toggle('is-selected');
-        row.classList.toggle('cockpit-pulse', row.classList.contains('is-selected'));
-      }
-      var backdrop = document.getElementById('cockpitDrawerBackdrop');
-      if (backdrop && e.target === backdrop) closeDrawer();
-    });
 
-    document.addEventListener('submit', function(e) {
-      var form = e.target.closest && e.target.closest('[data-confirm-text]');
-      if (!form) return;
-      var required = form.getAttribute('data-confirm-text') || '';
-      var input = form.querySelector('[data-confirm-input]');
-      if (!input || input.value !== required) {
-        e.preventDefault();
-        toast('Confirmation required', 'Type "' + required + '" before submitting this destructive command.', 'warn');
-      }
-    });
-  }
-
-  window.CockpitUI = {
-    toast: toast,
-    openDrawer: openDrawer,
-    closeDrawer: closeDrawer,
-    filterRows: filterRows
-  };
-
-  function init() {
-    markRail();
-    wireCommand();
-    wireDataControls();
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-})();
-
-// -----------------------------------------------------------------------
-// <time data-utc=...> → browser locale + timezone.
-// Server always emits UTC in ISO 8601. This script converts each
-// <time> with a data-utc attribute to the viewer's locale on load
-// and on MutationObserver fires (for dynamically injected rows).
-// The original UTC string is preserved in `title` so hovering any
-// rendered timestamp shows the canonical UTC source.
-// -----------------------------------------------------------------------
-(function() {
-  function fmt(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    try {
-      return d.toLocaleString(undefined, {
-        year: 'numeric', month: 'short', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        timeZoneName: 'short',
-      });
-    } catch (e) {
-      return d.toString();
-    }
-  }
-  function convertAll(root) {
-    (root || document).querySelectorAll('time[data-utc]').forEach(function(el) {
-      var utc = el.getAttribute('data-utc');
-      if (!utc || el.dataset.tzDone === '1') return;
-      el.textContent = fmt(utc);
-      if (!el.title) el.title = utc;
-      el.dataset.tzDone = '1';
-    });
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { convertAll(); });
-  } else {
-    convertAll();
-  }
-  // Catch dynamically added <time> elements.
-  if (window.MutationObserver) {
-    new MutationObserver(function(muts) {
-      muts.forEach(function(m) {
-        m.addedNodes && m.addedNodes.forEach(function(n) {
-          if (n.nodeType === 1) convertAll(n);
+        window.addEventListener("beforeunload", function () {
+          closedByPage = true;
+          if (reconnectTimer) window.clearTimeout(reconnectTimer);
+          if (socket) socket.close();
         });
-      });
-    }).observe(document.body, { childList: true, subtree: true });
-  }
-})();
+        connect();
+      })();
 
-(function() {
-  var latestSha = null;   // remember origin/main head so the Update
-                          // button can label itself with the target.
+      // -----------------------------------------------------------------------
+      // Nav: active-tab detection + click-to-open dropdowns + mobile drawer.
+      //   - Active detection walks each .nav-item's data-routes (parents) or
+      //     data-route (leaf) and picks the longest match against the current
+      //     path.  The parent tab AND the matching dropdown item both get
+      //     `.is-active` so the user can see their place even before opening
+      //     the menu.
+      //   - Dropdowns are click-to-open (no hover).  Closing happens on
+      //     outside click, Escape, another dropdown being opened, or a link
+      //     click inside the panel.
+      //   - Keyboard: Enter/Space opens; ArrowDown/ArrowUp moves between
+      //     menuitems inside the panel; Escape closes and returns focus to
+      //     the parent button.
+      //   - Mobile (≤700px): hamburger toggles the full-width drawer.  Same
+      //     close triggers (outside click, link click, Escape).
+      // -----------------------------------------------------------------------
+      (function () {
+        var path = location.pathname;
 
-  function renderBadge(data) {
-    var sha = data.running && data.running.sha_short ? data.running.sha_short : 'unknown';
-    var when = data.running && data.running.build_time && data.running.build_time !== 'unknown' ? data.running.build_time : '';
-    var el = document.getElementById('buildSha');
-    el.textContent = sha;
-    el.title = (data.running && data.running.sha ? data.running.sha : '') + (when ? ' — built ' + when : '');
+        // Longest-prefix match against a comma-separated list of routes.
+        function routeMatches(routesAttr) {
+          if (!routesAttr) return -1;
+          var best = -1;
+          routesAttr.split(",").forEach(function (r) {
+            r = r.trim();
+            if (!r) return;
+            var hit =
+              r === "/"
+                ? path === "/"
+                : path === r || path.indexOf(r + "/") === 0 || path === r;
+            // Allow trailing-slash variants: /template/ and /template both match /template.
+            if (!hit && r !== "/" && path.indexOf(r) === 0) {
+              var next = path.charAt(r.length);
+              if (next === "" || next === "/" || next === "?") hit = true;
+            }
+            if (hit && r.length > best) best = r.length;
+          });
+          return best;
+        }
 
-    var badge = document.getElementById('updateBadge');
-    var btn = document.getElementById('updateBtn');
-    // All visual states now use tokenised CSS classes (.update-pill.*
-    // + .is-ready on the button) so dark mode picks up the same
-    // colors without inline overrides.
-    if (data.update_available === true) {
-      latestSha = (data.latest && data.latest.sha_short) || null;
-      badge.innerHTML = '<a class="update-pill warn" href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank">Update available → ' + (latestSha || '?') + '</a>';
-      btn.textContent = latestSha ? 'Update to ' + latestSha : 'Update now';
-      btn.classList.add('is-ready');
-      btn.dataset.mode = 'update';
-    } else if (data.update_available === false) {
-      badge.innerHTML = '<span class="update-pill ok">up to date</span>';
-      btn.textContent = 'Check for updates';
-      btn.classList.remove('is-ready');
-      btn.dataset.mode = 'check';
-    } else if (data.latest && data.latest.error) {
-      badge.innerHTML = '<span class="update-pill neutral">update check failed</span>';
-      badge.title = data.latest.error;
-      btn.classList.remove('is-ready');
-      btn.dataset.mode = 'check';
-    } else {
-      badge.innerHTML = '';
-      btn.classList.remove('is-ready');
-      btn.dataset.mode = 'check';
-    }
-  }
+        function markActive() {
+          var items = document.querySelectorAll("#nav .nav-item");
+          var bestItem = null,
+            bestLen = -1;
+          items.forEach(function (item) {
+            var routes =
+              item.getAttribute("data-routes") ||
+              item.getAttribute("data-route") ||
+              "";
+            var len = routeMatches(routes);
+            if (len > bestLen) {
+              bestLen = len;
+              bestItem = item;
+            }
+          });
+          if (bestItem) {
+            var tab = bestItem.querySelector(".nav-tab");
+            if (tab) tab.classList.add("is-active");
+            // Highlight the matching dropdown item too, if any.
+            var dd = bestItem.querySelector(".nav-dropdown");
+            if (dd) {
+              var ddBest = null,
+                ddBestLen = -1;
+              dd.querySelectorAll("a[href]").forEach(function (a) {
+                var href = a.getAttribute("href");
+                var len = routeMatches(href);
+                if (len > ddBestLen) {
+                  ddBestLen = len;
+                  ddBest = a;
+                }
+              });
+              if (ddBest) ddBest.classList.add("is-active");
+            }
+          }
+          // Mobile drawer links — same longest-prefix logic.
+          var drawerLinks = document.querySelectorAll(
+            "#navDrawer a[data-route]",
+          );
+          var dBest = null,
+            dBestLen = -1;
+          drawerLinks.forEach(function (a) {
+            var len = routeMatches(a.getAttribute("data-route"));
+            if (len > dBestLen) {
+              dBestLen = len;
+              dBest = a;
+            }
+          });
+          if (dBest) dBest.classList.add("is-active");
+        }
 
-  window.checkUpdate = function(withRemote) {
-    var url = withRemote ? '/api/version?check=1' : '/api/version';
-    fetch(url).then(function(r) { return r.json(); }).then(renderBadge).catch(function(){});
-  };
+        // ---- Dropdowns ----
+        function closeAllDropdowns(except) {
+          document
+            .querySelectorAll("#nav .nav-item.is-open")
+            .forEach(function (item) {
+              if (item === except) return;
+              item.classList.remove("is-open");
+              var btn = item.querySelector(".nav-tab");
+              if (btn && btn.tagName === "BUTTON")
+                btn.setAttribute("aria-expanded", "false");
+            });
+        }
+        function openDropdown(item) {
+          closeAllDropdowns(item);
+          item.classList.add("is-open");
+          var btn = item.querySelector(".nav-tab");
+          if (btn) btn.setAttribute("aria-expanded", "true");
+        }
+        function toggleDropdown(item) {
+          if (item.classList.contains("is-open")) closeAllDropdowns();
+          else openDropdown(item);
+        }
 
-  // ---- Self-update flow ----
-  async function doUpdate() {
-    var overlay = document.getElementById('updateOverlay');
-    var stage = document.getElementById('updateStage');
-    var logEl = document.getElementById('updateLog');
-    overlay.style.display = 'block';
-    stage.textContent = 'spawning update sidecar…';
-    logEl.textContent = '';
-    try {
-      var r = await fetch('/api/update/run', {method: 'POST'});
-      if (!r.ok) {
-        stage.textContent = 'start failed: ' + (await r.text());
-        return;
-      }
-      var body = await r.json();
-      stage.textContent = 'sidecar started (' + (body.container_id || 'unknown') + ') — streaming log…';
-    } catch (e) {
-      stage.textContent = 'request failed — is the container still reachable? ' + e;
-      return;
-    }
+        function wireDropdowns() {
+          var parents = document.querySelectorAll(
+            "#nav .nav-item[data-dropdown]",
+          );
+          parents.forEach(function (item) {
+            var btn = item.querySelector(".nav-tab");
+            var menu = item.querySelector(".nav-dropdown");
+            if (!btn || !menu) return;
 
-    // Poll status until the sidecar finishes OR we lose the backend.
-    var firstLostContact = null;
-    var pollInterval = 2000;
-    async function poll() {
-      try {
-        var r = await fetch('/api/update/status');
-        if (!r.ok) throw new Error('status ' + r.status);
-        var s = await r.json();
-        firstLostContact = null;
-        logEl.textContent = s.log || '(waiting for output…)';
-        logEl.scrollTop = logEl.scrollHeight;
-        if (s.running) {
-          stage.textContent = 'sidecar running…';
-        } else if (s.finished) {
-          stage.textContent = 'update complete — reloading in 3s…';
-          setTimeout(function() { location.reload(); }, 3000);
-          return;
+            btn.addEventListener("click", function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              toggleDropdown(item);
+            });
+
+            btn.addEventListener("keydown", function (e) {
+              if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                openDropdown(item);
+                var first = menu.querySelector('a[role="menuitem"]');
+                if (first) first.focus();
+              } else if (e.key === "Escape") {
+                closeAllDropdowns();
+              }
+            });
+
+            // Arrow-key navigation inside the menu.
+            menu.addEventListener("keydown", function (e) {
+              var items = Array.prototype.slice.call(
+                menu.querySelectorAll('a[role="menuitem"]'),
+              );
+              var idx = items.indexOf(document.activeElement);
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                var next = items[(idx + 1) % items.length];
+                if (next) next.focus();
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                var prev = items[(idx - 1 + items.length) % items.length];
+                if (prev) prev.focus();
+              } else if (e.key === "Home") {
+                e.preventDefault();
+                if (items[0]) items[0].focus();
+              } else if (e.key === "End") {
+                e.preventDefault();
+                if (items.length) items[items.length - 1].focus();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                closeAllDropdowns();
+                btn.focus();
+              } else if (e.key === "Tab") {
+                // Let Tab close the menu naturally.
+                closeAllDropdowns();
+              }
+            });
+
+            // Close when a menu item is clicked (so the browser navigates
+            // with a clean state).
+            menu.querySelectorAll("a").forEach(function (a) {
+              a.addEventListener("click", function () {
+                closeAllDropdowns();
+              });
+            });
+          });
+
+          // Outside click.
+          document.addEventListener("click", function (e) {
+            if (
+              !e.target.closest ||
+              !e.target.closest("#nav .nav-item[data-dropdown]")
+            ) {
+              closeAllDropdowns();
+            }
+          });
+          // Global Escape.
+          document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+              closeAllDropdowns();
+              closeDrawer();
+            }
+          });
+        }
+
+        // ---- Mobile drawer ----
+        function openDrawer() {
+          var d = document.getElementById("navDrawer");
+          var b = document.getElementById("navHamburger");
+          if (!d || !b) return;
+          d.classList.add("is-open");
+          b.setAttribute("aria-expanded", "true");
+        }
+        function closeDrawer() {
+          var d = document.getElementById("navDrawer");
+          var b = document.getElementById("navHamburger");
+          if (!d || !b) return;
+          d.classList.remove("is-open");
+          b.setAttribute("aria-expanded", "false");
+        }
+        function wireDrawer() {
+          var btn = document.getElementById("navHamburger");
+          var drawer = document.getElementById("navDrawer");
+          if (!btn || !drawer) return;
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            if (drawer.classList.contains("is-open")) closeDrawer();
+            else openDrawer();
+          });
+          // Link click inside drawer → close.
+          drawer.querySelectorAll("a").forEach(function (a) {
+            a.addEventListener("click", function () {
+              closeDrawer();
+            });
+          });
+          // Outside click.
+          document.addEventListener("click", function (e) {
+            if (!drawer.classList.contains("is-open")) return;
+            if (e.target === btn || btn.contains(e.target)) return;
+            if (drawer.contains(e.target)) return;
+            closeDrawer();
+          });
+        }
+
+        function init() {
+          markActive();
+          wireDropdowns();
+          wireDrawer();
+        }
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", init);
         } else {
-          stage.textContent = 'sidecar finished — checking new build…';
-          setTimeout(function() { location.reload(); }, 2000);
-          return;
+          init();
         }
-      } catch (e) {
-        // Backend lost — that's EXPECTED during the compose up phase
-        // when our container is being replaced. Show a friendly
-        // message and keep polling until the new container answers.
-        firstLostContact = firstLostContact || Date.now();
-        var secs = Math.floor((Date.now() - firstLostContact) / 1000);
-        stage.textContent = 'container restarting (' + secs + 's)… waiting for new build to come up';
-        // After 120s of lost contact without recovery, give up.
-        if (secs > 120) {
-          stage.textContent = 'container did not come back in 120s — manually check docker compose logs autopilot';
-          return;
+      })();
+
+      // -----------------------------------------------------------------------
+      // Cockpit interaction primitives.  These are deliberately small and
+      // framework-free: command search, active rail, row selection, shared
+      // drawers, toasts, lightweight table filters, and confirmation gates.
+      // Route-specific pages can opt in with data attributes without changing
+      // backend contracts or form targets.
+      // -----------------------------------------------------------------------
+      (function () {
+        function routeScore(path, route) {
+          if (!route) return -1;
+          if (route === "/") return path === "/" ? 1 : -1;
+          return path === route || path.indexOf(route + "/") === 0
+            ? route.length
+            : -1;
         }
-      }
-      setTimeout(poll, pollInterval);
-    }
-    poll();
-  }
 
-  window.onUpdateClick = function() {
-    var btn = document.getElementById('updateBtn');
-    if (btn.dataset.mode === 'update') {
-      if (confirm('Pull latest image and restart the autopilot container?\n\nThe browser will reload automatically when the new build is up.')) {
-        doUpdate();
-      }
-    } else {
-      checkUpdate(true);
-    }
-  };
+        function markRail() {
+          var path = location.pathname;
+          var best = null;
+          var bestScore = -1;
+          document
+            .querySelectorAll(".cockpit-rail-link[data-route]")
+            .forEach(function (link) {
+              var score = routeScore(path, link.getAttribute("data-route"));
+              if (score > bestScore) {
+                bestScore = score;
+                best = link;
+              }
+            });
+          if (best) best.classList.add("is-active");
+        }
 
-  // Initial render: show the running build. Do the GitHub check after a
-  // short delay so the rest of the page loads first.
-  checkUpdate(false);
-  setTimeout(function() { checkUpdate(true); }, 1500);
-})();
-</script>
-</body>
+        function ensureToastStack() {
+          var stack = document.getElementById("cockpitToastStack");
+          if (!stack) {
+            stack = document.createElement("div");
+            stack.id = "cockpitToastStack";
+            stack.className = "cockpit-toast-stack";
+            stack.setAttribute("aria-live", "polite");
+            document.body.appendChild(stack);
+          }
+          return stack;
+        }
+
+        function toast(title, body, type) {
+          var stack = ensureToastStack();
+          var el = document.createElement("div");
+          el.className = "cockpit-toast cockpit-toast-" + (type || "info");
+          el.innerHTML = "<strong></strong><span></span>";
+          el.querySelector("strong").textContent = title || "Cockpit";
+          el.querySelector("span").textContent = body || "";
+          stack.appendChild(el);
+          window.setTimeout(function () {
+            el.style.opacity = "0";
+            el.style.transform = "translateY(8px)";
+            window.setTimeout(function () {
+              el.remove();
+            }, 180);
+          }, 3600);
+          return el;
+        }
+
+        function openDrawer(title, bodyHtml) {
+          var backdrop = document.getElementById("cockpitDrawerBackdrop");
+          var titleEl = document.getElementById("cockpitDrawerTitle");
+          var bodyEl = document.getElementById("cockpitDrawerBody");
+          if (!backdrop || !titleEl || !bodyEl) return;
+          titleEl.textContent = title || "Command";
+          bodyEl.innerHTML = bodyHtml || "";
+          backdrop.classList.add("is-open");
+          backdrop.setAttribute("aria-hidden", "false");
+          var close = backdrop.querySelector("[data-cockpit-close]");
+          if (close) close.focus();
+        }
+
+        function closeDrawer() {
+          var backdrop = document.getElementById("cockpitDrawerBackdrop");
+          if (!backdrop) return;
+          backdrop.classList.remove("is-open");
+          backdrop.setAttribute("aria-hidden", "true");
+        }
+
+        function commandPaletteHtml() {
+          var groups = {};
+          document
+            .querySelectorAll(".cockpit-rail-section")
+            .forEach(function (section) {
+              var label = section.querySelector(".cockpit-rail-label");
+              var groupName = label ? label.textContent : "Routes";
+              groups[groupName] = Array.prototype.slice
+                .call(section.querySelectorAll(".cockpit-rail-link"))
+                .map(function (link) {
+                  return {
+                    href: link.getAttribute("href"),
+                    text: link.textContent.replace(/^\d+\s*/, "").trim(),
+                  };
+                });
+            });
+          var html = '<div class="cockpit-grid">';
+          Object.keys(groups).forEach(function (group) {
+            html +=
+              '<div class="cockpit-metric cockpit-col-6"><div class="cockpit-metric-label">' +
+              group +
+              "</div>";
+            groups[group].forEach(function (item) {
+              html +=
+                '<p style="margin:10px 0 0"><a class="btn" href="' +
+                item.href +
+                '">' +
+                item.text +
+                "</a></p>";
+            });
+            html += "</div>";
+          });
+          html += "</div>";
+          return html;
+        }
+
+        function filterRows(query, root) {
+          var q = (query || "").trim().toLowerCase();
+          var rows = (root || document).querySelectorAll("tbody tr");
+          var visible = 0;
+          rows.forEach(function (row) {
+            var match = !q || row.textContent.toLowerCase().indexOf(q) !== -1;
+            row.style.display = match ? "" : "none";
+            if (match) visible += 1;
+          });
+          return visible;
+        }
+
+        function wireCommand() {
+          var input = document.getElementById("cockpitCommand");
+          if (!input) return;
+          document.addEventListener("keydown", function (e) {
+            var key = (e.key || "").toLowerCase();
+            if ((e.metaKey || e.ctrlKey) && key === "k") {
+              e.preventDefault();
+              input.focus();
+              input.select();
+            }
+            if (e.key === "Escape") closeDrawer();
+          });
+          input.addEventListener("keydown", function (e) {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            var q = input.value.trim().toLowerCase();
+            if (!q) {
+              openDrawer("Command Palette", commandPaletteHtml());
+              return;
+            }
+            var links = Array.prototype.slice.call(
+              document.querySelectorAll(".cockpit-rail-link[href]"),
+            );
+            var hit = links.find(function (link) {
+              return (
+                link.textContent.toLowerCase().indexOf(q) !== -1 ||
+                link.getAttribute("href").toLowerCase().indexOf(q) !== -1
+              );
+            });
+            if (hit) {
+              location.href = hit.getAttribute("href");
+              return;
+            }
+            var count = filterRows(q, document.getElementById("content"));
+            toast(
+              "Filter applied",
+              count + ' visible rows matched "' + input.value.trim() + '".',
+              "info",
+            );
+          });
+        }
+
+        function wireDataControls() {
+          document.addEventListener("input", function (e) {
+            var el =
+              e.target.closest && e.target.closest("[data-cockpit-filter]");
+            if (!el) return;
+            var target = el.getAttribute("data-cockpit-filter");
+            var root = target ? document.querySelector(target) : document;
+            filterRows(el.value, root || document);
+          });
+
+          document.addEventListener("click", function (e) {
+            var drawerTrigger =
+              e.target.closest && e.target.closest("[data-cockpit-drawer]");
+            if (drawerTrigger) {
+              e.preventDefault();
+              openDrawer(
+                drawerTrigger.getAttribute("data-drawer-title") ||
+                  drawerTrigger.textContent.trim() ||
+                  "Command",
+                drawerTrigger.getAttribute("data-drawer-body") ||
+                  '<p class="subtitle">Command staged. Wire this control to the existing backend endpoint when the page slice is converted.</p>',
+              );
+              return;
+            }
+            if (e.target.closest && e.target.closest("[data-cockpit-close]")) {
+              e.preventDefault();
+              closeDrawer();
+              return;
+            }
+            var toastTrigger =
+              e.target.closest && e.target.closest("[data-cockpit-toast]");
+            if (toastTrigger) {
+              toast(
+                toastTrigger.getAttribute("data-toast-title") ||
+                  "Command staged",
+                toastTrigger.getAttribute("data-toast-body") ||
+                  "The command packet was accepted by the cockpit UI.",
+                toastTrigger.getAttribute("data-toast-type") || "info",
+              );
+            }
+            var row = e.target.closest && e.target.closest("tbody tr");
+            if (
+              row &&
+              !e.target.closest("a,button,input,select,textarea,label")
+            ) {
+              var table = row.closest("table");
+              if (table) {
+                table
+                  .querySelectorAll("tbody tr.is-selected")
+                  .forEach(function (other) {
+                    if (other !== row)
+                      other.classList.remove("is-selected", "cockpit-pulse");
+                  });
+              }
+              row.classList.toggle("is-selected");
+              row.classList.toggle(
+                "cockpit-pulse",
+                row.classList.contains("is-selected"),
+              );
+            }
+            var backdrop = document.getElementById("cockpitDrawerBackdrop");
+            if (backdrop && e.target === backdrop) closeDrawer();
+          });
+
+          document.addEventListener("submit", function (e) {
+            var form =
+              e.target.closest && e.target.closest("[data-confirm-text]");
+            if (!form) return;
+            var required = form.getAttribute("data-confirm-text") || "";
+            var input = form.querySelector("[data-confirm-input]");
+            if (!input || input.value !== required) {
+              e.preventDefault();
+              toast(
+                "Confirmation required",
+                'Type "' +
+                  required +
+                  '" before submitting this destructive command.',
+                "warn",
+              );
+            }
+          });
+        }
+
+        window.CockpitUI = {
+          toast: toast,
+          openDrawer: openDrawer,
+          closeDrawer: closeDrawer,
+          filterRows: filterRows,
+        };
+
+        function init() {
+          markRail();
+          wireCommand();
+          wireDataControls();
+        }
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", init);
+        } else {
+          init();
+        }
+      })();
+
+      // -----------------------------------------------------------------------
+      // <time data-utc=...> → browser locale + timezone.
+      // Server always emits UTC in ISO 8601. This script converts each
+      // <time> with a data-utc attribute to the viewer's locale on load
+      // and on MutationObserver fires (for dynamically injected rows).
+      // The original UTC string is preserved in `title` so hovering any
+      // rendered timestamp shows the canonical UTC source.
+      // -----------------------------------------------------------------------
+      (function () {
+        function fmt(iso) {
+          var d = new Date(iso);
+          if (isNaN(d.getTime())) return iso;
+          try {
+            return d.toLocaleString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZoneName: "short",
+            });
+          } catch (e) {
+            return d.toString();
+          }
+        }
+        function convertAll(root) {
+          (root || document)
+            .querySelectorAll("time[data-utc]")
+            .forEach(function (el) {
+              var utc = el.getAttribute("data-utc");
+              if (!utc || el.dataset.tzDone === "1") return;
+              el.textContent = fmt(utc);
+              if (!el.title) el.title = utc;
+              el.dataset.tzDone = "1";
+            });
+        }
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", function () {
+            convertAll();
+          });
+        } else {
+          convertAll();
+        }
+        // Catch dynamically added <time> elements.
+        if (window.MutationObserver) {
+          new MutationObserver(function (muts) {
+            muts.forEach(function (m) {
+              m.addedNodes &&
+                m.addedNodes.forEach(function (n) {
+                  if (n.nodeType === 1) convertAll(n);
+                });
+            });
+          }).observe(document.body, { childList: true, subtree: true });
+        }
+      })();
+
+      (function () {
+        var latestSha = null; // remember origin/main head so the Update
+        // button can label itself with the target.
+
+        function renderBadge(data) {
+          var sha =
+            data.running && data.running.sha_short
+              ? data.running.sha_short
+              : "unknown";
+          var when =
+            data.running &&
+            data.running.build_time &&
+            data.running.build_time !== "unknown"
+              ? data.running.build_time
+              : "";
+          var el = document.getElementById("buildSha");
+          el.textContent = sha;
+          el.title =
+            (data.running && data.running.sha ? data.running.sha : "") +
+            (when ? " — built " + when : "");
+
+          var badge = document.getElementById("updateBadge");
+          var btn = document.getElementById("updateBtn");
+          // All visual states now use tokenised CSS classes (.update-pill.*
+          // + .is-ready on the button) so dark mode picks up the same
+          // colors without inline overrides.
+          if (data.update_available === true) {
+            latestSha = (data.latest && data.latest.sha_short) || null;
+            badge.innerHTML =
+              '<a class="update-pill warn" href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank">Update available → ' +
+              (latestSha || "?") +
+              "</a>";
+            btn.textContent = latestSha
+              ? "Update to " + latestSha
+              : "Update now";
+            btn.classList.add("is-ready");
+            btn.dataset.mode = "update";
+          } else if (data.update_available === false) {
+            badge.innerHTML = '<span class="update-pill ok">up to date</span>';
+            btn.textContent = "Check for updates";
+            btn.classList.remove("is-ready");
+            btn.dataset.mode = "check";
+          } else if (data.latest && data.latest.error) {
+            badge.innerHTML =
+              '<span class="update-pill neutral">update check failed</span>';
+            badge.title = data.latest.error;
+            btn.classList.remove("is-ready");
+            btn.dataset.mode = "check";
+          } else {
+            badge.innerHTML = "";
+            btn.classList.remove("is-ready");
+            btn.dataset.mode = "check";
+          }
+        }
+
+        window.checkUpdate = function (withRemote) {
+          var url = withRemote ? "/api/version?check=1" : "/api/version";
+          fetch(url)
+            .then(function (r) {
+              return r.json();
+            })
+            .then(renderBadge)
+            .catch(function () {});
+        };
+
+        // ---- Self-update flow ----
+        async function doUpdate() {
+          var overlay = document.getElementById("updateOverlay");
+          var stage = document.getElementById("updateStage");
+          var logEl = document.getElementById("updateLog");
+          overlay.style.display = "block";
+          stage.textContent = "spawning update sidecar…";
+          logEl.textContent = "";
+          try {
+            var r = await fetch("/api/update/run", { method: "POST" });
+            if (!r.ok) {
+              stage.textContent = "start failed: " + (await r.text());
+              return;
+            }
+            var body = await r.json();
+            stage.textContent =
+              "sidecar started (" +
+              (body.container_id || "unknown") +
+              ") — streaming log…";
+          } catch (e) {
+            stage.textContent =
+              "request failed — is the container still reachable? " + e;
+            return;
+          }
+
+          // Poll status until the sidecar finishes OR we lose the backend.
+          var firstLostContact = null;
+          var pollInterval = 2000;
+          async function poll() {
+            try {
+              var r = await fetch("/api/update/status");
+              if (!r.ok) throw new Error("status " + r.status);
+              var s = await r.json();
+              firstLostContact = null;
+              logEl.textContent = s.log || "(waiting for output…)";
+              logEl.scrollTop = logEl.scrollHeight;
+              if (s.running) {
+                stage.textContent = "sidecar running…";
+              } else if (s.finished) {
+                stage.textContent = "update complete — reloading in 3s…";
+                setTimeout(function () {
+                  location.reload();
+                }, 3000);
+                return;
+              } else {
+                stage.textContent = "sidecar finished — checking new build…";
+                setTimeout(function () {
+                  location.reload();
+                }, 2000);
+                return;
+              }
+            } catch (e) {
+              // Backend lost — that's EXPECTED during the compose up phase
+              // when our container is being replaced. Show a friendly
+              // message and keep polling until the new container answers.
+              firstLostContact = firstLostContact || Date.now();
+              var secs = Math.floor((Date.now() - firstLostContact) / 1000);
+              stage.textContent =
+                "container restarting (" +
+                secs +
+                "s)… waiting for new build to come up";
+              // After 120s of lost contact without recovery, give up.
+              if (secs > 120) {
+                stage.textContent =
+                  "container did not come back in 120s — manually check docker compose logs autopilot";
+                return;
+              }
+            }
+            setTimeout(poll, pollInterval);
+          }
+          poll();
+        }
+
+        window.onUpdateClick = function () {
+          var btn = document.getElementById("updateBtn");
+          if (btn.dataset.mode === "update") {
+            if (
+              confirm(
+                "Pull latest image and restart the autopilot container?\n\nThe browser will reload automatically when the new build is up.",
+              )
+            ) {
+              doUpdate();
+            }
+          } else {
+            checkUpdate(true);
+          }
+        };
+
+        // Initial render: show the running build. Do the GitHub check after a
+        // short delay so the rest of the page loads first.
+        checkUpdate(false);
+        setTimeout(function () {
+          checkUpdate(true);
+        }, 1500);
+      })();
+    </script>
+  </body>
 </html>
