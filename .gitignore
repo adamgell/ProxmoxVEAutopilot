@@ -7,6 +7,7 @@ __pycache__/
 
 # Secrets — never commit the real vault
 autopilot-proxmox/inventory/group_vars/all/vault.yml
+autopilot-proxmox/.env
 output/
 
 # docs (allow screenshots for README)
