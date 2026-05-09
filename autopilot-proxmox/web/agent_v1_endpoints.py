@@ -11,6 +11,7 @@ import hmac
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -98,13 +99,23 @@ def _bearer(authorization: Optional[str]) -> str:
     return token
 
 
-def _configured_fleet_bootstrap_token() -> str:
-    return os.environ.get("AUTOPILOT_AGENT_BOOTSTRAP_TOKEN", "").strip()
+def _configured_fleet_bootstrap_token_sha256() -> str:
+    return os.environ.get("AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256", "").strip().lower()
+
+
+def _fleet_bootstrap_token_matches(token: str) -> bool:
+    configured_hash = _configured_fleet_bootstrap_token_sha256()
+    if not configured_hash:
+        return False
+    submitted = token.strip().lower()
+    if hmac.compare_digest(submitted, configured_hash):
+        return True
+    token_hash = sha256(token.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(token_hash, configured_hash)
 
 
 def _bootstrap_run_id(token: str, requested_run_id: Optional[str]) -> str | None:
-    fleet_token = _configured_fleet_bootstrap_token()
-    if fleet_token and hmac.compare_digest(token, fleet_token):
+    if _fleet_bootstrap_token_matches(token):
         return None
     try:
         payload = winpe_token.verify(token)
@@ -137,7 +148,6 @@ def bootstrap_agent(
     bootstrap_token = _bearer(authorization)
     token_run_id = _bootstrap_run_id(bootstrap_token, body.run_id)
     run_id = body.run_id or token_run_id
-    agent_token = agent_telemetry_pg.new_agent_token()
     with _conn() as conn:
         if run_id:
             try:
@@ -153,6 +163,43 @@ def bootstrap_agent(
             vm_uuid = body.vm_uuid
             computer_name = body.computer_name
             serial_number = body.serial_number
+        if _fleet_bootstrap_token_matches(bootstrap_token):
+            approval = agent_telemetry_pg.create_bootstrap_approval(
+                conn,
+                bootstrap_token=bootstrap_token,
+                agent_id=body.agent_id,
+                phase=body.phase,
+                vmid=vmid,
+                vm_uuid=vm_uuid,
+                computer_name=computer_name,
+                serial_number=serial_number,
+                agent_version=body.agent_version,
+                created_from_run_id=run_id,
+            )
+            if approval["status"] == "approved" and approval.get("agent_token"):
+                agent_telemetry_pg.mark_bootstrap_approval_claimed(
+                    conn,
+                    approval["approval_id"],
+                )
+                return {
+                    "schema_version": 1,
+                    "agent_id": body.agent_id,
+                    "approval_id": approval["approval_id"],
+                    "approval_status": approval["status"],
+                    "agent_token": approval["agent_token"],
+                    "heartbeat_interval_seconds": _HEARTBEAT_INTERVAL_SECONDS,
+                    "server_time": datetime.now(timezone.utc).isoformat(),
+                }
+            return {
+                "schema_version": 1,
+                "agent_id": body.agent_id,
+                "approval_id": approval["approval_id"],
+                "approval_status": approval["status"],
+                "poll_url": f"/api/agent/v1/bootstrap/claim/{approval['approval_id']}",
+                "retry_after_seconds": 5,
+                "server_time": datetime.now(timezone.utc).isoformat(),
+            }
+        agent_token = agent_telemetry_pg.new_agent_token()
         agent_telemetry_pg.upsert_device(
             conn,
             agent_id=body.agent_id,
@@ -168,6 +215,43 @@ def bootstrap_agent(
         "schema_version": 1,
         "agent_id": body.agent_id,
         "agent_token": agent_token,
+        "heartbeat_interval_seconds": _HEARTBEAT_INTERVAL_SECONDS,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/bootstrap/claim/{approval_id}")
+def claim_bootstrap_approval(
+    approval_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    bootstrap_token = _bearer(authorization)
+    approval = None
+    with _conn() as conn:
+        approval = agent_telemetry_pg.claim_bootstrap_approval(
+            conn,
+            approval_id=approval_id,
+            bootstrap_token=bootstrap_token,
+        )
+    if not approval:
+        raise HTTPException(status_code=401, detail="invalid bootstrap approval")
+    if approval["status"] != "approved":
+        return {
+            "schema_version": 1,
+            "agent_id": approval["agent_id"],
+            "approval_id": approval["approval_id"],
+            "approval_status": approval["status"],
+            "retry_after_seconds": 5,
+            "server_time": datetime.now(timezone.utc).isoformat(),
+        }
+    if not approval.get("agent_token"):
+        raise HTTPException(status_code=409, detail="approved token is not ready")
+    return {
+        "schema_version": 1,
+        "agent_id": approval["agent_id"],
+        "approval_id": approval["approval_id"],
+        "approval_status": approval["status"],
+        "agent_token": approval["agent_token"],
         "heartbeat_interval_seconds": _HEARTBEAT_INTERVAL_SECONDS,
         "server_time": datetime.now(timezone.utc).isoformat(),
     }

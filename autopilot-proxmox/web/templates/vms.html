@@ -261,6 +261,79 @@ async function refreshVms() {
 </form>
 {% endif %}
 
+<section class="cockpit-panel" style="padding:16px;margin:18px 0;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+    <div>
+      <div class="cockpit-metric-label">AutopilotAgent</div>
+      <div class="subtitle">Persistent agent heartbeats from Windows clients and OSD continuations.</div>
+    </div>
+  </div>
+  <div id="agent-inventory-empty" {% if agent_devices %}style="display:none;"{% endif %}>
+    {{ empty_state("No AutopilotAgent heartbeats yet.", hint="Installed agents appear here after bootstrap and first heartbeat.") }}
+  </div>
+  <table id="agent-inventory-table" {% if not agent_devices %}style="display:none;"{% endif %}>
+    <thead>
+      <tr>
+        <th>Agent</th>
+        <th>Computer</th>
+        <th>VMID</th>
+        <th>IP</th>
+        <th>OS</th>
+        <th>Guest</th>
+        <th>Join</th>
+        <th>Phase</th>
+        <th>Agent state</th>
+        <th>Last heartbeat</th>
+        <th>Approval</th>
+      </tr>
+    </thead>
+    <tbody id="agent-inventory-body">
+      {% for agent in agent_devices %}
+      <tr data-agent-id="{{ agent.agent_id }}">
+        <td><code>{{ agent.agent_id }}</code></td>
+        <td data-agent-field="computer">{{ agent.computer_name or agent.serial_number or '—' }}</td>
+        <td data-agent-field="vmid">{% if agent.vmid %}{{ agent.vmid }}{% else %}—{% endif %}</td>
+        <td data-agent-field="ip">{% if agent.primary_ipv4 %}<code>{{ agent.primary_ipv4 }}</code>{% else %}—{% endif %}</td>
+        <td data-agent-field="os">
+          {{ agent.os_name | replace('Microsoft ', '') if agent.os_name else '—' }}
+          {% if agent.os_build %}<br><small style="color:var(--ink-muted);">build {{ agent.os_build }}</small>{% endif %}
+        </td>
+        <td data-agent-field="guest">{% if agent.qga_state %}<span class="badge badge-green">{{ agent.qga_state }}</span>{% else %}—{% endif %}</td>
+        <td data-agent-field="join">
+          {% if agent.domain_joined %}<span class="badge badge-green">domain</span>{% endif %}
+          {% if agent.entra_joined %}<span class="badge badge-green">Entra ID</span>{% endif %}
+          {% if not agent.domain_joined and not agent.entra_joined %}<span class="badge badge-gray">workgroup</span>{% endif %}
+        </td>
+        <td data-agent-field="phase">{{ agent.current_phase or '—' }}</td>
+        <td data-agent-field="state">
+          {% if agent.approval_status == 'pending' %}
+          <span class="badge badge-yellow">pending approval</span>
+          {% elif agent.approval_status == 'approved' %}
+          <span class="badge badge-green">approved, waiting</span>
+          {% else %}
+          <span class="badge badge-green">active</span>
+          {% endif %}
+        </td>
+        <td data-agent-field="heartbeat">
+          {% if agent.last_heartbeat_at %}
+          <time datetime="{{ agent.last_heartbeat_at }}"
+                data-utc="{{ agent.last_heartbeat_at }}"
+                data-agent-heartbeat-time
+                title="UTC: {{ agent.last_heartbeat_at }}">{{ agent.last_heartbeat_at }}</time>
+          <br><small style="color:var(--ink-muted);" data-agent-heartbeat-zone>local timezone</small>
+          {% else %}—{% endif %}
+        </td>
+        <td data-agent-field="approval">
+          {% if agent.approval_status == 'pending' and agent.approval_id %}
+          <button type="button" class="action-btn" data-agent-approve="{{ agent.approval_id }}">Approve</button>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
 <h2>Autopilot Devices (Intune)</h2>
 {% if ap_error %}
 <p><span class="status-red">Error:</span> {{ ap_error }}</p>
@@ -486,6 +559,155 @@ function patchFleetRow(row) {
   }
 }
 
+function renderJoinBadges(agent) {
+  var bits = [];
+  if (agent.domain_joined) bits.push('<span class="badge badge-green">domain</span>');
+  if (agent.entra_joined) bits.push('<span class="badge badge-green">Entra ID</span>');
+  if (!bits.length) bits.push('<span class="badge badge-gray">workgroup</span>');
+  return bits.join(' ');
+}
+
+function renderAgentState(agent) {
+  if (agent.approval_status === 'pending') return '<span class="badge badge-yellow">pending approval</span>';
+  if (agent.approval_status === 'approved') return '<span class="badge badge-green">approved, waiting</span>';
+  return '<span class="badge badge-green">active</span>';
+}
+
+function renderAgentApproval(agent) {
+  if (agent.approval_status === 'pending' && agent.approval_id) {
+    return '<button type="button" class="action-btn" data-agent-approve="' + _htmlEsc(agent.approval_id) + '">Approve</button>';
+  }
+  return '—';
+}
+
+function userTimeZoneLabel() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local timezone';
+  } catch (_) {
+    return 'local timezone';
+  }
+}
+
+function renderAgentHeartbeat(iso) {
+  if (!iso) return '—';
+  var safe = _htmlEsc(iso);
+  return '<time datetime="' + safe + '" data-utc="' + safe + '" data-agent-heartbeat-time title="UTC: ' + safe + '">' + safe + '</time>'
+    + '<br><small style="color:var(--ink-muted);" data-agent-heartbeat-zone>' + _htmlEsc(userTimeZoneLabel()) + '</small>';
+}
+
+function updateAgentHeartbeatZones(root) {
+  var zone = userTimeZoneLabel();
+  (root || document).querySelectorAll('[data-agent-heartbeat-zone]').forEach(function(el) {
+    el.textContent = zone;
+  });
+}
+
+function patchAgentInventory(agent) {
+  if (!agent || !agent.agent_id) return;
+  var body = document.getElementById('agent-inventory-body');
+  var table = document.getElementById('agent-inventory-table');
+  var empty = document.getElementById('agent-inventory-empty');
+  if (!body || !table) return;
+  var selector = 'tr[data-agent-id="' + CSS.escape(agent.agent_id) + '"]';
+  var tr = body.querySelector(selector);
+  if (!tr) {
+    tr = document.createElement('tr');
+    tr.setAttribute('data-agent-id', agent.agent_id);
+    tr.innerHTML =
+      '<td><code></code></td>'
+      + '<td data-agent-field="computer"></td>'
+      + '<td data-agent-field="vmid"></td>'
+      + '<td data-agent-field="ip"></td>'
+      + '<td data-agent-field="os"></td>'
+      + '<td data-agent-field="guest"></td>'
+      + '<td data-agent-field="join"></td>'
+      + '<td data-agent-field="phase"></td>'
+      + '<td data-agent-field="state"></td>'
+      + '<td data-agent-field="heartbeat"></td>'
+      + '<td data-agent-field="approval"></td>';
+    tr.querySelector('code').textContent = agent.agent_id;
+    body.prepend(tr);
+  }
+  table.style.display = '';
+  if (empty) empty.style.display = 'none';
+  tr.querySelector('[data-agent-field="computer"]').textContent =
+    agent.computer_name || agent.serial_number || '—';
+  tr.querySelector('[data-agent-field="vmid"]').textContent = agent.vmid || '—';
+  var ip = tr.querySelector('[data-agent-field="ip"]');
+  ip.innerHTML = agent.primary_ipv4 ? '<code>' + _htmlEsc(agent.primary_ipv4) + '</code>' : '—';
+  var osText = agent.os_name ? agent.os_name.replace(/^Microsoft /, '') : '—';
+  tr.querySelector('[data-agent-field="os"]').innerHTML =
+    _htmlEsc(osText) + (agent.os_build ? '<br><small style="color:var(--ink-muted);">build ' + _htmlEsc(agent.os_build) + '</small>' : '');
+  tr.querySelector('[data-agent-field="guest"]').innerHTML =
+    agent.qga_state ? '<span class="badge badge-green">' + _htmlEsc(agent.qga_state) + '</span>' : '—';
+  tr.querySelector('[data-agent-field="join"]').innerHTML = renderJoinBadges(agent);
+  tr.querySelector('[data-agent-field="phase"]').textContent = agent.current_phase || '—';
+  tr.querySelector('[data-agent-field="state"]').innerHTML = renderAgentState(agent);
+  tr.querySelector('[data-agent-field="heartbeat"]').innerHTML = renderAgentHeartbeat(agent.last_heartbeat_at);
+  tr.querySelector('[data-agent-field="approval"]').innerHTML = renderAgentApproval(agent);
+  updateAgentHeartbeatZones(tr);
+}
+
+function updateAgentInventoryEmptyState() {
+  var body = document.getElementById('agent-inventory-body');
+  var table = document.getElementById('agent-inventory-table');
+  var empty = document.getElementById('agent-inventory-empty');
+  if (!body || !table) return;
+  var hasRows = !!body.querySelector('tr[data-agent-id]');
+  table.style.display = hasRows ? '' : 'none';
+  if (empty) empty.style.display = hasRows ? 'none' : '';
+}
+
+function reconcileAgentInventory(agents) {
+  var body = document.getElementById('agent-inventory-body');
+  var table = document.getElementById('agent-inventory-table');
+  if (!body || !table) return;
+  agents = Array.isArray(agents) ? agents : [];
+  var seen = new Set();
+  agents.forEach(function(agent) {
+    if (!agent || !agent.agent_id) return;
+    seen.add(String(agent.agent_id));
+    patchAgentInventory(agent);
+  });
+  body.querySelectorAll('tr[data-agent-id]').forEach(function(tr) {
+    var agentId = tr.getAttribute('data-agent-id');
+    if (!seen.has(agentId)) tr.remove();
+  });
+  updateAgentInventoryEmptyState();
+}
+
+updateAgentHeartbeatZones();
+
+document.addEventListener('click', function(ev) {
+  var btn = ev.target.closest('[data-agent-approve]');
+  if (!btn) return;
+  ev.preventDefault();
+  var approvalId = btn.getAttribute('data-agent-approve');
+  btn.disabled = true;
+  btn.textContent = 'Approving...';
+  fetch('/api/agent-approvals/' + encodeURIComponent(approvalId) + '/approve', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: '{}'
+  }).then(function(resp) {
+    if (!resp.ok) throw new Error('approve failed: ' + resp.status);
+    return resp.json();
+  }).then(function() {
+    btn.textContent = 'Approved';
+  }).catch(function(err) {
+    if (String(err && err.message || err).indexOf('404') !== -1) {
+      var staleRow = btn.closest('tr[data-agent-id]');
+      if (staleRow) staleRow.remove();
+      updateAgentInventoryEmptyState();
+      alert('Approval record no longer exists. Removed the stale row.');
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Approve';
+    alert(err.message || String(err));
+  });
+});
+
 function openScreenshotModal(vmid, imageUrl) {
   var existing = document.getElementById('vm-screenshot-modal');
   if (existing) existing.remove();
@@ -514,7 +736,7 @@ function connectLiveFleet() {
   var ws = new WebSocket(scheme + location.host + '/api/live/ws');
   window.liveFleetSocket = ws;
   ws.addEventListener('open', function() {
-    ws.send(JSON.stringify({type: 'subscribe', topics: ['fleet', 'jobs', 'runs']}));
+    ws.send(JSON.stringify({type: 'subscribe', topics: ['fleet', 'jobs', 'runs', 'agents']}));
   });
   ws.addEventListener('message', function(ev) {
     var msg;
@@ -525,6 +747,10 @@ function connectLiveFleet() {
     }
     if (msg.type === 'snapshot' && msg.topic === 'fleet') {
       (msg.data && msg.data.rows || []).forEach(patchFleetRow);
+      return;
+    }
+    if (msg.topic === 'agents' && (msg.type === 'snapshot' || msg.type === 'patch')) {
+      reconcileAgentInventory((msg.data && msg.data.agents) || msg.agents || []);
       return;
     }
     if (msg.type === 'event' && msg.event === 'sweep_started') {

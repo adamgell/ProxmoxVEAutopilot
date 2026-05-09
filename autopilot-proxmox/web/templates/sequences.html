@@ -25,7 +25,7 @@
 </section>
 <table id="sequence-table" class="cockpit-scanline">
 <tr><th>Name</th><th>Target OS</th><th>Description</th><th>Steps</th><th>Default?</th>
-    <th>Autopilot hash?</th><th>Updated</th><th>Actions</th></tr>
+    <th>Autopilot hash?</th><th>Hash phase</th><th>WinPE task plan</th><th>Updated</th><th>Actions</th></tr>
 {% for s in sequences %}
 <tr>
   <td>{{ s.name }}</td>
@@ -34,6 +34,21 @@
   <td>{{ s.step_count }}</td>
   <td>{% if s.is_default %}<span class="status-green">default</span>{% else %}—{% endif %}</td>
   <td>{% if s.produces_autopilot_hash %}yes{% else %}—{% endif %}</td>
+  <td>{{ s.hash_capture_phase or 'oobe' }}</td>
+  <td>
+    {% if s.winpe_action_kinds %}
+    <details>
+      <summary>WinPE task plan ({{ s.winpe_action_kinds|length }})</summary>
+      <ol style="margin:6px 0 0 18px;padding:0;">
+        {% for kind in s.winpe_action_kinds %}
+        <li><code>{{ kind }}</code></li>
+        {% endfor %}
+      </ol>
+    </details>
+    {% else %}
+    —
+    {% endif %}
+  </td>
   <td>{{ s.updated_at }}</td>
   <td>
     <a href="/sequences/{{ s.id }}/edit">Edit</a> ·

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, empty_state %}
+{% block title %}WinPE Runs - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("WinPE Runs", "Live image-apply runs with sequence, VM identity, and step status.") }}
+
+{% if not runs %}
+{{ empty_state("No WinPE runs yet.", action_href="/provision", action_label="Start provisioning", hint="WinPE runs appear here once the provision form launches the blank-disk image-apply path.") }}
+{% else %}
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <label>Filter runs
+    <input type="search" data-cockpit-filter="#winpe-runs-table" placeholder="sequence, state, VMID, UUID" style="width:100%;margin-top:6px;">
+  </label>
+</section>
+<table id="winpe-runs-table" class="cockpit-scanline">
+  <thead>
+    <tr>
+      <th>Run</th>
+      <th>Sequence</th>
+      <th>VMID</th>
+      <th>State</th>
+      <th>Tasks</th>
+      <th>Started</th>
+      <th>VM UUID</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for run in runs %}
+    <tr>
+      <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+      <td>{{ run.sequence_name }}</td>
+      <td>{{ run.vmid or '—' }}</td>
+      <td><span class="badge">{{ run.state }}</span></td>
+      <td>
+        {{ run.ok_count }}/{{ run.step_count }} ok
+        {% if run.running_count %} · {{ run.running_count }} running{% endif %}
+        {% if run.error_count %} · {{ run.error_count }} error{% endif %}
+      </td>
+      <td>{{ run.started_at }}</td>
+      <td><code>{{ run.vm_uuid or 'pending' }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

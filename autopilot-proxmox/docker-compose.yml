@@ -35,6 +35,9 @@ services:
       # Task Sequence Engine v2 uses Postgres. Override
       # AUTOPILOT_POSTGRES_PASSWORD in production.
       AUTOPILOT_TS_ENGINE_DATABASE_URL: postgresql://autopilot:${AUTOPILOT_POSTGRES_PASSWORD:-autopilot-dev}@127.0.0.1:5432/autopilot
+      # SHA-256 hex digest of the fleet-scoped Ninja/retrofit bootstrap token.
+      # Store only the hash in the host .env; Ninja sends the raw secure value.
+      AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256: ${AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256:-}
     depends_on:
       autopilot-postgres:
         condition: service_healthy

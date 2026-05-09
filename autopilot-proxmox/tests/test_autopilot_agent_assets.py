@@ -76,6 +76,25 @@ def test_ninja_postinstall_unblocks_qga_after_agent_health():
     post = _read("autopilot-proxmox/files/ninja/autopilotagent-postinstall.ps1")
 
     assert "/api/agent/v1/bootstrap" in post
+    assert "ApprovalTimeoutSeconds" in post
+    assert "approval_id" in post
+    assert "poll_url" in post
+    assert "$pollUrl = [string]$bootstrap.poll_url" in post
+    assert '$claimUrl = $ServerUrl.TrimEnd("/") + $pollUrl' in post
+    assert "Approval poll failed:" in post
+    assert "Get-Sha256Hex" in post
+    assert "Get-TokenDiagnostic" in post
+    assert "BootstrapToken parameter diagnostic:" in post
+    assert "BootstrapToken env diagnostic:" in post
+    assert "BootstrapToken selected from env:" in post
+    assert "BootstrapToken received. Length=" in post
+    assert "ProofPrefix=" in post
+    assert "Sha256OfProofPrefix=" in post
+    assert "$BootstrapToken = [string]$env:BootstrapToken" in post
+    assert "Set the Ninja script variable named BootstrapToken" in post
+    assert '$BootstrapToken.Trim() -eq "BootstrapToken"' in post
+    assert 'remove the literal -BootstrapToken `"BootstrapToken`" parameter' in post
+    assert "$BootstrapToken = $BootstrapToken.Trim()" in post
     assert "AutopilotAgent" in post
     assert "guest-network-get-interfaces" in post
     assert "Invoke-CimMethod" in post

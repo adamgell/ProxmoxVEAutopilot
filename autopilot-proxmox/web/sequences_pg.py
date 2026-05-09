@@ -853,6 +853,45 @@ def get_provisioning_run(db_path, run_id: int) -> Optional[dict]:
     return _row_to_run(row)
 
 
+def list_provisioning_runs(db_path, *, provision_path: str | None = None) -> list[dict]:
+    args: list[Any] = []
+    where = ""
+    if provision_path is not None:
+        where = "WHERE r.provision_path = %s"
+        args.append(provision_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                r.*,
+                s.name AS sequence_name,
+                COUNT(st.id) AS step_count,
+                COUNT(st.id) FILTER (WHERE st.state = 'ok') AS ok_count,
+                COUNT(st.id) FILTER (WHERE st.state = 'running') AS running_count,
+                COUNT(st.id) FILTER (WHERE st.state = 'error') AS error_count
+            FROM provisioning_runs r
+            JOIN task_sequences s ON s.id = r.sequence_id
+            LEFT JOIN provisioning_run_steps st ON st.run_id = r.id
+            {where}
+            GROUP BY r.id, s.name
+            ORDER BY r.started_at DESC, r.id DESC
+            """,
+            tuple(args),
+        ).fetchall()
+    runs = []
+    for row in rows:
+        run = _row_to_run(row)
+        run.update({
+            "sequence_name": row["sequence_name"],
+            "step_count": int(row["step_count"]),
+            "ok_count": int(row["ok_count"]),
+            "running_count": int(row["running_count"]),
+            "error_count": int(row["error_count"]),
+        })
+        runs.append(run)
+    return runs
+
+
 def _normalize_uuid(vm_uuid: str) -> str:
     return (vm_uuid or "").strip().lower()
 

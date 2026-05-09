@@ -4,6 +4,7 @@
 {{ page_head("Run " ~ run.id, run.provision_path) }}
 <div class="cockpit-panel" style="padding:16px;">
   <dl class="row">
+    <dt class="col-sm-2">Task sequence</dt><dd class="col-sm-10">{{ run.sequence_name or run.sequence_id }}</dd>
     <dt class="col-sm-2">VMID</dt><dd class="col-sm-10">{{ run.vmid or '-' }}</dd>
     <dt class="col-sm-2">VM UUID</dt><dd class="col-sm-10"><code>{{ run.vm_uuid or '-' }}</code></dd>
     <dt class="col-sm-2">State</dt><dd class="col-sm-10"><span class="badge bg-info">{{ run.state }}</span></dd>
@@ -16,7 +17,30 @@
     {% endif %}
   </dl>
 
-  <h2>Steps</h2>
+  <section class="cockpit-grid" style="margin-bottom:14px;">
+    <div class="cockpit-metric cockpit-col-3">
+      <div class="cockpit-metric-label">Tasks</div>
+      <div class="cockpit-metric-value">{{ step_counts.total }}</div>
+      <div class="cockpit-metric-note">planned and recorded</div>
+    </div>
+    <div class="cockpit-metric cockpit-col-3">
+      <div class="cockpit-metric-label">OK</div>
+      <div class="cockpit-metric-value">{{ step_counts.ok }}</div>
+      <div class="cockpit-metric-note">completed steps</div>
+    </div>
+    <div class="cockpit-metric cockpit-col-3">
+      <div class="cockpit-metric-label">Running</div>
+      <div class="cockpit-metric-value">{{ step_counts.running }}</div>
+      <div class="cockpit-metric-note">active agent work</div>
+    </div>
+    <div class="cockpit-metric cockpit-col-3">
+      <div class="cockpit-metric-label">Attention</div>
+      <div class="cockpit-metric-value">{{ step_counts.error }}</div>
+      <div class="cockpit-metric-note">failed steps</div>
+    </div>
+  </section>
+
+  <h2>WinPE Task Plan</h2>
   <table class="table table-sm">
     <thead>
       <tr>
@@ -34,6 +58,7 @@
           {% if s.state == 'ok' %}<span class="badge ok">ok</span>
           {% elif s.state == 'error' %}<span class="badge error">error</span>
           {% elif s.state == 'running' %}<span class="badge pending">running</span>
+          {% elif s.state == 'planned' %}<span class="badge unknown">planned</span>
           {% else %}<span class="badge unknown">{{ s.state }}</span>{% endif %}
         </td>
         <td>{{ s.started_at or '' }}</td>

@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, empty_state %}
+{% block title %}Task Sequence Engine v2 - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("Task Sequence Engine v2", "Postgres-backed sequence trees, immutable run plans, agent v2 state, and content manifest visibility.") }}
+
+<section class="cockpit-grid" style="margin-bottom:14px;">
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">V2 Sequences</div>
+    <div class="cockpit-metric-value">{{ sequences|length }}</div>
+    <div class="cockpit-metric-note">ordered tree definitions</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">V2 Runs</div>
+    <div class="cockpit-metric-value">{{ runs|length }}</div>
+    <div class="cockpit-metric-note">immutable run plans</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Content Items</div>
+    <div class="cockpit-metric-value">{{ content_items|length }}</div>
+    <div class="cockpit-metric-note">apps, packages, scripts, drivers, images</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Manifest Rows</div>
+    <div class="cockpit-metric-value">{{ manifest_items|length }}</div>
+    <div class="cockpit-metric-note">resolved per-run content</div>
+  </div>
+</section>
+
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <label>Filter engine data
+    <input type="search" data-cockpit-filter=".task-engine-table" placeholder="sequence, step, kind, phase, run, content" style="width:100%;margin-top:6px;">
+  </label>
+</section>
+
+<h2>V2 Task Sequences</h2>
+{% if not sequences %}
+{{ empty_state("No v2 task sequences yet.", hint="Create them through /api/osd/v2/sequences or the v2 API clients; they will appear here with their ordered steps.") }}
+{% else %}
+<table class="cockpit-scanline task-engine-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Steps</th>
+      <th>Current Version</th>
+      <th>Updated</th>
+      <th>Plan</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for seq in sequences %}
+    <tr>
+      <td>
+        <strong>{{ seq.name }}</strong>
+        {% if seq.description %}<br><small>{{ seq.description }}</small>{% endif %}
+      </td>
+      <td>{% if seq.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge unknown">disabled</span>{% endif %}</td>
+      <td>{{ seq.step_count }}</td>
+      <td><code>{{ seq.current_version_id or 'uncompiled' }}</code></td>
+      <td>{{ seq.updated_at }}</td>
+      <td>
+        {% if seq.steps %}
+        <details>
+          <summary>{{ seq.steps|length }} step(s)</summary>
+          <ol style="margin:6px 0 0 18px;padding:0;">
+            {% for step in seq.steps %}
+            <li>
+              <code>{{ step.kind }}</code>
+              <span>{{ step.name }}</span>
+              <small>{{ step.phase }}{% if step.content_refs %} · {{ step.content_refs|join(', ') }}{% endif %}</small>
+            </li>
+            {% endfor %}
+          </ol>
+        </details>
+        {% else %}
+        —
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>V2 Runs</h2>
+{% if not runs %}
+{{ empty_state("No v2 runs yet.", hint="Runs are created from compiled v2 sequences and keep their own immutable step plan.") }}
+{% else %}
+<table class="cockpit-scanline task-engine-table">
+  <thead>
+    <tr>
+      <th>Run</th>
+      <th>Sequence</th>
+      <th>State</th>
+      <th>VMID</th>
+      <th>Steps</th>
+      <th>Content</th>
+      <th>Started</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for run in runs %}
+    <tr>
+      <td><code>{{ run.id }}</code></td>
+      <td>{{ run.sequence_name }} <small>v{{ run.sequence_version }}</small></td>
+      <td><span class="badge">{{ run.state }}</span>{% if run.phase %} <small>{{ run.phase }}</small>{% endif %}</td>
+      <td>{{ run.vmid or '—' }}</td>
+      <td>
+        {{ run.done_count }}/{{ run.step_count }} done
+        {% if run.running_count %} · {{ run.running_count }} running{% endif %}
+        {% if run.failed_count %} · {{ run.failed_count }} failed{% endif %}
+      </td>
+      <td>{{ run.manifest_count }}</td>
+      <td>{{ run.started_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>Content Library</h2>
+{% if not content_items %}
+{{ empty_state("No v2 content items yet.", hint="Content items become apps, packages, scripts, driver packages, and OS images for resolved run manifests.") }}
+{% else %}
+<table class="cockpit-scanline task-engine-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Latest Version</th>
+      <th>Source</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in content_items %}
+    <tr>
+      <td>{{ item.name }}{% if item.description %}<br><small>{{ item.description }}</small>{% endif %}</td>
+      <td>{{ item.content_type }}</td>
+      <td>{{ item.latest_version.version if item.latest_version else '—' }}</td>
+      <td><code>{{ item.latest_version.source_uri if item.latest_version else '—' }}</code></td>
+      <td>{% if item.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge unknown">disabled</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>Content Manifest</h2>
+{% if not manifest_items %}
+{{ empty_state("No resolved v2 content manifest rows yet.", hint="A run with resolve_content=true will pin exact content versions here.") }}
+{% else %}
+<table class="cockpit-scanline task-engine-table">
+  <thead>
+    <tr>
+      <th>Run</th>
+      <th>Sequence</th>
+      <th>Logical Name</th>
+      <th>Type</th>
+      <th>Phase</th>
+      <th>Status</th>
+      <th>Source</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in manifest_items %}
+    <tr>
+      <td><code>{{ item.run_id }}</code></td>
+      <td>{{ item.sequence_name }}</td>
+      <td>{{ item.logical_name }}</td>
+      <td>{{ item.content_type }}</td>
+      <td>{{ item.required_phase }}</td>
+      <td><span class="badge">{{ item.status }}</span></td>
+      <td><code>{{ item.source_uri }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

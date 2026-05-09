@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Optional
+from uuid import uuid4
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
@@ -80,12 +81,37 @@ CREATE TABLE IF NOT EXISTS agent_events (
 
 CREATE INDEX IF NOT EXISTS idx_agent_events_agent_time
     ON agent_events(agent_id, received_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_bootstrap_approvals (
+    approval_id uuid PRIMARY KEY,
+    agent_id text NOT NULL,
+    bootstrap_token_hash text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    phase text NULL,
+    vmid integer NULL,
+    vm_uuid text NULL,
+    computer_name text NULL,
+    serial_number text NULL,
+    agent_version text NULL,
+    created_from_run_id uuid NULL,
+    agent_token text NULL,
+    requested_at timestamptz NOT NULL,
+    approved_at timestamptz NULL,
+    claimed_at timestamptz NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_bootstrap_approvals_agent_pending
+    ON agent_bootstrap_approvals(agent_id)
+    WHERE status IN ('pending', 'approved');
+CREATE INDEX IF NOT EXISTS idx_agent_bootstrap_approvals_status_time
+    ON agent_bootstrap_approvals(status, requested_at DESC);
 """
 
 
 DROP_SCHEMA_FOR_TESTS = """
 DROP TABLE IF EXISTS agent_events CASCADE;
 DROP TABLE IF EXISTS agent_heartbeats CASCADE;
+DROP TABLE IF EXISTS agent_bootstrap_approvals CASCADE;
 DROP TABLE IF EXISTS agent_devices CASCADE;
 """
 
@@ -101,10 +127,18 @@ def _commit(conn: Connection) -> None:
 
 def _row_dict(row: Any) -> dict:
     data = dict(row)
-    for key in ("created_from_run_id", "current_run_id"):
+    for key in ("approval_id", "created_from_run_id", "current_run_id"):
         if data.get(key) is not None:
             data[key] = str(data[key])
     return data
+
+
+def _uuid_or_none(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 
 def _secret() -> bytes:
@@ -124,12 +158,22 @@ def new_agent_token() -> str:
     return secrets.token_urlsafe(48)
 
 
+def public_sha256(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
 def init(conn: Connection | None = None) -> None:
     if conn is None:
         with db_pg.connection() as live:
             init(live)
         return
     conn.execute(SCHEMA)
+    conn.execute(
+        """
+        ALTER TABLE agent_bootstrap_approvals
+            ADD COLUMN IF NOT EXISTS agent_token text NULL
+        """
+    )
     _commit(conn)
 
 
@@ -226,6 +270,175 @@ def revoke_agent(conn: Connection, agent_id: str) -> None:
     _commit(conn)
 
 
+def create_bootstrap_approval(
+    conn: Connection,
+    *,
+    bootstrap_token: str,
+    agent_id: str,
+    phase: Optional[str] = None,
+    vmid: Optional[int] = None,
+    vm_uuid: Optional[str] = None,
+    computer_name: Optional[str] = None,
+    serial_number: Optional[str] = None,
+    agent_version: Optional[str] = None,
+    created_from_run_id: Optional[str] = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO agent_bootstrap_approvals (
+            approval_id, agent_id, bootstrap_token_hash, status, phase,
+            vmid, vm_uuid, computer_name, serial_number, agent_version,
+            created_from_run_id, requested_at
+        )
+        VALUES (%s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (agent_id) WHERE status IN ('pending', 'approved')
+        DO UPDATE SET
+            bootstrap_token_hash = EXCLUDED.bootstrap_token_hash,
+            phase = EXCLUDED.phase,
+            vmid = COALESCE(EXCLUDED.vmid, agent_bootstrap_approvals.vmid),
+            vm_uuid = COALESCE(EXCLUDED.vm_uuid, agent_bootstrap_approvals.vm_uuid),
+            computer_name = COALESCE(
+                EXCLUDED.computer_name,
+                agent_bootstrap_approvals.computer_name
+            ),
+            serial_number = COALESCE(
+                EXCLUDED.serial_number,
+                agent_bootstrap_approvals.serial_number
+            ),
+            agent_version = COALESCE(
+                EXCLUDED.agent_version,
+                agent_bootstrap_approvals.agent_version
+            ),
+            created_from_run_id = COALESCE(
+                EXCLUDED.created_from_run_id,
+                agent_bootstrap_approvals.created_from_run_id
+            ),
+            requested_at = EXCLUDED.requested_at
+        RETURNING *
+        """,
+        (
+            uuid4(),
+            agent_id,
+            public_sha256(bootstrap_token),
+            phase,
+            vmid,
+            vm_uuid,
+            computer_name,
+            serial_number,
+            agent_version,
+            created_from_run_id,
+            now,
+        ),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row)
+
+
+def get_bootstrap_approval(conn: Connection, approval_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM agent_bootstrap_approvals WHERE approval_id = %s",
+        (approval_id,),
+    ).fetchone()
+    return _row_dict(row) if row else None
+
+
+def approve_bootstrap_approval(
+    conn: Connection,
+    approval_id: str,
+    *,
+    agent_token: Optional[str] = None,
+) -> dict | None:
+    token = agent_token or new_agent_token()
+    now = _now()
+    pending = get_bootstrap_approval(conn, approval_id)
+    if not pending:
+        return None
+    if pending["status"] not in ("pending", "approved"):
+        return pending
+    upsert_device(
+        conn,
+        agent_id=pending["agent_id"],
+        token=token,
+        vmid=pending.get("vmid"),
+        vm_uuid=pending.get("vm_uuid"),
+        serial_number=pending.get("serial_number"),
+        computer_name=pending.get("computer_name"),
+        agent_version=pending.get("agent_version"),
+        created_from_run_id=pending.get("created_from_run_id"),
+    )
+    row = conn.execute(
+        """
+        UPDATE agent_bootstrap_approvals
+        SET status = 'approved',
+            approved_at = COALESCE(approved_at, %s),
+            agent_token = %s
+        WHERE approval_id = %s
+        RETURNING *
+        """,
+        (now, token, approval_id),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row)
+
+
+def claim_bootstrap_approval(
+    conn: Connection,
+    approval_id: str,
+    *,
+    bootstrap_token: str,
+) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM agent_bootstrap_approvals
+        WHERE approval_id = %s AND bootstrap_token_hash = %s
+        """,
+        (approval_id, public_sha256(bootstrap_token)),
+    ).fetchone()
+    if not row:
+        return None
+    approval = _row_dict(row)
+    if approval["status"] == "approved" and approval.get("agent_token"):
+        conn.execute(
+            """
+            UPDATE agent_bootstrap_approvals
+            SET claimed_at = COALESCE(claimed_at, %s)
+            WHERE approval_id = %s
+            """,
+            (_now(), approval_id),
+        )
+        _commit(conn)
+    return approval
+
+
+def mark_bootstrap_approval_claimed(conn: Connection, approval_id: str) -> None:
+    conn.execute(
+        """
+        UPDATE agent_bootstrap_approvals
+        SET claimed_at = COALESCE(claimed_at, %s)
+        WHERE approval_id = %s
+        """,
+        (_now(), approval_id),
+    )
+    _commit(conn)
+
+
+def pending_bootstrap_approvals(conn: Connection | None = None) -> list[dict]:
+    if conn is None:
+        with db_pg.connection() as live:
+            return pending_bootstrap_approvals(live)
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM agent_bootstrap_approvals
+        WHERE status IN ('pending', 'approved')
+        ORDER BY requested_at DESC, agent_id ASC
+        """
+    ).fetchall()
+    return [_row_dict(row) for row in rows]
+
+
 def record_heartbeat(conn: Connection, *, agent_id: str, payload: dict[str, Any]) -> dict:
     now = _now()
     row = conn.execute(
@@ -264,7 +477,7 @@ def record_heartbeat(conn: Connection, *, agent_id: str, payload: dict[str, Any]
             payload.get("domain_joined"),
             payload.get("entra_joined"),
             payload.get("tenant_id"),
-            payload.get("current_run_id"),
+            _uuid_or_none(payload.get("current_run_id")),
             payload.get("current_phase"),
             payload.get("current_step_id"),
             payload.get("agent_version"),
@@ -291,6 +504,17 @@ def record_heartbeat(conn: Connection, *, agent_id: str, payload: dict[str, Any]
             payload.get("agent_version"),
             agent_id,
         ),
+    )
+    conn.execute(
+        """
+        UPDATE agent_bootstrap_approvals
+        SET status = 'claimed',
+            claimed_at = COALESCE(claimed_at, %s)
+        WHERE agent_id = %s
+          AND status = 'approved'
+          AND agent_token IS NOT NULL
+        """,
+        (now, agent_id),
     )
     _commit(conn)
     return _row_dict(row)
@@ -358,3 +582,61 @@ def latest_for_agent(conn: Connection, agent_id: str) -> dict | None:
         (agent_id,),
     ).fetchone()
     return _row_dict(row) if row else None
+
+
+def latest_agents(conn: Connection | None = None) -> list[dict]:
+    if conn is None:
+        with db_pg.connection() as live:
+            return latest_agents(live)
+    rows = conn.execute(
+        """
+        SELECT
+            d.agent_id,
+            d.vmid AS device_vmid,
+            d.vm_uuid AS device_vm_uuid,
+            d.serial_number AS device_serial_number,
+            d.computer_name AS device_computer_name,
+            d.agent_version AS device_agent_version,
+            d.created_from_run_id,
+            d.revoked,
+            d.created_at,
+            d.first_seen_at,
+            d.last_seen_at,
+            h.id AS heartbeat_id,
+            h.received_at,
+            h.vmid,
+            h.vm_uuid,
+            h.computer_name,
+            h.serial_number,
+            h.primary_ipv4,
+            h.ip_addresses_json,
+            h.nics_json,
+            h.os_name,
+            h.os_version,
+            h.os_build,
+            h.boot_time,
+            h.uptime_seconds,
+            h.qga_service_name,
+            h.qga_state,
+            h.domain_name,
+            h.domain_joined,
+            h.entra_joined,
+            h.tenant_id,
+            h.current_run_id,
+            h.current_phase,
+            h.current_step_id,
+            h.agent_version,
+            h.raw_json
+        FROM agent_devices d
+        LEFT JOIN LATERAL (
+            SELECT *
+            FROM agent_heartbeats h
+            WHERE h.agent_id = d.agent_id
+            ORDER BY h.received_at DESC, h.id DESC
+            LIMIT 1
+        ) h ON true
+        WHERE d.revoked = false
+        ORDER BY COALESCE(h.received_at, d.last_seen_at) DESC, d.agent_id ASC
+        """
+    ).fetchall()
+    return [_row_dict(row) for row in rows]

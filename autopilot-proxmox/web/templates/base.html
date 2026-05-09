@@ -928,6 +928,10 @@
         background: var(--warn-bg);
         color: var(--warn-fg);
       }
+      .badge-yellow {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+      }
       .badge.missing,
       .badge.error {
         background: var(--bad-bg);
@@ -1293,6 +1297,31 @@
           linear-gradient(180deg, #07101c 0%, var(--cockpit-bg) 46rem);
         min-height: 100vh;
       }
+      html:not([data-theme="dark"]) .cockpit-shell {
+        --cockpit-bg: #f5f7fb;
+        --cockpit-panel: rgba(255, 255, 255, 0.92);
+        --cockpit-panel-2: rgba(255, 255, 255, 0.86);
+        --cockpit-panel-3: rgba(245, 248, 252, 0.9);
+        --cockpit-line: rgba(72, 88, 111, 0.18);
+        --cockpit-line-strong: rgba(72, 88, 111, 0.3);
+        --cockpit-ink: #162033;
+        --cockpit-muted: #5d6b7f;
+        --cockpit-soft: #8a96a8;
+        color-scheme: light;
+        color: var(--cockpit-ink);
+        background:
+          radial-gradient(
+            circle at 18% -10%,
+            rgba(0, 105, 168, 0.16),
+            transparent 30rem
+          ),
+          radial-gradient(
+            circle at 82% 0%,
+            rgba(74, 117, 0, 0.1),
+            transparent 28rem
+          ),
+          linear-gradient(180deg, #eef5fb 0%, var(--cockpit-bg) 46rem);
+      }
       .cockpit-shell::before {
         content: "";
         position: fixed;
@@ -1313,11 +1342,21 @@
         );
         z-index: -1;
       }
+      html:not([data-theme="dark"]) .cockpit-shell::before {
+        background-image:
+          linear-gradient(rgba(22, 32, 51, 0.055) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(22, 32, 51, 0.04) 1px, transparent 1px);
+      }
       .cockpit-shell #header {
         background: rgba(5, 8, 15, 0.86);
         border-bottom: 1px solid rgba(142, 163, 191, 0.16);
         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
         backdrop-filter: blur(18px) saturate(140%);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell #header {
+        background: rgba(255, 255, 255, 0.86);
+        border-bottom-color: rgba(72, 88, 111, 0.16);
+        box-shadow: 0 12px 38px rgba(25, 37, 55, 0.12);
       }
       .cockpit-shell #header::after {
         height: 1px;
@@ -1339,14 +1378,28 @@
       .cockpit-shell .brand {
         min-width: 218px;
       }
+      html:not([data-theme="dark"]) .cockpit-shell .brand,
+      html:not([data-theme="dark"]) .cockpit-shell .brand:hover,
+      html:not([data-theme="dark"]) .cockpit-shell .brand-title {
+        color: var(--cockpit-ink);
+      }
       .cockpit-shell .brand img {
         border: 1px solid rgba(255, 255, 255, 0.12);
         box-shadow:
           0 0 0 4px rgba(59, 183, 255, 0.08),
           0 8px 28px rgba(0, 0, 0, 0.32);
       }
+      html:not([data-theme="dark"]) .cockpit-shell .brand img {
+        border-color: rgba(72, 88, 111, 0.18);
+        box-shadow:
+          0 0 0 4px rgba(0, 105, 168, 0.08),
+          0 8px 26px rgba(25, 37, 55, 0.14);
+      }
       .cockpit-shell .brand-subtitle {
         color: rgba(237, 244, 255, 0.5);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell .brand-subtitle {
+        color: var(--cockpit-muted);
       }
       .cockpit-command {
         flex: 1 1 420px;
@@ -1361,6 +1414,13 @@
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.055);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+      html:not([data-theme="dark"]) .cockpit-command {
+        border-color: rgba(72, 88, 111, 0.2);
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.8),
+          0 8px 24px rgba(25, 37, 55, 0.06);
       }
       .cockpit-command:focus-within {
         border-color: rgba(59, 183, 255, 0.72);
@@ -1388,11 +1448,17 @@
         box-shadow: none;
         font-size: 13px;
       }
+      html:not([data-theme="dark"]) .cockpit-command input {
+        color: var(--cockpit-ink);
+      }
       .cockpit-command input:focus {
         box-shadow: none;
       }
       .cockpit-command input::placeholder {
         color: rgba(237, 244, 255, 0.48);
+      }
+      html:not([data-theme="dark"]) .cockpit-command input::placeholder {
+        color: rgba(93, 107, 127, 0.72);
       }
       .cockpit-command kbd {
         border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1404,11 +1470,23 @@
         font-size: 10px;
         font-weight: 500;
       }
+      html:not([data-theme="dark"]) .cockpit-command kbd {
+        border-color: rgba(72, 88, 111, 0.2);
+        color: var(--cockpit-muted);
+        background: rgba(22, 32, 51, 0.06);
+      }
       .cockpit-shell .theme-toggle,
       .cockpit-shell .live-socket-chip,
       .cockpit-shell .user-chip {
         background: rgba(255, 255, 255, 0.065);
         border-color: rgba(142, 163, 191, 0.18);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell .theme-toggle,
+      html:not([data-theme="dark"]) .cockpit-shell .live-socket-chip,
+      html:not([data-theme="dark"]) .cockpit-shell .user-chip {
+        color: var(--cockpit-ink);
+        background: rgba(255, 255, 255, 0.74);
+        border-color: rgba(72, 88, 111, 0.18);
       }
       .cockpit-frame {
         width: min(1800px, 100%);
@@ -1434,10 +1512,21 @@
         );
         box-shadow: 0 18px 54px rgba(0, 0, 0, 0.26);
       }
+      html:not([data-theme="dark"]) .cockpit-rail {
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.9),
+          rgba(245, 248, 252, 0.86)
+        );
+        box-shadow: 0 18px 46px rgba(25, 37, 55, 0.1);
+      }
       .cockpit-rail-section + .cockpit-rail-section {
         margin-top: 16px;
         padding-top: 14px;
         border-top: 1px solid rgba(142, 163, 191, 0.12);
+      }
+      html:not([data-theme="dark"]) .cockpit-rail-section + .cockpit-rail-section {
+        border-top-color: rgba(72, 88, 111, 0.14);
       }
       .cockpit-rail-label {
         display: block;
@@ -1447,6 +1536,9 @@
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
+      }
+      html:not([data-theme="dark"]) .cockpit-rail-label {
+        color: rgba(93, 107, 127, 0.82);
       }
       .cockpit-rail-link {
         position: relative;
@@ -1467,12 +1559,20 @@
           color 140ms ease,
           transform 140ms ease;
       }
+      html:not([data-theme="dark"]) .cockpit-rail-link {
+        color: var(--cockpit-muted);
+      }
       .cockpit-rail-link:hover {
         color: #ffffff;
         text-decoration: none;
         background: rgba(255, 255, 255, 0.055);
         border-color: rgba(142, 163, 191, 0.16);
         transform: translateX(2px);
+      }
+      html:not([data-theme="dark"]) .cockpit-rail-link:hover {
+        color: var(--cockpit-ink);
+        background: rgba(0, 105, 168, 0.07);
+        border-color: rgba(0, 105, 168, 0.18);
       }
       .cockpit-rail-link.is-active {
         color: #ffffff;
@@ -1483,6 +1583,15 @@
         );
         border-color: rgba(59, 183, 255, 0.36);
         box-shadow: inset 3px 0 0 var(--cockpit-blue);
+      }
+      html:not([data-theme="dark"]) .cockpit-rail-link.is-active {
+        color: var(--cockpit-ink);
+        background: linear-gradient(
+          90deg,
+          rgba(0, 105, 168, 0.12),
+          rgba(74, 117, 0, 0.07)
+        );
+        border-color: rgba(0, 105, 168, 0.26);
       }
       .cockpit-rail-link span[aria-hidden] {
         display: inline-flex;
@@ -1523,6 +1632,24 @@
         border-radius: 8px;
         background: var(--cockpit-panel);
         box-shadow: 0 18px 54px rgba(0, 0, 0, 0.22);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell #content > h1,
+      html:not([data-theme="dark"]) .cockpit-shell #content > h2,
+      html:not([data-theme="dark"]) .cockpit-shell #content > h3,
+      html:not([data-theme="dark"]) .cockpit-shell .page-head,
+      html:not([data-theme="dark"]) .cockpit-panel,
+      html:not([data-theme="dark"]) .cockpit-card,
+      html:not([data-theme="dark"]) .cockpit-section,
+      html:not([data-theme="dark"]) .cockpit-shell #content > form,
+      html:not([data-theme="dark"]) .cockpit-shell #content > table,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .card,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .card-panel,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .monitor-shell,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .monitor-status,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .detail-grid,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .filter-bar,
+      html:not([data-theme="dark"]) .cockpit-shell #content > .empty-state {
+        box-shadow: 0 18px 46px rgba(25, 37, 55, 0.08);
       }
       .cockpit-shell #content > h1,
       .cockpit-shell #content > h2,
@@ -1574,11 +1701,23 @@
         background: var(--cockpit-panel-2);
         box-shadow: 0 14px 42px rgba(0, 0, 0, 0.2);
       }
+      html:not([data-theme="dark"]) .cockpit-shell .detail-grid > *,
+      html:not([data-theme="dark"]) .cockpit-shell .panel,
+      html:not([data-theme="dark"]) .cockpit-shell .card-panel,
+      html:not([data-theme="dark"]) .cockpit-shell .monitor-card,
+      html:not([data-theme="dark"]) .cockpit-shell .stat-card,
+      html:not([data-theme="dark"]) .cockpit-shell .data-card,
+      html:not([data-theme="dark"]) .cockpit-shell .settings-card {
+        box-shadow: 0 14px 36px rgba(25, 37, 55, 0.08);
+      }
       .cockpit-shell table {
         overflow: hidden;
         border: 1px solid var(--cockpit-line);
         border-radius: 8px;
         background: rgba(6, 10, 18, 0.58);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell table {
+        background: rgba(255, 255, 255, 0.78);
       }
       .cockpit-shell thead th,
       .cockpit-shell th {
@@ -1588,11 +1727,22 @@
         border-bottom-color: var(--cockpit-line);
         letter-spacing: 0.07em;
       }
+      html:not([data-theme="dark"]) .cockpit-shell thead th,
+      html:not([data-theme="dark"]) .cockpit-shell th {
+        color: rgba(93, 107, 127, 0.9);
+        background: rgba(22, 32, 51, 0.045);
+      }
       .cockpit-shell td {
         border-bottom-color: rgba(142, 163, 191, 0.11);
       }
+      html:not([data-theme="dark"]) .cockpit-shell td {
+        border-bottom-color: rgba(72, 88, 111, 0.12);
+      }
       .cockpit-shell tbody tr:nth-child(even) td {
         background: rgba(255, 255, 255, 0.018);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell tbody tr:nth-child(even) td {
+        background: rgba(22, 32, 51, 0.018);
       }
       .cockpit-shell tbody tr:hover td,
       .cockpit-shell tbody tr.is-selected td {
@@ -1612,9 +1762,22 @@
         background: rgba(5, 8, 15, 0.76);
         border-color: var(--cockpit-line-strong);
       }
+      html:not([data-theme="dark"]) .cockpit-shell input[type="text"],
+      html:not([data-theme="dark"]) .cockpit-shell input[type="number"],
+      html:not([data-theme="dark"]) .cockpit-shell input[type="password"],
+      html:not([data-theme="dark"]) .cockpit-shell input[type="email"],
+      html:not([data-theme="dark"]) .cockpit-shell input[type="search"],
+      html:not([data-theme="dark"]) .cockpit-shell select,
+      html:not([data-theme="dark"]) .cockpit-shell textarea {
+        background: rgba(255, 255, 255, 0.84);
+      }
       .cockpit-shell input::placeholder,
       .cockpit-shell textarea::placeholder {
         color: rgba(237, 244, 255, 0.38);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell input::placeholder,
+      html:not([data-theme="dark"]) .cockpit-shell textarea::placeholder {
+        color: rgba(93, 107, 127, 0.68);
       }
       .cockpit-shell input[type="submit"],
       .cockpit-shell button,
@@ -1630,6 +1793,19 @@
           inset 0 1px 0 rgba(255, 255, 255, 0.08),
           0 8px 24px rgba(0, 0, 0, 0.18);
       }
+      html:not([data-theme="dark"]) .cockpit-shell input[type="submit"],
+      html:not([data-theme="dark"]) .cockpit-shell button,
+      html:not([data-theme="dark"]) .cockpit-shell .btn {
+        color: var(--cockpit-ink);
+        background: linear-gradient(
+          180deg,
+          rgba(0, 105, 168, 0.1),
+          rgba(0, 105, 168, 0.04)
+        );
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.85),
+          0 8px 22px rgba(25, 37, 55, 0.08);
+      }
       .cockpit-shell input[type="submit"]:hover,
       .cockpit-shell button:hover,
       .cockpit-shell .btn:hover {
@@ -1639,14 +1815,32 @@
           rgba(59, 183, 255, 0.18)
         );
       }
+      html:not([data-theme="dark"]) .cockpit-shell input[type="submit"]:hover,
+      html:not([data-theme="dark"]) .cockpit-shell button:hover,
+      html:not([data-theme="dark"]) .cockpit-shell .btn:hover {
+        background: linear-gradient(
+          180deg,
+          rgba(0, 105, 168, 0.16),
+          rgba(0, 105, 168, 0.08)
+        );
+      }
       .cockpit-shell .btn-secondary,
       .cockpit-shell button.secondary {
         background: rgba(255, 255, 255, 0.06);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell .btn-secondary,
+      html:not([data-theme="dark"]) .cockpit-shell button.secondary {
+        background: rgba(22, 32, 51, 0.055);
       }
       .cockpit-shell .badge,
       .cockpit-shell .chip,
       .cockpit-shell .update-pill {
         border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell .badge,
+      html:not([data-theme="dark"]) .cockpit-shell .chip,
+      html:not([data-theme="dark"]) .cockpit-shell .update-pill {
+        border-color: rgba(72, 88, 111, 0.12);
       }
       .cockpit-grid {
         display: grid;
@@ -1694,6 +1888,9 @@
         font-weight: 700;
         line-height: 1;
       }
+      html:not([data-theme="dark"]) .cockpit-metric-value {
+        color: var(--cockpit-ink);
+      }
       .cockpit-metric-note {
         margin-top: 7px;
         color: var(--cockpit-muted);
@@ -1713,6 +1910,10 @@
         border: 1px solid var(--cockpit-line);
         border-radius: 7px;
         background: rgba(255, 255, 255, 0.035);
+      }
+      html:not([data-theme="dark"]) .lifecycle-step,
+      html:not([data-theme="dark"]) .cockpit-lifecycle-step {
+        background: rgba(22, 32, 51, 0.035);
       }
       .lifecycle-step::after,
       .cockpit-lifecycle-step::after {
@@ -1787,6 +1988,10 @@
         box-shadow: 0 18px 54px rgba(0, 0, 0, 0.36);
         animation: cockpit-toast-in 180ms ease-out;
       }
+      html:not([data-theme="dark"]) .cockpit-toast {
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 18px 44px rgba(25, 37, 55, 0.16);
+      }
       .cockpit-toast strong {
         display: block;
         margin-bottom: 3px;
@@ -1808,6 +2013,9 @@
         background: rgba(0, 0, 0, 0.48);
         z-index: 800;
       }
+      html:not([data-theme="dark"]) .cockpit-drawer-backdrop {
+        background: rgba(22, 32, 51, 0.28);
+      }
       .cockpit-drawer-backdrop.is-open {
         display: block;
       }
@@ -1828,6 +2036,14 @@
         transform: translateX(100%);
         transition: transform 180ms ease-out;
         overflow: auto;
+      }
+      html:not([data-theme="dark"]) .cockpit-drawer {
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.98),
+          rgba(245, 248, 252, 0.98)
+        );
+        box-shadow: -22px 0 60px rgba(25, 37, 55, 0.18);
       }
       .cockpit-drawer-backdrop.is-open .cockpit-drawer {
         transform: translateX(0);
@@ -2320,41 +2536,47 @@
           <a class="cockpit-rail-link" data-route="/jobs" href="/jobs"
             ><span aria-hidden="true">02</span>Jobs</a
           >
+          <a class="cockpit-rail-link" data-route="/runs" href="/runs"
+            ><span aria-hidden="true">03</span>WinPE Runs</a
+          >
           <a
             class="cockpit-rail-link"
             data-route="/monitoring"
             href="/monitoring"
-            ><span aria-hidden="true">03</span>Monitoring</a
+            ><span aria-hidden="true">04</span>Monitoring</a
           >
         </div>
         <div class="cockpit-rail-section">
           <span class="cockpit-rail-label">Build</span>
           <a class="cockpit-rail-link" data-route="/provision" href="/provision"
-            ><span aria-hidden="true">04</span>Provision VMs</a
+            ><span aria-hidden="true">05</span>Provision VMs</a
           >
           <a class="cockpit-rail-link" data-route="/template" href="/template"
-            ><span aria-hidden="true">05</span>Build Template</a
+            ><span aria-hidden="true">06</span>Build Template</a
           >
           <a class="cockpit-rail-link" data-route="/sequences" href="/sequences"
-            ><span aria-hidden="true">06</span>Sequences</a
+            ><span aria-hidden="true">07</span>Sequences</a
+          >
+          <a class="cockpit-rail-link" data-route="/task-engine" href="/task-engine"
+            ><span aria-hidden="true">08</span>Task Engine v2</a
           >
         </div>
         <div class="cockpit-rail-section">
           <span class="cockpit-rail-label">Fleet</span>
           <a class="cockpit-rail-link" data-route="/vms" href="/vms"
-            ><span aria-hidden="true">07</span>VM Fleet</a
+            ><span aria-hidden="true">09</span>VM Fleet</a
           >
           <a class="cockpit-rail-link" data-route="/cloud" href="/cloud"
-            ><span aria-hidden="true">08</span>Cloud Devices</a
+            ><span aria-hidden="true">10</span>Cloud Devices</a
           >
           <a class="cockpit-rail-link" data-route="/hashes" href="/hashes"
-            ><span aria-hidden="true">09</span>Hashes</a
+            ><span aria-hidden="true">11</span>Hashes</a
           >
           <a
             class="cockpit-rail-link"
             data-route="/answer-isos"
             href="/answer-isos"
-            ><span aria-hidden="true">10</span>Answer ISOs</a
+            ><span aria-hidden="true">12</span>Answer ISOs</a
           >
         </div>
         <div class="cockpit-rail-section">
@@ -2363,16 +2585,16 @@
             class="cockpit-rail-link"
             data-route="/credentials"
             href="/credentials"
-            ><span aria-hidden="true">11</span>Credentials</a
+            ><span aria-hidden="true">13</span>Credentials</a
           >
           <a class="cockpit-rail-link" data-route="/settings" href="/settings"
-            ><span aria-hidden="true">12</span>Settings</a
+            ><span aria-hidden="true">14</span>Settings</a
           >
           <a
             class="cockpit-rail-link"
             data-route="/monitoring/settings"
             href="/monitoring/settings"
-            ><span aria-hidden="true">13</span>Monitor Settings</a
+            ><span aria-hidden="true">15</span>Monitor Settings</a
           >
         </div>
       </aside>

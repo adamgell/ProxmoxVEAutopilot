@@ -298,6 +298,14 @@ def reset_for_tests(conn: Connection) -> None:
     _commit(conn)
 
 
+def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat(timespec="seconds")
+    return str(value)
+
+
 def create_sequence(
     conn: Connection,
     *,
@@ -317,6 +325,66 @@ def create_sequence(
     )
     _commit(conn)
     return sequence_id
+
+
+def list_sequences(conn: Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            s.*,
+            COUNT(n.id) FILTER (WHERE n.node_type = 'step') AS step_count,
+            COUNT(n.id) FILTER (WHERE n.node_type = 'group') AS group_count
+        FROM ts_task_sequences s
+        LEFT JOIN ts_task_sequence_nodes n ON n.sequence_id = s.id
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC, s.name ASC
+        """
+    ).fetchall()
+    return [
+        {
+            "id": str(row["id"]),
+            "name": row["name"],
+            "description": row["description"] or "",
+            "enabled": bool(row["enabled"]),
+            "current_version_id": (
+                str(row["current_version_id"]) if row["current_version_id"] else None
+            ),
+            "step_count": int(row["step_count"]),
+            "group_count": int(row["group_count"]),
+            "created_at": _iso(row["created_at"]),
+            "updated_at": _iso(row["updated_at"]),
+        }
+        for row in rows
+    ]
+
+
+def list_sequence_steps(conn: Connection, sequence_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM ts_task_sequence_nodes
+        WHERE sequence_id = %s AND node_type = 'step'
+        ORDER BY parent_id NULLS FIRST, position, name
+        """,
+        (sequence_id,),
+    ).fetchall()
+    return [
+        {
+            "id": str(row["id"]),
+            "sequence_id": str(row["sequence_id"]),
+            "parent_id": str(row["parent_id"]) if row["parent_id"] else None,
+            "position": int(row["position"]),
+            "name": row["name"],
+            "kind": row["kind"],
+            "phase": row["phase"],
+            "enabled": bool(row["enabled"]),
+            "content_refs": row["content_refs_json"] or [],
+            "retry_count": int(row["retry_count"]),
+            "reboot_behavior": row["reboot_behavior"],
+            "continue_on_error": bool(row["continue_on_error"]),
+        }
+        for row in rows
+    ]
 
 
 def add_group(
@@ -749,6 +817,97 @@ def list_run_steps(conn: Connection, run_id: str) -> list[dict]:
         (run_id,),
     ).fetchall()
     return [_normalize_step(row) for row in rows]
+
+
+def list_runs(conn: Connection, *, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            r.*,
+            s.name AS sequence_name,
+            v.version AS sequence_version,
+            COUNT(DISTINCT st.id) AS step_count,
+            COUNT(DISTINCT st.id) FILTER (WHERE st.state = 'done') AS done_count,
+            COUNT(DISTINCT st.id) FILTER (WHERE st.state = 'running') AS running_count,
+            COUNT(DISTINCT st.id) FILTER (WHERE st.state = 'failed') AS failed_count,
+            COUNT(DISTINCT m.id) AS manifest_count
+        FROM ts_provisioning_runs r
+        JOIN ts_task_sequences s ON s.id = r.sequence_id
+        JOIN ts_task_sequence_versions v ON v.id = r.sequence_version_id
+        LEFT JOIN ts_run_plan_steps st ON st.run_id = r.id
+        LEFT JOIN ts_run_content_manifest m ON m.run_id = r.id
+        GROUP BY r.id, s.name, v.version
+        ORDER BY r.started_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        {
+            "id": str(row["id"]),
+            "legacy_run_id": row["legacy_run_id"],
+            "sequence_id": str(row["sequence_id"]),
+            "sequence_name": row["sequence_name"],
+            "sequence_version_id": str(row["sequence_version_id"]),
+            "sequence_version": int(row["sequence_version"]),
+            "state": row["state"],
+            "phase": row["phase"],
+            "cursor_step_id": (
+                str(row["cursor_step_id"]) if row["cursor_step_id"] else None
+            ),
+            "vmid": row["vmid"],
+            "vm_uuid": row["vm_uuid"],
+            "computer_name": row["computer_name"],
+            "serial_number": row["serial_number"],
+            "started_at": _iso(row["started_at"]),
+            "finished_at": _iso(row["finished_at"]),
+            "last_error": row["last_error"],
+            "step_count": int(row["step_count"]),
+            "done_count": int(row["done_count"]),
+            "running_count": int(row["running_count"]),
+            "failed_count": int(row["failed_count"]),
+            "manifest_count": int(row["manifest_count"]),
+        }
+        for row in rows
+    ]
+
+
+def list_recent_manifest_items(conn: Connection, *, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            m.*,
+            r.state AS run_state,
+            s.name AS sequence_name
+        FROM ts_run_content_manifest m
+        JOIN ts_provisioning_runs r ON r.id = m.run_id
+        JOIN ts_task_sequences s ON s.id = r.sequence_id
+        ORDER BY m.created_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        {
+            "id": str(row["id"]),
+            "run_id": str(row["run_id"]),
+            "sequence_name": row["sequence_name"],
+            "run_state": row["run_state"],
+            "logical_name": row["logical_name"],
+            "content_type": row["content_type"],
+            "required_phase": row["required_phase"],
+            "required": bool(row["required"]),
+            "source_uri": row["source_uri"],
+            "sha256": row["sha256"],
+            "size_bytes": row["size_bytes"],
+            "staging_path": row["staging_path"],
+            "status": row["status"],
+            "staging_attempts": int(row["staging_attempts"]),
+            "last_error": row["last_error"],
+            "created_at": _iso(row["created_at"]),
+        }
+        for row in rows
+    ]
 
 
 def _normalize_step(row: dict) -> dict:

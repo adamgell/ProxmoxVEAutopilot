@@ -2884,10 +2884,12 @@ def _vms_from_monitor_snapshot() -> list[dict]:
             "in_intune": bool(int(probe.get("intune_found") or 0)),
             "intune_compliance": first_intune.get("complianceState") or "",
             "os_caption": "",
-            "os_build": str(probe.get("os_build") or ""),
-            "os_version": "",
-            "ip_address": "",
+            "os_build": str(probe.get("os_build") or agent.get("os_build") or ""),
+            "os_version": agent.get("os_version") or "",
+            "ip_address": agent.get("primary_ipv4") or "",
             "last_boot": "",
+            "agent_last_seen_at": agent.get("received_at") or "",
+            "agent_qga_state": agent.get("qga_state") or "",
         })
     return sorted(out, key=lambda v: v["vmid"])
 
@@ -2897,6 +2899,170 @@ def _latest_monitor_sweep_status() -> dict | None:
         return device_history_db.latest_sweep_status()
     except Exception:
         return None
+
+
+def _iso_or_blank(value) -> str:
+    if not value:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _identity_key(value) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _identity_keys(*values) -> set[str]:
+    return {key for key in (_identity_key(value) for value in values) if key}
+
+
+def _ip_keys(*values) -> set[str]:
+    return {
+        str(value).strip()
+        for value in values
+        if value and re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", str(value).strip())
+    }
+
+
+def _agent_match_keys(agent: dict) -> set[str]:
+    agent_id = str(agent.get("agent_id") or "")
+    agent_id_suffix = re.sub(r"^agent-", "", agent_id, flags=re.IGNORECASE)
+    return _identity_keys(
+        agent.get("computer_name"),
+        agent.get("serial_number"),
+        agent_id,
+        agent_id_suffix,
+    )
+
+
+def _agent_ip_match_keys(agent: dict) -> set[str]:
+    return _ip_keys(agent.get("primary_ipv4"))
+
+
+def _pve_vm_match_keys(vm: dict) -> set[str]:
+    return _identity_keys(
+        vm.get("name"),
+        vm.get("hostname"),
+        vm.get("serial"),
+        vm.get("computer_name"),
+    )
+
+
+def _pve_vm_ip_match_keys(vm: dict) -> set[str]:
+    return _ip_keys(vm.get("ip_address"), vm.get("primary_ipv4"))
+
+
+def _infer_agent_vmid_from_pve(agent: dict, pve_vms: list[dict] | None = None):
+    if agent.get("vmid"):
+        return agent.get("vmid")
+    agent_keys = _agent_match_keys(agent)
+    agent_ips = _agent_ip_match_keys(agent)
+    if not agent_keys and not agent_ips:
+        return None
+
+    matches: set[int] = set()
+    for vm in pve_vms or []:
+        vmid = vm.get("vmid")
+        if not vmid:
+            continue
+        if (
+            agent_keys.intersection(_pve_vm_match_keys(vm))
+            or agent_ips.intersection(_pve_vm_ip_match_keys(vm))
+        ):
+            matches.add(int(vmid))
+
+    if len(matches) == 1:
+        return next(iter(matches))
+    return None
+
+
+def _enrich_agent_vmid_from_pve(agent: dict, pve_vms: list[dict] | None = None) -> dict:
+    inferred = _infer_agent_vmid_from_pve(agent, pve_vms)
+    if inferred:
+        agent["vmid"] = inferred
+    return agent
+
+
+def _agent_inventory_rows() -> list[dict]:
+    pve_vms = list(_VMS_CACHE.get("data") or [])
+    try:
+        rows = agent_telemetry_pg.latest_agents()
+    except Exception:
+        rows = []
+    out: list[dict] = []
+    seen_agent_ids: set[str] = set()
+    for row in rows:
+        seen_agent_ids.add(row.get("agent_id") or "")
+        out.append(_enrich_agent_vmid_from_pve({
+            "agent_id": row.get("agent_id") or "",
+            "approval_id": "",
+            "approval_status": "active",
+            "vmid": row.get("vmid") or row.get("device_vmid"),
+            "computer_name": (
+                row.get("computer_name")
+                or row.get("device_computer_name")
+                or ""
+            ),
+            "serial_number": (
+                row.get("serial_number")
+                or row.get("device_serial_number")
+                or ""
+            ),
+            "primary_ipv4": row.get("primary_ipv4") or "",
+            "os_name": row.get("os_name") or "",
+            "os_version": row.get("os_version") or "",
+            "os_build": row.get("os_build") or "",
+            "qga_state": row.get("qga_state") or "",
+            "domain_name": row.get("domain_name") or "",
+            "domain_joined": row.get("domain_joined"),
+            "entra_joined": row.get("entra_joined"),
+            "current_phase": row.get("current_phase") or "",
+            "current_run_id": row.get("current_run_id") or "",
+            "agent_version": (
+                row.get("agent_version")
+                or row.get("device_agent_version")
+                or ""
+            ),
+            "last_heartbeat_at": _iso_or_blank(row.get("received_at")),
+            "last_seen_at": _iso_or_blank(row.get("last_seen_at")),
+        }, pve_vms))
+    try:
+        pending_rows = agent_telemetry_pg.pending_bootstrap_approvals()
+    except Exception:
+        pending_rows = []
+    for row in pending_rows:
+        agent_id = row.get("agent_id") or ""
+        if agent_id in seen_agent_ids:
+            for existing in out:
+                if existing["agent_id"] == agent_id:
+                    existing["approval_id"] = row.get("approval_id") or ""
+                    if not existing.get("last_heartbeat_at"):
+                        existing["approval_status"] = row.get("status") or ""
+                    break
+            continue
+        out.append(_enrich_agent_vmid_from_pve({
+            "agent_id": agent_id,
+            "approval_id": row.get("approval_id") or "",
+            "approval_status": row.get("status") or "pending",
+            "vmid": row.get("vmid"),
+            "computer_name": row.get("computer_name") or "",
+            "serial_number": row.get("serial_number") or "",
+            "primary_ipv4": "",
+            "os_name": "",
+            "os_version": "",
+            "os_build": "",
+            "qga_state": "",
+            "domain_name": "",
+            "domain_joined": None,
+            "entra_joined": None,
+            "current_phase": row.get("phase") or "",
+            "current_run_id": row.get("created_from_run_id") or "",
+            "agent_version": row.get("agent_version") or "",
+            "last_heartbeat_at": "",
+            "last_seen_at": _iso_or_blank(row.get("requested_at")),
+        }, pve_vms))
+    return out
 
 
 def _fetch_vms_payload_live():
@@ -3162,6 +3328,15 @@ async def _live_snapshot_provider(topics: set[str], vmids: set[int]) -> list[dic
                 "generated_at": utc_now_iso(),
             },
         })
+    if "agents" in topics:
+        messages.append({
+            "type": "snapshot",
+            "topic": "agents",
+            "data": {
+                "agents": await asyncio.to_thread(_agent_inventory_rows),
+                "generated_at": utc_now_iso(),
+            },
+        })
     return messages
 
 
@@ -3223,6 +3398,13 @@ async def _live_patch_provider(
             "type": "patch",
             "topic": "runs",
             "runs": await asyncio.to_thread(_live_recent_ts_runs),
+            "generated_at": utc_now_iso(),
+        })
+    if "agents" in topics:
+        messages.append({
+            "type": "patch",
+            "topic": "agents",
+            "agents": await asyncio.to_thread(_agent_inventory_rows),
             "generated_at": utc_now_iso(),
         })
     return messages
@@ -3403,6 +3585,38 @@ async def live_screenshot(screenshot_id: str):
     )
 
 
+@app.post("/api/agent-approvals/{approval_id}/approve")
+async def approve_agent_bootstrap(approval_id: str, request: Request):
+    agent_token = None
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
+            if isinstance(body, dict):
+                agent_token = body.get("agent_token") or None
+    except Exception:
+        agent_token = None
+    try:
+        from web import db_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            approval = agent_telemetry_pg.approve_bootstrap_approval(
+                conn,
+                approval_id,
+                agent_token=agent_token,
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not approval:
+        raise HTTPException(status_code=404, detail="approval not found")
+    return {
+        "ok": True,
+        "approval_id": approval["approval_id"],
+        "agent_id": approval["agent_id"],
+        "approval_status": approval["status"],
+    }
+
+
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request, error: str = ""):
     current_vars = _load_vars()
@@ -3469,6 +3683,7 @@ async def vms_page(request: Request, error: str = ""):
         "vms": vms,
         "devices": matched_devices,
         "missing_vms": missing_vms,
+        "agent_devices": _agent_inventory_rows(),
         "ap_error": ap_error,
         "error": error,
         # Surface to the footer so the operator can tell whether
@@ -6835,6 +7050,29 @@ def run_detail_page(run_id: int, request: Request):
             "run": run,
             "steps": steps,
             "step_counts": _step_counts(steps),
+        },
+    )
+
+
+@app.get("/task-engine", response_class=HTMLResponse)
+def task_engine_page(request: Request):
+    from web import db_pg, ts_engine_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        sequences = ts_engine_pg.list_sequences(conn)
+        for seq in sequences:
+            seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
+        runs = ts_engine_pg.list_runs(conn)
+        content_items = ts_engine_pg.list_content_items(conn)
+        manifest_items = ts_engine_pg.list_recent_manifest_items(conn)
+    return templates.TemplateResponse(
+        "task_engine.html",
+        {
+            "request": request,
+            "sequences": sequences,
+            "runs": runs,
+            "content_items": content_items,
+            "manifest_items": manifest_items,
         },
     )
 
