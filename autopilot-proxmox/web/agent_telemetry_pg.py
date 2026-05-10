@@ -584,6 +584,22 @@ def latest_for_agent(conn: Connection, agent_id: str) -> dict | None:
     return _row_dict(row) if row else None
 
 
+def latest_for_run(conn: Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT h.*
+        FROM agent_heartbeats h
+        JOIN agent_devices d ON d.agent_id = h.agent_id
+        WHERE h.current_run_id = %s
+          AND d.revoked = false
+        ORDER BY h.received_at DESC, h.id DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    return _row_dict(row) if row else None
+
+
 def latest_agents(conn: Connection | None = None) -> list[dict]:
     if conn is None:
         with db_pg.connection() as live:

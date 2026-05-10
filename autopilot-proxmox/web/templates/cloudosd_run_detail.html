@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block title %}CloudOSD Run - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("CloudOSD Run " ~ run.run_id[:8], "Run evidence, identity comparison, and heartbeat-gated completion for a single-VM CloudOSD deployment.") }}
+
+<style>
+  .cloudosd-detail-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .cloudosd-detail-panel {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .cloudosd-detail-panel h2,
+  .cloudosd-detail-panel h3 {
+    margin: 0 0 10px;
+  }
+  .cloudosd-kv {
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    gap: 7px 12px;
+  }
+  .cloudosd-kv dt {
+    color: var(--ink-soft);
+  }
+  .cloudosd-kv dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .cloudosd-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    padding: 1px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .cloudosd-badge.ready {
+    border-color: rgba(47, 133, 90, 0.55);
+    color: var(--ok);
+  }
+  .cloudosd-badge.warn {
+    border-color: rgba(170, 125, 40, 0.6);
+    color: var(--warn);
+  }
+  .cloudosd-badge.block {
+    border-color: rgba(190, 68, 68, 0.55);
+    color: var(--danger);
+  }
+  .cloudosd-events {
+    display: grid;
+    gap: 10px;
+  }
+  .cloudosd-event {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .cloudosd-mini {
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+  @media (max-width: 1000px) {
+    .cloudosd-detail-grid {
+      grid-template-columns: 1fr;
+    }
+    .cloudosd-kv {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="cloudosd-detail-grid">
+  <div>
+    <section class="cloudosd-detail-panel">
+      <h2>Run State</h2>
+      <dl class="cloudosd-kv">
+        <dt>State</dt><dd><span class="cloudosd-badge {{ 'ready' if run.state == 'complete' else 'warn' }}">{{ run.state }}</span></dd>
+        <dt>Heartbeat gate</dt><dd>{{ 'complete after AutopilotAgent heartbeat' if run.state == 'complete' else 'waiting for AutopilotAgent heartbeat before completion' }}</dd>
+        <dt>Requested name</dt><dd>{{ run.requested_vm_name }}</dd>
+        <dt>Final PVE VM name</dt><dd>{{ run.pve_vm_name or '-' }}</dd>
+        <dt>Windows heartbeat computer name</dt><dd>{{ run.heartbeat_computer_name or '-' }}</dd>
+        <dt>Expected Windows computer name</dt><dd>{{ run.expected_computer_name }}</dd>
+        <dt>Mismatch/truncation flag</dt>
+        <dd>
+          {% if run.name_comparison.mismatch or run.name_comparison.requested_was_normalized %}
+          <span class="cloudosd-badge warn">requested/PVE/heartbeat names need review</span>
+          {% else %}
+          <span class="cloudosd-badge ready">name evidence aligned</span>
+          {% endif %}
+        </dd>
+        <dt>VMID</dt><dd>{{ run.vmid or '-' }}</dd>
+        <dt>UUID</dt><dd>{{ run.vm_uuid or '-' }}</dd>
+        <dt>MAC</dt><dd>{{ run.mac or '-' }}</dd>
+        <dt>Node</dt><dd>{{ run.node or '-' }}</dd>
+      </dl>
+    </section>
+
+    <section class="cloudosd-detail-panel">
+      <h2>CloudOSD Evidence</h2>
+      <dl class="cloudosd-kv">
+        <dt>Artifact build SHA</dt><dd><code>{{ artifact.build_sha if artifact else run.artifact_id }}</code></dd>
+        <dt>OSDCloud module version</dt><dd>{{ artifact.osdcloud_module_version if artifact else '-' }}</dd>
+        <dt>Workflow name</dt><dd>{{ run.workflow_name }}</dd>
+        <dt>Selected OS catalog/settings</dt><dd>{{ run.os_version }} {{ run.os_edition }} {{ run.os_activation }} {{ run.os_language }}</dd>
+        <dt>OS image URL/hash</dt><dd>{{ (os_settings.OperatingSystem.default if os_settings else '-') }} / hash unknown</dd>
+        <dt>Outbound preflight result</dt><dd>{{ run.outbound_policy.mode if run.outbound_policy.mode is defined else 'blocked' }}</dd>
+        <dt>PE registration time</dt><dd>{{ run.pe_registered_at or '-' }}</dd>
+        <dt>OSDCloud start/end</dt><dd>{{ run.osdcloud_started_at or '-' }} / {{ run.osdcloud_finished_at or '-' }}</dd>
+        <dt>Offline driver validation result</dt><dd>{{ event_groups.offline_validation[-1].message if event_groups.offline_validation is defined else 'not reported' }}</dd>
+        <dt>SetupComplete/first-boot state</dt><dd>{{ event_groups.SetupComplete[-1].message if event_groups.SetupComplete is defined else 'not reported' }}</dd>
+        <dt>AutopilotAgent bootstrap result</dt><dd>{{ event_groups.AutopilotAgent[-1].message if event_groups.AutopilotAgent is defined else ('heartbeat observed' if latest_heartbeat else 'not reported') }}</dd>
+        <dt>Latest agent ID</dt><dd>{{ latest_heartbeat.agent_id if latest_heartbeat else '-' }}</dd>
+        <dt>Latest primary IPv4</dt><dd>{{ latest_heartbeat.primary_ipv4 if latest_heartbeat else '-' }}</dd>
+        <dt>First heartbeat time</dt><dd>{{ run.first_heartbeat_at or '-' }}</dd>
+        <dt>Job links/log links</dt>
+        <dd>
+          {% if related_jobs %}
+            {% for job in related_jobs %}
+            <a href="/jobs/{{ job.id }}">{{ job.job_type }}</a>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          {% else %}
+            <span class="cloudosd-mini">no related provision job recorded</span>
+          {% endif %}
+        </dd>
+      </dl>
+    </section>
+  </div>
+
+  <aside>
+    <section class="cloudosd-detail-panel">
+      <h2>Milestones</h2>
+      {% set phases = ['controller', 'Proxmox playbook', 'PE bridge', 'OSDCloud', 'offline validation', 'SetupComplete', 'first boot', 'AutopilotAgent'] %}
+      <div class="cloudosd-events">
+        {% for phase_label in phases %}
+        {% set phase_key = phase_label %}
+        {% set alt_key = phase_label | lower | replace(' ', '_') %}
+        {% set phase_events = event_groups.get(phase_key) or event_groups.get(alt_key) or [] %}
+        <div class="cloudosd-event">
+          <h3>{{ phase_label }}</h3>
+          {% if phase_events %}
+          {% for event in phase_events %}
+          <div>
+            <span class="cloudosd-mini">{{ event.created_at }} {{ event.severity }}</span><br>
+            <b>{{ event.event_type }}</b> {{ event.message or '' }}
+          </div>
+          {% endfor %}
+          {% else %}
+          <span class="cloudosd-mini">no evidence reported yet</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </aside>
+</div>
+{% endblock %}

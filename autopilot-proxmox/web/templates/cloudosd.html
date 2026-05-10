@@ -1,0 +1,721 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, empty_state %}
+{% block title %}CloudOSD - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("CloudOSD", "Dense operator cockpit for single-VM CloudOSD deployments beside the existing WinPE path.") }}
+
+<style>
+  .cloudosd-cockpit {
+    display: grid;
+    gap: 14px;
+  }
+  .cloudosd-metrics {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(130px, 1fr));
+    gap: 10px;
+  }
+  .cloudosd-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    align-items: start;
+    gap: 14px;
+    min-width: 0;
+  }
+  .cloudosd-stack {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
+  }
+  .cloudosd-panel {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 12px;
+    min-width: 0;
+  }
+  .cloudosd-panel h2,
+  .cloudosd-panel h3 {
+    margin: 0 0 8px;
+  }
+  .cloudosd-dense-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+    gap: 8px 10px;
+  }
+  .cloudosd-field label {
+    display: block;
+    color: var(--ink-soft);
+    font-size: 12px;
+    margin-bottom: 3px;
+  }
+  .cloudosd-field input:not([type="checkbox"]),
+  .cloudosd-field select {
+    width: 100%;
+    min-height: 32px;
+  }
+  .cloudosd-inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
+  .cloudosd-toggle-set {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    min-height: 32px;
+  }
+  .cloudosd-toggle-line {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 6px;
+    min-height: 22px;
+    margin: 0 !important;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+  .cloudosd-toggle-line input[type="checkbox"] {
+    flex: 0 0 auto;
+    width: 14px !important;
+    height: 14px !important;
+    min-width: 14px !important;
+    min-height: 14px !important;
+    margin: 0;
+  }
+  .cloudosd-toggle-line input[type="checkbox"]:disabled {
+    opacity: 0.7;
+  }
+  .cloudosd-agent-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+  .cloudosd-artifact-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+  }
+  #cloudosdBuildForm {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    min-width: 0;
+  }
+  #cloudosdBuildForm input {
+    min-width: 0;
+  }
+  .cloudosd-mini {
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+  .cloudosd-table-wrap {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .cloudosd-table {
+    min-width: 1280px;
+  }
+  .cloudosd-table code {
+    word-break: break-all;
+  }
+  .cloudosd-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    padding: 1px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .cloudosd-badge.ready {
+    border-color: rgba(47, 133, 90, 0.55);
+    color: var(--ok);
+  }
+  .cloudosd-badge.block {
+    border-color: rgba(190, 68, 68, 0.55);
+    color: var(--danger);
+  }
+  .cloudosd-badge.warn {
+    border-color: rgba(170, 125, 40, 0.6);
+    color: var(--warn);
+  }
+  .cloudosd-review {
+    position: sticky;
+    top: 82px;
+  }
+  .cloudosd-review dl {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 7px 10px;
+    margin: 0 0 12px;
+  }
+  .cloudosd-review dt {
+    color: var(--ink-soft);
+  }
+  .cloudosd-review dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .cloudosd-checks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .cloudosd-check-list {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .cloudosd-error {
+    color: var(--danger);
+    min-height: 18px;
+  }
+  @media (max-width: 1100px) {
+    .cloudosd-metrics {
+      grid-template-columns: repeat(2, minmax(130px, 1fr));
+    }
+    .cloudosd-layout {
+      grid-template-columns: 1fr;
+    }
+    .cloudosd-review {
+      position: static;
+    }
+  }
+  @media (max-width: 760px) {
+    .cloudosd-dense-grid,
+    .cloudosd-checks {
+      grid-template-columns: 1fr;
+    }
+    #cloudosdBuildForm {
+      justify-content: flex-start;
+    }
+  }
+</style>
+
+<div class="cloudosd-cockpit">
+  <div class="cloudosd-layout">
+    <div class="cloudosd-stack">
+      <section class="cloudosd-panel" id="cloudosd-deployment">
+        <h2>Single-VM Deployment</h2>
+        <form id="cloudosdRunForm">
+          <h3>Artifact</h3>
+          <div class="cloudosd-dense-grid">
+            <div class="cloudosd-field">
+              <label for="artifact_id">Ready artifact</label>
+              <select id="artifact_id" name="artifact_id" required {% if not ready_artifacts %}disabled{% endif %}>
+                {% for artifact in ready_artifacts %}
+                <option value="{{ artifact.id }}">{{ artifact.architecture }} {{ artifact.osdcloud_module_version }} {{ artifact.build_sha }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="cloudosd-field">
+              <label>Selected module/build/hash</label>
+              <div id="artifactInline" class="cloudosd-mini">No ready artifact selected.</div>
+            </div>
+            <div class="cloudosd-field">
+              <label>Proxmox volid</label>
+              <div id="artifactVolid" class="cloudosd-mini">not selected</div>
+            </div>
+          </div>
+
+          <h3>Proxmox</h3>
+          <div class="cloudosd-dense-grid">
+            <div class="cloudosd-field">
+              <label for="node">Node</label>
+              <select id="node" name="node"></select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="iso_storage">ISO storage</label>
+              <select id="iso_storage" name="iso_storage"></select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="storage">VM disk storage</label>
+              <select id="storage" name="storage"></select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="network_bridge">Network bridge</label>
+              <select id="network_bridge" name="network_bridge"></select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="vm_name">Requested VM name</label>
+              <input id="vm_name" name="vm_name" value="CLOUDOSD-001" required>
+            </div>
+            <div class="cloudosd-field">
+              <label for="vmid">Optional VMID</label>
+              <input id="vmid" name="vmid" type="number" min="1" placeholder="auto">
+            </div>
+            <div class="cloudosd-field">
+              <label for="vm_cores">vCPU</label>
+              <input id="vm_cores" name="vm_cores" type="number" min="1" value="{{ catalog.defaults.vm_cores }}">
+            </div>
+            <div class="cloudosd-field">
+              <label for="vm_memory_mb">Memory MB</label>
+              <input id="vm_memory_mb" name="vm_memory_mb" type="number" min="{{ catalog.defaults.minimum_vm_memory_mb }}" step="512" value="{{ catalog.defaults.vm_memory_mb }}">
+            </div>
+            <div class="cloudosd-field">
+              <label for="vm_disk_size_gb">Disk GB</label>
+              <input id="vm_disk_size_gb" name="vm_disk_size_gb" type="number" min="{{ catalog.defaults.minimum_vm_disk_size_gb }}" value="{{ catalog.defaults.vm_disk_size_gb }}">
+            </div>
+            <div class="cloudosd-field">
+              <label>Firmware</label>
+              <div class="cloudosd-toggle-set">
+                <label class="cloudosd-toggle-line"><input type="checkbox" name="tpm_enabled" checked> TPM</label>
+                <label class="cloudosd-toggle-line"><input type="checkbox" name="secure_boot" checked> Secure Boot</label>
+              </div>
+            </div>
+          </div>
+
+          <h3>Windows</h3>
+          <div class="cloudosd-dense-grid">
+            <div class="cloudosd-field">
+              <label for="os_version">Version</label>
+              <select id="os_version" name="os_version">
+                {% for value in catalog.os_versions %}
+                <option value="{{ value }}" {% if value == catalog.defaults.os_version %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="os_edition">Edition</label>
+              <select id="os_edition" name="os_edition">
+                {% for value in catalog.os_editions %}
+                <option value="{{ value }}" {% if value == catalog.defaults.os_edition %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="os_activation">Activation</label>
+              <select id="os_activation" name="os_activation">
+                {% for value in catalog.os_activations %}
+                <option value="{{ value }}" {% if value == catalog.defaults.os_activation %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="cloudosd-field">
+              <label for="os_language">Language</label>
+              <select id="os_language" name="os_language">
+                {% for value in catalog.os_languages %}
+                <option value="{{ value }}" {% if value == catalog.defaults.os_language %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <h3>CloudOSD Policy</h3>
+          <div class="cloudosd-dense-grid">
+            <div class="cloudosd-field">
+              <label for="driver_pack_policy">Driver pack policy</label>
+              <select id="driver_pack_policy" name="driver_pack_policy">
+                <option selected>None</option>
+                <option>OSDCloud</option>
+              </select>
+            </div>
+            <div class="cloudosd-field">
+              <label>Firmware updates</label>
+              <label class="cloudosd-toggle-line"><input type="checkbox" name="firmware_updates_enabled"> Enable firmware updates</label>
+            </div>
+            <div class="cloudosd-field">
+              <label>Analytics policy</label>
+              <label class="cloudosd-toggle-line"><input type="checkbox" name="analytics_enabled"> Allow analytics</label>
+            </div>
+            <div class="cloudosd-field">
+              <label for="outbound_policy_mode">Outbound/domain policy</label>
+              <select id="outbound_policy_mode" name="outbound_policy_mode">
+                <option value="blocked" selected>Blocked by default</option>
+                <option value="limited">Limited allowlist</option>
+              </select>
+            </div>
+            <div class="cloudosd-field">
+              <label>Workflow preview</label>
+              <div class="cloudosd-mini">cloudosd-nofirmware, validate offline OS, stage client, stage agent, wait heartbeat</div>
+            </div>
+          </div>
+
+          <h3>Agent &amp; Identity</h3>
+          <div class="cloudosd-dense-grid cloudosd-agent-grid">
+            <div class="cloudosd-field">
+              <label>OSD client</label>
+              <label class="cloudosd-toggle-line"><input type="checkbox" checked disabled> Stage OSD client package</label>
+            </div>
+            <div class="cloudosd-field">
+              <label>AutopilotAgent</label>
+              <label class="cloudosd-toggle-line"><input type="checkbox" checked disabled> Install MSI and run postinstall</label>
+            </div>
+            <div class="cloudosd-field">
+              <label>Completion gate</label>
+              <label class="cloudosd-toggle-line"><input type="checkbox" checked disabled> Require run-scoped heartbeat</label>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="cloudosd-panel" id="cloudosd-preflight">
+        <div class="cloudosd-inline" style="justify-content:space-between;">
+          <h2>Preflight</h2>
+          <button type="button" id="runPreflightBtn">Run Preflight</button>
+        </div>
+        <div id="preflightStatus" class="cloudosd-mini">Waiting for input.</div>
+        <div class="cloudosd-checks">
+          <div>
+            <h3>Blocking Checks</h3>
+            <ul id="blockingChecks" class="cloudosd-check-list"></ul>
+          </div>
+          <div>
+            <h3>Warnings</h3>
+            <ul id="warningChecks" class="cloudosd-check-list"></ul>
+          </div>
+        </div>
+        <div id="cloudosdLaunchError" class="cloudosd-error"></div>
+      </section>
+    </div>
+
+    <aside class="cloudosd-panel cloudosd-review" aria-label="Review and launch">
+      <h2>Review &amp; Launch</h2>
+      <dl>
+        <dt>Artifact</dt><dd id="reviewArtifact">not selected</dd>
+        <dt>Build</dt><dd id="reviewBuild">-</dd>
+        <dt>VM sizing</dt><dd id="reviewSizing">-</dd>
+        <dt>Requested name</dt><dd id="reviewRequestedName">-</dd>
+        <dt>Windows name</dt><dd id="reviewWindowsName">-</dd>
+        <dt>OS</dt><dd id="reviewOs">-</dd>
+        <dt>Policy</dt><dd id="reviewPolicy">-</dd>
+        <dt>Analytics</dt><dd id="reviewAnalytics">blocked</dd>
+        <dt>Heartbeat gate</dt><dd>AutopilotAgent heartbeat required</dd>
+        <dt>Blocking count</dt><dd id="reviewBlocking">-</dd>
+      </dl>
+      <button type="button" id="launchCloudosdBtn" class="action-btn-upload" disabled>Launch CloudOSD VM</button>
+    </aside>
+  </div>
+
+  <section class="cloudosd-metrics" aria-label="CloudOSD status metrics">
+    <div class="cockpit-metric cockpit-scanline">
+      <div class="cockpit-metric-label">OSDCloud Module Pin</div>
+      <div class="cockpit-metric-value" style="font-size:20px;">{{ catalog.defaults.osdcloud_module_version }}</div>
+      <div class="cockpit-metric-note">artifact builds stay pinned</div>
+    </div>
+    <div class="cockpit-metric">
+      <div class="cockpit-metric-label">Ready Artifacts</div>
+      <div class="cockpit-metric-value">{{ ready_artifacts | length }}</div>
+      <div class="cockpit-metric-note">hashes plus Proxmox volid</div>
+    </div>
+    <div class="cockpit-metric">
+      <div class="cockpit-metric-label">Minimum RAM</div>
+      <div class="cockpit-metric-value">{{ catalog.defaults.minimum_vm_memory_mb }} MB</div>
+      <div class="cockpit-metric-note">{{ catalog.defaults.recommended_vm_memory_mb }} MB default</div>
+    </div>
+    <div class="cockpit-metric">
+      <div class="cockpit-metric-label">Active Runs</div>
+      <div class="cockpit-metric-value">{{ active_runs | length }}</div>
+      <div class="cockpit-metric-note">waiting on PE or heartbeat</div>
+    </div>
+    <div class="cockpit-metric">
+      <div class="cockpit-metric-label">Analytics Policy</div>
+      <div class="cockpit-metric-value" style="font-size:18px;">OSDCloud analytics blocked</div>
+      <div class="cockpit-metric-note">default for first lab path</div>
+    </div>
+  </section>
+
+  <section class="cloudosd-panel" id="cloudosd-runs">
+    <h2>Recent CloudOSD Runs</h2>
+    <div class="cloudosd-mini">Requested name, final PVE name, and Heartbeat computer name comparison are tracked per run.</div>
+    {% if runs %}
+    <div class="cloudosd-table-wrap">
+      <table class="cloudosd-table cockpit-scanline">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>Requested name</th>
+            <th>Final PVE name</th>
+            <th>Heartbeat computer name</th>
+            <th>VMID</th>
+            <th>Artifact build SHA</th>
+            <th>OS</th>
+            <th>Created</th>
+            <th>First heartbeat</th>
+            <th>Job link</th>
+            <th>Name warning</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+          {% set comparison = run.name_comparison %}
+          {% set artifact = (artifacts | selectattr('id', 'equalto', run.artifact_id) | list | first) %}
+          <tr>
+            <td><span class="cloudosd-badge {{ 'ready' if run.state == 'complete' else 'warn' }}">{{ run.state }}</span></td>
+            <td>{{ run.requested_vm_name }}</td>
+            <td>{{ run.pve_vm_name or '-' }}</td>
+            <td>{{ run.heartbeat_computer_name or '-' }}</td>
+            <td>{{ run.vmid or '-' }}</td>
+            <td><code>{{ artifact.build_sha if artifact else run.artifact_id }}</code></td>
+            <td>{{ run.os_version }} {{ run.os_edition }} {{ run.os_activation }}</td>
+            <td>{{ run.created_at }}</td>
+            <td>{{ run.first_heartbeat_at or '-' }}</td>
+            <td><a href="/cloudosd/runs/{{ run.run_id }}">detail</a></td>
+            <td>
+              {% if comparison.mismatch or comparison.requested_was_normalized %}
+              <span class="cloudosd-badge warn">requested/PVE/heartbeat name review</span>
+              {% else %}
+              <span class="cloudosd-mini">aligned</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state("No CloudOSD runs yet.", hint="Launch is available after a ready artifact passes preflight.") }}
+    {% endif %}
+  </section>
+
+  <section class="cloudosd-panel" id="cloudosd-artifacts">
+    <div class="cloudosd-artifact-head">
+      <h2>Artifacts</h2>
+      <form id="cloudosdBuildForm" class="cloudosd-inline" data-endpoint="/api/cloudosd/artifacts/build">
+        <input name="remote" value="Adam.Gell@10.211.55.6" aria-label="Remote host" style="width:220px;">
+        <input name="remote_root" value="F:\BuildRoot" aria-label="Remote root" style="width:145px;">
+        <input name="architecture" value="amd64" readonly aria-label="Architecture" style="width:80px;">
+        <input name="osdcloud_module_version" value="{{ catalog.defaults.osdcloud_module_version }}" aria-label="OSDCloud module" style="width:110px;">
+        <button type="submit" class="action-btn-upload">Build Artifact</button>
+        <span id="cloudosdBuildStatus" class="cloudosd-mini"></span>
+      </form>
+    </div>
+    {% if artifacts %}
+    <div class="cloudosd-table-wrap">
+      <table class="cloudosd-table cockpit-scanline">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Architecture</th>
+            <th>OSDCloud</th>
+            <th>Build SHA</th>
+            <th>ISO path</th>
+            <th>WIM path</th>
+            <th>Manifest</th>
+            <th>ISO SHA-256</th>
+            <th>WIM SHA-256</th>
+            <th>Built host/time</th>
+            <th>Proxmox volid</th>
+            <th>Job/log</th>
+            <th>Publish</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for artifact in artifacts %}
+          <tr data-artifact-row="{{ artifact.id }}">
+            <td><span class="cloudosd-badge {{ 'ready' if artifact.ready else 'block' }}">{{ artifact.readiness | replace('_', ' ') }}</span></td>
+            <td><code>{{ artifact.architecture }}</code></td>
+            <td><code>{{ artifact.osdcloud_module_version }}</code></td>
+            <td><code>{{ artifact.build_sha }}</code></td>
+            <td><code>{{ artifact.iso_path }}</code></td>
+            <td><code>{{ artifact.wim_path }}</code></td>
+            <td><code>{{ artifact.manifest_path }}</code></td>
+            <td><code>{{ artifact.iso_sha256 }}</code></td>
+            <td><code>{{ artifact.wim_sha256 }}</code></td>
+            <td>{{ artifact.built_by_host }}<br><span class="cloudosd-mini">{{ artifact.built_at }}</span></td>
+            <td><code>{{ artifact.proxmox_volid or 'not uploaded' }}</code></td>
+            <td>
+              {% if artifact.build_job_url %}
+              <a href="{{ artifact.build_job_url }}">job</a>
+              <a href="{{ artifact.build_log_url }}">log</a>
+              {% else %}
+              <span class="cloudosd-mini">not recorded</span>
+              {% endif %}
+            </td>
+            <td>
+              <button type="button" data-publish-artifact="{{ artifact.id }}" {% if artifact.ready %}disabled{% endif %}>Publish</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state("No CloudOSD artifacts yet.", hint="Build an artifact first. Deployment launch stays disabled until an artifact has hashes and a Proxmox volid.") }}
+    {% endif %}
+  </section>
+</div>
+
+<script>
+  const cloudosdState = {
+    artifacts: {{ artifacts | tojson | safe }},
+    options: {{ proxmox_options | tojson | safe }},
+    preflight: null,
+    timer: null
+  };
+
+  function byId(id) { return document.getElementById(id); }
+  function selectedArtifact() {
+    const id = byId("artifact_id") ? byId("artifact_id").value : "";
+    return cloudosdState.artifacts.find((artifact) => artifact.id === id) || null;
+  }
+  function fillSelect(id, values, selected) {
+    const select = byId(id);
+    if (!select) return;
+    select.innerHTML = "";
+    (values || []).forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      if (value === selected) option.selected = true;
+      select.appendChild(option);
+    });
+  }
+  function formPayload() {
+    const form = byId("cloudosdRunForm");
+    const data = {};
+    new FormData(form).forEach((value, key) => {
+      if (key.endsWith("_mode")) return;
+      data[key] = value;
+    });
+    ["vm_cores", "vm_memory_mb", "vm_disk_size_gb", "vmid"].forEach((key) => {
+      if (data[key] !== undefined && data[key] !== "") data[key] = Number(data[key]);
+      if (data[key] === "") delete data[key];
+    });
+    ["tpm_enabled", "secure_boot", "firmware_updates_enabled", "analytics_enabled"].forEach((key) => {
+      data[key] = !!form.querySelector(`[name="${key}"]`)?.checked;
+    });
+    data.architecture = "amd64";
+    data.outbound_policy = { mode: byId("outbound_policy_mode").value };
+    return data;
+  }
+  function buildFormPayload(form) {
+    const data = {};
+    new FormData(form).forEach((value, key) => { data[key] = value; });
+    return data;
+  }
+  function renderArtifactSummary() {
+    const artifact = selectedArtifact();
+    byId("artifactInline").textContent = artifact
+      ? `${artifact.osdcloud_module_version} ${artifact.build_sha} ${artifact.iso_sha256.slice(0, 12)}`
+      : "No ready artifact selected.";
+    byId("artifactVolid").textContent = artifact ? artifact.proxmox_volid : "not selected";
+  }
+  function renderChecks(target, checks, emptyText) {
+    target.innerHTML = "";
+    if (!checks || checks.length === 0) {
+      const item = document.createElement("li");
+      item.textContent = emptyText;
+      target.appendChild(item);
+      return;
+    }
+    checks.forEach((check) => {
+      const item = document.createElement("li");
+      item.textContent = `${check.label}: ${check.detail}`;
+      target.appendChild(item);
+    });
+  }
+  function renderReview() {
+    const payload = formPayload();
+    const artifact = selectedArtifact();
+    const preflight = cloudosdState.preflight;
+    byId("reviewArtifact").textContent = artifact ? artifact.readiness : "not selected";
+    byId("reviewBuild").textContent = artifact ? `${artifact.build_sha} / ${artifact.osdcloud_module_version}` : "-";
+    byId("reviewSizing").textContent = `${payload.vm_cores || 0} vCPU, ${payload.vm_memory_mb || 0} MB, ${payload.vm_disk_size_gb || 0} GB`;
+    byId("reviewRequestedName").textContent = payload.vm_name || "-";
+    byId("reviewWindowsName").textContent = preflight?.normalized_computer_name || "-";
+    byId("reviewOs").textContent = `${payload.os_version} ${payload.os_edition} ${payload.os_activation} ${payload.os_language}`;
+    byId("reviewPolicy").textContent = `${payload.driver_pack_policy}, firmware ${payload.firmware_updates_enabled ? "on" : "off"}, outbound ${payload.outbound_policy.mode}`;
+    byId("reviewAnalytics").textContent = payload.analytics_enabled ? "allowed" : "blocked";
+    byId("reviewBlocking").textContent = preflight ? String(preflight.blocking_checks.length) : "-";
+    byId("launchCloudosdBtn").disabled = !preflight || !preflight.launch_allowed;
+  }
+  async function runPreflight() {
+    const status = byId("preflightStatus");
+    status.textContent = "checking";
+    try {
+      const response = await fetch("/api/cloudosd/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formPayload())
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || "preflight failed");
+      cloudosdState.preflight = body;
+      status.textContent = body.launch_allowed ? "Launch allowed" : "Launch blocked";
+      renderChecks(byId("blockingChecks"), body.blocking_checks, "No blocking checks.");
+      renderChecks(byId("warningChecks"), body.warnings, "No warnings.");
+    } catch (error) {
+      cloudosdState.preflight = null;
+      status.textContent = "preflight failed";
+      byId("cloudosdLaunchError").textContent = error.message || String(error);
+    }
+    renderReview();
+  }
+  function schedulePreflight() {
+    window.clearTimeout(cloudosdState.timer);
+    cloudosdState.timer = window.setTimeout(runPreflight, 500);
+    renderArtifactSummary();
+    renderReview();
+  }
+  async function launchCloudosd() {
+    byId("cloudosdLaunchError").textContent = "";
+    await runPreflight();
+    if (!cloudosdState.preflight?.launch_allowed) return;
+    byId("launchCloudosdBtn").disabled = true;
+    const created = await fetch("/api/cloudosd/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formPayload())
+    });
+    const run = await created.json();
+    if (!created.ok) {
+      byId("cloudosdLaunchError").textContent = JSON.stringify(run.detail || run);
+      renderReview();
+      return;
+    }
+    const provision = await fetch(`/api/cloudosd/runs/${run.run_id}/provision`, { method: "POST" });
+    const job = await provision.json();
+    if (!provision.ok) {
+      byId("cloudosdLaunchError").textContent = JSON.stringify(job.detail || job);
+      renderReview();
+      return;
+    }
+    window.location.assign(`/cloudosd/runs/${run.run_id}`);
+  }
+  function initCloudOSD() {
+    fillSelect("node", cloudosdState.options.nodes, cloudosdState.options.defaults.node);
+    fillSelect("iso_storage", cloudosdState.options.storages.iso, cloudosdState.options.defaults.iso_storage);
+    fillSelect("storage", cloudosdState.options.storages.disk, cloudosdState.options.defaults.disk_storage);
+    fillSelect("network_bridge", cloudosdState.options.bridges, cloudosdState.options.defaults.bridge);
+    byId("cloudosdRunForm").addEventListener("input", schedulePreflight);
+    byId("cloudosdRunForm").addEventListener("change", schedulePreflight);
+    byId("runPreflightBtn").addEventListener("click", runPreflight);
+    byId("launchCloudosdBtn").addEventListener("click", launchCloudosd);
+    byId("cloudosdBuildForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = byId("cloudosdBuildStatus");
+      status.textContent = "queueing";
+      const response = await fetch("/api/cloudosd/artifacts/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildFormPayload(event.currentTarget))
+      });
+      const body = await response.json();
+      status.innerHTML = response.ok ? `job <a href="/jobs/${body.job_id}">${body.job_id}</a>` : (body.detail || "build failed");
+    });
+    document.querySelectorAll("[data-publish-artifact]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        const artifactId = button.getAttribute("data-publish-artifact");
+        const response = await fetch(`/api/cloudosd/artifacts/${artifactId}/publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ node: byId("node")?.value, storage: byId("iso_storage")?.value })
+        });
+        if (response.ok) window.location.reload();
+        else {
+          const body = await response.json();
+          byId("cloudosdLaunchError").textContent = body.detail || "publish failed";
+          button.disabled = false;
+        }
+      });
+    });
+    renderArtifactSummary();
+    schedulePreflight();
+  }
+  initCloudOSD();
+</script>
+{% endblock %}

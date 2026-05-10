@@ -27,6 +27,9 @@ foreach ($rid in $RuntimeIdentifiers) {
         -p:Version=$Version `
         -p:AutopilotAgentVersion=$Version `
         -o $publishDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish failed for $rid with exit code $LASTEXITCODE"
+    }
 
     # WiX uses project-level obj state for output naming. Clean it between
     # RIDs so win-x64 and win-arm64 MSIs do not collide in incremental builds.
@@ -39,4 +42,7 @@ foreach ($rid in $RuntimeIdentifiers) {
         -p:InstallerPlatform=$installerPlatform `
         -p:PublishDir=$publishDir `
         -o $msiDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet build failed for $rid installer with exit code $LASTEXITCODE"
+    }
 }

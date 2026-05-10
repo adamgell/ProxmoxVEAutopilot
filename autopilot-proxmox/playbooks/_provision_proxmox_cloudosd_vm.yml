@@ -1,0 +1,240 @@
+---
+# CloudOSD provisioning path. This is intentionally separate from the
+# existing WinPE path: it consumes a prebuilt CloudOSD PE ISO artifact,
+# registers VM identity through /api/cloudosd, and waits for the installed
+# AutopilotAgent heartbeat before the run is accepted as complete.
+
+- name: Provision a Proxmox VM via CloudOSD
+  hosts: localhost
+  gather_facts: false
+  vars:
+    proxmox_template_vmid: "{{ cloudosd_blank_template_vmid | default(winpe_blank_template_vmid) }}"
+    _skip_panther_injection: true
+    _skip_chassis_type_smbios_file: true
+    vm_start_after_create: false
+  pre_tasks:
+    - name: Validate CloudOSD path is configured
+      ansible.builtin.assert:
+        that:
+          - cloudosd_run_id is defined
+          - cloudosd_artifact_volid is defined
+          - cloudosd_artifact_volid | length > 0
+          - proxmox_template_vmid is not none
+          - autopilot_base_url is defined
+          - autopilot_base_url | length > 0
+        fail_msg: >-
+          CloudOSD provisioning requires cloudosd_run_id,
+          cloudosd_artifact_volid, autopilot_base_url, and a blank template
+          VMID from cloudosd_blank_template_vmid or winpe_blank_template_vmid.
+
+  tasks:
+    - name: Clone the CloudOSD blank template
+      ansible.builtin.include_role:
+        name: proxmox_vm_clone
+
+    - name: Read cloned VM config for CloudOSD identity
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      register: _cloudosd_vm_config
+
+    - name: Extract primary VM MAC address
+      ansible.builtin.set_fact:
+        _cloudosd_mac: >-
+          {{ (_cloudosd_vm_config.json.data.net0 | default('')) |
+             regex_search('([A-Fa-f0-9]{2}:){5}[A-Fa-f0-9]{2}') }}
+
+    - name: Fail if cloned VM has no MAC address
+      ansible.builtin.fail:
+        msg: "CloudOSD clone {{ vm_vmid }} has no net0 MAC address."
+      when: _cloudosd_mac is not defined or (_cloudosd_mac | length) == 0
+
+    - name: Attach CloudOSD ISO at ide2
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          ide2: "{{ cloudosd_artifact_volid }},media=cdrom"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Attach VirtIO drivers ISO at ide3
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          ide3: "{{ proxmox_virtio_iso }},media=cdrom"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      when: proxmox_virtio_iso is defined and (proxmox_virtio_iso | length) > 0
+
+    - name: Set boot order to CloudOSD ISO first
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          boot: "order=ide2;scsi0"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: POST CloudOSD VM identity to Flask
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/cloudosd/runs/{{ cloudosd_run_id }}/identity"
+        method: POST
+        body_format: json
+        body:
+          vmid: "{{ vm_vmid | int }}"
+          vm_uuid: "{{ _vm_identity.uuid }}"
+          mac: "{{ _cloudosd_mac }}"
+          node: "{{ proxmox_node }}"
+          computer_name: "{{ vm_name }}"
+        status_code: [200]
+
+    - name: Start CloudOSD VM
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/start"
+        method: POST
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+
+    - name: Wait for CloudOSD PE registration
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/cloudosd/runs/{{ cloudosd_run_id }}"
+        method: GET
+        status_code: [200]
+      register: _cloudosd_run
+      until: _cloudosd_run.json.run.state in ['pe_registered', 'complete', 'failed']
+      retries: 240
+      delay: 10
+
+    - name: Fail if CloudOSD run failed during PE registration
+      ansible.builtin.fail:
+        msg: "CloudOSD run {{ cloudosd_run_id }} failed before PE handoff."
+      when: _cloudosd_run.json.run.state == 'failed'
+
+    - name: Detach CloudOSD ISO after PE registration
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          delete: "ide2"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Wait for CloudOSD PE phase completion
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/cloudosd/runs/{{ cloudosd_run_id }}"
+        method: GET
+        status_code: [200]
+      register: _cloudosd_pe_complete
+      until: >-
+        _cloudosd_pe_complete.json.run.state in ['complete', 'failed'] or
+        ((_cloudosd_pe_complete.json.run.osdcloud_finished_at | default('', true) | string) | length > 0)
+      retries: 720
+      delay: 10
+
+    - name: Fail if CloudOSD run failed before disk boot handoff
+      ansible.builtin.fail:
+        msg: "CloudOSD run {{ cloudosd_run_id }} failed before disk boot handoff."
+      when: _cloudosd_pe_complete.json.run.state == 'failed'
+
+    - name: Wait for CloudOSD PE shutdown
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/current"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      register: _cloudosd_vm_shutdown
+      until: _cloudosd_vm_shutdown.json.data.status == 'stopped'
+      retries: 60
+      delay: 5
+      failed_when: false
+
+    - name: Force stop CloudOSD VM if PE did not shut down
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/stop"
+        method: POST
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      when: _cloudosd_vm_shutdown.json.data.status != 'stopped'
+
+    - name: Ensure CloudOSD ISO is detached before disk boot
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          delete: "ide2"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Detach VirtIO ISO before disk boot
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          delete: "ide3"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Set boot order to installed Windows disk
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
+        method: PUT
+        body_format: form-urlencoded
+        body:
+          boot: "order=scsi0"
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Start installed Windows from disk
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/start"
+        method: POST
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+
+    - name: Wait for installed AutopilotAgent heartbeat completion
+      ansible.builtin.uri:
+        url: "{{ autopilot_base_url }}/api/cloudosd/runs/{{ cloudosd_run_id }}"
+        method: GET
+        status_code: [200]
+      register: _cloudosd_complete
+      until: _cloudosd_complete.json.run.state in ['complete', 'failed']
+      retries: 720
+      delay: 10
+
+    - name: Fail if CloudOSD run failed before completion
+      ansible.builtin.fail:
+        msg: "CloudOSD run {{ cloudosd_run_id }} failed before heartbeat completion."
+      when: _cloudosd_complete.json.run.state == 'failed'

@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS job_type_limits (
 DEFAULT_LIMITS = [
     ("build_template", 1),
     ("provision_clone", 3),
+    ("cloudosd_build_iso", 1),
+    ("provision_cloudosd", 2),
     ("hash_capture", 5),
     ("upload_after_capture", 5),
     ("retry_inject_hash", 3),

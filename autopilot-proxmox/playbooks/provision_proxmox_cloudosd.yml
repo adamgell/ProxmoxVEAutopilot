@@ -1,0 +1,2 @@
+---
+- import_playbook: _provision_proxmox_cloudosd_vm.yml

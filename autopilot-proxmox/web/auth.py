@@ -44,6 +44,8 @@ log = logging.getLogger(__name__)
 # the same HMAC bearer-token model. /api/runs/* is polled by the local
 # Ansible controller during WinPE provisioning. /api/agent/v1/* is the
 # persistent Windows agent protocol and validates its own bearer tokens.
+# CloudOSD PE bridge routes use the same HMAC bearer-token model after
+# identity registration.
 _EXEMPT_PREFIXES = (
     "/auth/",
     "/healthz",
@@ -58,6 +60,20 @@ _EXEMPT_PREFIXES = (
     "/static/",
     "/favicon.ico",
 )
+
+
+def _is_cloudosd_exempt(path: str) -> bool:
+    if path.startswith("/api/cloudosd/pe/"):
+        return True
+    if path.startswith("/api/cloudosd/assets/"):
+        return True
+    if path.startswith("/api/cloudosd/runs/") and len(path.rstrip("/").split("/")) == 5:
+        return True
+    if path.startswith("/api/cloudosd/runs/") and path.endswith("/identity"):
+        return True
+    if path.startswith("/api/cloudosd/runs/") and path.endswith("/events"):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +144,7 @@ def install_session_middleware(app, *, secret: str) -> None:
 # ---------------------------------------------------------------------------
 
 def is_exempt_path(path: str) -> bool:
-    return any(path.startswith(p) for p in _EXEMPT_PREFIXES)
+    return any(path.startswith(p) for p in _EXEMPT_PREFIXES) or _is_cloudosd_exempt(path)
 
 
 def current_user(request: Request) -> dict:

@@ -488,6 +488,7 @@ from web.osd_v2_endpoints import (
     content_api_router as _content_api_router,
 )
 from web.agent_v1_endpoints import router as _agent_v1_router
+from web.cloudosd_endpoints import router as _cloudosd_router
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
 app.include_router(_osd_router)
@@ -496,6 +497,7 @@ app.include_router(_osd_v2_api_router)
 app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
+app.include_router(_cloudosd_router)
 
 
 # ---------------------------------------------------------------------------
@@ -907,6 +909,7 @@ def _database_url() -> str:
 def _init_app_database() -> None:
     from web import (
         agent_telemetry_pg,
+        cloudosd_pg,
         db_pg,
         device_history_pg,
         devices_pg,
@@ -918,6 +921,7 @@ def _init_app_database() -> None:
         device_history_pg.init(conn)
         devices_pg.init(conn)
         agent_telemetry_pg.init(conn)
+        cloudosd_pg.init(conn)
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -2278,6 +2282,99 @@ async def provision_page(request: Request):
         "template_disk_gb": template_disk,
         "sequences": sequences_db.list_sequences(SEQUENCES_DB),
         "winpe_enabled": _winpe_enabled(),
+    })
+
+
+@app.get("/cloudosd", response_class=HTMLResponse)
+async def cloudosd_page(request: Request):
+    from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
+
+    cfg = _load_vars()
+    with db_pg.connection(_database_url()) as conn:
+        cloudosd_pg.init(conn)
+        agent_telemetry_pg.init(conn)
+        artifacts = [
+            cloudosd_endpoints.enrich_artifact(artifact)
+            for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
+        ]
+        runs = []
+        for run in cloudosd_pg.list_runs(conn, limit=25):
+            heartbeat = agent_telemetry_pg.latest_for_run(conn, run["run_id"])
+            heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
+            run["heartbeat_computer_name"] = heartbeat_name
+            run["name_comparison"] = cloudosd_pg.name_comparison(
+                requested_name=run.get("requested_vm_name") or run.get("vm_name"),
+                pve_name=run.get("pve_vm_name"),
+                heartbeat_name=heartbeat_name,
+            )
+            runs.append(run)
+    assets_status = cloudosd_endpoints.assets_status_payload()
+    proxmox_options = cloudosd_endpoints.proxmox_options_payload()
+    catalog = cloudosd_endpoints.catalog_payload()
+    ready_artifacts = [artifact for artifact in artifacts if artifact and artifact.get("ready")]
+    active_runs = [
+        run for run in runs
+        if run.get("state") not in ("complete", "failed", "cancelled")
+    ]
+    return templates.TemplateResponse("cloudosd.html", {
+        "request": request,
+        "artifacts": artifacts,
+        "runs": runs,
+        "ready_artifacts": ready_artifacts,
+        "active_runs": active_runs,
+        "catalog": catalog,
+        "assets_status": assets_status,
+        "proxmox_options": proxmox_options,
+        "proxmox_node": cfg.get("proxmox_node", "pve"),
+    })
+
+
+@app.get("/cloudosd/runs/{run_id}", response_class=HTMLResponse)
+async def cloudosd_run_detail_page(request: Request, run_id: str):
+    from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        cloudosd_pg.init(conn)
+        agent_telemetry_pg.init(conn)
+        run = cloudosd_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+        if heartbeat and run["state"] != "complete":
+            run = cloudosd_pg.mark_complete_from_heartbeat(
+                conn,
+                run_id=run_id,
+                heartbeat_at=heartbeat["received_at"],
+            )
+        artifact = cloudosd_endpoints.enrich_artifact(
+            cloudosd_pg.get_artifact(conn, run["artifact_id"]),
+        )
+        events = cloudosd_pg.list_events(conn, run_id)
+    heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
+    run["heartbeat_computer_name"] = heartbeat_name
+    run["name_comparison"] = cloudosd_pg.name_comparison(
+        requested_name=run.get("requested_vm_name") or run.get("vm_name"),
+        pve_name=run.get("pve_vm_name"),
+        heartbeat_name=heartbeat_name,
+    )
+    event_groups = {}
+    for event in events:
+        event_groups.setdefault(event["phase"], []).append(event)
+    related_jobs = [
+        job for job in job_manager.list_jobs()
+        if (job.get("args") or {}).get("cloudosd_run_id") == run_id
+    ]
+    return templates.TemplateResponse("cloudosd_run_detail.html", {
+        "request": request,
+        "run": run,
+        "artifact": artifact,
+        "latest_heartbeat": heartbeat,
+        "events": events,
+        "event_groups": event_groups,
+        "related_jobs": related_jobs,
+        "os_settings": cloudosd_pg.os_settings(run),
+        "user_settings": cloudosd_pg.user_settings(run),
+        "task": cloudosd_pg.task_settings(run),
     })
 
 

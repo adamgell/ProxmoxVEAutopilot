@@ -1,0 +1,15 @@
+{
+  "flask_base_url": "http://192.168.2.4:5000",
+  "fallback_base_url": "http://10.0.2.2:5000",
+  "architecture": "amd64",
+  "osdcloud_module_version": "26.4.17.1",
+  "build_sha": "static",
+  "analytics_policy": "blocked",
+  "allowed_domains": [
+    "autopilot.local",
+    "software-static.download.prss.microsoft.com",
+    "download.microsoft.com",
+    "powershellgallery.com",
+    "psg-prod-eastus.azureedge.net"
+  ]
+}
