@@ -672,6 +672,98 @@ def test_cloudosd_runs_events_endpoint_lists_grouped_evidence(
     assert body["milestone_groups"]["offline validation"][0]["event_type"] == "offline_validation_ok"
 
 
+def test_cloudosd_provision_job_is_normalized_into_playbook_milestones(
+    cloudosd_client,
+    pg_conn,
+):
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(artifact["id"], vm_name="CLOUDOSD-PLAYBOOK"),
+    ).json()
+
+    provision = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/provision")
+    assert provision.status_code == 202, provision.text
+
+    events = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}/events")
+
+    assert events.status_code == 200
+    body = events.json()
+    playbook_events = body["milestone_groups"]["Proxmox playbook"]
+    assert playbook_events
+    assert playbook_events[-1]["event_type"] == "provision_job_status"
+    assert "provision_cloudosd" in playbook_events[-1]["message"]
+
+
+def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg, ts_engine_pg, winpe_token
+
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(artifact["id"], vm_name="CLOUDOSD-PROGRESS"),
+    ).json()
+    before = [
+        row for row in ts_engine_pg.list_runs(pg_conn)
+        if row["id"] == run["run_id"]
+    ][0]
+    pg_conn.commit()
+    assert before["done_count"] == 0
+    assert before["step_count"] == 6
+
+    token = winpe_token.sign(run_id=run["run_id"], ttl_seconds=3600)
+    for event in (
+        {
+            "phase": "pe",
+            "event_type": "osdcloud_start",
+            "message": "Starting OSDCloud deploy",
+        },
+        {
+            "phase": "offline_validation",
+            "event_type": "offline_validation_ok",
+            "message": "Offline Windows validation passed",
+        },
+        {
+            "phase": "setupcomplete",
+            "event_type": "setupcomplete_chained",
+            "message": "SetupComplete first-boot chain staged",
+        },
+        {
+            "phase": "pe",
+            "event_type": "cloudosd_pe_complete",
+            "message": "CloudOSD PE phase complete",
+        },
+    ):
+        response = cloudosd_client.post(
+            f"/api/cloudosd/runs/{run['run_id']}/events",
+            headers=_bearer(token),
+            json=event,
+        )
+        assert response.status_code == 200, response.text
+
+    cloudosd_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        heartbeat_at=cloudosd_pg._now(),
+    )
+
+    after = [
+        row for row in ts_engine_pg.list_runs(pg_conn)
+        if row["id"] == run["run_id"]
+    ][0]
+    pg_conn.commit()
+    assert after["done_count"] == 6
+    assert after["step_count"] == 6
+    assert after["state"] == "done"
+
+    task_engine = cloudosd_client.get("/task-engine")
+    assert task_engine.status_code == 200
+    assert "6/6 done" in task_engine.text
+
+
 def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
     cloudosd_client,
     pg_conn,

@@ -244,6 +244,7 @@
     const phase = text(event.phase, "").toLowerCase();
     const type = text(event.event_type, "").toLowerCase();
     if (phase === "controller" || type === "run_created" || type === "identity_recorded") return "controller";
+    if (phase === "proxmox_playbook" || phase === "proxmox playbook" || type.includes("playbook") || type === "provision_job_status") return "Proxmox playbook";
     if (type === "pe_registered") return "PE bridge";
     if (type.includes("osdcloud")) return "OSDCloud";
     if (type.includes("validation") || phase === "offline_validation") return "offline validation";

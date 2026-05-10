@@ -872,6 +872,113 @@ def list_runs(conn: Connection, *, limit: int = 50) -> list[dict]:
     ]
 
 
+def mark_steps_done_by_kind(
+    conn: Connection,
+    *,
+    run_id: str,
+    kinds: list[str] | tuple[str, ...] | set[str],
+    agent_id: str = "controller",
+    message: Optional[str] = None,
+    data: Optional[dict] = None,
+) -> int:
+    """Mark matching run-plan steps done from external lifecycle evidence.
+
+    CloudOSD owns deployment orchestration in PE/full OS today, while the v2
+    engine owns the immutable run plan shown in the UI. This bridge lets a
+    trusted controller synchronize plan progress without pretending the OSD v2
+    agent claimed each CloudOSD step.
+    """
+    normalized_kinds = sorted({str(kind) for kind in kinds if str(kind)})
+    if not normalized_kinds:
+        return 0
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM ts_run_plan_steps
+        WHERE run_id = %s
+          AND kind = ANY(%s)
+        ORDER BY ordinal
+        """,
+        (run_id, normalized_kinds),
+    ).fetchall()
+    now = _now()
+    changed = 0
+    for row in rows:
+        if row["state"] == "done":
+            continue
+        conn.execute(
+            """
+            UPDATE ts_run_plan_steps
+            SET state = 'done',
+                started_at = COALESCE(started_at, %s),
+                finished_at = COALESCE(finished_at, %s),
+                claimed_by = COALESCE(claimed_by, %s),
+                claimed_at = COALESCE(claimed_at, %s),
+                last_error = NULL
+            WHERE id = %s
+            """,
+            (now, now, agent_id, now, row["id"]),
+        )
+        _append_event(
+            conn,
+            run_id=run_id,
+            step_id=str(row["id"]),
+            event_type="step_done",
+            severity="info",
+            agent_id=agent_id,
+            phase=row["phase"],
+            attempt=row["attempt"],
+            message=message or "step completed from external lifecycle evidence",
+            data=data or {},
+        )
+        changed += 1
+
+    remaining = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM ts_run_plan_steps
+        WHERE run_id = %s
+          AND state IN ('pending', 'running', 'awaiting_reboot', 'failed')
+        """,
+        (run_id,),
+    ).fetchone()["count"]
+    if int(remaining or 0) == 0:
+        conn.execute(
+            """
+            UPDATE ts_provisioning_runs
+            SET state = 'done',
+                phase = 'full_os',
+                finished_at = COALESCE(finished_at, %s),
+                cursor_step_id = COALESCE(
+                    cursor_step_id,
+                    (
+                        SELECT id
+                        FROM ts_run_plan_steps
+                        WHERE run_id = %s
+                        ORDER BY ordinal DESC
+                        LIMIT 1
+                    )
+                )
+            WHERE id = %s
+              AND state <> 'failed'
+            """,
+            (now, run_id, run_id),
+        )
+    elif changed:
+        last_phase = rows[-1]["phase"] if rows else None
+        conn.execute(
+            """
+            UPDATE ts_provisioning_runs
+            SET phase = COALESCE(%s, phase)
+            WHERE id = %s
+              AND state NOT IN ('done', 'failed')
+            """,
+            (last_phase, run_id),
+        )
+    _commit(conn)
+    return changed
+
+
 def list_recent_manifest_items(conn: Connection, *, limit: int = 50) -> list[dict]:
     rows = conn.execute(
         """

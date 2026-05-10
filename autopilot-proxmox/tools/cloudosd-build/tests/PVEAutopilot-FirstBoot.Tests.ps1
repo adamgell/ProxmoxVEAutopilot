@@ -44,10 +44,20 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
             -InstallMsi { param($Path) $script:Calls += "msi:$Path" } `
             -RunPostinstall { param($ScriptPath,$PostinstallArgs) $script:Calls += "postinstall:$($ScriptPath):$($PostinstallArgs.Phase)" } `
             -ConfirmHeartbeat { param($ConfigUrl,$Token) $script:Calls += 'heartbeat' } `
-            -RemoveScheduledTask { param($Name) $script:Calls += "cleanup:$Name" }
+            -RemoveScheduledTask { param($Name) $script:Calls += "cleanup:$Name" } `
+            -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data) }
 
         ($script:Calls -join '|') |
             Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot'
+    }
+
+    It 'posts SetupComplete and first-boot milestone events to the controller' {
+        $source = Get-Content -LiteralPath $script:FirstBootPath -Raw
+
+        $source | Should -Match 'Write-PVEAutopilotCloudOSDEvent'
+        $source | Should -Match "EventType 'setupcomplete_task_started'"
+        $source | Should -Match "EventType 'firstboot_complete'"
+        $source | Should -Match '/api/cloudosd/runs/.*/events'
     }
 
     It 'passes postinstall arguments through the real helper without using the automatic args variable' -Skip:$IsWindows {

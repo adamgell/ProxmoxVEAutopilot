@@ -290,6 +290,15 @@ Describe 'Test-CloudOSDOfflineWindows' {
 
         $result.ok | Should -BeTrue
     }
+
+    It 'reports offline validation and SetupComplete milestones before PE completion' {
+        $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' 'Invoke-CloudOSDBridge.ps1') -Raw
+
+        $source | Should -Match "EventType 'offline_validation_ok'"
+        $source | Should -Match "Phase 'offline_validation'"
+        $source | Should -Match "EventType 'setupcomplete_chained'"
+        $source | Should -Match "Phase 'setupcomplete'"
+    }
 }
 
 Describe 'Add-CloudOSDOfflineVirtIODrivers' {

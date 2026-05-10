@@ -2349,7 +2349,9 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         artifact = cloudosd_endpoints.enrich_artifact(
             cloudosd_pg.get_artifact(conn, run["artifact_id"]),
         )
+        cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
         events = cloudosd_pg.list_events(conn, run_id)
+        events = cloudosd_endpoints.events_with_related_jobs(run_id, events, run)
     heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
     run["heartbeat_computer_name"] = heartbeat_name
     run["name_comparison"] = cloudosd_pg.name_comparison(
@@ -7152,9 +7154,10 @@ def run_detail_page(run_id: int, request: Request):
 
 @app.get("/task-engine", response_class=HTMLResponse)
 def task_engine_page(request: Request):
-    from web import db_pg, ts_engine_pg
+    from web import cloudosd_pg, db_pg, ts_engine_pg
 
     with db_pg.connection(_database_url()) as conn:
+        cloudosd_pg.sync_all_ts_progress(conn)
         sequences = ts_engine_pg.list_sequences(conn)
         for seq in sequences:
             seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])

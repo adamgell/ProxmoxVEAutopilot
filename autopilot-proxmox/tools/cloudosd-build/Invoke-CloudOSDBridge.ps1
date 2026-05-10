@@ -817,14 +817,29 @@ function Invoke-CloudOSDBridge {
             -BridgeRoot $PSScriptRoot `
             -BearerToken $token
         Add-PVEAutopilotSetupCompleteChain -WindowsRoot $windowsRoot
+        Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+            -RunId $runId -BearerToken $token -Phase 'setupcomplete' `
+            -EventType 'setupcomplete_chained' `
+            -Message 'SetupComplete first-boot chain staged' `
+            -Data @{ windows_root = $windowsRoot; staged_root = $stageRoot }
         Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot `
             -ComputerName (Get-PVEAutopilotPackageComputerName -Package $package)
         Add-PVEAutopilotSetupSpecializePackage -WindowsRoot $windowsRoot -ModuleRoot $moduleRoot
         Disable-PVEAutopilotAutomaticDeviceEncryption -WindowsRoot $windowsRoot
         $validation = Test-CloudOSDOfflineWindows -WindowsRoot $windowsRoot
         if (-not $validation.ok) {
+            Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+                -RunId $runId -BearerToken $token -Phase 'offline_validation' `
+                -EventType 'offline_validation_failed' -Severity 'error' `
+                -Message "CloudOSD offline validation failed: $($validation.errors -join '; ')" `
+                -Data @{ windows_root = $windowsRoot; errors = $validation.errors }
             throw "CloudOSD offline validation failed: $($validation.errors -join '; ')"
         }
+        Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+            -RunId $runId -BearerToken $token -Phase 'offline_validation' `
+            -EventType 'offline_validation_ok' `
+            -Message 'Offline Windows validation passed' `
+            -Data @{ windows_root = $windowsRoot; staged_root = $stageRoot }
 
         Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
             -RunId $runId -BearerToken $token -Phase 'pe' `

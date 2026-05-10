@@ -256,6 +256,128 @@ def _related_jobs(run_id: str) -> list[dict]:
         return []
 
 
+def _job_event(job: dict) -> dict:
+    status = str(job.get("status") or "unknown")
+    severity = "error" if status in {"failed", "canceled"} else "info"
+    job_type = job.get("job_type") or job.get("playbook") or "provision_cloudosd"
+    job_id = job.get("id") or "unknown"
+    return {
+        "id": f"job:{job_id}",
+        "run_id": str((job.get("args") or {}).get("cloudosd_run_id") or ""),
+        "phase": "proxmox_playbook",
+        "event_type": "provision_job_status",
+        "severity": severity,
+        "message": f"{job_type} job {job_id} is {status}",
+        "data": {
+            "job_id": job_id,
+            "job_type": job_type,
+            "status": status,
+            "playbook": job.get("playbook"),
+        },
+        "created_at": job.get("ended") or job.get("ended_at") or job.get("started") or job.get("created_at"),
+    }
+
+
+def _event_by_type(events: list[dict], event_type: str) -> dict | None:
+    target = event_type.casefold()
+    for event in events:
+        if str(event.get("event_type") or "").casefold() == target:
+            return event
+    return None
+
+
+def _derived_event(
+    *,
+    run_id: str,
+    phase: str,
+    event_type: str,
+    message: str,
+    source_event: dict | None = None,
+    created_at: str | None = None,
+    data: dict | None = None,
+) -> dict:
+    payload = {
+        "derived": True,
+        **(data or {}),
+    }
+    if source_event:
+        payload["source_event_id"] = source_event.get("id")
+        payload["source_event_type"] = source_event.get("event_type")
+    return {
+        "id": f"derived:{run_id}:{event_type}",
+        "run_id": run_id,
+        "phase": phase,
+        "event_type": event_type,
+        "severity": "info",
+        "message": message,
+        "data": payload,
+        "created_at": created_at or (source_event or {}).get("created_at"),
+    }
+
+
+def _derived_lifecycle_events(run_id: str, events: list[dict], run: dict | None) -> list[dict]:
+    """Fill normalized milestone groups from existing CloudOSD completion gates.
+
+    Older CloudOSD runs did not post every planned normalized event, but the
+    controller still has hard gates: PE completion only happens after staging
+    and offline validation, and run completion only happens after the agent
+    heartbeat. These synthetic events are marked as derived so the UI can make
+    that distinction without leaving the milestone groups empty.
+    """
+    existing = {
+        str(event.get("event_type") or "").casefold()
+        for event in events
+    }
+    derived: list[dict] = []
+    pe_complete = _event_by_type(events, "cloudosd_pe_complete")
+    if pe_complete and "offline_validation_ok" not in existing:
+        derived.append(_derived_event(
+            run_id=run_id,
+            phase="offline_validation",
+            event_type="offline_validation_ok",
+            message="Offline validation passed before CloudOSD PE completion (derived from PE completion gate)",
+            source_event=pe_complete,
+        ))
+    if pe_complete and "setupcomplete_chained" not in existing:
+        derived.append(_derived_event(
+            run_id=run_id,
+            phase="setupcomplete",
+            event_type="setupcomplete_chained",
+            message="SetupComplete first-boot chain was staged before CloudOSD PE completion (derived from PE completion gate)",
+            source_event=pe_complete,
+        ))
+
+    first_heartbeat_at = (run or {}).get("first_heartbeat_at")
+    heartbeat_event = _event_by_type(events, "autopilotagent_heartbeat")
+    if (
+        (first_heartbeat_at or heartbeat_event or (run or {}).get("state") == "complete")
+        and "firstboot_complete" not in existing
+    ):
+        derived.append(_derived_event(
+            run_id=run_id,
+            phase="first_boot",
+            event_type="firstboot_complete",
+            message="First boot reached AutopilotAgent heartbeat gate (derived from run completion evidence)",
+            source_event=heartbeat_event,
+            created_at=first_heartbeat_at or (heartbeat_event or {}).get("created_at"),
+            data={"first_heartbeat_at": first_heartbeat_at},
+        ))
+    return derived
+
+
+def events_with_related_jobs(
+    run_id: str,
+    events: list[dict],
+    run: dict | None = None,
+) -> list[dict]:
+    """Return CloudOSD events plus derived lifecycle and Proxmox playbook evidence."""
+    derived = [
+        *_derived_lifecycle_events(run_id, events, run),
+        *[_job_event(job) for job in _related_jobs(run_id)],
+    ]
+    return [*events, *derived]
+
+
 def _asset_path(name: str) -> Path:
     if name == "PVEAutopilot-FirstBoot.ps1":
         return _CLOUDOSD_TOOL_ROOT / name
@@ -952,7 +1074,9 @@ def get_run(run_id: str):
                 heartbeat_at=heartbeat["received_at"],
             )
         artifact = cloudosd_pg.get_artifact(conn, run["artifact_id"])
+        cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
         events = cloudosd_pg.list_events(conn, run_id)
+        evidence_events = events_with_related_jobs(run_id, events, run)
     heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
     name_comparison = cloudosd_pg.name_comparison(
         requested_name=run.get("requested_vm_name") or run.get("vm_name"),
@@ -966,8 +1090,8 @@ def get_run(run_id: str):
         "run": run,
         "artifact": enrich_artifact(artifact),
         "latest_heartbeat": heartbeat,
-        "events": events,
-        "event_groups": cloudosd_pg.milestone_event_groups(events),
+        "events": evidence_events,
+        "event_groups": cloudosd_pg.milestone_event_groups(evidence_events),
         "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
         "related_jobs": _related_jobs(run_id),
         "os_settings": cloudosd_pg.os_settings(run),
@@ -982,7 +1106,9 @@ def list_run_events(run_id: str):
         run = cloudosd_pg.get_run(conn, run_id)
         if not run:
             raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
         events = cloudosd_pg.list_events(conn, run_id)
+    events = events_with_related_jobs(run_id, events, run)
     groups: dict[str, list[dict]] = {}
     for event in events:
         groups.setdefault(event["phase"], []).append(event)
@@ -1154,4 +1280,5 @@ def append_event(
                 run_id=run_id,
                 message=body.message or body.event_type,
             )
+        cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
     return {"schema_version": 1, "event": event}

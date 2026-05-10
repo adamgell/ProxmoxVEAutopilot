@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from psycopg import Connection
+from psycopg import Connection, errors
 from psycopg.types.json import Jsonb
 
 from web import ts_engine_pg
@@ -184,6 +184,14 @@ CLOUDOSD_MILESTONE_LABELS = [
     "first boot",
     "AutopilotAgent",
 ]
+_CLOUDOSD_PE_STEP_KINDS = {
+    "cloudosd_preflight",
+    "cloudosd_deploy_os",
+    "cloudosd_validate_offline_os",
+    "stage_osd_client",
+    "stage_autopilot_agent",
+}
+_CLOUDOSD_ALL_STEP_KINDS = _CLOUDOSD_PE_STEP_KINDS | {"wait_agent_heartbeat"}
 
 
 def _now() -> datetime:
@@ -279,6 +287,12 @@ def milestone_label_for_event(event: dict) -> str:
     event_key = event_type.casefold()
     if phase_key == "controller" or event_key in {"run_created", "identity_recorded"}:
         return "controller"
+    if (
+        phase_key in {"proxmox_playbook", "proxmox playbook"}
+        or "playbook" in event_key
+        or event_key == "provision_job_status"
+    ):
+        return "Proxmox playbook"
     if event_key == "pe_registered":
         return "PE bridge"
     if "osdcloud" in event_key:
@@ -301,6 +315,68 @@ def milestone_event_groups(events: list[dict]) -> dict[str, list[dict]]:
     for event in events:
         groups.setdefault(milestone_label_for_event(event), []).append(event)
     return groups
+
+
+def sync_ts_progress_for_run(conn: Connection, run_id: str) -> int:
+    """Synchronize v2 run-plan progress from CloudOSD lifecycle evidence."""
+    run = get_run(conn, run_id)
+    if not run:
+        return 0
+    events = list_events(conn, run_id)
+    event_types = {
+        str(event.get("event_type") or "").casefold()
+        for event in events
+    }
+    phases = {
+        str(event.get("phase") or "").casefold()
+        for event in events
+    }
+
+    done_kinds: set[str] = set()
+    if run.get("pe_registered_at") or "pe_registered" in event_types:
+        done_kinds.add("cloudosd_preflight")
+    if "osdcloud_start" in event_types:
+        done_kinds.add("cloudosd_preflight")
+    if (
+        "offline_validation_ok" in event_types
+        or "offline validation" in phases
+        or "offline_validation" in phases
+    ):
+        done_kinds.update({"cloudosd_deploy_os", "cloudosd_validate_offline_os"})
+    if run.get("osdcloud_finished_at") or "cloudosd_pe_complete" in event_types:
+        done_kinds.update(_CLOUDOSD_PE_STEP_KINDS)
+    if (
+        run.get("first_heartbeat_at")
+        or run.get("state") == "complete"
+        or "autopilotagent_heartbeat" in event_types
+        or "firstboot_complete" in event_types
+    ):
+        done_kinds.update(_CLOUDOSD_ALL_STEP_KINDS)
+
+    if not done_kinds:
+        return 0
+    return ts_engine_pg.mark_steps_done_by_kind(
+        conn,
+        run_id=run_id,
+        kinds=done_kinds,
+        agent_id="cloudosd-controller",
+        message="CloudOSD lifecycle evidence advanced this v2 run step",
+        data={"source": "cloudosd_lifecycle"},
+    )
+
+
+def sync_all_ts_progress(conn: Connection) -> int:
+    changed = 0
+    try:
+        rows = conn.execute(
+            "SELECT run_id FROM cloudosd_runs ORDER BY created_at DESC"
+        ).fetchall()
+    except errors.UndefinedTable:
+        conn.rollback()
+        return 0
+    for row in rows:
+        changed += sync_ts_progress_for_run(conn, str(row["run_id"]))
+    return changed
 
 
 def init(conn: Connection) -> None:
@@ -859,6 +935,7 @@ def mark_complete_from_heartbeat(
             message="AutopilotAgent heartbeat observed for CloudOSD run",
             data={"first_heartbeat_at": _iso(heartbeat_at)},
         )
+        sync_ts_progress_for_run(conn, run_id)
     return _run_row(row)
 
 

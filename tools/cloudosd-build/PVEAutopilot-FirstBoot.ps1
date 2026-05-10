@@ -16,6 +16,37 @@ function Write-CloudOSDFirstBootLog {
     Write-Output $line
 }
 
+function Write-PVEAutopilotCloudOSDEvent {
+    param(
+        [Parameter(Mandatory)] [string] $ServerUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [Parameter(Mandatory)] [string] $Phase,
+        [Parameter(Mandatory)] [string] $EventType,
+        [string] $Message,
+        [string] $Severity = 'info',
+        [hashtable] $Data = @{}
+    )
+    try {
+        $uri = $ServerUrl.TrimEnd('/') + "/api/cloudosd/runs/$RunId/events"
+        $body = @{
+            phase = $Phase
+            event_type = $EventType
+            severity = $Severity
+            message = $Message
+            data = $Data
+        } | ConvertTo-Json -Depth 20 -Compress
+        Invoke-RestMethod -Uri $uri `
+            -Method Post `
+            -Headers @{ Authorization = "Bearer $BearerToken" } `
+            -Body $body `
+            -ContentType 'application/json' `
+            -TimeoutSec 30 | Out-Null
+    } catch {
+        Write-CloudOSDFirstBootLog "failed to report CloudOSD event ${EventType}: $($_.Exception.Message)"
+    }
+}
+
 function Get-CloudOSDNetworkSnapshot {
     try {
         $rows = @()
@@ -217,7 +248,27 @@ function Invoke-PVEAutopilotFirstBoot {
         [scriptblock] $InstallMsi = { param($Path) Install-AutopilotAgentMsi -Path $Path },
         [scriptblock] $RunPostinstall = { param($ScriptPath,$PostinstallArgs) Invoke-AutopilotAgentPostinstall -ScriptPath $ScriptPath -PostinstallArgs $PostinstallArgs },
         [scriptblock] $ConfirmHeartbeat = { param($ConfigUrl,$Token) Confirm-AutopilotAgentHeartbeat -ConfigUrl $ConfigUrl -Token $Token },
-        [scriptblock] $RemoveScheduledTask = { param($Name) Remove-PVEAutopilotFirstBootTask -Name $Name }
+        [scriptblock] $RemoveScheduledTask = { param($Name) Remove-PVEAutopilotFirstBootTask -Name $Name },
+        [scriptblock] $ReportEvent = {
+            param(
+                [string] $ServerUrl,
+                [string] $RunId,
+                [string] $BearerToken,
+                [string] $Phase,
+                [string] $EventType,
+                [string] $Message,
+                [string] $Severity,
+                [hashtable] $Data
+            )
+            Write-PVEAutopilotCloudOSDEvent -ServerUrl $ServerUrl `
+                -RunId $RunId `
+                -BearerToken $BearerToken `
+                -Phase $Phase `
+                -EventType $EventType `
+                -Message $Message `
+                -Severity $Severity `
+                -Data $Data
+        }
     )
     if (-not $RunConfig) { $RunConfig = Read-PVEAutopilotCloudOSDRunConfig }
 
@@ -237,11 +288,48 @@ function Invoke-PVEAutopilotFirstBoot {
         -Payload $RunConfig.payloads.autopilotagent_postinstall `
         -Name 'autopilotagent-postinstall.ps1'
 
+    function Send-PVEAutopilotFirstBootEvent {
+        param(
+            [Parameter(Mandatory)] [string] $Phase,
+            [Parameter(Mandatory)] [string] $EventType,
+            [string] $Message,
+            [string] $Severity = 'info',
+            [hashtable] $Data = @{}
+        )
+        try {
+            & $ReportEvent -ServerUrl $serverUrl `
+                -RunId $runId `
+                -BearerToken $bootstrapToken `
+                -Phase $Phase `
+                -EventType $EventType `
+                -Message $Message `
+                -Severity $Severity `
+                -Data $Data
+        } catch {
+            Write-CloudOSDFirstBootLog "failed to report CloudOSD event ${EventType}: $($_.Exception.Message)"
+        }
+    }
+
     Write-CloudOSDFirstBootLog "Starting CloudOSD first boot for run $runId"
+    Send-PVEAutopilotFirstBootEvent -Phase 'setupcomplete' `
+        -EventType 'setupcomplete_task_started' `
+        -Message 'SetupComplete scheduled task started CloudOSD first boot'
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_start' `
+        -Message 'CloudOSD first boot started'
     & $WaitForNetwork
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_network_ready' `
+        -Message 'CloudOSD first boot network is ready'
     & $WaitForServer $serverUrl
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_server_ready' `
+        -Message 'ProxmoxVEAutopilot server is reachable from installed OS'
     Install-QemuGuestAgentIfPresent
     & $InstallMsi $msiPath
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_agent_msi_installed' `
+        -Message 'AutopilotAgent MSI installed'
     $postinstallArgs = @{
         ServerUrl = $serverUrl
         BootstrapToken = $bootstrapToken
@@ -250,10 +338,19 @@ function Invoke-PVEAutopilotFirstBoot {
         Phase = 'cloudosd'
     }
     & $RunPostinstall $postinstallPath $postinstallArgs
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_postinstall_complete' `
+        -Message 'AutopilotAgent postinstall completed'
     $agentToken = Get-AutopilotAgentToken
     & $ConfirmHeartbeat ($serverUrl.TrimEnd('/') + '/api/agent/v1/config') $agentToken
+    Send-PVEAutopilotFirstBootEvent -Phase 'AutopilotAgent' `
+        -EventType 'autopilotagent_heartbeat_visible' `
+        -Message 'AutopilotAgent heartbeat visible from installed OS'
     & $RemoveScheduledTask 'PVEAutopilot-CloudOSD-FirstBoot'
     Write-CloudOSDFirstBootLog "CloudOSD first boot complete for run $runId"
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_complete' `
+        -Message 'CloudOSD first boot completed'
 }
 
 if ($env:CLOUDOSD_FIRSTBOOT_LIBRARY_ONLY -ne '1') {
@@ -262,6 +359,18 @@ if ($env:CLOUDOSD_FIRSTBOOT_LIBRARY_ONLY -ne '1') {
     }
     catch {
         Write-CloudOSDFirstBootLog "CloudOSD first boot failed: $($_.Exception.Message)"
+        try {
+            $runConfig = Read-PVEAutopilotCloudOSDRunConfig
+            Write-PVEAutopilotCloudOSDEvent -ServerUrl ([string] $runConfig.server_base_url) `
+                -RunId ([string] $runConfig.run_id) `
+                -BearerToken ([string] $runConfig.agent.bootstrap_token) `
+                -Phase 'first_boot' `
+                -EventType 'firstboot_failed' `
+                -Severity 'error' `
+                -Message $_.Exception.Message
+        } catch {
+            Write-CloudOSDFirstBootLog "failed to report CloudOSD first boot failure: $($_.Exception.Message)"
+        }
         throw
     }
 }
