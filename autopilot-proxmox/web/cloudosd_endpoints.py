@@ -244,6 +244,18 @@ def _package_response(
     }
 
 
+def _related_jobs(run_id: str) -> list[dict]:
+    try:
+        from web import app as web_app
+
+        return [
+            job for job in web_app.job_manager.list_jobs()
+            if (job.get("args") or {}).get("cloudosd_run_id") == run_id
+        ]
+    except Exception:
+        return []
+
+
 def _asset_path(name: str) -> Path:
     if name == "PVEAutopilot-FirstBoot.ps1":
         return _CLOUDOSD_TOOL_ROOT / name
@@ -955,6 +967,9 @@ def get_run(run_id: str):
         "artifact": enrich_artifact(artifact),
         "latest_heartbeat": heartbeat,
         "events": events,
+        "event_groups": cloudosd_pg.milestone_event_groups(events),
+        "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
+        "related_jobs": _related_jobs(run_id),
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
         "task": cloudosd_pg.task_settings(run),
@@ -971,7 +986,14 @@ def list_run_events(run_id: str):
     groups: dict[str, list[dict]] = {}
     for event in events:
         groups.setdefault(event["phase"], []).append(event)
-    return {"schema_version": 1, "run_id": run_id, "events": events, "groups": groups}
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "events": events,
+        "groups": groups,
+        "milestone_groups": cloudosd_pg.milestone_event_groups(events),
+        "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
+    }
 
 
 @router.post("/runs/{run_id}/provision", status_code=202)

@@ -669,6 +669,44 @@ def test_cloudosd_runs_events_endpoint_lists_grouped_evidence(
     body = response.json()
     assert body["schema_version"] == 1
     assert body["groups"]["offline_validation"][0]["event_type"] == "offline_validation_ok"
+    assert body["milestone_groups"]["offline validation"][0]["event_type"] == "offline_validation_ok"
+
+
+def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg
+
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(artifact["id"], vm_name="CLOUDOSD-LIVE"),
+    ).json()
+    cloudosd_pg.append_event(
+        pg_conn,
+        run_id=run["run_id"],
+        phase="pe",
+        event_type="pe_registered",
+        message="CloudOSD PE bridge registered",
+    )
+    cloudosd_pg.append_event(
+        pg_conn,
+        run_id=run["run_id"],
+        phase="pe",
+        event_type="osdcloud_start",
+        message="Starting OSDCloud deploy",
+    )
+
+    response = cloudosd_client.get(f"/cloudosd/runs/{run['run_id']}")
+
+    assert response.status_code == 200, response.text
+    assert 'id="cloudosdRunDetail"' in response.text
+    assert 'data-cloudosd-field="pe_registered_at"' in response.text
+    assert f"/api/cloudosd/runs/${{encodeURIComponent(runId)}}" in response.text
+    assert "window.setTimeout(refresh, 5000)" in response.text
+    assert "CloudOSD PE bridge registered" in response.text
+    assert "Starting OSDCloud deploy" in response.text
 
 
 def test_cloudosd_proxmox_options_fallback_to_configured_defaults(

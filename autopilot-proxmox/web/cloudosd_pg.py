@@ -174,6 +174,16 @@ DEFAULT_VM_DISK_SIZE_GB = 80
 MIN_VM_MEMORY_MB = 6144
 RECOMMENDED_VM_MEMORY_MB = 8192
 MIN_VM_DISK_SIZE_GB = 80
+CLOUDOSD_MILESTONE_LABELS = [
+    "controller",
+    "Proxmox playbook",
+    "PE bridge",
+    "OSDCloud",
+    "offline validation",
+    "SetupComplete",
+    "first boot",
+    "AutopilotAgent",
+]
 
 
 def _now() -> datetime:
@@ -260,6 +270,37 @@ def name_comparison(
         "pve_mismatch": pve_mismatch,
         "heartbeat_mismatch": heartbeat_mismatch,
     }
+
+
+def milestone_label_for_event(event: dict) -> str:
+    phase = (event.get("phase") or "").strip()
+    event_type = (event.get("event_type") or "").strip()
+    phase_key = phase.casefold()
+    event_key = event_type.casefold()
+    if phase_key == "controller" or event_key in {"run_created", "identity_recorded"}:
+        return "controller"
+    if event_key == "pe_registered":
+        return "PE bridge"
+    if "osdcloud" in event_key:
+        return "OSDCloud"
+    if "validation" in event_key or phase_key == "offline_validation":
+        return "offline validation"
+    if "setupcomplete" in event_key or phase_key in {"setupcomplete", "setup_complete"}:
+        return "SetupComplete"
+    if "firstboot" in event_key or phase_key in {"first_boot", "first boot"}:
+        return "first boot"
+    if "autopilotagent" in event_key or phase_key == "full_os":
+        return "AutopilotAgent"
+    if phase_key == "pe":
+        return "PE bridge"
+    return phase or "controller"
+
+
+def milestone_event_groups(events: list[dict]) -> dict[str, list[dict]]:
+    groups = {label: [] for label in CLOUDOSD_MILESTONE_LABELS}
+    for event in events:
+        groups.setdefault(milestone_label_for_event(event), []).append(event)
+    return groups
 
 
 def init(conn: Connection) -> None:

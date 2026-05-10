@@ -2357,9 +2357,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         pve_name=run.get("pve_vm_name"),
         heartbeat_name=heartbeat_name,
     )
-    event_groups = {}
-    for event in events:
-        event_groups.setdefault(event["phase"], []).append(event)
+    event_groups = cloudosd_pg.milestone_event_groups(events)
     related_jobs = [
         job for job in job_manager.list_jobs()
         if (job.get("args") or {}).get("cloudosd_run_id") == run_id
@@ -2371,6 +2369,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         "latest_heartbeat": heartbeat,
         "events": events,
         "event_groups": event_groups,
+        "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
         "related_jobs": related_jobs,
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
