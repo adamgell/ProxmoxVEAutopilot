@@ -349,6 +349,7 @@ def sync_ts_progress_for_run(conn: Connection, run_id: str) -> int:
         run.get("first_heartbeat_at")
         or run.get("state") == "complete"
         or "autopilotagent_heartbeat" in event_types
+        or "autopilotagent_heartbeat_visible" in event_types
         or "firstboot_complete" in event_types
     ):
         done_kinds.update(_CLOUDOSD_ALL_STEP_KINDS)
@@ -581,6 +582,7 @@ def _create_sequence_for_run(conn: Connection, *, name: str) -> str:
         ("Validate offline Windows", "cloudosd_validate_offline_os", "pe"),
         ("Stage OSD client", "stage_osd_client", "pe"),
         ("Stage AutopilotAgent", "stage_autopilot_agent", "pe"),
+        ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
         ("Wait for AutopilotAgent heartbeat", "wait_agent_heartbeat", "full_os"),
     ]
     for position, (step_name, kind, phase) in enumerate(steps):

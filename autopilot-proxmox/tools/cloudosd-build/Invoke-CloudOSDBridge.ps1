@@ -305,12 +305,135 @@ function Save-CloudOSDPayload {
     }
 }
 
+function Join-CloudOSDPath {
+    param(
+        [Parameter(Mandatory)] [string] $Root,
+        [Parameter(Mandatory)] [string] $RelativePath
+    )
+    $path = $Root
+    foreach ($part in ($RelativePath -split '[\\/]')) {
+        if (-not [string]::IsNullOrWhiteSpace($part)) {
+            $path = Join-Path $path $part
+        }
+    }
+    return $path
+}
+
+function Resolve-CloudOSDPackageTargetPath {
+    param(
+        [Parameter(Mandatory)] [string] $TargetPath,
+        [Parameter(Mandatory)] [string] $WindowsRoot
+    )
+    if ($TargetPath -match '^[A-Za-z]:\\Windows\\(.+)$') {
+        return Join-CloudOSDPath -Root $WindowsRoot -RelativePath $Matches[1]
+    }
+    if ($TargetPath -match '^[A-Za-z]:\\ProgramData\\(.+)$') {
+        return Join-CloudOSDPath `
+            -Root (Get-OfflineProgramDataPath -WindowsRoot $WindowsRoot) `
+            -RelativePath $Matches[1]
+    }
+    throw "unsupported OSD client package target path: $TargetPath"
+}
+
+function Set-CloudOSDObjectProperty {
+    param(
+        [Parameter(Mandatory)] [object] $InputObject,
+        [Parameter(Mandatory)] [string] $Name,
+        [object] $Value
+    )
+    if ($InputObject.PSObject.Properties.Match($Name).Count -gt 0) {
+        $InputObject.PSObject.Properties[$Name].Value = $Value
+    } else {
+        Add-Member -InputObject $InputObject `
+            -NotePropertyName $Name `
+            -NotePropertyValue $Value `
+            -Force
+    }
+}
+
+function Save-CloudOSDOsdClientPackage {
+    param(
+        [Parameter(Mandatory)] [object] $Package,
+        [Parameter(Mandatory)] [string] $WindowsRoot,
+        [string] $BearerToken,
+        [object] $OsdClientPackage,
+        [scriptblock] $PackageDownloader = {
+            param($Url,$Headers)
+            Invoke-RestMethod -Uri $Url -Headers $Headers -TimeoutSec 300
+        }
+    )
+    if (
+        $Package.PSObject.Properties.Match('payloads').Count -eq 0 -or
+        $Package.payloads.PSObject.Properties.Match('osd_client').Count -eq 0 -or
+        -not $Package.payloads.osd_client
+    ) {
+        return $null
+    }
+
+    if (-not $OsdClientPackage) {
+        if (
+            $Package.payloads.osd_client.PSObject.Properties.Match('url').Count -eq 0 -or
+            -not $Package.payloads.osd_client.url
+        ) {
+            throw 'OSD client payload is missing package URL'
+        }
+        $headers = @{}
+        if ($BearerToken) { $headers.Authorization = "Bearer $BearerToken" }
+        $OsdClientPackage = & $PackageDownloader ([string] $Package.payloads.osd_client.url) $headers
+    }
+
+    $programDataRoot = Get-OfflineProgramDataPath -WindowsRoot $WindowsRoot
+    $osdRoot = Join-CloudOSDPath `
+        -Root $programDataRoot `
+        -RelativePath 'ProxmoxVEAutopilot\OSD'
+    New-Item -ItemType Directory -Path $osdRoot -Force | Out-Null
+
+    foreach ($file in @($OsdClientPackage.files)) {
+        $targetPath = [string] $file.path
+        if ($targetPath -match '\\Windows\\Setup\\Scripts\\SetupComplete\.cmd$') {
+            continue
+        }
+        $destination = Resolve-CloudOSDPackageTargetPath `
+            -TargetPath $targetPath `
+            -WindowsRoot $WindowsRoot
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        [System.IO.File]::WriteAllBytes(
+            $destination,
+            [Convert]::FromBase64String([string] $file.content_b64)
+        )
+    }
+
+    $config = $OsdClientPackage.config | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    Set-CloudOSDObjectProperty `
+        -InputObject $config `
+        -Name 'flask_base_url' `
+        -Value ([string] $Package.server_base_url)
+    if (
+        $Package.PSObject.Properties.Match('server_base_url_fallback').Count -gt 0 -and
+        $Package.server_base_url_fallback
+    ) {
+        Set-CloudOSDObjectProperty `
+            -InputObject $config `
+            -Name 'flask_base_url_fallback' `
+            -Value ([string] $Package.server_base_url_fallback)
+    }
+    $configPath = Join-CloudOSDPath -Root $osdRoot -RelativePath 'osd-config.json'
+    $config | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $configPath -Encoding UTF8
+
+    Add-Member -InputObject $Package.payloads.osd_client `
+        -NotePropertyName local_path `
+        -NotePropertyValue $osdRoot `
+        -Force
+    return $osdRoot
+}
+
 function Save-CloudOSDRunPackage {
     param(
         [Parameter(Mandatory)] [object] $Package,
         [Parameter(Mandatory)] [string] $WindowsRoot,
         [Parameter(Mandatory)] [string] $BridgeRoot,
         [string] $BearerToken,
+        [object] $OsdClientPackage,
         [scriptblock] $Downloader
     )
     $stageRoot = Join-Path (Get-OfflineProgramDataPath -WindowsRoot $WindowsRoot) 'ProxmoxVEAutopilot\CloudOSD'
@@ -336,6 +459,13 @@ function Save-CloudOSDRunPackage {
         if ($Downloader) { $saveArgs.Downloader = $Downloader }
         Save-CloudOSDPayload @saveArgs
     }
+    $osdClientArgs = @{
+        Package = $Package
+        WindowsRoot = $WindowsRoot
+        BearerToken = $BearerToken
+    }
+    if ($OsdClientPackage) { $osdClientArgs.OsdClientPackage = $OsdClientPackage }
+    Save-CloudOSDOsdClientPackage @osdClientArgs | Out-Null
     if ($Package.payloads.first_boot_script) {
         $Package.payloads.first_boot_script |
             Add-Member -NotePropertyName local_path `

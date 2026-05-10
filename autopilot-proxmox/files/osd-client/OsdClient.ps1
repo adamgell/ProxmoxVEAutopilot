@@ -641,7 +641,15 @@ function Invoke-CaptureAutopilotHash {
         throw "Autopilot hardware hash CSV missing Hardware Hash column: $csvPath"
     }
 
-    Invoke-OsdRequest -Config $Config -Path '/osd/client/hash' -Method POST `
+    $hashUploadPath = '/osd/client/hash'
+    if (
+        ($Config.PSObject.Properties.Match('engine').Count -gt 0 -and [string] $Config.engine -eq 'v2') -or
+        ($Config.PSObject.Properties.Match('api_version').Count -gt 0 -and [string] $Config.api_version -eq '2')
+    ) {
+        $hashUploadPath = '/osd/v2/agent/hash'
+    }
+
+    Invoke-OsdRequest -Config $Config -Path $hashUploadPath -Method POST `
         -BearerToken $BearerToken `
         -Body @{
             serial_number = $capturedSerial
@@ -692,6 +700,9 @@ function Invoke-OsdAction {
         'install_qga_watchdog' { Invoke-InstallQgaWatchdog -Action $Action }
         'capture_autopilot_hash' {
             Invoke-CaptureAutopilotHash -Config $Config -BearerToken $BearerToken
+        }
+        'wait_agent_heartbeat' {
+            Write-OsdLog 'wait_agent_heartbeat is satisfied by the CloudOSD first-boot heartbeat gate.'
         }
         'handoff_to_oobe' { Invoke-HandoffToOobe }
         'install_package' {

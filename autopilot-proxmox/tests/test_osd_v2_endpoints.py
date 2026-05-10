@@ -258,6 +258,40 @@ def test_v2_agent_package_rejects_token_for_another_run(osd_v2_client, pg_conn):
     assert response.json()["detail"] == "token/run mismatch"
 
 
+def test_v2_agent_hash_persists_hash_for_uuid_run(
+    osd_v2_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import app as web_app
+    from web import winpe_token
+
+    monkeypatch.setattr(web_app, "HASH_DIR", tmp_path)
+    run_id = _create_run(pg_conn, winpe_only=True)
+    token = winpe_token.sign(run_id=run_id, ttl_seconds=60)
+
+    response = osd_v2_client.post(
+        "/osd/v2/agent/hash",
+        headers=_bearer(token),
+        json={
+            "serial_number": "CLOUDOSD-SERIAL",
+            "product_id": "PRODUCT-ID",
+            "hardware_hash": "HASH-VALUE",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    files = list(tmp_path.glob("*.csv"))
+    assert len(files) == 1
+    text = files[0].read_text(encoding="utf-8")
+    assert "Device Serial Number,Windows Product ID,Hardware Hash" in text
+    assert "CLOUDOSD-SERIAL,PRODUCT-ID,HASH-VALUE" in text
+    assert "-vm119-" in files[0].name
+    assert files[0].name.endswith("-osd-v2_hwid.csv")
+
+
 @pytest.mark.parametrize(
     "path",
     [

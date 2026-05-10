@@ -240,6 +240,26 @@ function Get-CloudOSDLocalPayloadPath {
     throw "CloudOSD payload $Name is not staged"
 }
 
+function Invoke-CloudOSDOsdClient {
+    $scriptPath = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+    if (-not (Test-Path -LiteralPath $scriptPath)) {
+        throw "OSD client is not staged: $scriptPath"
+    }
+    $stdoutLog = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\CloudOSD\osd-client-firstboot.out.log'
+    $stderrLog = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\CloudOSD\osd-client-firstboot.err.log'
+    Write-CloudOSDFirstBootLog "Starting CloudOSD OSD client from $scriptPath"
+    $process = Start-Process -FilePath powershell.exe `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) `
+        -RedirectStandardOutput $stdoutLog `
+        -RedirectStandardError $stderrLog `
+        -Wait `
+        -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "CloudOSD OSD client failed with exit code $($process.ExitCode)"
+    }
+    Write-CloudOSDFirstBootLog 'CloudOSD OSD client completed.'
+}
+
 function Invoke-PVEAutopilotFirstBoot {
     param(
         [object] $RunConfig,
@@ -248,6 +268,7 @@ function Invoke-PVEAutopilotFirstBoot {
         [scriptblock] $InstallMsi = { param($Path) Install-AutopilotAgentMsi -Path $Path },
         [scriptblock] $RunPostinstall = { param($ScriptPath,$PostinstallArgs) Invoke-AutopilotAgentPostinstall -ScriptPath $ScriptPath -PostinstallArgs $PostinstallArgs },
         [scriptblock] $ConfirmHeartbeat = { param($ConfigUrl,$Token) Confirm-AutopilotAgentHeartbeat -ConfigUrl $ConfigUrl -Token $Token },
+        [scriptblock] $RunOsdClient = { Invoke-CloudOSDOsdClient },
         [scriptblock] $RemoveScheduledTask = { param($Name) Remove-PVEAutopilotFirstBootTask -Name $Name },
         [scriptblock] $ReportEvent = {
             param(
@@ -346,6 +367,13 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'AutopilotAgent' `
         -EventType 'autopilotagent_heartbeat_visible' `
         -Message 'AutopilotAgent heartbeat visible from installed OS'
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_osd_client_start' `
+        -Message 'Starting staged OSD client for CloudOSD hash capture'
+    & $RunOsdClient
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_osd_client_complete' `
+        -Message 'Staged OSD client completed CloudOSD post-deployment work'
     & $RemoveScheduledTask 'PVEAutopilot-CloudOSD-FirstBoot'
     Write-CloudOSDFirstBootLog "CloudOSD first boot complete for run $runId"
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `

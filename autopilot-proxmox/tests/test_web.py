@@ -76,6 +76,14 @@ def test_jobs_page_empty(client):
     assert "No jobs yet" in response.text
 
 
+def test_jobs_page_uses_full_width_cockpit_shell(client):
+    response = client.get("/jobs")
+
+    assert response.status_code == 200
+    assert 'body class="cockpit-shell jobs-wide"' in response.text
+    assert ".cockpit-shell.jobs-wide .cockpit-frame" in response.text
+
+
 def test_job_detail_not_found(client):
     from web.app import job_manager
     job_manager.get_job.return_value = None

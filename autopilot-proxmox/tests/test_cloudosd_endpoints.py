@@ -263,7 +263,10 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     from web import ts_engine_pg
 
     steps = ts_engine_pg.list_run_steps(pg_conn, run_body["run_id"])
-    assert [step["kind"] for step in steps][-1] == "wait_agent_heartbeat"
+    assert [step["kind"] for step in steps][-2:] == [
+        "capture_autopilot_hash",
+        "wait_agent_heartbeat",
+    ]
     assert steps[-1]["phase"] == "full_os"
 
 
@@ -712,7 +715,7 @@ def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(
     ][0]
     pg_conn.commit()
     assert before["done_count"] == 0
-    assert before["step_count"] == 6
+    assert before["step_count"] == 7
 
     token = winpe_token.sign(run_id=run["run_id"], ttl_seconds=3600)
     for event in (
@@ -756,12 +759,12 @@ def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(
     ][0]
     pg_conn.commit()
     assert after["done_count"] == 6
-    assert after["step_count"] == 6
+    assert after["step_count"] == 7
     assert after["state"] == "done"
 
     task_engine = cloudosd_client.get("/task-engine")
     assert task_engine.status_code == 200
-    assert "6/6 done" in task_engine.text
+    assert "6/7 done" in task_engine.text
 
 
 def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(

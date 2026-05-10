@@ -184,6 +184,76 @@ Describe 'OsdClient content materialization' {
         Should -Invoke Invoke-InstallPackage -Times 1 -Exactly
     }
 
+    It 'uploads captured hashes to the v2 hash endpoint for v2 configs' {
+        $osdRoot = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\OSD'
+        New-Item -ItemType Directory -Path $osdRoot -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $osdRoot 'Get-WindowsAutopilotInfo.ps1') `
+            -Value '# fake autopilot hash script' `
+            -Encoding ASCII
+
+        $createdCimShim = $false
+        if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
+            function global:Get-CimInstance {}
+            $createdCimShim = $true
+        }
+        function global:powershell.exe {
+            $outIndex = [Array]::IndexOf($args, '-OutputFile')
+            if ($outIndex -lt 0) { throw 'missing -OutputFile' }
+            $outFile = [string] $args[$outIndex + 1]
+            @(
+                'Device Serial Number,Windows Product ID,Hardware Hash',
+                'CLOUDOSD-SERIAL,PRODUCT-ID,HASH-VALUE'
+            ) | Set-Content -LiteralPath $outFile -Encoding ASCII
+            $global:LASTEXITCODE = 0
+        }
+        try {
+            Mock Get-CimInstance {
+                return [pscustomobject]@{ SerialNumber = 'CLOUDOSD-SERIAL' }
+            } -ParameterFilter { $ClassName -eq 'Win32_BIOS' }
+            Mock Invoke-OsdRequest {
+                $script:Requests += [pscustomobject]@{
+                    Path = $Path
+                    Body = $Body
+                    BearerToken = $BearerToken
+                }
+                return @{}
+            }
+            $config = [pscustomobject]@{
+                engine = 'v2'
+                run_id = 'run-1'
+                agent_id = 'osd-1'
+                flask_base_url = 'https://autopilot.local'
+            }
+
+            Invoke-CaptureAutopilotHash -Config $config -BearerToken 'token-1'
+
+            $script:Requests.Count | Should -Be 1
+            $script:Requests[0].Path | Should -Be '/osd/v2/agent/hash'
+            $script:Requests[0].Body.serial_number | Should -Be 'CLOUDOSD-SERIAL'
+            $script:Requests[0].Body.product_id | Should -Be 'PRODUCT-ID'
+            $script:Requests[0].Body.hardware_hash | Should -Be 'HASH-VALUE'
+        }
+        finally {
+            Remove-Item Function:\powershell.exe -ErrorAction SilentlyContinue
+            if ($createdCimShim) {
+                Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'treats wait_agent_heartbeat as already satisfied for v2 CloudOSD clients' {
+        $action = [pscustomobject]@{ kind = 'wait_agent_heartbeat' }
+        $config = [pscustomobject]@{
+            engine = 'v2'
+            run_id = 'run-1'
+            agent_id = 'osd-1'
+            flask_base_url = 'https://autopilot.local'
+        }
+
+        { Invoke-OsdAction -Action $action -Config $config -BearerToken 'token-1' } |
+            Should -Not -Throw
+    }
+
     It 'installs the QGA watchdog script and scheduled task' {
         Mock Invoke-VerifyQga {}
         Mock Set-QgaServiceRecovery {}

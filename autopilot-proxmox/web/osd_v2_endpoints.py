@@ -7,7 +7,9 @@ stay in place while agents migrate.
 """
 from __future__ import annotations
 
+import csv
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -77,6 +79,12 @@ class ContentStageBody(BaseModel):
     status: str = Field(pattern=r"^(pending|staging|staged|failed)$")
     staging_path: Optional[str] = None
     error: Optional[str] = None
+
+
+class HashBody(BaseModel):
+    serial_number: str
+    product_id: str
+    hardware_hash: str
 
 
 class ContentItemCreateBody(BaseModel):
@@ -197,6 +205,39 @@ def _manifest_response(conn, run_id: str) -> dict:
     }
 
 
+def _persist_autopilot_hash(
+    *,
+    vmid: int,
+    serial: str,
+    product_id: str,
+    hardware_hash: str,
+    source: str = "osd-v2",
+) -> None:
+    from web import app as web_app
+
+    web_app.HASH_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_serial = "".join(
+        c for c in serial if c.isalnum() or c in ("-", "_")
+    )
+    if not safe_serial:
+        safe_serial = "noserial"
+    safe_source = "".join(
+        c for c in source if c.isalnum() or c in ("-", "_")
+    )
+    if not safe_source:
+        safe_source = "hash"
+    out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-{safe_source}_hwid.csv"
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([
+            "Device Serial Number",
+            "Windows Product ID",
+            "Hardware Hash",
+        ])
+        writer.writerow([serial, product_id, hardware_hash])
+
+
 @router.get("/agent/package/{run_id}")
 def get_v2_agent_package(
     run_id: str,
@@ -239,6 +280,27 @@ def get_v2_agent_package(
         "config": config,
         "files": files,
     }
+
+
+@router.post("/agent/hash")
+def post_agent_hash(body: HashBody, payload: dict = Depends(_require_bearer)):
+    run_id = str(payload["run_id"])
+    with _conn() as conn:
+        try:
+            run = ts_engine_pg.get_run(conn, run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+    vmid = run.get("vmid")
+    if vmid is None:
+        raise HTTPException(status_code=404, detail="run not found or no vmid yet")
+    _persist_autopilot_hash(
+        vmid=int(vmid),
+        serial=body.serial_number,
+        product_id=body.product_id,
+        hardware_hash=body.hardware_hash,
+        source="osd-v2",
+    )
+    return {"ok": True}
 
 
 @router.post("/agent/register")

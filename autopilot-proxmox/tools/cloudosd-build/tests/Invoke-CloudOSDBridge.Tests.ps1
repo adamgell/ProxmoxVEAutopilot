@@ -210,13 +210,20 @@ Describe 'Disable-PVEAutopilotAutomaticDeviceEncryption' {
 }
 
 Describe 'Save-CloudOSDRunPackage' {
-    It 'downloads first-boot payloads and records local paths in cloudosd-run.json' {
+    It 'downloads first-boot payloads, stages the OSD client package, and records local paths in cloudosd-run.json' {
         $windowsRoot = Join-Path $TestDrive 'Windows'
         $bridgeRoot = Join-Path $TestDrive 'Bridge'
         New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot -Force | Out-Null
         'firstboot' | Set-Content -LiteralPath (Join-Path $bridgeRoot 'PVEAutopilot-FirstBoot.ps1')
         $package = [pscustomobject]@{
+            run_id = 'run-1'
+            server_base_url = 'https://autopilot.local'
+            server_base_url_fallback = 'http://192.168.2.4:5000'
             payloads = [pscustomobject]@{
+                osd_client = [pscustomobject]@{
+                    url = 'https://autopilot.local/osd/v2/agent/package/run-1?phase=full_os'
+                    sha256 = $null
+                }
                 autopilotagent_msi = [pscustomobject]@{
                     url = 'https://autopilot.local/api/cloudosd/assets/autopilotagent.msi'
                     sha256 = $null
@@ -227,11 +234,41 @@ Describe 'Save-CloudOSDRunPackage' {
                 }
             }
         }
+        $encode = {
+            param([string] $Text)
+            [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Text))
+        }
+        $osdClientPackage = [pscustomobject]@{
+            config = [pscustomobject]@{
+                engine = 'v2'
+                api_version = 2
+                flask_base_url = ''
+                run_id = 'run-1'
+                agent_id = 'osd-fullos-run-1'
+                phase = 'full_os'
+                bearer_token = 'osd-token'
+            }
+            files = @(
+                [pscustomobject]@{
+                    path = 'V:\Windows\Setup\Scripts\SetupComplete.cmd'
+                    content_b64 = & $encode 'do not overwrite setupcomplete'
+                },
+                [pscustomobject]@{
+                    path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\OsdClient.ps1'
+                    content_b64 = & $encode 'osd client'
+                },
+                [pscustomobject]@{
+                    path = 'V:\ProgramData\ProxmoxVEAutopilot\OSD\Get-WindowsAutopilotInfo.ps1'
+                    content_b64 = & $encode 'hash script'
+                }
+            )
+        }
 
         $stageRoot = Save-CloudOSDRunPackage -Package $package `
             -WindowsRoot $windowsRoot `
             -BridgeRoot $bridgeRoot `
             -BearerToken 'token-1' `
+            -OsdClientPackage $osdClientPackage `
             -Downloader {
                 param($Url,$OutFile,$Headers)
                 Set-Content -LiteralPath $OutFile -Value $Url -Encoding ASCII
@@ -245,6 +282,20 @@ Describe 'Save-CloudOSDRunPackage' {
             Should -Match 'AutopilotAgent\.msi'
         $runJson.payloads.autopilotagent_postinstall.local_path |
             Should -Match 'autopilotagent-postinstall\.ps1'
+        $runJson.payloads.osd_client.local_path |
+            Should -Match 'ProxmoxVEAutopilot.*OSD'
+
+        $programData = Get-OfflineProgramDataPath -WindowsRoot $windowsRoot
+        Test-Path -LiteralPath (Join-Path $programData 'ProxmoxVEAutopilot/OSD/OsdClient.ps1') |
+            Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $programData 'ProxmoxVEAutopilot/OSD/Get-WindowsAutopilotInfo.ps1') |
+            Should -BeTrue
+        $config = Get-Content -LiteralPath (Join-Path $programData 'ProxmoxVEAutopilot/OSD/osd-config.json') -Raw |
+            ConvertFrom-Json
+        $config.flask_base_url | Should -Be 'https://autopilot.local'
+        $config.flask_base_url_fallback | Should -Be 'http://192.168.2.4:5000'
+        Test-Path -LiteralPath (Join-Path $windowsRoot 'Setup/Scripts/SetupComplete.cmd') |
+            Should -BeFalse
     }
 }
 

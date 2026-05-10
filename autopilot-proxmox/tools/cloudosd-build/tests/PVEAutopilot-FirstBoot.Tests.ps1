@@ -44,11 +44,12 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
             -InstallMsi { param($Path) $script:Calls += "msi:$Path" } `
             -RunPostinstall { param($ScriptPath,$PostinstallArgs) $script:Calls += "postinstall:$($ScriptPath):$($PostinstallArgs.Phase)" } `
             -ConfirmHeartbeat { param($ConfigUrl,$Token) $script:Calls += 'heartbeat' } `
+            -RunOsdClient { $script:Calls += 'osd-client' } `
             -RemoveScheduledTask { param($Name) $script:Calls += "cleanup:$Name" } `
             -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data) }
 
         ($script:Calls -join '|') |
-            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot'
+            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|osd-client|cleanup:PVEAutopilot-CloudOSD-FirstBoot'
     }
 
     It 'posts SetupComplete and first-boot milestone events to the controller' {
