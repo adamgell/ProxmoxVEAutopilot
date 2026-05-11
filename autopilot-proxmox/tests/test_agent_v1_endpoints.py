@@ -67,6 +67,7 @@ def _approved_agent_with_heartbeat(
     token: str,
     vmid: int,
     computer_name: str,
+    agent_version: str = "0.2.0-test",
 ) -> str:
     reg = _bootstrap_fleet_agent(
         client,
@@ -93,7 +94,7 @@ def _approved_agent_with_heartbeat(
             "computer_name": computer_name,
             "serial_number": computer_name,
             "primary_ipv4": f"10.211.55.{vmid}",
-            "agent_version": "0.2.0-test",
+            "agent_version": agent_version,
         },
     )
     assert heartbeat.status_code == 200, heartbeat.text
@@ -532,6 +533,31 @@ def test_capture_job_enqueues_agent_work_item_instead_of_qga_playbook(
     assert item["id"] == work["id"]
     assert item["kind"] == "capture_autopilot_hash"
     assert item["request"]["vmid"] == 118
+
+
+def test_capture_job_refuses_agents_without_work_queue_support(
+    agent_client,
+):
+    from web import jobs_pg
+
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-old-osd",
+        token="agent-old-osd-secret",
+        vmid=120,
+        computer_name="Gell-OLDOSD",
+        agent_version="0.1.0.0",
+    )
+
+    response = agent_client.post(
+        "/api/jobs/capture",
+        data={"vmid": "120", "vm_name": "Gell-OLDOSD", "group_tag": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"].startswith("/vms?error=")
+    assert jobs_pg.list_jobs() == []
 
 
 def test_agent_hash_persists_csv_and_completes_capture_work_item(

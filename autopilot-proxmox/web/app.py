@@ -5461,7 +5461,22 @@ def _latest_capture_agent(vmid: int) -> dict:
         raise ValueError(
             f"AutopilotAgent heartbeat for VMID {vmid} is missing agent identity."
         )
+    version = str(latest.get("agent_version") or "").strip()
+    if not _agent_supports_work_queue(version):
+        raise ValueError(
+            f"AutopilotAgent on VMID {vmid} is version {version or 'unknown'}; "
+            "upgrade the MSI to 0.1.1 or newer before agent-driven hash capture."
+        )
     return latest
+
+
+def _agent_supports_work_queue(version: str) -> bool:
+    parts = [int(match) for match in re.findall(r"\d+", str(version))]
+    if not parts:
+        return False
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3]) >= (0, 1, 1)
 
 
 def _start_agent_hash_capture_job(
