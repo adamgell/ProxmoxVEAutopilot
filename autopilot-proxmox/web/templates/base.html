@@ -1363,7 +1363,9 @@
         opacity: 0.55;
       }
       .cockpit-shell .header-inner {
-        max-width: 1800px;
+        width: 100%;
+        max-width: none;
+        box-sizing: border-box;
         min-height: 64px;
         gap: 14px;
         padding: 0 18px;
@@ -1489,22 +1491,20 @@
         border-color: rgba(72, 88, 111, 0.18);
       }
       .cockpit-frame {
-        width: min(1800px, 100%);
-        margin: 0 auto;
+        width: 100%;
+        max-width: none;
+        box-sizing: border-box;
+        margin: 0;
         display: grid;
         grid-template-columns: 228px minmax(0, 1fr);
         gap: 18px;
         padding: 18px;
         align-items: start;
       }
-      .cockpit-shell.jobs-wide .header-inner,
-      .cockpit-shell.jobs-wide .cockpit-frame,
-      .cockpit-shell.jobs-wide #footer {
+      .cockpit-shell #footer {
         width: 100%;
         max-width: none;
-      }
-      .cockpit-shell.jobs-wide .cockpit-frame {
-        margin: 0;
+        box-sizing: border-box;
       }
       .cockpit-rail {
         position: sticky;

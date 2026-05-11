@@ -76,12 +76,20 @@ def test_jobs_page_empty(client):
     assert "No jobs yet" in response.text
 
 
-def test_jobs_page_uses_full_width_cockpit_shell(client):
+def test_cockpit_pages_use_shared_full_width_shell(client):
     response = client.get("/jobs")
+    runs_response = client.get("/runs")
 
     assert response.status_code == 200
-    assert 'body class="cockpit-shell jobs-wide"' in response.text
-    assert ".cockpit-shell.jobs-wide .cockpit-frame" in response.text
+    assert runs_response.status_code == 200
+    assert 'body class="cockpit-shell "' in response.text
+    assert 'body class="cockpit-shell "' in runs_response.text
+    assert "jobs-wide" not in response.text
+    assert ".cockpit-shell .header-inner" in response.text
+    assert "max-width: none;" in response.text
+    assert ".cockpit-frame" in response.text
+    assert "width: 100%;" in response.text
+    assert ".cockpit-shell.jobs-wide .cockpit-frame" not in response.text
 
 
 def test_job_detail_not_found(client):
