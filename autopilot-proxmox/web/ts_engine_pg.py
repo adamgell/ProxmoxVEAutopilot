@@ -12,6 +12,7 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any, Optional
 
 import psycopg
@@ -23,6 +24,9 @@ from psycopg.types.json import Jsonb
 SCHEMA_VERSION = 1
 CONTENT_TYPES = frozenset({"app", "package", "script", "driver", "os_image"})
 REBOOT_BEHAVIORS = frozenset({"none", "optional", "required", "deferred"})
+_INIT_LOCK = Lock()
+_INIT_DONE = False
+_INIT_LOCK_KEY = "proxmoxveautopilot:ts_engine_pg:init"
 
 
 SCHEMA = """
@@ -280,22 +284,32 @@ def _commit(conn: Connection) -> None:
 
 def init(conn: Connection) -> None:
     """Create the v2 engine schema. Safe to call repeatedly."""
-    conn.execute(SCHEMA)
-    conn.execute(
-        """
-        INSERT INTO ts_engine_schema_migrations (version, applied_at)
-        VALUES (%s, %s)
-        ON CONFLICT (version) DO NOTHING
-        """,
-        (SCHEMA_VERSION, _now()),
-    )
-    _commit(conn)
+    global _INIT_DONE
+    if _INIT_DONE:
+        return
+    with _INIT_LOCK:
+        if _INIT_DONE:
+            return
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_INIT_LOCK_KEY,))
+        conn.execute(SCHEMA)
+        conn.execute(
+            """
+            INSERT INTO ts_engine_schema_migrations (version, applied_at)
+            VALUES (%s, %s)
+            ON CONFLICT (version) DO NOTHING
+            """,
+            (SCHEMA_VERSION, _now()),
+        )
+        _commit(conn)
+        _INIT_DONE = True
 
 
 def reset_for_tests(conn: Connection) -> None:
     """Drop v2 engine tables. Only test code should call this."""
+    global _INIT_DONE
     conn.execute(DROP_SCHEMA_FOR_TESTS)
     _commit(conn)
+    _INIT_DONE = False
 
 
 def _iso(value: Any) -> str | None:

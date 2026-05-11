@@ -4,12 +4,18 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any, Optional
 
 from psycopg import Connection, errors
 from psycopg.types.json import Jsonb
 
 from web import ts_engine_pg
+
+
+_INIT_LOCK = Lock()
+_INIT_DONE = False
+_INIT_LOCK_KEY = "proxmoxveautopilot:cloudosd_pg:init"
 
 
 SCHEMA = """
@@ -381,21 +387,31 @@ def sync_all_ts_progress(conn: Connection) -> int:
 
 
 def init(conn: Connection) -> None:
-    ts_engine_pg.init(conn)
-    conn.execute(SCHEMA)
-    conn.execute("ALTER TABLE cloudosd_artifacts ADD COLUMN IF NOT EXISTS build_job_id text NULL")
-    conn.execute("ALTER TABLE cloudosd_artifacts ADD COLUMN IF NOT EXISTS publish_job_id text NULL")
-    conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS requested_vm_name text NULL")
-    conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS pve_vm_name text NULL")
-    conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS expected_computer_name text NULL")
-    conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS requested_vmid integer NULL")
-    conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS iso_storage text NULL")
-    conn.commit()
+    global _INIT_DONE
+    if _INIT_DONE:
+        return
+    with _INIT_LOCK:
+        if _INIT_DONE:
+            return
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_INIT_LOCK_KEY,))
+        ts_engine_pg.init(conn)
+        conn.execute(SCHEMA)
+        conn.execute("ALTER TABLE cloudosd_artifacts ADD COLUMN IF NOT EXISTS build_job_id text NULL")
+        conn.execute("ALTER TABLE cloudosd_artifacts ADD COLUMN IF NOT EXISTS publish_job_id text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS requested_vm_name text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS pve_vm_name text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS expected_computer_name text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS requested_vmid integer NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS iso_storage text NULL")
+        conn.commit()
+        _INIT_DONE = True
 
 
 def reset_for_tests(conn: Connection) -> None:
+    global _INIT_DONE
     conn.execute(DROP_SCHEMA_FOR_TESTS)
     conn.commit()
+    _INIT_DONE = False
 
 
 def _artifact_row(row: dict | None) -> dict | None:

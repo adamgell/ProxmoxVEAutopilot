@@ -6,6 +6,7 @@ import os
 import secrets
 from datetime import datetime, timezone
 from hashlib import sha256
+from threading import Lock
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -115,6 +116,10 @@ DROP TABLE IF EXISTS agent_bootstrap_approvals CASCADE;
 DROP TABLE IF EXISTS agent_devices CASCADE;
 """
 
+_INIT_LOCK = Lock()
+_INIT_DONE = False
+_INIT_LOCK_KEY = "proxmoxveautopilot:agent_telemetry_pg:init"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -163,23 +168,33 @@ def public_sha256(value: str) -> str:
 
 
 def init(conn: Connection | None = None) -> None:
+    global _INIT_DONE
     if conn is None:
         with db_pg.connection() as live:
             init(live)
         return
-    conn.execute(SCHEMA)
-    conn.execute(
-        """
-        ALTER TABLE agent_bootstrap_approvals
-            ADD COLUMN IF NOT EXISTS agent_token text NULL
-        """
-    )
-    _commit(conn)
+    if _INIT_DONE:
+        return
+    with _INIT_LOCK:
+        if _INIT_DONE:
+            return
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_INIT_LOCK_KEY,))
+        conn.execute(SCHEMA)
+        conn.execute(
+            """
+            ALTER TABLE agent_bootstrap_approvals
+                ADD COLUMN IF NOT EXISTS agent_token text NULL
+            """
+        )
+        _commit(conn)
+        _INIT_DONE = True
 
 
 def reset_for_tests(conn: Connection) -> None:
+    global _INIT_DONE
     conn.execute(DROP_SCHEMA_FOR_TESTS)
     _commit(conn)
+    _INIT_DONE = False
 
 
 def upsert_device(
