@@ -3100,6 +3100,11 @@ def _agent_inventory_rows() -> list[dict]:
     seen_agent_ids: set[str] = set()
     for row in rows:
         seen_agent_ids.add(row.get("agent_id") or "")
+        agent_version = (
+            row.get("agent_version")
+            or row.get("device_agent_version")
+            or ""
+        )
         out.append(_enrich_agent_vmid_from_pve({
             "agent_id": row.get("agent_id") or "",
             "approval_id": "",
@@ -3125,11 +3130,8 @@ def _agent_inventory_rows() -> list[dict]:
             "entra_joined": row.get("entra_joined"),
             "current_phase": row.get("current_phase") or "",
             "current_run_id": row.get("current_run_id") or "",
-            "agent_version": (
-                row.get("agent_version")
-                or row.get("device_agent_version")
-                or ""
-            ),
+            "agent_version": agent_version,
+            "hash_capture_supported": _agent_supports_work_queue(agent_version),
             "last_heartbeat_at": _iso_or_blank(row.get("received_at")),
             "last_seen_at": _iso_or_blank(row.get("last_seen_at")),
         }, pve_vms))
@@ -3165,6 +3167,9 @@ def _agent_inventory_rows() -> list[dict]:
             "current_phase": row.get("phase") or "",
             "current_run_id": row.get("created_from_run_id") or "",
             "agent_version": row.get("agent_version") or "",
+            "hash_capture_supported": _agent_supports_work_queue(
+                row.get("agent_version") or ""
+            ),
             "last_heartbeat_at": "",
             "last_seen_at": _iso_or_blank(row.get("requested_at")),
         }, pve_vms))

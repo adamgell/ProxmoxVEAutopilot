@@ -313,6 +313,14 @@ async function refreshVms() {
           {% else %}
           <span class="badge badge-green">active</span>
           {% endif %}
+          {% if agent.agent_version %}
+          <br><small style="color:var(--ink-muted);">v{{ agent.agent_version }}</small>
+          {% endif %}
+          {% if agent.hash_capture_supported %}
+          <br><span class="badge badge-blue">hash ready</span>
+          {% elif agent.agent_version %}
+          <br><span class="badge badge-yellow">upgrade for hash</span>
+          {% endif %}
         </td>
         <td data-agent-field="heartbeat">
           {% if agent.last_heartbeat_at %}
@@ -568,9 +576,17 @@ function renderJoinBadges(agent) {
 }
 
 function renderAgentState(agent) {
-  if (agent.approval_status === 'pending') return '<span class="badge badge-yellow">pending approval</span>';
-  if (agent.approval_status === 'approved') return '<span class="badge badge-green">approved, waiting</span>';
-  return '<span class="badge badge-green">active</span>';
+  var html;
+  if (agent.approval_status === 'pending') html = '<span class="badge badge-yellow">pending approval</span>';
+  else if (agent.approval_status === 'approved') html = '<span class="badge badge-green">approved, waiting</span>';
+  else html = '<span class="badge badge-green">active</span>';
+  if (agent.agent_version) {
+    html += '<br><small style="color:var(--ink-muted);">v' + _htmlEsc(agent.agent_version) + '</small>';
+    html += agent.hash_capture_supported
+      ? '<br><span class="badge badge-blue">hash ready</span>'
+      : '<br><span class="badge badge-yellow">upgrade for hash</span>';
+  }
+  return html;
 }
 
 function renderAgentApproval(agent) {
