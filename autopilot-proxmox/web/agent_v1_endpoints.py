@@ -7,14 +7,16 @@ tokens whose hashes are stored in Postgres.
 """
 from __future__ import annotations
 
+import csv
 import hmac
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, ts_engine_pg, winpe_token
@@ -67,6 +69,29 @@ class EventBody(BaseModel):
     event_type: str = Field(min_length=1)
     message: Optional[str] = None
     data: dict = Field(default_factory=dict)
+
+
+class WorkNextBody(BaseModel):
+    agent_id: str = Field(min_length=1)
+    supported_kinds: list[str] = Field(default_factory=list)
+
+
+class WorkCompleteBody(BaseModel):
+    agent_id: str = Field(min_length=1)
+    result: dict = Field(default_factory=dict)
+
+
+class WorkFailBody(BaseModel):
+    agent_id: str = Field(min_length=1)
+    error: str = Field(min_length=1)
+    result: dict = Field(default_factory=dict)
+
+
+class HashBody(BaseModel):
+    work_item_id: Optional[str] = None
+    serial_number: str = Field(min_length=1)
+    product_id: str = ""
+    hardware_hash: str = Field(min_length=1)
 
 
 def _database_url() -> str:
@@ -138,6 +163,71 @@ def _require_agent(
     if not device:
         raise HTTPException(status_code=401, detail="invalid agent token")
     return device
+
+
+def _public_work_item(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "agent_id": row["agent_id"],
+        "kind": row["kind"],
+        "status": row["status"],
+        "vmid": row.get("vmid"),
+        "job_id": row.get("job_id"),
+        "request": row.get("request_json") or {},
+        "result": row.get("result_json") or {},
+        "error": row.get("error"),
+        "created_at": (
+            row["created_at"].isoformat()
+            if hasattr(row.get("created_at"), "isoformat")
+            else row.get("created_at")
+        ),
+        "claimed_at": (
+            row["claimed_at"].isoformat()
+            if hasattr(row.get("claimed_at"), "isoformat")
+            else row.get("claimed_at")
+        ),
+        "completed_at": (
+            row["completed_at"].isoformat()
+            if hasattr(row.get("completed_at"), "isoformat")
+            else row.get("completed_at")
+        ),
+    }
+
+
+def _persist_autopilot_hash(
+    *,
+    vmid: int,
+    serial: str,
+    product_id: str,
+    hardware_hash: str,
+    group_tag: str = "",
+    source: str = "agent-v1",
+) -> Path:
+    from web import app as web_app
+
+    web_app.HASH_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_serial = "".join(c for c in serial if c.isalnum() or c in ("-", "_"))
+    if not safe_serial:
+        safe_serial = "noserial"
+    safe_source = "".join(c for c in source if c.isalnum() or c in ("-", "_"))
+    if not safe_source:
+        safe_source = "hash"
+    out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-{safe_source}_hwid.csv"
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        header = [
+            "Device Serial Number",
+            "Windows Product ID",
+            "Hardware Hash",
+        ]
+        row = [serial, product_id, hardware_hash]
+        if group_tag:
+            header.append("Group Tag")
+            row.append(group_tag)
+        writer.writerow(header)
+        writer.writerow(row)
+    return out
 
 
 @router.post("/bootstrap")
@@ -285,6 +375,123 @@ def events(body: EventBody, device: dict = Depends(_require_agent)):
             payload=body.model_dump(),
         )
     return {"status": "ok", "event_id": event["id"]}
+
+
+@router.post("/work/next")
+def next_work(body: WorkNextBody, device: dict = Depends(_require_agent)):
+    if body.agent_id != device["agent_id"]:
+        raise HTTPException(status_code=403, detail="token/agent mismatch")
+    kinds = [kind for kind in body.supported_kinds if kind]
+    with _conn() as conn:
+        row = agent_telemetry_pg.claim_next_work_item(
+            conn,
+            agent_id=body.agent_id,
+            supported_kinds=kinds,
+        )
+    return {"work_item": _public_work_item(row) if row else None}
+
+
+@router.post("/work/{work_item_id}/complete")
+def complete_work(
+    work_item_id: str,
+    body: WorkCompleteBody,
+    device: dict = Depends(_require_agent),
+):
+    if body.agent_id != device["agent_id"]:
+        raise HTTPException(status_code=403, detail="token/agent mismatch")
+    with _conn() as conn:
+        row = agent_telemetry_pg.complete_work_item(
+            conn,
+            work_item_id,
+            agent_id=body.agent_id,
+            result=body.result,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="work item not found")
+    return {"status": "ok", "work_item": _public_work_item(row)}
+
+
+@router.post("/work/{work_item_id}/fail")
+def fail_work(
+    work_item_id: str,
+    body: WorkFailBody,
+    device: dict = Depends(_require_agent),
+):
+    if body.agent_id != device["agent_id"]:
+        raise HTTPException(status_code=403, detail="token/agent mismatch")
+    with _conn() as conn:
+        row = agent_telemetry_pg.fail_work_item(
+            conn,
+            work_item_id,
+            agent_id=body.agent_id,
+            error=body.error,
+            result=body.result,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="work item not found")
+    return {"status": "ok", "work_item": _public_work_item(row)}
+
+
+@router.get("/hash-script")
+def hash_script(device: dict = Depends(_require_agent)):
+    root = Path(__file__).resolve().parents[1]
+    script = root / "files" / "Get-WindowsAutopilotInfo.ps1"
+    try:
+        content = script.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="hash capture script is missing")
+    return Response(content=content, media_type="text/plain; charset=utf-8")
+
+
+@router.post("/hash")
+def post_hash(body: HashBody, device: dict = Depends(_require_agent)):
+    work = None
+    with _conn() as conn:
+        if body.work_item_id:
+            work = agent_telemetry_pg.get_work_item(conn, body.work_item_id)
+            if work is None:
+                raise HTTPException(status_code=404, detail="work item not found")
+            if work["agent_id"] != device["agent_id"]:
+                raise HTTPException(status_code=403, detail="token/work mismatch")
+        latest = agent_telemetry_pg.latest_for_agent(conn, device["agent_id"])
+        vmid = (
+            work.get("vmid")
+            if work and work.get("vmid") is not None
+            else latest.get("vmid") if latest else device.get("vmid")
+        )
+        if vmid is None:
+            raise HTTPException(status_code=409, detail="agent has no VMID")
+        request = work.get("request_json") if work else {}
+        group_tag = str((request or {}).get("group_tag") or "")
+        path = _persist_autopilot_hash(
+            vmid=int(vmid),
+            serial=body.serial_number,
+            product_id=body.product_id,
+            hardware_hash=body.hardware_hash,
+            group_tag=group_tag,
+            source="agent-v1",
+        )
+        result = {
+            "filename": path.name,
+            "vmid": int(vmid),
+            "serial_number": body.serial_number,
+            "product_id": body.product_id,
+            "group_tag": group_tag,
+            "source": "agent-v1",
+        }
+        if body.work_item_id:
+            completed = agent_telemetry_pg.complete_work_item(
+                conn,
+                body.work_item_id,
+                agent_id=device["agent_id"],
+                result=result,
+            )
+            if completed is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="work item is already terminal",
+                )
+    return {"ok": True, **result}
 
 
 @router.get("/config")

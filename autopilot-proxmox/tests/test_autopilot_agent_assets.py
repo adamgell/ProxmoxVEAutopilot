@@ -31,6 +31,23 @@ def test_autopilot_agent_uses_programdata_config_and_logs():
     )
 
 
+def test_autopilot_agent_claims_hash_capture_work_items():
+    client = _read("autopilot-agent/src/AutopilotAgent/AgentApiClient.cs")
+    worker = _read("autopilot-agent/src/AutopilotAgent/Worker.cs")
+    capture = _read("autopilot-agent/src/AutopilotAgent/HashCaptureService.cs")
+    program = _read("autopilot-agent/src/AutopilotAgent/Program.cs")
+
+    assert "/api/agent/v1/work/next" in client
+    assert "/api/agent/v1/hash-script" in client
+    assert "/api/agent/v1/hash" in client
+    assert "/api/agent/v1/work/{workItemId}/{action}" in client
+    assert "capture_autopilot_hash" in worker
+    assert "HashCaptureService" in program
+    assert "Get-WindowsAutopilotInfo.ps1" in capture
+    assert "-GroupTag" in capture
+    assert "TextFieldParser" in capture
+
+
 def test_wix_installer_creates_delayed_auto_localsystem_service():
     wxs = _read("autopilot-agent/installer/AutopilotAgent.wxs")
 

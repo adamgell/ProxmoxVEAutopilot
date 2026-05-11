@@ -11,6 +11,7 @@ var builder = Host.CreateDefaultBuilder(args)
     {
         services.AddSingleton<AgentFileLog>();
         services.AddSingleton<TelemetryCollector>();
+        services.AddSingleton<HashCaptureService>();
         services.AddHttpClient<AgentApiClient>();
         services.AddHostedService<Worker>();
     });

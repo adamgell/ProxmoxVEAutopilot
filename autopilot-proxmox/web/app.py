@@ -2598,18 +2598,26 @@ def _build_job_plan(job: dict) -> Optional[dict]:
 
     if pb == "hash_capture":
         vmids = args.get("vmids") or ([args["vmid"]] if args.get("vmid") else [])
+        transport = args.get("capture_transport") or "autopilot_agent"
         return {
             "title": f"Capture Autopilot hash for {len(vmids)} VM(s)",
-            "summary": ("Runs Get-WindowsAutopilotInfo via guest-exec to "
-                        "produce the Autopilot hardware hash CSV."),
+            "summary": ("Queues a capture request for the installed "
+                        "AutopilotAgent, which runs Get-WindowsAutopilotInfo "
+                        "inside Windows and posts the CSV back to the controller."),
             "steps": [
-                "Push the hash-capture PowerShell script to the VM",
-                "Execute Get-WindowsAutopilotInfo → capture CSV on guest",
-                "Retrieve CSV back to the controller",
+                "Find the latest live AutopilotAgent heartbeat for the VM",
+                "Queue an agent work item for hash capture",
+                "AutopilotAgent downloads Get-WindowsAutopilotInfo and captures the CSV",
+                "AutopilotAgent posts the hash back to the controller",
                 "Save to /app/output/hashes/<serial>_hwid.csv",
             ],
             "end_goal": "One CSV per VM, ready for Intune bulk upload.",
-            "metadata": [("Target VMIDs", ", ".join(str(v) for v in vmids))],
+            "metadata": [
+                ("Target VMIDs", ", ".join(str(v) for v in vmids)),
+                ("Capture transport", transport),
+                ("Agent ID", args.get("agent_id") or ""),
+                ("Work item", args.get("work_item_id") or ""),
+            ],
         }
 
     if pb == "upload_after_capture":
@@ -2618,7 +2626,7 @@ def _build_job_plan(job: dict) -> Optional[dict]:
             "summary": ("Captures the hash then hands it straight to "
                         "Intune via Microsoft Graph."),
             "steps": [
-                "Run hash_capture against the target VM",
+                "Wait for AutopilotAgent hash-capture work items to complete",
                 "Authenticate to Microsoft Graph using Entra app creds",
                 "POST the hash to /deviceManagement/importedWindowsAutopilotDeviceIdentities",
                 "Wait for Intune import to reach 'complete' state",
@@ -5438,6 +5446,73 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
     )
 
 
+def _latest_capture_agent(vmid: int) -> dict:
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        latest = agent_telemetry_pg.latest_by_vmid(conn).get(int(vmid))
+    if not latest:
+        raise ValueError(
+            f"No live AutopilotAgent heartbeat found for VMID {vmid}; "
+            "install or repair AutopilotAgent before capturing the hardware hash."
+        )
+    if not latest.get("agent_id"):
+        raise ValueError(
+            f"AutopilotAgent heartbeat for VMID {vmid} is missing agent identity."
+        )
+    return latest
+
+
+def _start_agent_hash_capture_job(
+    *,
+    vmid: int,
+    vm_name: str,
+    group_tag: str = "",
+) -> dict:
+    from web import db_pg
+
+    agent = _latest_capture_agent(vmid)
+    request = {
+        "vmid": int(vmid),
+        "vm_name": vm_name,
+        "group_tag": group_tag,
+        "hash_script_url": "/api/agent/v1/hash-script",
+        "hash_upload_url": "/api/agent/v1/hash",
+    }
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent["agent_id"],
+            kind="capture_autopilot_hash",
+            request=request,
+            vmid=int(vmid),
+        )
+    wait_script = BASE_DIR / "scripts" / "wait_agent_work_item.py"
+    cmd = [
+        "python",
+        str(wait_script),
+        "--work-item",
+        work["id"],
+        "--timeout",
+        "1800",
+    ]
+    args = {
+        "vmid": int(vmid),
+        "vm_name": vm_name,
+        "group_tag": group_tag,
+        "agent_id": agent["agent_id"],
+        "work_item_id": work["id"],
+        "capture_transport": "autopilot_agent",
+    }
+    job = job_manager.start("hash_capture", cmd, args=args)
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        agent_telemetry_pg.attach_work_item_job(conn, work["id"], job_id=job["id"])
+    return job
+
+
 @app.post("/api/jobs/capture-and-upload")
 async def start_capture_and_upload(
     missing_vmids: list[str] = Form(...),
@@ -5454,29 +5529,29 @@ async def start_capture_and_upload(
         _sanitize_input(name)
         vm_list.append({"vmid": vmid, "name": name})
 
-    # Launch parallel capture jobs (one per VM)
-    for vm in vm_list:
-        cmd = [
-            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
-            "-e", f"vm_vmid={vm['vmid']}",
-            "-e", f"vm_name={vm['name']}",
-            "-e", "autopilot_skip=true",
+    try:
+        capture_jobs = [
+            _start_agent_hash_capture_job(
+                vmid=int(vm["vmid"]),
+                vm_name=vm["name"],
+                group_tag=group_tag,
+            )
+            for vm in vm_list
         ]
-        if group_tag:
-            cmd += ["-e", f"vm_group_tag={group_tag}"]
-        job_manager.start("hash_capture", cmd, args={"vmid": vm["vmid"], "vm_name": vm["name"], "group_tag": group_tag})
+    except ValueError as exc:
+        return _redirect_with_error("/vms", str(exc))
 
-    # Launch upload job that waits for captures to finish
     import tempfile
+    work_ids = [job["args"]["work_item_id"] for job in capture_jobs]
+    wait_script = BASE_DIR / "scripts" / "wait_agent_work_item.py"
     script_lines = [
         "#!/bin/bash",
+        "set -euo pipefail",
         f"echo 'Waiting for {len(vm_list)} capture job(s) to finish...'",
-        "while true; do",
-        "  RUNNING=$(ps aux | grep '[a]nsible-playbook.*retry_inject_hash' | wc -l)",
-        "  [ \"$RUNNING\" -eq 0 ] && break",
-        "  echo \"  $RUNNING capture(s) still running...\"",
-        "  sleep 5",
-        "done",
+        "python "
+        + shlex.quote(str(wait_script))
+        + " --timeout 1800 "
+        + " ".join(f"--work-item {shlex.quote(str(work_id))}" for work_id in work_ids),
         "echo '=== All captures done, uploading hashes to Intune ==='",
         f"ansible-playbook {shlex.quote(str(PLAYBOOK_DIR / 'upload_hashes.yml'))}",
     ]
@@ -5487,7 +5562,7 @@ async def start_capture_and_upload(
     script_path.chmod(0o755)
 
     job_manager.start("upload_after_capture", ["bash", str(script_path)],
-                      args={"vms": [v["name"] for v in vm_list], "group_tag": group_tag, "upload": True})
+                      args={"vms": [v["name"] for v in vm_list], "work_item_ids": work_ids, "group_tag": group_tag, "upload": True})
 
     return RedirectResponse("/jobs", status_code=303)
 
@@ -5501,19 +5576,18 @@ async def start_bulk_capture(
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
-    for entry in vmids:
-        vmid, name = entry.split(":", 1)
-        _sanitize_input(vmid)
-        _sanitize_input(name)
-        cmd = [
-            "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
-            "-e", f"vm_vmid={vmid}",
-            "-e", f"vm_name={name}",
-            "-e", "autopilot_skip=true",
-        ]
-        if group_tag:
-            cmd += ["-e", f"vm_group_tag={group_tag}"]
-        job_manager.start("hash_capture", cmd, args={"vmid": vmid, "vm_name": name, "group_tag": group_tag})
+    try:
+        for entry in vmids:
+            vmid, name = entry.split(":", 1)
+            _sanitize_input(vmid)
+            _sanitize_input(name)
+            _start_agent_hash_capture_job(
+                vmid=int(vmid),
+                vm_name=name,
+                group_tag=group_tag,
+            )
+    except ValueError as exc:
+        return _redirect_with_error("/vms", str(exc))
 
     return RedirectResponse("/jobs", status_code=303)
 
@@ -5527,16 +5601,14 @@ async def start_capture(
     name = _sanitize_input(vm_name) if vm_name else f"autopilot-{vmid}"
     if group_tag:
         group_tag = _sanitize_input(group_tag)
-    cmd = [
-        "ansible-playbook", str(PLAYBOOK_DIR / "retry_inject_hash.yml"),
-        "-e", f"vm_vmid={vmid}",
-        "-e", f"vm_name={name}",
-        "-e", "autopilot_skip=true",
-    ]
-    if group_tag:
-        cmd += ["-e", f"vm_group_tag={group_tag}"]
-    args = {"vmid": vmid, "vm_name": name, "group_tag": group_tag}
-    job = job_manager.start("hash_capture", cmd, args=args)
+    try:
+        job = _start_agent_hash_capture_job(
+            vmid=int(vmid),
+            vm_name=name,
+            group_tag=group_tag,
+        )
+    except ValueError as exc:
+        return _redirect_with_error("/vms", str(exc))
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 

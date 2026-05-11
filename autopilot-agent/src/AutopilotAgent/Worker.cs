@@ -5,6 +5,7 @@ namespace AutopilotAgent;
 public sealed class Worker(
     AgentApiClient apiClient,
     TelemetryCollector telemetryCollector,
+    HashCaptureService hashCaptureService,
     AgentFileLog log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,6 +39,14 @@ public sealed class Worker(
                 {
                     await apiClient.SendHeartbeatAsync(config, telemetry, stoppingToken);
                     log.Info("Heartbeat sent.");
+                    var work = await apiClient.GetNextWorkAsync(
+                        config,
+                        ["capture_autopilot_hash"],
+                        stoppingToken);
+                    if (work is not null)
+                    {
+                        await ProcessWorkAsync(config, work, stoppingToken);
+                    }
                 }
                 else
                 {
@@ -57,5 +66,44 @@ public sealed class Worker(
         }
 
         log.Info("AutopilotAgent stopping.");
+    }
+
+    private async Task ProcessWorkAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        log.Info($"Starting work item {work.Id} ({work.Kind}).");
+        try
+        {
+            switch (work.Kind)
+            {
+                case "capture_autopilot_hash":
+                    await hashCaptureService.CaptureAsync(config, work, cancellationToken);
+                    log.Info($"Completed work item {work.Id}.");
+                    break;
+                default:
+                    await apiClient.FailWorkAsync(
+                        config,
+                        work.Id,
+                        $"Unsupported work item kind: {work.Kind}",
+                        cancellationToken);
+                    log.Warning($"Unsupported work item {work.Id} kind={work.Kind}.");
+                    break;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, $"Work item {work.Id} failed.");
+            await apiClient.FailWorkAsync(
+                config,
+                work.Id,
+                ex.Message,
+                cancellationToken);
+        }
     }
 }

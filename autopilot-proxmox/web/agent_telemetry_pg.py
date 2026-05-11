@@ -106,10 +106,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_bootstrap_approvals_agent_pending
     WHERE status IN ('pending', 'approved');
 CREATE INDEX IF NOT EXISTS idx_agent_bootstrap_approvals_status_time
     ON agent_bootstrap_approvals(status, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_work_items (
+    id uuid PRIMARY KEY,
+    agent_id text NOT NULL REFERENCES agent_devices(agent_id) ON DELETE CASCADE,
+    kind text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    vmid integer NULL,
+    job_id text NULL,
+    request_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    result_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    error text NULL,
+    created_at timestamptz NOT NULL,
+    claimed_at timestamptz NULL,
+    completed_at timestamptz NULL,
+    updated_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_work_items_agent_status_time
+    ON agent_work_items(agent_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_work_items_vmid_status_time
+    ON agent_work_items(vmid, status, created_at);
 """
 
 
 DROP_SCHEMA_FOR_TESTS = """
+DROP TABLE IF EXISTS agent_work_items CASCADE;
 DROP TABLE IF EXISTS agent_events CASCADE;
 DROP TABLE IF EXISTS agent_heartbeats CASCADE;
 DROP TABLE IF EXISTS agent_bootstrap_approvals CASCADE;
@@ -132,7 +154,7 @@ def _commit(conn: Connection) -> None:
 
 def _row_dict(row: Any) -> dict:
     data = dict(row)
-    for key in ("approval_id", "created_from_run_id", "current_run_id"):
+    for key in ("id", "approval_id", "created_from_run_id", "current_run_id"):
         if data.get(key) is not None:
             data[key] = str(data[key])
     return data
@@ -669,5 +691,191 @@ def latest_agents(conn: Connection | None = None) -> list[dict]:
         WHERE d.revoked = false
         ORDER BY COALESCE(h.received_at, d.last_seen_at) DESC, d.agent_id ASC
         """
+    ).fetchall()
+    return [_row_dict(row) for row in rows]
+
+
+def create_work_item(
+    conn: Connection,
+    *,
+    agent_id: str,
+    kind: str,
+    request: dict[str, Any],
+    vmid: Optional[int] = None,
+    job_id: Optional[str] = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO agent_work_items (
+            id, agent_id, kind, status, vmid, job_id, request_json,
+            result_json, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, 'pending', %s, %s, %s, '{}'::jsonb, %s, %s)
+        RETURNING *
+        """,
+        (
+            uuid4(),
+            agent_id,
+            kind,
+            vmid,
+            job_id,
+            Jsonb(request),
+            now,
+            now,
+        ),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row)
+
+
+def attach_work_item_job(
+    conn: Connection,
+    work_item_id: str,
+    *,
+    job_id: str,
+) -> dict | None:
+    row = conn.execute(
+        """
+        UPDATE agent_work_items
+        SET job_id = %s,
+            updated_at = %s
+        WHERE id = %s
+        RETURNING *
+        """,
+        (job_id, _now(), work_item_id),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row) if row else None
+
+
+def get_work_item(conn: Connection, work_item_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM agent_work_items WHERE id = %s",
+        (work_item_id,),
+    ).fetchone()
+    return _row_dict(row) if row else None
+
+
+def claim_next_work_item(
+    conn: Connection,
+    *,
+    agent_id: str,
+    supported_kinds: list[str],
+) -> dict | None:
+    if not supported_kinds:
+        return None
+    with conn.transaction():
+        pending = conn.execute(
+            """
+            SELECT id
+            FROM agent_work_items
+            WHERE agent_id = %s
+              AND status = 'pending'
+              AND kind = ANY(%s)
+            ORDER BY created_at ASC, id ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+            """,
+            (agent_id, supported_kinds),
+        ).fetchone()
+        if not pending:
+            return None
+        now = _now()
+        row = conn.execute(
+            """
+            UPDATE agent_work_items
+            SET status = 'claimed',
+                claimed_at = COALESCE(claimed_at, %s),
+                updated_at = %s
+            WHERE id = %s AND status = 'pending'
+            RETURNING *
+            """,
+            (now, now, pending["id"]),
+        ).fetchone()
+    _commit(conn)
+    return _row_dict(row) if row else None
+
+
+def complete_work_item(
+    conn: Connection,
+    work_item_id: str,
+    *,
+    agent_id: str,
+    result: dict[str, Any],
+) -> dict | None:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE agent_work_items
+        SET status = 'complete',
+            result_json = %s,
+            error = NULL,
+            completed_at = COALESCE(completed_at, %s),
+            updated_at = %s
+        WHERE id = %s
+          AND agent_id = %s
+          AND status IN ('pending', 'claimed')
+        RETURNING *
+        """,
+        (Jsonb(result), now, now, work_item_id, agent_id),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row) if row else None
+
+
+def fail_work_item(
+    conn: Connection,
+    work_item_id: str,
+    *,
+    agent_id: str,
+    error: str,
+    result: Optional[dict[str, Any]] = None,
+) -> dict | None:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE agent_work_items
+        SET status = 'failed',
+            result_json = %s,
+            error = %s,
+            completed_at = COALESCE(completed_at, %s),
+            updated_at = %s
+        WHERE id = %s
+          AND agent_id = %s
+          AND status IN ('pending', 'claimed')
+        RETURNING *
+        """,
+        (Jsonb(result or {}), error, now, now, work_item_id, agent_id),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row) if row else None
+
+
+def list_work_items(
+    conn: Connection,
+    *,
+    status: Optional[str] = None,
+    job_id: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = %s")
+        params.append(status)
+    if job_id:
+        clauses.append("job_id = %s")
+        params.append(job_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM agent_work_items
+        {where}
+        ORDER BY created_at DESC, id DESC
+        LIMIT %s
+        """,
+        (*params, limit),
     ).fetchall()
     return [_row_dict(row) for row in rows]

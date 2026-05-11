@@ -60,6 +60,46 @@ def _create_run(conn) -> str:
     )
 
 
+def _approved_agent_with_heartbeat(
+    client: TestClient,
+    *,
+    agent_id: str,
+    token: str,
+    vmid: int,
+    computer_name: str,
+) -> str:
+    reg = _bootstrap_fleet_agent(
+        client,
+        agent_id=agent_id,
+        vmid=vmid,
+        computer_name=computer_name,
+    )
+    assert reg.status_code == 200, reg.text
+    approval_id = reg.json()["approval_id"]
+    approved = _approve_bootstrap(client, approval_id, token)
+    assert approved.status_code == 200, approved.text
+    claimed = client.get(
+        f"/api/agent/v1/bootstrap/claim/{approval_id}",
+        headers=_bearer("fleet-bootstrap"),
+    )
+    assert claimed.status_code == 200, claimed.text
+    agent_token = claimed.json()["agent_token"]
+    heartbeat = client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer(agent_token),
+        json={
+            "agent_id": agent_id,
+            "vmid": vmid,
+            "computer_name": computer_name,
+            "serial_number": computer_name,
+            "primary_ipv4": f"10.211.55.{vmid}",
+            "agent_version": "0.2.0-test",
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    return agent_token
+
+
 @pytest.fixture
 def agent_client(pg_conn, monkeypatch):
     from web import agent_telemetry_pg, ts_engine_pg
@@ -443,6 +483,118 @@ def test_agent_heartbeat_allows_empty_current_run_id(agent_client, pg_conn):
     )
 
     assert response.status_code == 200, response.text
+
+
+def test_capture_job_enqueues_agent_work_item_instead_of_qga_playbook(
+    agent_client,
+    pg_conn,
+):
+    from web import agent_telemetry_pg, jobs_pg
+
+    agent_token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-gell-osd2",
+        token="agent-gell-osd2-secret",
+        vmid=118,
+        computer_name="Gell-OSD2",
+    )
+
+    response = agent_client.post(
+        "/api/jobs/capture",
+        data={"vmid": "118", "vm_name": "Gell-OSD2", "group_tag": "CloudOSD"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    job_id = response.headers["location"].rsplit("/", 1)[-1]
+    job = jobs_pg.get_job(job_id)
+    assert job["job_type"] == "hash_capture"
+    joined_cmd = " ".join(job["cmd"])
+    assert "wait_agent_work_item.py" in joined_cmd
+    assert "retry_inject_hash.yml" not in joined_cmd
+    assert job["args"]["agent_id"] == "agent-gell-osd2"
+
+    work = agent_telemetry_pg.get_work_item(pg_conn, job["args"]["work_item_id"])
+    assert work["status"] == "pending"
+    assert work["kind"] == "capture_autopilot_hash"
+    assert work["request_json"]["group_tag"] == "CloudOSD"
+
+    next_response = agent_client.post(
+        "/api/agent/v1/work/next",
+        headers=_bearer(agent_token),
+        json={
+            "agent_id": "agent-gell-osd2",
+            "supported_kinds": ["capture_autopilot_hash"],
+        },
+    )
+    assert next_response.status_code == 200, next_response.text
+    item = next_response.json()["work_item"]
+    assert item["id"] == work["id"]
+    assert item["kind"] == "capture_autopilot_hash"
+    assert item["request"]["vmid"] == 118
+
+
+def test_agent_hash_persists_csv_and_completes_capture_work_item(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app, "HASH_DIR", tmp_path)
+    agent_token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-gell-osd3",
+        token="agent-gell-osd3-secret",
+        vmid=119,
+        computer_name="Gell-OSD3",
+    )
+    response = agent_client.post(
+        "/api/jobs/capture",
+        data={"vmid": "119", "vm_name": "Gell-OSD3", "group_tag": ""},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+
+    next_response = agent_client.post(
+        "/api/agent/v1/work/next",
+        headers=_bearer(agent_token),
+        json={
+            "agent_id": "agent-gell-osd3",
+            "supported_kinds": ["capture_autopilot_hash"],
+        },
+    )
+    assert next_response.status_code == 200, next_response.text
+    work_id = next_response.json()["work_item"]["id"]
+
+    hash_response = agent_client.post(
+        "/api/agent/v1/hash",
+        headers=_bearer(agent_token),
+        json={
+            "work_item_id": work_id,
+            "serial_number": "Gell-OSD3",
+            "product_id": "",
+            "hardware_hash": "hardware-hash-for-gell-osd3",
+        },
+    )
+
+    assert hash_response.status_code == 200, hash_response.text
+    body = hash_response.json()
+    assert body["ok"] is True
+    assert body["filename"].endswith("-vm119-Gell-OSD3-agent-v1_hwid.csv")
+
+    files = list(tmp_path.glob("*_hwid.csv"))
+    assert len(files) == 1
+    csv_text = files[0].read_text(encoding="utf-8")
+    assert "Device Serial Number,Windows Product ID,Hardware Hash" in csv_text
+    assert "Gell-OSD3,,hardware-hash-for-gell-osd3" in csv_text
+
+    work = agent_telemetry_pg.get_work_item(pg_conn, work_id)
+    assert work["status"] == "complete"
+    assert work["result_json"]["filename"] == body["filename"]
+    assert work["result_json"]["source"] == "agent-v1"
 
 
 def test_agent_token_revoke_blocks_heartbeat(agent_client, pg_conn):
