@@ -19,13 +19,29 @@
         paths: "{{ hash_output_dir }}"
         patterns: "*_hwid.csv"
       register: _hash_files
+      when: hash_file is not defined or (hash_file | string | length) == 0
+
+    - name: Check selected hash file
+      ansible.builtin.stat:
+        path: "{{ hash_file }}"
+      register: _selected_hash_file
+      when: hash_file is defined and (hash_file | string | length) > 0
 
     - name: Fail if no hash files found
       ansible.builtin.fail:
         msg: "No hardware hash CSV files found in {{ hash_output_dir }}"
-      when: _hash_files.matched == 0
+      when:
+        - hash_file is not defined or (hash_file | string | length) == 0
+        - _hash_files.matched == 0
 
-    - name: Upload all hashes to Autopilot
+    - name: Fail if selected hash file is missing
+      ansible.builtin.fail:
+        msg: "Selected hardware hash CSV file not found: {{ hash_file }}"
+      when:
+        - hash_file is defined and (hash_file | string | length) > 0
+        - not _selected_hash_file.stat.exists
+
+    - name: Upload hashes to Autopilot
       ansible.builtin.command:
         cmd: "pwsh -NonInteractive -File {{ playbook_dir }}/../scripts/upload_hashes.ps1"
       environment:
@@ -33,6 +49,8 @@
         ENTRA_TENANT_ID: "{{ vault_entra_tenant_id }}"
         ENTRA_APP_SECRET: "{{ vault_entra_app_secret }}"
         HASH_DIR: "{{ hash_output_dir }}"
+        HASH_FILE: "{{ hash_file | default('') }}"
+        GROUP_TAG: "{{ vm_group_tag | default('') }}"
       async: 1800
       poll: 10
       register: _upload_result

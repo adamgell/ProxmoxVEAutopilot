@@ -48,6 +48,32 @@ def test_autopilot_agent_claims_hash_capture_work_items():
     assert "TextFieldParser" in capture
 
 
+def test_hash_upload_playbook_preserves_selected_file_contract():
+    playbook = _read("autopilot-proxmox/playbooks/upload_hashes.yml")
+
+    assert "Check selected hash file" in playbook
+    assert "Fail if selected hash file is missing" in playbook
+    assert "hash_file is defined" in playbook
+    assert "HASH_FILE: \"{{ hash_file | default('') }}\"" in playbook
+    assert "GROUP_TAG: \"{{ vm_group_tag | default('') }}\"" in playbook
+    assert "Upload hashes to Autopilot" in playbook
+
+
+def test_hash_upload_script_uses_selected_file_and_cleans_temp_tagged_copy():
+    script = _read("autopilot-proxmox/scripts/upload_hashes.ps1")
+
+    assert "$hashFile  = $env:HASH_FILE" in script
+    assert "$groupTag  = $env:GROUP_TAG" in script
+    assert "Get-Item -LiteralPath $hashFile" in script
+    assert "Applying group tag override:" in script
+    assert script.count("function New-TaggedCsvCopy") == 1
+    assert "try {" in script
+    assert "finally {" in script
+    assert "Import-AutopilotCSV -csvFile $uploadPath" in script
+    assert "Disconnect-MgGraph | Out-Null" in script
+    assert "Remove-Item -LiteralPath $uploadPath -Force" in script
+
+
 def test_wix_installer_creates_delayed_auto_localsystem_service():
     wxs = _read("autopilot-agent/installer/AutopilotAgent.wxs")
 

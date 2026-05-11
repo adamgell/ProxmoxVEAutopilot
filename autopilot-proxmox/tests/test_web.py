@@ -143,6 +143,96 @@ def test_jobs_page_uses_live_jobs_websocket(client):
     assert 'topics: [\'jobs\']' in response.text
 
 
+def test_hash_upload_job_targets_selected_file_and_group_tag(client, tmp_dirs):
+    _, hash_dir = tmp_dirs
+    hash_file = Path(hash_dir) / "Gell-OSD2_hwid.csv"
+    hash_file.write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-OSD2,,HASH,\n",
+        encoding="utf-8",
+    )
+
+    from web.app import job_manager
+
+    started = []
+
+    def fake_start(kind, cmd, args=None):
+        started.append({"kind": kind, "cmd": cmd, "args": args or {}})
+        return {"id": "UPLOAD1"}
+
+    job_manager.start.side_effect = fake_start
+
+    response = client.post(
+        "/api/jobs/upload",
+        data={"files": "Gell-OSD2_hwid.csv", "group_tags": "GellNative"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/hashes?uploaded=1"
+    assert len(started) == 1
+    job = started[0]
+    assert job["kind"] == "upload_hash"
+    assert str(Path("playbooks") / "upload_hashes.yml") in " ".join(job["cmd"])
+    assert f"hash_file={hash_file.resolve()}" in job["cmd"]
+    assert "vm_group_tag=GellNative" in job["cmd"]
+    assert job["args"] == {"file": "Gell-OSD2_hwid.csv", "group_tag": "GellNative"}
+
+
+def test_capture_and_upload_uploads_completed_agent_hash_results(
+    client,
+    monkeypatch,
+):
+    from web import app as app_module
+    from web.app import job_manager
+
+    capture_requests = []
+
+    def fake_capture_job(vmid: int, vm_name: str, group_tag: str):
+        capture_requests.append({"vmid": vmid, "vm_name": vm_name, "group_tag": group_tag})
+        return {
+            "id": f"CAP{vmid}",
+            "args": {
+                "work_item_id": f"WORK{vmid}",
+            },
+        }
+
+    started = []
+
+    def fake_start(kind, cmd, args=None):
+        started.append({"kind": kind, "cmd": cmd, "args": args or {}})
+        return {"id": "UPLOAD-AFTER"}
+
+    monkeypatch.setattr(app_module, "_start_agent_hash_capture_job", fake_capture_job)
+    job_manager.start.side_effect = fake_start
+
+    response = client.post(
+        "/api/jobs/capture-and-upload",
+        data={
+            "missing_vmids": ["118:Gell-OSD2", "119:Gell-OSD3"],
+            "group_tag": "GellNative",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/jobs"
+    assert capture_requests == [
+        {"vmid": 118, "vm_name": "Gell-OSD2", "group_tag": "GellNative"},
+        {"vmid": 119, "vm_name": "Gell-OSD3", "group_tag": "GellNative"},
+    ]
+    assert len(started) == 1
+    assert started[0]["kind"] == "upload_after_capture"
+    script_path = Path(started[0]["cmd"][1])
+    script = script_path.read_text(encoding="utf-8")
+    assert "wait_agent_work_item.py" in script
+    assert "upload_agent_hash_results.py" in script
+    assert "--work-item WORK118" in script
+    assert "--work-item WORK119" in script
+    assert "--group-tag GellNative" in script
+    assert "=== All captures done, uploading captured hashes to Intune ===" in script
+
+
 def test_qga_recovery_script_download(client):
     response = client.get("/api/qga/recovery-script.ps1")
 

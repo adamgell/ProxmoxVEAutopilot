@@ -8,6 +8,8 @@ $appId     = $env:ENTRA_APP_ID
 $tenantId  = $env:ENTRA_TENANT_ID
 $appSecret = $env:ENTRA_APP_SECRET
 $hashDir   = $env:HASH_DIR
+$hashFile  = $env:HASH_FILE
+$groupTag  = $env:GROUP_TAG
 
 if (-not $appId -or -not $tenantId -or -not $appSecret) {
     throw "Missing Entra credentials. Set ENTRA_APP_ID, ENTRA_TENANT_ID, ENTRA_APP_SECRET."
@@ -17,34 +19,83 @@ if (-not $hashDir -or -not (Test-Path $hashDir)) {
     throw "Hash directory '$hashDir' not found."
 }
 
-$csvFiles = Get-ChildItem -Path $hashDir -Filter "*_hwid.csv"
+if ($hashFile) {
+    if (-not (Test-Path -LiteralPath $hashFile)) {
+        throw "Selected hash file '$hashFile' not found."
+    }
+    $csvFiles = @(Get-Item -LiteralPath $hashFile)
+} else {
+    $csvFiles = @(Get-ChildItem -Path $hashDir -Filter "*_hwid.csv")
+}
 if ($csvFiles.Count -eq 0) {
     Write-Host "No CSV files found in $hashDir"
     exit 0
 }
 
 Write-Host "Found $($csvFiles.Count) hash file(s) to upload in parallel"
+if ($hashFile) {
+    Write-Host "Selected hash file: $hashFile"
+}
+if ($groupTag) {
+    Write-Host "Applying group tag override: $groupTag"
+}
 
 # Launch a background job per CSV
 $jobs = @()
 foreach ($csv in $csvFiles) {
     Write-Host "Starting upload: $($csv.Name)"
     $job = Start-Job -ScriptBlock {
-        param($csvPath, $appId, $tenantId, $appSecret)
+        param($csvPath, $appId, $tenantId, $appSecret, $groupTag)
         $ErrorActionPreference = 'Stop'
         Import-Module Microsoft.Graph.Authentication
         Import-Module WindowsAutopilotIntune
-        $secret = ConvertTo-SecureString $appSecret -AsPlainText -Force
-        $credential = New-Object System.Management.Automation.PSCredential($appId, $secret)
-        Connect-MgGraph -TenantId $tenantId -ClientSecretCredential $credential -NoWelcome
-        $result = Import-AutopilotCSV -csvFile $csvPath
-        Disconnect-MgGraph | Out-Null
-        return @{
-            File = (Split-Path $csvPath -Leaf)
-            Success = $true
-            Result = ($result | Out-String)
+        function New-TaggedCsvCopy {
+            param(
+                [Parameter(Mandatory)] [string] $CsvPath,
+                [string] $Tag
+            )
+            if ([string]::IsNullOrWhiteSpace($Tag)) {
+                return $CsvPath
+            }
+            $rows = @(Import-Csv -LiteralPath $CsvPath)
+            if ($rows.Count -eq 0) {
+                throw "Hash CSV '$CsvPath' contains no data rows."
+            }
+            foreach ($row in $rows) {
+                if ($row.PSObject.Properties.Match('Group Tag').Count -eq 0) {
+                    $row | Add-Member -NotePropertyName 'Group Tag' -NotePropertyValue $Tag
+                } else {
+                    $row.'Group Tag' = $Tag
+                }
+            }
+            $tempName = [IO.Path]::GetFileNameWithoutExtension($CsvPath) + "-tagged-" + [guid]::NewGuid().ToString("N") + ".csv"
+            $tempPath = Join-Path ([IO.Path]::GetTempPath()) $tempName
+            $rows | Export-Csv -LiteralPath $tempPath -NoTypeInformation -Encoding UTF8
+            return $tempPath
         }
-    } -ArgumentList $csv.FullName, $appId, $tenantId, $appSecret
+        $uploadPath = $null
+        $connected = $false
+        try {
+            $uploadPath = New-TaggedCsvCopy -CsvPath $csvPath -Tag $groupTag
+            $secret = ConvertTo-SecureString $appSecret -AsPlainText -Force
+            $credential = New-Object System.Management.Automation.PSCredential($appId, $secret)
+            Connect-MgGraph -TenantId $tenantId -ClientSecretCredential $credential -NoWelcome
+            $connected = $true
+            $result = Import-AutopilotCSV -csvFile $uploadPath
+            return @{
+                File = (Split-Path $csvPath -Leaf)
+                Success = $true
+                Result = ($result | Out-String)
+            }
+        } finally {
+            if ($connected) {
+                Disconnect-MgGraph | Out-Null
+            }
+            if ($uploadPath -and $uploadPath -ne $csvPath -and (Test-Path -LiteralPath $uploadPath)) {
+                Remove-Item -LiteralPath $uploadPath -Force
+            }
+        }
+    } -ArgumentList $csv.FullName, $appId, $tenantId, $appSecret, $groupTag
     $jobs += $job
 }
 

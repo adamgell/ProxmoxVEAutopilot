@@ -5564,6 +5564,15 @@ async def start_capture_and_upload(
     import tempfile
     work_ids = [job["args"]["work_item_id"] for job in capture_jobs]
     wait_script = BASE_DIR / "scripts" / "wait_agent_work_item.py"
+    upload_results_script = BASE_DIR / "scripts" / "upload_agent_hash_results.py"
+    work_id_args = " ".join(f"--work-item {shlex.quote(str(work_id))}" for work_id in work_ids)
+    upload_args = [
+        f"--hash-dir {shlex.quote(str(HASH_DIR))}",
+        f"--playbook {shlex.quote(str(PLAYBOOK_DIR / 'upload_hashes.yml'))}",
+        work_id_args,
+    ]
+    if group_tag:
+        upload_args.append(f"--group-tag {shlex.quote(group_tag)}")
     script_lines = [
         "#!/bin/bash",
         "set -euo pipefail",
@@ -5571,9 +5580,12 @@ async def start_capture_and_upload(
         "python "
         + shlex.quote(str(wait_script))
         + " --timeout 1800 "
-        + " ".join(f"--work-item {shlex.quote(str(work_id))}" for work_id in work_ids),
-        "echo '=== All captures done, uploading hashes to Intune ==='",
-        f"ansible-playbook {shlex.quote(str(PLAYBOOK_DIR / 'upload_hashes.yml'))}",
+        + work_id_args,
+        "echo '=== All captures done, uploading captured hashes to Intune ==='",
+        "python "
+        + shlex.quote(str(upload_results_script))
+        + " "
+        + " ".join(upload_args),
     ]
     fd, script_file = tempfile.mkstemp(suffix=".sh", dir=str(BASE_DIR / "jobs"))
     os.close(fd)
@@ -5638,8 +5650,6 @@ async def start_upload(
     group_tags: list[str] = Form(...),
 ):
     """Upload selected hash files to Intune with per-file group tags."""
-    upload_playbook = shlex.quote(str(PLAYBOOK_DIR / "upload_hashes.yml"))
-
     for filename, tag in zip(files, group_tags):
         try:
             file_path = _safe_path(HASH_DIR, filename)
@@ -5654,7 +5664,7 @@ async def start_upload(
         if tag:
             tag = _sanitize_input(tag)
             cmd += ["-e", f"vm_group_tag={tag}"]
-        cmd += ["-e", f"hash_file={shlex.quote(str(file_path))}"]
+        cmd += ["-e", f"hash_file={file_path}"]
 
         job_manager.start("upload_hash", cmd, args={"file": filename, "group_tag": tag})
 
