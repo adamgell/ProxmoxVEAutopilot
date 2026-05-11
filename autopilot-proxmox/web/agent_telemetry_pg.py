@@ -307,6 +307,103 @@ def revoke_agent(conn: Connection, agent_id: str) -> None:
     _commit(conn)
 
 
+def upsert_manual_agent(
+    conn: Connection,
+    *,
+    agent_id: str,
+    vmid: Optional[int] = None,
+    computer_name: Optional[str] = None,
+    serial_number: Optional[str] = None,
+    agent_version: Optional[str] = None,
+    created_from_run_id: Optional[str] = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO agent_devices (
+            agent_id, token_hash, vmid, serial_number, computer_name,
+            agent_version, created_from_run_id, revoked, created_at,
+            first_seen_at, last_seen_at, token_rotated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s, %s)
+        ON CONFLICT (agent_id) DO UPDATE SET
+            vmid = EXCLUDED.vmid,
+            serial_number = EXCLUDED.serial_number,
+            computer_name = EXCLUDED.computer_name,
+            agent_version = EXCLUDED.agent_version,
+            created_from_run_id = EXCLUDED.created_from_run_id,
+            revoked = false,
+            last_seen_at = EXCLUDED.last_seen_at
+        RETURNING *
+        """,
+        (
+            agent_id,
+            hash_token(new_agent_token()),
+            vmid,
+            serial_number,
+            computer_name,
+            agent_version,
+            _uuid_or_none(created_from_run_id),
+            now,
+            now,
+            now,
+            now,
+        ),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row)
+
+
+def update_agent_metadata(
+    conn: Connection,
+    *,
+    agent_id: str,
+    vmid: Optional[int] = None,
+    computer_name: Optional[str] = None,
+    serial_number: Optional[str] = None,
+    agent_version: Optional[str] = None,
+    created_from_run_id: Optional[str] = None,
+) -> dict | None:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE agent_devices
+        SET vmid = %s,
+            computer_name = %s,
+            serial_number = %s,
+            agent_version = %s,
+            created_from_run_id = %s,
+            last_seen_at = %s
+        WHERE agent_id = %s
+        RETURNING *
+        """,
+        (
+            vmid,
+            computer_name,
+            serial_number,
+            agent_version,
+            _uuid_or_none(created_from_run_id),
+            now,
+            agent_id,
+        ),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row) if row else None
+
+
+def hard_delete_agent(conn: Connection, agent_id: str) -> bool:
+    conn.execute(
+        "DELETE FROM agent_bootstrap_approvals WHERE agent_id = %s",
+        (agent_id,),
+    )
+    row = conn.execute(
+        "DELETE FROM agent_devices WHERE agent_id = %s RETURNING agent_id",
+        (agent_id,),
+    ).fetchone()
+    _commit(conn)
+    return row is not None
+
+
 def create_bootstrap_approval(
     conn: Connection,
     *,

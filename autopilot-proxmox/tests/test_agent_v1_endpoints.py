@@ -412,6 +412,166 @@ def test_vms_agent_inventory_shows_pending_approved_and_active_states(agent_clie
     assert rows["agent-ui-active"]["last_heartbeat_at"]
 
 
+def test_agent_admin_create_and_update_metadata(agent_client, pg_conn):
+    from web import agent_telemetry_pg
+    from web import app as app_module
+
+    create = agent_client.post(
+        "/api/agents",
+        data={
+            "agent_id": "agent-admin-crud",
+            "vmid": "121",
+            "computer_name": "GELL-CRUD",
+            "serial_number": "GELL-CRUD-SERIAL",
+            "agent_version": "0.1.1",
+        },
+        follow_redirects=False,
+    )
+    assert create.status_code == 303, create.text
+
+    device = agent_telemetry_pg.get_device(pg_conn, "agent-admin-crud")
+    original_token_hash = device["token_hash"]
+    assert device["vmid"] == 121
+    assert device["computer_name"] == "GELL-CRUD"
+    assert device["serial_number"] == "GELL-CRUD-SERIAL"
+    assert device["agent_version"] == "0.1.1"
+
+    update = agent_client.post(
+        "/api/agents/agent-admin-crud/update",
+        data={
+            "vmid": "122",
+            "computer_name": "GELL-CRUD-UPDATED",
+            "serial_number": "GELL-CRUD-SERIAL-2",
+            "agent_version": "0.1.2",
+        },
+        follow_redirects=False,
+    )
+    assert update.status_code == 303, update.text
+
+    updated = agent_telemetry_pg.get_device(pg_conn, "agent-admin-crud")
+    assert updated["token_hash"] == original_token_hash
+    assert updated["vmid"] == 122
+    assert updated["computer_name"] == "GELL-CRUD-UPDATED"
+    assert updated["serial_number"] == "GELL-CRUD-SERIAL-2"
+    assert updated["agent_version"] == "0.1.2"
+
+    rows = {row["agent_id"]: row for row in app_module._agent_inventory_rows()}
+    assert rows["agent-admin-crud"]["vmid"] == 122
+    assert rows["agent-admin-crud"]["computer_name"] == "GELL-CRUD-UPDATED"
+
+
+def test_agent_admin_hard_delete_removes_local_agent_state(agent_client, pg_conn):
+    from web import agent_telemetry_pg
+
+    create = agent_client.post(
+        "/api/agents",
+        data={
+            "agent_id": "agent-delete-crud",
+            "vmid": "123",
+            "computer_name": "GELL-DELETE",
+            "serial_number": "GELL-DELETE",
+            "agent_version": "0.1.1",
+        },
+        follow_redirects=False,
+    )
+    assert create.status_code == 303, create.text
+
+    agent_telemetry_pg.record_heartbeat(
+        pg_conn,
+        agent_id="agent-delete-crud",
+        payload={
+            "vmid": 123,
+            "computer_name": "GELL-DELETE",
+            "serial_number": "GELL-DELETE",
+            "agent_version": "0.1.1",
+        },
+    )
+    agent_telemetry_pg.record_event(
+        pg_conn,
+        agent_id="agent-delete-crud",
+        payload={
+            "severity": "info",
+            "event_type": "test",
+            "message": "delete cascade",
+        },
+    )
+    agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="agent-delete-crud",
+        kind="capture_autopilot_hash",
+        request={"group_tag": "DeleteTest"},
+        vmid=123,
+    )
+    approval = agent_telemetry_pg.create_bootstrap_approval(
+        pg_conn,
+        bootstrap_token="delete-bootstrap",
+        agent_id="agent-delete-crud",
+        computer_name="GELL-DELETE",
+    )
+
+    delete = agent_client.post(
+        "/api/agents/agent-delete-crud/delete",
+        follow_redirects=False,
+    )
+
+    assert delete.status_code == 303, delete.text
+    assert agent_telemetry_pg.get_device(pg_conn, "agent-delete-crud") is None
+    assert agent_telemetry_pg.get_bootstrap_approval(pg_conn, approval["approval_id"]) is None
+    assert pg_conn.execute(
+        "SELECT count(*) FROM agent_heartbeats WHERE agent_id = %s",
+        ("agent-delete-crud",),
+    ).fetchone()["count"] == 0
+    assert pg_conn.execute(
+        "SELECT count(*) FROM agent_events WHERE agent_id = %s",
+        ("agent-delete-crud",),
+    ).fetchone()["count"] == 0
+    assert pg_conn.execute(
+        "SELECT count(*) FROM agent_work_items WHERE agent_id = %s",
+        ("agent-delete-crud",),
+    ).fetchone()["count"] == 0
+
+
+def test_agent_admin_delete_missing_returns_operator_error(agent_client):
+    response = agent_client.post(
+        "/api/agents/missing-agent/delete",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"].startswith("/vms?error=")
+
+
+def test_vms_agent_inventory_renders_hard_delete_crud_controls(agent_client, pg_conn):
+    from web import agent_telemetry_pg
+    from web import app as app_module
+
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-ui-crud",
+        token="ui-crud-secret",
+        vmid=124,
+        computer_name="GELL-UI-CRUD",
+        serial_number="GELL-UI-CRUD",
+        agent_version="0.1.1",
+    )
+    app_module._VMS_CACHE.update({
+        "data": [],
+        "devices": ([], ""),
+        "hash_serials": set(),
+        "fetched_at": app_module.time.monotonic(),
+        "refreshing": False,
+    })
+
+    response = agent_client.get("/vms")
+
+    assert response.status_code == 200
+    assert 'action="/api/agents"' in response.text
+    assert 'name="agent_id"' in response.text
+    assert 'action="/api/agents/agent-ui-crud/update"' in response.text
+    assert 'action="/api/agents/agent-ui-crud/delete"' in response.text
+    assert "confirm(" not in response.text.partition('action="/api/agents/agent-ui-crud/delete"')[2].split("</form>", 1)[0]
+
+
 def test_agent_heartbeat_updates_latest_telemetry(agent_client, pg_conn):
     from web import agent_telemetry_pg, winpe_token
 

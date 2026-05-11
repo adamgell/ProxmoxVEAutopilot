@@ -3696,6 +3696,121 @@ async def live_screenshot(screenshot_id: str):
     )
 
 
+def _optional_agent_int(value) -> int | None:
+    text = _optional_text(value)
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid VMID: {value!r}")
+    if parsed <= 0:
+        raise ValueError(f"Invalid VMID: {value!r}")
+    return parsed
+
+
+def _agent_metadata_form(
+    *,
+    agent_id: str,
+    vmid,
+    computer_name: str,
+    serial_number: str,
+    agent_version: str,
+    created_from_run_id: str = "",
+) -> dict:
+    agent_id = _sanitize_input(_optional_text(agent_id))
+    if not agent_id:
+        raise ValueError("agent_id is required")
+    values = {
+        "agent_id": agent_id,
+        "vmid": _optional_agent_int(vmid),
+        "computer_name": _optional_text(computer_name),
+        "serial_number": _optional_text(serial_number),
+        "agent_version": _optional_text(agent_version),
+        "created_from_run_id": _optional_text(created_from_run_id) or None,
+    }
+    for key in ("computer_name", "serial_number", "agent_version"):
+        if values[key]:
+            values[key] = _sanitize_input(values[key])
+    return values
+
+
+@app.post("/api/agents")
+async def create_agent_record(
+    agent_id: str = Form(...),
+    vmid: str = Form(""),
+    computer_name: str = Form(""),
+    serial_number: str = Form(""),
+    agent_version: str = Form(""),
+    created_from_run_id: str = Form(""),
+):
+    try:
+        values = _agent_metadata_form(
+            agent_id=agent_id,
+            vmid=vmid,
+            computer_name=computer_name,
+            serial_number=serial_number,
+            agent_version=agent_version,
+            created_from_run_id=created_from_run_id,
+        )
+        from web import db_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            agent_telemetry_pg.upsert_manual_agent(conn, **values)
+    except Exception as exc:
+        return _redirect_with_error("/vms", f"Create agent failed: {exc}")
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/agents/{agent_id}/update")
+async def update_agent_record(
+    agent_id: str,
+    vmid: str = Form(""),
+    computer_name: str = Form(""),
+    serial_number: str = Form(""),
+    agent_version: str = Form(""),
+    created_from_run_id: str = Form(""),
+):
+    try:
+        values = _agent_metadata_form(
+            agent_id=agent_id,
+            vmid=vmid,
+            computer_name=computer_name,
+            serial_number=serial_number,
+            agent_version=agent_version,
+            created_from_run_id=created_from_run_id,
+        )
+        from web import db_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            updated = agent_telemetry_pg.update_agent_metadata(conn, **values)
+        if updated is None:
+            return _redirect_with_error("/vms", f"Agent not found: {values['agent_id']}")
+    except Exception as exc:
+        return _redirect_with_error("/vms", f"Update agent failed: {exc}")
+    return RedirectResponse("/vms", status_code=303)
+
+
+@app.post("/api/agents/{agent_id}/delete")
+async def delete_agent_record(agent_id: str):
+    try:
+        agent_id = _sanitize_input(_optional_text(agent_id))
+        if not agent_id:
+            raise ValueError("agent_id is required")
+        from web import db_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            deleted = agent_telemetry_pg.hard_delete_agent(conn, agent_id)
+        if not deleted:
+            return _redirect_with_error("/vms", f"Agent not found: {agent_id}")
+    except Exception as exc:
+        return _redirect_with_error("/vms", f"Delete agent failed: {exc}")
+    return RedirectResponse("/vms", status_code=303)
+
+
 @app.post("/api/agent-approvals/{approval_id}/approve")
 async def approve_agent_bootstrap(approval_id: str, request: Request):
     agent_token = None

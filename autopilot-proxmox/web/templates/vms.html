@@ -268,6 +268,29 @@ async function refreshVms() {
       <div class="subtitle">Persistent agent heartbeats from Windows clients and OSD continuations.</div>
     </div>
   </div>
+  <form method="POST" action="/api/agents" style="display:grid;grid-template-columns:minmax(180px,1.3fr) 90px minmax(150px,1fr) minmax(150px,1fr) 100px auto;gap:8px;align-items:end;margin:0 0 14px 0;">
+    <label style="display:grid;gap:4px;">
+      <span class="cockpit-metric-label">Agent ID</span>
+      <input type="text" name="agent_id" placeholder="agent-example" required>
+    </label>
+    <label style="display:grid;gap:4px;">
+      <span class="cockpit-metric-label">VMID</span>
+      <input type="number" name="vmid" min="1" placeholder="optional">
+    </label>
+    <label style="display:grid;gap:4px;">
+      <span class="cockpit-metric-label">Computer</span>
+      <input type="text" name="computer_name" placeholder="optional">
+    </label>
+    <label style="display:grid;gap:4px;">
+      <span class="cockpit-metric-label">Serial</span>
+      <input type="text" name="serial_number" placeholder="optional">
+    </label>
+    <label style="display:grid;gap:4px;">
+      <span class="cockpit-metric-label">Version</span>
+      <input type="text" name="agent_version" placeholder="0.1.1">
+    </label>
+    <button type="submit" class="action-btn">Add agent</button>
+  </form>
   <div id="agent-inventory-empty" {% if agent_devices %}style="display:none;"{% endif %}>
     {{ empty_state("No AutopilotAgent heartbeats yet.", hint="Installed agents appear here after bootstrap and first heartbeat.") }}
   </div>
@@ -285,6 +308,7 @@ async function refreshVms() {
         <th>Agent state</th>
         <th>Last heartbeat</th>
         <th>Approval</th>
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody id="agent-inventory-body">
@@ -335,6 +359,21 @@ async function refreshVms() {
           {% if agent.approval_status == 'pending' and agent.approval_id %}
           <button type="button" class="action-btn" data-agent-approve="{{ agent.approval_id }}">Approve</button>
           {% else %}—{% endif %}
+        </td>
+        <td data-agent-field="actions">
+          <details>
+            <summary class="action-btn" style="display:inline-block;cursor:pointer;">Edit</summary>
+            <form method="POST" action="/api/agents/{{ agent.agent_id }}/update" style="display:grid;gap:6px;margin-top:8px;min-width:180px;">
+              <input type="number" name="vmid" min="1" placeholder="VMID" value="{{ agent.vmid or '' }}">
+              <input type="text" name="computer_name" placeholder="Computer" value="{{ agent.computer_name or '' }}">
+              <input type="text" name="serial_number" placeholder="Serial" value="{{ agent.serial_number or '' }}">
+              <input type="text" name="agent_version" placeholder="Version" value="{{ agent.agent_version or '' }}">
+              <button type="submit" class="action-btn">Save</button>
+            </form>
+          </details>
+          <form method="POST" action="/api/agents/{{ agent.agent_id }}/delete" style="display:inline;">
+            <button type="submit" class="action-btn-delete">Delete</button>
+          </form>
         </td>
       </tr>
       {% endfor %}
@@ -596,6 +635,23 @@ function renderAgentApproval(agent) {
   return '—';
 }
 
+function renderAgentActions(agent) {
+  var id = _htmlEsc(agent.agent_id || '');
+  return '<details>'
+    + '<summary class="action-btn" style="display:inline-block;cursor:pointer;">Edit</summary>'
+    + '<form method="POST" action="/api/agents/' + id + '/update" style="display:grid;gap:6px;margin-top:8px;min-width:180px;">'
+    + '<input type="number" name="vmid" min="1" placeholder="VMID" value="' + _htmlEsc(agent.vmid || '') + '">'
+    + '<input type="text" name="computer_name" placeholder="Computer" value="' + _htmlEsc(agent.computer_name || '') + '">'
+    + '<input type="text" name="serial_number" placeholder="Serial" value="' + _htmlEsc(agent.serial_number || '') + '">'
+    + '<input type="text" name="agent_version" placeholder="Version" value="' + _htmlEsc(agent.agent_version || '') + '">'
+    + '<button type="submit" class="action-btn">Save</button>'
+    + '</form>'
+    + '</details>'
+    + '<form method="POST" action="/api/agents/' + id + '/delete" style="display:inline;">'
+    + '<button type="submit" class="action-btn-delete">Delete</button>'
+    + '</form>';
+}
+
 function userTimeZoneLabel() {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local timezone';
@@ -640,7 +696,8 @@ function patchAgentInventory(agent) {
       + '<td data-agent-field="phase"></td>'
       + '<td data-agent-field="state"></td>'
       + '<td data-agent-field="heartbeat"></td>'
-      + '<td data-agent-field="approval"></td>';
+      + '<td data-agent-field="approval"></td>'
+      + '<td data-agent-field="actions"></td>';
     tr.querySelector('code').textContent = agent.agent_id;
     body.prepend(tr);
   }
@@ -661,6 +718,7 @@ function patchAgentInventory(agent) {
   tr.querySelector('[data-agent-field="state"]').innerHTML = renderAgentState(agent);
   tr.querySelector('[data-agent-field="heartbeat"]').innerHTML = renderAgentHeartbeat(agent.last_heartbeat_at);
   tr.querySelector('[data-agent-field="approval"]').innerHTML = renderAgentApproval(agent);
+  tr.querySelector('[data-agent-field="actions"]').innerHTML = renderAgentActions(agent);
   updateAgentHeartbeatZones(tr);
 }
 
