@@ -2,6 +2,10 @@
 # Orchestrator: clone a VM from a Proxmox template and reconfigure it.
 # Mirrors New-ProxmoxCloneDevice.ps1 logic.
 
+- name: Capture requested VM display name
+  ansible.builtin.set_fact:
+    _requested_vm_name: "{{ vm_name | default('') | trim }}"
+
 - name: Get next available VMID
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/cluster/nextid"
@@ -10,11 +14,25 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
   register: _nextid_result
+  when: requested_vmid is not defined or (requested_vmid | string | length) == 0
 
-- name: Set VM ID and name
+- name: Set VM ID and name from requested VMID
+  ansible.builtin.set_fact:
+    vm_vmid: "{{ requested_vmid | int }}"
+    vm_name: >-
+      {{ _requested_vm_name
+         if (_requested_vm_name | length) > 0
+         else vm_name_prefix ~ '-' ~ (requested_vmid | int) }}
+  when: requested_vmid is defined and (requested_vmid | string | length) > 0
+
+- name: Set VM ID and name from next available VMID
   ansible.builtin.set_fact:
     vm_vmid: "{{ _nextid_result.json.data }}"
-    vm_name: "{{ vm_name_prefix }}-{{ _nextid_result.json.data }}"
+    vm_name: >-
+      {{ _requested_vm_name
+         if (_requested_vm_name | length) > 0
+         else vm_name_prefix ~ '-' ~ _nextid_result.json.data }}
+  when: requested_vmid is not defined or (requested_vmid | string | length) == 0
 
 - name: Load OEM profile + compute identity
   ansible.builtin.include_role:
@@ -22,7 +40,9 @@
 
 - name: Update VM name to serial
   ansible.builtin.set_fact:
-    vm_name: "{{ _vm_serial | regex_replace('[^A-Za-z0-9\\-]', '') }}"
+    vm_name: >-
+      {{ (_requested_vm_name if (_requested_vm_name | length) > 0 else _vm_serial)
+         | regex_replace('[^A-Za-z0-9\\-]', '') }}
   when: _vm_serial is defined and _vm_serial | length > 0
 
 # Resolve effective chassis type in two steps so we never reference

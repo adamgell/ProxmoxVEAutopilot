@@ -993,6 +993,90 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             assert run["source_surface"] == "provision"
 
 
+def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+
+    def fake_proxmox_api(path, *args, **kwargs):
+        values = {
+            "/cluster/nextid": 120,
+            "/cluster/resources?type=vm": [{"vmid": 100}, {"vmid": 119}],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+        }
+        if path not in values:
+            raise RuntimeError(path)
+        return values[path]
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "dell-latitude-3550",
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "group_tag": "GellNative",
+            "hostname_pattern": "Gell-{VMID}-{SERIAL}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    jobs = [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ]
+    assert len(jobs) == 1
+    args = jobs[0]["args"]
+    assert args["requested_vmid"] == 120
+    assert args["vm_custom_serial"].startswith("SVC-")
+    assert args["vm_name"].startswith("Gell-120-SVC-")
+    assert args["vm_name"].endswith(args["vm_custom_serial"])
+    runs = cloudosd_pg.list_runs(pg_conn, limit=10)
+    run = next(row for row in runs if row["run_id"] == args["cloudosd_run_id"])
+    assert run["requested_vmid"] == 120
+    assert run["requested_vm_name"] == args["vm_name"]
+    assert run["vm_oem_profile"] == "dell-latitude-3550"
+
+
 def test_provision_cloudosd_rejects_low_ram_before_enqueue(
     cloudosd_client,
     pg_conn,

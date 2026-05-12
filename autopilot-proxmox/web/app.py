@@ -4142,16 +4142,77 @@ def _form_flag(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _cloudosd_serial_prefix_for_profile(profile: str) -> str:
+    try:
+        manufacturer = (load_oem_profiles().get(profile) or {}).get("manufacturer", "")
+    except Exception:
+        manufacturer = ""
+    if manufacturer.startswith("Lenovo"):
+        return "PF"
+    if manufacturer.startswith("Dell"):
+        return "SVC"
+    if manufacturer.startswith("HP"):
+        return "CZC"
+    if manufacturer.startswith("Microsoft"):
+        return "MSF"
+    return "LAB"
+
+
+def _cloudosd_generate_serial(*, profile: str, serial_prefix: str) -> str:
+    prefix = (serial_prefix or "").strip().rstrip("-")
+    if not prefix:
+        prefix = _cloudosd_serial_prefix_for_profile(profile)
+    prefix = re.sub(r"[^A-Za-z0-9-]", "", prefix).strip("-") or "LAB"
+    return f"{prefix}-{uuid4().hex[:8].upper()}"
+
+
+def _cloudosd_pattern_has_token(pattern: str, token: str) -> bool:
+    return re.search(r"\{" + re.escape(token) + r"\}", pattern or "", re.IGNORECASE) is not None
+
+
+def _cloudosd_candidate_vmids(count: int) -> list[int]:
+    first = int(_proxmox_api("/cluster/nextid"))
+    used: set[int] = set()
+    try:
+        for row in _proxmox_api("/cluster/resources?type=vm") or []:
+            if row.get("vmid") is not None:
+                used.add(int(row["vmid"]))
+    except Exception:
+        # /cluster/nextid is the authoritative first free ID. If the
+        # broader resource read is unavailable, sequential candidates
+        # still cover the single-run path and keep the operator moving.
+        used = set()
+    vmids: list[int] = []
+    candidate = first
+    while len(vmids) < count:
+        if candidate not in used:
+            vmids.append(candidate)
+            used.add(candidate)
+        candidate += 1
+    return vmids
+
+
+def _replace_cloudosd_token(pattern: str, token: str, value: str) -> str:
+    return re.sub(
+        r"\{" + re.escape(token) + r"\}",
+        value,
+        pattern,
+        flags=re.IGNORECASE,
+    )
+
+
 def _cloudosd_batch_names(
     *,
+    profile: str = "",
     hostname_pattern: str,
     count: int,
     serial_prefix: str,
-) -> list[str]:
+) -> list[dict]:
     pattern = (hostname_pattern or "").strip() or "cloudosd-{index}"
     placeholders = set(re.findall(r"\{[^{}]*\}", pattern))
     allowed_placeholders = {"{index}", "{serial}", "{vmid}"}
-    invalid_placeholders = sorted(placeholders - allowed_placeholders)
+    normalized_placeholders = {placeholder.lower() for placeholder in placeholders}
+    invalid_placeholders = sorted(normalized_placeholders - allowed_placeholders)
     pattern_without_tokens = re.sub(r"\{[^{}]*\}", "", pattern)
     if (
         invalid_placeholders
@@ -4165,18 +4226,28 @@ def _cloudosd_batch_names(
                 "Use only {index}, {serial}, and {vmid}."
             ),
         )
-    if count > 1 and "{index}" not in pattern and "{serial}" not in pattern:
+    uses_index = _cloudosd_pattern_has_token(pattern, "index")
+    uses_serial = _cloudosd_pattern_has_token(pattern, "serial")
+    uses_vmid = _cloudosd_pattern_has_token(pattern, "vmid")
+    if count > 1 and not (uses_index or uses_serial or uses_vmid):
         pattern = f"{pattern}-{{index}}"
-    serial_base = (serial_prefix or "CLOUDOSD").strip("-") or "CLOUDOSD"
-    names: list[str] = []
+        uses_index = True
+    requested_vmids = _cloudosd_candidate_vmids(count) if uses_vmid else [None] * count
+    plans: list[dict] = []
     for index in range(1, count + 1):
-        serial = f"{serial_base}-{uuid4().hex[:8].upper()}"
-        name = (
-            pattern
-            .replace("{index}", f"{index:02d}")
-            .replace("{serial}", serial)
-            .replace("{vmid}", f"{index:02d}")
+        serial = _cloudosd_generate_serial(
+            profile=profile,
+            serial_prefix=serial_prefix,
         )
+        requested_vmid = requested_vmids[index - 1]
+        name = pattern
+        name = _replace_cloudosd_token(name, "index", f"{index:02d}")
+        name = _replace_cloudosd_token(
+            name,
+            "vmid",
+            str(requested_vmid) if requested_vmid is not None else f"{index:02d}",
+        )
+        name = _replace_cloudosd_token(name, "serial", serial)
         if not name.strip():
             raise HTTPException(status_code=400, detail="CloudOSD VM name is empty")
         name = name.strip()
@@ -4189,13 +4260,18 @@ def _cloudosd_batch_names(
                     "the name cannot start or end with a hyphen."
                 ),
             )
-        names.append(name)
+        plans.append({
+            "name": name,
+            "serial": serial,
+            "requested_vmid": requested_vmid,
+        })
+    names = [plan["name"] for plan in plans]
     if len({name.lower() for name in names}) != len(names):
         raise HTTPException(
             status_code=400,
             detail="CloudOSD hostname pattern produced duplicate VM names",
         )
-    return names
+    return plans
 
 
 def _cloudosd_root_ticket_for_batch(
@@ -4277,14 +4353,16 @@ def _start_cloudosd_provision_batch(
             detail=f"CloudOSD VMs need at least {cloudosd_pg.MIN_VM_DISK_SIZE_GB} GB disk",
         )
 
-    names = _cloudosd_batch_names(
+    batch_plan = _cloudosd_batch_names(
+        profile=profile,
         hostname_pattern=hostname_pattern,
         count=count,
         serial_prefix=serial_prefix,
     )
     source_sequence_id = int(sequence_id) if sequence_id else None
     bodies: list[cloudosd_endpoints.RunCreateBody] = []
-    for name in names:
+    for plan in batch_plan:
+        name = plan["name"]
         bodies.append(cloudosd_endpoints.RunCreateBody(
             artifact_id=artifact_id,
             vm_name=name,
@@ -4292,6 +4370,7 @@ def _start_cloudosd_provision_batch(
             iso_storage=iso_storage or None,
             storage=storage or None,
             network_bridge=network_bridge or None,
+            vmid=plan["requested_vmid"],
             architecture=cloudosd_pg.DEFAULT_ARCHITECTURE,
             os_version=os_version or cloudosd_pg.DEFAULT_OS_VERSION,
             os_activation=os_activation or cloudosd_pg.DEFAULT_OS_ACTIVATION,
@@ -4337,7 +4416,7 @@ def _start_cloudosd_provision_batch(
     run_ids = []
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
-        for body, preflight in zip(bodies, preflights):
+        for idx, (body, preflight) in enumerate(zip(bodies, preflights)):
             target = preflight["target"]
             artifact = cloudosd_pg.get_artifact(conn, body.artifact_id)
             if not artifact:
@@ -4369,6 +4448,7 @@ def _start_cloudosd_provision_batch(
                     chassis_type_override=body.chassis_type_override,
                     source_surface="provision",
                     source_sequence_id=source_sequence_id,
+                    requested_vmid=batch_plan[idx]["requested_vmid"],
                     tpm_enabled=body.tpm_enabled,
                     secure_boot=body.secure_boot,
                     firmware_updates_enabled=body.firmware_updates_enabled,
@@ -4388,6 +4468,7 @@ def _start_cloudosd_provision_batch(
             )
             if serial_prefix:
                 extra_vars["vm_serial_prefix"] = serial_prefix
+            extra_vars["vm_custom_serial"] = batch_plan[idx]["serial"]
             if source_sequence_id:
                 extra_vars["source_sequence_id"] = source_sequence_id
             cmd = [
