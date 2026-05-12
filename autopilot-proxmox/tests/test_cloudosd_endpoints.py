@@ -931,12 +931,6 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             "vault_proxmox_root_password": "fake-root-pw",
         },
     )
-    monkeypatch.setattr(
-        web_app,
-        "_proxmox_root_ticket_fetch",
-        lambda cfg: ("PVE:root@pam:FAKETICKET", "csrf-value"),
-    )
-
     response = cloudosd_client.post(
         "/api/jobs/provision",
         data={
@@ -985,8 +979,8 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
         assert args["vm_group_tag"] == "GellNative"
         assert args["vm_oem_profile"] == "lenovo-t14"
         assert args["chassis_type_override"] == 31
-        assert args["_proxmox_root_ticket"] == "PVE:root@pam:FAKETICKET"
-        assert args["_proxmox_root_csrf_token"] == "csrf-value"
+        assert "_proxmox_root_ticket" not in args
+        assert "_proxmox_root_csrf_token" not in args
         assert "_skip_chassis_type_smbios_file" not in args
 
     runs = cloudosd_pg.list_runs(pg_conn, limit=10)
@@ -1034,7 +1028,7 @@ def test_provision_cloudosd_rejects_low_ram_before_enqueue(
     ] == []
 
 
-def test_provision_cloudosd_chassis_requires_root_ticket(
+def test_provision_cloudosd_chassis_requires_root_ssh(
     cloudosd_client,
     pg_conn,
     monkeypatch,
@@ -1073,7 +1067,9 @@ def test_provision_cloudosd_chassis_requires_root_ticket(
     )
 
     assert response.status_code == 400
-    assert "vault_proxmox_root_password" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "Proxmox root SSH" in detail
+    assert "Proxmox Permission Bootstrap" in detail
 
 
 def test_cloudosd_static_first_boot_assets_are_served(cloudosd_client):

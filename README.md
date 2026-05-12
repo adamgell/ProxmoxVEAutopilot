@@ -52,14 +52,7 @@ pveum user token add autopilot@pve ansible --privsep=0 --comment "Automation"
 
 > **Save the token secret — Proxmox shows it once.** If you lose it, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#lost-my-api-token-secret).
 
-Then grant the role on your storage and SDN zone (adjust names for your environment):
-
-```bash
-pveum acl modify / -user autopilot@pve -role AutopilotProvisioner
-pveum acl modify /storage/ssdpool -user autopilot@pve -role AutopilotProvisioner
-pveum acl modify /storage/isos -user autopilot@pve -role AutopilotProvisioner
-pveum acl modify /sdn/zones/localnetwork -user autopilot@pve -role AutopilotProvisioner
-```
+Then sign in to the website with Entra and run **Settings -> Proxmox Permission Bootstrap**. That SSH-backed action repairs the role/ACLs for the configured token, enables snippet storage, seeds chassis SMBIOS binaries, and stores the validated root SSH credential needed for CloudOSD/OEM chassis profiles. You can still run the manual ACL commands from [docs/SETUP.md](docs/SETUP.md#1-create-a-proxmox-api-token), but the UI bootstrap is the preferred path.
 
 Full breakdown, including how to find your storage and SDN names: [docs/SETUP.md](docs/SETUP.md#1-create-a-proxmox-api-token).
 

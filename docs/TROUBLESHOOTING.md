@@ -223,11 +223,11 @@ With no arguments, the script writes a common set (desktop, laptop, mini-PC, con
 Status code was 500 and not [200]: HTTP Error 500: only root can set 'args' config
 ```
 
-**Cause:** Proxmox hardcodes the VM `args:` config field to `root@pam` in `PVE::API2::Qemu::check_vm_modify_config_perm`. The chassis-type override feature uses `args:` to pass `-smbios file=<path>` to QEMU, so it needs a `root@pam` API token for that one PUT. Your scoped `autopilot@pve!ansible` token can't cover it regardless of role.
+**Cause:** Proxmox hardcodes the VM `args:` config field to root in `PVE::API2::Qemu::check_vm_modify_config_perm`. The chassis-type override feature uses `args:` to pass `-smbios file=<path>` to QEMU, so the normal scoped `autopilot@pve!ansible` API token cannot cover it regardless of role.
 
-**Fix:** create a `root@pam` API token, add it to `vault.yml`, and restart the container. Full steps in [SETUP.md §5b](SETUP.md#5b-enable-chassis-type-overrides-optional).
+**Fix:** open **Settings -> Proxmox Permission Bootstrap** and apply the SSH bootstrap. The app repairs role/ACL/snippet permissions, seeds chassis SMBIOS binaries, and stores the root SSH credential used by the role to run `qm set ... --args`. Full steps in [SETUP.md §5b](SETUP.md#5b-enable-chassis-type-overrides-optional).
 
-In newer builds, requesting a chassis override without the root token configured returns a 400 from the UI **before** the job starts, with the exact remediation commands in the error body. If you're seeing this message mid-run, you're on an older image — `docker compose pull && docker compose up -d` to get the preflight.
+In newer builds, requesting a chassis override without the root SSH credential configured returns a 400 from the UI **before** the job starts, pointing at the Settings bootstrap action. If you're seeing this message mid-run, you're on an older image — `docker compose pull && docker compose up -d` to get the preflight.
 
 ## Clone lands at Windows "Select a region" / ignores the answer file
 

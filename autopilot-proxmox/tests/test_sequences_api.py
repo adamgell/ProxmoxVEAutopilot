@@ -232,9 +232,9 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
 
     from unittest.mock import patch
     # Pin the Proxmox config so the test is independent of whatever
-    # vars.yml happens to live on the developer's machine. Root token
-    # is required any time a chassis override is used (args is root-only
-    # in Proxmox), so the mocked config includes it.
+    # vars.yml happens to live on the developer's machine. Root SSH is
+    # required any time a chassis override is used because args is
+    # root-only in Proxmox, so the mocked config includes the password.
     with patch("web.app._load_proxmox_config", return_value={
         "proxmox_node": "pve", "proxmox_snippets_storage": "local",
         "proxmox_host": "10.0.0.1",
@@ -245,10 +245,7 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
                return_value="/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img") \
                     as mock_ensure_floppy, \
          patch("web.answer_floppy_cache.make_sshpass_runner",
-               return_value=lambda cmd: (0, b"", b"")), \
-         patch("web.app._proxmox_root_ticket_fetch",
-               return_value=("PVE:root@pam:FAKETICKET",
-                             "csrf-value")) as mock_ticket:
+               return_value=lambda cmd: (0, b"", b"")):
         mock_require.return_value = "/var/lib/vz/snippets/fake.bin"
         r = app_env.post("/api/jobs/provision", data={
             "profile": "",
@@ -268,17 +265,17 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
     # Sequence compile → per-VM answer floppy was built & wired into ansible.
     mock_ensure_floppy.assert_called_once()
     assert "_answer_floppy_path=/var/lib/vz/snippets/autopilot-unattend-deadbeefdeadbeef.img" in cmd
-    # Chassis override OR any sequence → root ticket fetched once.
-    mock_ticket.assert_called_once()
-    assert "_proxmox_root_ticket=PVE:root@pam:FAKETICKET" in cmd
-    assert "_proxmox_root_csrf_token=csrf-value" in cmd
+    # Chassis override now uses root SSH in the role instead of passing
+    # root@pam ticket material through the job command.
+    assert not any(part.startswith("_proxmox_root_ticket=") for part in cmd)
+    assert not any(part.startswith("_proxmox_root_csrf_token=") for part in cmd)
 
 
 def test_provision_rejects_chassis_override_without_root_password(app_env):
-    """The args config field is root-only in Proxmox and API tokens
-    can't satisfy the literal 'root@pam' eq check. If the password
-    isn't configured in vault.yml, the provision must fail fast with
-    a 400 pointing at docs, not queue a job that will die mid-run."""
+    """The args config field is root-only in Proxmox. If the root SSH
+    password isn't configured, the provision must fail fast with a 400
+    pointing at the UI bootstrap action, not queue a job that dies
+    mid-run."""
     from web import sequences_db
     from web.app import SEQUENCES_DB
 
@@ -310,8 +307,8 @@ def test_provision_rejects_chassis_override_without_root_password(app_env):
         }, follow_redirects=False)
     assert r.status_code == 400
     detail = r.json()["detail"]
-    assert "root@pam" in detail
-    assert "vault_proxmox_root_password" in detail
+    assert "Proxmox root SSH" in detail
+    assert "Proxmox Permission Bootstrap" in detail
 
 
 def test_provision_with_rename_computer_passes_reboot_count(app_env):
@@ -540,7 +537,7 @@ def test_proxmox_root_ticket_fetch_appends_pam_realm_to_bare_username(monkeypatc
     assert captured["data"]["username"] == "someone@pve"
 
 
-def test_proxmox_args_write_requires_root_ticket_when_smbios_args_needed():
+def test_proxmox_args_write_requires_root_ssh_when_smbios_args_needed():
     task_file = (
         Path(__file__).resolve().parents[1]
         / "roles/proxmox_vm_clone/tasks/update_config.yml"
@@ -548,10 +545,13 @@ def test_proxmox_args_write_requires_root_ticket_when_smbios_args_needed():
     text = task_file.read_text(encoding="utf-8")
 
     assert "_args_write_required" in text
-    assert "Fail if args write needs root@pam ticket" in text
+    assert "Fail if args write needs root SSH or root@pam ticket" in text
+    assert "Apply args via Proxmox root SSH" in text
+    assert "qm set {{ vm_vmid | int }} --args" in text
+    assert "vault_proxmox_root_password is not defined" in text
     assert "_proxmox_root_ticket is not defined" in text
     assert "_proxmox_root_csrf_token is not defined" in text
-    assert "Apply args via root@pam ticket" in text
+    assert "Apply args via root@pam ticket fallback" in text
     assert "- _args_write_required | default(false) | bool" in text
 
 

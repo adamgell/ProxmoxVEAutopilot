@@ -160,3 +160,145 @@ def test_settings_save_rotates_secret_when_form_nonempty(app_client, tmp_path, m
     out = p.read_text()
     assert "ROTATED-VALUE" in out
     assert "ORIGINAL" not in out
+
+
+def test_proxmox_bootstrap_script_repairs_role_storage_and_chassis_seed():
+    from web import proxmox_permissions
+
+    script = proxmox_permissions.build_bootstrap_script(
+        api_token_id="autopilot@pve!ansible",
+        disk_storage="ssdpool",
+        iso_storage="isos",
+        snippet_storage="local",
+        chassis_types=(10,),
+    )
+
+    assert "pveum role add" in script
+    assert "pveum role modify" in script
+    assert "Datastore.Allocate" in script
+    assert 'pveum acl modify "/storage/$storage"' in script
+    assert 'pvesm set "$SNIPPETS_STORAGE" --content "$next"' in script
+    assert "autopilot-chassis-type-{chassis_type}.bin" in script
+    assert "AUTOPILOT_BOOTSTRAP_OK" in script
+
+
+def test_proxmox_bootstrap_endpoint_runs_ssh_and_saves_root_credentials(
+    app_client, tmp_path, monkeypatch,
+):
+    from web import app as _app
+
+    vault_path = tmp_path / "vault.yml"
+    _write(vault_path, "---\nvault_proxmox_api_token_id: autopilot@pve!ansible\n")
+    monkeypatch.setattr(_app, "VAULT_PATH", vault_path)
+
+    ssh_calls = []
+
+    def fake_runner(*, host, password, user):
+        assert host == "192.168.2.200"
+        assert password == "root-secret"
+        assert user == "root"
+
+        def run(cmd):
+            ssh_calls.append(cmd)
+            return 0, b"role_updated=AutopilotProvisioner\nAUTOPILOT_BOOTSTRAP_OK\n", b""
+
+        return run
+
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_host": "192.168.2.200",
+        "proxmox_storage": "ssdpool",
+        "proxmox_iso_storage": "isos",
+        "vault_proxmox_api_token_id": "autopilot@pve!ansible",
+    }), patch("web.proxmox_permissions.answer_floppy_cache.make_sshpass_runner", fake_runner):
+        r = app_client.post("/api/proxmox/bootstrap-permissions", data={
+            "root_username": "root@pam",
+            "root_password": "root-secret",
+            "snippet_storage": "local",
+            "save_root_credentials": "on",
+        })
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["root_password_set"] is True
+    assert "root-secret" not in body.get("stdout", "")
+    assert ssh_calls, "bootstrap did not run over SSH"
+    out = vault_path.read_text()
+    assert "vault_proxmox_root_username: root@pam" in out
+    assert "vault_proxmox_root_password: root-secret" in out
+
+
+def test_proxmox_bootstrap_endpoint_does_not_save_on_failed_ssh(
+    app_client, tmp_path, monkeypatch,
+):
+    from web import app as _app
+
+    vault_path = tmp_path / "vault.yml"
+    _write(vault_path, "---\n")
+    monkeypatch.setattr(_app, "VAULT_PATH", vault_path)
+
+    def fake_runner(*, host, password, user):
+        def run(cmd):
+            return 255, b"", b"Permission denied"
+
+        return run
+
+    with patch("web.app._load_proxmox_config", return_value={
+        "proxmox_host": "192.168.2.200",
+        "proxmox_storage": "ssdpool",
+        "proxmox_iso_storage": "isos",
+        "vault_proxmox_api_token_id": "autopilot@pve!ansible",
+    }), patch("web.proxmox_permissions.answer_floppy_cache.make_sshpass_runner", fake_runner):
+        r = app_client.post("/api/proxmox/bootstrap-permissions", data={
+            "root_username": "root@pam",
+            "root_password": "bad",
+            "save_root_credentials": "on",
+        })
+
+    assert r.status_code == 502
+    assert "Permission denied" in r.json()["detail"]
+    assert "vault_proxmox_root_password" not in vault_path.read_text()
+
+
+def test_settings_page_renders_proxmox_permission_bootstrap(
+    app_client, tmp_path, monkeypatch,
+):
+    from web import app as _app
+
+    vault_path = tmp_path / "vault.yml"
+    _write(vault_path, "---\nvault_proxmox_root_password: ROOT-SECRET\n")
+    monkeypatch.setattr(_app, "VAULT_PATH", vault_path)
+
+    with patch("web.app._load_vars", return_value={"hypervisor_type": "proxmox"}), \
+         patch("web.app._load_proxmox_config", return_value={
+             "hypervisor_type": "proxmox",
+             "proxmox_host": "192.168.2.200",
+             "proxmox_storage": "ssdpool",
+             "proxmox_iso_storage": "isos",
+         }), \
+         patch("web.app._fetch_settings_options", return_value={}):
+        r = app_client.get("/settings")
+
+    assert r.status_code == 200
+    body = r.text
+    assert "Proxmox Permission Bootstrap" in body
+    assert "Apply Proxmox permissions over SSH" in body
+    assert "ROOT-SECRET" not in body
+
+
+def test_settings_page_treats_pve_alias_as_proxmox(app_client, monkeypatch):
+    from web import app as _app
+
+    with patch("web.app._load_vars", return_value={"hypervisor_type": "pve"}), \
+         patch("web.app._load_vault", return_value={}), \
+         patch("web.app._vault_presence", return_value={}), \
+         patch("web.app._load_proxmox_config", return_value={
+             "hypervisor_type": "pve",
+             "proxmox_host": "192.168.2.200",
+         }), \
+         patch("web.app._fetch_settings_options", return_value={}):
+        r = app_client.get("/settings")
+
+    assert r.status_code == 200
+    assert "Proxmox Connection" in r.text
+    assert "Proxmox Permission Bootstrap" in r.text

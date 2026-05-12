@@ -51,8 +51,9 @@
 # QEMU 'args' is hardcoded to root@pam in Proxmox
 # (PVE::API2::Qemu::check_vm_modify_config_perm is a literal eq match
 # against the authuser — API tokens never satisfy it). Build the full
-# args string on the controller, then PUT it once via a /access/ticket
-# cookie. Two contributors may want args set:
+# args string on the controller, then set it over root SSH with `qm set`.
+# Older callers may still pass a root@pam ticket; keep that as a fallback.
+# Two contributors may want args set:
 #
 #   _smbios_args         -smbios file=/var/lib/vz/snippets/chassis.bin
 #   _answer_floppy_path  /var/lib/vz/snippets/autopilot-unattend-<hash>.img
@@ -83,18 +84,52 @@
   ansible.builtin.set_fact:
     _merged_args: "{{ _args_tokens | join(' ') }}"
 
-- name: Fail if args write needs root@pam ticket
+- name: Build args SSH command
+  ansible.builtin.set_fact:
+    _args_remote_command: "qm set {{ vm_vmid | int }} --args {{ _merged_args | quote }}"
+  when: _args_write_required | default(false) | bool
+
+- name: Fail if args write needs root SSH or root@pam ticket
   ansible.builtin.fail:
     msg: >-
-      VM {{ vm_vmid }} needs QEMU args updated but root@pam ticket
-      variables are missing. Set vault_proxmox_root_password so the
-      controller can fetch _proxmox_root_ticket/_proxmox_root_csrf_token,
-      or disable the sequence/profile option that requires QEMU args.
+      VM {{ vm_vmid }} needs QEMU args updated but neither Proxmox root
+      SSH nor root@pam ticket variables are available. Run Settings ->
+      Proxmox Permission Bootstrap so the controller can store
+      vault_proxmox_root_password, or disable the profile option that
+      requires QEMU args.
   when:
     - _args_write_required | default(false) | bool
+    - (vault_proxmox_root_password is not defined or (vault_proxmox_root_password | string | length) == 0)
     - _proxmox_root_ticket is not defined or _proxmox_root_csrf_token is not defined
 
-- name: Apply args via root@pam ticket
+- name: Apply args via Proxmox root SSH
+  ansible.builtin.command:
+    argv:
+      - sshpass
+      - -e
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - LogLevel=ERROR
+      - "root@{{ proxmox_host }}"
+      - "{{ _args_remote_command }}"
+  environment:
+    SSHPASS: "{{ vault_proxmox_root_password }}"
+  delegate_to: localhost
+  register: _args_ssh_result
+  retries: "{{ clone_config_retries | default(6) }}"
+  delay: "{{ clone_config_delay | default(5) }}"
+  until: _args_ssh_result.rc == 0
+  no_log: true
+  when:
+    - _args_write_required | default(false) | bool
+    - vault_proxmox_root_password is defined
+    - (vault_proxmox_root_password | string | length) > 0
+
+- name: Apply args via root@pam ticket fallback
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
     method: PUT
@@ -113,5 +148,6 @@
   no_log: true
   when:
     - _args_write_required | default(false) | bool
+    - vault_proxmox_root_password is not defined or (vault_proxmox_root_password | string | length) == 0
     - _proxmox_root_ticket is defined
     - _proxmox_root_csrf_token is defined

@@ -26,6 +26,7 @@ from web import devices_pg as devices_db
 from web import jobs_pg as jobs_db
 from web.live import LiveHub, utc_now_iso
 from web import monitoring_evidence
+from web import proxmox_permissions
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -286,6 +287,11 @@ def _vault_presence() -> dict[str, bool]:
     """Return {key: True} for every vault key whose value is non-empty.
     Safe to render in HTML -- carries no secret material."""
     return {k: bool(v) for k, v in _load_vault().items()}
+
+
+def _settings_hypervisor_type(value: str | None) -> str:
+    hv_type = (value or "proxmox").lower()
+    return "proxmox" if hv_type == "pve" else hv_type
 
 
 def _looks_like_jinja(value: str) -> bool:
@@ -1539,10 +1545,9 @@ def _proxmox_api_put(path, data=None):
 def _proxmox_root_ticket_fetch(cfg: dict) -> tuple[str, str]:
     """Exchange root@pam username/password for a (ticket, CSRF) pair.
 
-    Proxmox tickets are good for ~2 hours by default — enough for a
-    single provision job. The password is read fresh from the loaded
-    config each call, so rotating in vault.yml + restarting the
-    container is sufficient; no caching here.
+    Proxmox tickets are good for ~2 hours by default. Newer runtime
+    paths prefer root SSH for host-local QEMU args work, but this helper
+    remains for compatibility with older call sites and tests.
     """
     host = cfg.get("proxmox_host", "")
     port = cfg.get("proxmox_port", 8006)
@@ -2708,8 +2713,10 @@ async def job_detail_page(request: Request, job_id: str):
 async def settings_page(request: Request, saved: str = ""):
     current_vars = _load_vars()
     vault_present = _vault_presence()
+    vault_values = _load_vault()
+    merged_cfg = _load_proxmox_config()
     options = _fetch_settings_options()
-    hv_type = (current_vars.get("hypervisor_type") or "proxmox").lower()
+    hv_type = _settings_hypervisor_type(current_vars.get("hypervisor_type"))
     sections = []
     for group in SETTINGS_SCHEMA:
         group_applies = group.get("applies_to", "all")
@@ -2759,6 +2766,17 @@ async def settings_page(request: Request, saved: str = ""):
         "sections": sections,
         "saved": saved == "1",
         "hypervisor_type": hv_type,
+        "proxmox_bootstrap": {
+            "enabled": hv_type == "proxmox",
+            "host": merged_cfg.get("proxmox_host", ""),
+            "disk_storage": merged_cfg.get("proxmox_storage", ""),
+            "iso_storage": merged_cfg.get("proxmox_iso_storage", ""),
+            "root_username": vault_values.get("vault_proxmox_root_username") or "root@pam",
+            "root_password_set": vault_present.get("vault_proxmox_root_password", False),
+            "default_token_id": proxmox_permissions.DEFAULT_API_TOKEN_ID,
+            "snippet_storage": proxmox_permissions.DEFAULT_SNIPPET_STORAGE,
+            "chassis_types": ",".join(str(v) for v in proxmox_permissions.DEFAULT_CHASSIS_TYPES),
+        },
     })
 
 
@@ -2806,6 +2824,104 @@ async def node_options(node: str):
     return result
 
 
+@app.post("/api/proxmox/bootstrap-permissions")
+async def bootstrap_proxmox_permissions(request: Request):
+    """Repair Proxmox permissions and host-local OEM prerequisites over SSH."""
+    form = await request.form()
+    cfg = _load_proxmox_config()
+    host = (form.get("proxmox_host") or cfg.get("proxmox_host") or "").strip()
+    if not host:
+        raise HTTPException(status_code=400, detail="proxmox_host is required")
+    root_username = (form.get("root_username") or "root@pam").strip() or "root@pam"
+    root_password = (form.get("root_password") or "").strip()
+    if not root_password:
+        raise HTTPException(status_code=400, detail="root SSH password is required")
+    api_token_id = (
+        form.get("api_token_id")
+        or cfg.get("vault_proxmox_api_token_id")
+        or proxmox_permissions.DEFAULT_API_TOKEN_ID
+    )
+    snippet_storage = (
+        form.get("snippet_storage")
+        or proxmox_permissions.DEFAULT_SNIPPET_STORAGE
+    )
+    raw_chassis = (form.get("chassis_types") or "").strip()
+    if raw_chassis:
+        try:
+            chassis_types = [
+                int(part.strip()) for part in raw_chassis.split(",")
+                if part.strip()
+            ]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="chassis_types must be comma-separated integers",
+            ) from exc
+    else:
+        chassis_types = list(proxmox_permissions.DEFAULT_CHASSIS_TYPES)
+
+    try:
+        script = proxmox_permissions.build_bootstrap_script(
+            api_token_id=api_token_id,
+            disk_storage=cfg.get("proxmox_storage"),
+            iso_storage=cfg.get("proxmox_iso_storage"),
+            snippet_storage=snippet_storage,
+            chassis_types=chassis_types,
+        )
+        result = proxmox_permissions.run_bootstrap_script(
+            host=host,
+            root_username=root_username,
+            root_password=root_password,
+            script=script,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "sshpass/ssh is not available in the web container; "
+                "install the Proxmox SSH client dependencies and retry."
+            ),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Proxmox SSH bootstrap failed: {exc}",
+        ) from exc
+
+    if not result.ok:
+        detail = (result.stderr or result.stdout or "unknown SSH bootstrap failure").strip()
+        raise HTTPException(status_code=502, detail=detail)
+
+    save_credentials = str(form.get("save_root_credentials", "on")).lower() in {
+        "1", "true", "yes", "on",
+    }
+    if save_credentials:
+        _save_vault({
+            "vault_proxmox_root_username": root_username,
+            "vault_proxmox_root_password": root_password,
+        })
+
+    return {
+        "ok": True,
+        "host": host,
+        "api_user": proxmox_permissions.api_token_user(api_token_id),
+        "role": proxmox_permissions.AUTOPILOT_ROLE,
+        "storages": [
+            value for value in [
+                cfg.get("proxmox_storage"),
+                cfg.get("proxmox_iso_storage"),
+                snippet_storage,
+            ]
+            if value
+        ],
+        "root_password_set": save_credentials,
+        "stdout": result.stdout[-4000:],
+        "stderr": result.stderr[-4000:],
+    }
+
+
 @app.post("/api/settings")
 async def save_settings(request: Request):
     form = await request.form()
@@ -2813,9 +2929,9 @@ async def save_settings(request: Request):
     # Honor the submitted hypervisor_type when filtering (so flipping
     # backends + saving in one submit applies correctly), falling back
     # to the on-disk value.
-    hv_type = (form.get("hypervisor_type")
-               or current_vars.get("hypervisor_type")
-               or "proxmox").lower()
+    hv_type = _settings_hypervisor_type(
+        form.get("hypervisor_type") or current_vars.get("hypervisor_type")
+    )
     vars_updates: dict = {}
     vault_updates: dict = {}
     for group in SETTINGS_SCHEMA:
@@ -4075,24 +4191,13 @@ def _cloudosd_root_ticket_for_batch(
         raise HTTPException(
             status_code=400,
             detail=(
-                "CloudOSD OEM/chassis provisioning needs the QEMU 'args' "
-                "field set, which Proxmox restricts to root@pam password "
-                "auth. Set vault_proxmox_root_password in vault.yml "
-                "(Settings -> Credentials) and restart the container."
+                "CloudOSD OEM/chassis provisioning needs Proxmox root SSH "
+                "for host-local SMBIOS staging and QEMU args. Run Settings "
+                "-> Proxmox Permission Bootstrap to apply the hypervisor "
+                "permissions and store the validated root SSH credential."
             ),
         )
-    try:
-        ticket, csrf = _proxmox_root_ticket_fetch(cfg)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Could not obtain a root@pam ticket from Proxmox: {exc}. "
-                "Check vault_proxmox_root_username and "
-                "vault_proxmox_root_password."
-            ),
-        ) from exc
-    return True, ticket, csrf
+    return True, None, None
 
 
 def _start_cloudosd_provision_batch(
@@ -4444,30 +4549,13 @@ async def start_provision(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "This provision needs the QEMU 'args' field set "
-                    "(chassis-type override and/or per-VM answer floppy), "
-                    "which Proxmox restricts to root@pam password auth "
-                    "(API tokens are rejected by PVE's literal eq check "
-                    "against 'root@pam'). Set vault_proxmox_root_password "
-                    "in vault.yml (Settings → Credentials) and restart the "
-                    "container. The password drives a just-in-time "
-                    "/access/ticket per provision; the ticket lives 2h "
-                    "and is only used for the single PUT that writes "
-                    "'args'. See docs/SETUP.md §5b for details."
+                    "This provision needs Proxmox root SSH for host-local "
+                    "SMBIOS/QEMU args work. Run Settings -> Proxmox "
+                    "Permission Bootstrap to apply the hypervisor "
+                    "permissions and store the validated root SSH "
+                    "credential."
                 ),
             )
-        try:
-            _proxmox_root_ticket, _proxmox_root_csrf_token = \
-                _proxmox_root_ticket_fetch(cfg)
-        except Exception as _e:
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Could not obtain a root@pam ticket from Proxmox: "
-                    f"{_e}. Check vault_proxmox_root_username "
-                    f"(default 'root@pam') and vault_proxmox_root_password."
-                ),
-            ) from _e
 
     # Build the common -e overrides shared between single and multi paths.
     # Zero means "don't override, let vars.yml defaults apply" — lets the
@@ -4536,10 +4624,10 @@ async def start_provision(
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Sequence-based provisioning needs vault_proxmox_root_password "
-                        "set in vault.yml (Settings → Credentials). The web backend "
-                        "SSHes to the Proxmox host as root to build the per-VM "
-                        "answer floppy and to set the VM's args field."
+                        "Sequence-based provisioning needs Proxmox root SSH. "
+                        "Run Settings -> Proxmox Permission Bootstrap to apply "
+                        "the hypervisor permissions and store the validated root "
+                        "SSH credential."
                     ),
                 )
             _ssh_runner = answer_floppy_cache.make_sshpass_runner(

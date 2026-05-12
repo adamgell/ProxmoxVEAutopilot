@@ -15,6 +15,62 @@
   one to rotate it. The browser never receives stored secret values.
 </p>
 
+{% if proxmox_bootstrap.enabled %}
+<section class="panel" style="margin: 16px 0 22px 0; max-width: 1100px;">
+  <div class="panel-title-row">
+    <div>
+      <h3 style="margin:0;">Proxmox Permission Bootstrap</h3>
+      <p class="subtitle" style="margin:4px 0 0 0; max-width: 900px;">
+        Apply Proxmox permissions over SSH, repair the Autopilot role/ACLs,
+        enable snippet storage, seed chassis SMBIOS binaries, and store the
+        root SSH credential used later for OEM/chassis CloudOSD operations.
+      </p>
+    </div>
+    {% if proxmox_bootstrap.root_password_set %}
+      <span class="badge badge-green">root SSH set</span>
+    {% else %}
+      <span class="badge badge-gray">root SSH not set</span>
+    {% endif %}
+  </div>
+  <form id="proxmox-bootstrap-form" autocomplete="off"
+        style="display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; margin-top: 14px;">
+    <label>
+      <small>Proxmox SSH host</small>
+      <input type="text" name="proxmox_host" value="{{ proxmox_bootstrap.host }}" placeholder="192.168.2.200">
+    </label>
+    <label>
+      <small>Root SSH username</small>
+      <input type="text" name="root_username" value="{{ proxmox_bootstrap.root_username }}" placeholder="root@pam">
+    </label>
+    <label>
+      <small>Root SSH password</small>
+      <input type="password" name="root_password" value="" autocomplete="new-password" placeholder="required to apply">
+    </label>
+    <label>
+      <small>Snippet storage</small>
+      <input type="text" name="snippet_storage" value="{{ proxmox_bootstrap.snippet_storage }}">
+    </label>
+    <label style="grid-column: span 2;">
+      <small>API token id to repair</small>
+      <input type="text" name="api_token_id" value="" placeholder="{{ proxmox_bootstrap.default_token_id }} or configured vault token">
+    </label>
+    <label style="grid-column: span 2;">
+      <small>Chassis types to seed</small>
+      <input type="text" name="chassis_types" value="{{ proxmox_bootstrap.chassis_types }}">
+    </label>
+    <label style="grid-column: span 2; display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" name="save_root_credentials" checked>
+      <span>Save validated root SSH credential for CloudOSD/OEM runtime operations</span>
+    </label>
+    <div style="grid-column: span 2; display:flex; align-items:center; justify-content:flex-end; gap:10px;">
+      <span id="proxmox-bootstrap-status" class="subtitle" style="margin:0;"></span>
+      <button type="submit">Apply Proxmox permissions over SSH</button>
+    </div>
+  </form>
+  <pre id="proxmox-bootstrap-output" style="display:none; margin-top:12px; max-height:220px; overflow:auto;"></pre>
+</section>
+{% endif %}
+
 <form method="POST" action="/api/settings" autocomplete="off">
 <input type="hidden" name="_all_fields" value="1">
 {% for group in sections %}
@@ -134,6 +190,49 @@ if (nodeSelect) {
       })
       .catch(function() {
         if (loading) loading.style.display = 'none';
+      });
+  });
+}
+
+var bootstrapForm = document.getElementById('proxmox-bootstrap-form');
+if (bootstrapForm) {
+  bootstrapForm.addEventListener('submit', function(ev) {
+    ev.preventDefault();
+    var status = document.getElementById('proxmox-bootstrap-status');
+    var output = document.getElementById('proxmox-bootstrap-output');
+    var submit = bootstrapForm.querySelector('button[type="submit"]');
+    if (status) status.textContent = 'Applying...';
+    if (output) {
+      output.style.display = 'none';
+      output.textContent = '';
+    }
+    if (submit) submit.disabled = true;
+    fetch('/api/proxmox/bootstrap-permissions', {
+      method: 'POST',
+      body: new FormData(bootstrapForm)
+    })
+      .then(function(r) {
+        return r.json().then(function(data) {
+          if (!r.ok) throw data;
+          return data;
+        });
+      })
+      .then(function(data) {
+        if (status) status.textContent = 'Applied. Root SSH credential is ready.';
+        if (output) {
+          output.style.display = 'block';
+          output.textContent = data.stdout || 'Proxmox permissions applied.';
+        }
+      })
+      .catch(function(err) {
+        if (status) status.textContent = 'Failed';
+        if (output) {
+          output.style.display = 'block';
+          output.textContent = (err && err.detail) ? err.detail : String(err || 'unknown error');
+        }
+      })
+      .finally(function() {
+        if (submit) submit.disabled = false;
       });
   });
 }

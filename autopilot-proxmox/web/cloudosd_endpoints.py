@@ -1217,26 +1217,15 @@ def cloudosd_provision_extra_vars(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "CloudOSD OEM/chassis provisioning needs the QEMU 'args' "
-                    "field set, which Proxmox restricts to root@pam password "
-                    "auth. Set vault_proxmox_root_password in vault.yml "
-                    "(Settings -> Credentials) and restart the container."
+                    "CloudOSD OEM/chassis provisioning needs Proxmox root SSH "
+                    "for host-local SMBIOS staging and QEMU args. Run Settings "
+                    "-> Proxmox Permission Bootstrap to apply the hypervisor "
+                    "permissions and store the validated root SSH credential."
                 ),
             )
-        if not (root_ticket and root_csrf_token):
-            try:
-                root_ticket, root_csrf_token = web_app._proxmox_root_ticket_fetch(cfg)
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"Could not obtain a root@pam ticket from Proxmox: {exc}. "
-                        "Check vault_proxmox_root_username and "
-                        "vault_proxmox_root_password."
-                    ),
-                ) from exc
-        extra_vars["_proxmox_root_ticket"] = root_ticket
-        extra_vars["_proxmox_root_csrf_token"] = root_csrf_token
+        if root_ticket and root_csrf_token:
+            extra_vars["_proxmox_root_ticket"] = root_ticket
+            extra_vars["_proxmox_root_csrf_token"] = root_csrf_token
 
     return extra_vars
 
