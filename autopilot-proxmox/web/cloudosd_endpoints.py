@@ -1183,6 +1183,7 @@ def cloudosd_provision_extra_vars(
         "cloudosd_artifact_volid": artifact["proxmox_volid"],
         "autopilot_base_url": _base_url(request),
         "proxmox_node": run["node"],
+        "proxmox_node_ssh_host": web_app._proxmox_node_ssh_host(run["node"]),
         "proxmox_storage": run["storage"],
         "proxmox_bridge": run["network_bridge"],
         "vm_cores": run["vm_cores"],

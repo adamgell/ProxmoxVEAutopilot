@@ -1017,6 +1017,9 @@ def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(
         values = {
             "/cluster/nextid": 120,
             "/cluster/resources?type=vm": [{"vmid": 100}, {"vmid": 119}],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
             "/nodes": [{"node": "pve"}],
             "/storage": [
                 {"storage": "local", "content": "iso"},
@@ -1067,6 +1070,7 @@ def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(
     assert len(jobs) == 1
     args = jobs[0]["args"]
     assert args["requested_vmid"] == 120
+    assert args["proxmox_node_ssh_host"] == "10.0.0.2"
     assert args["vm_custom_serial"].startswith("SVC-")
     assert args["vm_name"].startswith("Gell-120-SVC-")
     assert args["vm_name"].endswith(args["vm_custom_serial"])

@@ -114,7 +114,7 @@
       - UserKnownHostsFile=/dev/null
       - -o
       - LogLevel=ERROR
-      - "root@{{ proxmox_host }}"
+      - "root@{{ proxmox_node_ssh_host | default(proxmox_host) }}"
       - "{{ _args_remote_command }}"
   environment:
     SSHPASS: "{{ vault_proxmox_root_password }}"

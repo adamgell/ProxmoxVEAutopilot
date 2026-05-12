@@ -1514,6 +1514,33 @@ def _proxmox_api(path, method="GET", data=None, files=None):
     return resp.json().get("data", [])
 
 
+def _proxmox_node_ssh_host(node: str | None) -> str:
+    """Resolve a Proxmox node name to the host/IP root SSH should target.
+
+    The API endpoint can be a cluster member that is not the selected VM
+    node. Host-local operations like `qm set` and `/var/lib/vz/snippets`
+    must run on the node that owns the VM.
+    """
+    cfg = _load_proxmox_config()
+    fallback = cfg.get("proxmox_host", "")
+    node_name = (node or cfg.get("proxmox_node") or "").strip()
+    if not node_name:
+        return fallback
+    try:
+        for row in _proxmox_api("/cluster/status") or []:
+            if row.get("type") == "node" and row.get("name") == node_name and row.get("ip"):
+                return str(row["ip"])
+    except Exception:
+        pass
+    try:
+        for row in _proxmox_api("/cluster/config/nodes") or []:
+            if (row.get("node") or row.get("name")) == node_name and row.get("ring0_addr"):
+                return str(row["ring0_addr"])
+    except Exception:
+        pass
+    return fallback
+
+
 def _proxmox_api_post(path, data=None):
     """POST to Proxmox API (for VM power actions and guest-exec)."""
     cfg = _load_proxmox_config()

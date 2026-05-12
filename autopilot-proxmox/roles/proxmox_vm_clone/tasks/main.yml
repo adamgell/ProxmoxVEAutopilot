@@ -104,7 +104,7 @@
       - bash
       - -c
       - >-
-        printf '%s' {{ _smbios_file_b64 | quote }} | base64 -d | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@{{ proxmox_host }} {{ ('umask 022; mkdir -p /var/lib/vz/snippets; cat > ' ~ _smbios_file_path ~ '; test -s ' ~ _smbios_file_path ~ ' && echo OK_SMBIOS_WRITTEN') | quote }}
+        printf '%s' {{ _smbios_file_b64 | quote }} | base64 -d | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@{{ proxmox_node_ssh_host | default(proxmox_host) }} {{ ('umask 022; mkdir -p /var/lib/vz/snippets; cat > ' ~ _smbios_file_path ~ '; test -s ' ~ _smbios_file_path ~ ' && echo OK_SMBIOS_WRITTEN') | quote }}
   environment:
     SSHPASS: "{{ vault_proxmox_root_password }}"
   delegate_to: localhost
