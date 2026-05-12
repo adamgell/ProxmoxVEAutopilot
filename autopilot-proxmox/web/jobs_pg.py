@@ -57,14 +57,25 @@ def init(conn: Connection | None = None) -> None:
     try:
         conn.execute(SCHEMA)
         for job_type, cap in DEFAULT_LIMITS:
-            conn.execute(
-                """
-                INSERT INTO job_type_limits (job_type, max_concurrent)
-                VALUES (%s, %s)
-                ON CONFLICT (job_type) DO NOTHING
-                """,
-                (job_type, cap),
-            )
+            if job_type == "provision_cloudosd":
+                conn.execute(
+                    """
+                    INSERT INTO job_type_limits (job_type, max_concurrent)
+                    VALUES (%s, %s)
+                    ON CONFLICT (job_type) DO UPDATE
+                    SET max_concurrent = EXCLUDED.max_concurrent
+                    """,
+                    (job_type, cap),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO job_type_limits (job_type, max_concurrent)
+                    VALUES (%s, %s)
+                    ON CONFLICT (job_type) DO NOTHING
+                    """,
+                    (job_type, cap),
+                )
         conn.commit()
     finally:
         if own:

@@ -107,6 +107,17 @@ def test_limits_can_be_listed_and_updated(pg_conn):
     assert caps["build_template"] == 2
 
 
+def test_cloudosd_limit_is_migrated_to_current_default(pg_conn):
+    from web import jobs_pg
+
+    jobs_pg.update_job_type_limit("provision_cloudosd", 2)
+
+    jobs_pg.init(pg_conn)
+
+    caps = {r["job_type"]: r["max_concurrent"] for r in jobs_pg.list_job_type_limits()}
+    assert caps["provision_cloudosd"] == 4
+
+
 def test_complete_interrupted_winpe_jobs_for_run(pg_conn):
     from web import jobs_pg
 
