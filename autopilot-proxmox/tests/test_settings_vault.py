@@ -177,6 +177,8 @@ def test_proxmox_bootstrap_script_repairs_role_storage_and_chassis_seed():
     assert "pveum role modify" in script
     assert "Datastore.Allocate" in script
     assert 'pveum acl modify "/storage/$storage"' in script
+    assert "pvesm config" not in script
+    assert "/etc/pve/storage.cfg" in script
     assert 'pvesm set "$SNIPPETS_STORAGE" --content "$next"' in script
     assert "autopilot-chassis-type-{chassis_type}.bin" in script
     assert "AUTOPILOT_BOOTSTRAP_OK" in script

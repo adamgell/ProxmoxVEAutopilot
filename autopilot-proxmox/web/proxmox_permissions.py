@@ -146,7 +146,36 @@ for storage in "${{STORAGES[@]}}"; do
 done
 
 if pvesm status | awk 'NR > 1 {{print $1}}' | grep -Fxq "$SNIPPETS_STORAGE"; then
-  current="$(pvesm config "$SNIPPETS_STORAGE" | awk -F': ' '$1 == "content" {{print $2; exit}}')"
+  current="$(python3 - "$SNIPPETS_STORAGE" <<'PY'
+import sys
+
+storage = sys.argv[1]
+current = None
+in_block = False
+
+try:
+    with open("/etc/pve/storage.cfg", encoding="utf-8") as fh:
+        for raw in fh:
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not raw[0].isspace() and ":" in raw:
+                rest = raw.split(":", 1)[1].strip()
+                in_block = bool(rest and rest.split()[0] == storage)
+                continue
+            if in_block:
+                parts = stripped.split(None, 1)
+                if parts and parts[0] == "content":
+                    current = parts[1].strip() if len(parts) > 1 else ""
+                    break
+except FileNotFoundError:
+    pass
+
+if current is None:
+    current = "backup,iso,vztmpl" if storage == "local" else ""
+print(current)
+PY
+)"
   case ",$current," in
     *,snippets,*) next="$current" ;;
     *) next="${{current:+$current,}}snippets" ;;
