@@ -83,6 +83,7 @@
   <td><input type="text" name="hostname_pattern" value="{{ defaults.hostname_pattern | default('autopilot-{serial}') }}" size="30" placeholder="autopilot-{serial}">
     <small style="color:var(--ink-soft);">
       Tokens: <code>{serial}</code>, <code>{vmid}</code>, <code>{index}</code>.
+      Generated Proxmox names must use only letters, numbers, and hyphens.
       Windows: used for computer-name during specialize pass.
       Ubuntu: applied via cloud-init on first boot.
     </small></td>

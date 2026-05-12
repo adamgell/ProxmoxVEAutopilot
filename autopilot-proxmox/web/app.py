@@ -4149,6 +4149,22 @@ def _cloudosd_batch_names(
     serial_prefix: str,
 ) -> list[str]:
     pattern = (hostname_pattern or "").strip() or "cloudosd-{index}"
+    placeholders = set(re.findall(r"\{[^{}]*\}", pattern))
+    allowed_placeholders = {"{index}", "{serial}", "{vmid}"}
+    invalid_placeholders = sorted(placeholders - allowed_placeholders)
+    pattern_without_tokens = re.sub(r"\{[^{}]*\}", "", pattern)
+    if (
+        invalid_placeholders
+        or "{" in pattern_without_tokens
+        or "}" in pattern_without_tokens
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "CloudOSD hostname pattern contains an invalid placeholder. "
+                "Use only {index}, {serial}, and {vmid}."
+            ),
+        )
     if count > 1 and "{index}" not in pattern and "{serial}" not in pattern:
         pattern = f"{pattern}-{{index}}"
     serial_base = (serial_prefix or "CLOUDOSD").strip("-") or "CLOUDOSD"
@@ -4163,7 +4179,17 @@ def _cloudosd_batch_names(
         )
         if not name.strip():
             raise HTTPException(status_code=400, detail="CloudOSD VM name is empty")
-        names.append(name.strip())
+        name = name.strip()
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"CloudOSD hostname pattern produced invalid Proxmox VM "
+                    f"name {name!r}. Use letters, numbers, and hyphens only; "
+                    "the name cannot start or end with a hyphen."
+                ),
+            )
+        names.append(name)
     if len({name.lower() for name in names}) != len(names):
         raise HTTPException(
             status_code=400,

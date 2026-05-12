@@ -1028,6 +1028,76 @@ def test_provision_cloudosd_rejects_low_ram_before_enqueue(
     ] == []
 
 
+def test_provision_cloudosd_rejects_malformed_hostname_placeholder_before_enqueue(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "lenovo-t14",
+            "count": "4",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "hostname_pattern": "Gell-{vmid)",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "invalid placeholder" in response.json()["detail"]
+    assert [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ] == []
+
+
+def test_provision_cloudosd_rejects_invalid_generated_pve_name_before_enqueue(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "lenovo-t14",
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "hostname_pattern": "Gell_{index}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "invalid Proxmox VM name" in response.json()["detail"]
+    assert [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ] == []
+
+
 def test_provision_cloudosd_chassis_requires_root_ssh(
     cloudosd_client,
     pg_conn,
