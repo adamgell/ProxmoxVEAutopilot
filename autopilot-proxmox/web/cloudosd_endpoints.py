@@ -57,6 +57,11 @@ class RunCreateBody(BaseModel):
     vm_cores: int = Field(default=cloudosd_pg.DEFAULT_VM_CORES, ge=1)
     vm_memory_mb: int = Field(default=cloudosd_pg.DEFAULT_VM_MEMORY_MB, ge=1)
     vm_disk_size_gb: int = Field(default=cloudosd_pg.DEFAULT_VM_DISK_SIZE_GB, ge=1)
+    vm_group_tag: str = ""
+    vm_oem_profile: str = ""
+    chassis_type_override: int = Field(default=0, ge=0)
+    source_surface: str = "cloudosd"
+    source_sequence_id: Optional[int] = Field(default=None, ge=1)
     tpm_enabled: bool = True
     secure_boot: bool = True
     firmware_updates_enabled: bool = False
@@ -205,6 +210,14 @@ def _package_response(
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
         "task": cloudosd_pg.task_settings(run),
+        "deployment": {
+            "path": "cloudosd",
+            "source_surface": run.get("source_surface") or "cloudosd",
+            "source_sequence_id": run.get("source_sequence_id"),
+            "group_tag": run.get("vm_group_tag") or "",
+            "oem_profile": run.get("vm_oem_profile") or "",
+            "chassis_type_override": run.get("chassis_type_override"),
+        },
         "payloads": {
             "osd_client": {
                 "url": (
@@ -1039,6 +1052,11 @@ def create_run(body: RunCreateBody):
                 vm_cores=body.vm_cores,
                 vm_memory_mb=body.vm_memory_mb,
                 vm_disk_size_gb=body.vm_disk_size_gb,
+                vm_group_tag=body.vm_group_tag.strip(),
+                vm_oem_profile=body.vm_oem_profile.strip(),
+                chassis_type_override=body.chassis_type_override,
+                source_surface=body.source_surface.strip() or "cloudosd",
+                source_sequence_id=body.source_sequence_id,
                 tpm_enabled=body.tpm_enabled,
                 secure_boot=body.secure_boot,
                 firmware_updates_enabled=body.firmware_updates_enabled,
@@ -1122,6 +1140,107 @@ def list_run_events(run_id: str):
     }
 
 
+def _profile_chassis_type(profile_key: str | None) -> int:
+    if not profile_key:
+        return 0
+    try:
+        from web import app as web_app
+
+        profile = web_app.load_oem_profiles().get(profile_key.strip()) or {}
+        return int(profile.get("chassis_type") or 0)
+    except Exception:
+        return 0
+
+
+def _run_needs_root_ticket_for_chassis(run: dict) -> bool:
+    if int(run.get("chassis_type_override") or 0) > 0:
+        return True
+    return _profile_chassis_type(run.get("vm_oem_profile")) > 0
+
+
+def cloudosd_provision_extra_vars(
+    *,
+    run: dict,
+    artifact: dict,
+    request: Request | None = None,
+    root_ticket: str | None = None,
+    root_csrf_token: str | None = None,
+    require_root_ticket: bool | None = None,
+) -> dict:
+    """Build playbook vars for a CloudOSD provision job.
+
+    This is shared by the single-run CloudOSD cockpit and the batch
+    `/provision` launcher so both paths carry the same identity, metadata,
+    and Proxmox root-ticket behavior.
+    """
+    from web import app as web_app
+
+    run_id = run["run_id"]
+    requested_name = run.get("requested_vm_name") or run["vm_name"]
+    expected_name = run.get("expected_computer_name") or requested_name
+    extra_vars = {
+        "cloudosd_run_id": run_id,
+        "cloudosd_artifact_volid": artifact["proxmox_volid"],
+        "autopilot_base_url": _base_url(request),
+        "proxmox_node": run["node"],
+        "proxmox_storage": run["storage"],
+        "proxmox_bridge": run["network_bridge"],
+        "vm_cores": run["vm_cores"],
+        "vm_memory_mb": run["vm_memory_mb"],
+        "vm_disk_size_gb": run["vm_disk_size_gb"],
+        "vm_name": requested_name,
+        "vm_custom_serial": expected_name,
+        "hostname_pattern": expected_name,
+        "tpm_enabled": run["tpm_enabled"],
+        "secure_boot": run["secure_boot"],
+    }
+    if run.get("vm_group_tag"):
+        extra_vars["vm_group_tag"] = run["vm_group_tag"]
+    if run.get("vm_oem_profile"):
+        extra_vars["vm_oem_profile"] = run["vm_oem_profile"]
+    if int(run.get("chassis_type_override") or 0) > 0:
+        extra_vars["chassis_type_override"] = int(run["chassis_type_override"])
+    if run.get("requested_vmid"):
+        extra_vars["requested_vmid"] = run["requested_vmid"]
+    if run.get("source_sequence_id"):
+        extra_vars["source_sequence_id"] = run["source_sequence_id"]
+
+    needs_root_ticket = (
+        _run_needs_root_ticket_for_chassis(run)
+        if require_root_ticket is None
+        else require_root_ticket
+    )
+    if needs_root_ticket:
+        cfg = web_app._load_proxmox_config()
+        root_password = cfg.get("vault_proxmox_root_password", "")
+        if not root_password and not (root_ticket and root_csrf_token):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "CloudOSD OEM/chassis provisioning needs the QEMU 'args' "
+                    "field set, which Proxmox restricts to root@pam password "
+                    "auth. Set vault_proxmox_root_password in vault.yml "
+                    "(Settings -> Credentials) and restart the container."
+                ),
+            )
+        if not (root_ticket and root_csrf_token):
+            try:
+                root_ticket, root_csrf_token = web_app._proxmox_root_ticket_fetch(cfg)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Could not obtain a root@pam ticket from Proxmox: {exc}. "
+                        "Check vault_proxmox_root_username and "
+                        "vault_proxmox_root_password."
+                    ),
+                ) from exc
+        extra_vars["_proxmox_root_ticket"] = root_ticket
+        extra_vars["_proxmox_root_csrf_token"] = root_csrf_token
+
+    return extra_vars
+
+
 @router.post("/runs/{run_id}/provision", status_code=202)
 def provision_run(run_id: str, request: Request):
     from web import app as web_app
@@ -1138,24 +1257,11 @@ def provision_run(run_id: str, request: Request):
                 status_code=409,
                 detail="CloudOSD artifact is not uploaded to Proxmox ISO storage",
             )
-    extra_vars = {
-        "cloudosd_run_id": run_id,
-        "cloudosd_artifact_volid": artifact["proxmox_volid"],
-        "autopilot_base_url": _base_url(request),
-        "proxmox_node": run["node"],
-        "proxmox_storage": run["storage"],
-        "proxmox_bridge": run["network_bridge"],
-        "vm_cores": run["vm_cores"],
-        "vm_memory_mb": run["vm_memory_mb"],
-        "vm_disk_size_gb": run["vm_disk_size_gb"],
-        "vm_name": run.get("requested_vm_name") or run["vm_name"],
-        "vm_custom_serial": run.get("expected_computer_name") or run["vm_name"],
-        "hostname_pattern": run.get("expected_computer_name") or run["vm_name"],
-        "tpm_enabled": run["tpm_enabled"],
-        "secure_boot": run["secure_boot"],
-    }
-    if run.get("requested_vmid"):
-        extra_vars["requested_vmid"] = run["requested_vmid"]
+    extra_vars = cloudosd_provision_extra_vars(
+        run=run,
+        artifact=artifact,
+        request=request,
+    )
     cmd = [
         "ansible-playbook",
         str(_APP_ROOT / "playbooks" / "provision_proxmox_cloudosd.yml"),

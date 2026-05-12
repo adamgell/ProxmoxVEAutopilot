@@ -2249,6 +2249,8 @@ async def home(request: Request):
 
 @app.get("/provision", response_class=HTMLResponse)
 async def provision_page(request: Request):
+    from web import cloudosd_endpoints, cloudosd_pg, db_pg
+
     cfg = _load_vars()
     # Best-effort: look up template disk size so the UI can show the minimum.
     template_disk = None
@@ -2275,6 +2277,18 @@ async def provision_page(request: Request):
         "template_vmid": cfg.get("proxmox_template_vmid", ""),
         "hostname_pattern": _optional_text(cfg.get("vm_hostname_pattern", "")) or "autopilot-{serial}",
     }
+    cloudosd_catalog = cloudosd_endpoints.catalog_payload()
+    cloudosd_options = cloudosd_endpoints.proxmox_options_payload()
+    cloudosd_artifacts = []
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            cloudosd_pg.init(conn)
+            cloudosd_artifacts = [
+                cloudosd_endpoints.enrich_artifact(artifact)
+                for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
+            ]
+    except Exception:
+        cloudosd_artifacts = []
     return templates.TemplateResponse("provision.html", {
         "request": request,
         "profiles": load_oem_profiles(),
@@ -2282,6 +2296,12 @@ async def provision_page(request: Request):
         "template_disk_gb": template_disk,
         "sequences": sequences_db.list_sequences(SEQUENCES_DB),
         "winpe_enabled": _winpe_enabled(),
+        "cloudosd_catalog": cloudosd_catalog,
+        "cloudosd_options": cloudosd_options,
+        "cloudosd_artifacts": cloudosd_artifacts,
+        "cloudosd_ready_artifacts": [
+            artifact for artifact in cloudosd_artifacts if artifact.get("ready")
+        ],
     })
 
 
@@ -4002,8 +4022,265 @@ def _register_sequence_callbacks(job_id: str, sequence_id: int) -> None:
     )
 
 
+def _form_flag(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _cloudosd_batch_names(
+    *,
+    hostname_pattern: str,
+    count: int,
+    serial_prefix: str,
+) -> list[str]:
+    pattern = (hostname_pattern or "").strip() or "cloudosd-{index}"
+    if count > 1 and "{index}" not in pattern and "{serial}" not in pattern:
+        pattern = f"{pattern}-{{index}}"
+    serial_base = (serial_prefix or "CLOUDOSD").strip("-") or "CLOUDOSD"
+    names: list[str] = []
+    for index in range(1, count + 1):
+        serial = f"{serial_base}-{uuid4().hex[:8].upper()}"
+        name = (
+            pattern
+            .replace("{index}", f"{index:02d}")
+            .replace("{serial}", serial)
+            .replace("{vmid}", f"{index:02d}")
+        )
+        if not name.strip():
+            raise HTTPException(status_code=400, detail="CloudOSD VM name is empty")
+        names.append(name.strip())
+    if len({name.lower() for name in names}) != len(names):
+        raise HTTPException(
+            status_code=400,
+            detail="CloudOSD hostname pattern produced duplicate VM names",
+        )
+    return names
+
+
+def _cloudosd_root_ticket_for_batch(
+    *,
+    profile: str,
+    chassis_type_override: int,
+) -> tuple[bool, str | None, str | None]:
+    from web import cloudosd_endpoints
+
+    needs_root_ticket = (
+        int(chassis_type_override or 0) > 0
+        or cloudosd_endpoints._profile_chassis_type(profile) > 0
+    )
+    if not needs_root_ticket:
+        return False, None, None
+
+    cfg = _load_proxmox_config()
+    if not cfg.get("vault_proxmox_root_password", ""):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "CloudOSD OEM/chassis provisioning needs the QEMU 'args' "
+                "field set, which Proxmox restricts to root@pam password "
+                "auth. Set vault_proxmox_root_password in vault.yml "
+                "(Settings -> Credentials) and restart the container."
+            ),
+        )
+    try:
+        ticket, csrf = _proxmox_root_ticket_fetch(cfg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Could not obtain a root@pam ticket from Proxmox: {exc}. "
+                "Check vault_proxmox_root_username and "
+                "vault_proxmox_root_password."
+            ),
+        ) from exc
+    return True, ticket, csrf
+
+
+def _start_cloudosd_provision_batch(
+    *,
+    request: Request,
+    artifact_id: str,
+    profile: str,
+    count: int,
+    serial_prefix: str,
+    group_tag: str,
+    cores: int,
+    memory_mb: int,
+    disk_size_gb: int,
+    sequence_id: int | None,
+    hostname_pattern: str,
+    chassis_type_override: int,
+    node: str,
+    iso_storage: str,
+    storage: str,
+    network_bridge: str,
+    os_version: str,
+    os_activation: str,
+    os_edition: str,
+    os_language: str,
+    tpm_enabled: bool,
+    secure_boot: bool,
+    firmware_updates_enabled: bool,
+    driver_pack_policy: str,
+    analytics_enabled: bool,
+    outbound_policy_mode: str,
+) -> RedirectResponse:
+    from web import cloudosd_endpoints, cloudosd_pg, db_pg
+
+    count = int(count or 1)
+    if count < 1 or count > 50:
+        raise HTTPException(status_code=400, detail="CloudOSD count must be between 1 and 50")
+    if not artifact_id:
+        raise HTTPException(status_code=400, detail="CloudOSD artifact_id is required")
+
+    vm_cores = int(cores or 0) or cloudosd_pg.DEFAULT_VM_CORES
+    vm_memory_mb = int(memory_mb or 0) or cloudosd_pg.DEFAULT_VM_MEMORY_MB
+    vm_disk_size_gb = int(disk_size_gb or 0) or cloudosd_pg.DEFAULT_VM_DISK_SIZE_GB
+    if vm_memory_mb < cloudosd_pg.MIN_VM_MEMORY_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"CloudOSD Proxmox VMs need at least {cloudosd_pg.MIN_VM_MEMORY_MB} MB RAM",
+        )
+    if vm_disk_size_gb < cloudosd_pg.MIN_VM_DISK_SIZE_GB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"CloudOSD VMs need at least {cloudosd_pg.MIN_VM_DISK_SIZE_GB} GB disk",
+        )
+
+    names = _cloudosd_batch_names(
+        hostname_pattern=hostname_pattern,
+        count=count,
+        serial_prefix=serial_prefix,
+    )
+    source_sequence_id = int(sequence_id) if sequence_id else None
+    bodies: list[cloudosd_endpoints.RunCreateBody] = []
+    for name in names:
+        bodies.append(cloudosd_endpoints.RunCreateBody(
+            artifact_id=artifact_id,
+            vm_name=name,
+            node=node or None,
+            iso_storage=iso_storage or None,
+            storage=storage or None,
+            network_bridge=network_bridge or None,
+            architecture=cloudosd_pg.DEFAULT_ARCHITECTURE,
+            os_version=os_version or cloudosd_pg.DEFAULT_OS_VERSION,
+            os_activation=os_activation or cloudosd_pg.DEFAULT_OS_ACTIVATION,
+            os_edition=os_edition or cloudosd_pg.DEFAULT_OS_EDITION,
+            os_language=os_language or cloudosd_pg.DEFAULT_OS_LANGUAGE,
+            vm_cores=vm_cores,
+            vm_memory_mb=vm_memory_mb,
+            vm_disk_size_gb=vm_disk_size_gb,
+            vm_group_tag=group_tag,
+            vm_oem_profile=profile,
+            chassis_type_override=int(chassis_type_override or 0),
+            source_surface="provision",
+            source_sequence_id=source_sequence_id,
+            tpm_enabled=tpm_enabled,
+            secure_boot=secure_boot,
+            firmware_updates_enabled=firmware_updates_enabled,
+            driver_pack_policy=driver_pack_policy or cloudosd_pg.DEFAULT_DRIVER_PACK_POLICY,
+            analytics_enabled=analytics_enabled,
+            outbound_policy={"mode": outbound_policy_mode or "blocked"},
+        ))
+
+    preflights = [cloudosd_endpoints.preflight_payload(body) for body in bodies]
+    blockers = [
+        check
+        for preflight in preflights
+        for check in preflight.get("blocking_checks", [])
+    ]
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "CloudOSD blocking preflight checks failed",
+                "blocking_checks": blockers,
+            },
+        )
+
+    needs_root_ticket, root_ticket, root_csrf = _cloudosd_root_ticket_for_batch(
+        profile=profile,
+        chassis_type_override=int(chassis_type_override or 0),
+    )
+
+    jobs = []
+    run_ids = []
+    with db_pg.connection(_database_url()) as conn:
+        cloudosd_pg.init(conn)
+        for body, preflight in zip(bodies, preflights):
+            target = preflight["target"]
+            artifact = cloudosd_pg.get_artifact(conn, body.artifact_id)
+            if not artifact:
+                raise HTTPException(status_code=404, detail="CloudOSD artifact not found")
+            if not artifact.get("proxmox_volid"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="CloudOSD artifact is not uploaded to Proxmox ISO storage",
+                )
+            try:
+                run = cloudosd_pg.create_run(
+                    conn,
+                    artifact_id=body.artifact_id,
+                    vm_name=body.vm_name,
+                    node=target["node"],
+                    iso_storage=target["iso_storage"],
+                    storage=target["storage"],
+                    network_bridge=target["network_bridge"],
+                    architecture=body.architecture,
+                    os_version=body.os_version,
+                    os_activation=body.os_activation,
+                    os_edition=body.os_edition,
+                    os_language=body.os_language,
+                    vm_cores=body.vm_cores,
+                    vm_memory_mb=body.vm_memory_mb,
+                    vm_disk_size_gb=body.vm_disk_size_gb,
+                    vm_group_tag=body.vm_group_tag.strip(),
+                    vm_oem_profile=body.vm_oem_profile.strip(),
+                    chassis_type_override=body.chassis_type_override,
+                    source_surface="provision",
+                    source_sequence_id=source_sequence_id,
+                    tpm_enabled=body.tpm_enabled,
+                    secure_boot=body.secure_boot,
+                    firmware_updates_enabled=body.firmware_updates_enabled,
+                    driver_pack_policy=body.driver_pack_policy,
+                    analytics_enabled=body.analytics_enabled,
+                    outbound_policy=body.outbound_policy,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            extra_vars = cloudosd_endpoints.cloudosd_provision_extra_vars(
+                run=run,
+                artifact=artifact,
+                request=request,
+                root_ticket=root_ticket,
+                root_csrf_token=root_csrf,
+                require_root_ticket=needs_root_ticket,
+            )
+            if serial_prefix:
+                extra_vars["vm_serial_prefix"] = serial_prefix
+            if source_sequence_id:
+                extra_vars["source_sequence_id"] = source_sequence_id
+            cmd = [
+                "ansible-playbook",
+                str(PLAYBOOK_DIR / "provision_proxmox_cloudosd.yml"),
+            ]
+            for key, value in extra_vars.items():
+                cmd.extend(["-e", f"{key}={value}"])
+            job = job_manager.start("provision_cloudosd", cmd, args=extra_vars)
+            jobs.append(job)
+            run_ids.append(run["run_id"])
+
+    first_run = run_ids[0] if run_ids else ""
+    if len(run_ids) == 1:
+        return RedirectResponse(f"/cloudosd/runs/{first_run}", status_code=303)
+    return RedirectResponse(
+        f"/cloudosd?created={len(run_ids)}&first_run={first_run}",
+        status_code=303,
+    )
+
+
 @app.post("/api/jobs/provision")
 async def start_provision(
+    request: Request,
     profile: str = Form(...),
     count: int = Form(1),
     serial_prefix: str = Form(""),
@@ -4015,10 +4292,25 @@ async def start_provision(
     hostname_pattern: str = Form("autopilot-{serial}"),
     chassis_type_override: int = Form(0),
     boot_mode: str = Form("clone"),
+    artifact_id: str = Form(""),
+    node: str = Form(""),
+    iso_storage: str = Form(""),
+    storage: str = Form(""),
+    network_bridge: str = Form(""),
+    os_version: str = Form(""),
+    os_activation: str = Form(""),
+    os_edition: str = Form(""),
+    os_language: str = Form(""),
+    tpm_enabled: str = Form(""),
+    secure_boot: str = Form(""),
+    firmware_updates_enabled: str = Form(""),
+    driver_pack_policy: str = Form(""),
+    analytics_enabled: str = Form(""),
+    outbound_policy_mode: str = Form("blocked"),
 ):
     profile = _sanitize_input(profile)
     boot_mode = (boot_mode or "clone").lower()
-    if boot_mode not in ("clone", "winpe"):
+    if boot_mode not in ("clone", "winpe", "cloudosd"):
         raise HTTPException(
             status_code=400, detail=f"unknown boot_mode: {boot_mode!r}",
         )
@@ -4055,6 +4347,36 @@ async def start_provision(
     # hostname_pattern contains literal { } tokens — don't _sanitize_input
     # (which strips special chars); just trim and fall back to the default.
     hostname_pattern = (hostname_pattern or "").strip() or "autopilot-{serial}"
+
+    if boot_mode == "cloudosd":
+        return _start_cloudosd_provision_batch(
+            request=request,
+            artifact_id=artifact_id.strip(),
+            profile=profile,
+            count=int(count or 1),
+            serial_prefix=serial_prefix,
+            group_tag=group_tag,
+            cores=int(cores or 0),
+            memory_mb=int(memory_mb or 0),
+            disk_size_gb=int(disk_size_gb or 0),
+            sequence_id=int(sequence_id) if sequence_id else None,
+            hostname_pattern=hostname_pattern,
+            chassis_type_override=int(chassis_type_override or 0),
+            node=node.strip(),
+            iso_storage=iso_storage.strip(),
+            storage=storage.strip(),
+            network_bridge=network_bridge.strip(),
+            os_version=os_version.strip(),
+            os_activation=os_activation.strip(),
+            os_edition=os_edition.strip(),
+            os_language=os_language.strip(),
+            tpm_enabled=_form_flag(tpm_enabled),
+            secure_boot=_form_flag(secure_boot),
+            firmware_updates_enabled=_form_flag(firmware_updates_enabled),
+            driver_pack_policy=driver_pack_policy.strip(),
+            analytics_enabled=_form_flag(analytics_enabled),
+            outbound_policy_mode=outbound_policy_mode.strip() or "blocked",
+        )
 
     # Stage the chassis-type SMBIOS binary(ies) on the Proxmox host for
     # every possible source of the effective chassis type. The compiler

@@ -10,7 +10,7 @@
   vars:
     proxmox_template_vmid: "{{ cloudosd_blank_template_vmid | default(winpe_blank_template_vmid) }}"
     _skip_panther_injection: true
-    _skip_chassis_type_smbios_file: true
+    _skip_chassis_type_smbios_file: false
     vm_start_after_create: false
   pre_tasks:
     - name: Validate CloudOSD path is configured

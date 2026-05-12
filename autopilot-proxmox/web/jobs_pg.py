@@ -39,7 +39,7 @@ DEFAULT_LIMITS = [
     ("build_template", 1),
     ("provision_clone", 3),
     ("cloudosd_build_iso", 1),
-    ("provision_cloudosd", 2),
+    ("provision_cloudosd", 4),
     ("hash_capture", 5),
     ("upload_after_capture", 5),
     ("retry_inject_hash", 3),

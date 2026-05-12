@@ -20,8 +20,10 @@ def _bearer(token: str) -> dict[str, str]:
 
 @pytest.fixture
 def cloudosd_client(pg_conn, monkeypatch):
-    from web import agent_telemetry_pg, cloudosd_pg, ts_engine_pg
+    from web import agent_telemetry_pg, cloudosd_pg, sequences_pg, ts_engine_pg
 
+    sequences_pg.reset_for_tests(pg_conn)
+    sequences_pg.init(pg_conn)
     ts_engine_pg.reset_for_tests(pg_conn)
     ts_engine_pg.init(pg_conn)
     agent_telemetry_pg.reset_for_tests(pg_conn)
@@ -863,7 +865,7 @@ def test_cloudosd_job_caps_and_public_bridge_routes_are_additive(pg_conn):
 
     caps = {r["job_type"]: r["max_concurrent"] for r in jobs_pg.list_job_type_limits()}
     assert caps["cloudosd_build_iso"] == 1
-    assert caps["provision_cloudosd"] == 2
+    assert caps["provision_cloudosd"] == 4
     assert caps["provision_clone"] == 3
 
     assert auth.is_exempt_path("/api/cloudosd/pe/register")
@@ -874,6 +876,204 @@ def test_cloudosd_job_caps_and_public_bridge_routes_are_additive(pg_conn):
     assert auth.is_exempt_path("/api/cloudosd/runs/run-1/events")
     assert not auth.is_exempt_path("/api/cloudosd/runs")
     assert not auth.is_exempt_path("/api/cloudosd/runs/run-1/provision")
+
+
+def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
+    cloudosd_client,
+    pg_conn,
+):
+    artifact = _create_artifact(pg_conn)
+
+    response = cloudosd_client.get("/provision")
+
+    assert response.status_code == 200, response.text
+    body = response.text
+    assert body.index('name="boot_mode"') < body.index('name="sequence_id"')
+    assert '<option value="cloudosd">CloudOSD' in body
+    assert 'data-boot-section="cloudosd"' in body
+    assert f'value="{artifact["id"]}"' in body
+    for required in (
+        'name="artifact_id"',
+        'name="count"',
+        'name="cores"',
+        'name="memory_mb"',
+        'name="disk_size_gb"',
+        'name="group_tag"',
+        'name="profile"',
+        'name="chassis_type_override"',
+        'name="node"',
+        'name="iso_storage"',
+        'name="storage"',
+        'name="network_bridge"',
+        'name="os_version"',
+        'name="os_edition"',
+        'name="os_activation"',
+        'name="os_language"',
+    ):
+        assert required in body
+
+
+def test_provision_cloudosd_batch_creates_runs_and_jobs(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_root_ticket_fetch",
+        lambda cfg: ("PVE:root@pam:FAKETICKET", "csrf-value"),
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "lenovo-t14",
+            "count": "3",
+            "cores": "6",
+            "memory_mb": "12288",
+            "disk_size_gb": "96",
+            "serial_prefix": "GELL",
+            "group_tag": "GellNative",
+            "hostname_pattern": "GELL-OSD-{index}",
+            "chassis_type_override": "31",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"].startswith("/cloudosd")
+    jobs = [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ]
+    assert len(jobs) == 3
+    names = {job["args"]["vm_name"] for job in jobs}
+    assert names == {"GELL-OSD-01", "GELL-OSD-02", "GELL-OSD-03"}
+    for job in jobs:
+        args = job["args"]
+        assert args["cloudosd_artifact_volid"] == artifact["proxmox_volid"]
+        assert args["vm_cores"] == 6
+        assert args["vm_memory_mb"] == 12288
+        assert args["vm_disk_size_gb"] == 96
+        assert args["vm_group_tag"] == "GellNative"
+        assert args["vm_oem_profile"] == "lenovo-t14"
+        assert args["chassis_type_override"] == 31
+        assert args["_proxmox_root_ticket"] == "PVE:root@pam:FAKETICKET"
+        assert args["_proxmox_root_csrf_token"] == "csrf-value"
+        assert "_skip_chassis_type_smbios_file" not in args
+
+    runs = cloudosd_pg.list_runs(pg_conn, limit=10)
+    assert {run["requested_vm_name"] for run in runs} >= names
+    for run in runs:
+        if run["requested_vm_name"] in names:
+            assert run["vm_group_tag"] == "GellNative"
+            assert run["vm_oem_profile"] == "lenovo-t14"
+            assert run["chassis_type_override"] == 31
+            assert run["source_surface"] == "provision"
+
+
+def test_provision_cloudosd_rejects_low_ram_before_enqueue(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "lenovo-t14",
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "4096",
+            "disk_size_gb": "80",
+            "hostname_pattern": "LOW-RAM-{index}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "at least" in response.json()["detail"]
+    assert [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ] == []
+
+
+def test_provision_cloudosd_chassis_requires_root_ticket(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+        },
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "lenovo-t14",
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "hostname_pattern": "NO-ROOT-{index}",
+            "chassis_type_override": "31",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "vault_proxmox_root_password" in response.json()["detail"]
 
 
 def test_cloudosd_static_first_boot_assets_are_served(cloudosd_client):

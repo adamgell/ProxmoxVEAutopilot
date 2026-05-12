@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS cloudosd_runs (
     vm_cores integer NOT NULL,
     vm_memory_mb integer NOT NULL,
     vm_disk_size_gb integer NOT NULL,
+    vm_group_tag text NULL,
+    vm_oem_profile text NULL,
+    chassis_type_override integer NULL,
+    source_surface text NULL,
+    source_sequence_id integer NULL,
     tpm_enabled boolean NOT NULL DEFAULT true,
     secure_boot boolean NOT NULL DEFAULT true,
     firmware_updates_enabled boolean NOT NULL DEFAULT false,
@@ -403,6 +408,11 @@ def init(conn: Connection) -> None:
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS expected_computer_name text NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS requested_vmid integer NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS iso_storage text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS vm_group_tag text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS vm_oem_profile text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS chassis_type_override integer NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_surface text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_sequence_id integer NULL")
         conn.commit()
         _INIT_DONE = True
 
@@ -465,6 +475,11 @@ def _run_row(row: dict | None) -> dict | None:
         "vm_cores": row["vm_cores"],
         "vm_memory_mb": row["vm_memory_mb"],
         "vm_disk_size_gb": row["vm_disk_size_gb"],
+        "vm_group_tag": row.get("vm_group_tag"),
+        "vm_oem_profile": row.get("vm_oem_profile"),
+        "chassis_type_override": row.get("chassis_type_override"),
+        "source_surface": row.get("source_surface"),
+        "source_sequence_id": row.get("source_sequence_id"),
         "tpm_enabled": row["tpm_enabled"],
         "secure_boot": row["secure_boot"],
         "firmware_updates_enabled": row["firmware_updates_enabled"],
@@ -635,6 +650,11 @@ def create_run(
     vm_cores: int = DEFAULT_VM_CORES,
     vm_memory_mb: int = DEFAULT_VM_MEMORY_MB,
     vm_disk_size_gb: int = DEFAULT_VM_DISK_SIZE_GB,
+    vm_group_tag: str | None = None,
+    vm_oem_profile: str | None = None,
+    chassis_type_override: int | None = None,
+    source_surface: str | None = None,
+    source_sequence_id: int | None = None,
     tpm_enabled: bool = True,
     secure_boot: bool = True,
     firmware_updates_enabled: bool = False,
@@ -670,6 +690,11 @@ def create_run(
         run_variables={
             "deployment_path": "cloudosd",
             "artifact_id": artifact_id,
+            "vm_group_tag": vm_group_tag or "",
+            "vm_oem_profile": vm_oem_profile or "",
+            "chassis_type_override": int(chassis_type_override or 0),
+            "source_surface": source_surface or "cloudosd",
+            "source_sequence_id": source_sequence_id,
             "os_version": os_version,
             "os_activation": os_activation,
             "os_edition": os_edition,
@@ -689,14 +714,16 @@ def create_run(
             os_version, os_activation, os_edition, os_language, vm_name,
             requested_vm_name, expected_computer_name, requested_vmid,
             node, iso_storage, storage, network_bridge, vm_cores,
-            vm_memory_mb, vm_disk_size_gb, tpm_enabled, secure_boot,
-            firmware_updates_enabled, driver_pack_policy, analytics_enabled,
-            outbound_policy_json, created_at, updated_at
+            vm_memory_mb, vm_disk_size_gb, vm_group_tag, vm_oem_profile,
+            chassis_type_override, source_surface, source_sequence_id,
+            tpm_enabled, secure_boot, firmware_updates_enabled,
+            driver_pack_policy, analytics_enabled, outbound_policy_json,
+            created_at, updated_at
         )
         VALUES (
             %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         RETURNING *
         """,
@@ -720,6 +747,11 @@ def create_run(
             vm_cores,
             vm_memory_mb,
             vm_disk_size_gb,
+            vm_group_tag or None,
+            vm_oem_profile or None,
+            int(chassis_type_override or 0) or None,
+            source_surface or None,
+            source_sequence_id,
             tpm_enabled,
             secure_boot,
             firmware_updates_enabled,
