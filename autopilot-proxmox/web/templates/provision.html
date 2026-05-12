@@ -106,7 +106,10 @@
 <tr>
   <td><b>Serial Prefix:</b></td>
   <td><input type="text" name="serial_prefix" value="{{ defaults.serial_prefix }}" size="30">
-    <small style="color:var(--ink-soft);">default: {{ defaults.serial_prefix or 'OEM profile prefix' }}</small></td>
+    <small style="color:var(--ink-soft);">
+      default: {{ defaults.serial_prefix or 'blank' }}.
+      CloudOSD blank uses a plain generated serial; Clone/WinPE blank keeps the OEM profile prefix behavior.
+    </small></td>
 </tr>
 <tr>
   <td><b>Group Tag:</b></td>
