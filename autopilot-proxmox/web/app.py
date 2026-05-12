@@ -4169,28 +4169,13 @@ def _form_flag(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _cloudosd_serial_prefix_for_profile(profile: str) -> str:
-    try:
-        manufacturer = (load_oem_profiles().get(profile) or {}).get("manufacturer", "")
-    except Exception:
-        manufacturer = ""
-    if manufacturer.startswith("Lenovo"):
-        return "PF"
-    if manufacturer.startswith("Dell"):
-        return "SVC"
-    if manufacturer.startswith("HP"):
-        return "CZC"
-    if manufacturer.startswith("Microsoft"):
-        return "MSF"
-    return "LAB"
-
-
 def _cloudosd_generate_serial(*, profile: str, serial_prefix: str) -> str:
     prefix = (serial_prefix or "").strip().rstrip("-")
+    prefix = re.sub(r"[^A-Za-z0-9-]", "", prefix).strip("-")
+    suffix = uuid4().hex[:8].upper()
     if not prefix:
-        prefix = _cloudosd_serial_prefix_for_profile(profile)
-    prefix = re.sub(r"[^A-Za-z0-9-]", "", prefix).strip("-") or "LAB"
-    return f"{prefix}-{uuid4().hex[:8].upper()}"
+        return suffix
+    return f"{prefix}-{suffix}"
 
 
 def _cloudosd_pattern_has_token(pattern: str, token: str) -> bool:

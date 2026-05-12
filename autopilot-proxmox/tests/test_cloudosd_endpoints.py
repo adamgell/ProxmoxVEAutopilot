@@ -1071,8 +1071,10 @@ def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(
     args = jobs[0]["args"]
     assert args["requested_vmid"] == 120
     assert args["proxmox_node_ssh_host"] == "10.0.0.2"
-    assert args["vm_custom_serial"].startswith("SVC-")
-    assert args["vm_name"].startswith("Gell-120-SVC-")
+    assert not args["vm_custom_serial"].startswith(("SVC-", "CZC-", "HP-"))
+    assert "-" not in args["vm_custom_serial"]
+    assert args["vm_name"].startswith("Gell-120-")
+    assert not args["vm_name"].startswith("Gell-120-SVC-")
     assert args["vm_name"].endswith(args["vm_custom_serial"])
     runs = cloudosd_pg.list_runs(pg_conn, limit=10)
     run = next(row for row in runs if row["run_id"] == args["cloudosd_run_id"])
