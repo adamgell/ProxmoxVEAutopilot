@@ -135,6 +135,37 @@ Describe 'Add-PVEAutopilotSpecializeUnattend' {
             Should -Be 1
     }
 
+    It 'writes oobeSystem locale and OOBE suppression so CloudOSD does not stop at Region' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsOobe'
+        New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null
+
+        Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot -ComputerName 'GELL-AD-001'
+
+        $content = Get-Content -LiteralPath (Join-Path $windowsRoot 'Panther/Unattend.xml') -Raw
+        $content | Should -Match '<settings pass="oobeSystem">'
+        $content | Should -Match 'Microsoft-Windows-International-Core'
+        $content | Should -Match '<InputLocale>en-US</InputLocale>'
+        $content | Should -Match '<SystemLocale>en-US</SystemLocale>'
+        $content | Should -Match '<UILanguage>en-US</UILanguage>'
+        $content | Should -Match '<UserLocale>en-US</UserLocale>'
+        $content | Should -Match '<OOBE>'
+        $content | Should -Match '<HideEULAPage>true</HideEULAPage>'
+        $content | Should -Match '<HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>'
+        $content | Should -Match '<HideLocalAccountScreen>true</HideLocalAccountScreen>'
+        $content | Should -Match '<HideOnlineAccountScreens>true</HideOnlineAccountScreens>'
+        $content | Should -Match '<HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>'
+        $content | Should -Match '<ProtectYourPC>3</ProtectYourPC>'
+        $content | Should -Match '<UserAccounts>'
+        $content | Should -Match '<LocalAccounts>'
+        $content | Should -Match '<Name>PVEAutopilot</Name>'
+        $content | Should -Match '<Group>Administrators</Group>'
+        $content | Should -Match '<AutoLogon>'
+        $content | Should -Match '<Enabled>true</Enabled>'
+        $content | Should -Match '<Username>PVEAutopilot</Username>'
+        $content | Should -Match '<LogonCount>1</LogonCount>'
+        $content | Should -Not -Match 'Nsta1200'
+    }
+
     It 'writes Microsoft-Windows-UnattendedJoin when domain join is requested' {
         $windowsRoot = Join-Path $TestDrive 'WindowsDomain'
         New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null

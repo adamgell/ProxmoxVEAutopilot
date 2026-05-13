@@ -120,10 +120,18 @@ function Clear-PVEAutopilotDomainJoinSecrets {
             $xml.Load($file.FullName)
             $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
             $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
-            $passwordNodes = $xml.SelectNodes("//u:component[@name='Microsoft-Windows-UnattendedJoin']//u:Credentials/u:Password", $ns)
+            $passwordNodes = $xml.SelectNodes('//u:Password', $ns)
             if (-not $passwordNodes -or $passwordNodes.Count -eq 0) { continue }
             foreach ($node in @($passwordNodes)) {
-                if ($node.InnerText -and $node.InnerText -ne 'REDACTED-BY-PVEAUTOPILOT') {
+                $valueNodes = $node.SelectNodes('u:Value', $ns)
+                if ($valueNodes -and $valueNodes.Count -gt 0) {
+                    foreach ($valueNode in @($valueNodes)) {
+                        if ($valueNode.InnerText -and $valueNode.InnerText -ne 'REDACTED-BY-PVEAUTOPILOT') {
+                            $valueNode.InnerText = 'REDACTED-BY-PVEAUTOPILOT'
+                            $redacted++
+                        }
+                    }
+                } elseif ($node.InnerText -and $node.InnerText -ne 'REDACTED-BY-PVEAUTOPILOT') {
                     $node.InnerText = 'REDACTED-BY-PVEAUTOPILOT'
                     $redacted++
                 }
@@ -322,6 +330,28 @@ function Invoke-CloudOSDOsdClient {
     Write-CloudOSDFirstBootLog 'CloudOSD OSD client completed.'
 }
 
+function Clear-PVEAutopilotOobeBootstrapAccount {
+    param(
+        [string] $UserName = 'PVEAutopilot',
+        [scriptblock] $RegistryCleanup = {
+            $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+            foreach ($name in @('AutoAdminLogon', 'DefaultUserName', 'DefaultPassword', 'DefaultDomainName')) {
+                Remove-ItemProperty -Path $winlogon -Name $name -ErrorAction SilentlyContinue
+            }
+        },
+        [scriptblock] $DisableUser = {
+            param([string] $Name)
+            if (Get-Command Disable-LocalUser -ErrorAction SilentlyContinue) {
+                Disable-LocalUser -Name $Name -ErrorAction SilentlyContinue
+            } else {
+                net.exe user $Name /active:no | Out-Null
+            }
+        }
+    )
+    & $RegistryCleanup
+    & $DisableUser $UserName
+}
+
 function Invoke-PVEAutopilotFirstBoot {
     param(
         [object] $RunConfig,
@@ -451,6 +481,18 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_osd_client_complete' `
         -Message 'Staged OSD client completed CloudOSD post-deployment work'
+    try {
+        Clear-PVEAutopilotOobeBootstrapAccount
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_cleanup_ok' `
+            -Message 'Temporary CloudOSD OOBE bootstrap account cleanup completed'
+    } catch {
+        Write-CloudOSDFirstBootLog "CloudOSD OOBE bootstrap account cleanup failed: $($_.Exception.Message)"
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_cleanup_failed' `
+            -Severity 'warning' `
+            -Message $_.Exception.Message
+    }
     & $RemoveScheduledTask 'PVEAutopilot-CloudOSD-FirstBoot'
     Write-CloudOSDFirstBootLog "CloudOSD first boot complete for run $runId"
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `

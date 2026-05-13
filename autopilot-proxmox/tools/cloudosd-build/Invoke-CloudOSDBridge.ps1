@@ -191,6 +191,66 @@ function New-PVEAutopilotUnattendTextElement {
     return $node
 }
 
+function Set-PVEAutopilotUnattendTextElement {
+    param(
+        [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
+        [Parameter(Mandatory)] [System.Xml.XmlElement] $Parent,
+        [Parameter(Mandatory)] [System.Xml.XmlNamespaceManager] $NamespaceManager,
+        [Parameter(Mandatory)] [string] $Namespace,
+        [Parameter(Mandatory)] [string] $Name,
+        [AllowNull()] [object] $Value
+    )
+    $node = $Parent.SelectSingleNode("u:$Name", $NamespaceManager)
+    if (-not $node) {
+        $node = $Xml.CreateElement($Name, $Namespace)
+        $Parent.AppendChild($node) | Out-Null
+    }
+    $node.InnerText = [string] $Value
+    return $node
+}
+
+function New-PVEAutopilotOobeBootstrapPassword {
+    $bytes = New-Object byte[] 18
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
+    $randomText = [Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', ''
+    if ($randomText.Length -lt 20) {
+        $randomText = ($randomText + ([guid]::NewGuid().ToString('N')))
+    }
+    return ('Pve!' + $randomText.Substring(0, 20))
+}
+
+function Set-PVEAutopilotUnattendPasswordElement {
+    param(
+        [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
+        [Parameter(Mandatory)] [System.Xml.XmlElement] $Parent,
+        [Parameter(Mandatory)] [System.Xml.XmlNamespaceManager] $NamespaceManager,
+        [Parameter(Mandatory)] [string] $Namespace,
+        [Parameter(Mandatory)] [string] $Value
+    )
+    $passwordNode = $Parent.SelectSingleNode('u:Password', $NamespaceManager)
+    if (-not $passwordNode) {
+        $passwordNode = $Xml.CreateElement('Password', $Namespace)
+        $Parent.AppendChild($passwordNode) | Out-Null
+    }
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $passwordNode `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $Namespace `
+        -Name 'Value' `
+        -Value $Value | Out-Null
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $passwordNode `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $Namespace `
+        -Name 'PlainText' `
+        -Value 'true' | Out-Null
+}
+
 function Add-PVEAutopilotUnattendedJoinComponent {
     param(
         [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
@@ -250,6 +310,142 @@ function Add-PVEAutopilotUnattendedJoinComponent {
     }
     $component.AppendChild($identification) | Out-Null
     $Settings.AppendChild($component) | Out-Null
+}
+
+function Add-PVEAutopilotOobeSystemUnattend {
+    param(
+        [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
+        [Parameter(Mandatory)] [System.Xml.XmlElement] $RootElement,
+        [Parameter(Mandatory)] [System.Xml.XmlNamespaceManager] $NamespaceManager,
+        [Parameter(Mandatory)] [string] $UnattendNamespace
+    )
+
+    $settings = $RootElement.SelectSingleNode("u:settings[@pass='oobeSystem']", $NamespaceManager)
+    if (-not $settings) {
+        $settings = $Xml.CreateElement('settings', $UnattendNamespace)
+        $settings.SetAttribute('pass', 'oobeSystem')
+        $RootElement.AppendChild($settings) | Out-Null
+    }
+
+    $shellComponent = $settings.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup' and @processorArchitecture='amd64']", $NamespaceManager)
+    if (-not $shellComponent) {
+        $shellComponent = $Xml.CreateElement('component', $UnattendNamespace)
+        $shellComponent.SetAttribute('name', 'Microsoft-Windows-Shell-Setup')
+        $shellComponent.SetAttribute('processorArchitecture', 'amd64')
+        $shellComponent.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        $shellComponent.SetAttribute('language', 'neutral')
+        $shellComponent.SetAttribute('versionScope', 'nonSxS')
+        $settings.AppendChild($shellComponent) | Out-Null
+    }
+    $oobe = $shellComponent.SelectSingleNode('u:OOBE', $NamespaceManager)
+    if (-not $oobe) {
+        $oobe = $Xml.CreateElement('OOBE', $UnattendNamespace)
+        $shellComponent.AppendChild($oobe) | Out-Null
+    }
+    foreach ($entry in @(
+        @{ Name = 'HideEULAPage'; Value = 'true' },
+        @{ Name = 'HideOEMRegistrationScreen'; Value = 'true' },
+        @{ Name = 'HideLocalAccountScreen'; Value = 'true' },
+        @{ Name = 'HideOnlineAccountScreens'; Value = 'true' },
+        @{ Name = 'HideWirelessSetupInOOBE'; Value = 'true' },
+        @{ Name = 'ProtectYourPC'; Value = '3' }
+    )) {
+        Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+            -Parent $oobe `
+            -NamespaceManager $NamespaceManager `
+            -Namespace $UnattendNamespace `
+            -Name $entry.Name `
+            -Value $entry.Value | Out-Null
+    }
+
+    $bootstrapUser = 'PVEAutopilot'
+    $bootstrapPassword = New-PVEAutopilotOobeBootstrapPassword
+    $userAccounts = $shellComponent.SelectSingleNode('u:UserAccounts', $NamespaceManager)
+    if (-not $userAccounts) {
+        $userAccounts = $Xml.CreateElement('UserAccounts', $UnattendNamespace)
+        $shellComponent.AppendChild($userAccounts) | Out-Null
+    }
+    $localAccounts = $userAccounts.SelectSingleNode('u:LocalAccounts', $NamespaceManager)
+    if (-not $localAccounts) {
+        $localAccounts = $Xml.CreateElement('LocalAccounts', $UnattendNamespace)
+        $userAccounts.AppendChild($localAccounts) | Out-Null
+    }
+    $localAccount = $localAccounts.SelectSingleNode("u:LocalAccount[u:Name='$bootstrapUser']", $NamespaceManager)
+    if (-not $localAccount) {
+        $localAccount = $Xml.CreateElement('LocalAccount', $UnattendNamespace)
+        $localAccount.SetAttribute('action', 'http://schemas.microsoft.com/WMIConfig/2002/State', 'add')
+        $localAccounts.AppendChild($localAccount) | Out-Null
+    }
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $localAccount `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Name 'Name' `
+        -Value $bootstrapUser | Out-Null
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $localAccount `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Name 'Group' `
+        -Value 'Administrators' | Out-Null
+    Set-PVEAutopilotUnattendPasswordElement -Xml $Xml `
+        -Parent $localAccount `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Value $bootstrapPassword
+
+    $autoLogon = $shellComponent.SelectSingleNode('u:AutoLogon', $NamespaceManager)
+    if (-not $autoLogon) {
+        $autoLogon = $Xml.CreateElement('AutoLogon', $UnattendNamespace)
+        $shellComponent.AppendChild($autoLogon) | Out-Null
+    }
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $autoLogon `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Name 'Enabled' `
+        -Value 'true' | Out-Null
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $autoLogon `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Name 'Username' `
+        -Value $bootstrapUser | Out-Null
+    Set-PVEAutopilotUnattendPasswordElement -Xml $Xml `
+        -Parent $autoLogon `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Value $bootstrapPassword
+    Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+        -Parent $autoLogon `
+        -NamespaceManager $NamespaceManager `
+        -Namespace $UnattendNamespace `
+        -Name 'LogonCount' `
+        -Value '1' | Out-Null
+
+    $intlComponent = $settings.SelectSingleNode("u:component[@name='Microsoft-Windows-International-Core' and @processorArchitecture='amd64']", $NamespaceManager)
+    if (-not $intlComponent) {
+        $intlComponent = $Xml.CreateElement('component', $UnattendNamespace)
+        $intlComponent.SetAttribute('name', 'Microsoft-Windows-International-Core')
+        $intlComponent.SetAttribute('processorArchitecture', 'amd64')
+        $intlComponent.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        $intlComponent.SetAttribute('language', 'neutral')
+        $intlComponent.SetAttribute('versionScope', 'nonSxS')
+        $settings.AppendChild($intlComponent) | Out-Null
+    }
+    foreach ($entry in @(
+        @{ Name = 'InputLocale'; Value = 'en-US' },
+        @{ Name = 'SystemLocale'; Value = 'en-US' },
+        @{ Name = 'UILanguage'; Value = 'en-US' },
+        @{ Name = 'UserLocale'; Value = 'en-US' }
+    )) {
+        Set-PVEAutopilotUnattendTextElement -Xml $Xml `
+            -Parent $intlComponent `
+            -NamespaceManager $NamespaceManager `
+            -Namespace $UnattendNamespace `
+            -Name $entry.Name `
+            -Value $entry.Value | Out-Null
+    }
 }
 
 function Get-CloudOSDWorkflowTask {
@@ -753,6 +949,11 @@ function Add-PVEAutopilotSpecializeUnattend {
         -NamespaceManager $ns `
         -UnattendNamespace $unattendNs `
         -DomainJoin $DomainJoin
+
+    Add-PVEAutopilotOobeSystemUnattend -Xml $xml `
+        -RootElement $rootElement `
+        -NamespaceManager $ns `
+        -UnattendNamespace $unattendNs
 
     $writerSettings = New-Object System.Xml.XmlWriterSettings
     $writerSettings.Encoding = New-Object System.Text.UTF8Encoding($false)

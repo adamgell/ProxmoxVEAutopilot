@@ -90,6 +90,58 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         $content | Should -Match '<JoinDomain>home.gell.one</JoinDomain>'
     }
 
+    It 'redacts CloudOSD OOBE bootstrap account passwords from Panther unattend files' {
+        $panther = Join-Path $TestDrive 'PantherOobe'
+        New-Item -ItemType Directory -Path $panther -Force | Out-Null
+        $unattend = Join-Path $panther 'Unattend.xml'
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount>
+            <Name>PVEAutopilot</Name>
+            <Password>
+              <Value>oobe-secret</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Username>PVEAutopilot</Username>
+        <Password>
+          <Value>autologon-secret</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath $unattend -Encoding UTF8
+
+        $redacted = Clear-PVEAutopilotDomainJoinSecrets -PantherRoot $panther
+
+        $content = Get-Content -LiteralPath $unattend -Raw
+        $redacted | Should -Be 2
+        $content | Should -Not -Match 'oobe-secret'
+        $content | Should -Not -Match 'autologon-secret'
+        ([regex]::Matches($content, '<Value>REDACTED-BY-PVEAUTOPILOT</Value>')).Count |
+            Should -Be 2
+    }
+
+    It 'clears OOBE bootstrap AutoLogon state and disables the temporary account' {
+        $script:CleanupCalls = @()
+
+        Clear-PVEAutopilotOobeBootstrapAccount `
+            -RegistryCleanup { $script:CleanupCalls += 'registry' } `
+            -DisableUser { param($Name) $script:CleanupCalls += "disable:$Name" }
+
+        ($script:CleanupCalls -join '|') |
+            Should -Be 'registry|disable:PVEAutopilot'
+    }
+
     It 'skips non-unattend Panther XML files during domain join cleanup' {
         $panther = Join-Path $TestDrive 'Panther'
         $unattendGc = Join-Path $panther 'UnattendGC'
