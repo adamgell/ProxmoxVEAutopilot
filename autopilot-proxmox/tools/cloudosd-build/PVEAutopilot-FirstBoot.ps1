@@ -112,6 +112,9 @@ function Clear-PVEAutopilotDomainJoinSecrets {
         -ErrorAction SilentlyContinue
     foreach ($file in @($files)) {
         try {
+            if ($file.Name -notlike '*unattend*.xml') {
+                continue
+            }
             $xml = New-Object System.Xml.XmlDocument
             $xml.PreserveWhitespace = $true
             $xml.Load($file.FullName)
@@ -135,8 +138,8 @@ function Clear-PVEAutopilotDomainJoinSecrets {
                 $writer.Close()
             }
         } catch {
-            Write-CloudOSDFirstBootLog "failed to redact domain join secret from $($file.FullName): $($_.Exception.Message)"
-            throw
+            Write-CloudOSDFirstBootLog "skipping domain join secret cleanup for $($file.FullName): $($_.Exception.Message)"
+            continue
         }
     }
     return $redacted

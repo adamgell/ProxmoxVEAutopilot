@@ -90,6 +90,37 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         $content | Should -Match '<JoinDomain>home.gell.one</JoinDomain>'
     }
 
+    It 'skips non-unattend Panther XML files during domain join cleanup' {
+        $panther = Join-Path $TestDrive 'Panther'
+        $unattendGc = Join-Path $panther 'UnattendGC'
+        New-Item -ItemType Directory -Path $unattendGc -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $unattendGc 'diagerr.xml') `
+            -Value '<diag><unclosed>' `
+            -Encoding UTF8
+        $unattend = Join-Path $panther 'Unattend.xml'
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <Identification>
+        <Credentials>
+          <Domain>HOME</Domain>
+          <Username>svc-cloudjoin</Username>
+          <Password>join-secret</Password>
+        </Credentials>
+        <JoinDomain>home.gell.one</JoinDomain>
+      </Identification>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath $unattend -Encoding UTF8
+
+        { Clear-PVEAutopilotDomainJoinSecrets -PantherRoot $panther } |
+            Should -Not -Throw
+        Get-Content -LiteralPath $unattend -Raw |
+            Should -Match '<Password>REDACTED-BY-PVEAUTOPILOT</Password>'
+    }
+
     It 'passes postinstall arguments through the real helper without using the automatic args variable' -Skip:$IsWindows {
         $fakeBin = Join-Path $TestDrive 'bin'
         New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
