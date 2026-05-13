@@ -83,6 +83,65 @@ function Read-PVEAutopilotCloudOSDRunConfig {
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Test-PVEAutopilotCloudOSDDomainJoinEnabled {
+    param([AllowNull()] [object] $RunConfig)
+    if ($null -eq $RunConfig) { return $false }
+    if ($RunConfig.PSObject.Properties.Match('domain_join').Count -eq 0 -or
+        -not $RunConfig.domain_join) {
+        return $false
+    }
+    if ($RunConfig.domain_join.PSObject.Properties.Match('enabled').Count -eq 0) {
+        return $false
+    }
+    return [bool] $RunConfig.domain_join.enabled
+}
+
+function Clear-PVEAutopilotDomainJoinSecrets {
+    param(
+        [string] $PantherRoot = (Join-Path $env:SystemRoot 'Panther')
+    )
+    if (-not (Test-Path -LiteralPath $PantherRoot)) {
+        return 0
+    }
+
+    $redacted = 0
+    $files = Get-ChildItem -LiteralPath $PantherRoot `
+        -Recurse `
+        -File `
+        -Filter '*.xml' `
+        -ErrorAction SilentlyContinue
+    foreach ($file in @($files)) {
+        try {
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.PreserveWhitespace = $true
+            $xml.Load($file.FullName)
+            $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+            $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+            $passwordNodes = $xml.SelectNodes("//u:component[@name='Microsoft-Windows-UnattendedJoin']//u:Credentials/u:Password", $ns)
+            if (-not $passwordNodes -or $passwordNodes.Count -eq 0) { continue }
+            foreach ($node in @($passwordNodes)) {
+                if ($node.InnerText -and $node.InnerText -ne 'REDACTED-BY-PVEAUTOPILOT') {
+                    $node.InnerText = 'REDACTED-BY-PVEAUTOPILOT'
+                    $redacted++
+                }
+            }
+            $writerSettings = New-Object System.Xml.XmlWriterSettings
+            $writerSettings.Encoding = New-Object System.Text.UTF8Encoding($false)
+            $writerSettings.Indent = $true
+            $writer = [System.Xml.XmlWriter]::Create($file.FullName, $writerSettings)
+            try {
+                $xml.Save($writer)
+            } finally {
+                $writer.Close()
+            }
+        } catch {
+            Write-CloudOSDFirstBootLog "failed to redact domain join secret from $($file.FullName): $($_.Exception.Message)"
+            throw
+        }
+    }
+    return $redacted
+}
+
 function Wait-CloudOSDNetwork {
     param(
         [int] $TimeoutSeconds = 600,
@@ -338,6 +397,21 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_start' `
         -Message 'CloudOSD first boot started'
+    if (Test-PVEAutopilotCloudOSDDomainJoinEnabled -RunConfig $RunConfig) {
+        try {
+            $redactedCount = Clear-PVEAutopilotDomainJoinSecrets
+            Send-PVEAutopilotFirstBootEvent -Phase 'domain_join' `
+                -EventType 'domain_join_secret_cleanup_ok' `
+                -Message 'Domain join unattend secrets redacted from Panther' `
+                -Data @{ redacted_password_nodes = $redactedCount }
+        } catch {
+            Send-PVEAutopilotFirstBootEvent -Phase 'domain_join' `
+                -EventType 'domain_join_secret_cleanup_failed' `
+                -Severity 'error' `
+                -Message $_.Exception.Message
+            throw
+        }
+    }
     & $WaitForNetwork
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_network_ready' `

@@ -134,6 +134,59 @@ Describe 'Add-PVEAutopilotSpecializeUnattend' {
         ([regex]::Matches($content, 'PVEAutopilot-SetupComplete\.cmd')).Count |
             Should -Be 1
     }
+
+    It 'writes Microsoft-Windows-UnattendedJoin when domain join is requested' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsDomain'
+        New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null
+        $domainJoin = [pscustomobject]@{
+            enabled = $true
+            domain_fqdn = 'home.gell.one'
+            credential_domain = 'HOME'
+            username = 'svc-cloudjoin'
+            password = 'join-secret'
+            ou_path = 'OU=CloudOSD,DC=home,DC=gell,DC=one'
+        }
+
+        Add-PVEAutopilotSpecializeUnattend `
+            -WindowsRoot $windowsRoot `
+            -ComputerName 'GELL-AD-001' `
+            -DomainJoin $domainJoin
+
+        $content = Get-Content -LiteralPath (Join-Path $windowsRoot 'Panther/Unattend.xml') -Raw
+        $content | Should -Match 'Microsoft-Windows-UnattendedJoin'
+        $content | Should -Match '<JoinDomain>home\.gell\.one</JoinDomain>'
+        $content | Should -Match '<Domain>HOME</Domain>'
+        $content | Should -Match '<Username>svc-cloudjoin</Username>'
+        $content | Should -Match '<Password>join-secret</Password>'
+        $content | Should -Match '<MachineObjectOU>OU=CloudOSD,DC=home,DC=gell,DC=one</MachineObjectOU>'
+    }
+
+    It 'refuses to overwrite an existing non-autopilot UnattendedJoin component' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsExistingDomain'
+        $panther = Join-Path $windowsRoot 'Panther'
+        New-Item -ItemType Directory -Path $panther -Force | Out-Null
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <Identification>
+        <JoinDomain>other.example</JoinDomain>
+      </Identification>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath (Join-Path $panther 'Unattend.xml') -Encoding UTF8
+        $domainJoin = [pscustomobject]@{
+            enabled = $true
+            domain_fqdn = 'home.gell.one'
+            credential_domain = 'HOME'
+            username = 'svc-cloudjoin'
+            password = 'join-secret'
+        }
+
+        { Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot -DomainJoin $domainJoin } |
+            Should -Throw '*existing Microsoft-Windows-UnattendedJoin*'
+    }
 }
 
 Describe 'Add-PVEAutopilotSetupSpecializePackage' {
@@ -297,6 +350,40 @@ Describe 'Save-CloudOSDRunPackage' {
         Test-Path -LiteralPath (Join-Path $windowsRoot 'Setup/Scripts/SetupComplete.cmd') |
             Should -BeFalse
     }
+
+    It 'redacts PE-only domain join secrets from the offline run package' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsRedact'
+        $bridgeRoot = Join-Path $TestDrive 'BridgeRedact'
+        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot -Force | Out-Null
+        'firstboot' | Set-Content -LiteralPath (Join-Path $bridgeRoot 'PVEAutopilot-FirstBoot.ps1')
+        $package = [pscustomobject]@{
+            run_id = 'run-domain'
+            bearer_token = 'pe-token'
+            server_base_url = 'https://autopilot.local'
+            domain_join = [pscustomobject]@{
+                enabled = $true
+                domain_fqdn = 'home.gell.one'
+                credential_domain = 'HOME'
+                username = 'svc-cloudjoin'
+                password = 'join-secret'
+                ou_path = 'OU=CloudOSD,DC=home,DC=gell,DC=one'
+            }
+            payloads = [pscustomobject]@{}
+        }
+
+        $stageRoot = Save-CloudOSDRunPackage -Package $package `
+            -WindowsRoot $windowsRoot `
+            -BridgeRoot $bridgeRoot `
+            -BearerToken 'token-1'
+
+        $jsonText = Get-Content -LiteralPath (Join-Path $stageRoot 'cloudosd-run.json') -Raw
+        $jsonText | Should -Not -Match 'join-secret'
+        $jsonText | Should -Not -Match 'svc-cloudjoin'
+        $jsonText | Should -Not -Match 'pe-token'
+        $json = $jsonText | ConvertFrom-Json
+        $json.domain_join.enabled | Should -BeTrue
+        $json.domain_join.domain_fqdn | Should -Be 'home.gell.one'
+    }
 }
 
 Describe 'Test-CloudOSDOfflineWindows' {
@@ -340,6 +427,41 @@ Describe 'Test-CloudOSDOfflineWindows' {
         $result = Test-CloudOSDOfflineWindows -WindowsRoot $windowsRoot
 
         $result.ok | Should -BeTrue
+    }
+
+    It 'fails domain validation when required UnattendedJoin XML is missing' {
+        $offlineRoot = Join-Path $TestDrive 'offline-domain'
+        $windowsRoot = Join-Path $offlineRoot 'Windows'
+        $driverStore = Join-Path $windowsRoot 'System32/DriverStore/FileRepository'
+        foreach ($driver in @(
+            @{ dir = 'vioscsi.inf_amd64_test'; inf = 'vioscsi.inf'; sys = 'vioscsi.sys' },
+            @{ dir = 'netkvm.inf_amd64_test'; inf = 'netkvm.inf'; sys = 'netkvm.sys' }
+        )) {
+            $driverDir = Join-Path $driverStore $driver.dir
+            New-Item -ItemType Directory -Path $driverDir -Force | Out-Null
+            'inf' | Set-Content -LiteralPath (Join-Path $driverDir $driver.inf)
+            'sys' | Set-Content -LiteralPath (Join-Path $driverDir $driver.sys)
+        }
+        $scripts = Join-Path $windowsRoot 'Setup/Scripts'
+        New-Item -ItemType Directory -Path $scripts -Force | Out-Null
+        'rem PVEAUTOPILOT-CLOUDOSD-SENTINEL' |
+            Set-Content -LiteralPath (Join-Path $scripts 'SetupComplete.cmd') -Encoding ASCII
+        Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot -ComputerName 'GELL-AD-001'
+        $specialize = Join-Path $windowsRoot 'Temp/osdcloud'
+        New-Item -ItemType Directory -Path $specialize -Force | Out-Null
+        'call C:\Windows\Setup\Scripts\PVEAutopilot-SetupComplete.cmd' |
+            Set-Content -LiteralPath (Join-Path $specialize 'SetupSpecialize.cmd') -Encoding ASCII
+        $stage = Join-Path $offlineRoot 'ProgramData/ProxmoxVEAutopilot/CloudOSD'
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        '{"domain_join":{"enabled":true,"domain_fqdn":"home.gell.one"}}' |
+            Set-Content -LiteralPath (Join-Path $stage 'cloudosd-run.json')
+
+        $result = Test-CloudOSDOfflineWindows `
+            -WindowsRoot $windowsRoot `
+            -DomainJoin ([pscustomobject]@{ enabled = $true; domain_fqdn = 'home.gell.one' })
+
+        $result.ok | Should -BeFalse
+        ($result.errors -join '|') | Should -Match 'UnattendedJoin'
     }
 
     It 'reports offline validation and SetupComplete milestones before PE completion' {

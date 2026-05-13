@@ -2,6 +2,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.ServiceProcess;
+using System.Management;
 using Microsoft.Win32;
 
 namespace AutopilotAgent;
@@ -29,8 +30,13 @@ public sealed class TelemetryCollector
             .ToArray();
 
         var qga = QueryService("QEMU-GA");
-        var domainName = IPGlobalProperties.GetIPGlobalProperties().DomainName;
-        var domainJoined = !string.IsNullOrWhiteSpace(domainName);
+        var domainState = ReadDomainState();
+        var networkDomainName = IPGlobalProperties.GetIPGlobalProperties().DomainName;
+        var domainName = !string.IsNullOrWhiteSpace(domainState.DomainName)
+            ? domainState.DomainName
+            : networkDomainName;
+        var domainJoined = domainState.DomainJoined
+            ?? !string.IsNullOrWhiteSpace(networkDomainName);
 
         return new TelemetrySnapshot(
             Environment.MachineName,
@@ -90,6 +96,36 @@ public sealed class TelemetryCollector
         return DateTimeOffset.UtcNow
             .AddSeconds(-Environment.TickCount64 / 1000)
             .ToString("o");
+    }
+
+    private static (string? DomainName, bool? DomainJoined) ReadDomainState()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return (null, null);
+        }
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Domain, PartOfDomain FROM Win32_ComputerSystem");
+            foreach (ManagementObject system in searcher.Get())
+            {
+                var domainName = system["Domain"]?.ToString();
+                var partOfDomainValue = system["PartOfDomain"];
+                bool? partOfDomain = partOfDomainValue switch
+                {
+                    bool value => value,
+                    string text when bool.TryParse(text, out var parsed) => parsed,
+                    _ => null
+                };
+                return (domainName, partOfDomain);
+            }
+        }
+        catch
+        {
+            return (null, null);
+        }
+        return (null, null);
     }
 
     private static bool? ReadEntraJoinState()

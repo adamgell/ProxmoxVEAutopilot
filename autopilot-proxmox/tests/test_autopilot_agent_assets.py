@@ -31,6 +31,15 @@ def test_autopilot_agent_uses_programdata_config_and_logs():
     )
 
 
+def test_autopilot_agent_domain_telemetry_uses_computer_system_membership():
+    telemetry = _read("autopilot-agent/src/AutopilotAgent/TelemetryCollector.cs")
+
+    assert "Win32_ComputerSystem" in telemetry
+    assert "PartOfDomain" in telemetry
+    assert "ReadDomainState" in telemetry
+    assert "IPGlobalProperties.GetIPGlobalProperties().DomainName" in telemetry
+
+
 def test_autopilot_agent_claims_hash_capture_work_items():
     client = _read("autopilot-agent/src/AutopilotAgent/AgentApiClient.cs")
     worker = _read("autopilot-agent/src/AutopilotAgent/Worker.cs")

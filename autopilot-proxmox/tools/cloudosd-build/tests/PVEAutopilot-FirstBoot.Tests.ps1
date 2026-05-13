@@ -61,6 +61,35 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         $source | Should -Match '/api/cloudosd/runs/.*/events'
     }
 
+    It 'redacts domain join passwords from Panther unattend files during first boot' {
+        $panther = Join-Path $TestDrive 'Panther'
+        New-Item -ItemType Directory -Path $panther -Force | Out-Null
+        $unattend = Join-Path $panther 'Unattend.xml'
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <Identification>
+        <Credentials>
+          <Domain>HOME</Domain>
+          <Username>svc-cloudjoin</Username>
+          <Password>join-secret</Password>
+        </Credentials>
+        <JoinDomain>home.gell.one</JoinDomain>
+      </Identification>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath $unattend -Encoding UTF8
+
+        Clear-PVEAutopilotDomainJoinSecrets -PantherRoot $panther
+
+        $content = Get-Content -LiteralPath $unattend -Raw
+        $content | Should -Not -Match 'join-secret'
+        $content | Should -Match '<Password>REDACTED-BY-PVEAUTOPILOT</Password>'
+        $content | Should -Match '<JoinDomain>home.gell.one</JoinDomain>'
+    }
+
     It 'passes postinstall arguments through the real helper without using the automatic args variable' -Skip:$IsWindows {
         $fakeBin = Join-Path $TestDrive 'bin'
         New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null

@@ -136,6 +136,122 @@ function ConvertTo-CloudOSDHashtable {
     return $Value
 }
 
+function Get-CloudOSDObjectProperty {
+    param(
+        [AllowNull()] [object] $Value,
+        [Parameter(Mandatory)] [string] $Name
+    )
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        if ($Value.Contains($Name)) { return $Value[$Name] }
+        return $null
+    }
+    if ($Value.PSObject.Properties.Match($Name).Count -gt 0) {
+        return $Value.$Name
+    }
+    return $null
+}
+
+function Test-CloudOSDDomainJoinEnabled {
+    param([AllowNull()] [object] $DomainJoin)
+    $enabled = Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'enabled'
+    return ($null -ne $enabled -and [bool] $enabled)
+}
+
+function Get-CloudOSDSanitizedRunPackage {
+    param([Parameter(Mandatory)] [object] $Package)
+    $copy = ConvertTo-CloudOSDHashtable $Package
+    if ($copy -isnot [System.Collections.IDictionary]) { return $copy }
+
+    if ($copy.Contains('bearer_token')) {
+        $copy.Remove('bearer_token')
+    }
+    if ($copy.Contains('domain_join') -and
+        $copy['domain_join'] -is [System.Collections.IDictionary]) {
+        foreach ($secretKey in @('username', 'password', 'credential_id')) {
+            if ($copy['domain_join'].Contains($secretKey)) {
+                $copy['domain_join'].Remove($secretKey)
+            }
+        }
+    }
+    return $copy
+}
+
+function New-PVEAutopilotUnattendTextElement {
+    param(
+        [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
+        [Parameter(Mandatory)] [System.Xml.XmlElement] $Parent,
+        [Parameter(Mandatory)] [string] $Namespace,
+        [Parameter(Mandatory)] [string] $Name,
+        [AllowNull()] [object] $Value
+    )
+    $node = $Xml.CreateElement($Name, $Namespace)
+    if ($null -ne $Value) { $node.InnerText = [string] $Value }
+    $Parent.AppendChild($node) | Out-Null
+    return $node
+}
+
+function Add-PVEAutopilotUnattendedJoinComponent {
+    param(
+        [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
+        [Parameter(Mandatory)] [System.Xml.XmlElement] $Settings,
+        [Parameter(Mandatory)] [System.Xml.XmlNamespaceManager] $NamespaceManager,
+        [Parameter(Mandatory)] [string] $UnattendNamespace,
+        [AllowNull()] [object] $DomainJoin
+    )
+    if (-not (Test-CloudOSDDomainJoinEnabled -DomainJoin $DomainJoin)) { return }
+
+    $domainFqdn = [string] (Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'domain_fqdn')
+    $credentialDomain = [string] (Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'credential_domain')
+    $username = [string] (Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'username')
+    $password = [string] (Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'password')
+    $ouPath = [string] (Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'ou_path')
+    if ([string]::IsNullOrWhiteSpace($domainFqdn) -or
+        [string]::IsNullOrWhiteSpace($username) -or
+        [string]::IsNullOrWhiteSpace($password)) {
+        throw 'CloudOSD domain join package is missing domain_fqdn, username, or password'
+    }
+    if ([string]::IsNullOrWhiteSpace($credentialDomain)) {
+        $credentialDomain = $domainFqdn
+    }
+
+    $existing = $Settings.SelectNodes("u:component[@name='Microsoft-Windows-UnattendedJoin']", $NamespaceManager)
+    foreach ($component in @($existing)) {
+        $hasSentinel = $false
+        foreach ($child in $component.ChildNodes) {
+            if ($child.NodeType -eq [System.Xml.XmlNodeType]::Comment -and
+                $child.Value -match 'PVEAUTOPILOT-CLOUDOSD-DOMAIN-JOIN') {
+                $hasSentinel = $true
+            }
+        }
+        if (-not $hasSentinel) {
+            throw 'Refusing to overwrite existing Microsoft-Windows-UnattendedJoin component without ProxmoxVEAutopilot sentinel'
+        }
+        $Settings.RemoveChild($component) | Out-Null
+    }
+
+    $component = $Xml.CreateElement('component', $UnattendNamespace)
+    $component.SetAttribute('name', 'Microsoft-Windows-UnattendedJoin')
+    $component.SetAttribute('processorArchitecture', 'amd64')
+    $component.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+    $component.SetAttribute('language', 'neutral')
+    $component.SetAttribute('versionScope', 'nonSxS')
+    $component.AppendChild($Xml.CreateComment('PVEAUTOPILOT-CLOUDOSD-DOMAIN-JOIN')) | Out-Null
+
+    $identification = $Xml.CreateElement('Identification', $UnattendNamespace)
+    $credentials = $Xml.CreateElement('Credentials', $UnattendNamespace)
+    New-PVEAutopilotUnattendTextElement -Xml $Xml -Parent $credentials -Namespace $UnattendNamespace -Name 'Domain' -Value $credentialDomain | Out-Null
+    New-PVEAutopilotUnattendTextElement -Xml $Xml -Parent $credentials -Namespace $UnattendNamespace -Name 'Username' -Value $username | Out-Null
+    New-PVEAutopilotUnattendTextElement -Xml $Xml -Parent $credentials -Namespace $UnattendNamespace -Name 'Password' -Value $password | Out-Null
+    $identification.AppendChild($credentials) | Out-Null
+    New-PVEAutopilotUnattendTextElement -Xml $Xml -Parent $identification -Namespace $UnattendNamespace -Name 'JoinDomain' -Value $domainFqdn | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($ouPath)) {
+        New-PVEAutopilotUnattendTextElement -Xml $Xml -Parent $identification -Namespace $UnattendNamespace -Name 'MachineObjectOU' -Value $ouPath | Out-Null
+    }
+    $component.AppendChild($identification) | Out-Null
+    $Settings.AppendChild($component) | Out-Null
+}
+
 function Get-CloudOSDWorkflowTask {
     param(
         [Parameter(Mandatory)] [string] $ModuleRoot,
@@ -422,7 +538,7 @@ function Save-CloudOSDOsdClientPackage {
 
     Add-Member -InputObject $Package.payloads.osd_client `
         -NotePropertyName local_path `
-        -NotePropertyValue $osdRoot `
+        -NotePropertyValue ([string] $osdRoot) `
         -Force
     return $osdRoot
 }
@@ -474,7 +590,9 @@ function Save-CloudOSDRunPackage {
     }
 
     $runJson = Join-Path $stageRoot 'cloudosd-run.json'
-    $Package | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $runJson -Encoding UTF8
+    Get-CloudOSDSanitizedRunPackage -Package $Package |
+        ConvertTo-Json -Depth 30 |
+        Set-Content -LiteralPath $runJson -Encoding UTF8
     return $stageRoot
 }
 
@@ -524,7 +642,8 @@ function ConvertTo-PVEAutopilotWindowsComputerName {
 function Add-PVEAutopilotSpecializeUnattend {
     param(
         [Parameter(Mandatory)] [string] $WindowsRoot,
-        [string] $ComputerName
+        [string] $ComputerName,
+        [object] $DomainJoin
     )
 
     $pantherRoot = Join-Path $WindowsRoot 'Panther'
@@ -629,6 +748,12 @@ function Add-PVEAutopilotSpecializeUnattend {
         $computerNameNode.InnerText = $windowsComputerName
     }
 
+    Add-PVEAutopilotUnattendedJoinComponent -Xml $xml `
+        -Settings $settings `
+        -NamespaceManager $ns `
+        -UnattendNamespace $unattendNs `
+        -DomainJoin $DomainJoin
+
     $writerSettings = New-Object System.Xml.XmlWriterSettings
     $writerSettings.Encoding = New-Object System.Text.UTF8Encoding($false)
     $writerSettings.Indent = $true
@@ -719,7 +844,8 @@ function Disable-PVEAutopilotAutomaticDeviceEncryption {
 function Test-CloudOSDOfflineWindows {
     param(
         [Parameter(Mandatory)] [string] $WindowsRoot,
-        [string] $EfiRoot
+        [string] $EfiRoot,
+        [object] $DomainJoin
     )
     $errors = @()
     if (-not (Test-Path -LiteralPath $WindowsRoot)) {
@@ -756,6 +882,52 @@ function Test-CloudOSDOfflineWindows {
     $runJson = Join-Path (Get-OfflineProgramDataPath -WindowsRoot $WindowsRoot) 'ProxmoxVEAutopilot\CloudOSD\cloudosd-run.json'
     if (-not (Test-Path -LiteralPath $runJson)) {
         $errors += 'CloudOSD run package is not staged in offline OS'
+    } else {
+        $runJsonText = Get-Content -LiteralPath $runJson -Raw
+        if ($runJsonText -match '"password"\s*:' -or $runJsonText -match '"username"\s*:') {
+            $errors += 'CloudOSD offline run package contains domain join credentials'
+        }
+        if (-not (Test-CloudOSDDomainJoinEnabled -DomainJoin $DomainJoin)) {
+            try {
+                $runConfig = $runJsonText | ConvertFrom-Json
+                if ($runConfig.PSObject.Properties.Match('domain_join').Count -gt 0) {
+                    $DomainJoin = $runConfig.domain_join
+                }
+            } catch {
+                $errors += "CloudOSD run package JSON is not readable: $($_.Exception.Message)"
+            }
+        }
+    }
+    if (Test-CloudOSDDomainJoinEnabled -DomainJoin $DomainJoin) {
+        if (-not (Test-Path -LiteralPath $unattendPath)) {
+            $errors += 'Domain join requested but UnattendedJoin XML is missing'
+        } else {
+            try {
+                $domainXml = New-Object System.Xml.XmlDocument
+                $domainXml.Load($unattendPath)
+                $domainNs = New-Object System.Xml.XmlNamespaceManager($domainXml.NameTable)
+                $domainNs.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+                $joinComponent = $domainXml.SelectSingleNode("//u:component[@name='Microsoft-Windows-UnattendedJoin']", $domainNs)
+                if (-not $joinComponent) {
+                    $errors += 'Domain join requested but Microsoft-Windows-UnattendedJoin is missing'
+                } else {
+                    $joinDomain = $joinComponent.SelectSingleNode('.//u:JoinDomain', $domainNs)
+                    $expectedDomain = [string] (Get-CloudOSDObjectProperty -Value $DomainJoin -Name 'domain_fqdn')
+                    if (-not $joinDomain -or [string]::IsNullOrWhiteSpace($joinDomain.InnerText)) {
+                        $errors += 'UnattendedJoin JoinDomain is missing'
+                    } elseif (-not [string]::IsNullOrWhiteSpace($expectedDomain) -and
+                        $joinDomain.InnerText -ine $expectedDomain) {
+                        $errors += "UnattendedJoin JoinDomain '$($joinDomain.InnerText)' does not match expected domain '$expectedDomain'"
+                    }
+                    $passwordNode = $joinComponent.SelectSingleNode('.//u:Credentials/u:Password', $domainNs)
+                    if (-not $passwordNode -or [string]::IsNullOrWhiteSpace($passwordNode.InnerText)) {
+                        $errors += 'UnattendedJoin password is missing before specialize'
+                    }
+                }
+            } catch {
+                $errors += "UnattendedJoin XML could not be read: $($_.Exception.Message)"
+            }
+        }
     }
     if ($EfiRoot) {
         $bcd = Join-Path $EfiRoot 'EFI\Microsoft\Boot\BCD'
@@ -953,10 +1125,18 @@ function Invoke-CloudOSDBridge {
             -Message 'SetupComplete first-boot chain staged' `
             -Data @{ windows_root = $windowsRoot; staged_root = $stageRoot }
         Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot `
-            -ComputerName (Get-PVEAutopilotPackageComputerName -Package $package)
+            -ComputerName (Get-PVEAutopilotPackageComputerName -Package $package) `
+            -DomainJoin $package.domain_join
+        if (Test-CloudOSDDomainJoinEnabled -DomainJoin $package.domain_join) {
+            Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+                -RunId $runId -BearerToken $token -Phase 'domain_join' `
+                -EventType 'domain_join_unattend_staged' `
+                -Message 'AD domain join specialize unattend staged'
+        }
         Add-PVEAutopilotSetupSpecializePackage -WindowsRoot $windowsRoot -ModuleRoot $moduleRoot
         Disable-PVEAutopilotAutomaticDeviceEncryption -WindowsRoot $windowsRoot
-        $validation = Test-CloudOSDOfflineWindows -WindowsRoot $windowsRoot
+        $validation = Test-CloudOSDOfflineWindows -WindowsRoot $windowsRoot `
+            -DomainJoin $package.domain_join
         if (-not $validation.ok) {
             Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
                 -RunId $runId -BearerToken $token -Phase 'offline_validation' `

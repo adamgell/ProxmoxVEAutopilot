@@ -6,6 +6,7 @@ import pytest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from cryptography.fernet import Fernet
 
 
 pytestmark = pytest.mark.skipif(
@@ -114,6 +115,56 @@ def _assert_blocking(body: dict, check_id: str):
 def _assert_warning(body: dict, check_id: str):
     ids = {check["id"] for check in body["warnings"]}
     assert check_id in ids, body
+
+
+def _patch_sequence_cipher(monkeypatch, tmp_path: Path):
+    from web import app as web_app
+
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    key_path = secrets / "credential_key"
+    key_path.write_bytes(Fernet.generate_key())
+    web_app._CIPHER = None
+    monkeypatch.setattr(web_app, "SECRETS_DIR", secrets)
+    monkeypatch.setattr(web_app, "CREDENTIAL_KEY", key_path)
+    return web_app._cipher()
+
+
+def _create_domain_join_sequence(pg_conn, cipher, *, unsupported_step: bool = False):
+    from web import sequences_pg
+
+    cred_id = sequences_pg.create_credential(
+        pg_conn,
+        cipher,
+        name="cloudosd-domain-join",
+        type="domain_join",
+        payload={
+            "domain_fqdn": "home.gell.one",
+            "username": "HOME\\svc-cloudjoin",
+            "password": "join-secret-for-tests",
+            "ou_hint": "OU=CloudOSD,DC=home,DC=gell,DC=one",
+        },
+    )
+    steps = [
+        {
+            "step_type": "join_ad_domain",
+            "params": {"credential_id": cred_id, "ou_path": ""},
+            "enabled": True,
+        },
+    ]
+    if unsupported_step:
+        steps.append({
+            "step_type": "run_script",
+            "params": {"name": "unsupported", "script": "Write-Host no"},
+            "enabled": True,
+        })
+    return sequences_pg.create_sequence(
+        pg_conn,
+        name="CloudOSD AD Join",
+        description="Join AD through CloudOSD specialize",
+        produces_autopilot_hash=True,
+        steps=steps,
+    )
 
 
 def test_cloudosd_base_url_honors_forwarded_https_headers(monkeypatch):
@@ -271,6 +322,233 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     ]
     assert steps[-1]["phase"] == "full_os"
 
+
+def test_cloudosd_provision_sequence_with_domain_join_adds_v2_steps_and_pe_only_secret(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg, ts_engine_pg
+
+    cipher = _patch_sequence_cipher(monkeypatch, tmp_path)
+    sequence_id = _create_domain_join_sequence(pg_conn, cipher)
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+        },
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "group_tag": "GellNative",
+            "profile": "",
+            "hostname_pattern": "GELL-AD-{index}",
+            "sequence_id": str(sequence_id),
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    jobs = [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ]
+    assert len(jobs) == 1
+    job_text = str(jobs[0]["args"])
+    assert "join-secret-for-tests" not in job_text
+    run_id = jobs[0]["args"]["cloudosd_run_id"]
+
+    run = cloudosd_pg.get_run(pg_conn, run_id)
+    assert run["domain_join"]["enabled"] is True
+    assert run["domain_join"]["domain_fqdn"] == "home.gell.one"
+    assert run["domain_join"]["credential_domain"] == "HOME"
+    assert "username" not in run["domain_join"]
+    assert "password" not in run["domain_join"]
+    assert "join-secret-for-tests" not in str(run)
+
+    steps = ts_engine_pg.list_run_steps(pg_conn, run_id)
+    kinds = [step["kind"] for step in steps]
+    assert "stage_ad_domain_join_unattend" in kinds
+    assert "verify_ad_domain_join" in kinds
+    assert "join-secret-for-tests" not in str(steps)
+
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/identity",
+        json={
+            "vmid": 244,
+            "vm_uuid": "44444444-5555-6666-7777-888888888888",
+            "mac": "52:54:00:aa:bb:44",
+            "node": "pve",
+            "computer_name": "GELL-AD-01",
+        },
+    ).status_code == 200
+    registered = cloudosd_client.post(
+        "/api/cloudosd/pe/register",
+        json={
+            "vm_uuid": "44444444-5555-6666-7777-888888888888",
+            "mac": "52:54:00:aa:bb:44",
+            "architecture": "amd64",
+            "build_sha": "cloudosdtest",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    package = cloudosd_client.get(
+        f"/api/cloudosd/pe/package/{run_id}",
+        headers=_bearer(registered.json()["bearer_token"]),
+    )
+    assert package.status_code == 200, package.text
+    domain_join = package.json()["domain_join"]
+    assert domain_join["enabled"] is True
+    assert domain_join["password"] == "join-secret-for-tests"
+    assert domain_join["username"] == "svc-cloudjoin"
+
+
+def test_cloudosd_provision_rejects_unsupported_enabled_sequence_step(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import jobs_pg
+
+    cipher = _patch_sequence_cipher(monkeypatch, tmp_path)
+    sequence_id = _create_domain_join_sequence(
+        pg_conn,
+        cipher,
+        unsupported_step=True,
+    )
+    artifact = _create_artifact(pg_conn)
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "profile": "",
+            "hostname_pattern": "GELL-UNSUPPORTED-{index}",
+            "sequence_id": str(sequence_id),
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "not CloudOSD-compatible" in response.json()["detail"]
+    assert "run_script" in response.json()["detail"]
+    assert [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ] == []
+
+
+def test_cloudosd_domain_join_run_waits_for_matching_domain_heartbeat(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg, ts_engine_pg, winpe_token
+
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="GELL-AD-VERIFY",
+        node="pve",
+        storage="local-lvm",
+        network_bridge="vmbr0",
+        domain_join={
+            "enabled": True,
+            "source_sequence_id": 42,
+            "credential_id": 7,
+            "domain_fqdn": "home.gell.one",
+            "credential_domain": "HOME",
+            "ou_path": "OU=CloudOSD,DC=home,DC=gell,DC=one",
+            "acceptable_domain_names": ["home.gell.one", "HOME"],
+        },
+    )
+    bootstrap_token = winpe_token.sign(run_id=run["run_id"], ttl_seconds=300)
+    bootstrap = cloudosd_client.post(
+        "/api/agent/v1/bootstrap",
+        headers=_bearer(bootstrap_token),
+        json={
+            "agent_id": "cloudosd-domain-agent",
+            "run_id": run["run_id"],
+            "phase": "cloudosd",
+            "vmid": 245,
+        },
+    )
+    assert bootstrap.status_code == 200, bootstrap.text
+    agent_token = bootstrap.json()["agent_token"]
+
+    pending_hb = cloudosd_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer(agent_token),
+        json={
+            "agent_id": "cloudosd-domain-agent",
+            "vmid": 245,
+            "computer_name": "GELL-AD-VERIFY",
+            "current_run_id": run["run_id"],
+            "current_phase": "cloudosd",
+            "domain_joined": False,
+            "domain_name": "WORKGROUP",
+        },
+    )
+    assert pending_hb.status_code == 200, pending_hb.text
+    pending = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["run"]["state"] == "full_os_waiting_domain_join"
+    steps = ts_engine_pg.list_run_steps(pg_conn, run["run_id"])
+    verify_step = next(step for step in steps if step["kind"] == "verify_ad_domain_join")
+    assert verify_step["state"] == "pending"
+
+    matched_hb = cloudosd_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer(agent_token),
+        json={
+            "agent_id": "cloudosd-domain-agent",
+            "vmid": 245,
+            "computer_name": "GELL-AD-VERIFY",
+            "current_run_id": run["run_id"],
+            "current_phase": "cloudosd",
+            "domain_joined": True,
+            "domain_name": "home.gell.one",
+        },
+    )
+    assert matched_hb.status_code == 200, matched_hb.text
+    complete = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert complete.status_code == 200, complete.text
+    assert complete.json()["run"]["state"] == "complete"
+    steps = ts_engine_pg.list_run_steps(pg_conn, run["run_id"])
+    verify_step = next(step for step in steps if step["kind"] == "verify_ad_domain_join")
+    assert verify_step["state"] == "done"
+    events = cloudosd_pg.list_events(pg_conn, run["run_id"])
+    assert {event["event_type"] for event in events} >= {
+        "domain_join_pending",
+        "domain_join_verified",
+    }
 
 def test_cloudosd_pe_register_rejects_wrong_identity(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
@@ -800,6 +1078,9 @@ def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
     assert response.status_code == 200, response.text
     assert 'id="cloudosdRunDetail"' in response.text
     assert 'data-cloudosd-field="pe_registered_at"' in response.text
+    assert 'data-cloudosd-field="domain_join_target"' in response.text
+    assert 'data-cloudosd-field="domain_join_verification"' in response.text
+    assert "Domain join" in response.text
     assert f"/api/cloudosd/runs/${{encodeURIComponent(runId)}}" in response.text
     assert "window.setTimeout(refresh, 5000)" in response.text
     assert "CloudOSD PE bridge registered" in response.text

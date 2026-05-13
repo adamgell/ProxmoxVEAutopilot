@@ -127,6 +127,7 @@
     <section class="cloudosd-detail-panel">
       <h2>CloudOSD Evidence</h2>
       {% set offline_events = event_groups.get('offline validation') or [] %}
+      {% set domain_events = event_groups.get('Domain join') or [] %}
       {% set setup_events = event_groups.get('SetupComplete') or [] %}
       {% set agent_events = event_groups.get('AutopilotAgent') or [] %}
       <dl class="cloudosd-kv">
@@ -139,6 +140,16 @@
         <dt>PE registration time</dt><dd data-cloudosd-field="pe_registered_at">{{ run.pe_registered_at or '-' }}</dd>
         <dt>OSDCloud start/end</dt><dd data-cloudosd-field="osdcloud_start_end">{{ run.osdcloud_started_at or '-' }} / {{ run.osdcloud_finished_at or '-' }}</dd>
         <dt>Offline driver validation result</dt><dd data-cloudosd-field="offline_validation">{{ offline_events[-1].message if offline_events else 'not reported' }}</dd>
+        <dt>Domain join target</dt>
+        <dd data-cloudosd-field="domain_join_target">
+          {% if run.domain_join.enabled %}
+          {{ run.domain_join.domain_fqdn }}{% if run.domain_join.ou_path %} / {{ run.domain_join.ou_path }}{% endif %}
+          {% else %}
+          not requested
+          {% endif %}
+        </dd>
+        <dt>Domain join verification</dt><dd data-cloudosd-field="domain_join_verification">{{ domain_events[-1].message if domain_events else ('not requested' if not run.domain_join.enabled else 'waiting for domain heartbeat evidence') }}</dd>
+        <dt>Latest heartbeat domain</dt><dd data-cloudosd-field="latest_domain">{{ (latest_heartbeat.domain_name ~ ' / joined=' ~ latest_heartbeat.domain_joined) if latest_heartbeat and latest_heartbeat.domain_name else '-' }}</dd>
         <dt>SetupComplete/first-boot state</dt><dd data-cloudosd-field="setupcomplete">{{ setup_events[-1].message if setup_events else 'not reported' }}</dd>
         <dt>AutopilotAgent bootstrap result</dt><dd data-cloudosd-field="autopilotagent">{{ agent_events[-1].message if agent_events else ('heartbeat observed' if latest_heartbeat else 'not reported') }}</dd>
         <dt>Latest agent ID</dt><dd data-cloudosd-field="latest_agent_id">{{ latest_heartbeat.agent_id if latest_heartbeat else '-' }}</dd>
@@ -190,7 +201,7 @@
   const liveStatus = document.getElementById("cloudosdLiveStatus");
   const liveUpdated = document.getElementById("cloudosdLiveUpdated");
   const milestoneRoot = root.querySelector("[data-cloudosd-milestones]");
-  const milestoneLabels = ["controller", "Proxmox playbook", "PE bridge", "OSDCloud", "offline validation", "SetupComplete", "first boot", "AutopilotAgent"];
+  const milestoneLabels = ["controller", "Proxmox playbook", "PE bridge", "OSDCloud", "offline validation", "Domain join", "SetupComplete", "first boot", "AutopilotAgent"];
   const terminalStates = new Set(["complete", "failed", "cancelled"]);
 
   function field(name) {
@@ -248,6 +259,7 @@
     if (type === "pe_registered") return "PE bridge";
     if (type.includes("osdcloud")) return "OSDCloud";
     if (type.includes("validation") || phase === "offline_validation") return "offline validation";
+    if (type.includes("domain_join") || phase === "domain_join" || phase === "domain join") return "Domain join";
     if (type.includes("setupcomplete") || phase === "setupcomplete" || phase === "setup_complete") return "SetupComplete";
     if (type.includes("firstboot") || phase === "first_boot" || phase === "first boot") return "first boot";
     if (type.includes("autopilotagent") || phase === "full_os") return "AutopilotAgent";
@@ -350,6 +362,21 @@
     setText("pe_registered_at", run.pe_registered_at);
     setText("osdcloud_start_end", `${text(run.osdcloud_started_at)} / ${text(run.osdcloud_finished_at)}`);
     setText("offline_validation", latestMessage(groups, "offline validation", "not reported"));
+    const domainJoin = run.domain_join || {};
+    const domainTarget = domainJoin.enabled
+      ? [domainJoin.domain_fqdn, domainJoin.ou_path].filter(Boolean).join(" / ")
+      : "not requested";
+    setText("domain_join_target", domainTarget);
+    setText(
+      "domain_join_verification",
+      latestMessage(groups, "Domain join", domainJoin.enabled ? "waiting for domain heartbeat evidence" : "not requested")
+    );
+    setText(
+      "latest_domain",
+      heartbeat && heartbeat.domain_name
+        ? `${heartbeat.domain_name} / joined=${heartbeat.domain_joined}`
+        : "-"
+    );
     setText("setupcomplete", latestMessage(groups, "SetupComplete", "not reported"));
     setText("autopilotagent", latestMessage(groups, "AutopilotAgent", heartbeat ? "heartbeat observed" : "not reported"));
     setText("latest_agent_id", heartbeat && heartbeat.agent_id);

@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS cloudosd_runs (
     driver_pack_policy text NOT NULL DEFAULT 'None',
     analytics_enabled boolean NOT NULL DEFAULT false,
     outbound_policy_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    domain_join_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     vmid integer NULL,
     vm_uuid text NULL,
     mac text NULL,
@@ -191,6 +192,7 @@ CLOUDOSD_MILESTONE_LABELS = [
     "PE bridge",
     "OSDCloud",
     "offline validation",
+    "Domain join",
     "SetupComplete",
     "first boot",
     "AutopilotAgent",
@@ -199,10 +201,14 @@ _CLOUDOSD_PE_STEP_KINDS = {
     "cloudosd_preflight",
     "cloudosd_deploy_os",
     "cloudosd_validate_offline_os",
+    "stage_ad_domain_join_unattend",
     "stage_osd_client",
     "stage_autopilot_agent",
 }
-_CLOUDOSD_ALL_STEP_KINDS = _CLOUDOSD_PE_STEP_KINDS | {"wait_agent_heartbeat"}
+_CLOUDOSD_HEARTBEAT_STEP_KINDS = _CLOUDOSD_PE_STEP_KINDS | {
+    "wait_agent_heartbeat",
+}
+_CLOUDOSD_DOMAIN_VERIFY_STEP_KINDS = {"verify_ad_domain_join"}
 
 
 def _now() -> datetime:
@@ -310,6 +316,8 @@ def milestone_label_for_event(event: dict) -> str:
         return "OSDCloud"
     if "validation" in event_key or phase_key == "offline_validation":
         return "offline validation"
+    if "domain_join" in event_key or phase_key in {"domain_join", "domain join"}:
+        return "Domain join"
     if "setupcomplete" in event_key or phase_key in {"setupcomplete", "setup_complete"}:
         return "SetupComplete"
     if "firstboot" in event_key or phase_key in {"first_boot", "first boot"}:
@@ -363,7 +371,9 @@ def sync_ts_progress_for_run(conn: Connection, run_id: str) -> int:
         or "autopilotagent_heartbeat_visible" in event_types
         or "firstboot_complete" in event_types
     ):
-        done_kinds.update(_CLOUDOSD_ALL_STEP_KINDS)
+        done_kinds.update(_CLOUDOSD_HEARTBEAT_STEP_KINDS)
+    if "domain_join_verified" in event_types:
+        done_kinds.update(_CLOUDOSD_DOMAIN_VERIFY_STEP_KINDS)
 
     if not done_kinds:
         return 0
@@ -413,6 +423,7 @@ def init(conn: Connection) -> None:
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS chassis_type_override integer NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_surface text NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_sequence_id integer NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS domain_join_json jsonb NOT NULL DEFAULT '{}'::jsonb")
         conn.commit()
         _INIT_DONE = True
 
@@ -422,6 +433,81 @@ def reset_for_tests(conn: Connection) -> None:
     conn.execute(DROP_SCHEMA_FOR_TESTS)
     conn.commit()
     _INIT_DONE = False
+
+
+def _domain_join_enabled(domain_join: dict | None) -> bool:
+    return bool((domain_join or {}).get("enabled"))
+
+
+def _unique_text(values: list[Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        key = item.casefold()
+        if not item or key in seen:
+            continue
+        out.append(item)
+        seen.add(key)
+    return out
+
+
+def _sanitize_domain_join(
+    domain_join: dict | None,
+    *,
+    expected_computer_name: str | None = None,
+) -> dict:
+    raw = dict(domain_join or {})
+    if not raw.get("enabled"):
+        return {"enabled": False}
+    domain_fqdn = str(raw.get("domain_fqdn") or "").strip()
+    credential_domain = str(raw.get("credential_domain") or "").strip()
+    acceptable = _unique_text(
+        list(raw.get("acceptable_domain_names") or [])
+        + [domain_fqdn, credential_domain],
+    )
+    return {
+        "enabled": True,
+        "source_sequence_id": raw.get("source_sequence_id"),
+        "credential_id": raw.get("credential_id"),
+        "domain_fqdn": domain_fqdn,
+        "credential_domain": credential_domain,
+        "ou_path": str(raw.get("ou_path") or "").strip(),
+        "acceptable_domain_names": acceptable,
+        "expected_computer_name": (
+            expected_computer_name
+            or str(raw.get("expected_computer_name") or "").strip()
+        ),
+    }
+
+
+def domain_join_verification(domain_join: dict | None, heartbeat: dict | None) -> dict:
+    config = _sanitize_domain_join(domain_join)
+    hb = heartbeat or {}
+    observed = str(hb.get("domain_name") or "").strip()
+    joined = bool(hb.get("domain_joined"))
+    expected = _unique_text(config.get("acceptable_domain_names") or [])
+    observed_key = observed.casefold()
+    matched = bool(
+        config.get("enabled")
+        and joined
+        and observed_key
+        and observed_key in {item.casefold() for item in expected}
+    )
+    reason = "matched" if matched else "waiting_for_domain_membership"
+    if not joined:
+        reason = "heartbeat_not_domain_joined"
+    elif not observed:
+        reason = "heartbeat_missing_domain_name"
+    elif expected and observed_key not in {item.casefold() for item in expected}:
+        reason = "heartbeat_domain_mismatch"
+    return {
+        "matched": matched,
+        "reason": reason,
+        "expected_domain_names": expected,
+        "observed_domain_name": observed,
+        "domain_joined": joined,
+    }
 
 
 def _artifact_row(row: dict | None) -> dict | None:
@@ -486,6 +572,10 @@ def _run_row(row: dict | None) -> dict | None:
         "driver_pack_policy": row["driver_pack_policy"],
         "analytics_enabled": row["analytics_enabled"],
         "outbound_policy": row["outbound_policy_json"] or {},
+        "domain_join": _sanitize_domain_join(
+            row.get("domain_join_json") or {},
+            expected_computer_name=expected_name,
+        ),
         "vmid": row["vmid"],
         "vm_uuid": row["vm_uuid"],
         "mac": row["mac"],
@@ -600,22 +690,38 @@ def update_artifact_proxmox_volid(
     return _artifact_row(row)
 
 
-def _create_sequence_for_run(conn: Connection, *, name: str) -> str:
+def _create_sequence_for_run(
+    conn: Connection,
+    *,
+    name: str,
+    domain_join: dict | None = None,
+) -> str:
     sequence_id = ts_engine_pg.create_sequence(
         conn,
         name=name,
         description="Generated CloudOSD deployment sequence",
         created_by="cloudosd",
     )
+    domain_enabled = _domain_join_enabled(domain_join)
     steps = [
         ("CloudOSD PE preflight", "cloudosd_preflight", "pe"),
         ("Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
+    ]
+    if domain_enabled:
+        steps.append(
+            ("Stage AD domain join unattend", "stage_ad_domain_join_unattend", "pe"),
+        )
+    steps.extend([
         ("Validate offline Windows", "cloudosd_validate_offline_os", "pe"),
         ("Stage OSD client", "stage_osd_client", "pe"),
         ("Stage AutopilotAgent", "stage_autopilot_agent", "pe"),
         ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
         ("Wait for AutopilotAgent heartbeat", "wait_agent_heartbeat", "full_os"),
-    ]
+    ])
+    if domain_enabled:
+        steps.append(
+            ("Verify AD domain membership", "verify_ad_domain_join", "full_os"),
+        )
     for position, (step_name, kind, phase) in enumerate(steps):
         ts_engine_pg.add_step(
             conn,
@@ -625,7 +731,14 @@ def _create_sequence_for_run(conn: Connection, *, name: str) -> str:
             kind=kind,
             phase=phase,
             position=position,
-            params={},
+            params=(
+                domain_join
+                if kind in {
+                    "stage_ad_domain_join_unattend",
+                    "verify_ad_domain_join",
+                }
+                else {}
+            ),
             retry_count=0,
             reboot_behavior="none",
         )
@@ -661,6 +774,7 @@ def create_run(
     driver_pack_policy: str = DEFAULT_DRIVER_PACK_POLICY,
     analytics_enabled: bool = False,
     outbound_policy: Optional[dict] = None,
+    domain_join: Optional[dict] = None,
 ) -> dict:
     artifact = get_artifact(conn, artifact_id)
     if not artifact:
@@ -673,10 +787,15 @@ def create_run(
         raise ValueError(
             "CloudOSD requested VM name does not produce a valid Windows computer name",
         )
+    domain_join_config = _sanitize_domain_join(
+        domain_join,
+        expected_computer_name=expected_computer_name,
+    )
 
     version_id = _create_sequence_for_run(
         conn,
         name=f"CloudOSD deployment for {vm_name}",
+        domain_join=domain_join_config,
     )
     run_id = ts_engine_pg.create_run_from_version(
         conn,
@@ -701,6 +820,7 @@ def create_run(
             "os_language": os_language,
             "driver_pack_policy": driver_pack_policy,
             "firmware_updates_enabled": firmware_updates_enabled,
+            "domain_join": domain_join_config,
         },
         created_by="cloudosd",
         resolve_content=False,
@@ -718,12 +838,13 @@ def create_run(
             chassis_type_override, source_surface, source_sequence_id,
             tpm_enabled, secure_boot, firmware_updates_enabled,
             driver_pack_policy, analytics_enabled, outbound_policy_json,
+            domain_join_json,
             created_at, updated_at
         )
         VALUES (
             %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         RETURNING *
         """,
@@ -758,6 +879,7 @@ def create_run(
             driver_pack_policy,
             analytics_enabled,
             _json(outbound_policy or {}),
+            _json(domain_join_config),
             now,
             now,
         ),
@@ -950,8 +1072,72 @@ def mark_complete_from_heartbeat(
     *,
     run_id: str,
     heartbeat_at: datetime,
+    heartbeat: dict | None = None,
 ) -> dict | None:
     now = _now()
+    current = conn.execute(
+        "SELECT * FROM cloudosd_runs WHERE run_id = %s",
+        (run_id,),
+    ).fetchone()
+    if not current:
+        return None
+    if current["state"] == "failed":
+        return _run_row(current)
+
+    domain_join = _sanitize_domain_join(current.get("domain_join_json") or {})
+    if _domain_join_enabled(domain_join):
+        verification = domain_join_verification(domain_join, heartbeat)
+        if not verification["matched"]:
+            row = conn.execute(
+                """
+                UPDATE cloudosd_runs
+                SET state = CASE
+                        WHEN state = 'complete' THEN state
+                        ELSE 'full_os_waiting_domain_join'
+                    END,
+                    first_heartbeat_at = COALESCE(first_heartbeat_at, %s),
+                    updated_at = %s
+                WHERE run_id = %s
+                  AND state <> 'failed'
+                RETURNING *
+                """,
+                (heartbeat_at, now, run_id),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    UPDATE ts_provisioning_runs
+                    SET state = CASE
+                            WHEN state = 'done' THEN state
+                            ELSE 'full_os_waiting_domain_join'
+                        END,
+                        phase = 'full_os'
+                    WHERE id = %s
+                    """,
+                    (run_id,),
+                )
+            conn.commit()
+            if row:
+                append_event(
+                    conn,
+                    run_id=run_id,
+                    phase="full_os",
+                    event_type="autopilotagent_heartbeat",
+                    message="AutopilotAgent heartbeat observed for CloudOSD run",
+                    data={"first_heartbeat_at": _iso(heartbeat_at)},
+                )
+                append_event(
+                    conn,
+                    run_id=run_id,
+                    phase="domain_join",
+                    event_type="domain_join_pending",
+                    severity="warning",
+                    message="Waiting for AutopilotAgent heartbeat to report expected AD domain membership",
+                    data=verification,
+                )
+                sync_ts_progress_for_run(conn, run_id)
+            return _run_row(row)
+
     row = conn.execute(
         """
         UPDATE cloudosd_runs
@@ -985,6 +1171,15 @@ def mark_complete_from_heartbeat(
             message="AutopilotAgent heartbeat observed for CloudOSD run",
             data={"first_heartbeat_at": _iso(heartbeat_at)},
         )
+        if _domain_join_enabled(domain_join):
+            append_event(
+                conn,
+                run_id=run_id,
+                phase="domain_join",
+                event_type="domain_join_verified",
+                message="AutopilotAgent heartbeat reported expected AD domain membership",
+                data=domain_join_verification(domain_join, heartbeat),
+            )
         sync_ts_progress_for_run(conn, run_id)
     return _run_row(row)
 

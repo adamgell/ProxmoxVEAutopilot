@@ -2397,6 +2397,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
                 conn,
                 run_id=run_id,
                 heartbeat_at=heartbeat["received_at"],
+                heartbeat=heartbeat,
             )
         artifact = cloudosd_endpoints.enrich_artifact(
             cloudosd_pg.get_artifact(conn, run["artifact_id"]),
@@ -4343,7 +4344,7 @@ def _start_cloudosd_provision_batch(
     analytics_enabled: bool,
     outbound_policy_mode: str,
 ) -> RedirectResponse:
-    from web import cloudosd_endpoints, cloudosd_pg, db_pg
+    from web import cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg
 
     count = int(count or 1)
     if count < 1 or count > 50:
@@ -4372,6 +4373,23 @@ def _start_cloudosd_provision_batch(
         serial_prefix=serial_prefix,
     )
     source_sequence_id = int(sequence_id) if sequence_id else None
+    domain_join_intent = {"enabled": False}
+    if source_sequence_id:
+        seq = sequences_db.get_sequence(SEQUENCES_DB, source_sequence_id)
+        if seq is None:
+            raise HTTPException(404, f"sequence {source_sequence_id} not found")
+
+        def _resolve_cloudosd_credential(cid: int):
+            return sequences_db.get_credential(SEQUENCES_DB, _cipher(), cid)
+
+        try:
+            domain_join_intent = cloudosd_sequence.compile_cloudosd_sequence_intent(
+                seq,
+                resolve_credential=_resolve_cloudosd_credential,
+            )["domain_join"]
+        except cloudosd_sequence.CloudOSDSequenceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     bodies: list[cloudosd_endpoints.RunCreateBody] = []
     for plan in batch_plan:
         name = plan["name"]
@@ -4467,6 +4485,7 @@ def _start_cloudosd_provision_batch(
                     driver_pack_policy=body.driver_pack_policy,
                     analytics_enabled=body.analytics_enabled,
                     outbound_policy=body.outbound_policy,
+                    domain_join=domain_join_intent,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc

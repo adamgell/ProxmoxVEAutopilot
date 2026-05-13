@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, cloudosd_pg, osd_package, winpe_token
+from web.sequence_compiler import _split_domain_user
 
 
 router = APIRouter(prefix="/api/cloudosd", tags=["cloudosd"])
@@ -178,6 +179,7 @@ def _package_response(
     run: dict,
     artifact: dict,
     server_base_url: str,
+    domain_join_secret: dict | None = None,
 ) -> dict:
     bootstrap_token = _sign(
         run["run_id"],
@@ -191,7 +193,7 @@ def _package_response(
         run.get("expected_computer_name")
         or cloudosd_pg.normalize_windows_computer_name(run.get("vm_name"))
     )
-    return {
+    response = {
         "schema_version": 1,
         "run_id": run["run_id"],
         "bearer_token": pe_token,
@@ -255,6 +257,63 @@ def _package_response(
             "vmid": run["vmid"],
         },
     }
+    domain_join = domain_join_secret or _domain_join_package_stub(run)
+    if domain_join.get("enabled"):
+        response["domain_join"] = domain_join
+    return response
+
+
+def _domain_join_package_stub(run: dict) -> dict:
+    domain_join = run.get("domain_join") or {}
+    if not domain_join.get("enabled"):
+        return {"enabled": False}
+    return {key: value for key, value in domain_join.items() if key != "credential_id"}
+
+
+def _domain_join_secret_for_run(run: dict) -> dict:
+    domain_join = run.get("domain_join") or {}
+    if not domain_join.get("enabled"):
+        return {"enabled": False}
+    credential_id = domain_join.get("credential_id")
+    if not credential_id:
+        raise HTTPException(
+            status_code=409,
+            detail="CloudOSD domain join is enabled but no credential_id is stored",
+        )
+    try:
+        from web import app as web_app, sequences_pg
+
+        credential = sequences_pg.get_credential(
+            web_app.SEQUENCES_DB,
+            web_app._cipher(),
+            int(credential_id),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"CloudOSD domain join credential could not be resolved: {exc}",
+        ) from exc
+    if not credential:
+        raise HTTPException(
+            status_code=409,
+            detail=f"CloudOSD domain join credential id={credential_id} was not found",
+        )
+    payload = credential.get("payload") or {}
+    raw_username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    if not raw_username or not password:
+        raise HTTPException(
+            status_code=409,
+            detail="CloudOSD domain join credential is missing username or password",
+        )
+    user_domain, username = _split_domain_user(raw_username)
+    package = _domain_join_package_stub(run)
+    package.update({
+        "credential_domain": package.get("credential_domain") or user_domain,
+        "username": username,
+        "password": password,
+    })
+    return package
 
 
 def _related_jobs(run_id: str) -> list[dict]:
@@ -1090,6 +1149,7 @@ def get_run(run_id: str):
                 conn,
                 run_id=run_id,
                 heartbeat_at=heartbeat["received_at"],
+                heartbeat=heartbeat,
             )
         artifact = cloudosd_pg.get_artifact(conn, run["artifact_id"])
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
@@ -1324,6 +1384,7 @@ def pe_package(
         run=run,
         artifact=artifact,
         server_base_url=_base_url(request),
+        domain_join_secret=_domain_join_secret_for_run(run),
     )
 
 
