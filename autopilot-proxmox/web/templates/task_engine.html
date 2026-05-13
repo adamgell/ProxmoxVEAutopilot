@@ -119,6 +119,53 @@
 </table>
 {% endif %}
 
+<h2>CloudOSD V2 OSD Task Plans</h2>
+{% if not cloudosd_runs %}
+{{ empty_state("No CloudOSD v2 OSD run plans yet.", hint="CloudOSD provision runs create immutable v2 OSD plans with PE, full-OS, hash, heartbeat, and domain verification tasks.") }}
+{% else %}
+<table class="cockpit-scanline task-engine-table">
+  <thead>
+    <tr>
+      <th>Run</th>
+      <th>Target</th>
+      <th>State</th>
+      <th>Visible OSD Plan</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for run in cloudosd_runs %}
+    <tr>
+      <td>
+        <code>{{ run.id }}</code>
+        <br><small>{{ run.sequence_name }} v{{ run.sequence_version }}</small>
+      </td>
+      <td>
+        {% if run.vmid %}VMID {{ run.vmid }}{% else %}VMID —{% endif %}
+        {% if run.computer_name %}<br><small>{{ run.computer_name }}</small>{% endif %}
+        {% if run.serial_number %}<br><small>serial {{ run.serial_number }}</small>{% endif %}
+      </td>
+      <td>
+        <span class="badge">{{ run.state }}</span>
+        <br><small>{{ run.done_count }}/{{ run.step_count }} done{% if run.failed_count %} · {{ run.failed_count }} failed{% endif %}</small>
+      </td>
+      <td>
+        <ol class="cloudosd-v2-task-plan" style="margin:0;padding-left:18px;">
+          {% for step in run.steps %}
+          <li style="margin:3px 0;">
+            <span class="badge">{{ step.state }}</span>
+            <strong>{{ step.name }}</strong>
+            <code>{{ step.kind }}</code>
+            <small>{{ step.phase }}</small>
+          </li>
+          {% endfor %}
+        </ol>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
 <h2>Content Library</h2>
 {% if not content_items %}
 {{ empty_state("No v2 content items yet.", hint="Content items become apps, packages, scripts, driver packages, and OS images for resolved run manifests.") }}

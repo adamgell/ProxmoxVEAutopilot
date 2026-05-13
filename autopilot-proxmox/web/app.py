@@ -7921,12 +7921,32 @@ def run_detail_page(run_id: int, request: Request):
 def task_engine_page(request: Request):
     from web import cloudosd_pg, db_pg, ts_engine_pg
 
+    cloudosd_step_kinds = {
+        "cloudosd_preflight",
+        "cloudosd_deploy_os",
+        "stage_ad_domain_join_unattend",
+        "cloudosd_validate_offline_os",
+        "stage_osd_client",
+        "stage_autopilot_agent",
+        "capture_autopilot_hash",
+        "wait_agent_heartbeat",
+        "verify_ad_domain_join",
+    }
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.sync_all_ts_progress(conn)
         sequences = ts_engine_pg.list_sequences(conn)
         for seq in sequences:
             seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
         runs = ts_engine_pg.list_runs(conn)
+        cloudosd_runs = []
+        for run in runs:
+            steps = ts_engine_pg.list_run_steps(conn, run["id"])
+            run["steps"] = steps
+            if (
+                str(run.get("sequence_name") or "").startswith("CloudOSD deployment")
+                or any(step.get("kind") in cloudosd_step_kinds for step in steps)
+            ):
+                cloudosd_runs.append(run)
         content_items = ts_engine_pg.list_content_items(conn)
         manifest_items = ts_engine_pg.list_recent_manifest_items(conn)
     return templates.TemplateResponse(
@@ -7935,6 +7955,7 @@ def task_engine_page(request: Request):
             "request": request,
             "sequences": sequences,
             "runs": runs,
+            "cloudosd_runs": cloudosd_runs,
             "content_items": content_items,
             "manifest_items": manifest_items,
         },

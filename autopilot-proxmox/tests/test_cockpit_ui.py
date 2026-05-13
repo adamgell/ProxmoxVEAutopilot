@@ -412,3 +412,59 @@ def test_task_engine_page_shows_v2_sequences_runs_and_content(
     assert "queued" in body
     assert "notepad-plus-plus" in body
     assert "Content Manifest" in body
+
+
+def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
+    web_client: TestClient, pg_conn
+):
+    from web import ts_engine_pg
+
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    sequence_id = ts_engine_pg.create_sequence(
+        pg_conn,
+        name="CloudOSD deployment for GELL-119-AD",
+        description="Generated CloudOSD deployment sequence",
+        created_by="cloudosd",
+    )
+    for position, (name, kind, phase) in enumerate([
+        ("CloudOSD PE preflight", "cloudosd_preflight", "pe"),
+        ("Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
+        ("Stage OSD client", "stage_osd_client", "pe"),
+        ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
+        ("Verify AD domain membership", "verify_ad_domain_join", "full_os"),
+    ]):
+        ts_engine_pg.add_step(
+            pg_conn,
+            sequence_id=sequence_id,
+            parent_id=None,
+            name=name,
+            kind=kind,
+            phase=phase,
+            position=position,
+        )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn,
+        sequence_version_id=version_id,
+        deployment_target={
+            "vmid": 119,
+            "computer_name": "GELL-119-AD",
+            "serial_number": "GELL-119-AD",
+        },
+    )
+
+    res = web_client.get("/task-engine")
+
+    assert res.status_code == 200
+    body = res.text
+    assert "CloudOSD V2 OSD Task Plans" in body
+    assert 'class="cloudosd-v2-task-plan"' in body
+    assert run_id in body
+    assert "VMID 119" in body
+    assert "GELL-119-AD" in body
+    assert "Stage OSD client" in body
+    assert "stage_osd_client" in body
+    assert "Capture Autopilot hardware hash" in body
+    assert "capture_autopilot_hash" in body
+    assert "Verify AD domain membership" in body
