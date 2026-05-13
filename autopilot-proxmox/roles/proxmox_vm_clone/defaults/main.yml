@@ -13,5 +13,5 @@ clone_config_delay: 5
 # instead of injecting it into the cloned disk's filesystem.
 _skip_panther_injection: false
 # When true, OEM profile chassis_type is ignored for the root-only
-# SMBIOS Type 3 file/args path. SMBIOS1 identity is still applied.
+# SMBIOS file/args path and the legacy SMBIOS1 identity stays active.
 _skip_chassis_type_smbios_file: false

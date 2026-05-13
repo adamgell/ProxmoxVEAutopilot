@@ -1,6 +1,7 @@
 """CloudOSD controller and WinPE bridge API."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sys
@@ -18,6 +19,7 @@ from web.sequence_compiler import _split_domain_user
 
 
 router = APIRouter(prefix="/api/cloudosd", tags=["cloudosd"])
+logger = logging.getLogger(__name__)
 
 _PE_TOKEN_TTL_SECONDS = 6 * 60 * 60
 _AGENT_BOOTSTRAP_TOKEN_TTL_SECONDS = 48 * 60 * 60
@@ -1370,6 +1372,15 @@ def pe_register(body: PeRegisterBody):
             build_sha=body.build_sha,
         )
         if not run:
+            logger.warning(
+                "CloudOSD PE registration identity mismatch: vm_uuid=%s mac=%s architecture=%s build_sha=%s manufacturer=%s model=%s",
+                body.vm_uuid,
+                body.mac,
+                body.architecture,
+                body.build_sha,
+                body.manufacturer,
+                body.model,
+            )
             raise HTTPException(status_code=404, detail="matching CloudOSD run not found")
         run = cloudosd_pg.mark_pe_registered(conn, run_id=run["run_id"])
     return {

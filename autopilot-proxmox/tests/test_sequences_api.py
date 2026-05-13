@@ -555,6 +555,19 @@ def test_proxmox_args_write_requires_root_ssh_when_smbios_args_needed():
     assert "- _args_write_required | default(false) | bool" in text
 
 
+def test_per_vm_smbios_file_deletes_inherited_smbios1():
+    task_file = (
+        Path(__file__).resolve().parents[1]
+        / "roles/proxmox_vm_clone/tasks/update_config.yml"
+    )
+    text = task_file.read_text(encoding="utf-8")
+
+    assert "Drop inherited SMBIOS1 when per-VM SMBIOS file owns Type 1" in text
+    assert "'delete'" in text
+    assert "smbios1" in text
+    assert "when: _use_per_vm_smbios_file | default(false) | bool" in text
+
+
 def test_startup_seeds_defaults(tmp_path, pg_conn):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile
