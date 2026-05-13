@@ -352,6 +352,44 @@ function Clear-PVEAutopilotOobeBootstrapAccount {
     & $DisableUser $UserName
 }
 
+function Invoke-PVEAutopilotBootstrapSessionLogoff {
+    param(
+        [string] $UserName = 'PVEAutopilot',
+        [scriptblock] $QueryUser = { query.exe user 2>$null },
+        [scriptblock] $LogoffSession = { param([int] $SessionId) logoff.exe $SessionId }
+    )
+
+    $loggedOff = 0
+    $lines = @(& $QueryUser)
+    foreach ($line in $lines) {
+        $text = ([string] $line).Trim()
+        if (-not $text -or $text -like 'USERNAME*') { continue }
+        if ($text.StartsWith('>')) {
+            $text = $text.Substring(1).Trim()
+        }
+        $parts = @($text -split '\s+' | Where-Object { $_ })
+        if ($parts.Count -lt 2 -or $parts[0] -ine $UserName) { continue }
+
+        $sessionId = $null
+        foreach ($token in @($parts | Select-Object -Skip 1)) {
+            $parsed = 0
+            if ([int]::TryParse($token, [ref] $parsed)) {
+                $sessionId = $parsed
+                break
+            }
+        }
+        if ($null -eq $sessionId) {
+            Write-CloudOSDFirstBootLog "Unable to identify session ID for OOBE bootstrap user $UserName from query.exe output: $line" | Out-Null
+            continue
+        }
+
+        Write-CloudOSDFirstBootLog "Logging off OOBE bootstrap user $UserName session $sessionId" | Out-Null
+        & $LogoffSession $sessionId
+        $loggedOff++
+    }
+    return $loggedOff
+}
+
 function Invoke-PVEAutopilotFirstBoot {
     param(
         [object] $RunConfig,
@@ -362,6 +400,7 @@ function Invoke-PVEAutopilotFirstBoot {
         [scriptblock] $ConfirmHeartbeat = { param($ConfigUrl,$Token) Confirm-AutopilotAgentHeartbeat -ConfigUrl $ConfigUrl -Token $Token },
         [scriptblock] $RunOsdClient = { Invoke-CloudOSDOsdClient },
         [scriptblock] $RemoveScheduledTask = { param($Name) Remove-PVEAutopilotFirstBootTask -Name $Name },
+        [scriptblock] $EndBootstrapSession = { param($Name) Invoke-PVEAutopilotBootstrapSessionLogoff -UserName $Name },
         [scriptblock] $ReportEvent = {
             param(
                 [string] $ServerUrl,
@@ -498,6 +537,19 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_complete' `
         -Message 'CloudOSD first boot completed'
+    try {
+        $loggedOff = & $EndBootstrapSession 'PVEAutopilot'
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_session_logoff_requested' `
+            -Message 'Temporary CloudOSD OOBE bootstrap desktop session logoff requested' `
+            -Data @{ sessions_logged_off = $loggedOff }
+    } catch {
+        Write-CloudOSDFirstBootLog "CloudOSD OOBE bootstrap session logoff failed: $($_.Exception.Message)"
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_session_logoff_failed' `
+            -Severity 'warning' `
+            -Message $_.Exception.Message
+    }
 }
 
 if ($env:CLOUDOSD_FIRSTBOOT_LIBRARY_ONLY -ne '1') {

@@ -46,10 +46,11 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
             -ConfirmHeartbeat { param($ConfigUrl,$Token) $script:Calls += 'heartbeat' } `
             -RunOsdClient { $script:Calls += 'osd-client' } `
             -RemoveScheduledTask { param($Name) $script:Calls += "cleanup:$Name" } `
+            -EndBootstrapSession { param($Name) $script:Calls += "end-session:$Name" } `
             -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data) }
 
         ($script:Calls -join '|') |
-            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|osd-client|cleanup:PVEAutopilot-CloudOSD-FirstBoot'
+            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|osd-client|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
     }
 
     It 'posts SetupComplete and first-boot milestone events to the controller' {
@@ -140,6 +141,24 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
 
         ($script:CleanupCalls -join '|') |
             Should -Be 'registry|disable:PVEAutopilot'
+    }
+
+    It 'logs off the temporary OOBE bootstrap desktop session' {
+        $script:LogoffCalls = @()
+        $queryUserOutput = @'
+ USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME
+>PVEAutopilot         console             1  Active      none   5/13/2026 2:11 PM
+ adam                 rdp-tcp#1           2  Active      none   5/13/2026 2:12 PM
+'@
+
+        $loggedOff = Invoke-PVEAutopilotBootstrapSessionLogoff `
+            -UserName 'PVEAutopilot' `
+            -QueryUser { $queryUserOutput -split "`n" } `
+            -LogoffSession { param([int] $SessionId) $script:LogoffCalls += "logoff:$SessionId" }
+
+        $loggedOff | Should -Be 1
+        ($script:LogoffCalls -join '|') |
+            Should -Be 'logoff:1'
     }
 
     It 'skips non-unattend Panther XML files during domain join cleanup' {
