@@ -310,7 +310,7 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     assert heartbeat.status_code == 200, heartbeat.text
     after_heartbeat = cloudosd_client.get(f"/api/cloudosd/runs/{run_body['run_id']}")
     assert after_heartbeat.status_code == 200
-    assert after_heartbeat.json()["run"]["state"] == "complete"
+    assert after_heartbeat.json()["run"]["state"] == "full_os_waiting_v2"
     assert after_heartbeat.json()["run"]["first_heartbeat_at"]
 
     from web import ts_engine_pg
@@ -321,6 +321,47 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
         "wait_agent_heartbeat",
     ]
     assert steps[-1]["phase"] == "full_os"
+    assert steps[-1]["state"] == "done"
+    assert steps[-2]["state"] == "pending"
+
+    v2_reg = cloudosd_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run_body["run_id"],
+            "agent_id": "cloudosd-agent-1",
+            "phase": "full_os",
+            "capabilities": ["capture_autopilot_hash"],
+        },
+    )
+    assert v2_reg.status_code == 200, v2_reg.text
+    v2_next = cloudosd_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(v2_reg.json()["bearer_token"]),
+        json={
+            "run_id": run_body["run_id"],
+            "agent_id": "cloudosd-agent-1",
+            "phase": "full_os",
+        },
+    )
+    assert v2_next.status_code == 200, v2_next.text
+    action = v2_next.json()["actions"][0]
+    assert action["kind"] == "capture_autopilot_hash"
+    result = cloudosd_client.post(
+        f"/osd/v2/agent/step/{action['step_id']}/result",
+        headers=_bearer(v2_reg.json()["bearer_token"]),
+        json={
+            "run_id": run_body["run_id"],
+            "agent_id": "cloudosd-agent-1",
+            "phase": "full_os",
+            "status": "success",
+            "message": "hash uploaded through AutopilotAgent v2",
+            "data": {"source": "autopilotagent-v2"},
+        },
+    )
+    assert result.status_code == 200, result.text
+    complete = cloudosd_client.get(f"/api/cloudosd/runs/{run_body['run_id']}")
+    assert complete.status_code == 200, complete.text
+    assert complete.json()["run"]["state"] == "complete"
 
 
 def test_cloudosd_provision_sequence_with_domain_join_adds_v2_steps_and_pe_only_secret(
@@ -538,6 +579,61 @@ def test_cloudosd_domain_join_run_waits_for_matching_domain_heartbeat(
         },
     )
     assert matched_hb.status_code == 200, matched_hb.text
+    waiting_v2 = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert waiting_v2.status_code == 200, waiting_v2.text
+    assert waiting_v2.json()["run"]["state"] == "full_os_waiting_v2"
+    steps = ts_engine_pg.list_run_steps(pg_conn, run["run_id"])
+    verify_step = next(step for step in steps if step["kind"] == "verify_ad_domain_join")
+    capture_step = next(step for step in steps if step["kind"] == "capture_autopilot_hash")
+    assert verify_step["state"] == "pending"
+    assert capture_step["state"] == "pending"
+
+    ts_engine_pg.complete_step(
+        pg_conn,
+        run_id=run["run_id"],
+        step_id=capture_step["id"],
+        agent_id="cloudosd-domain-agent",
+        status="success",
+        message="hash uploaded through AutopilotAgent v2",
+    )
+    v2_reg = cloudosd_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "cloudosd-domain-agent",
+            "phase": "full_os",
+            "capabilities": ["verify_ad_domain_join"],
+        },
+    )
+    assert v2_reg.status_code == 200, v2_reg.text
+    v2_next = cloudosd_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(v2_reg.json()["bearer_token"]),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "cloudosd-domain-agent",
+            "phase": "full_os",
+        },
+    )
+    assert v2_next.status_code == 200, v2_next.text
+    action = v2_next.json()["actions"][0]
+    assert action["kind"] == "verify_ad_domain_join"
+    result = cloudosd_client.post(
+        f"/osd/v2/agent/step/{action['step_id']}/result",
+        headers=_bearer(v2_reg.json()["bearer_token"]),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "cloudosd-domain-agent",
+            "phase": "full_os",
+            "status": "success",
+            "message": "AD domain membership verified by AutopilotAgent v2",
+            "data": {
+                "domain_name": "home.gell.one",
+                "domain_joined": True,
+            },
+        },
+    )
+    assert result.status_code == 200, result.text
     complete = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
     assert complete.status_code == 200, complete.text
     assert complete.json()["run"]["state"] == "complete"
@@ -1040,11 +1136,12 @@ def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(
     pg_conn.commit()
     assert after["done_count"] == 6
     assert after["step_count"] == 7
-    assert after["state"] == "done"
+    assert after["state"] == "full_os_waiting_v2"
 
     task_engine = cloudosd_client.get("/task-engine")
     assert task_engine.status_code == 200
     assert "6/7 done" in task_engine.text
+    assert "full_os_waiting_v2" in task_engine.text
 
 
 def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(

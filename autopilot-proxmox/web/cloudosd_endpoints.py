@@ -1153,6 +1153,12 @@ def get_run(run_id: str):
             )
         artifact = cloudosd_pg.get_artifact(conn, run["artifact_id"])
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
+        v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_completion = cloudosd_pg.v2_completion_status(
+            conn,
+            run_id,
+            domain_join=run.get("domain_join"),
+        )
         events = cloudosd_pg.list_events(conn, run_id)
         evidence_events = events_with_related_jobs(run_id, events, run)
     heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
@@ -1171,6 +1177,8 @@ def get_run(run_id: str):
         "events": evidence_events,
         "event_groups": cloudosd_pg.milestone_event_groups(evidence_events),
         "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
+        "v2_steps": v2_steps,
+        "v2_completion": v2_completion,
         "related_jobs": _related_jobs(run_id),
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
@@ -1185,6 +1193,12 @@ def list_run_events(run_id: str):
         if not run:
             raise HTTPException(status_code=404, detail="CloudOSD run not found")
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
+        v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_completion = cloudosd_pg.v2_completion_status(
+            conn,
+            run_id,
+            domain_join=run.get("domain_join"),
+        )
         events = cloudosd_pg.list_events(conn, run_id)
     events = events_with_related_jobs(run_id, events, run)
     groups: dict[str, list[dict]] = {}
@@ -1197,6 +1211,8 @@ def list_run_events(run_id: str):
         "groups": groups,
         "milestone_groups": cloudosd_pg.milestone_event_groups(events),
         "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
+        "v2_steps": v2_steps,
+        "v2_completion": v2_completion,
     }
 
 

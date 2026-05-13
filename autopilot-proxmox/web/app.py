@@ -2403,6 +2403,12 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
             cloudosd_pg.get_artifact(conn, run["artifact_id"]),
         )
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
+        v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_completion = cloudosd_pg.v2_completion_status(
+            conn,
+            run_id,
+            domain_join=run.get("domain_join"),
+        )
         events = cloudosd_pg.list_events(conn, run_id)
         events = cloudosd_endpoints.events_with_related_jobs(run_id, events, run)
     heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
@@ -2425,6 +2431,8 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         "events": events,
         "event_groups": event_groups,
         "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
+        "v2_steps": v2_steps,
+        "v2_completion": v2_completion,
         "related_jobs": related_jobs,
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),

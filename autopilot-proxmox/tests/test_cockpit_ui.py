@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 
@@ -75,6 +77,18 @@ def test_cockpit_shell_renders_on_dashboard(web_client: TestClient, monkeypatch)
     assert "WebSocket: Connecting" in body
     assert "new WebSocket" in body
     assert "/api/live/ws" in body
+
+
+def test_cloudosd_run_detail_renders_v2_plan_live_section():
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "web/templates/cloudosd_run_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert "AutopilotAgent v2 Plan" in template
+    assert "data-cloudosd-v2-steps" in template
+    assert "v2_completion" in template
+    assert "renderV2Steps" in template
 
 
 def test_cockpit_shell_has_light_mode_tokens(web_client: TestClient, monkeypatch):

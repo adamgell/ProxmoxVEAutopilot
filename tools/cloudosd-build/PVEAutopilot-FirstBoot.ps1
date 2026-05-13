@@ -2,8 +2,8 @@
 #
 # Runs as SYSTEM from a scheduled task created by SetupComplete. It installs
 # the persistent AutopilotAgent MSI, runs the existing postinstall bootstrap
-# script with the CloudOSD run token, confirms heartbeat, then removes its own
-# scheduled task.
+# script with the CloudOSD run token, confirms heartbeat, then leaves v2
+# full-OS deployment work to the persistent AutopilotAgent service.
 
 $ErrorActionPreference = 'Stop'
 
@@ -83,6 +83,76 @@ function Read-PVEAutopilotCloudOSDRunConfig {
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Test-PVEAutopilotCloudOSDDomainJoinEnabled {
+    param([AllowNull()] [object] $RunConfig)
+    if ($null -eq $RunConfig) { return $false }
+    if ($RunConfig.PSObject.Properties.Match('domain_join').Count -eq 0 -or
+        -not $RunConfig.domain_join) {
+        return $false
+    }
+    if ($RunConfig.domain_join.PSObject.Properties.Match('enabled').Count -eq 0) {
+        return $false
+    }
+    return [bool] $RunConfig.domain_join.enabled
+}
+
+function Clear-PVEAutopilotDomainJoinSecrets {
+    param(
+        [string] $PantherRoot = (Join-Path $env:SystemRoot 'Panther')
+    )
+    if (-not (Test-Path -LiteralPath $PantherRoot)) {
+        return 0
+    }
+
+    $redacted = 0
+    $files = Get-ChildItem -LiteralPath $PantherRoot `
+        -Recurse `
+        -File `
+        -Filter '*.xml' `
+        -ErrorAction SilentlyContinue
+    foreach ($file in @($files)) {
+        try {
+            if ($file.Name -notlike '*unattend*.xml') {
+                continue
+            }
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.PreserveWhitespace = $true
+            $xml.Load($file.FullName)
+            $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+            $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+            $passwordNodes = $xml.SelectNodes('//u:Password', $ns)
+            if (-not $passwordNodes -or $passwordNodes.Count -eq 0) { continue }
+            foreach ($node in @($passwordNodes)) {
+                $valueNodes = $node.SelectNodes('u:Value', $ns)
+                if ($valueNodes -and $valueNodes.Count -gt 0) {
+                    foreach ($valueNode in @($valueNodes)) {
+                        if ($valueNode.InnerText -and $valueNode.InnerText -ne 'REDACTED-BY-PVEAUTOPILOT') {
+                            $valueNode.InnerText = 'REDACTED-BY-PVEAUTOPILOT'
+                            $redacted++
+                        }
+                    }
+                } elseif ($node.InnerText -and $node.InnerText -ne 'REDACTED-BY-PVEAUTOPILOT') {
+                    $node.InnerText = 'REDACTED-BY-PVEAUTOPILOT'
+                    $redacted++
+                }
+            }
+            $writerSettings = New-Object System.Xml.XmlWriterSettings
+            $writerSettings.Encoding = New-Object System.Text.UTF8Encoding($false)
+            $writerSettings.Indent = $true
+            $writer = [System.Xml.XmlWriter]::Create($file.FullName, $writerSettings)
+            try {
+                $xml.Save($writer)
+            } finally {
+                $writer.Close()
+            }
+        } catch {
+            Write-CloudOSDFirstBootLog "skipping domain join secret cleanup for $($file.FullName): $($_.Exception.Message)"
+            continue
+        }
+    }
+    return $redacted
+}
+
 function Wait-CloudOSDNetwork {
     param(
         [int] $TimeoutSeconds = 600,
@@ -147,6 +217,13 @@ function Install-QemuGuestAgentIfPresent {
         -Wait -PassThru
     if ($p.ExitCode -notin @(0, 3010, 1641)) {
         throw "QEMU Guest Agent MSI failed with exit code $($p.ExitCode)"
+    }
+    try {
+        Set-Service -Name QEMU-GA -StartupType Automatic -ErrorAction Stop
+        Start-Service -Name QEMU-GA -ErrorAction Stop
+        Write-CloudOSDFirstBootLog 'QEMU Guest Agent service started.'
+    } catch {
+        Write-CloudOSDFirstBootLog "QEMU Guest Agent MSI installed but service did not start yet: $($_.Exception.Message)"
     }
 }
 
@@ -260,6 +337,74 @@ function Invoke-CloudOSDOsdClient {
     Write-CloudOSDFirstBootLog 'CloudOSD OSD client completed.'
 }
 
+function Clear-PVEAutopilotOobeBootstrapAccount {
+    param(
+        [string] $UserName = 'PVEAutopilot',
+        [scriptblock] $RegistryCleanup = {
+            $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+            foreach ($name in @('AutoAdminLogon', 'DefaultUserName', 'DefaultPassword', 'DefaultDomainName')) {
+                Remove-ItemProperty -Path $winlogon -Name $name -ErrorAction SilentlyContinue
+            }
+            $userList = Join-Path $winlogon 'SpecialAccounts\UserList'
+            New-Item -Path $userList -Force -ErrorAction SilentlyContinue | Out-Null
+            New-ItemProperty -Path $userList `
+                -Name 'PVEAutopilot' `
+                -Value 0 `
+                -PropertyType DWord `
+                -Force `
+                -ErrorAction SilentlyContinue | Out-Null
+        },
+        [scriptblock] $DisableUser = {
+            param([string] $Name)
+            if (Get-Command Disable-LocalUser -ErrorAction SilentlyContinue) {
+                Disable-LocalUser -Name $Name -ErrorAction SilentlyContinue
+            } else {
+                net.exe user $Name /active:no | Out-Null
+            }
+        }
+    )
+    & $RegistryCleanup
+    & $DisableUser $UserName
+}
+
+function Invoke-PVEAutopilotBootstrapSessionLogoff {
+    param(
+        [string] $UserName = 'PVEAutopilot',
+        [scriptblock] $QueryUser = { query.exe user 2>$null },
+        [scriptblock] $LogoffSession = { param([int] $SessionId) logoff.exe $SessionId }
+    )
+
+    $loggedOff = 0
+    $lines = @(& $QueryUser)
+    foreach ($line in $lines) {
+        $text = ([string] $line).Trim()
+        if (-not $text -or $text -like 'USERNAME*') { continue }
+        if ($text.StartsWith('>')) {
+            $text = $text.Substring(1).Trim()
+        }
+        $parts = @($text -split '\s+' | Where-Object { $_ })
+        if ($parts.Count -lt 2 -or $parts[0] -ine $UserName) { continue }
+
+        $sessionId = $null
+        foreach ($token in @($parts | Select-Object -Skip 1)) {
+            $parsed = 0
+            if ([int]::TryParse($token, [ref] $parsed)) {
+                $sessionId = $parsed
+                break
+            }
+        }
+        if ($null -eq $sessionId) {
+            Write-CloudOSDFirstBootLog "Unable to identify session ID for OOBE bootstrap user $UserName from query.exe output: $line" | Out-Null
+            continue
+        }
+
+        Write-CloudOSDFirstBootLog "Logging off OOBE bootstrap user $UserName session $sessionId" | Out-Null
+        & $LogoffSession $sessionId
+        $loggedOff++
+    }
+    return $loggedOff
+}
+
 function Invoke-PVEAutopilotFirstBoot {
     param(
         [object] $RunConfig,
@@ -270,6 +415,7 @@ function Invoke-PVEAutopilotFirstBoot {
         [scriptblock] $ConfirmHeartbeat = { param($ConfigUrl,$Token) Confirm-AutopilotAgentHeartbeat -ConfigUrl $ConfigUrl -Token $Token },
         [scriptblock] $RunOsdClient = { Invoke-CloudOSDOsdClient },
         [scriptblock] $RemoveScheduledTask = { param($Name) Remove-PVEAutopilotFirstBootTask -Name $Name },
+        [scriptblock] $EndBootstrapSession = { param($Name) Invoke-PVEAutopilotBootstrapSessionLogoff -UserName $Name },
         [scriptblock] $ReportEvent = {
             param(
                 [string] $ServerUrl,
@@ -338,6 +484,21 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_start' `
         -Message 'CloudOSD first boot started'
+    if (Test-PVEAutopilotCloudOSDDomainJoinEnabled -RunConfig $RunConfig) {
+        try {
+            $redactedCount = Clear-PVEAutopilotDomainJoinSecrets
+            Send-PVEAutopilotFirstBootEvent -Phase 'domain_join' `
+                -EventType 'domain_join_secret_cleanup_ok' `
+                -Message 'Domain join unattend secrets redacted from Panther' `
+                -Data @{ redacted_password_nodes = $redactedCount }
+        } catch {
+            Send-PVEAutopilotFirstBootEvent -Phase 'domain_join' `
+                -EventType 'domain_join_secret_cleanup_failed' `
+                -Severity 'error' `
+                -Message $_.Exception.Message
+            throw
+        }
+    }
     & $WaitForNetwork
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_network_ready' `
@@ -368,17 +529,38 @@ function Invoke-PVEAutopilotFirstBoot {
         -EventType 'autopilotagent_heartbeat_visible' `
         -Message 'AutopilotAgent heartbeat visible from installed OS'
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
-        -EventType 'firstboot_osd_client_start' `
-        -Message 'Starting staged OSD client for CloudOSD hash capture'
-    & $RunOsdClient
-    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
-        -EventType 'firstboot_osd_client_complete' `
-        -Message 'Staged OSD client completed CloudOSD post-deployment work'
+        -EventType 'firstboot_v2_agent_ownership_ready' `
+        -Message 'Persistent AutopilotAgent will claim CloudOSD v2 full-OS steps'
+    try {
+        Clear-PVEAutopilotOobeBootstrapAccount
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_cleanup_ok' `
+            -Message 'Temporary CloudOSD OOBE bootstrap account cleanup completed'
+    } catch {
+        Write-CloudOSDFirstBootLog "CloudOSD OOBE bootstrap account cleanup failed: $($_.Exception.Message)"
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_cleanup_failed' `
+            -Severity 'warning' `
+            -Message $_.Exception.Message
+    }
     & $RemoveScheduledTask 'PVEAutopilot-CloudOSD-FirstBoot'
     Write-CloudOSDFirstBootLog "CloudOSD first boot complete for run $runId"
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_complete' `
         -Message 'CloudOSD first boot completed'
+    try {
+        $loggedOff = & $EndBootstrapSession 'PVEAutopilot'
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_session_logoff_requested' `
+            -Message 'Temporary CloudOSD OOBE bootstrap desktop session logoff requested' `
+            -Data @{ sessions_logged_off = $loggedOff }
+    } catch {
+        Write-CloudOSDFirstBootLog "CloudOSD OOBE bootstrap session logoff failed: $($_.Exception.Message)"
+        Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+            -EventType 'firstboot_oobe_bootstrap_session_logoff_failed' `
+            -Severity 'warning' `
+            -Message $_.Exception.Message
+    }
 }
 
 if ($env:CLOUDOSD_FIRSTBOOT_LIBRARY_ONLY -ne '1') {

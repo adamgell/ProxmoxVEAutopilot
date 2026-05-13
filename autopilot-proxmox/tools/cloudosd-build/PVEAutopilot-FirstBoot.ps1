@@ -2,8 +2,8 @@
 #
 # Runs as SYSTEM from a scheduled task created by SetupComplete. It installs
 # the persistent AutopilotAgent MSI, runs the existing postinstall bootstrap
-# script with the CloudOSD run token, confirms heartbeat, then removes its own
-# scheduled task.
+# script with the CloudOSD run token, confirms heartbeat, then leaves v2
+# full-OS deployment work to the persistent AutopilotAgent service.
 
 $ErrorActionPreference = 'Stop'
 
@@ -218,6 +218,13 @@ function Install-QemuGuestAgentIfPresent {
     if ($p.ExitCode -notin @(0, 3010, 1641)) {
         throw "QEMU Guest Agent MSI failed with exit code $($p.ExitCode)"
     }
+    try {
+        Set-Service -Name QEMU-GA -StartupType Automatic -ErrorAction Stop
+        Start-Service -Name QEMU-GA -ErrorAction Stop
+        Write-CloudOSDFirstBootLog 'QEMU Guest Agent service started.'
+    } catch {
+        Write-CloudOSDFirstBootLog "QEMU Guest Agent MSI installed but service did not start yet: $($_.Exception.Message)"
+    }
 }
 
 function Install-AutopilotAgentMsi {
@@ -338,6 +345,14 @@ function Clear-PVEAutopilotOobeBootstrapAccount {
             foreach ($name in @('AutoAdminLogon', 'DefaultUserName', 'DefaultPassword', 'DefaultDomainName')) {
                 Remove-ItemProperty -Path $winlogon -Name $name -ErrorAction SilentlyContinue
             }
+            $userList = Join-Path $winlogon 'SpecialAccounts\UserList'
+            New-Item -Path $userList -Force -ErrorAction SilentlyContinue | Out-Null
+            New-ItemProperty -Path $userList `
+                -Name 'PVEAutopilot' `
+                -Value 0 `
+                -PropertyType DWord `
+                -Force `
+                -ErrorAction SilentlyContinue | Out-Null
         },
         [scriptblock] $DisableUser = {
             param([string] $Name)
@@ -514,12 +529,8 @@ function Invoke-PVEAutopilotFirstBoot {
         -EventType 'autopilotagent_heartbeat_visible' `
         -Message 'AutopilotAgent heartbeat visible from installed OS'
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
-        -EventType 'firstboot_osd_client_start' `
-        -Message 'Starting staged OSD client for CloudOSD hash capture'
-    & $RunOsdClient
-    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
-        -EventType 'firstboot_osd_client_complete' `
-        -Message 'Staged OSD client completed CloudOSD post-deployment work'
+        -EventType 'firstboot_v2_agent_ownership_ready' `
+        -Message 'Persistent AutopilotAgent will claim CloudOSD v2 full-OS steps'
     try {
         Clear-PVEAutopilotOobeBootstrapAccount
         Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `

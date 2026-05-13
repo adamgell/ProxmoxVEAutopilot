@@ -6,6 +6,7 @@ public sealed class Worker(
     AgentApiClient apiClient,
     TelemetryCollector telemetryCollector,
     HashCaptureService hashCaptureService,
+    OsdV2WorkService osdV2WorkService,
     AgentFileLog log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,6 +40,10 @@ public sealed class Worker(
                 {
                     await apiClient.SendHeartbeatAsync(config, telemetry, stoppingToken);
                     log.Info("Heartbeat sent.");
+                    await osdV2WorkService.ProcessOnceAsync(
+                        config,
+                        telemetry,
+                        stoppingToken);
                     var work = await apiClient.GetNextWorkAsync(
                         config,
                         ["capture_autopilot_hash"],

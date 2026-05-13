@@ -85,6 +85,7 @@ class HashBody(BaseModel):
     serial_number: str
     product_id: str
     hardware_hash: str
+    group_tag: Optional[str] = None
 
 
 class ContentItemCreateBody(BaseModel):
@@ -211,6 +212,7 @@ def _persist_autopilot_hash(
     serial: str,
     product_id: str,
     hardware_hash: str,
+    group_tag: str = "",
     source: str = "osd-v2",
 ) -> None:
     from web import app as web_app
@@ -230,12 +232,81 @@ def _persist_autopilot_hash(
     out = web_app.HASH_DIR / f"{ts}-vm{vmid}-{safe_serial}-{safe_source}_hwid.csv"
     with out.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        writer.writerow([
+        header = [
             "Device Serial Number",
             "Windows Product ID",
             "Hardware Hash",
-        ])
-        writer.writerow([serial, product_id, hardware_hash])
+        ]
+        row = [serial, product_id, hardware_hash]
+        if group_tag:
+            header.append("Group Tag")
+            row.append(group_tag)
+        writer.writerow(header)
+        writer.writerow(row)
+
+
+def _sync_cloudosd_after_step_result(
+    conn,
+    *,
+    step: dict,
+    updated: dict,
+    body: StepResultBody,
+) -> None:
+    if body.status != "success":
+        return
+    kind = str(step.get("kind") or "")
+    if kind not in {
+        "capture_autopilot_hash",
+        "wait_agent_heartbeat",
+        "verify_ad_domain_join",
+    }:
+        return
+    try:
+        from web import agent_telemetry_pg, cloudosd_pg
+
+        run = cloudosd_pg.get_run(conn, body.run_id)
+        if not run:
+            return
+        event_map = {
+            "capture_autopilot_hash": (
+                "AutopilotAgent",
+                "autopilotagent_v2_hash_capture_complete",
+                "AutopilotAgent v2 reported Autopilot hardware hash capture complete",
+            ),
+            "wait_agent_heartbeat": (
+                "AutopilotAgent",
+                "autopilotagent_v2_heartbeat_confirmed",
+                "AutopilotAgent v2 confirmed full-OS heartbeat",
+            ),
+            "verify_ad_domain_join": (
+                "domain_join",
+                "domain_join_verified",
+                "AD domain membership verified by AutopilotAgent v2",
+            ),
+        }
+        phase, event_type, default_message = event_map[kind]
+        cloudosd_pg.append_event(
+            conn,
+            run_id=body.run_id,
+            phase=phase,
+            event_type=event_type,
+            message=body.message or default_message,
+            data={
+                "step_id": updated["id"],
+                "agent_id": body.agent_id,
+                **(body.data or {}),
+            },
+        )
+        latest = agent_telemetry_pg.latest_for_run(conn, body.run_id)
+        if latest:
+            cloudosd_pg.mark_complete_from_heartbeat(
+                conn,
+                run_id=body.run_id,
+                heartbeat_at=latest["received_at"],
+                heartbeat=latest,
+            )
+    except Exception:
+        conn.rollback()
 
 
 @router.get("/agent/package/{run_id}")
@@ -298,6 +369,7 @@ def post_agent_hash(body: HashBody, payload: dict = Depends(_require_bearer)):
         serial=body.serial_number,
         product_id=body.product_id,
         hardware_hash=body.hardware_hash,
+        group_tag=str(body.group_tag or ""),
         source="osd-v2",
     )
     return {"ok": True}
@@ -403,6 +475,12 @@ def post_step_result(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        _sync_cloudosd_after_step_result(
+            conn,
+            step=step,
+            updated=updated,
+            body=body,
+        )
     return {
         "ok": True,
         "step": updated,

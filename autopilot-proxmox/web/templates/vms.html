@@ -610,7 +610,7 @@ function renderJoinBadges(agent) {
   var bits = [];
   if (agent.domain_joined) bits.push('<span class="badge badge-green">domain</span>');
   if (agent.entra_joined) bits.push('<span class="badge badge-green">Entra ID</span>');
-  if (!bits.length) bits.push('<span class="badge badge-gray">workgroup</span>');
+  if (!bits.length) bits.push('<span class="badge badge-gray">' + 'workgroup' + '</span>');
   return bits.join(' ');
 }
 

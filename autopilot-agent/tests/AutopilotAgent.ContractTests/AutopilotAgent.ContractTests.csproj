@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/AutopilotAgent/AgentApiClient.cs" Link="AgentApiClient.cs" />
+    <Compile Include="../../src/AutopilotAgent/AgentConfig.cs" Link="AgentConfig.cs" />
+    <Compile Include="../../src/AutopilotAgent/AgentFileLog.cs" Link="AgentFileLog.cs" />
+    <Compile Include="../../src/AutopilotAgent/HashCaptureService.cs" Link="HashCaptureService.cs" />
+    <Compile Include="../../src/AutopilotAgent/OsdV2WorkService.cs" Link="OsdV2WorkService.cs" />
+    <Compile Include="../../src/AutopilotAgent/TelemetryCollector.cs" Link="TelemetryCollector.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+  </ItemGroup>
+</Project>

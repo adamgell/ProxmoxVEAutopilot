@@ -510,6 +510,41 @@ def domain_join_verification(domain_join: dict | None, heartbeat: dict | None) -
     }
 
 
+def v2_completion_status(
+    conn: Connection,
+    run_id: str,
+    *,
+    domain_join: dict | None = None,
+) -> dict:
+    required = ["capture_autopilot_hash", "wait_agent_heartbeat"]
+    if _domain_join_enabled(domain_join):
+        required.append("verify_ad_domain_join")
+    try:
+        steps = ts_engine_pg.list_run_steps(conn, run_id)
+    except Exception:
+        return {
+            "ready": False,
+            "required": required,
+            "missing": required,
+            "states": {},
+        }
+    states = {
+        str(step.get("kind")): str(step.get("state"))
+        for step in steps
+        if str(step.get("kind")) in required
+    }
+    missing = [
+        kind for kind in required
+        if states.get(kind) != "done"
+    ]
+    return {
+        "ready": not missing,
+        "required": required,
+        "missing": missing,
+        "states": states,
+    }
+
+
 def _artifact_row(row: dict | None) -> dict | None:
     if not row:
         return None
@@ -690,11 +725,25 @@ def update_artifact_proxmox_volid(
     return _artifact_row(row)
 
 
+def _step_params_for_cloudosd_sequence(
+    *,
+    kind: str,
+    domain_join: dict | None = None,
+    vm_group_tag: str | None = None,
+) -> dict:
+    if kind in {"stage_ad_domain_join_unattend", "verify_ad_domain_join"}:
+        return dict(domain_join or {})
+    if kind == "capture_autopilot_hash" and vm_group_tag:
+        return {"group_tag": vm_group_tag}
+    return {}
+
+
 def _create_sequence_for_run(
     conn: Connection,
     *,
     name: str,
     domain_join: dict | None = None,
+    vm_group_tag: str | None = None,
 ) -> str:
     sequence_id = ts_engine_pg.create_sequence(
         conn,
@@ -731,15 +780,17 @@ def _create_sequence_for_run(
             kind=kind,
             phase=phase,
             position=position,
-            params=(
-                domain_join
-                if kind in {
-                    "stage_ad_domain_join_unattend",
-                    "verify_ad_domain_join",
-                }
-                else {}
+            params=_step_params_for_cloudosd_sequence(
+                kind=kind,
+                domain_join=domain_join,
+                vm_group_tag=vm_group_tag,
             ),
-            retry_count=0,
+            retry_count=(
+                60
+                if kind == "verify_ad_domain_join"
+                else 2 if kind == "capture_autopilot_hash" else 0
+            ),
+            retry_delay_seconds=30 if kind == "verify_ad_domain_join" else 10,
             reboot_behavior="none",
         )
     return ts_engine_pg.compile_sequence(conn, sequence_id, compiled_by="cloudosd")
@@ -796,6 +847,7 @@ def create_run(
         conn,
         name=f"CloudOSD deployment for {vm_name}",
         domain_join=domain_join_config,
+        vm_group_tag=vm_group_tag,
     )
     run_id = ts_engine_pg.create_run_from_version(
         conn,
@@ -1085,6 +1137,7 @@ def mark_complete_from_heartbeat(
         return _run_row(current)
 
     domain_join = _sanitize_domain_join(current.get("domain_join_json") or {})
+    heartbeat_payload = {"first_heartbeat_at": _iso(heartbeat_at)}
     if _domain_join_enabled(domain_join):
         verification = domain_join_verification(domain_join, heartbeat)
         if not verification["matched"]:
@@ -1124,7 +1177,7 @@ def mark_complete_from_heartbeat(
                     phase="full_os",
                     event_type="autopilotagent_heartbeat",
                     message="AutopilotAgent heartbeat observed for CloudOSD run",
-                    data={"first_heartbeat_at": _iso(heartbeat_at)},
+                    data=heartbeat_payload,
                 )
                 append_event(
                     conn,
@@ -1141,7 +1194,10 @@ def mark_complete_from_heartbeat(
     row = conn.execute(
         """
         UPDATE cloudosd_runs
-        SET state = 'complete',
+        SET state = CASE
+                WHEN state = 'complete' THEN state
+                ELSE 'full_os_waiting_v2'
+            END,
             first_heartbeat_at = COALESCE(first_heartbeat_at, %s),
             updated_at = %s
         WHERE run_id = %s
@@ -1154,12 +1210,14 @@ def mark_complete_from_heartbeat(
         conn.execute(
             """
             UPDATE ts_provisioning_runs
-            SET state = 'done',
-                phase = 'full_os',
-                finished_at = COALESCE(finished_at, %s)
+            SET state = CASE
+                    WHEN state = 'done' THEN state
+                    ELSE 'full_os_waiting_v2'
+                END,
+                phase = 'full_os'
             WHERE id = %s
             """,
-            (heartbeat_at, run_id),
+            (run_id,),
         )
     conn.commit()
     if row:
@@ -1169,18 +1227,57 @@ def mark_complete_from_heartbeat(
             phase="full_os",
             event_type="autopilotagent_heartbeat",
             message="AutopilotAgent heartbeat observed for CloudOSD run",
-            data={"first_heartbeat_at": _iso(heartbeat_at)},
+            data=heartbeat_payload,
         )
-        if _domain_join_enabled(domain_join):
+        sync_ts_progress_for_run(conn, run_id)
+        status = v2_completion_status(
+            conn,
+            run_id,
+            domain_join=domain_join,
+        )
+        if not status["ready"]:
             append_event(
                 conn,
                 run_id=run_id,
-                phase="domain_join",
-                event_type="domain_join_verified",
-                message="AutopilotAgent heartbeat reported expected AD domain membership",
-                data=domain_join_verification(domain_join, heartbeat),
+                phase="full_os",
+                event_type="cloudosd_v2_waiting",
+                message="Waiting for AutopilotAgent v2 full-OS steps before CloudOSD completion",
+                data=status,
             )
-        sync_ts_progress_for_run(conn, run_id)
+            return _run_row(row)
+
+        complete = conn.execute(
+            """
+            UPDATE cloudosd_runs
+            SET state = 'complete',
+                updated_at = %s
+            WHERE run_id = %s
+              AND state <> 'failed'
+            RETURNING *
+            """,
+            (now, run_id),
+        ).fetchone()
+        if complete:
+            conn.execute(
+                """
+                UPDATE ts_provisioning_runs
+                SET state = 'done',
+                    phase = 'full_os',
+                    finished_at = COALESCE(finished_at, %s)
+                WHERE id = %s
+                """,
+                (heartbeat_at, run_id),
+            )
+            conn.commit()
+            append_event(
+                conn,
+                run_id=run_id,
+                phase="full_os",
+                event_type="cloudosd_v2_completion_gate_satisfied",
+                message="AutopilotAgent v2 full-OS steps and heartbeat gate are complete",
+                data=status,
+            )
+            return _run_row(complete)
     return _run_row(row)
 
 

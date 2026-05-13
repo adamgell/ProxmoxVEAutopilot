@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "0.1.2",
     [string[]]$RuntimeIdentifiers = @("win-x64", "win-arm64"),
     [string]$Configuration = "Release",
     [string]$OutputRoot = (Join-Path $PSScriptRoot "..\artifacts")

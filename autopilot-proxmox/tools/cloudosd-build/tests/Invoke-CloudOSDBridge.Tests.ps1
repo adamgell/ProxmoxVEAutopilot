@@ -382,6 +382,30 @@ Describe 'Save-CloudOSDRunPackage' {
             Should -BeFalse
     }
 
+    It 'stages QEMU Guest Agent MSI from the attached VirtIO media for first boot' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsQga'
+        $bridgeRoot = Join-Path $TestDrive 'BridgeQga'
+        $virtioRoot = Join-Path $TestDrive 'VirtIO'
+        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot, (Join-Path $virtioRoot 'guest-agent') -Force | Out-Null
+        'firstboot' | Set-Content -LiteralPath (Join-Path $bridgeRoot 'PVEAutopilot-FirstBoot.ps1')
+        'qga-msi' | Set-Content -LiteralPath (Join-Path $virtioRoot 'guest-agent/qemu-ga-x86_64.msi') -Encoding ASCII
+        $package = [pscustomobject]@{
+            run_id = 'run-qga'
+            server_base_url = 'https://autopilot.local'
+            payloads = [pscustomobject]@{}
+        }
+
+        $stageRoot = Save-CloudOSDRunPackage -Package $package `
+            -WindowsRoot $windowsRoot `
+            -BridgeRoot $bridgeRoot `
+            -BearerToken 'token-1' `
+            -QgaSearchRoots @($virtioRoot)
+
+        $stagedMsi = Join-Path $stageRoot 'qemu-ga-x86_64.msi'
+        Test-Path -LiteralPath $stagedMsi | Should -BeTrue
+        Get-Content -LiteralPath $stagedMsi -Raw | Should -Match 'qga-msi'
+    }
+
     It 'redacts PE-only domain join secrets from the offline run package' {
         $windowsRoot = Join-Path $TestDrive 'WindowsRedact'
         $bridgeRoot = Join-Path $TestDrive 'BridgeRedact'

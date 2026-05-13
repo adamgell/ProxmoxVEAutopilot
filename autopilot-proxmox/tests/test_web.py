@@ -306,6 +306,10 @@ def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
             "tags": "autopilot",
         },
     ]
+    app_module._VMS_CACHE.update(
+        {"data": None, "devices": None, "hash_serials": None,
+         "fetched_at": 0.0, "refreshing": False},
+    )
     with patch("web.app.get_autopilot_vms", return_value=fake_vms):
         with patch("web.app.get_autopilot_devices", return_value=([], None)):
             with patch("web.app.get_hash_files", return_value=[]):

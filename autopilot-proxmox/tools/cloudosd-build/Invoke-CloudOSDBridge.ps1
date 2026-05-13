@@ -746,6 +746,7 @@ function Save-CloudOSDRunPackage {
         [Parameter(Mandatory)] [string] $BridgeRoot,
         [string] $BearerToken,
         [object] $OsdClientPackage,
+        [string[]] $QgaSearchRoots,
         [scriptblock] $Downloader
     )
     $stageRoot = Join-Path (Get-OfflineProgramDataPath -WindowsRoot $WindowsRoot) 'ProxmoxVEAutopilot\CloudOSD'
@@ -784,12 +785,52 @@ function Save-CloudOSDRunPackage {
                 -NotePropertyValue (Join-Path $stageRoot 'PVEAutopilot-FirstBoot.ps1') `
                 -Force
     }
+    Copy-CloudOSDQemuGuestAgentMsi `
+        -Destination (Join-Path $stageRoot 'qemu-ga-x86_64.msi') `
+        -SearchRoots $QgaSearchRoots | Out-Null
 
     $runJson = Join-Path $stageRoot 'cloudosd-run.json'
     Get-CloudOSDSanitizedRunPackage -Package $Package |
         ConvertTo-Json -Depth 30 |
         Set-Content -LiteralPath $runJson -Encoding UTF8
     return $stageRoot
+}
+
+function Find-CloudOSDQemuGuestAgentMsi {
+    param([string[]] $SearchRoots)
+    $roots = @()
+    if ($SearchRoots) {
+        $roots += @($SearchRoots | Where-Object { $_ })
+    } else {
+        $roots += @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Root })
+    }
+    foreach ($root in @($roots)) {
+        if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($relative in @(
+            'guest-agent\qemu-ga-x86_64.msi',
+            'qemu-ga-x86_64.msi',
+            'qemu\qemu-ga-x86_64.msi'
+        )) {
+            $candidate = Join-Path $root $relative
+            if (Test-Path -LiteralPath $candidate) {
+                return $candidate
+            }
+        }
+    }
+    return $null
+}
+
+function Copy-CloudOSDQemuGuestAgentMsi {
+    param(
+        [Parameter(Mandatory)] [string] $Destination,
+        [string[]] $SearchRoots
+    )
+    $source = Find-CloudOSDQemuGuestAgentMsi -SearchRoots $SearchRoots
+    if (-not $source) { return $null }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $Destination -Force
+    return $Destination
 }
 
 function Add-PVEAutopilotSetupCompleteChain {

@@ -13,26 +13,12 @@ public sealed class HashCaptureService(
         AgentWorkItem work,
         CancellationToken cancellationToken)
     {
-        var scriptDir = Path.Combine(AgentConfig.ProgramDataRoot, "tools");
-        var hashDir = Path.Combine(AgentConfig.ProgramDataRoot, "hashes");
-        Directory.CreateDirectory(scriptDir);
-        Directory.CreateDirectory(hashDir);
-
-        var scriptPath = Path.Combine(scriptDir, "Get-WindowsAutopilotInfo.ps1");
-        var script = await apiClient.DownloadHashScriptAsync(config, cancellationToken);
-        await File.WriteAllTextAsync(scriptPath, script, cancellationToken);
-
-        var csvPath = Path.Combine(hashDir, $"{work.Id}_hwid.csv");
-        if (File.Exists(csvPath))
-        {
-            File.Delete(csvPath);
-        }
-
+        var captured = await CaptureHashAsync(
+            config,
+            work.Id,
+            work.Request,
+            cancellationToken);
         var groupTag = ReadString(work.Request, "group_tag");
-        log.Info($"Capturing Autopilot hardware hash for work item {work.Id}.");
-        await RunAutopilotInfoAsync(scriptPath, csvPath, groupTag, cancellationToken);
-
-        var captured = ReadHashCsv(csvPath);
         var upload = await apiClient.UploadHashAsync(
             config,
             work.Id,
@@ -45,6 +31,63 @@ public sealed class HashCaptureService(
             throw new InvalidOperationException("Server rejected Autopilot hash upload.");
         }
         log.Info($"Autopilot hardware hash uploaded for work item {work.Id}: {upload.Filename}");
+        if (!string.IsNullOrWhiteSpace(groupTag))
+        {
+            log.Info($"Autopilot hardware hash used group tag {groupTag} for work item {work.Id}.");
+        }
+    }
+
+    public async Task CaptureOsdV2Async(
+        AgentConfig config,
+        OsdV2Action action,
+        string bearerToken,
+        CancellationToken cancellationToken)
+    {
+        var captured = await CaptureHashAsync(
+            config,
+            action.StepId,
+            action.Params,
+            cancellationToken);
+        var groupTag = ReadString(action.Params, "group_tag");
+        await apiClient.UploadOsdV2HashAsync(
+            config,
+            bearerToken,
+            captured.SerialNumber,
+            captured.ProductId,
+            captured.HardwareHash,
+            groupTag,
+            cancellationToken);
+        log.Info($"Autopilot hardware hash uploaded for OSD v2 step {action.StepId}.");
+    }
+
+    private async Task<CapturedHash> CaptureHashAsync(
+        AgentConfig config,
+        string workId,
+        IReadOnlyDictionary<string, JsonElement> request,
+        CancellationToken cancellationToken)
+    {
+        var scriptDir = Path.Combine(AgentConfig.ProgramDataRoot, "tools");
+        var hashDir = Path.Combine(AgentConfig.ProgramDataRoot, "hashes");
+        Directory.CreateDirectory(scriptDir);
+        Directory.CreateDirectory(hashDir);
+
+        var scriptPath = Path.Combine(scriptDir, "Get-WindowsAutopilotInfo.ps1");
+        var script = await apiClient.DownloadHashScriptAsync(config, cancellationToken);
+        await File.WriteAllTextAsync(scriptPath, script, cancellationToken);
+
+        var safeWorkId = string.Concat(
+            workId.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_'));
+        var csvPath = Path.Combine(hashDir, $"{safeWorkId}_hwid.csv");
+        if (File.Exists(csvPath))
+        {
+            File.Delete(csvPath);
+        }
+
+        var groupTag = ReadString(request, "group_tag");
+        log.Info($"Capturing Autopilot hardware hash for work item {workId}.");
+        await RunAutopilotInfoAsync(scriptPath, csvPath, groupTag, cancellationToken);
+
+        return ReadHashCsv(csvPath);
     }
 
     private static string ReadString(

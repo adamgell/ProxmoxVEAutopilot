@@ -278,6 +278,7 @@ def test_v2_agent_hash_persists_hash_for_uuid_run(
             "serial_number": "CLOUDOSD-SERIAL",
             "product_id": "PRODUCT-ID",
             "hardware_hash": "HASH-VALUE",
+            "group_tag": "GellNative",
         },
     )
 
@@ -287,7 +288,8 @@ def test_v2_agent_hash_persists_hash_for_uuid_run(
     assert len(files) == 1
     text = files[0].read_text(encoding="utf-8")
     assert "Device Serial Number,Windows Product ID,Hardware Hash" in text
-    assert "CLOUDOSD-SERIAL,PRODUCT-ID,HASH-VALUE" in text
+    assert "Group Tag" in text
+    assert "CLOUDOSD-SERIAL,PRODUCT-ID,HASH-VALUE,GellNative" in text
     assert "-vm119-" in files[0].name
     assert files[0].name.endswith("-osd-v2_hwid.csv")
 

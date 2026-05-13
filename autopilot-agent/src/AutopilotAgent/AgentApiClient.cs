@@ -135,6 +135,236 @@ public sealed class AgentApiClient(HttpClient httpClient)
         return body?.WorkItem;
     }
 
+    public async Task<OsdV2RegisterResponse> RegisterOsdV2AgentAsync(
+        AgentConfig config,
+        TelemetrySnapshot snapshot,
+        IReadOnlyCollection<string> capabilities,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.RunId))
+        {
+            throw new InvalidOperationException("RunId is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentId))
+        {
+            throw new InvalidOperationException("AgentId is not configured.");
+        }
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/osd/v2/agent/register")
+        {
+            Content = JsonContent.Create(new
+            {
+                run_id = config.RunId,
+                agent_id = config.AgentId,
+                phase = OsdV2WorkService.FullOsPhase,
+                computer_name = snapshot.ComputerName,
+                build_sha = ThisAssembly.Version,
+                capabilities,
+            }),
+        };
+
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<OsdV2RegisterResponse>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("OSD v2 register response was empty.");
+    }
+
+    public async Task<OsdV2NextResponse> GetNextOsdV2ActionAsync(
+        AgentConfig config,
+        string bearerToken,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.RunId))
+        {
+            throw new InvalidOperationException("RunId is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentId))
+        {
+            throw new InvalidOperationException("AgentId is not configured.");
+        }
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/osd/v2/agent/next")
+        {
+            Content = JsonContent.Create(new
+            {
+                run_id = config.RunId,
+                agent_id = config.AgentId,
+                phase = OsdV2WorkService.FullOsPhase,
+                batch_size = 1,
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            bearerToken);
+
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<OsdV2NextResponse>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("OSD v2 next response was empty.");
+    }
+
+    public async Task UploadOsdV2HashAsync(
+        AgentConfig config,
+        string bearerToken,
+        string serialNumber,
+        string productId,
+        string hardwareHash,
+        string groupTag,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/osd/v2/agent/hash")
+        {
+            Content = JsonContent.Create(new
+            {
+                serial_number = serialNumber,
+                product_id = productId,
+                hardware_hash = hardwareHash,
+                group_tag = groupTag,
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            bearerToken);
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task PostOsdV2StepLogAsync(
+        AgentConfig config,
+        string bearerToken,
+        string stepId,
+        string stream,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.RunId))
+        {
+            throw new InvalidOperationException("RunId is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentId))
+        {
+            throw new InvalidOperationException("AgentId is not configured.");
+        }
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/osd/v2/agent/step/{stepId}/logs")
+        {
+            Content = JsonContent.Create(new
+            {
+                run_id = config.RunId,
+                agent_id = config.AgentId,
+                stream,
+                content,
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            bearerToken);
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public Task CompleteOsdV2StepAsync(
+        AgentConfig config,
+        string bearerToken,
+        string stepId,
+        string message,
+        IReadOnlyDictionary<string, object?> data,
+        CancellationToken cancellationToken) =>
+        PostOsdV2StepResultAsync(
+            config,
+            bearerToken,
+            stepId,
+            "success",
+            message,
+            data,
+            cancellationToken);
+
+    public Task FailOsdV2StepAsync(
+        AgentConfig config,
+        string bearerToken,
+        string stepId,
+        string message,
+        IReadOnlyDictionary<string, object?> data,
+        CancellationToken cancellationToken) =>
+        PostOsdV2StepResultAsync(
+            config,
+            bearerToken,
+            stepId,
+            "failed",
+            message,
+            data,
+            cancellationToken);
+
+    private async Task PostOsdV2StepResultAsync(
+        AgentConfig config,
+        string bearerToken,
+        string stepId,
+        string status,
+        string message,
+        IReadOnlyDictionary<string, object?> data,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.RunId))
+        {
+            throw new InvalidOperationException("RunId is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentId))
+        {
+            throw new InvalidOperationException("AgentId is not configured.");
+        }
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/osd/v2/agent/step/{stepId}/result")
+        {
+            Content = JsonContent.Create(new
+            {
+                run_id = config.RunId,
+                agent_id = config.AgentId,
+                phase = OsdV2WorkService.FullOsPhase,
+                status,
+                message,
+                data,
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            bearerToken);
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task<string> DownloadHashScriptAsync(
         AgentConfig config,
         CancellationToken cancellationToken)
@@ -272,6 +502,30 @@ public sealed record AgentWorkItem(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("request")] Dictionary<string, JsonElement> Request);
+
+public sealed record OsdV2RegisterResponse(
+    [property: JsonPropertyName("run_id")] string RunId,
+    [property: JsonPropertyName("agent_id")] string AgentId,
+    [property: JsonPropertyName("phase")] string Phase,
+    [property: JsonPropertyName("bearer_token")] string BearerToken);
+
+public sealed record OsdV2NextResponse(
+    [property: JsonPropertyName("run_id")] string RunId,
+    [property: JsonPropertyName("phase")] string Phase,
+    [property: JsonPropertyName("actions")] IReadOnlyList<OsdV2Action> Actions,
+    [property: JsonPropertyName("bearer_token")] string? BearerToken);
+
+public sealed record OsdV2Action(
+    [property: JsonPropertyName("step_id")] string StepId,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("phase")] string Phase,
+    [property: JsonPropertyName("attempt")] int Attempt,
+    [property: JsonPropertyName("retry_count")] int RetryCount,
+    [property: JsonPropertyName("retry_delay_seconds")] int RetryDelaySeconds,
+    [property: JsonPropertyName("timeout_seconds")] int? TimeoutSeconds,
+    [property: JsonPropertyName("reboot_behavior")] string RebootBehavior,
+    [property: JsonPropertyName("params")] Dictionary<string, JsonElement> Params,
+    [property: JsonPropertyName("content")] IReadOnlyList<JsonElement> Content);
 
 public sealed record HashUploadResponse(
     [property: JsonPropertyName("ok")] bool Ok,

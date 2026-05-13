@@ -50,7 +50,7 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
             -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data) }
 
         ($script:Calls -join '|') |
-            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|osd-client|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
+            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
     }
 
     It 'posts SetupComplete and first-boot milestone events to the controller' {
@@ -60,6 +60,14 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         $source | Should -Match "EventType 'setupcomplete_task_started'"
         $source | Should -Match "EventType 'firstboot_complete'"
         $source | Should -Match '/api/cloudosd/runs/.*/events'
+    }
+
+    It 'starts QEMU Guest Agent after MSI install and hides the bootstrap account tile' {
+        $source = Get-Content -LiteralPath $script:FirstBootPath -Raw
+
+        $source | Should -Match 'Start-Service -Name QEMU-GA'
+        $source | Should -Match 'SpecialAccounts\\UserList'
+        $source | Should -Match "Name 'PVEAutopilot'"
     }
 
     It 'redacts domain join passwords from Panther unattend files during first boot' {

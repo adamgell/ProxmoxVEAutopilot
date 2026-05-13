@@ -83,6 +83,16 @@
     color: var(--ink-soft);
     font-size: 12px;
   }
+  .cloudosd-v2-steps {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .cloudosd-v2-steps li {
+    margin: 7px 0;
+  }
+  .cloudosd-v2-steps code {
+    overflow-wrap: anywhere;
+  }
   @media (max-width: 1000px) {
     .cloudosd-detail-grid {
       grid-template-columns: 1fr;
@@ -104,7 +114,7 @@
       <h2>Run State</h2>
       <dl class="cloudosd-kv">
         <dt>State</dt><dd data-cloudosd-field="state"><span class="cloudosd-badge {{ 'ready' if run.state == 'complete' else ('block' if run.state == 'failed' else 'warn') }}">{{ run.state }}</span></dd>
-        <dt>Heartbeat gate</dt><dd data-cloudosd-field="heartbeat_gate">{{ 'complete after AutopilotAgent heartbeat' if run.state == 'complete' else 'waiting for AutopilotAgent heartbeat before completion' }}</dd>
+        <dt>Heartbeat gate</dt><dd data-cloudosd-field="heartbeat_gate">{{ 'complete after AutopilotAgent heartbeat and v2 full-OS evidence' if run.state == 'complete' else 'waiting for AutopilotAgent heartbeat and v2 full-OS evidence' }}</dd>
         <dt>Requested name</dt><dd data-cloudosd-field="requested_vm_name">{{ run.requested_vm_name }}</dd>
         <dt>Final PVE VM name</dt><dd data-cloudosd-field="pve_vm_name">{{ run.pve_vm_name or '-' }}</dd>
         <dt>Windows heartbeat computer name</dt><dd data-cloudosd-field="heartbeat_computer_name">{{ run.heartbeat_computer_name or '-' }}</dd>
@@ -167,6 +177,31 @@
         </dd>
       </dl>
     </section>
+
+    <section class="cloudosd-detail-panel">
+      <h2>AutopilotAgent v2 Plan</h2>
+      <dl class="cloudosd-kv">
+        <dt>Completion gate</dt>
+        <dd data-cloudosd-field="v2_completion_gate">
+          {% if v2_completion.ready %}
+          <span class="cloudosd-badge ready">v2 full-OS gate satisfied</span>
+          {% else %}
+          <span class="cloudosd-badge warn">waiting for {{ v2_completion.missing | join(', ') }}</span>
+          {% endif %}
+        </dd>
+      </dl>
+      <ol class="cloudosd-v2-steps" data-cloudosd-v2-steps>
+        {% for step in v2_steps %}
+        <li>
+          <span class="cloudosd-badge {{ 'ready' if step.state == 'done' else ('block' if step.state == 'failed' else 'warn') }}">{{ step.state }}</span>
+          <strong>{{ step.name }}</strong>
+          <code>{{ step.kind }}</code>
+          <span class="cloudosd-mini">{{ step.phase }}{% if step.claimed_by %} · {{ step.claimed_by }}{% endif %}</span>
+          {% if step.last_error %}<br><span class="cloudosd-mini">{{ step.last_error }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
   </div>
 
   <aside>
@@ -201,6 +236,7 @@
   const liveStatus = document.getElementById("cloudosdLiveStatus");
   const liveUpdated = document.getElementById("cloudosdLiveUpdated");
   const milestoneRoot = root.querySelector("[data-cloudosd-milestones]");
+  const v2StepsRoot = root.querySelector("[data-cloudosd-v2-steps]");
   const milestoneLabels = ["controller", "Proxmox playbook", "PE bridge", "OSDCloud", "offline validation", "Domain join", "SetupComplete", "first boot", "AutopilotAgent"];
   const terminalStates = new Set(["complete", "failed", "cancelled"]);
 
@@ -225,8 +261,8 @@
   }
 
   function badgeClass(state) {
-    if (state === "complete") return "ready";
-    if (state === "failed" || state === "cancelled") return "block";
+    if (state === "complete" || state === "done" || state === "ok") return "ready";
+    if (state === "failed" || state === "cancelled" || state === "error") return "block";
     return "warn";
   }
 
@@ -246,9 +282,9 @@
   }
 
   function heartbeatGate(state) {
-    if (state === "complete") return "complete after AutopilotAgent heartbeat";
+    if (state === "complete") return "complete after AutopilotAgent heartbeat and v2 full-OS evidence";
     if (state === "failed") return "failed before heartbeat completion";
-    return "waiting for AutopilotAgent heartbeat before completion";
+    return "waiting for AutopilotAgent heartbeat and v2 full-OS evidence";
   }
 
   function classifyEvent(event) {
@@ -332,6 +368,50 @@
     }).join(", ");
   }
 
+  function renderV2Completion(status) {
+    const el = field("v2_completion_gate");
+    if (!el) return;
+    if (status && status.ready) {
+      el.innerHTML = '<span class="cloudosd-badge ready">v2 full-OS gate satisfied</span>';
+      return;
+    }
+    const missing = status && status.missing && status.missing.length
+      ? status.missing.join(", ")
+      : "v2 full-OS steps";
+    el.innerHTML = `<span class="cloudosd-badge warn">waiting for ${escapeHtml(missing)}</span>`;
+  }
+
+  function renderV2Steps(steps) {
+    if (!v2StepsRoot) return;
+    v2StepsRoot.innerHTML = "";
+    (steps || []).forEach((step) => {
+      const item = document.createElement("li");
+      const badge = document.createElement("span");
+      badge.className = `cloudosd-badge ${badgeClass(step.state)}`;
+      badge.textContent = text(step.state);
+      const name = document.createElement("strong");
+      name.textContent = ` ${text(step.name)}`;
+      const kind = document.createElement("code");
+      kind.textContent = text(step.kind);
+      const meta = document.createElement("span");
+      meta.className = "cloudosd-mini";
+      meta.textContent = ` ${text(step.phase)}${step.claimed_by ? " · " + step.claimed_by : ""}`;
+      item.appendChild(badge);
+      item.appendChild(name);
+      item.appendChild(document.createTextNode(" "));
+      item.appendChild(kind);
+      item.appendChild(meta);
+      if (step.last_error) {
+        item.appendChild(document.createElement("br"));
+        const error = document.createElement("span");
+        error.className = "cloudosd-mini";
+        error.textContent = step.last_error;
+        item.appendChild(error);
+      }
+      v2StepsRoot.appendChild(item);
+    });
+  }
+
   function render(data) {
     const run = data.run || {};
     const artifact = data.artifact || {};
@@ -383,6 +463,8 @@
     setText("latest_primary_ipv4", heartbeat && heartbeat.primary_ipv4);
     setText("first_heartbeat_at", run.first_heartbeat_at);
     renderRelatedJobs(data.related_jobs || []);
+    renderV2Completion(data.v2_completion || {});
+    renderV2Steps(data.v2_steps || []);
     renderMilestones(groups);
 
     const now = new Date();
