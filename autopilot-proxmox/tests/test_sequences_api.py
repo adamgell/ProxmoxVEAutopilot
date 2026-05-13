@@ -568,6 +568,22 @@ def test_per_vm_smbios_file_deletes_inherited_smbios1():
     assert "when: _use_per_vm_smbios_file | default(false) | bool" in text
 
 
+def test_per_vm_smbios_file_stages_after_clone_succeeds():
+    task_file = (
+        Path(__file__).resolve().parents[1]
+        / "roles/proxmox_vm_clone/tasks/main.yml"
+    )
+    text = task_file.read_text(encoding="utf-8")
+
+    clone_idx = text.index("- name: Clone VM from template")
+    wait_idx = text.index("- name: Wait for clone task")
+    stage_idx = text.index("- name: Stage per-VM SMBIOS file on the Proxmox host")
+    read_config_idx = text.index("- name: Read current cloned VM config")
+
+    assert clone_idx < wait_idx < stage_idx < read_config_idx
+    assert "duplicate requested VMID cannot overwrite the SMBIOS" in text
+
+
 def test_startup_seeds_defaults(tmp_path, pg_conn):
     """When the app starts on an empty DB, the three seed sequences appear."""
     import tempfile
