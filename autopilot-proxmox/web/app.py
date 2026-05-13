@@ -6890,6 +6890,22 @@ _GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"
 _LATEST_VERSION_TTL = 300  # seconds — cache GitHub response for 5 min
 
 
+def _same_git_sha(left: str | None, right: str | None) -> bool:
+    left = (left or "").strip().lower()
+    right = (right or "").strip().lower()
+    if not left or not right or "unknown" in {left, right}:
+        return False
+    if left == right:
+        return True
+    # Some production builds bake a short SHA while GitHub returns the full
+    # commit. Treat a 7+ character prefix match as the same build.
+    if len(left) >= 7 and right.startswith(left):
+        return True
+    if len(right) >= 7 and left.startswith(right):
+        return True
+    return False
+
+
 def _fetch_latest_main_sha():
     """Return the SHA of origin/main from GitHub. Cached to respect rate limits."""
     now = time.time()
@@ -7105,7 +7121,7 @@ async def api_version(check: bool = False):
         running_sha = _APP_VERSION.get("sha", "")
         latest_sha = latest.get("sha") or ""
         if running_sha and latest_sha and running_sha != "unknown":
-            out["update_available"] = running_sha != latest_sha
+            out["update_available"] = not _same_git_sha(running_sha, latest_sha)
         else:
             out["update_available"] = None
     return out

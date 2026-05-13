@@ -76,6 +76,31 @@ def test_jobs_page_empty(client):
     assert "No jobs yet" in response.text
 
 
+def test_api_version_treats_short_running_sha_as_current(client, monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.setattr(
+        web_app,
+        "_APP_VERSION",
+        {"sha": "f6e29f885b75", "sha_short": "f6e29f8", "build_time": "test"},
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_fetch_latest_main_sha",
+        lambda: {
+            "sha": "f6e29f885b754e38567356d30579d729f42cde64",
+            "sha_short": "f6e29f8",
+            "fetched_at": 1,
+            "error": None,
+        },
+    )
+
+    response = client.get("/api/version?check=1")
+
+    assert response.status_code == 200
+    assert response.json()["update_available"] is False
+
+
 def test_cockpit_pages_use_shared_full_width_shell(client):
     response = client.get("/jobs")
     runs_response = client.get("/runs")
