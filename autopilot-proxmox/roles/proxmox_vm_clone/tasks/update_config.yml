@@ -30,7 +30,7 @@
 
 - name: Drop inherited SMBIOS1 when per-VM SMBIOS file owns Type 1
   ansible.builtin.set_fact:
-    _config_body: "{{ _config_body | combine({'delete': ((_config_body.get('delete', '') | string).split(',') + ['smbios1'] | reject('equalto', '') | unique | join(','))}) }}"
+    _config_body: "{{ _config_body | combine({'delete': (((_config_body.get('delete', '') | string).split(',') + ['smbios1']) | reject('equalto', '') | unique | join(','))}) }}"
   when: _use_per_vm_smbios_file | default(false) | bool
 
 - name: Add VirtIO ISO to config
