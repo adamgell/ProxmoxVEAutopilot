@@ -330,6 +330,142 @@ def _related_jobs(run_id: str) -> list[dict]:
         return []
 
 
+def _identity_candidates(run: dict, heartbeat: dict | None = None) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in (
+        run.get("expected_computer_name"),
+        run.get("pve_vm_name"),
+        run.get("requested_vm_name"),
+        run.get("vm_name"),
+        (heartbeat or {}).get("computer_name"),
+    ):
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
+
+
+def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
+    candidates = _identity_candidates(run, heartbeat)
+    candidate_keys = {item.casefold() for item in candidates}
+    matched_hashes: list[dict] = []
+    cache_error = ""
+    try:
+        from web import app as web_app
+
+        for item in web_app.get_hash_files():
+            serial = str(item.get("serial") or "").strip()
+            filename = str(item.get("name") or "")
+            serial_match = serial and serial.casefold() in candidate_keys
+            vmid_match = (
+                run.get("vmid") is not None
+                and f"-vm{run['vmid']}-".casefold() in filename.casefold()
+            )
+            if serial_match or vmid_match:
+                matched = dict(item)
+                matched_hashes.append(matched)
+                if serial and serial.casefold() not in candidate_keys:
+                    candidate_keys.add(serial.casefold())
+                    candidates.append(serial)
+    except Exception as exc:
+        cache_error = f"hash evidence unavailable: {exc}"
+
+    group = None
+    synced_at = ""
+    try:
+        from web import devices_pg
+
+        groups, extra = devices_pg.list_grouped(windows_only=False)
+        synced_at = (extra.get("meta") or {}).get("synced_at") or ""
+        by_serial = {
+            str(row.get("serial") or "").casefold(): row
+            for row in groups
+            if row.get("serial")
+        }
+        for key in candidate_keys:
+            if key in by_serial:
+                group = by_serial[key]
+                break
+    except Exception as exc:
+        if cache_error:
+            cache_error = f"{cache_error}; device cache unavailable: {exc}"
+        else:
+            cache_error = f"device cache unavailable: {exc}"
+
+    autopilot = (group or {}).get("autopilot") or None
+    intune = (group or {}).get("intune") or None
+    entra = (group or {}).get("entra") or []
+    upload_status = "uploaded" if autopilot else "not_found"
+    assignment_status = (
+        autopilot.get("profile_status")
+        if autopilot and autopilot.get("profile_status")
+        else "not_found"
+    )
+    enrollment_status = (
+        "enrolled"
+        if intune
+        else (
+            autopilot.get("enrollment_state")
+            if autopilot and autopilot.get("enrollment_state")
+            else "not_found"
+        )
+    )
+    if matched_hashes and autopilot:
+        summary = f"hash captured; Autopilot upload found; assignment {assignment_status}; enrollment {enrollment_status}"
+    elif matched_hashes:
+        summary = "hash captured; waiting for Autopilot upload evidence"
+    elif autopilot:
+        summary = f"Autopilot upload found without a matching local hash file; assignment {assignment_status}"
+    else:
+        summary = "waiting for local hash capture and Autopilot upload evidence"
+
+    return {
+        "schema_version": 1,
+        "summary": summary,
+        "serial_candidates": candidates,
+        "cache_synced_at": synced_at,
+        "error": cache_error,
+        "hash": {
+            "status": "captured" if matched_hashes else "missing",
+            "files": matched_hashes,
+        },
+        "autopilot": {
+            "status": upload_status,
+            "id": autopilot.get("id") if autopilot else None,
+            "serial": autopilot.get("serial") if autopilot else None,
+            "group_tag": autopilot.get("group_tag") if autopilot else None,
+            "profile_status": autopilot.get("profile_status") if autopilot else None,
+            "enrollment_state": autopilot.get("enrollment_state") if autopilot else None,
+            "last_contact": autopilot.get("last_contact") if autopilot else None,
+            "display_name": autopilot.get("display_name") if autopilot else None,
+        },
+        "assignment": {
+            "status": assignment_status,
+            "group_tag": autopilot.get("group_tag") if autopilot else None,
+            "profile_status": autopilot.get("profile_status") if autopilot else None,
+        },
+        "enrollment": {
+            "status": enrollment_status,
+            "autopilot_enrollment_state": autopilot.get("enrollment_state") if autopilot else None,
+            "intune_device_id": intune.get("id") if intune else None,
+            "intune_device_name": intune.get("device_name") if intune else None,
+            "management_state": intune.get("management_state") if intune else None,
+            "compliance_state": intune.get("compliance_state") if intune else None,
+            "last_sync": intune.get("last_sync") if intune else None,
+            "enrolled_date": intune.get("enrolled_date") if intune else None,
+        },
+        "entra": {
+            "count": len(entra),
+            "devices": entra,
+        },
+    }
+
+
 def _job_event(job: dict) -> dict:
     status = str(job.get("status") or "unknown")
     severity = "error" if status in {"failed", "canceled"} else "info"
@@ -1155,11 +1291,17 @@ def get_run(run_id: str):
             )
         artifact = cloudosd_pg.get_artifact(conn, run["artifact_id"])
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
-        v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        raw_v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_steps = cloudosd_pg.enrich_v2_steps_for_operator(raw_v2_steps)
         v2_completion = cloudosd_pg.v2_completion_status(
             conn,
             run_id,
             domain_join=run.get("domain_join"),
+        )
+        v2_operator_status = cloudosd_pg.v2_operator_status(
+            raw_v2_steps,
+            v2_completion,
+            heartbeat=heartbeat,
         )
         events = cloudosd_pg.list_events(conn, run_id)
         evidence_events = events_with_related_jobs(run_id, events, run)
@@ -1181,10 +1323,48 @@ def get_run(run_id: str):
         "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
         "v2_steps": v2_steps,
         "v2_completion": v2_completion,
+        "v2_operator_status": v2_operator_status,
+        "intune_evidence": intune_evidence_for_run(run, heartbeat),
         "related_jobs": _related_jobs(run_id),
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
         "task": cloudosd_pg.task_settings(run),
+    }
+
+
+@router.post("/runs/{run_id}/v2/steps/{step_id}/retry")
+def retry_v2_step(run_id: str, step_id: str):
+    with _conn() as conn:
+        run = cloudosd_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        try:
+            step = cloudosd_pg.requeue_agent_v2_step(
+                conn,
+                run_id=run_id,
+                step_id=step_id,
+                requested_by="operator",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
+        raw_v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_completion = cloudosd_pg.v2_completion_status(
+            conn,
+            run_id,
+            domain_join=run.get("domain_join"),
+        )
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+    return {
+        "ok": True,
+        "step": cloudosd_pg.enrich_v2_steps_for_operator([step])[0],
+        "v2_steps": cloudosd_pg.enrich_v2_steps_for_operator(raw_v2_steps),
+        "v2_completion": v2_completion,
+        "v2_operator_status": cloudosd_pg.v2_operator_status(
+            raw_v2_steps,
+            v2_completion,
+            heartbeat=heartbeat,
+        ),
     }
 
 
@@ -1195,7 +1375,8 @@ def list_run_events(run_id: str):
         if not run:
             raise HTTPException(status_code=404, detail="CloudOSD run not found")
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
-        v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        raw_v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_steps = cloudosd_pg.enrich_v2_steps_for_operator(raw_v2_steps)
         v2_completion = cloudosd_pg.v2_completion_status(
             conn,
             run_id,

@@ -86,8 +86,15 @@ def test_cloudosd_run_detail_renders_v2_plan_live_section():
     ).read_text(encoding="utf-8")
 
     assert "AutopilotAgent v2 Plan" in template
+    assert "Why Waiting" in template
+    assert "Intune &amp; Autopilot Evidence" in template
+    assert "Retry step" in template
     assert "data-cloudosd-v2-steps" in template
+    assert "data-cloudosd-field=\"v2_wait_reason\"" in template
+    assert "data-cloudosd-field=\"autopilot_upload\"" in template
     assert "v2_completion" in template
+    assert "v2_operator_status" in template
+    assert "intune_evidence" in template
     assert "renderV2Steps" in template
 
 

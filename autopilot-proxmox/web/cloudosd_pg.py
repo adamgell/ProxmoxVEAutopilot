@@ -545,6 +545,165 @@ def v2_completion_status(
     }
 
 
+_AGENT_OPERATOR_RETRY_KINDS = {
+    "capture_autopilot_hash",
+    "verify_ad_domain_join",
+}
+
+
+def _v2_step_wait_reason(step: dict) -> str:
+    state = str(step.get("state") or "")
+    kind = str(step.get("kind") or "")
+    phase = str(step.get("phase") or "")
+    error = str(step.get("last_error") or "").strip()
+    claimed_by = str(step.get("claimed_by") or "").strip()
+    if state == "failed":
+        return f"failed: {error or 'no error message reported'}"
+    if state == "pending" and phase == "full_os":
+        return f"waiting for AutopilotAgent to claim {kind}"
+    if state == "running":
+        if claimed_by:
+            return f"claimed by {claimed_by}, waiting for result"
+        return "running, waiting for result"
+    if state == "awaiting_reboot":
+        return "waiting for reboot completion"
+    if state == "done":
+        return "complete"
+    if state == "skipped":
+        return "skipped"
+    return state or "unknown"
+
+
+def enrich_v2_steps_for_operator(steps: list[dict]) -> list[dict]:
+    enriched: list[dict] = []
+    for step in steps:
+        item = dict(step)
+        item["wait_reason"] = _v2_step_wait_reason(item)
+        item["retryable"] = (
+            item.get("state") == "failed"
+            and item.get("phase") == "full_os"
+            and item.get("kind") in _AGENT_OPERATOR_RETRY_KINDS
+        )
+        enriched.append(item)
+    return enriched
+
+
+def v2_operator_status(
+    steps: list[dict],
+    completion: dict,
+    *,
+    heartbeat: dict | None = None,
+) -> dict:
+    enriched = enrich_v2_steps_for_operator(steps)
+    failed_steps = [
+        {
+            "id": step["id"],
+            "name": step["name"],
+            "kind": step["kind"],
+            "phase": step["phase"],
+            "last_error": step.get("last_error"),
+            "retryable": bool(step.get("retryable")),
+            "wait_reason": step.get("wait_reason"),
+        }
+        for step in enriched
+        if step.get("state") == "failed"
+    ]
+    missing = list(completion.get("missing") or [])
+    waiting_steps = [
+        {
+            "id": step["id"],
+            "name": step["name"],
+            "kind": step["kind"],
+            "phase": step["phase"],
+            "state": step["state"],
+            "wait_reason": step.get("wait_reason"),
+        }
+        for step in enriched
+        if step.get("kind") in missing
+    ]
+    next_actions: list[str] = []
+    for step in failed_steps:
+        if step["retryable"]:
+            next_actions.append(f"Retry {step['kind']}")
+        else:
+            next_actions.append(f"Review failed {step['kind']}")
+    if missing and not failed_steps:
+        if not heartbeat:
+            next_actions.append("Wait for AutopilotAgent heartbeat")
+        next_actions.extend(
+            f"Wait for {kind}" for kind in missing
+        )
+    if not missing and not failed_steps:
+        next_actions.append("No operator action required")
+
+    if failed_steps:
+        state = "blocked"
+        summary = f"{len(failed_steps)} v2 step(s) failed"
+    elif missing:
+        state = "waiting"
+        summary = "Waiting for " + ", ".join(missing)
+    else:
+        state = "ready"
+        summary = "v2 full-OS gate satisfied"
+    return {
+        "state": state,
+        "summary": summary,
+        "failed_steps": failed_steps,
+        "waiting_steps": waiting_steps,
+        "missing": missing,
+        "next_actions": next_actions,
+    }
+
+
+def requeue_agent_v2_step(
+    conn: Connection,
+    *,
+    run_id: str,
+    step_id: str,
+    requested_by: str = "operator",
+) -> dict:
+    step = ts_engine_pg.get_step(conn, step_id)
+    if step["run_id"] != str(run_id):
+        raise ValueError("step/run mismatch")
+    if step["phase"] != "full_os" or step["kind"] not in _AGENT_OPERATOR_RETRY_KINDS:
+        raise ValueError(
+            "only failed agent-owned CloudOSD full-OS steps can be requeued",
+        )
+    updated = ts_engine_pg.requeue_step(
+        conn,
+        run_id=run_id,
+        step_id=step_id,
+        requested_by=requested_by,
+        message=f"Operator requeued CloudOSD v2 step {step['kind']}",
+    )
+    conn.execute(
+        """
+        UPDATE cloudosd_runs
+        SET state = 'full_os_waiting_v2',
+            updated_at = %s
+        WHERE run_id = %s
+          AND state <> 'complete'
+        """,
+        (_now(), run_id),
+    )
+    conn.commit()
+    phase = "domain_join" if updated["kind"] == "verify_ad_domain_join" else "AutopilotAgent"
+    append_event(
+        conn,
+        run_id=run_id,
+        phase=phase,
+        event_type="cloudosd_v2_step_requeued",
+        severity="warning",
+        message=f"Operator requeued {updated['kind']}",
+        data={
+            "step_id": updated["id"],
+            "kind": updated["kind"],
+            "requested_by": requested_by,
+        },
+    )
+    return updated
+
+
 def _artifact_row(row: dict | None) -> dict | None:
     if not row:
         return None

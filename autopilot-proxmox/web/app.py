@@ -2359,6 +2359,10 @@ async def cloudosd_page(request: Request):
                 pve_name=run.get("pve_vm_name"),
                 heartbeat_name=heartbeat_name,
             )
+            run["intune_evidence"] = cloudosd_endpoints.intune_evidence_for_run(
+                run,
+                heartbeat,
+            )
             runs.append(run)
     assets_status = cloudosd_endpoints.assets_status_payload()
     proxmox_options = cloudosd_endpoints.proxmox_options_payload()
@@ -2403,11 +2407,17 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
             cloudosd_pg.get_artifact(conn, run["artifact_id"]),
         )
         cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
-        v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        raw_v2_steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+        v2_steps = cloudosd_pg.enrich_v2_steps_for_operator(raw_v2_steps)
         v2_completion = cloudosd_pg.v2_completion_status(
             conn,
             run_id,
             domain_join=run.get("domain_join"),
+        )
+        v2_operator_status = cloudosd_pg.v2_operator_status(
+            raw_v2_steps,
+            v2_completion,
+            heartbeat=heartbeat,
         )
         events = cloudosd_pg.list_events(conn, run_id)
         events = cloudosd_endpoints.events_with_related_jobs(run_id, events, run)
@@ -2419,6 +2429,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         heartbeat_name=heartbeat_name,
     )
     event_groups = cloudosd_pg.milestone_event_groups(events)
+    intune_evidence = cloudosd_endpoints.intune_evidence_for_run(run, heartbeat)
     related_jobs = [
         job for job in job_manager.list_jobs()
         if (job.get("args") or {}).get("cloudosd_run_id") == run_id
@@ -2433,6 +2444,8 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         "milestone_labels": cloudosd_pg.CLOUDOSD_MILESTONE_LABELS,
         "v2_steps": v2_steps,
         "v2_completion": v2_completion,
+        "v2_operator_status": v2_operator_status,
+        "intune_evidence": intune_evidence,
         "related_jobs": related_jobs,
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),

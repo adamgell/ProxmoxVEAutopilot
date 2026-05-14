@@ -93,6 +93,17 @@
   .cloudosd-v2-steps code {
     overflow-wrap: anywhere;
   }
+  .cloudosd-step-actions {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .cloudosd-step-actions button {
+    min-height: 24px;
+    padding: 2px 8px;
+    font-size: 12px;
+  }
   @media (max-width: 1000px) {
     .cloudosd-detail-grid {
       grid-template-columns: 1fr;
@@ -189,6 +200,8 @@
           <span class="cloudosd-badge warn">waiting for {{ v2_completion.missing | join(', ') }}</span>
           {% endif %}
         </dd>
+        <dt>Why Waiting</dt><dd data-cloudosd-field="v2_wait_reason">{{ v2_operator_status.summary }}</dd>
+        <dt>Next action</dt><dd data-cloudosd-field="v2_next_action">{{ v2_operator_status.next_actions | join('; ') }}</dd>
       </dl>
       <ol class="cloudosd-v2-steps" data-cloudosd-v2-steps>
         {% for step in v2_steps %}
@@ -197,10 +210,29 @@
           <strong>{{ step.name }}</strong>
           <code>{{ step.kind }}</code>
           <span class="cloudosd-mini">{{ step.phase }}{% if step.claimed_by %} · {{ step.claimed_by }}{% endif %}</span>
-          {% if step.last_error %}<br><span class="cloudosd-mini">{{ step.last_error }}</span>{% endif %}
+          {% if step.retryable %}
+          <span class="cloudosd-step-actions">
+            <button type="button" data-cloudosd-retry-step="{{ step.id }}">Retry step</button>
+          </span>
+          {% endif %}
+          <br><span class="cloudosd-mini">{{ step.wait_reason }}</span>
         </li>
         {% endfor %}
       </ol>
+    </section>
+
+    <section class="cloudosd-detail-panel">
+      <h2>Intune &amp; Autopilot Evidence</h2>
+      <dl class="cloudosd-kv">
+        <dt>Summary</dt><dd data-cloudosd-field="intune_summary">{{ intune_evidence.summary }}</dd>
+        <dt>Serial candidates</dt><dd data-cloudosd-field="serial_candidates">{{ intune_evidence.serial_candidates | join(', ') if intune_evidence.serial_candidates else '-' }}</dd>
+        <dt>Hash capture</dt><dd data-cloudosd-field="hash_capture">{{ intune_evidence.hash.status }}{% if intune_evidence.hash.files %}: {{ intune_evidence.hash.files | map(attribute='name') | join(', ') }}{% endif %}</dd>
+        <dt>Autopilot upload</dt><dd data-cloudosd-field="autopilot_upload">{{ intune_evidence.autopilot.status }}{% if intune_evidence.autopilot.id %}: {{ intune_evidence.autopilot.id }}{% endif %}</dd>
+        <dt>Assignment</dt><dd data-cloudosd-field="autopilot_assignment">{{ intune_evidence.assignment.status }}{% if intune_evidence.assignment.group_tag %} / {{ intune_evidence.assignment.group_tag }}{% endif %}</dd>
+        <dt>Enrollment</dt><dd data-cloudosd-field="intune_enrollment">{{ intune_evidence.enrollment.status }}{% if intune_evidence.enrollment.intune_device_name %} / {{ intune_evidence.enrollment.intune_device_name }}{% endif %}</dd>
+        <dt>Device cache sync</dt><dd data-cloudosd-field="device_cache_sync">{{ intune_evidence.cache_synced_at or '-' }}</dd>
+        <dt>Evidence error</dt><dd data-cloudosd-field="intune_evidence_error">{{ intune_evidence.error or '-' }}</dd>
+      </dl>
     </section>
   </div>
 
@@ -381,6 +413,39 @@
     el.innerHTML = `<span class="cloudosd-badge warn">waiting for ${escapeHtml(missing)}</span>`;
   }
 
+  function renderV2OperatorStatus(status) {
+    setText("v2_wait_reason", status && status.summary ? status.summary : "waiting for v2 evidence");
+    const actions = status && status.next_actions && status.next_actions.length
+      ? status.next_actions.join("; ")
+      : "No operator action required";
+    setText("v2_next_action", actions);
+  }
+
+  async function retryStep(stepId, button) {
+    if (!stepId) return;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Retrying";
+    }
+    try {
+      const response = await fetch(
+        `/api/cloudosd/runs/${encodeURIComponent(runId)}/v2/steps/${encodeURIComponent(stepId)}/retry`,
+        {method: "POST", cache: "no-store"}
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      await refresh();
+    } catch (error) {
+      if (liveStatus) liveStatus.textContent = `Retry failed: ${error.message || error}`;
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Retry step";
+      }
+    }
+  }
+
   function renderV2Steps(steps) {
     if (!v2StepsRoot) return;
     v2StepsRoot.innerHTML = "";
@@ -401,15 +466,40 @@
       item.appendChild(document.createTextNode(" "));
       item.appendChild(kind);
       item.appendChild(meta);
-      if (step.last_error) {
-        item.appendChild(document.createElement("br"));
-        const error = document.createElement("span");
-        error.className = "cloudosd-mini";
-        error.textContent = step.last_error;
-        item.appendChild(error);
+      if (step.retryable) {
+        const actions = document.createElement("span");
+        actions.className = "cloudosd-step-actions";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Retry step";
+        button.addEventListener("click", () => retryStep(step.id, button));
+        actions.appendChild(button);
+        item.appendChild(actions);
       }
+      item.appendChild(document.createElement("br"));
+      const reason = document.createElement("span");
+      reason.className = "cloudosd-mini";
+      reason.textContent = step.wait_reason || step.last_error || "";
+      item.appendChild(reason);
       v2StepsRoot.appendChild(item);
     });
+  }
+
+  function renderIntuneEvidence(evidence) {
+    evidence = evidence || {};
+    const hash = evidence.hash || {};
+    const autopilot = evidence.autopilot || {};
+    const assignment = evidence.assignment || {};
+    const enrollment = evidence.enrollment || {};
+    const files = (hash.files || []).map((item) => item.name).filter(Boolean).join(", ");
+    setText("intune_summary", evidence.summary);
+    setText("serial_candidates", (evidence.serial_candidates || []).join(", "));
+    setText("hash_capture", `${text(hash.status, "missing")}${files ? ": " + files : ""}`);
+    setText("autopilot_upload", `${text(autopilot.status, "not_found")}${autopilot.id ? ": " + autopilot.id : ""}`);
+    setText("autopilot_assignment", `${text(assignment.status, "not_found")}${assignment.group_tag ? " / " + assignment.group_tag : ""}`);
+    setText("intune_enrollment", `${text(enrollment.status, "not_found")}${enrollment.intune_device_name ? " / " + enrollment.intune_device_name : ""}`);
+    setText("device_cache_sync", evidence.cache_synced_at);
+    setText("intune_evidence_error", evidence.error || "-");
   }
 
   function render(data) {
@@ -464,7 +554,9 @@
     setText("first_heartbeat_at", run.first_heartbeat_at);
     renderRelatedJobs(data.related_jobs || []);
     renderV2Completion(data.v2_completion || {});
+    renderV2OperatorStatus(data.v2_operator_status || {});
     renderV2Steps(data.v2_steps || []);
+    renderIntuneEvidence(data.intune_evidence || {});
     renderMilestones(groups);
 
     const now = new Date();

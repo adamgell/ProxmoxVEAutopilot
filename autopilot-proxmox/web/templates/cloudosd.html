@@ -434,6 +434,10 @@
             <th>OS</th>
             <th>Created</th>
             <th>First heartbeat</th>
+            <th>Hash</th>
+            <th>Autopilot</th>
+            <th>Assignment</th>
+            <th>Enrollment</th>
             <th>Job link</th>
             <th>Name warning</th>
           </tr>
@@ -442,6 +446,7 @@
           {% for run in runs %}
           {% set comparison = run.name_comparison %}
           {% set artifact = (artifacts | selectattr('id', 'equalto', run.artifact_id) | list | first) %}
+          {% set evidence = run.intune_evidence or {} %}
           <tr>
             <td><span class="cloudosd-badge {{ 'ready' if run.state == 'complete' else 'warn' }}">{{ run.state }}</span></td>
             <td>{{ run.requested_vm_name }}</td>
@@ -452,6 +457,10 @@
             <td>{{ run.os_version }} {{ run.os_edition }} {{ run.os_activation }}</td>
             <td>{{ run.created_at }}</td>
             <td>{{ run.first_heartbeat_at or '-' }}</td>
+            <td>{{ evidence.hash.status if evidence.hash is defined else '-' }}</td>
+            <td>{{ evidence.autopilot.status if evidence.autopilot is defined else '-' }}</td>
+            <td>{{ evidence.assignment.status if evidence.assignment is defined else '-' }}</td>
+            <td>{{ evidence.enrollment.status if evidence.enrollment is defined else '-' }}</td>
             <td><a href="/cloudosd/runs/{{ run.run_id }}">detail</a></td>
             <td>
               {% if comparison.mismatch or comparison.requested_was_normalized %}

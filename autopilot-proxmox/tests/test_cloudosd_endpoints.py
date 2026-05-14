@@ -117,6 +117,14 @@ def _assert_warning(body: dict, check_id: str):
     assert check_id in ids, body
 
 
+def _create_cloudosd_run(cloudosd_client, pg_conn, **overrides):
+    artifact = _create_artifact(pg_conn)
+    payload = _run_payload(artifact["id"], **overrides)
+    response = cloudosd_client.post("/api/cloudosd/runs", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 def _patch_sequence_cipher(monkeypatch, tmp_path: Path):
     from web import app as web_app
 
@@ -645,6 +653,142 @@ def test_cloudosd_domain_join_run_waits_for_matching_domain_heartbeat(
         "domain_join_pending",
         "domain_join_verified",
     }
+
+
+def test_cloudosd_run_explains_failed_v2_step_and_operator_retry(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg, ts_engine_pg
+
+    run = _create_cloudosd_run(cloudosd_client, pg_conn, vm_name="GELL-RETRY-001")
+    capture_step = next(
+        step
+        for step in ts_engine_pg.list_run_steps(pg_conn, run["run_id"])
+        if step["kind"] == "capture_autopilot_hash"
+    )
+    pg_conn.execute(
+        """
+        UPDATE ts_run_plan_steps
+        SET state = 'failed',
+            attempt = 3,
+            claimed_by = 'agent-gell-retry-001',
+            last_error = 'hash script exited 1'
+        WHERE id = %s
+        """,
+        (capture_step["id"],),
+    )
+    pg_conn.execute(
+        """
+        UPDATE ts_provisioning_runs
+        SET state = 'failed',
+            phase = 'full_os',
+            cursor_step_id = %s,
+            last_error = 'hash script exited 1'
+        WHERE id = %s
+        """,
+        (capture_step["id"], run["run_id"]),
+    )
+    pg_conn.commit()
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    operator = body["v2_operator_status"]
+    assert operator["state"] == "blocked"
+    assert operator["failed_steps"][0]["kind"] == "capture_autopilot_hash"
+    assert "Retry capture_autopilot_hash" in operator["next_actions"]
+    enriched_step = next(
+        step for step in body["v2_steps"]
+        if step["kind"] == "capture_autopilot_hash"
+    )
+    assert enriched_step["retryable"] is True
+    assert enriched_step["wait_reason"] == "failed: hash script exited 1"
+
+    retry = cloudosd_client.post(
+        f"/api/cloudosd/runs/{run['run_id']}/v2/steps/{capture_step['id']}/retry",
+    )
+    assert retry.status_code == 200, retry.text
+    retried = retry.json()["step"]
+    assert retried["state"] == "pending"
+    assert retried["attempt"] == 0
+    assert retried["last_error"] is None
+    events = cloudosd_pg.list_events(pg_conn, run["run_id"])
+    assert any(event["event_type"] == "cloudosd_v2_step_requeued" for event in events)
+
+
+def test_cloudosd_run_surfaces_hash_upload_assignment_and_enrollment_evidence(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, devices_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T010101Z-vm245-Gell-245-ABC-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-245-ABC,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    devices_pg.reset_for_tests(pg_conn)
+    devices_pg.init(pg_conn)
+    devices_pg.upsert_autopilot([
+        {
+            "id": "ap-245",
+            "serialNumber": "Gell-245-ABC",
+            "groupTag": "GellNative",
+            "deploymentProfileAssignmentStatus": "pending",
+            "enrollmentState": "notContacted",
+            "manufacturer": "Dell Inc.",
+            "model": "Latitude 7450",
+            "displayName": "GELL-245-ABC",
+            "lastContactedDateTime": "2026-05-14T01:05:00Z",
+        }
+    ])
+    devices_pg.upsert_intune([
+        {
+            "id": "intune-245",
+            "serialNumber": "Gell-245-ABC",
+            "deviceName": "GELL-245-ABC",
+            "operatingSystem": "Windows",
+            "complianceState": "unknown",
+            "managementState": "managed",
+            "lastSyncDateTime": "2026-05-14T01:06:00Z",
+            "enrolledDateTime": "2026-05-14T01:04:00Z",
+        }
+    ])
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-245-ABC",
+        vm_group_tag="GellNative",
+    )
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run['run_id']}/identity",
+        json={
+            "vmid": 245,
+            "vm_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "mac": "52:54:00:aa:bb:ee",
+            "node": "pve",
+            "computer_name": "Gell-245-ABC",
+        },
+    ).status_code == 200
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail.status_code == 200, detail.text
+    evidence = detail.json()["intune_evidence"]
+    assert evidence["hash"]["status"] == "captured"
+    assert evidence["hash"]["files"][0]["serial"] == "Gell-245-ABC"
+    assert evidence["autopilot"]["status"] == "uploaded"
+    assert evidence["autopilot"]["id"] == "ap-245"
+    assert evidence["assignment"]["status"] == "pending"
+    assert evidence["assignment"]["group_tag"] == "GellNative"
+    assert evidence["enrollment"]["status"] == "enrolled"
+    assert evidence["enrollment"]["intune_device_id"] == "intune-245"
+
 
 def test_cloudosd_pe_register_rejects_wrong_identity(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)

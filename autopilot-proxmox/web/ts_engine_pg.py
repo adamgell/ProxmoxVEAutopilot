@@ -1740,6 +1740,75 @@ def get_run(conn: Connection, run_id: str) -> dict:
     }
 
 
+def requeue_step(
+    conn: Connection,
+    *,
+    run_id: str,
+    step_id: str,
+    requested_by: str = "operator",
+    message: str | None = None,
+) -> dict:
+    step = conn.execute(
+        """
+        SELECT *
+        FROM ts_run_plan_steps
+        WHERE id = %s
+          AND run_id = %s
+        FOR UPDATE
+        """,
+        (step_id, run_id),
+    ).fetchone()
+    if not step:
+        raise ValueError(f"step not found for run: {step_id}")
+    if step["state"] != "failed":
+        raise ValueError(f"only failed steps can be requeued: {step_id}")
+
+    conn.execute(
+        """
+        UPDATE ts_run_plan_steps
+        SET state = 'pending',
+            attempt = 0,
+            claimed_by = NULL,
+            claimed_at = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            last_error = NULL
+        WHERE id = %s
+        """,
+        (step_id,),
+    )
+    conn.execute(
+        """
+        UPDATE ts_provisioning_runs
+        SET state = %s,
+            phase = %s,
+            cursor_step_id = NULL,
+            finished_at = NULL,
+            last_error = NULL
+        WHERE id = %s
+        """,
+        (f"running_{step['phase']}", step["phase"], run_id),
+    )
+    _append_event(
+        conn,
+        run_id=run_id,
+        step_id=step_id,
+        event_type="step_requeued",
+        severity="warning",
+        agent_id=requested_by,
+        phase=step["phase"],
+        attempt=0,
+        message=message or f"Operator requeued failed step {step['kind']}",
+        data={"previous_attempt": step["attempt"], "kind": step["kind"]},
+    )
+    _commit(conn)
+    updated = conn.execute(
+        "SELECT * FROM ts_run_plan_steps WHERE id = %s",
+        (step_id,),
+    ).fetchone()
+    return _normalize_step(updated)
+
+
 def append_step_log(
     conn: Connection,
     *,
