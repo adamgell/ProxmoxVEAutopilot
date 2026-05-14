@@ -1741,6 +1741,8 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
         '<option value="cloudosd" selected>CloudOSD (Windows desktop clients)</option>'
         in body
     )
+    assert '<option value="" selected data-cloudosd-default="1">' in body
+    assert "CloudOSD base deployment (no legacy sequence)" in body
     assert body.index('<option value="cloudosd" selected>') < body.index(
         '<option value="winpe">'
     )

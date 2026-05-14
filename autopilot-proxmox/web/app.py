@@ -2281,7 +2281,7 @@ async def home(request: Request):
 
 @app.get("/provision", response_class=HTMLResponse)
 async def provision_page(request: Request):
-    from web import cloudosd_endpoints, cloudosd_pg, db_pg
+    from web import cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg
 
     cfg = _load_vars()
     # Best-effort: look up template disk size so the UI can show the minimum.
@@ -2326,12 +2326,25 @@ async def provision_page(request: Request):
         cloudosd_batch_progress = cloudosd_endpoints.provision_progress_payload(limit=25)
     except Exception:
         cloudosd_batch_progress = {"schema_version": 1, "runs": []}
+    sequences = sequences_db.list_sequences(SEQUENCES_DB)
+    default_sequence_id = ""
+    sequence_rows = []
+    for sequence in sequences:
+        if sequence.get("is_default"):
+            default_sequence_id = str(sequence["id"])
+        row = dict(sequence)
+        full_sequence = sequences_db.get_sequence(SEQUENCES_DB, int(sequence["id"]))
+        unsupported = cloudosd_sequence.unsupported_enabled_steps(full_sequence)
+        row["cloudosd_unsupported_steps"] = unsupported
+        row["cloudosd_compatible"] = not unsupported
+        sequence_rows.append(row)
     return templates.TemplateResponse("provision.html", {
         "request": request,
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
-        "sequences": sequences_db.list_sequences(SEQUENCES_DB),
+        "sequences": sequence_rows,
+        "default_sequence_id": default_sequence_id,
         "winpe_enabled": _winpe_enabled(),
         "cloudosd_catalog": cloudosd_catalog,
         "cloudosd_options": cloudosd_options,
@@ -4620,7 +4633,7 @@ async def start_provision(
     cores: int = Form(0),
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
-    sequence_id: int = Form(None),
+    sequence_id_raw: str | None = Form(None, alias="sequence_id"),
     hostname_pattern: str = Form("autopilot-{serial}"),
     chassis_type_override: int = Form(0),
     boot_mode: str = Form("clone"),
@@ -4641,6 +4654,7 @@ async def start_provision(
     outbound_policy_mode: str = Form("blocked"),
 ):
     profile = _sanitize_input(profile)
+    sequence_id = int(str(sequence_id_raw).strip()) if str(sequence_id_raw or "").strip() else None
     boot_mode = (boot_mode or "clone").lower()
     if boot_mode not in ("clone", "winpe", "cloudosd"):
         raise HTTPException(

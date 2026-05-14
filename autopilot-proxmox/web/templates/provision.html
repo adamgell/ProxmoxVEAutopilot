@@ -41,12 +41,17 @@
 </tr>
 <tr>
   <td><b>Task Sequence:</b></td>
-  <td><select name="sequence_id">
+  <td><select name="sequence_id" id="provision-sequence-id" data-default-sequence-id="{{ default_sequence_id }}">
+    <option value="" selected data-cloudosd-default="1">CloudOSD base deployment (no legacy sequence)</option>
     {% for s in sequences %}
-    <option value="{{ s.id }}"{% if s.is_default %} selected{% endif %}>{{ s.name }}{% if s.is_default %} (default){% endif %}</option>
+    <option value="{{ s.id }}"
+      data-global-default="{{ '1' if s.is_default else '0' }}"
+      data-cloudosd-compatible="{{ '1' if s.cloudosd_compatible else '0' }}"
+      data-cloudosd-unsupported="{{ s.cloudosd_unsupported_steps | join(', ') }}"
+    >{{ s.name }}{% if s.is_default %} (default){% endif %}{% if not s.cloudosd_compatible %} — not CloudOSD-compatible yet{% endif %}</option>
     {% endfor %}
   </select>
-  <small style="color:var(--ink-soft);">Phase A: selection is recorded but still uses the hardcoded flow. Phase B wires the compiler.</small></td>
+  <small style="color:var(--ink-soft);">CloudOSD defaults to the base desktop deployment. Select a compatible sequence only when CloudOSD v2 should own a supported full-OS step such as AD domain verification.</small></td>
 </tr>
 <tr>
   <td><b>OEM Profile:</b></td>
@@ -286,6 +291,7 @@
   const bootMode = document.getElementById('provision-boot-mode');
   const cloudosdSection = document.querySelector('[data-boot-section="cloudosd"]');
   if (!bootMode || !cloudosdSection) return;
+  const sequence = document.getElementById('provision-sequence-id');
   const controls = Array.from(cloudosdSection.querySelectorAll('input, select, textarea, button'));
   const cores = document.querySelector('input[name="cores"]');
   const memory = document.querySelector('input[name="memory_mb"]');
@@ -299,6 +305,10 @@
     cloudosdSection.hidden = !cloudosd;
     controls.forEach((control) => { control.disabled = !cloudosd; });
     if (cloudosd) {
+      const selectedSequence = sequence?.selectedOptions?.[0];
+      if (sequence && selectedSequence && selectedSequence.value && selectedSequence.dataset.cloudosdCompatible !== '1') {
+        sequence.value = '';
+      }
       if (cores && Number(cores.value || 0) < {{ cloudosd_catalog.defaults.vm_cores }}) cores.value = '{{ cloudosd_catalog.defaults.vm_cores }}';
       if (memory) {
         memory.min = '{{ cloudosd_catalog.defaults.minimum_vm_memory_mb }}';
@@ -309,6 +319,9 @@
         if (Number(disk.value || 0) < {{ cloudosd_catalog.defaults.vm_disk_size_gb }}) disk.value = '{{ cloudosd_catalog.defaults.vm_disk_size_gb }}';
       }
     } else {
+      if (sequence && !sequence.value && sequence.dataset.defaultSequenceId) {
+        sequence.value = sequence.dataset.defaultSequenceId;
+      }
       if (memory) memory.min = originalMins.memory;
       if (disk) disk.min = originalMins.disk;
     }

@@ -146,6 +146,8 @@ def test_provision_page_defaults_to_cloudosd_for_desktop_clients():
     )
     assert "WinPE (Windows Server / image apply)" in template
     assert "Clone (Windows Server / template builds)" in template
+    assert "CloudOSD base deployment (no legacy sequence)" in template
+    assert "data-cloudosd-compatible" in template
     assert template.index('<option value="cloudosd" selected>') < template.index(
         '<option value="winpe">'
     )

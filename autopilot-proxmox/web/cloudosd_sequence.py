@@ -18,6 +18,17 @@ class CloudOSDSequenceError(ValueError):
 _SUPPORTED_ENABLED_STEPS = {"join_ad_domain"}
 
 
+def unsupported_enabled_steps(sequence: Optional[dict]) -> list[str]:
+    if not sequence:
+        return []
+    return sorted({
+        step.get("step_type", "")
+        for step in sequence.get("steps", []) or []
+        if step.get("enabled", True)
+        and step.get("step_type") not in _SUPPORTED_ENABLED_STEPS
+    })
+
+
 def compile_cloudosd_sequence_intent(
     sequence: Optional[dict],
     *,
@@ -32,12 +43,7 @@ def compile_cloudosd_sequence_intent(
     if not sequence:
         return {"domain_join": {"enabled": False}}
 
-    unsupported = sorted({
-        step.get("step_type", "")
-        for step in sequence.get("steps", []) or []
-        if step.get("enabled", True)
-        and step.get("step_type") not in _SUPPORTED_ENABLED_STEPS
-    })
+    unsupported = unsupported_enabled_steps(sequence)
     if unsupported:
         raise CloudOSDSequenceError(
             "CloudOSD selected sequence is not CloudOSD-compatible yet; "
