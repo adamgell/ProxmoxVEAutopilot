@@ -212,15 +212,22 @@
 
 <style>
   .cloudosd-progress-table {
-    min-width: 1180px;
+    width: 100%;
+    table-layout: fixed;
+    font-size: 12px;
   }
   .cloudosd-progress-wrap {
-    overflow-x: auto;
+    overflow-x: visible;
     max-width: 100%;
     margin-top: 10px;
   }
+  .cloudosd-progress-table th,
+  .cloudosd-progress-table td {
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
   .cloudosd-progress-cell {
-    white-space: nowrap;
+    white-space: normal;
   }
   .cloudosd-progress-detail {
     color: var(--ink-soft);
