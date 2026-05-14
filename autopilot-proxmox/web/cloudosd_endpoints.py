@@ -416,11 +416,7 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
                 and f"-vm{run['vmid']}-".casefold() in filename.casefold()
             )
             if serial_match or vmid_match:
-                matched = dict(item)
-                matched_hashes.append(matched)
-                if serial and serial.casefold() not in candidate_keys:
-                    candidate_keys.add(serial.casefold())
-                    candidates.append(serial)
+                matched_hashes.append(dict(item))
         matched_hashes.sort(
             key=lambda item: (
                 int(item.get("modified_epoch") or 0),
@@ -431,6 +427,17 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
     except Exception as exc:
         cache_error = f"hash evidence unavailable: {exc}"
 
+    selected_hash_serial = ""
+    if matched_hashes:
+        selected_hash_serial = str(matched_hashes[0].get("serial") or "").strip()
+        if selected_hash_serial and selected_hash_serial.casefold() not in candidate_keys:
+            candidates.append(selected_hash_serial)
+
+    device_candidate_keys = (
+        {selected_hash_serial.casefold()}
+        if selected_hash_serial
+        else candidate_keys
+    )
     group = None
     synced_at = ""
     try:
@@ -439,7 +446,7 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
         groups, extra = devices_pg.list_grouped(windows_only=False)
         synced_at = (extra.get("meta") or {}).get("synced_at") or ""
         for item in groups:
-            if _device_group_matches(item, candidate_keys):
+            if _device_group_matches(item, device_candidate_keys):
                 group = item
                 break
     except Exception as exc:

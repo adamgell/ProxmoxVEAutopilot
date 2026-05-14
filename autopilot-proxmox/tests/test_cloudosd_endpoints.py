@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 
 import pytest
@@ -1113,6 +1114,81 @@ def test_cloudosd_autopilot_readiness_tracks_imported_before_assignment(
     assert readiness["autopilot"]["device_id"] == "ap-250"
     assert readiness["assignment"]["status"] == "notAssigned"
     assert readiness["assignment"]["group_tag_match"] is True
+
+
+def test_cloudosd_autopilot_readiness_ignores_stale_same_vmid_serial(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_endpoints, cloudosd_pg, devices_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    stale_hash = hash_dir / "20260513T070707Z-vm251-OLD251-osd-v2_hwid.csv"
+    current_hash = hash_dir / "20260514T070707Z-vm251-NEW251-osd-v2_hwid.csv"
+    stale_hash.write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "OLD251,,old-hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    current_hash.write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "NEW251,,new-hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    os.utime(stale_hash, (1_768_300_000, 1_768_300_000))
+    os.utime(current_hash, (1_768_400_000, 1_768_400_000))
+    devices_pg.upsert_autopilot([
+        {
+            "id": "ap-old-251",
+            "serialNumber": "OLD251",
+            "groupTag": "GellNative",
+            "deploymentProfileAssignmentStatus": "assignedInSync",
+            "enrollmentState": "notContacted",
+            "displayName": "GELL-251-OLD",
+        }
+    ])
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-251-E2E",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=251,
+        vm_uuid="bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+        mac="52:54:00:aa:bb:f6",
+        node="pve",
+        computer_name="Gell-251-E2E",
+    )
+    cloudosd_pg.record_autopilot_upload_attempt(
+        pg_conn,
+        run_id=run["run_id"],
+        job_id="upload-251",
+        hash_filename=current_hash.name,
+        expected_group_tag="GellNative",
+        status="complete",
+    )
+
+    run_row = cloudosd_pg.get_run(pg_conn, run["run_id"])
+    readiness = cloudosd_endpoints.autopilot_readiness_for_run(
+        pg_conn,
+        run_row,
+        allow_auto_sync=False,
+    )
+
+    assert readiness["hash"]["filename"] == current_hash.name
+    assert readiness["hash"]["serial"] == "NEW251"
+    assert readiness["state"] == "upload_submitted"
+    assert readiness["next_action"] == "sync_intune"
+    assert readiness["autopilot"]["device_id"] is None
+    assert readiness["autopilot"]["serial"] is None
+    assert readiness["assignment"]["status"] == "waiting_for_upload"
 
 
 def test_cloudosd_pe_register_rejects_wrong_identity(cloudosd_client, pg_conn):
