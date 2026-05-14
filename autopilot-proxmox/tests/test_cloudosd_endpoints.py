@@ -48,6 +48,8 @@ def cloudosd_client(pg_conn, monkeypatch):
 
     def fake_proxmox_api(path, *args, **kwargs):
         values = {
+            "/cluster/nextid": 100,
+            "/cluster/resources?type=vm": [],
             "/nodes": [{"node": "pve"}],
             "/storage": [
                 {"storage": "local", "content": "iso"},
@@ -1039,10 +1041,17 @@ def test_cloudosd_autopilot_readiness_sync_reconciles_import_and_assignment(
             return []
         raise AssertionError(path)
 
+    graph_calls = []
+    monkeypatch.setattr(
+        web_app,
+        "_graph_api",
+        lambda path, method="GET", json_body=None: graph_calls.append((path, method)) or {},
+    )
     monkeypatch.setattr(web_app, "_graph_api_all", fake_graph_all)
 
     synced = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/autopilot/sync")
     assert synced.status_code == 200, synced.text
+    assert graph_calls == [("/deviceManagement/windowsAutopilotSettings/sync", "POST")]
     readiness = synced.json()["autopilot_readiness"]
     assert readiness["state"] == "enrolled"
     assert readiness["autopilot"]["device_id"] == "ap-249"
@@ -1777,6 +1786,24 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             "vault_proxmox_root_password": "fake-root-pw",
         },
     )
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_api",
+        lambda path, *args, **kwargs: {
+            "/cluster/nextid": 100,
+            "/cluster/resources?type=vm": [],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+        }[path],
+    )
     response = cloudosd_client.post(
         "/api/jobs/provision",
         data={
@@ -1837,6 +1864,100 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             assert run["vm_oem_profile"] == "lenovo-t14"
             assert run["chassis_type_override"] == 31
             assert run["source_surface"] == "provision"
+
+
+def test_provision_cloudosd_batch_reserves_unique_vmids_without_vmid_token(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+
+    def fake_proxmox_api(path, *args, **kwargs):
+        values = {
+            "/cluster/nextid": 100,
+            "/cluster/resources?type=vm": [{"vmid": 100}, {"vmid": 102}],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+        }
+        if path not in values:
+            raise AssertionError(path)
+        return values[path]
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+    cloudosd_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="AD-RESERVED",
+        requested_vmid=101,
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "generic-desktop",
+            "count": "4",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "serial_prefix": "AD",
+            "group_tag": "Domain",
+            "hostname_pattern": "AD-{serial}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    jobs = [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ]
+    assert len(jobs) == 4
+    requested_vmids = sorted(job["args"].get("requested_vmid") for job in jobs)
+    assert requested_vmids == [103, 104, 105, 106]
+    assert all(job["args"]["vm_name"].startswith("AD-") for job in jobs)
+
+    runs = cloudosd_pg.list_runs(pg_conn, limit=10)
+    run_vmids = sorted(
+        run["requested_vmid"]
+        for run in runs
+        if run["requested_vm_name"] in {job["args"]["vm_name"] for job in jobs}
+    )
+    assert run_vmids == [103, 104, 105, 106]
 
 
 def test_provision_page_shows_cloudosd_batch_progress_rows(
@@ -1962,6 +2083,72 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     assert "Autopilot readiness" in body
     assert "Gell-251-OSD1" in body
     assert "/api/cloudosd/provision/progress" in body
+
+
+def test_cloudosd_archive_hides_run_from_default_history_but_preserves_detail(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg
+
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-ARCHIVE-01",
+    )
+    cloudosd_pg.append_event(
+        pg_conn,
+        run_id=run["run_id"],
+        phase="controller",
+        event_type="test_evidence",
+        message="evidence should survive archive",
+    )
+
+    archive = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/archive")
+    assert archive.status_code == 200, archive.text
+    assert archive.json()["run"]["archived"] is True
+
+    default_list = cloudosd_client.get("/api/cloudosd/runs")
+    assert default_list.status_code == 200, default_list.text
+    assert run["run_id"] not in {item["run_id"] for item in default_list.json()["runs"]}
+
+    archived_list = cloudosd_client.get("/api/cloudosd/runs?include_archived=true")
+    assert archived_list.status_code == 200, archived_list.text
+    archived_run = next(item for item in archived_list.json()["runs"] if item["run_id"] == run["run_id"])
+    assert archived_run["archived"] is True
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail.status_code == 200, detail.text
+    assert any(event["event_type"] == "test_evidence" for event in detail.json()["events"])
+
+    restore = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/unarchive")
+    assert restore.status_code == 200, restore.text
+    assert restore.json()["run"]["archived"] is False
+
+    restored_list = cloudosd_client.get("/api/cloudosd/runs")
+    assert run["run_id"] in {item["run_id"] for item in restored_list.json()["runs"]}
+
+
+def test_cloudosd_archive_hides_provision_progress_by_default(
+    cloudosd_client,
+    pg_conn,
+):
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-ARCHIVE-02",
+        source_surface="provision",
+    )
+
+    assert cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/archive").status_code == 200
+
+    default_progress = cloudosd_client.get("/api/cloudosd/provision/progress")
+    assert default_progress.status_code == 200, default_progress.text
+    assert run["run_id"] not in {item["run_id"] for item in default_progress.json()["runs"]}
+
+    archived_progress = cloudosd_client.get("/api/cloudosd/provision/progress?include_archived=true")
+    assert archived_progress.status_code == 200, archived_progress.text
+    assert run["run_id"] in {item["run_id"] for item in archived_progress.json()["runs"]}
 
 
 def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(
@@ -2312,12 +2499,13 @@ def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_con
     assert "Single-VM Deployment" in response.text
     assert "Review &amp; Launch" in response.text
     assert "Blocking Checks" in response.text
-    assert "Recent CloudOSD Runs" in response.text
-    assert "Requested name" in response.text
-    assert "Heartbeat computer name" in response.text
+    assert "CloudOSD Run History" in response.text
+    assert "Active Runs" in response.text
+    assert "Stale Failed Runs" in response.text
+    assert "Stale failures can be hidden without deleting evidence" in response.text
     assert "cloudosd-toggle-line" in response.text
     assert response.text.index("Single-VM Deployment") < response.text.index("OSDCloud Module Pin")
-    assert response.text.index("Recent CloudOSD Runs") < response.text.index("<h2>Artifacts</h2>")
+    assert response.text.index("CloudOSD Run History") < response.text.index("<h2>Artifacts</h2>")
 
 
 def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(

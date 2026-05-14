@@ -283,7 +283,9 @@ def test_v2_agent_hash_persists_hash_for_uuid_run(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"ok": True}
+    body = response.json()
+    assert body["ok"] is True
+    assert body["hash_filename"].endswith("-osd-v2_hwid.csv")
     files = list(tmp_path.glob("*.csv"))
     assert len(files) == 1
     text = files[0].read_text(encoding="utf-8")
@@ -355,6 +357,7 @@ def test_cloudosd_v2_agent_hash_queues_autopilot_upload(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
+    assert body["hash_filename"]
     assert body["autopilot_upload"]["queued"] is True
     assert body["autopilot_upload"]["job_id"]
     files = list(tmp_path.glob("*.csv"))
@@ -364,6 +367,7 @@ def test_cloudosd_v2_agent_hash_queues_autopilot_upload(
     assert job["args"]["cloudosd_run_id"] == run["run_id"]
     assert job["args"]["vmid"] == 247
     assert job["args"]["file"] == files[0].name
+    assert job["args"]["file"] == body["hash_filename"]
     assert job["args"]["group_tag"] == "GellNative"
 
 

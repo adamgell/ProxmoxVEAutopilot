@@ -110,6 +110,24 @@ def test_cloudosd_run_detail_renders_autopilot_readiness_section():
     assert "data-cloudosd-field=\"autopilot_readiness_upload\"" in template
     assert "data-cloudosd-field=\"autopilot_readiness_assignment\"" in template
     assert "data-cloudosd-field=\"autopilot_readiness_errors\"" in template
+
+
+def test_cloudosd_cockpit_renders_archive_history_controls():
+    template = Path("autopilot-proxmox/web/templates/cloudosd.html").read_text(encoding="utf-8")
+
+    assert "CloudOSD Run History" in template
+    assert "Active Runs" in template
+    assert "Stale Failed Runs" in template
+    assert "data-cloudosd-archive" in template
+    assert "data-cloudosd-unarchive" in template
+
+
+def test_cloudosd_run_detail_keeps_readiness_live_after_completion():
+    template = Path("autopilot-proxmox/web/templates/cloudosd_run_detail.html").read_text(encoding="utf-8")
+
+    assert "readinessTerminalStates" in template
+    assert "Autopilot readiness" in template
+    assert "keepReadinessLive" in template
     assert "data-cloudosd-autopilot-action=\"upload\"" in template
     assert "data-cloudosd-autopilot-action=\"sync\"" in template
     assert "renderAutopilotReadiness" in template

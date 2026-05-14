@@ -2344,10 +2344,11 @@ async def provision_page(request: Request):
 
 
 @app.get("/cloudosd", response_class=HTMLResponse)
-async def cloudosd_page(request: Request):
+async def cloudosd_page(request: Request, archived: str = "0"):
     from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
 
     cfg = _load_vars()
+    show_archived = str(archived or "").lower() in {"1", "true", "yes", "on"}
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
         agent_telemetry_pg.init(conn)
@@ -2355,8 +2356,7 @@ async def cloudosd_page(request: Request):
             cloudosd_endpoints.enrich_artifact(artifact)
             for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
         ]
-        runs = []
-        for run in cloudosd_pg.list_runs(conn, limit=25):
+        def enrich_run(run: dict) -> dict:
             heartbeat = agent_telemetry_pg.latest_for_run(conn, run["run_id"])
             heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
             run["heartbeat_computer_name"] = heartbeat_name
@@ -2369,21 +2369,36 @@ async def cloudosd_page(request: Request):
                 run,
                 heartbeat,
             )
-            runs.append(run)
+            return run
+
+        runs = [
+            enrich_run(run)
+            for run in cloudosd_pg.list_runs(
+                conn,
+                limit=25,
+                include_archived=show_archived,
+            )
+        ]
+        active_runs = [
+            enrich_run(run)
+            for run in cloudosd_pg.list_runs(conn, limit=10, active_only=True)
+        ]
+        stale_failed_runs = [
+            enrich_run(run)
+            for run in cloudosd_pg.list_runs(conn, limit=10, stale_failed_hours=12)
+        ]
     assets_status = cloudosd_endpoints.assets_status_payload()
     proxmox_options = cloudosd_endpoints.proxmox_options_payload()
     catalog = cloudosd_endpoints.catalog_payload()
     ready_artifacts = [artifact for artifact in artifacts if artifact and artifact.get("ready")]
-    active_runs = [
-        run for run in runs
-        if run.get("state") not in ("complete", "failed", "cancelled")
-    ]
     return templates.TemplateResponse("cloudosd.html", {
         "request": request,
         "artifacts": artifacts,
         "runs": runs,
         "ready_artifacts": ready_artifacts,
         "active_runs": active_runs,
+        "stale_failed_runs": stale_failed_runs,
+        "show_archived": show_archived,
         "catalog": catalog,
         "assets_status": assets_status,
         "proxmox_options": proxmox_options,
@@ -4212,9 +4227,13 @@ def _cloudosd_pattern_has_token(pattern: str, token: str) -> bool:
     return re.search(r"\{" + re.escape(token) + r"\}", pattern or "", re.IGNORECASE) is not None
 
 
-def _cloudosd_candidate_vmids(count: int) -> list[int]:
+_CLOUDOSD_VMID_RESERVATION_LOCK = "proxmoxveautopilot:cloudosd-vmid-reservation"
+
+
+def _cloudosd_candidate_vmids(count: int, *, reserved_vmids: set[int] | None = None) -> list[int]:
     first = int(_proxmox_api("/cluster/nextid"))
-    used: set[int] = set()
+    reserved = set(reserved_vmids or set())
+    used: set[int] = set(reserved)
     try:
         for row in _proxmox_api("/cluster/resources?type=vm") or []:
             if row.get("vmid") is not None:
@@ -4222,8 +4241,8 @@ def _cloudosd_candidate_vmids(count: int) -> list[int]:
     except Exception:
         # /cluster/nextid is the authoritative first free ID. If the
         # broader resource read is unavailable, sequential candidates
-        # still cover the single-run path and keep the operator moving.
-        used = set()
+        # still honor locally reserved IDs and keep the operator moving.
+        used = set(reserved)
     vmids: list[int] = []
     candidate = first
     while len(vmids) < count:
@@ -4232,6 +4251,32 @@ def _cloudosd_candidate_vmids(count: int) -> list[int]:
             used.add(candidate)
         candidate += 1
     return vmids
+
+
+def _cloudosd_active_reserved_vmids(conn) -> set[int]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT requested_vmid
+        FROM cloudosd_runs
+        WHERE requested_vmid IS NOT NULL
+          AND state NOT IN ('complete', 'failed', 'cancelled', 'canceled')
+        """,
+    ).fetchall()
+    return {int(row["requested_vmid"]) for row in rows if row.get("requested_vmid")}
+
+
+def _cloudosd_lock_vmid_reservations(conn) -> None:
+    conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (_CLOUDOSD_VMID_RESERVATION_LOCK,))
+
+
+def _cloudosd_unlock_vmid_reservations(conn) -> None:
+    try:
+        conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (_CLOUDOSD_VMID_RESERVATION_LOCK,))
+        conn.commit()
+    except psycopg.errors.InFailedSqlTransaction:
+        conn.rollback()
+        conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (_CLOUDOSD_VMID_RESERVATION_LOCK,))
+        conn.commit()
 
 
 def _replace_cloudosd_token(pattern: str, token: str, value: str) -> str:
@@ -4249,6 +4294,7 @@ def _cloudosd_batch_names(
     hostname_pattern: str,
     count: int,
     serial_prefix: str,
+    requested_vmids: list[int] | None = None,
 ) -> list[dict]:
     pattern = (hostname_pattern or "").strip() or "cloudosd-{index}"
     placeholders = set(re.findall(r"\{[^{}]*\}", pattern))
@@ -4274,7 +4320,12 @@ def _cloudosd_batch_names(
     if count > 1 and not (uses_index or uses_serial or uses_vmid):
         pattern = f"{pattern}-{{index}}"
         uses_index = True
-    requested_vmids = _cloudosd_candidate_vmids(count) if uses_vmid else [None] * count
+    requested_vmids = requested_vmids or _cloudosd_candidate_vmids(count)
+    if len(requested_vmids) != count:
+        raise HTTPException(
+            status_code=500,
+            detail="CloudOSD VMID reservation returned the wrong number of VMIDs",
+        )
     plans: list[dict] = []
     for index in range(1, count + 1):
         serial = _cloudosd_generate_serial(
@@ -4395,12 +4446,6 @@ def _start_cloudosd_provision_batch(
             detail=f"CloudOSD VMs need at least {cloudosd_pg.MIN_VM_DISK_SIZE_GB} GB disk",
         )
 
-    batch_plan = _cloudosd_batch_names(
-        profile=profile,
-        hostname_pattern=hostname_pattern,
-        count=count,
-        serial_prefix=serial_prefix,
-    )
     source_sequence_id = int(sequence_id) if sequence_id else None
     domain_join_intent = {"enabled": False}
     if source_sequence_id:
@@ -4419,127 +4464,142 @@ def _start_cloudosd_provision_batch(
         except cloudosd_sequence.CloudOSDSequenceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    bodies: list[cloudosd_endpoints.RunCreateBody] = []
-    for plan in batch_plan:
-        name = plan["name"]
-        bodies.append(cloudosd_endpoints.RunCreateBody(
-            artifact_id=artifact_id,
-            vm_name=name,
-            node=node or None,
-            iso_storage=iso_storage or None,
-            storage=storage or None,
-            network_bridge=network_bridge or None,
-            vmid=plan["requested_vmid"],
-            architecture=cloudosd_pg.DEFAULT_ARCHITECTURE,
-            os_version=os_version or cloudosd_pg.DEFAULT_OS_VERSION,
-            os_activation=os_activation or cloudosd_pg.DEFAULT_OS_ACTIVATION,
-            os_edition=os_edition or cloudosd_pg.DEFAULT_OS_EDITION,
-            os_language=os_language or cloudosd_pg.DEFAULT_OS_LANGUAGE,
-            vm_cores=vm_cores,
-            vm_memory_mb=vm_memory_mb,
-            vm_disk_size_gb=vm_disk_size_gb,
-            vm_group_tag=group_tag,
-            vm_oem_profile=profile,
-            chassis_type_override=int(chassis_type_override or 0),
-            source_surface="provision",
-            source_sequence_id=source_sequence_id,
-            tpm_enabled=tpm_enabled,
-            secure_boot=secure_boot,
-            firmware_updates_enabled=firmware_updates_enabled,
-            driver_pack_policy=driver_pack_policy or cloudosd_pg.DEFAULT_DRIVER_PACK_POLICY,
-            analytics_enabled=analytics_enabled,
-            outbound_policy={"mode": outbound_policy_mode or "blocked"},
-        ))
-
-    preflights = [cloudosd_endpoints.preflight_payload(body) for body in bodies]
-    blockers = [
-        check
-        for preflight in preflights
-        for check in preflight.get("blocking_checks", [])
-    ]
-    if blockers:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "CloudOSD blocking preflight checks failed",
-                "blocking_checks": blockers,
-            },
-        )
-
-    needs_root_ticket, root_ticket, root_csrf = _cloudosd_root_ticket_for_batch(
-        profile=profile,
-        chassis_type_override=int(chassis_type_override or 0),
-    )
-
     jobs = []
     run_ids = []
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
-        for idx, (body, preflight) in enumerate(zip(bodies, preflights)):
-            target = preflight["target"]
-            artifact = cloudosd_pg.get_artifact(conn, body.artifact_id)
-            if not artifact:
-                raise HTTPException(status_code=404, detail="CloudOSD artifact not found")
-            if not artifact.get("proxmox_volid"):
-                raise HTTPException(
-                    status_code=409,
-                    detail="CloudOSD artifact is not uploaded to Proxmox ISO storage",
-                )
-            try:
-                run = cloudosd_pg.create_run(
-                    conn,
-                    artifact_id=body.artifact_id,
-                    vm_name=body.vm_name,
-                    node=target["node"],
-                    iso_storage=target["iso_storage"],
-                    storage=target["storage"],
-                    network_bridge=target["network_bridge"],
-                    architecture=body.architecture,
-                    os_version=body.os_version,
-                    os_activation=body.os_activation,
-                    os_edition=body.os_edition,
-                    os_language=body.os_language,
-                    vm_cores=body.vm_cores,
-                    vm_memory_mb=body.vm_memory_mb,
-                    vm_disk_size_gb=body.vm_disk_size_gb,
-                    vm_group_tag=body.vm_group_tag.strip(),
-                    vm_oem_profile=body.vm_oem_profile.strip(),
-                    chassis_type_override=body.chassis_type_override,
+        _cloudosd_lock_vmid_reservations(conn)
+        try:
+            requested_vmids = _cloudosd_candidate_vmids(
+                count,
+                reserved_vmids=_cloudosd_active_reserved_vmids(conn),
+            )
+            batch_plan = _cloudosd_batch_names(
+                profile=profile,
+                hostname_pattern=hostname_pattern,
+                count=count,
+                serial_prefix=serial_prefix,
+                requested_vmids=requested_vmids,
+            )
+            bodies: list[cloudosd_endpoints.RunCreateBody] = []
+            for plan in batch_plan:
+                name = plan["name"]
+                bodies.append(cloudosd_endpoints.RunCreateBody(
+                    artifact_id=artifact_id,
+                    vm_name=name,
+                    node=node or None,
+                    iso_storage=iso_storage or None,
+                    storage=storage or None,
+                    network_bridge=network_bridge or None,
+                    vmid=plan["requested_vmid"],
+                    architecture=cloudosd_pg.DEFAULT_ARCHITECTURE,
+                    os_version=os_version or cloudosd_pg.DEFAULT_OS_VERSION,
+                    os_activation=os_activation or cloudosd_pg.DEFAULT_OS_ACTIVATION,
+                    os_edition=os_edition or cloudosd_pg.DEFAULT_OS_EDITION,
+                    os_language=os_language or cloudosd_pg.DEFAULT_OS_LANGUAGE,
+                    vm_cores=vm_cores,
+                    vm_memory_mb=vm_memory_mb,
+                    vm_disk_size_gb=vm_disk_size_gb,
+                    vm_group_tag=group_tag,
+                    vm_oem_profile=profile,
+                    chassis_type_override=int(chassis_type_override or 0),
                     source_surface="provision",
                     source_sequence_id=source_sequence_id,
-                    requested_vmid=batch_plan[idx]["requested_vmid"],
-                    tpm_enabled=body.tpm_enabled,
-                    secure_boot=body.secure_boot,
-                    firmware_updates_enabled=body.firmware_updates_enabled,
-                    driver_pack_policy=body.driver_pack_policy,
-                    analytics_enabled=body.analytics_enabled,
-                    outbound_policy=body.outbound_policy,
-                    domain_join=domain_join_intent,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            extra_vars = cloudosd_endpoints.cloudosd_provision_extra_vars(
-                run=run,
-                artifact=artifact,
-                request=request,
-                root_ticket=root_ticket,
-                root_csrf_token=root_csrf,
-                require_root_ticket=needs_root_ticket,
-            )
-            if serial_prefix:
-                extra_vars["vm_serial_prefix"] = serial_prefix
-            extra_vars["vm_custom_serial"] = batch_plan[idx]["serial"]
-            if source_sequence_id:
-                extra_vars["source_sequence_id"] = source_sequence_id
-            cmd = [
-                "ansible-playbook",
-                str(PLAYBOOK_DIR / "provision_proxmox_cloudosd.yml"),
+                    tpm_enabled=tpm_enabled,
+                    secure_boot=secure_boot,
+                    firmware_updates_enabled=firmware_updates_enabled,
+                    driver_pack_policy=driver_pack_policy or cloudosd_pg.DEFAULT_DRIVER_PACK_POLICY,
+                    analytics_enabled=analytics_enabled,
+                    outbound_policy={"mode": outbound_policy_mode or "blocked"},
+                ))
+
+            preflights = [cloudosd_endpoints.preflight_payload(body) for body in bodies]
+            blockers = [
+                check
+                for preflight in preflights
+                for check in preflight.get("blocking_checks", [])
             ]
-            for key, value in extra_vars.items():
-                cmd.extend(["-e", f"{key}={value}"])
-            job = job_manager.start("provision_cloudosd", cmd, args=extra_vars)
-            jobs.append(job)
-            run_ids.append(run["run_id"])
+            if blockers:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "CloudOSD blocking preflight checks failed",
+                        "blocking_checks": blockers,
+                    },
+                )
+
+            needs_root_ticket, root_ticket, root_csrf = _cloudosd_root_ticket_for_batch(
+                profile=profile,
+                chassis_type_override=int(chassis_type_override or 0),
+            )
+
+            for idx, (body, preflight) in enumerate(zip(bodies, preflights)):
+                target = preflight["target"]
+                artifact = cloudosd_pg.get_artifact(conn, body.artifact_id)
+                if not artifact:
+                    raise HTTPException(status_code=404, detail="CloudOSD artifact not found")
+                if not artifact.get("proxmox_volid"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="CloudOSD artifact is not uploaded to Proxmox ISO storage",
+                    )
+                try:
+                    run = cloudosd_pg.create_run(
+                        conn,
+                        artifact_id=body.artifact_id,
+                        vm_name=body.vm_name,
+                        node=target["node"],
+                        iso_storage=target["iso_storage"],
+                        storage=target["storage"],
+                        network_bridge=target["network_bridge"],
+                        architecture=body.architecture,
+                        os_version=body.os_version,
+                        os_activation=body.os_activation,
+                        os_edition=body.os_edition,
+                        os_language=body.os_language,
+                        vm_cores=body.vm_cores,
+                        vm_memory_mb=body.vm_memory_mb,
+                        vm_disk_size_gb=body.vm_disk_size_gb,
+                        vm_group_tag=body.vm_group_tag.strip(),
+                        vm_oem_profile=body.vm_oem_profile.strip(),
+                        chassis_type_override=body.chassis_type_override,
+                        source_surface="provision",
+                        source_sequence_id=source_sequence_id,
+                        requested_vmid=batch_plan[idx]["requested_vmid"],
+                        tpm_enabled=body.tpm_enabled,
+                        secure_boot=body.secure_boot,
+                        firmware_updates_enabled=body.firmware_updates_enabled,
+                        driver_pack_policy=body.driver_pack_policy,
+                        analytics_enabled=body.analytics_enabled,
+                        outbound_policy=body.outbound_policy,
+                        domain_join=domain_join_intent,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                extra_vars = cloudosd_endpoints.cloudosd_provision_extra_vars(
+                    run=run,
+                    artifact=artifact,
+                    request=request,
+                    root_ticket=root_ticket,
+                    root_csrf_token=root_csrf,
+                    require_root_ticket=needs_root_ticket,
+                )
+                if serial_prefix:
+                    extra_vars["vm_serial_prefix"] = serial_prefix
+                extra_vars["vm_custom_serial"] = batch_plan[idx]["serial"]
+                if source_sequence_id:
+                    extra_vars["source_sequence_id"] = source_sequence_id
+                cmd = [
+                    "ansible-playbook",
+                    str(PLAYBOOK_DIR / "provision_proxmox_cloudosd.yml"),
+                ]
+                for key, value in extra_vars.items():
+                    cmd.extend(["-e", f"{key}={value}"])
+                job = job_manager.start("provision_cloudosd", cmd, args=extra_vars)
+                jobs.append(job)
+                run_ids.append(run["run_id"])
+        finally:
+            _cloudosd_unlock_vmid_reservations(conn)
 
     first_run = run_ids[0] if run_ids else ""
     if len(run_ids) == 1:

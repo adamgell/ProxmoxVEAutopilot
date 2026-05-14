@@ -323,6 +323,7 @@
   const readinessActions = Array.from(root.querySelectorAll("[data-cloudosd-autopilot-action]"));
   const milestoneLabels = ["controller", "Proxmox playbook", "PE bridge", "OSDCloud", "offline validation", "Domain join", "SetupComplete", "first boot", "AutopilotAgent"];
   const terminalStates = new Set(["complete", "failed", "cancelled"]);
+  const readinessTerminalStates = new Set(["assigned", "contacted", "enrolled", "upload_failed", "group_tag_mismatch", "sync_failed", "blocked"]);
   const readyBadgeStates = new Set(["complete", "done", "ok", "assigned", "contacted", "enrolled"]);
   const blockBadgeStates = new Set(["failed", "cancelled", "canceled", "error", "upload_failed", "group_tag_mismatch", "blocked"]);
 
@@ -711,12 +712,16 @@
 
     const now = new Date();
     if (liveUpdated) liveUpdated.textContent = `last updated ${now.toLocaleTimeString()}`;
+    const readinessState = (data.autopilot_readiness || {}).state || "";
+    const keepReadinessLive = terminalStates.has(run.state) && !readinessTerminalStates.has(readinessState);
     if (liveStatus) {
-      liveStatus.textContent = terminalStates.has(run.state)
-        ? `Live refresh reached terminal state: ${run.state}`
-        : `Live refresh active: ${run.state || "pending"}`;
+      liveStatus.textContent = keepReadinessLive
+        ? `Live refresh active: ${run.state}; Autopilot readiness ${readinessState || "pending"}`
+        : (terminalStates.has(run.state)
+          ? `Live refresh reached terminal state: ${run.state}`
+          : `Live refresh active: ${run.state || "pending"}`);
     }
-    return terminalStates.has(run.state);
+    return terminalStates.has(run.state) && !keepReadinessLive;
   }
 
   async function refresh() {

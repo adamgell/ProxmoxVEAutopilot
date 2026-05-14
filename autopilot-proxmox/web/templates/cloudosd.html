@@ -59,6 +59,42 @@
     align-items: center;
     gap: 6px 10px;
   }
+  .cloudosd-history-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .cloudosd-history-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .cloudosd-run-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .cloudosd-run-strip article {
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,.02);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .cloudosd-run-list {
+    display: grid;
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .cloudosd-run-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+  }
   .cloudosd-toggle-set {
     display: flex;
     flex-wrap: wrap;
@@ -418,8 +454,40 @@
   </section>
 
   <section class="cloudosd-panel" id="cloudosd-runs">
-    <h2>Recent CloudOSD Runs</h2>
-    <div class="cloudosd-mini">Requested name, final PVE name, and Heartbeat computer name comparison are tracked per run.</div>
+    <div class="cloudosd-history-head">
+      <div>
+        <h2>CloudOSD Run History</h2>
+        <div class="cloudosd-mini">Active desktop deployments stay visible first. Stale failures can be hidden without deleting evidence, logs, readiness, or v2 step history.</div>
+      </div>
+      <div class="cloudosd-history-actions">
+        <a class="action-btn-upload" href="/cloudosd#cloudosd-runs">Default history</a>
+        <a class="action-btn-upload" href="/cloudosd?archived=1#cloudosd-runs">Show archived</a>
+      </div>
+    </div>
+    <div class="cloudosd-run-strip">
+      <article>
+        <b>Active Runs</b>
+        <div class="cloudosd-mini">Created, provisioning, PE, OSDCloud, first boot, or readiness work still moving.</div>
+        <div class="cloudosd-run-list">
+          {% for run in active_runs %}
+          <div class="cloudosd-run-line"><a href="/cloudosd/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><span>{{ run.state }}</span></div>
+          {% else %}
+          <span class="cloudosd-mini">No active CloudOSD desktop runs.</span>
+          {% endfor %}
+        </div>
+      </article>
+      <article>
+        <b>Stale Failed Runs</b>
+        <div class="cloudosd-mini">Failed runs older than 12 hours. Archive them after review to keep the cockpit focused.</div>
+        <div class="cloudosd-run-list">
+          {% for run in stale_failed_runs %}
+          <div class="cloudosd-run-line"><a href="/cloudosd/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><button type="button" class="action-btn-upload" data-cloudosd-archive="{{ run.run_id }}">Archive</button></div>
+          {% else %}
+          <span class="cloudosd-mini">No stale failed runs.</span>
+          {% endfor %}
+        </div>
+      </article>
+    </div>
     {% if runs %}
     <div class="cloudosd-table-wrap">
       <table class="cloudosd-table cockpit-scanline">
@@ -439,6 +507,8 @@
             <th>Assignment</th>
             <th>Enrollment</th>
             <th>Job link</th>
+            <th>Visibility</th>
+            <th>Actions</th>
             <th>Name warning</th>
           </tr>
         </thead>
@@ -462,6 +532,20 @@
             <td>{{ evidence.assignment.status if evidence.assignment is defined else '-' }}</td>
             <td>{{ evidence.enrollment.status if evidence.enrollment is defined else '-' }}</td>
             <td><a href="/cloudosd/runs/{{ run.run_id }}">detail</a></td>
+            <td>
+              {% if run.archived %}
+              <span class="cloudosd-badge warn">archived</span><br><span class="cloudosd-mini">{{ run.archived_at }}</span>
+              {% else %}
+              <span class="cloudosd-mini">visible</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if run.archived %}
+              <button type="button" class="action-btn-upload" data-cloudosd-unarchive="{{ run.run_id }}">Restore</button>
+              {% else %}
+              <button type="button" class="action-btn-upload" data-cloudosd-archive="{{ run.run_id }}">Archive</button>
+              {% endif %}
+            </td>
             <td>
               {% if comparison.mismatch or comparison.requested_was_normalized %}
               <span class="cloudosd-badge warn">requested/PVE/heartbeat name review</span>
@@ -719,6 +803,29 @@
           const body = await response.json();
           byId("cloudosdLaunchError").textContent = body.detail || "publish failed";
           button.disabled = false;
+        }
+      });
+    });
+    document.querySelectorAll("[data-cloudosd-archive], [data-cloudosd-unarchive]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const archiveId = button.dataset.cloudosdArchive;
+        const unarchiveId = button.dataset.cloudosdUnarchive;
+        const runId = archiveId || unarchiveId;
+        const action = archiveId ? "archive" : "unarchive";
+        button.disabled = true;
+        try {
+          const response = await fetch(`/api/cloudosd/runs/${encodeURIComponent(runId)}/${action}`, {
+            method: "POST",
+            headers: { "Accept": "application/json" }
+          });
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${response.status}`);
+          }
+          window.location.reload();
+        } catch (error) {
+          button.disabled = false;
+          byId("cloudosdLaunchError").textContent = `CloudOSD ${action} failed: ${error.message || error}`;
         }
       });
     });

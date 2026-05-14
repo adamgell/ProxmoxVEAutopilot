@@ -81,12 +81,18 @@ CREATE TABLE IF NOT EXISTS cloudosd_runs (
     osdcloud_started_at timestamptz NULL,
     osdcloud_finished_at timestamptz NULL,
     first_heartbeat_at timestamptz NULL,
+    archived_at timestamptz NULL,
+    archived_by text NULL,
+    archive_reason text NULL,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_state
     ON cloudosd_runs(state, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_archive
+    ON cloudosd_runs(archived_at, state, updated_at DESC, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_identity
     ON cloudosd_runs(vm_uuid, mac)
@@ -470,9 +476,18 @@ def init(conn: Connection) -> None:
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_surface text NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_sequence_id integer NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS domain_join_json jsonb NOT NULL DEFAULT '{}'::jsonb")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS archived_at timestamptz NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS archived_by text NULL")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS archive_reason text NULL")
         conn.execute("ALTER TABLE cloudosd_autopilot_readiness ADD COLUMN IF NOT EXISTS upload_error text NULL")
         conn.execute("ALTER TABLE cloudosd_autopilot_upload_attempts ADD COLUMN IF NOT EXISTS stdout_tail text NULL")
         conn.execute("ALTER TABLE cloudosd_autopilot_upload_attempts ADD COLUMN IF NOT EXISTS stderr_tail text NULL")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_archive
+                ON cloudosd_runs(archived_at, state, updated_at DESC, created_at DESC)
+            """,
+        )
         conn.commit()
         _INIT_DONE = True
 
@@ -826,6 +841,10 @@ def _run_row(row: dict | None) -> dict | None:
         "osdcloud_started_at": _iso(row["osdcloud_started_at"]),
         "osdcloud_finished_at": _iso(row["osdcloud_finished_at"]),
         "first_heartbeat_at": _iso(row["first_heartbeat_at"]),
+        "archived_at": _iso(row.get("archived_at")),
+        "archived_by": row.get("archived_by"),
+        "archive_reason": row.get("archive_reason"),
+        "archived": bool(row.get("archived_at")),
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
     }
@@ -1379,17 +1398,83 @@ def get_run(conn: Connection, run_id: str) -> dict | None:
     return _run_row(row)
 
 
-def list_runs(conn: Connection, *, limit: int = 100) -> list[dict]:
+def list_runs(
+    conn: Connection,
+    *,
+    limit: int = 100,
+    include_archived: bool = False,
+    source_surface: str | None = None,
+    active_only: bool = False,
+    stale_failed_hours: int | None = None,
+) -> list[dict]:
+    where: list[str] = []
+    params: list[Any] = []
+    if not include_archived:
+        where.append("archived_at IS NULL")
+    if source_surface is not None:
+        where.append("COALESCE(source_surface, 'cloudosd') = %s")
+        params.append(source_surface)
+    if active_only:
+        where.append("state NOT IN ('complete', 'failed', 'cancelled', 'canceled')")
+    if stale_failed_hours is not None:
+        where.append("state = 'failed'")
+        where.append("updated_at <= now() - (%s * interval '1 hour')")
+        params.append(int(stale_failed_hours))
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    params.append(limit)
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM cloudosd_runs
+        {where_sql}
         ORDER BY created_at DESC
         LIMIT %s
         """,
-        (limit,),
+        tuple(params),
     ).fetchall()
     return [_run_row(row) for row in rows]
+
+
+def archive_run(
+    conn: Connection,
+    run_id: str,
+    *,
+    archived_by: str = "operator",
+    reason: str = "",
+) -> dict | None:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE cloudosd_runs
+        SET archived_at = COALESCE(archived_at, %s),
+            archived_by = COALESCE(archived_by, %s),
+            archive_reason = COALESCE(NULLIF(archive_reason, ''), NULLIF(%s, '')),
+            updated_at = %s
+        WHERE run_id = %s
+        RETURNING *
+        """,
+        (now, archived_by, reason, now, run_id),
+    ).fetchone()
+    conn.commit()
+    return _run_row(row)
+
+
+def unarchive_run(conn: Connection, run_id: str) -> dict | None:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE cloudosd_runs
+        SET archived_at = NULL,
+            archived_by = NULL,
+            archive_reason = NULL,
+            updated_at = %s
+        WHERE run_id = %s
+        RETURNING *
+        """,
+        (now, run_id),
+    ).fetchone()
+    conn.commit()
+    return _run_row(row)
 
 
 def set_run_identity(

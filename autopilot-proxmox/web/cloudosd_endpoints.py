@@ -421,6 +421,13 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
                 if serial and serial.casefold() not in candidate_keys:
                     candidate_keys.add(serial.casefold())
                     candidates.append(serial)
+        matched_hashes.sort(
+            key=lambda item: (
+                int(item.get("modified_epoch") or 0),
+                str(item.get("name") or ""),
+            ),
+            reverse=True,
+        )
     except Exception as exc:
         cache_error = f"hash evidence unavailable: {exc}"
 
@@ -615,15 +622,166 @@ def _readiness_error(source: str, code: str, message: str) -> dict:
     return {"source": source, "code": code, "message": message}
 
 
-def autopilot_readiness_for_run(conn, run: dict, heartbeat: dict | None = None) -> dict:
+def _latest_auto_sync_event(conn, run_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM cloudosd_run_events
+        WHERE run_id = %s
+          AND event_type IN (
+            'autopilot_cache_auto_sync_attempted',
+            'autopilot_cache_auto_sync_complete',
+            'autopilot_cache_auto_sync_failed'
+          )
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _event_age_seconds(event: dict | None) -> float | None:
+    if not event or not event.get("created_at"):
+        return None
+    created = event["created_at"]
+    if isinstance(created, str):
+        try:
+            created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created.astimezone(timezone.utc)).total_seconds()
+
+
+def _readiness_with_sync_error(readiness: dict, message: str) -> dict:
+    updated = dict(readiness)
+    errors = list(updated.get("errors") or [])
+    errors.append(_readiness_error("sync", "sync_failed", message))
+    updated["state"] = "sync_failed"
+    updated["label"] = "sync failed"
+    updated["detail"] = message
+    updated["next_action"] = "sync_intune"
+    updated["errors"] = errors
+    return updated
+
+
+def _should_auto_sync_after_upload(readiness: dict) -> bool:
+    return (
+        readiness.get("state") == "upload_submitted"
+        and readiness.get("next_action") == "sync_intune"
+        and (readiness.get("cache") or {}).get("status") in {"missing", "stale", "expired"}
+        and not (readiness.get("autopilot") or {}).get("device_id")
+    )
+
+
+def _maybe_auto_sync_after_upload(conn, run: dict, heartbeat: dict | None, readiness: dict) -> dict:
+    if not _should_auto_sync_after_upload(readiness):
+        return readiness
+
+    latest_event = _latest_auto_sync_event(conn, run["run_id"])
+    latest_age = _event_age_seconds(latest_event)
+    latest_type = str((latest_event or {}).get("event_type") or "")
+    if latest_age is not None and latest_age < 600:
+        if latest_type == "autopilot_cache_auto_sync_failed":
+            message = str((latest_event.get("data_json") or {}).get("error") or "Cloud device sync failed")
+            return _readiness_with_sync_error(readiness, message)
+        return readiness
+
+    cloudosd_pg.append_event(
+        conn,
+        run_id=run["run_id"],
+        phase="AutopilotAgent",
+        event_type="autopilot_cache_auto_sync_attempted",
+        message="CloudOSD Autopilot upload completed; syncing Autopilot and Intune device cache",
+    )
+    try:
+        counts = _sync_cloud_devices_from_graph()
+    except Exception as exc:
+        message = f"Cloud device sync failed after hash upload: {exc}"
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run["run_id"],
+            phase="AutopilotAgent",
+            event_type="autopilot_cache_auto_sync_failed",
+            severity="error",
+            message=message,
+            data={"error": str(exc)},
+        )
+        failed = _readiness_with_sync_error(readiness, message)
+        cloudosd_pg.upsert_autopilot_readiness(
+            conn,
+            run_id=run["run_id"],
+            state=failed["state"],
+            expected_group_tag=failed.get("expected_group_tag"),
+            hash_status=(failed.get("hash") or {}).get("status"),
+            hash_filename=(failed.get("hash") or {}).get("filename"),
+            hash_sha256=(failed.get("hash") or {}).get("sha256"),
+            hash_serial=(failed.get("hash") or {}).get("serial"),
+            upload_status=(failed.get("upload") or {}).get("status"),
+            upload_job_id=(failed.get("upload") or {}).get("job_id"),
+            upload_started_at=_parse_timestamp((failed.get("upload") or {}).get("started_at")),
+            upload_finished_at=_parse_timestamp((failed.get("upload") or {}).get("finished_at")),
+            upload_error=(failed.get("upload") or {}).get("error"),
+            autopilot_device_id=(failed.get("autopilot") or {}).get("device_id"),
+            imported_serial=(failed.get("autopilot") or {}).get("serial"),
+            imported_group_tag=(failed.get("assignment") or {}).get("actual_group_tag"),
+            assignment_status=(failed.get("assignment") or {}).get("status"),
+            enrollment_status=(failed.get("enrollment") or {}).get("status"),
+            contact_state=(failed.get("contact") or {}).get("state"),
+            cache_status=(failed.get("cache") or {}).get("status"),
+            cache_synced_at=_parse_timestamp((failed.get("cache") or {}).get("synced_at")),
+            errors=failed.get("errors") or [],
+        )
+        return failed
+
+    cloudosd_pg.append_event(
+        conn,
+        run_id=run["run_id"],
+        phase="AutopilotAgent",
+        event_type="autopilot_cache_auto_sync_complete",
+        message="CloudOSD Autopilot and Intune device cache synced after hash upload",
+        data={"counts": counts},
+    )
+    return autopilot_readiness_for_run(
+        conn,
+        run,
+        heartbeat,
+        allow_auto_sync=False,
+    )
+
+
+def _prefer_hash_file(hash_files: list[dict], preferred_hash_filename: str) -> list[dict]:
+    preferred = Path(preferred_hash_filename or "").name
+    if not preferred:
+        return hash_files
+    return sorted(
+        hash_files,
+        key=lambda item: 0 if item.get("name") == preferred else 1,
+    )
+
+
+def autopilot_readiness_for_run(
+    conn,
+    run: dict,
+    heartbeat: dict | None = None,
+    *,
+    allow_auto_sync: bool = True,
+    preferred_hash_filename: str | None = None,
+) -> dict:
     evidence = intune_evidence_for_run(run, heartbeat)
     hash_files = evidence.get("hash", {}).get("files") or []
+    attempt = cloudosd_pg.latest_autopilot_upload_attempt(conn, run["run_id"])
+    preferred_name = preferred_hash_filename or str((attempt or {}).get("hash_filename") or "")
+    if preferred_name:
+        hash_files = _prefer_hash_file(hash_files, preferred_name)
+        evidence.setdefault("hash", {})["files"] = hash_files
     selected_hash = hash_files[0] if hash_files else {}
     hash_filename = selected_hash.get("name")
     hash_serial = selected_hash.get("serial")
     hash_status = "captured" if hash_filename else "missing"
     expected_group_tag = str(run.get("vm_group_tag") or "").strip()
-    attempt = cloudosd_pg.latest_autopilot_upload_attempt(conn, run["run_id"])
     upload_job = None
     upload_status = "not_started"
     upload_error = None
@@ -787,6 +945,8 @@ def autopilot_readiness_for_run(conn, run: dict, heartbeat: dict | None = None) 
         cache_synced_at=cache_synced_at,
         errors=errors,
     )
+    if allow_auto_sync:
+        return _maybe_auto_sync_after_upload(conn, run, heartbeat, readiness)
     return readiness
 
 
@@ -935,13 +1095,15 @@ def provision_progress_for_run(conn, run: dict) -> dict:
     }
 
 
-def provision_progress_payload(limit: int = 50) -> dict:
+def provision_progress_payload(limit: int = 50, include_archived: bool = False) -> dict:
     limit = max(1, min(int(limit or 50), 100))
     with _conn() as conn:
-        runs = [
-            run for run in cloudosd_pg.list_runs(conn, limit=limit * 4)
-            if (run.get("source_surface") or "") == "provision"
-        ][:limit]
+        runs = cloudosd_pg.list_runs(
+            conn,
+            limit=limit,
+            include_archived=include_archived,
+            source_surface="provision",
+        )
         rows = [provision_progress_for_run(conn, run) for run in runs]
     return {
         "schema_version": 1,
@@ -1750,17 +1912,59 @@ def create_run(body: RunCreateBody):
 
 
 @router.get("/runs")
-def list_runs(limit: int = 100):
+def list_runs(limit: int = 100, include_archived: bool = False):
     with _conn() as conn:
         return {
             "schema_version": 1,
-            "runs": cloudosd_pg.list_runs(conn, limit=limit),
+            "runs": cloudosd_pg.list_runs(
+                conn,
+                limit=limit,
+                include_archived=include_archived,
+            ),
         }
 
 
 @router.get("/provision/progress")
-def cloudosd_provision_progress(limit: int = 50):
-    return provision_progress_payload(limit=limit)
+def cloudosd_provision_progress(limit: int = 50, include_archived: bool = False):
+    return provision_progress_payload(limit=limit, include_archived=include_archived)
+
+
+@router.post("/runs/{run_id}/archive")
+def archive_run(run_id: str, reason: str = ""):
+    with _conn() as conn:
+        run = cloudosd_pg.archive_run(
+            conn,
+            run_id,
+            archived_by="operator",
+            reason=reason,
+        )
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run_id,
+            phase="controller",
+            event_type="run_archived",
+            message="CloudOSD run hidden from default history",
+            data={"reason": reason or ""},
+        )
+        return {"ok": True, "run": run}
+
+
+@router.post("/runs/{run_id}/unarchive")
+def unarchive_run(run_id: str):
+    with _conn() as conn:
+        run = cloudosd_pg.unarchive_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run_id,
+            phase="controller",
+            event_type="run_unarchived",
+            message="CloudOSD run restored to default history",
+        )
+        return {"ok": True, "run": run}
 
 
 @router.get("/runs/{run_id}")
@@ -1827,6 +2031,11 @@ def _sync_cloud_devices_from_graph() -> dict:
     from web import app as web_app
     from web import devices_pg as devices_db
 
+    sync_error = ""
+    try:
+        web_app._graph_api("/deviceManagement/windowsAutopilotSettings/sync", method="POST")
+    except Exception as exc:
+        sync_error = str(exc)
     ap = web_app._graph_api_all("/deviceManagement/windowsAutopilotDeviceIdentities") or []
     it = web_app._graph_api_all("/deviceManagement/managedDevices") or []
     en = web_app._graph_api_all("/devices") or []
@@ -1834,7 +2043,12 @@ def _sync_cloud_devices_from_graph() -> dict:
     devices_db.upsert_autopilot(ap)
     devices_db.upsert_intune(it)
     devices_db.upsert_entra(en)
-    return {"autopilot": len(ap), "intune": len(it), "entra": len(en)}
+    return {
+        "autopilot": len(ap),
+        "intune": len(it),
+        "entra": len(en),
+        "autopilot_service_sync_error": sync_error,
+    }
 
 
 def _readiness_response(conn, run: dict, heartbeat: dict | None = None, **extra) -> dict:
@@ -1853,11 +2067,17 @@ def _queue_autopilot_hash_upload(
     heartbeat: dict | None = None,
     *,
     source: str = "cloudosd_autopilot_readiness",
+    preferred_hash_filename: str | None = None,
 ) -> dict:
     from web import app as web_app
 
-    readiness = autopilot_readiness_for_run(conn, run, heartbeat)
-    hash_filename = readiness.get("hash", {}).get("filename")
+    readiness = autopilot_readiness_for_run(
+        conn,
+        run,
+        heartbeat,
+        preferred_hash_filename=preferred_hash_filename,
+    )
+    hash_filename = preferred_hash_filename or readiness.get("hash", {}).get("filename")
     if not hash_filename:
         raise HTTPException(status_code=409, detail="CloudOSD run has no captured Autopilot hash yet")
     if Path(hash_filename).name != hash_filename:
@@ -1918,7 +2138,12 @@ def _queue_autopilot_hash_upload(
         message="CloudOSD Autopilot hash upload queued",
         data={"job_id": job["id"], "hash_filename": hash_filename, "source": source},
     )
-    readiness = autopilot_readiness_for_run(conn, run, heartbeat)
+    readiness = autopilot_readiness_for_run(
+        conn,
+        run,
+        heartbeat,
+        preferred_hash_filename=hash_filename,
+    )
     return {
         "queued": True,
         "job_id": job["id"],
@@ -1927,7 +2152,7 @@ def _queue_autopilot_hash_upload(
     }
 
 
-def auto_queue_autopilot_hash_upload(run_id: str) -> dict:
+def auto_queue_autopilot_hash_upload(run_id: str, *, hash_filename: str | None = None) -> dict:
     try:
         with _conn() as conn:
             run = cloudosd_pg.get_run(conn, run_id)
@@ -1943,6 +2168,7 @@ def auto_queue_autopilot_hash_upload(run_id: str) -> dict:
                 run,
                 heartbeat,
                 source="cloudosd_v2_hash_capture",
+                preferred_hash_filename=hash_filename,
             )
             return {
                 "queued": bool(result.get("queued")),

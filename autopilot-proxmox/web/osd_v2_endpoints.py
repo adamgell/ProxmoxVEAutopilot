@@ -214,7 +214,7 @@ def _persist_autopilot_hash(
     hardware_hash: str,
     group_tag: str = "",
     source: str = "osd-v2",
-) -> None:
+) -> str:
     from web import app as web_app
 
     web_app.HASH_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,6 +243,7 @@ def _persist_autopilot_hash(
             row.append(group_tag)
         writer.writerow(header)
         writer.writerow(row)
+    return out.name
 
 
 def _sync_cloudosd_after_step_result(
@@ -364,7 +365,7 @@ def post_agent_hash(body: HashBody, payload: dict = Depends(_require_bearer)):
     vmid = run.get("vmid")
     if vmid is None:
         raise HTTPException(status_code=404, detail="run not found or no vmid yet")
-    _persist_autopilot_hash(
+    hash_filename = _persist_autopilot_hash(
         vmid=int(vmid),
         serial=body.serial_number,
         product_id=body.product_id,
@@ -375,12 +376,15 @@ def post_agent_hash(body: HashBody, payload: dict = Depends(_require_bearer)):
     try:
         from web import cloudosd_endpoints
 
-        upload = cloudosd_endpoints.auto_queue_autopilot_hash_upload(run_id)
+        upload = cloudosd_endpoints.auto_queue_autopilot_hash_upload(
+            run_id,
+            hash_filename=hash_filename,
+        )
     except Exception:
         upload = {"queued": False, "reason": "upload_queue_error"}
     if upload.get("reason") == "not_cloudosd_run":
-        return {"ok": True}
-    return {"ok": True, "autopilot_upload": upload}
+        return {"ok": True, "hash_filename": hash_filename}
+    return {"ok": True, "hash_filename": hash_filename, "autopilot_upload": upload}
 
 
 @router.post("/agent/register")
