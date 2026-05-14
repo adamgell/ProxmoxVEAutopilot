@@ -116,6 +116,68 @@ def test_cloudosd_run_detail_renders_autopilot_readiness_section():
     assert "/api/cloudosd/runs/${encodeURIComponent(runId)}/autopilot/${action}" in template
 
 
+def test_provision_page_defaults_to_cloudosd_for_desktop_clients():
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/provision.html"
+    ).read_text(encoding="utf-8")
+
+    assert "primary Windows desktop client path" in template
+    assert (
+        '<option value="cloudosd" selected>CloudOSD (Windows desktop clients)</option>'
+        in template
+    )
+    assert "WinPE (Windows Server / image apply)" in template
+    assert "Clone (Windows Server / template builds)" in template
+    assert template.index('<option value="cloudosd" selected>') < template.index(
+        '<option value="winpe">'
+    )
+    assert template.index('<option value="winpe">') < template.index(
+        '<option value="clone">'
+    )
+    assert 'data-boot-section="cloudosd" hidden' not in template
+    assert '<tbody data-boot-section="cloudosd">' in template
+
+
+def test_build_nav_prioritizes_cloudosd_desktop_cockpit():
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/base.html"
+    ).read_text(encoding="utf-8")
+
+    dropdown = template[
+        template.index('id="nav-dd-provision"') : template.index(
+            "</ul>", template.index('id="nav-dd-provision"')
+        )
+    ]
+    assert dropdown.index('href="/cloudosd">CloudOSD Desktop') < dropdown.index(
+        'href="/provision">Provision VMs'
+    )
+
+    drawer = template[
+        template.index('<span class="nav-drawer-group-label">Provision</span>')
+        : template.index('<span class="nav-drawer-group-label">Fleet</span>')
+    ]
+    assert drawer.index('href="/cloudosd"') < drawer.index('href="/provision"')
+    assert "CloudOSD Desktop" in drawer
+
+    rail = template[
+        template.index('<span class="cockpit-rail-label">Build</span>')
+        : template.index('<span class="cockpit-rail-label">Fleet</span>')
+    ]
+    assert '<span aria-hidden="true">05</span>CloudOSD Desktop' in rail
+    assert '<span aria-hidden="true">06</span>Provision VMs' in rail
+    assert rail.index('data-route="/cloudosd"') < rail.index('data-route="/provision"')
+
+
+def test_cloudosd_cockpit_copy_positions_desktop_factory():
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/cloudosd.html"
+    ).read_text(encoding="utf-8")
+
+    assert "Windows desktop deployment cockpit" in template
+    assert "primary client deployment path" in template
+    assert "WinPE and Clone stay available for Windows Server" in template
+
+
 def test_cockpit_shell_has_light_mode_tokens(web_client: TestClient, monkeypatch):
     from web import app as web_app
 

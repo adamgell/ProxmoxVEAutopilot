@@ -1728,7 +1728,13 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
     assert response.status_code == 200, response.text
     body = response.text
     assert body.index('name="boot_mode"') < body.index('name="sequence_id"')
-    assert '<option value="cloudosd">CloudOSD' in body
+    assert (
+        '<option value="cloudosd" selected>CloudOSD (Windows desktop clients)</option>'
+        in body
+    )
+    assert body.index('<option value="cloudosd" selected>') < body.index(
+        '<option value="winpe">'
+    )
     assert 'data-boot-section="cloudosd"' in body
     assert "CloudOSD blank uses a plain generated serial" in body
     assert f'value="{artifact["id"]}"' in body

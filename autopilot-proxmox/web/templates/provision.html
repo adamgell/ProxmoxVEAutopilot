@@ -2,7 +2,7 @@
 {% from "_macros.html" import page_head %}
 {% block title %}Provision VMs - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-{{ page_head("Provision VMs", "Clone, WinPE, or batch CloudOSD stage new virtual machines with sequence, OEM, identity, and hardware controls.") }}
+{{ page_head("Provision VMs", "CloudOSD is the primary Windows desktop client path; WinPE and Clone stay available for Windows Server and fallback builds.") }}
 <section class="cockpit-grid" style="margin-bottom:14px;">
   <div class="cockpit-metric cockpit-col-4 cockpit-scanline">
     <div class="cockpit-metric-label">Template VMID</div>
@@ -20,7 +20,7 @@
     <div class="cockpit-metric-note"><a href="/settings">Change defaults</a></div>
   </div>
 </section>
-<p class="subtitle">Provision VMs from Template. Fields are pre-filled from <a href="/settings">Settings</a>; override here for this run only.</p>
+<p class="subtitle">Launch CloudOSD desktop clients first. Use WinPE for Windows Server image-apply builds and Clone for Windows Server template builds. Fields are pre-filled from <a href="/settings">Settings</a>; override here for this run only.</p>
 
 <form method="POST" action="/api/jobs/provision">
 <table border="0" cellpadding="3">
@@ -28,12 +28,13 @@
   <td><b>Boot mode:</b></td>
   <td>
     <select name="boot_mode" id="provision-boot-mode">
-      <option value="clone" selected>Clone (default)</option>
-      <option value="winpe">WinPE (blank-disk image-apply)</option>
-      <option value="cloudosd">CloudOSD (batch OSDCloud deploy)</option>
+      <option value="cloudosd" selected>CloudOSD (Windows desktop clients)</option>
+      <option value="winpe">WinPE (Windows Server / image apply)</option>
+      <option value="clone">Clone (Windows Server / template builds)</option>
     </select>
     <small style="color:var(--ink-soft);">
       CloudOSD launches blank Proxmox VMs from the selected PE artifact and waits for AutopilotAgent heartbeat-gated completion.
+      Switch to WinPE or Clone for Windows Server workflows that should not use OSDCloud.
       {% if not winpe_enabled %}WinPE is visible but still requires WinPE inventory settings before launch.{% endif %}
     </small>
   </td>
@@ -116,7 +117,7 @@
   <td><input type="text" name="group_tag" value="{{ defaults.group_tag }}" size="30">
     <small style="color:var(--ink-soft);">default: {{ defaults.group_tag or '—' }}</small></td>
 </tr>
-<tbody data-boot-section="cloudosd" hidden>
+<tbody data-boot-section="cloudosd">
 <tr>
   <td><b>CloudOSD artifact:</b></td>
   <td>
@@ -241,7 +242,7 @@
 
 <section class="panel" data-cloudosd-batch-progress style="margin-top:16px;">
   <h2>CloudOSD Batch Progress</h2>
-  <p class="subtitle">Recent `/provision` CloudOSD runs, one row per VM. Progress updates poll the CloudOSD controller without changing clone or WinPE behavior.</p>
+  <p class="subtitle">Recent `/provision` CloudOSD desktop runs, one row per VM. Progress updates poll the CloudOSD controller without changing Clone or WinPE Windows Server behavior.</p>
   <div class="cloudosd-progress-wrap">
     <table class="cloudosd-progress-table">
       <thead>
