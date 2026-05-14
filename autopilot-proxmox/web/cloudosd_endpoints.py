@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
+from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, cloudosd_pg, osd_package, winpe_token
@@ -1846,6 +1847,123 @@ def _readiness_response(conn, run: dict, heartbeat: dict | None = None, **extra)
     }
 
 
+def _queue_autopilot_hash_upload(
+    conn,
+    run: dict,
+    heartbeat: dict | None = None,
+    *,
+    source: str = "cloudosd_autopilot_readiness",
+) -> dict:
+    from web import app as web_app
+
+    readiness = autopilot_readiness_for_run(conn, run, heartbeat)
+    hash_filename = readiness.get("hash", {}).get("filename")
+    if not hash_filename:
+        raise HTTPException(status_code=409, detail="CloudOSD run has no captured Autopilot hash yet")
+    if Path(hash_filename).name != hash_filename:
+        raise HTTPException(status_code=409, detail="CloudOSD hash filename is invalid")
+    autopilot_device_id = readiness.get("autopilot", {}).get("device_id")
+    if autopilot_device_id:
+        return {
+            "queued": False,
+            "job_id": None,
+            "reason": "autopilot_device_already_imported",
+            "autopilot_readiness": readiness,
+        }
+    existing_status = str(readiness.get("upload", {}).get("status") or "")
+    existing_job_id = readiness.get("upload", {}).get("job_id")
+    if existing_status in {"pending", "queued", "running"}:
+        return {
+            "queued": False,
+            "job_id": existing_job_id,
+            "reason": "upload_already_active",
+            "autopilot_readiness": readiness,
+        }
+    hash_file = web_app.HASH_DIR / hash_filename
+    if not hash_file.is_file():
+        raise HTTPException(status_code=409, detail=f"CloudOSD hash file is missing: {hash_filename}")
+    cmd = [
+        "ansible-playbook",
+        str(web_app.PLAYBOOK_DIR / "upload_hashes.yml"),
+        "-e",
+        f"hash_file={hash_file}",
+    ]
+    group_tag = str(run.get("vm_group_tag") or "").strip()
+    if group_tag:
+        cmd += ["-e", f"vm_group_tag={group_tag}"]
+    job = web_app.job_manager.start(
+        "upload_hash",
+        cmd,
+        args={
+            "cloudosd_run_id": run["run_id"],
+            "vmid": run.get("vmid"),
+            "file": hash_filename,
+            "group_tag": group_tag,
+            "source": source,
+        },
+    )
+    cloudosd_pg.record_autopilot_upload_attempt(
+        conn,
+        run_id=run["run_id"],
+        job_id=job["id"],
+        hash_filename=hash_filename,
+        expected_group_tag=group_tag,
+        status="queued",
+    )
+    cloudosd_pg.append_event(
+        conn,
+        run_id=run["run_id"],
+        phase="AutopilotAgent",
+        event_type="autopilot_hash_upload_queued",
+        message="CloudOSD Autopilot hash upload queued",
+        data={"job_id": job["id"], "hash_filename": hash_filename, "source": source},
+    )
+    readiness = autopilot_readiness_for_run(conn, run, heartbeat)
+    return {
+        "queued": True,
+        "job_id": job["id"],
+        "reason": "queued",
+        "autopilot_readiness": readiness,
+    }
+
+
+def auto_queue_autopilot_hash_upload(run_id: str) -> dict:
+    try:
+        with _conn() as conn:
+            run = cloudosd_pg.get_run(conn, run_id)
+            if not run:
+                return {"queued": False, "reason": "not_cloudosd_run"}
+            try:
+                heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+            except pg_errors.UndefinedTable:
+                conn.rollback()
+                heartbeat = None
+            result = _queue_autopilot_hash_upload(
+                conn,
+                run,
+                heartbeat,
+                source="cloudosd_v2_hash_capture",
+            )
+            return {
+                "queued": bool(result.get("queued")),
+                "job_id": result.get("job_id"),
+                "reason": result.get("reason"),
+                "state": (result.get("autopilot_readiness") or {}).get("state"),
+            }
+    except HTTPException as exc:
+        return {
+            "queued": False,
+            "reason": "upload_not_queued",
+            "status_code": exc.status_code,
+            "error": exc.detail,
+        }
+    except pg_errors.UndefinedTable:
+        return {"queued": False, "reason": "not_cloudosd_run"}
+    except Exception as exc:
+        logger.exception("failed to auto-queue CloudOSD Autopilot hash upload for %s", run_id)
+        return {"queued": False, "reason": "upload_queue_error", "error": str(exc)}
+
+
 @router.get("/runs/{run_id}/autopilot/readiness")
 def get_autopilot_readiness(run_id: str):
     with _conn() as conn:
@@ -1884,62 +2002,18 @@ def sync_autopilot_readiness(run_id: str):
 
 @router.post("/runs/{run_id}/autopilot/upload", status_code=202)
 def upload_autopilot_hash(run_id: str):
-    from web import app as web_app
-
     with _conn() as conn:
         run = cloudosd_pg.get_run(conn, run_id)
         if not run:
             raise HTTPException(status_code=404, detail="CloudOSD run not found")
         heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
-        readiness = autopilot_readiness_for_run(conn, run, heartbeat)
-        hash_filename = readiness.get("hash", {}).get("filename")
-        if not hash_filename:
-            raise HTTPException(status_code=409, detail="CloudOSD run has no captured Autopilot hash yet")
-        if Path(hash_filename).name != hash_filename:
-            raise HTTPException(status_code=409, detail="CloudOSD hash filename is invalid")
-        existing_status = str(readiness.get("upload", {}).get("status") or "")
-        if existing_status in {"pending", "queued", "running"}:
-            return _readiness_response(conn, run, heartbeat)
-        hash_file = web_app.HASH_DIR / hash_filename
-        if not hash_file.is_file():
-            raise HTTPException(status_code=409, detail=f"CloudOSD hash file is missing: {hash_filename}")
-        cmd = [
-            "ansible-playbook",
-            str(web_app.PLAYBOOK_DIR / "upload_hashes.yml"),
-            "-e",
-            f"hash_file={hash_file}",
-        ]
-        group_tag = str(run.get("vm_group_tag") or "").strip()
-        if group_tag:
-            cmd += ["-e", f"vm_group_tag={group_tag}"]
-        job = web_app.job_manager.start(
-            "upload_hash",
-            cmd,
-            args={
-                "cloudosd_run_id": run_id,
-                "vmid": run.get("vmid"),
-                "file": hash_filename,
-                "group_tag": group_tag,
-                "source": "cloudosd_autopilot_readiness",
-            },
-        )
-        cloudosd_pg.record_autopilot_upload_attempt(
-            conn,
-            run_id=run_id,
-            job_id=job["id"],
-            hash_filename=hash_filename,
-            expected_group_tag=group_tag,
-            status="queued",
-        )
-        cloudosd_pg.append_event(
-            conn,
-            run_id=run_id,
-            phase="AutopilotAgent",
-            event_type="autopilot_hash_upload_queued",
-            message="CloudOSD Autopilot hash upload queued",
-            data={"job_id": job["id"], "hash_filename": hash_filename},
-        )
-        return _readiness_response(conn, run, heartbeat, job_id=job["id"])
+        result = _queue_autopilot_hash_upload(conn, run, heartbeat)
+        return {
+            "ok": True,
+            "run_id": run["run_id"],
+            "autopilot_readiness": result["autopilot_readiness"],
+            "job_id": result.get("job_id"),
+        }
 
 
 @router.post("/runs/{run_id}/autopilot/retry-upload", status_code=202)

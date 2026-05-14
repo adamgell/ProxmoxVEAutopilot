@@ -372,7 +372,15 @@ def post_agent_hash(body: HashBody, payload: dict = Depends(_require_bearer)):
         group_tag=str(body.group_tag or ""),
         source="osd-v2",
     )
-    return {"ok": True}
+    try:
+        from web import cloudosd_endpoints
+
+        upload = cloudosd_endpoints.auto_queue_autopilot_hash_upload(run_id)
+    except Exception:
+        upload = {"queued": False, "reason": "upload_queue_error"}
+    if upload.get("reason") == "not_cloudosd_run":
+        return {"ok": True}
+    return {"ok": True, "autopilot_upload": upload}
 
 
 @router.post("/agent/register")

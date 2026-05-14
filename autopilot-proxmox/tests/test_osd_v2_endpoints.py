@@ -294,6 +294,79 @@ def test_v2_agent_hash_persists_hash_for_uuid_run(
     assert files[0].name.endswith("-osd-v2_hwid.csv")
 
 
+def test_cloudosd_v2_agent_hash_queues_autopilot_upload(
+    osd_v2_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import app as web_app
+    from web import cloudosd_pg, jobs_pg, winpe_token
+
+    jobs_pg.reset_for_tests(pg_conn)
+    jobs_pg.init(pg_conn)
+    cloudosd_pg.reset_for_tests(pg_conn)
+    cloudosd_pg.init(pg_conn)
+    monkeypatch.setattr(web_app, "HASH_DIR", tmp_path)
+    artifact = cloudosd_pg.create_artifact(
+        pg_conn,
+        architecture="amd64",
+        osdcloud_module_version="26.4.17.1",
+        build_sha="osdv2autopilot",
+        iso_path="/app/output/cloudosd-autopilot-amd64-osdv2autopilot.iso",
+        wim_path="/app/output/cloudosd-autopilot-amd64-osdv2autopilot.wim",
+        manifest_path="/app/output/cloudosd-autopilot-amd64-osdv2autopilot.json",
+        iso_sha256="a" * 64,
+        wim_sha256="b" * 64,
+        built_by_host="Adam.Gell@10.211.55.6",
+        proxmox_volid="local:iso/cloudosd-autopilot-amd64-osdv2autopilot.iso",
+    )
+    run = cloudosd_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="Gell-247-AP1",
+        node="pve",
+        storage="local-lvm",
+        network_bridge="vmbr0",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=247,
+        vm_uuid="dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f2",
+        node="pve",
+        computer_name="Gell-247-AP1",
+    )
+    token = winpe_token.sign(run_id=run["run_id"], ttl_seconds=60)
+
+    response = osd_v2_client.post(
+        "/osd/v2/agent/hash",
+        headers=_bearer(token),
+        json={
+            "serial_number": "Gell-247-AP1",
+            "product_id": "PRODUCT-ID",
+            "hardware_hash": "HASH-VALUE",
+            "group_tag": "GellNative",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["autopilot_upload"]["queued"] is True
+    assert body["autopilot_upload"]["job_id"]
+    files = list(tmp_path.glob("*.csv"))
+    assert len(files) == 1
+    job = jobs_pg.get_job(body["autopilot_upload"]["job_id"])
+    assert job["job_type"] == "upload_hash"
+    assert job["args"]["cloudosd_run_id"] == run["run_id"]
+    assert job["args"]["vmid"] == 247
+    assert job["args"]["file"] == files[0].name
+    assert job["args"]["group_tag"] == "GellNative"
+
+
 @pytest.mark.parametrize(
     "path",
     [
