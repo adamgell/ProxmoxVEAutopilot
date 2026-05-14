@@ -91,9 +91,6 @@ CREATE TABLE IF NOT EXISTS cloudosd_runs (
 CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_state
     ON cloudosd_runs(state, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_archive
-    ON cloudosd_runs(archived_at, state, updated_at DESC, created_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_identity
     ON cloudosd_runs(vm_uuid, mac)
     WHERE vm_uuid IS NOT NULL AND mac IS NOT NULL;
