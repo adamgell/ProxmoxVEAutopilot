@@ -41,6 +41,7 @@ DEFAULT_LIMITS = [
     ("cloudosd_build_iso", 1),
     ("provision_cloudosd", 4),
     ("hash_capture", 5),
+    ("upload_hash", 5),
     ("upload_after_capture", 5),
     ("retry_inject_hash", 3),
 ]

@@ -21,7 +21,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 @pytest.fixture
 def cloudosd_client(pg_conn, monkeypatch):
-    from web import agent_telemetry_pg, cloudosd_pg, sequences_pg, ts_engine_pg
+    from web import agent_telemetry_pg, cloudosd_pg, devices_pg, jobs_pg, sequences_pg, ts_engine_pg
 
     sequences_pg.reset_for_tests(pg_conn)
     sequences_pg.init(pg_conn)
@@ -29,6 +29,10 @@ def cloudosd_client(pg_conn, monkeypatch):
     ts_engine_pg.init(pg_conn)
     agent_telemetry_pg.reset_for_tests(pg_conn)
     agent_telemetry_pg.init(pg_conn)
+    devices_pg.reset_for_tests(pg_conn)
+    devices_pg.init(pg_conn)
+    jobs_pg.reset_for_tests(pg_conn)
+    jobs_pg.init(pg_conn)
     cloudosd_pg.reset_for_tests(pg_conn)
     cloudosd_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
@@ -861,6 +865,247 @@ def test_cloudosd_run_flags_autopilot_group_tag_mismatch(
     ]
 
 
+def test_cloudosd_autopilot_readiness_upload_is_run_bound(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T030303Z-vm247-Gell-247-AP1-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-247-AP1,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-247-AP1",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=247,
+        vm_uuid="dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f2",
+        node="pve",
+        computer_name="Gell-247-AP1",
+    )
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail.status_code == 200, detail.text
+    readiness = detail.json()["autopilot_readiness"]
+    assert readiness["state"] == "hash_captured"
+    assert readiness["hash"]["filename"] == "20260514T030303Z-vm247-Gell-247-AP1-osd-v2_hwid.csv"
+    assert readiness["next_action"] == "upload_hash"
+    assert readiness["upload"]["status"] == "not_started"
+
+    upload = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/autopilot/upload")
+    assert upload.status_code == 202, upload.text
+    body = upload.json()
+    assert body["ok"] is True
+    assert body["autopilot_readiness"]["state"] == "upload_queued"
+    assert body["autopilot_readiness"]["upload"]["job_id"]
+
+    job = jobs_pg.get_job(body["autopilot_readiness"]["upload"]["job_id"])
+    assert job["job_type"] == "upload_hash"
+    assert job["args"]["cloudosd_run_id"] == run["run_id"]
+    assert job["args"]["vmid"] == 247
+    assert job["args"]["file"] == "20260514T030303Z-vm247-Gell-247-AP1-osd-v2_hwid.csv"
+    assert job["args"]["group_tag"] == "GellNative"
+
+    detail_after = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail_after.status_code == 200, detail_after.text
+    assert detail_after.json()["autopilot_readiness"]["state"] == "upload_queued"
+
+
+def test_cloudosd_autopilot_readiness_surfaces_failed_upload(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T040404Z-vm248-Gell-248-AP2-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-248-AP2,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-248-AP2",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=248,
+        vm_uuid="eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f3",
+        node="pve",
+        computer_name="Gell-248-AP2",
+    )
+    upload = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/autopilot/upload")
+    assert upload.status_code == 202, upload.text
+    job_id = upload.json()["autopilot_readiness"]["upload"]["job_id"]
+    (Path(web_app.job_manager.jobs_dir) / f"{job_id}.log").write_text(
+        "FAILED: selected hash upload - invalid client secret\n",
+        encoding="utf-8",
+    )
+    pg_conn.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed', exit_code = 1, ended_at = now()
+        WHERE id = %s
+        """,
+        (job_id,),
+    )
+    pg_conn.commit()
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail.status_code == 200, detail.text
+    readiness = detail.json()["autopilot_readiness"]
+    assert readiness["state"] == "upload_failed"
+    assert readiness["next_action"] == "retry_upload"
+    assert readiness["upload"]["status"] == "failed"
+    assert "invalid client secret" in readiness["upload"]["error"]
+    assert readiness["errors"][0]["code"] == "upload_failed"
+
+
+def test_cloudosd_autopilot_readiness_sync_reconciles_import_and_assignment(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T050505Z-vm249-Gell-249-AP3-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-249-AP3,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-249-AP3",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=249,
+        vm_uuid="ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f4",
+        node="pve",
+        computer_name="Gell-249-AP3",
+    )
+
+    def fake_graph_all(path):
+        if path == "/deviceManagement/windowsAutopilotDeviceIdentities":
+            return [{
+                "id": "ap-249",
+                "serialNumber": "Gell-249-AP3",
+                "groupTag": "GellNative",
+                "deploymentProfileAssignmentStatus": "assignedInSync",
+                "enrollmentState": "enrolled",
+                "lastContactedDateTime": "2026-05-14T05:10:00Z",
+                "displayName": "GELL-249-AP3",
+            }]
+        if path == "/deviceManagement/managedDevices":
+            return [{
+                "id": "intune-249",
+                "serialNumber": "Gell-249-AP3",
+                "deviceName": "GELL-249-AP3",
+                "operatingSystem": "Windows",
+                "managementState": "managed",
+                "lastSyncDateTime": "2026-05-14T05:11:00Z",
+                "enrolledDateTime": "2026-05-14T05:09:00Z",
+            }]
+        if path == "/devices":
+            return []
+        raise AssertionError(path)
+
+    monkeypatch.setattr(web_app, "_graph_api_all", fake_graph_all)
+
+    synced = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/autopilot/sync")
+    assert synced.status_code == 200, synced.text
+    readiness = synced.json()["autopilot_readiness"]
+    assert readiness["state"] == "enrolled"
+    assert readiness["autopilot"]["device_id"] == "ap-249"
+    assert readiness["assignment"]["status"] == "assignedInSync"
+    assert readiness["assignment"]["group_tag_match"] is True
+    assert readiness["enrollment"]["status"] == "enrolled"
+    assert readiness["contact"]["state"] == "enrolled"
+    assert readiness["errors"] == []
+
+
+def test_cloudosd_autopilot_readiness_tracks_imported_before_assignment(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, devices_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T060606Z-vm250-Gell-250-AP4-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-250-AP4,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-250-AP4",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=250,
+        vm_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f5",
+        node="pve",
+        computer_name="Gell-250-AP4",
+    )
+    devices_pg.upsert_autopilot([
+        {
+            "id": "ap-250",
+            "serialNumber": "Gell-250-AP4",
+            "groupTag": "GellNative",
+            "deploymentProfileAssignmentStatus": "notAssigned",
+            "enrollmentState": "notContacted",
+            "displayName": "GELL-250-AP4",
+        }
+    ])
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+
+    assert detail.status_code == 200, detail.text
+    readiness = detail.json()["autopilot_readiness"]
+    assert readiness["state"] == "imported"
+    assert readiness["next_action"] == "wait_for_assignment"
+    assert readiness["autopilot"]["device_id"] == "ap-250"
+    assert readiness["assignment"]["status"] == "notAssigned"
+    assert readiness["assignment"]["group_tag_match"] is True
+
+
 def test_cloudosd_pe_register_rejects_wrong_identity(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
     run = cloudosd_client.post(
@@ -1459,6 +1704,7 @@ def test_cloudosd_job_caps_and_public_bridge_routes_are_additive(pg_conn):
     caps = {r["job_type"]: r["max_concurrent"] for r in jobs_pg.list_job_type_limits()}
     assert caps["cloudosd_build_iso"] == 1
     assert caps["provision_cloudosd"] == 4
+    assert caps["upload_hash"] == 5
     assert caps["provision_clone"] == 3
 
     assert auth.is_exempt_path("/api/cloudosd/pe/register")
@@ -1690,6 +1936,10 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     assert row["milestones"]["agent_heartbeat"]["state"] == "done"
     assert row["milestones"]["v2_steps_done"]["state"] == "done"
     assert row["milestones"]["intune_state"]["state"] == "done"
+    assert row["autopilot_readiness"]["state"] == "enrolled"
+    assert row["autopilot_readiness"]["autopilot"]["device_id"] == "ap-251"
+    assert row["autopilot_readiness"]["assignment"]["status"] == "assignedInSync"
+    assert row["autopilot_readiness"]["enrollment"]["status"] == "enrolled"
     assert row["intune_evidence"]["upload"]["autopilot_device_id"] == "ap-251"
     assert row["intune_evidence"]["assignment"]["status"] == "assignedInSync"
     assert row["intune_evidence"]["enrollment"]["status"] == "enrolled"
@@ -1703,7 +1953,7 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     assert "OSDCloud done" in body
     assert "Agent heartbeat" in body
     assert "v2 steps done" in body
-    assert "Intune state" in body
+    assert "Autopilot readiness" in body
     assert "Gell-251-OSD1" in body
     assert "/api/cloudosd/provision/progress" in body
 

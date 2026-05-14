@@ -2427,6 +2427,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         )
         events = cloudosd_pg.list_events(conn, run_id)
         events = cloudosd_endpoints.events_with_related_jobs(run_id, events, run)
+        autopilot_readiness = cloudosd_endpoints.autopilot_readiness_for_run(conn, run, heartbeat)
     heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
     run["heartbeat_computer_name"] = heartbeat_name
     run["name_comparison"] = cloudosd_pg.name_comparison(
@@ -2452,6 +2453,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         "v2_completion": v2_completion,
         "v2_operator_status": v2_operator_status,
         "intune_evidence": intune_evidence,
+        "autopilot_readiness": autopilot_readiness,
         "related_jobs": related_jobs,
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),

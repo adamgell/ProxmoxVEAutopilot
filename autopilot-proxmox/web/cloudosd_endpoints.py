@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from hashlib import sha256
 from contextlib import contextmanager
 from pathlib import Path
@@ -547,6 +548,247 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
     }
 
 
+def _parse_timestamp(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _cache_status(synced_at: str | None) -> str:
+    parsed = _parse_timestamp(synced_at)
+    if not parsed:
+        return "missing"
+    age_seconds = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+    if age_seconds <= 5 * 60:
+        return "fresh"
+    if age_seconds <= 15 * 60:
+        return "aging"
+    if age_seconds <= 60 * 60:
+        return "stale"
+    return "expired"
+
+
+def _hash_file_sha256(filename: str | None) -> str | None:
+    if not filename:
+        return None
+    try:
+        from web import app as web_app
+
+        candidate = web_app.HASH_DIR / Path(filename).name
+        if candidate.is_file():
+            return sha256(candidate.read_bytes()).hexdigest()
+    except Exception:
+        return None
+    return None
+
+
+def _assigned_status(value: str | None) -> bool:
+    return str(value or "").strip() in {
+        "assigned",
+        "assignedInSync",
+        "assignedUnkownSyncState",
+        "Assigned",
+        "Assigned (Synced)",
+    }
+
+
+def _job_log_tail(job_id: str | None) -> str:
+    if not job_id:
+        return ""
+    try:
+        from web import app as web_app
+
+        return (web_app.job_manager.get_log(job_id) or "")[-4000:]
+    except Exception:
+        return ""
+
+
+def _readiness_error(source: str, code: str, message: str) -> dict:
+    return {"source": source, "code": code, "message": message}
+
+
+def autopilot_readiness_for_run(conn, run: dict, heartbeat: dict | None = None) -> dict:
+    evidence = intune_evidence_for_run(run, heartbeat)
+    hash_files = evidence.get("hash", {}).get("files") or []
+    selected_hash = hash_files[0] if hash_files else {}
+    hash_filename = selected_hash.get("name")
+    hash_serial = selected_hash.get("serial")
+    hash_status = "captured" if hash_filename else "missing"
+    expected_group_tag = str(run.get("vm_group_tag") or "").strip()
+    attempt = cloudosd_pg.latest_autopilot_upload_attempt(conn, run["run_id"])
+    upload_job = None
+    upload_status = "not_started"
+    upload_error = None
+    upload_job_id = None
+    upload_started_at = None
+    upload_finished_at = None
+    if attempt:
+        upload_job_id = attempt.get("job_id")
+        upload_status = attempt.get("status") or "queued"
+        upload_started_at = attempt.get("started_at")
+        upload_finished_at = attempt.get("finished_at")
+        upload_error = attempt.get("error")
+    if upload_job_id:
+        try:
+            from web import app as web_app
+
+            upload_job = web_app.job_manager.get_job(upload_job_id)
+        except Exception:
+            upload_job = None
+        if upload_job:
+            job_status = str(upload_job.get("status") or "")
+            if job_status in {"pending", "running", "complete", "failed", "canceled"}:
+                upload_status = job_status
+            upload_started_at = upload_job.get("claimed_at") or upload_job.get("started") or upload_started_at
+            upload_finished_at = upload_job.get("ended") or upload_finished_at
+            if job_status in {"failed", "canceled"}:
+                upload_error = upload_error or _job_log_tail(upload_job_id).strip() or job_status
+
+    errors = list(evidence.get("errors") or [])
+    if upload_status in {"failed", "canceled"}:
+        errors.append(_readiness_error(
+            "upload",
+            "upload_failed",
+            upload_error or f"Upload job {upload_job_id} is {upload_status}",
+        ))
+
+    autopilot_device_id = evidence.get("upload", {}).get("autopilot_device_id")
+    imported_group_tag = evidence.get("assignment", {}).get("actual_group_tag")
+    assignment_status = evidence.get("assignment", {}).get("status") or "not_found"
+    enrollment_status = evidence.get("enrollment", {}).get("status") or "not_found"
+    contact_state = evidence.get("enrollment", {}).get("contact_state") or "not_found"
+    cache_state = _cache_status(evidence.get("cache_synced_at"))
+    cache_synced_at = _parse_timestamp(evidence.get("cache_synced_at"))
+    group_tag_match = evidence.get("assignment", {}).get("group_tag_match")
+
+    if hash_status != "captured":
+        state = "waiting_for_hash"
+        next_action = "wait_for_hash"
+    elif upload_status in {"failed", "canceled"}:
+        state = "upload_failed"
+        next_action = "retry_upload"
+    elif autopilot_device_id:
+        if group_tag_match is False:
+            state = "group_tag_mismatch"
+            next_action = "review_group_tag"
+        elif enrollment_status == "enrolled":
+            state = "enrolled"
+            next_action = "none"
+        elif contact_state not in {"", "not_found", "not_contacted"}:
+            state = "contacted"
+            next_action = "sync_intune"
+        elif _assigned_status(assignment_status):
+            state = "assigned"
+            next_action = "wait_for_contact"
+        else:
+            state = "imported"
+            next_action = "wait_for_assignment"
+    elif upload_status == "complete":
+        state = "upload_submitted"
+        next_action = "sync_intune"
+    elif upload_status == "running":
+        state = "upload_running"
+        next_action = "wait_for_upload"
+    elif upload_status == "pending" or upload_status == "queued":
+        state = "upload_queued"
+        next_action = "wait_for_upload"
+    else:
+        state = "hash_captured"
+        next_action = "upload_hash"
+
+    if state == "group_tag_mismatch":
+        state_label = "group tag mismatch"
+    else:
+        state_label = state.replace("_", " ")
+    detail = evidence.get("summary") or state_label
+    if state == "upload_failed" and upload_error:
+        detail = upload_error
+    elif state == "upload_submitted" and cache_state in {"stale", "expired", "missing"}:
+        detail = f"Upload submitted; device cache is {cache_state}; sync Intune"
+
+    readiness = {
+        "schema_version": 1,
+        "run_id": run["run_id"],
+        "state": state,
+        "label": state_label,
+        "detail": detail,
+        "next_action": next_action,
+        "expected_group_tag": expected_group_tag,
+        "hash": {
+            "status": hash_status,
+            "filename": hash_filename,
+            "sha256": _hash_file_sha256(hash_filename),
+            "serial": hash_serial,
+            "files": hash_files,
+        },
+        "upload": {
+            "status": upload_status,
+            "job_id": upload_job_id,
+            "error": upload_error,
+            "started_at": upload_started_at,
+            "finished_at": upload_finished_at,
+        },
+        "autopilot": {
+            "device_id": autopilot_device_id,
+            "serial": evidence.get("autopilot", {}).get("serial"),
+            "display_name": evidence.get("autopilot", {}).get("display_name"),
+        },
+        "assignment": {
+            "status": assignment_status,
+            "expected_group_tag": expected_group_tag,
+            "actual_group_tag": imported_group_tag,
+            "group_tag_match": group_tag_match,
+        },
+        "enrollment": {
+            "status": enrollment_status,
+            "intune_device_id": evidence.get("enrollment", {}).get("intune_device_id"),
+            "intune_device_name": evidence.get("enrollment", {}).get("intune_device_name"),
+            "last_sync": evidence.get("enrollment", {}).get("last_sync"),
+        },
+        "contact": {
+            "state": contact_state,
+            "last_contact": evidence.get("enrollment", {}).get("autopilot_last_contact"),
+        },
+        "cache": {
+            "status": cache_state,
+            "synced_at": evidence.get("cache_synced_at") or "",
+        },
+        "errors": errors,
+    }
+    cloudosd_pg.upsert_autopilot_readiness(
+        conn,
+        run_id=run["run_id"],
+        state=state,
+        expected_group_tag=expected_group_tag,
+        hash_status=hash_status,
+        hash_filename=hash_filename,
+        hash_sha256=readiness["hash"]["sha256"],
+        hash_serial=hash_serial,
+        upload_status=upload_status,
+        upload_job_id=upload_job_id,
+        upload_started_at=_parse_timestamp(upload_started_at),
+        upload_finished_at=_parse_timestamp(upload_finished_at),
+        upload_error=upload_error,
+        autopilot_device_id=autopilot_device_id,
+        imported_serial=evidence.get("autopilot", {}).get("serial"),
+        imported_group_tag=imported_group_tag,
+        assignment_status=assignment_status,
+        enrollment_status=enrollment_status,
+        contact_state=contact_state,
+        cache_status=cache_state,
+        cache_synced_at=cache_synced_at,
+        errors=errors,
+    )
+    return readiness
+
+
 def _progress_milestone(
     *,
     state: str,
@@ -580,6 +822,7 @@ def provision_progress_for_run(conn, run: dict) -> dict:
         domain_join=run.get("domain_join"),
     )
     evidence = intune_evidence_for_run(run, heartbeat)
+    readiness = autopilot_readiness_for_run(conn, run, heartbeat)
     failed_v2_steps = [step for step in steps if step.get("state") == "failed"]
 
     vm_created = (
@@ -637,29 +880,24 @@ def provision_progress_for_run(conn, run: dict) -> dict:
             "waiting for " + ", ".join(v2_completion.get("missing") or []),
         )
 
-    if evidence["enrollment"]["status"] == "enrolled":
+    readiness_state = readiness.get("state") or ""
+    if readiness_state in {"enrolled", "contacted", "assigned"}:
         intune_state = _progress_milestone(
             state="done",
-            label="enrolled",
-            detail=evidence["enrollment"].get("intune_device_name") or "",
+            label=readiness["label"],
+            detail=readiness.get("detail") or "",
         )
-    elif evidence["errors"]:
+    elif readiness_state in {"upload_failed", "group_tag_mismatch", "blocked"} or readiness.get("errors"):
         intune_state = _progress_milestone(
             state="failed",
-            label="needs review",
-            detail="; ".join(error["message"] for error in evidence["errors"]),
+            label=readiness.get("label") or "needs review",
+            detail="; ".join(error["message"] for error in readiness.get("errors") or []) or readiness.get("detail") or "",
         )
-    elif evidence["upload"]["status"] == "uploaded":
+    elif readiness_state:
         intune_state = _progress_milestone(
             state="waiting",
-            label=evidence["assignment"]["status"],
-            detail="waiting for assignment/enrollment",
-        )
-    elif evidence["hash"]["status"] == "captured":
-        intune_state = _progress_milestone(
-            state="waiting",
-            label="hash captured",
-            detail="waiting for Autopilot upload",
+            label=readiness.get("label") or readiness_state,
+            detail=readiness.get("detail") or "",
         )
     else:
         intune_state = _progress_milestone(
@@ -692,6 +930,7 @@ def provision_progress_for_run(conn, run: dict) -> dict:
         "total_count": len(milestones),
         "milestones": milestones,
         "intune_evidence": evidence,
+        "autopilot_readiness": readiness,
     }
 
 
@@ -1553,6 +1792,8 @@ def get_run(run_id: str):
         )
         events = cloudosd_pg.list_events(conn, run_id)
         evidence_events = events_with_related_jobs(run_id, events, run)
+        intune_evidence = intune_evidence_for_run(run, heartbeat)
+        autopilot_readiness = autopilot_readiness_for_run(conn, run, heartbeat)
     heartbeat_name = heartbeat.get("computer_name") if heartbeat else None
     name_comparison = cloudosd_pg.name_comparison(
         requested_name=run.get("requested_vm_name") or run.get("vm_name"),
@@ -1572,12 +1813,138 @@ def get_run(run_id: str):
         "v2_steps": v2_steps,
         "v2_completion": v2_completion,
         "v2_operator_status": v2_operator_status,
-        "intune_evidence": intune_evidence_for_run(run, heartbeat),
+        "intune_evidence": intune_evidence,
+        "autopilot_readiness": autopilot_readiness,
         "related_jobs": _related_jobs(run_id),
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
         "task": cloudosd_pg.task_settings(run),
     }
+
+
+def _sync_cloud_devices_from_graph() -> dict:
+    from web import app as web_app
+    from web import devices_pg as devices_db
+
+    ap = web_app._graph_api_all("/deviceManagement/windowsAutopilotDeviceIdentities") or []
+    it = web_app._graph_api_all("/deviceManagement/managedDevices") or []
+    en = web_app._graph_api_all("/devices") or []
+    devices_db.init()
+    devices_db.upsert_autopilot(ap)
+    devices_db.upsert_intune(it)
+    devices_db.upsert_entra(en)
+    return {"autopilot": len(ap), "intune": len(it), "entra": len(en)}
+
+
+def _readiness_response(conn, run: dict, heartbeat: dict | None = None, **extra) -> dict:
+    readiness = autopilot_readiness_for_run(conn, run, heartbeat)
+    return {
+        "ok": True,
+        "run_id": run["run_id"],
+        "autopilot_readiness": readiness,
+        **extra,
+    }
+
+
+@router.get("/runs/{run_id}/autopilot/readiness")
+def get_autopilot_readiness(run_id: str):
+    with _conn() as conn:
+        run = cloudosd_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+        return _readiness_response(conn, run, heartbeat)
+
+
+@router.post("/runs/{run_id}/autopilot/reconcile")
+def reconcile_autopilot_readiness(run_id: str):
+    with _conn() as conn:
+        run = cloudosd_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+        return _readiness_response(conn, run, heartbeat)
+
+
+@router.post("/runs/{run_id}/autopilot/sync")
+def sync_autopilot_readiness(run_id: str):
+    with _conn() as conn:
+        run = cloudosd_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+    try:
+        counts = _sync_cloud_devices_from_graph()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Cloud device sync failed: {exc}")
+    with _conn() as conn:
+        run = cloudosd_pg.get_run(conn, run_id)
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+        return _readiness_response(conn, run, heartbeat, sync=counts)
+
+
+@router.post("/runs/{run_id}/autopilot/upload", status_code=202)
+def upload_autopilot_hash(run_id: str):
+    from web import app as web_app
+
+    with _conn() as conn:
+        run = cloudosd_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+        readiness = autopilot_readiness_for_run(conn, run, heartbeat)
+        hash_filename = readiness.get("hash", {}).get("filename")
+        if not hash_filename:
+            raise HTTPException(status_code=409, detail="CloudOSD run has no captured Autopilot hash yet")
+        if Path(hash_filename).name != hash_filename:
+            raise HTTPException(status_code=409, detail="CloudOSD hash filename is invalid")
+        existing_status = str(readiness.get("upload", {}).get("status") or "")
+        if existing_status in {"pending", "queued", "running"}:
+            return _readiness_response(conn, run, heartbeat)
+        hash_file = web_app.HASH_DIR / hash_filename
+        if not hash_file.is_file():
+            raise HTTPException(status_code=409, detail=f"CloudOSD hash file is missing: {hash_filename}")
+        cmd = [
+            "ansible-playbook",
+            str(web_app.PLAYBOOK_DIR / "upload_hashes.yml"),
+            "-e",
+            f"hash_file={hash_file}",
+        ]
+        group_tag = str(run.get("vm_group_tag") or "").strip()
+        if group_tag:
+            cmd += ["-e", f"vm_group_tag={group_tag}"]
+        job = web_app.job_manager.start(
+            "upload_hash",
+            cmd,
+            args={
+                "cloudosd_run_id": run_id,
+                "vmid": run.get("vmid"),
+                "file": hash_filename,
+                "group_tag": group_tag,
+                "source": "cloudosd_autopilot_readiness",
+            },
+        )
+        cloudosd_pg.record_autopilot_upload_attempt(
+            conn,
+            run_id=run_id,
+            job_id=job["id"],
+            hash_filename=hash_filename,
+            expected_group_tag=group_tag,
+            status="queued",
+        )
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run_id,
+            phase="AutopilotAgent",
+            event_type="autopilot_hash_upload_queued",
+            message="CloudOSD Autopilot hash upload queued",
+            data={"job_id": job["id"], "hash_filename": hash_filename},
+        )
+        return _readiness_response(conn, run, heartbeat, job_id=job["id"])
+
+
+@router.post("/runs/{run_id}/autopilot/retry-upload", status_code=202)
+def retry_autopilot_hash_upload(run_id: str):
+    return upload_autopilot_hash(run_id)
 
 
 @router.post("/runs/{run_id}/v2/steps/{step_id}/retry")

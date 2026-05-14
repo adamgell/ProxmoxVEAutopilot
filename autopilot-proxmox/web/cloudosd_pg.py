@@ -102,9 +102,55 @@ CREATE TABLE IF NOT EXISTS cloudosd_run_events (
     data_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cloudosd_autopilot_readiness (
+    run_id uuid PRIMARY KEY REFERENCES cloudosd_runs(run_id) ON DELETE CASCADE,
+    state text NOT NULL,
+    expected_group_tag text NULL,
+    hash_status text NULL,
+    hash_filename text NULL,
+    hash_sha256 text NULL,
+    hash_serial text NULL,
+    upload_status text NULL,
+    upload_job_id text NULL,
+    upload_started_at timestamptz NULL,
+    upload_finished_at timestamptz NULL,
+    upload_error text NULL,
+    autopilot_device_id text NULL,
+    imported_serial text NULL,
+    imported_group_tag text NULL,
+    assignment_status text NULL,
+    enrollment_status text NULL,
+    contact_state text NULL,
+    cache_status text NULL,
+    cache_synced_at timestamptz NULL,
+    last_observed_at timestamptz NULL,
+    errors_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+    updated_at timestamptz NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cloudosd_autopilot_upload_attempts (
+    id bigserial PRIMARY KEY,
+    run_id uuid NOT NULL REFERENCES cloudosd_runs(run_id) ON DELETE CASCADE,
+    job_id text NULL,
+    hash_filename text NOT NULL,
+    expected_group_tag text NULL,
+    status text NOT NULL,
+    started_at timestamptz NULL,
+    finished_at timestamptz NULL,
+    error text NULL,
+    stdout_tail text NULL,
+    stderr_tail text NULL,
+    created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cloudosd_autopilot_upload_attempts_run
+    ON cloudosd_autopilot_upload_attempts(run_id, created_at DESC, id DESC);
 """
 
 DROP_SCHEMA_FOR_TESTS = """
+DROP TABLE IF EXISTS cloudosd_autopilot_upload_attempts CASCADE;
+DROP TABLE IF EXISTS cloudosd_autopilot_readiness CASCADE;
 DROP TABLE IF EXISTS cloudosd_run_events CASCADE;
 DROP TABLE IF EXISTS cloudosd_runs CASCADE;
 DROP TABLE IF EXISTS cloudosd_artifacts CASCADE;
@@ -424,6 +470,9 @@ def init(conn: Connection) -> None:
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_surface text NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_sequence_id integer NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS domain_join_json jsonb NOT NULL DEFAULT '{}'::jsonb")
+        conn.execute("ALTER TABLE cloudosd_autopilot_readiness ADD COLUMN IF NOT EXISTS upload_error text NULL")
+        conn.execute("ALTER TABLE cloudosd_autopilot_upload_attempts ADD COLUMN IF NOT EXISTS stdout_tail text NULL")
+        conn.execute("ALTER TABLE cloudosd_autopilot_upload_attempts ADD COLUMN IF NOT EXISTS stderr_tail text NULL")
         conn.commit()
         _INIT_DONE = True
 
@@ -780,6 +829,214 @@ def _run_row(row: dict | None) -> dict | None:
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
     }
+
+
+def _readiness_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "run_id": str(row["run_id"]),
+        "state": row["state"],
+        "expected_group_tag": row.get("expected_group_tag"),
+        "hash_status": row.get("hash_status"),
+        "hash_filename": row.get("hash_filename"),
+        "hash_sha256": row.get("hash_sha256"),
+        "hash_serial": row.get("hash_serial"),
+        "upload_status": row.get("upload_status"),
+        "upload_job_id": row.get("upload_job_id"),
+        "upload_started_at": _iso(row.get("upload_started_at")),
+        "upload_finished_at": _iso(row.get("upload_finished_at")),
+        "upload_error": row.get("upload_error"),
+        "autopilot_device_id": row.get("autopilot_device_id"),
+        "imported_serial": row.get("imported_serial"),
+        "imported_group_tag": row.get("imported_group_tag"),
+        "assignment_status": row.get("assignment_status"),
+        "enrollment_status": row.get("enrollment_status"),
+        "contact_state": row.get("contact_state"),
+        "cache_status": row.get("cache_status"),
+        "cache_synced_at": _iso(row.get("cache_synced_at")),
+        "last_observed_at": _iso(row.get("last_observed_at")),
+        "errors": row.get("errors_json") or [],
+        "updated_at": _iso(row.get("updated_at")),
+    }
+
+
+def _upload_attempt_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "run_id": str(row["run_id"]),
+        "job_id": row.get("job_id"),
+        "hash_filename": row.get("hash_filename"),
+        "expected_group_tag": row.get("expected_group_tag"),
+        "status": row.get("status"),
+        "started_at": _iso(row.get("started_at")),
+        "finished_at": _iso(row.get("finished_at")),
+        "error": row.get("error"),
+        "stdout_tail": row.get("stdout_tail"),
+        "stderr_tail": row.get("stderr_tail"),
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
+def get_autopilot_readiness(conn: Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM cloudosd_autopilot_readiness WHERE run_id = %s",
+        (run_id,),
+    ).fetchone()
+    return _readiness_row(row)
+
+
+def upsert_autopilot_readiness(
+    conn: Connection,
+    *,
+    run_id: str,
+    state: str,
+    expected_group_tag: str | None = None,
+    hash_status: str | None = None,
+    hash_filename: str | None = None,
+    hash_sha256: str | None = None,
+    hash_serial: str | None = None,
+    upload_status: str | None = None,
+    upload_job_id: str | None = None,
+    upload_started_at: datetime | None = None,
+    upload_finished_at: datetime | None = None,
+    upload_error: str | None = None,
+    autopilot_device_id: str | None = None,
+    imported_serial: str | None = None,
+    imported_group_tag: str | None = None,
+    assignment_status: str | None = None,
+    enrollment_status: str | None = None,
+    contact_state: str | None = None,
+    cache_status: str | None = None,
+    cache_synced_at: datetime | None = None,
+    errors: list[dict] | None = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO cloudosd_autopilot_readiness (
+            run_id, state, expected_group_tag, hash_status, hash_filename,
+            hash_sha256, hash_serial, upload_status, upload_job_id,
+            upload_started_at, upload_finished_at, upload_error,
+            autopilot_device_id, imported_serial, imported_group_tag,
+            assignment_status, enrollment_status, contact_state, cache_status,
+            cache_synced_at, last_observed_at, errors_json, updated_at
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT (run_id) DO UPDATE SET
+            state = EXCLUDED.state,
+            expected_group_tag = EXCLUDED.expected_group_tag,
+            hash_status = EXCLUDED.hash_status,
+            hash_filename = EXCLUDED.hash_filename,
+            hash_sha256 = EXCLUDED.hash_sha256,
+            hash_serial = EXCLUDED.hash_serial,
+            upload_status = EXCLUDED.upload_status,
+            upload_job_id = EXCLUDED.upload_job_id,
+            upload_started_at = EXCLUDED.upload_started_at,
+            upload_finished_at = EXCLUDED.upload_finished_at,
+            upload_error = EXCLUDED.upload_error,
+            autopilot_device_id = EXCLUDED.autopilot_device_id,
+            imported_serial = EXCLUDED.imported_serial,
+            imported_group_tag = EXCLUDED.imported_group_tag,
+            assignment_status = EXCLUDED.assignment_status,
+            enrollment_status = EXCLUDED.enrollment_status,
+            contact_state = EXCLUDED.contact_state,
+            cache_status = EXCLUDED.cache_status,
+            cache_synced_at = EXCLUDED.cache_synced_at,
+            last_observed_at = EXCLUDED.last_observed_at,
+            errors_json = EXCLUDED.errors_json,
+            updated_at = EXCLUDED.updated_at
+        RETURNING *
+        """,
+        (
+            run_id,
+            state,
+            expected_group_tag,
+            hash_status,
+            hash_filename,
+            hash_sha256,
+            hash_serial,
+            upload_status,
+            upload_job_id,
+            upload_started_at,
+            upload_finished_at,
+            upload_error,
+            autopilot_device_id,
+            imported_serial,
+            imported_group_tag,
+            assignment_status,
+            enrollment_status,
+            contact_state,
+            cache_status,
+            cache_synced_at,
+            now,
+            _json(errors or []),
+            now,
+        ),
+    ).fetchone()
+    conn.commit()
+    return _readiness_row(row)
+
+
+def record_autopilot_upload_attempt(
+    conn: Connection,
+    *,
+    run_id: str,
+    job_id: str,
+    hash_filename: str,
+    expected_group_tag: str | None = None,
+    status: str = "queued",
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    error: str | None = None,
+    stdout_tail: str | None = None,
+    stderr_tail: str | None = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO cloudosd_autopilot_upload_attempts (
+            run_id, job_id, hash_filename, expected_group_tag, status,
+            started_at, finished_at, error, stdout_tail, stderr_tail, created_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            run_id,
+            job_id,
+            hash_filename,
+            expected_group_tag,
+            status,
+            started_at,
+            finished_at,
+            error,
+            stdout_tail,
+            stderr_tail,
+            now,
+        ),
+    ).fetchone()
+    conn.commit()
+    return _upload_attempt_row(row)
+
+
+def latest_autopilot_upload_attempt(conn: Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM cloudosd_autopilot_upload_attempts
+        WHERE run_id = %s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    return _upload_attempt_row(row)
 
 
 def create_artifact(

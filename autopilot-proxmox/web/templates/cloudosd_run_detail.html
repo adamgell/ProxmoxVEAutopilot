@@ -104,6 +104,15 @@
     padding: 2px 8px;
     font-size: 12px;
   }
+  .cloudosd-readiness-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .cloudosd-readiness-actions button {
+    min-height: 30px;
+  }
   @media (max-width: 1000px) {
     .cloudosd-detail-grid {
       grid-template-columns: 1fr;
@@ -240,6 +249,42 @@
         <dt>Tracking errors</dt><dd data-cloudosd-field="intune_tracking_errors">{{ intune_evidence.errors | map(attribute='message') | join('; ') if intune_evidence.errors else '-' }}</dd>
       </dl>
     </section>
+
+    <section class="cloudosd-detail-panel">
+      <h2>Autopilot Readiness</h2>
+      {% set readiness = autopilot_readiness or {} %}
+      {% set readiness_hash = readiness.hash or {} %}
+      {% set readiness_upload = readiness.upload or {} %}
+      {% set readiness_autopilot = readiness.autopilot or {} %}
+      {% set readiness_assignment = readiness.assignment or {} %}
+      {% set readiness_enrollment = readiness.enrollment or {} %}
+      {% set readiness_contact = readiness.contact or {} %}
+      {% set readiness_cache = readiness.cache or {} %}
+      {% set readiness_state = readiness.state or 'waiting_for_hash' %}
+      <dl class="cloudosd-kv">
+        <dt>State</dt>
+        <dd data-cloudosd-field="autopilot_readiness_state">
+          <span class="cloudosd-badge {{ 'ready' if readiness_state in ['assigned', 'contacted', 'enrolled'] else ('block' if readiness_state in ['upload_failed', 'group_tag_mismatch', 'blocked', 'failed'] else 'warn') }}">{{ readiness.label or readiness_state }}</span>
+          <span class="cloudosd-mini">{{ readiness.detail or '' }}</span>
+        </dd>
+        <dt>Next action</dt><dd data-cloudosd-field="autopilot_readiness_next_action">{{ readiness.next_action or '-' }}</dd>
+        <dt>Hash</dt><dd data-cloudosd-field="autopilot_readiness_hash">{{ readiness_hash.status or 'missing' }}{% if readiness_hash.filename %}: {{ readiness_hash.filename }}{% endif %}</dd>
+        <dt>Upload</dt><dd data-cloudosd-field="autopilot_readiness_upload">{{ readiness_upload.status or 'not_started' }}{% if readiness_upload.job_id %}: <a href="/jobs/{{ readiness_upload.job_id }}">{{ readiness_upload.job_id }}</a>{% endif %}{% if readiness_upload.error %}<br><span class="cloudosd-mini">{{ readiness_upload.error }}</span>{% endif %}</dd>
+        <dt>Autopilot device ID</dt><dd data-cloudosd-field="autopilot_readiness_autopilot_id">{{ readiness_autopilot.device_id or '-' }}</dd>
+        <dt>Group tag</dt><dd data-cloudosd-field="autopilot_readiness_group_tag">{{ readiness_assignment.expected_group_tag or readiness.expected_group_tag or '-' }} / {{ readiness_assignment.actual_group_tag or '-' }} / match={{ readiness_assignment.group_tag_match if readiness_assignment.group_tag_match is not none else '-' }}</dd>
+        <dt>Assignment</dt><dd data-cloudosd-field="autopilot_readiness_assignment">{{ readiness_assignment.status or 'not_found' }}</dd>
+        <dt>Enrollment/contact</dt><dd data-cloudosd-field="autopilot_readiness_contact">{{ readiness_enrollment.status or 'not_found' }} / {{ readiness_contact.state or 'not_found' }}{% if readiness_contact.last_contact %} / {{ readiness_contact.last_contact }}{% endif %}</dd>
+        <dt>Device cache</dt><dd data-cloudosd-field="autopilot_readiness_cache">{{ readiness_cache.status or 'missing' }}{% if readiness_cache.synced_at %} / {{ readiness_cache.synced_at }}{% endif %}</dd>
+        <dt>Errors</dt><dd data-cloudosd-field="autopilot_readiness_errors">{{ readiness.errors | map(attribute='message') | join('; ') if readiness.errors else '-' }}</dd>
+      </dl>
+      <div class="cloudosd-readiness-actions">
+        <button type="button" data-cloudosd-autopilot-action="upload">Upload hash</button>
+        <button type="button" data-cloudosd-autopilot-action="retry-upload">Retry upload</button>
+        <button type="button" data-cloudosd-autopilot-action="sync">Sync Intune</button>
+        <button type="button" data-cloudosd-autopilot-action="reconcile">Reconcile now</button>
+      </div>
+      <div class="cloudosd-mini" data-cloudosd-field="autopilot_readiness_action_result"></div>
+    </section>
   </div>
 
   <aside>
@@ -275,8 +320,11 @@
   const liveUpdated = document.getElementById("cloudosdLiveUpdated");
   const milestoneRoot = root.querySelector("[data-cloudosd-milestones]");
   const v2StepsRoot = root.querySelector("[data-cloudosd-v2-steps]");
+  const readinessActions = Array.from(root.querySelectorAll("[data-cloudosd-autopilot-action]"));
   const milestoneLabels = ["controller", "Proxmox playbook", "PE bridge", "OSDCloud", "offline validation", "Domain join", "SetupComplete", "first boot", "AutopilotAgent"];
   const terminalStates = new Set(["complete", "failed", "cancelled"]);
+  const readyBadgeStates = new Set(["complete", "done", "ok", "assigned", "contacted", "enrolled"]);
+  const blockBadgeStates = new Set(["failed", "cancelled", "canceled", "error", "upload_failed", "group_tag_mismatch", "blocked"]);
 
   function field(name) {
     return root.querySelector(`[data-cloudosd-field="${name}"]`);
@@ -299,8 +347,8 @@
   }
 
   function badgeClass(state) {
-    if (state === "complete" || state === "done" || state === "ok") return "ready";
-    if (state === "failed" || state === "cancelled" || state === "error") return "block";
+    if (readyBadgeStates.has(state)) return "ready";
+    if (blockBadgeStates.has(state)) return "block";
     return "warn";
   }
 
@@ -517,6 +565,92 @@
     setText("intune_tracking_errors", errors || "-");
   }
 
+  function renderAutopilotReadiness(readiness) {
+    readiness = readiness || {};
+    const state = readiness.state || "waiting_for_hash";
+    const hash = readiness.hash || {};
+    const upload = readiness.upload || {};
+    const autopilot = readiness.autopilot || {};
+    const assignment = readiness.assignment || {};
+    const enrollment = readiness.enrollment || {};
+    const contact = readiness.contact || {};
+    const cache = readiness.cache || {};
+    const stateEl = field("autopilot_readiness_state");
+    if (stateEl) {
+      stateEl.innerHTML = `<span class="cloudosd-badge ${badgeClass(state)}">${escapeHtml(readiness.label || state)}</span> <span class="cloudosd-mini">${escapeHtml(readiness.detail || "")}</span>`;
+    }
+    setText("autopilot_readiness_next_action", readiness.next_action);
+    setText(
+      "autopilot_readiness_hash",
+      `${text(hash.status, "missing")}${hash.filename ? ": " + hash.filename : ""}${hash.sha256 ? " / sha256 " + hash.sha256 : ""}`
+    );
+    const uploadEl = field("autopilot_readiness_upload");
+    if (uploadEl) {
+      const jobLink = upload.job_id
+        ? `: <a href="/jobs/${encodeURIComponent(upload.job_id)}">${escapeHtml(upload.job_id)}</a>`
+        : "";
+      const error = upload.error
+        ? `<br><span class="cloudosd-mini">${escapeHtml(upload.error)}</span>`
+        : "";
+      uploadEl.innerHTML = `${escapeHtml(text(upload.status, "not_started"))}${jobLink}${error}`;
+    }
+    setText(
+      "autopilot_readiness_autopilot_id",
+      [autopilot.device_id, autopilot.display_name, autopilot.serial].filter(Boolean).join(" / ")
+    );
+    setText(
+      "autopilot_readiness_group_tag",
+      `${text(assignment.expected_group_tag || readiness.expected_group_tag)} / ${text(assignment.actual_group_tag)} / match=${assignment.group_tag_match === null || assignment.group_tag_match === undefined ? "-" : assignment.group_tag_match}`
+    );
+    setText("autopilot_readiness_assignment", assignment.status || "not_found");
+    setText(
+      "autopilot_readiness_contact",
+      `${text(enrollment.status, "not_found")} / ${text(contact.state, "not_found")}${contact.last_contact ? " / " + contact.last_contact : ""}${enrollment.last_sync ? " / sync " + enrollment.last_sync : ""}`
+    );
+    setText(
+      "autopilot_readiness_cache",
+      `${text(cache.status, "missing")}${cache.synced_at ? " / " + cache.synced_at : ""}`
+    );
+    const errors = (readiness.errors || []).map((item) => item.message || item.code).filter(Boolean).join("; ");
+    setText("autopilot_readiness_errors", errors || "-");
+
+    readinessActions.forEach((button) => {
+      const action = button.dataset.cloudosdAutopilotAction;
+      const hashReady = hash.status === "captured" || Boolean(hash.filename);
+      const uploadBusy = ["pending", "queued", "running"].includes(upload.status);
+      if (action === "upload") {
+        button.disabled = !hashReady || uploadBusy || readiness.next_action !== "upload_hash";
+      } else if (action === "retry-upload") {
+        button.disabled = !hashReady || uploadBusy || readiness.next_action !== "retry_upload";
+      } else {
+        button.disabled = uploadBusy && action === "sync";
+      }
+    });
+  }
+
+  async function runAutopilotAction(action, button) {
+    if (!action) return;
+    const result = field("autopilot_readiness_action_result");
+    if (button) button.disabled = true;
+    if (result) result.textContent = `Running ${action}...`;
+    try {
+      const response = await fetch(
+        `/api/cloudosd/runs/${encodeURIComponent(runId)}/autopilot/${action}`,
+        {method: "POST", cache: "no-store"}
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.detail || `HTTP ${response.status}`);
+      }
+      renderAutopilotReadiness(body.autopilot_readiness || {});
+      if (result) result.textContent = body.message || `${action} accepted`;
+      await refresh();
+    } catch (error) {
+      if (result) result.textContent = `${action} failed: ${error.message || error}`;
+      if (button) button.disabled = false;
+    }
+  }
+
   function render(data) {
     const run = data.run || {};
     const artifact = data.artifact || {};
@@ -572,6 +706,7 @@
     renderV2OperatorStatus(data.v2_operator_status || {});
     renderV2Steps(data.v2_steps || []);
     renderIntuneEvidence(data.intune_evidence || {});
+    renderAutopilotReadiness(data.autopilot_readiness || {});
     renderMilestones(groups);
 
     const now = new Date();
@@ -596,6 +731,10 @@
       window.setTimeout(refresh, 5000);
     }
   }
+
+  readinessActions.forEach((button) => {
+    button.addEventListener("click", () => runAutopilotAction(button.dataset.cloudosdAutopilotAction, button));
+  });
 
   window.setTimeout(refresh, 1000);
 })();

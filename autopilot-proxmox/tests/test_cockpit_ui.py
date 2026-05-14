@@ -98,6 +98,24 @@ def test_cloudosd_run_detail_renders_v2_plan_live_section():
     assert "renderV2Steps" in template
 
 
+def test_cloudosd_run_detail_renders_autopilot_readiness_section():
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "web/templates/cloudosd_run_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert "Autopilot Readiness" in template
+    assert "data-cloudosd-field=\"autopilot_readiness_state\"" in template
+    assert "data-cloudosd-field=\"autopilot_readiness_hash\"" in template
+    assert "data-cloudosd-field=\"autopilot_readiness_upload\"" in template
+    assert "data-cloudosd-field=\"autopilot_readiness_assignment\"" in template
+    assert "data-cloudosd-field=\"autopilot_readiness_errors\"" in template
+    assert "data-cloudosd-autopilot-action=\"upload\"" in template
+    assert "data-cloudosd-autopilot-action=\"sync\"" in template
+    assert "renderAutopilotReadiness" in template
+    assert "/api/cloudosd/runs/${encodeURIComponent(runId)}/autopilot/${action}" in template
+
+
 def test_cockpit_shell_has_light_mode_tokens(web_client: TestClient, monkeypatch):
     from web import app as web_app
 
