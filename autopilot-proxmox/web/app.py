@@ -2312,6 +2312,7 @@ async def provision_page(request: Request):
     cloudosd_catalog = cloudosd_endpoints.catalog_payload()
     cloudosd_options = cloudosd_endpoints.proxmox_options_payload()
     cloudosd_artifacts = []
+    cloudosd_batch_progress = {"schema_version": 1, "runs": []}
     try:
         with db_pg.connection(_database_url()) as conn:
             cloudosd_pg.init(conn)
@@ -2321,6 +2322,10 @@ async def provision_page(request: Request):
             ]
     except Exception:
         cloudosd_artifacts = []
+    try:
+        cloudosd_batch_progress = cloudosd_endpoints.provision_progress_payload(limit=25)
+    except Exception:
+        cloudosd_batch_progress = {"schema_version": 1, "runs": []}
     return templates.TemplateResponse("provision.html", {
         "request": request,
         "profiles": load_oem_profiles(),
@@ -2334,6 +2339,7 @@ async def provision_page(request: Request):
         "cloudosd_ready_artifacts": [
             artifact for artifact in cloudosd_artifacts if artifact.get("ready")
         ],
+        "cloudosd_batch_progress": cloudosd_batch_progress,
     })
 
 

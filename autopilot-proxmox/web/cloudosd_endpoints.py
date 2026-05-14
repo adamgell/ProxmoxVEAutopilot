@@ -350,9 +350,56 @@ def _identity_candidates(run: dict, heartbeat: dict | None = None) -> list[str]:
     return out
 
 
+def _same_text(left: str | None, right: str | None) -> bool:
+    return str(left or "").strip().casefold() == str(right or "").strip().casefold()
+
+
+def _device_group_matches(group: dict, candidate_keys: set[str]) -> bool:
+    autopilot = group.get("autopilot") or {}
+    intune = group.get("intune") or {}
+    values = [
+        group.get("serial"),
+        autopilot.get("serial"),
+        autopilot.get("display_name"),
+        intune.get("serial"),
+        intune.get("device_name"),
+    ]
+    return any(str(value or "").strip().casefold() in candidate_keys for value in values)
+
+
+def _assignment_status(
+    *,
+    autopilot: dict | None,
+    expected_group_tag: str,
+    matched_hashes: list[dict],
+) -> str:
+    if not autopilot:
+        return "waiting_for_upload" if matched_hashes else "not_found"
+    actual_group_tag = str(autopilot.get("group_tag") or "").strip()
+    if expected_group_tag and actual_group_tag and not _same_text(expected_group_tag, actual_group_tag):
+        return "group_tag_mismatch"
+    return str(autopilot.get("profile_status") or "unknown")
+
+
+def _enrollment_contact_state(
+    *,
+    autopilot: dict | None,
+    intune: dict | None,
+) -> str:
+    if intune:
+        return "enrolled"
+    enrollment_state = str((autopilot or {}).get("enrollment_state") or "").strip()
+    if not enrollment_state:
+        return "not_found"
+    if enrollment_state.casefold() == "notcontacted":
+        return "not_contacted"
+    return enrollment_state
+
+
 def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
     candidates = _identity_candidates(run, heartbeat)
     candidate_keys = {item.casefold() for item in candidates}
+    expected_group_tag = str(run.get("vm_group_tag") or "").strip()
     matched_hashes: list[dict] = []
     cache_error = ""
     try:
@@ -382,14 +429,9 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
 
         groups, extra = devices_pg.list_grouped(windows_only=False)
         synced_at = (extra.get("meta") or {}).get("synced_at") or ""
-        by_serial = {
-            str(row.get("serial") or "").casefold(): row
-            for row in groups
-            if row.get("serial")
-        }
-        for key in candidate_keys:
-            if key in by_serial:
-                group = by_serial[key]
+        for item in groups:
+            if _device_group_matches(item, candidate_keys):
+                group = item
                 break
     except Exception as exc:
         if cache_error:
@@ -401,11 +443,15 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
     intune = (group or {}).get("intune") or None
     entra = (group or {}).get("entra") or []
     upload_status = "uploaded" if autopilot else "not_found"
-    assignment_status = (
-        autopilot.get("profile_status")
-        if autopilot and autopilot.get("profile_status")
-        else "not_found"
+    assignment_status = _assignment_status(
+        autopilot=autopilot,
+        expected_group_tag=expected_group_tag,
+        matched_hashes=matched_hashes,
     )
+    actual_group_tag = str((autopilot or {}).get("group_tag") or "").strip()
+    group_tag_match = None
+    if expected_group_tag or actual_group_tag:
+        group_tag_match = _same_text(expected_group_tag, actual_group_tag)
     enrollment_status = (
         "enrolled"
         if intune
@@ -415,6 +461,23 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
             else "not_found"
         )
     )
+    contact_state = _enrollment_contact_state(autopilot=autopilot, intune=intune)
+    errors: list[dict] = []
+    if cache_error:
+        errors.append({
+            "source": "cache",
+            "code": "cache_error",
+            "message": cache_error,
+        })
+    if assignment_status == "group_tag_mismatch":
+        errors.append({
+            "source": "assignment",
+            "code": "group_tag_mismatch",
+            "message": (
+                f"Autopilot group tag {actual_group_tag} does not match "
+                f"expected {expected_group_tag}"
+            ),
+        })
     if matched_hashes and autopilot:
         summary = f"hash captured; Autopilot upload found; assignment {assignment_status}; enrollment {enrollment_status}"
     elif matched_hashes:
@@ -430,9 +493,22 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
         "serial_candidates": candidates,
         "cache_synced_at": synced_at,
         "error": cache_error,
+        "errors": errors,
+        "tracking": {
+            "expected_group_tag": expected_group_tag,
+            "source_surface": run.get("source_surface") or "cloudosd",
+            "source_sequence_id": run.get("source_sequence_id"),
+        },
         "hash": {
             "status": "captured" if matched_hashes else "missing",
             "files": matched_hashes,
+        },
+        "upload": {
+            "status": upload_status,
+            "autopilot_device_id": autopilot.get("id") if autopilot else None,
+            "serial": autopilot.get("serial") if autopilot else None,
+            "display_name": autopilot.get("display_name") if autopilot else None,
+            "error": None,
         },
         "autopilot": {
             "status": upload_status,
@@ -446,12 +522,17 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
         },
         "assignment": {
             "status": assignment_status,
+            "expected_group_tag": expected_group_tag,
             "group_tag": autopilot.get("group_tag") if autopilot else None,
+            "actual_group_tag": autopilot.get("group_tag") if autopilot else None,
+            "group_tag_match": group_tag_match,
             "profile_status": autopilot.get("profile_status") if autopilot else None,
         },
         "enrollment": {
             "status": enrollment_status,
+            "contact_state": contact_state,
             "autopilot_enrollment_state": autopilot.get("enrollment_state") if autopilot else None,
+            "autopilot_last_contact": autopilot.get("last_contact") if autopilot else None,
             "intune_device_id": intune.get("id") if intune else None,
             "intune_device_name": intune.get("device_name") if intune else None,
             "management_state": intune.get("management_state") if intune else None,
@@ -463,6 +544,168 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
             "count": len(entra),
             "devices": entra,
         },
+    }
+
+
+def _progress_milestone(
+    *,
+    state: str,
+    label: str,
+    at: str | None = None,
+    detail: str = "",
+) -> dict:
+    return {
+        "state": state,
+        "label": label,
+        "at": at or "",
+        "detail": detail,
+    }
+
+
+def _pending_or_failed(run: dict, detail: str = "") -> dict:
+    state = str(run.get("state") or "")
+    if state == "failed":
+        return _progress_milestone(state="failed", label="failed", detail=detail)
+    return _progress_milestone(state="waiting", label="waiting", detail=detail)
+
+
+def provision_progress_for_run(conn, run: dict) -> dict:
+    run_id = str(run["run_id"])
+    heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+    cloudosd_pg.sync_ts_progress_for_run(conn, run_id)
+    steps = cloudosd_pg.ts_engine_pg.list_run_steps(conn, run_id)
+    v2_completion = cloudosd_pg.v2_completion_status(
+        conn,
+        run_id,
+        domain_join=run.get("domain_join"),
+    )
+    evidence = intune_evidence_for_run(run, heartbeat)
+    failed_v2_steps = [step for step in steps if step.get("state") == "failed"]
+
+    vm_created = (
+        _progress_milestone(
+            state="done",
+            label="created",
+            detail=f"VMID {run['vmid']}",
+        )
+        if run.get("vmid") is not None
+        else _pending_or_failed(run, "waiting for Proxmox VM identity")
+    )
+    pe_registered = (
+        _progress_milestone(
+            state="done",
+            label="registered",
+            at=run.get("pe_registered_at"),
+        )
+        if run.get("pe_registered_at")
+        else _pending_or_failed(run, "waiting for PE bridge")
+    )
+    osdcloud_done = (
+        _progress_milestone(
+            state="done",
+            label="done",
+            at=run.get("osdcloud_finished_at"),
+        )
+        if run.get("osdcloud_finished_at")
+        else _pending_or_failed(run, "waiting for OSDCloud completion")
+    )
+    agent_heartbeat = (
+        _progress_milestone(
+            state="done",
+            label="heartbeat",
+            at=run.get("first_heartbeat_at") or (heartbeat or {}).get("received_at"),
+            detail=(heartbeat or {}).get("agent_id") or "",
+        )
+        if run.get("first_heartbeat_at") or heartbeat
+        else _pending_or_failed(run, "waiting for AutopilotAgent heartbeat")
+    )
+    if v2_completion.get("ready"):
+        v2_steps_done = _progress_milestone(
+            state="done",
+            label="done",
+            detail="required full-OS steps complete",
+        )
+    elif failed_v2_steps:
+        v2_steps_done = _progress_milestone(
+            state="failed",
+            label="failed",
+            detail=", ".join(step["kind"] for step in failed_v2_steps),
+        )
+    else:
+        v2_steps_done = _pending_or_failed(
+            run,
+            "waiting for " + ", ".join(v2_completion.get("missing") or []),
+        )
+
+    if evidence["enrollment"]["status"] == "enrolled":
+        intune_state = _progress_milestone(
+            state="done",
+            label="enrolled",
+            detail=evidence["enrollment"].get("intune_device_name") or "",
+        )
+    elif evidence["errors"]:
+        intune_state = _progress_milestone(
+            state="failed",
+            label="needs review",
+            detail="; ".join(error["message"] for error in evidence["errors"]),
+        )
+    elif evidence["upload"]["status"] == "uploaded":
+        intune_state = _progress_milestone(
+            state="waiting",
+            label=evidence["assignment"]["status"],
+            detail="waiting for assignment/enrollment",
+        )
+    elif evidence["hash"]["status"] == "captured":
+        intune_state = _progress_milestone(
+            state="waiting",
+            label="hash captured",
+            detail="waiting for Autopilot upload",
+        )
+    else:
+        intune_state = _progress_milestone(
+            state="waiting",
+            label="waiting",
+            detail="waiting for hash capture",
+        )
+
+    milestones = {
+        "vm_created": vm_created,
+        "pe_registered": pe_registered,
+        "osdcloud_done": osdcloud_done,
+        "agent_heartbeat": agent_heartbeat,
+        "v2_steps_done": v2_steps_done,
+        "intune_state": intune_state,
+    }
+    done_count = sum(1 for item in milestones.values() if item["state"] == "done")
+    failed_count = sum(1 for item in milestones.values() if item["state"] == "failed")
+    return {
+        "run_id": run_id,
+        "vm_name": run.get("requested_vm_name") or run.get("vm_name"),
+        "pve_vm_name": run.get("pve_vm_name"),
+        "vmid": run.get("vmid"),
+        "state": run.get("state"),
+        "created_at": run.get("created_at"),
+        "group_tag": run.get("vm_group_tag") or "",
+        "source_sequence_id": run.get("source_sequence_id"),
+        "done_count": done_count,
+        "failed_count": failed_count,
+        "total_count": len(milestones),
+        "milestones": milestones,
+        "intune_evidence": evidence,
+    }
+
+
+def provision_progress_payload(limit: int = 50) -> dict:
+    limit = max(1, min(int(limit or 50), 100))
+    with _conn() as conn:
+        runs = [
+            run for run in cloudosd_pg.list_runs(conn, limit=limit * 4)
+            if (run.get("source_surface") or "") == "provision"
+        ][:limit]
+        rows = [provision_progress_for_run(conn, run) for run in runs]
+    return {
+        "schema_version": 1,
+        "runs": rows,
     }
 
 
@@ -1273,6 +1516,11 @@ def list_runs(limit: int = 100):
             "schema_version": 1,
             "runs": cloudosd_pg.list_runs(conn, limit=limit),
         }
+
+
+@router.get("/provision/progress")
+def cloudosd_provision_progress(limit: int = 50):
+    return provision_progress_payload(limit=limit)
 
 
 @router.get("/runs/{run_id}")

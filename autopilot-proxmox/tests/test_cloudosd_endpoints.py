@@ -780,14 +780,85 @@ def test_cloudosd_run_surfaces_hash_upload_assignment_and_enrollment_evidence(
     detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
     assert detail.status_code == 200, detail.text
     evidence = detail.json()["intune_evidence"]
+    assert evidence["tracking"]["expected_group_tag"] == "GellNative"
+    assert evidence["tracking"]["source_surface"] == "cloudosd"
+    assert evidence["upload"]["status"] == "uploaded"
+    assert evidence["upload"]["autopilot_device_id"] == "ap-245"
     assert evidence["hash"]["status"] == "captured"
     assert evidence["hash"]["files"][0]["serial"] == "Gell-245-ABC"
     assert evidence["autopilot"]["status"] == "uploaded"
     assert evidence["autopilot"]["id"] == "ap-245"
     assert evidence["assignment"]["status"] == "pending"
+    assert evidence["assignment"]["expected_group_tag"] == "GellNative"
     assert evidence["assignment"]["group_tag"] == "GellNative"
+    assert evidence["assignment"]["actual_group_tag"] == "GellNative"
+    assert evidence["assignment"]["group_tag_match"] is True
     assert evidence["enrollment"]["status"] == "enrolled"
+    assert evidence["enrollment"]["contact_state"] == "enrolled"
     assert evidence["enrollment"]["intune_device_id"] == "intune-245"
+    assert evidence["errors"] == []
+
+
+def test_cloudosd_run_flags_autopilot_group_tag_mismatch(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, devices_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T010101Z-vm246-Gell-246-ABC-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-246-ABC,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    devices_pg.reset_for_tests(pg_conn)
+    devices_pg.init(pg_conn)
+    devices_pg.upsert_autopilot([
+        {
+            "id": "ap-246",
+            "serialNumber": "Gell-246-ABC",
+            "groupTag": "WrongTag",
+            "deploymentProfileAssignmentStatus": "notAssigned",
+            "enrollmentState": "notContacted",
+            "displayName": "GELL-246-ABC",
+        }
+    ])
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-246-ABC",
+        vm_group_tag="GellNative",
+    )
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run['run_id']}/identity",
+        json={
+            "vmid": 246,
+            "vm_uuid": "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "mac": "52:54:00:aa:bb:ef",
+            "node": "pve",
+            "computer_name": "Gell-246-ABC",
+        },
+    ).status_code == 200
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+    assert detail.status_code == 200, detail.text
+    evidence = detail.json()["intune_evidence"]
+    assert evidence["upload"]["status"] == "uploaded"
+    assert evidence["assignment"]["status"] == "group_tag_mismatch"
+    assert evidence["assignment"]["expected_group_tag"] == "GellNative"
+    assert evidence["assignment"]["actual_group_tag"] == "WrongTag"
+    assert evidence["assignment"]["group_tag_match"] is False
+    assert evidence["errors"] == [
+        {
+            "source": "assignment",
+            "code": "group_tag_mismatch",
+            "message": "Autopilot group tag WrongTag does not match expected GellNative",
+        }
+    ]
 
 
 def test_cloudosd_pe_register_rejects_wrong_identity(cloudosd_client, pg_conn):
@@ -1514,6 +1585,127 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             assert run["vm_oem_profile"] == "lenovo-t14"
             assert run["chassis_type_override"] == 31
             assert run["source_surface"] == "provision"
+
+
+def test_provision_page_shows_cloudosd_batch_progress_rows(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, agent_telemetry_pg, cloudosd_pg, devices_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T020202Z-vm251-Gell-251-OSD1-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-251-OSD1,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    devices_pg.reset_for_tests(pg_conn)
+    devices_pg.init(pg_conn)
+    devices_pg.upsert_autopilot([
+        {
+            "id": "ap-251",
+            "serialNumber": "Gell-251-OSD1",
+            "groupTag": "GellNative",
+            "deploymentProfileAssignmentStatus": "assignedInSync",
+            "enrollmentState": "enrolled",
+            "displayName": "GELL-251-OSD1",
+            "lastContactedDateTime": "2026-05-14T02:10:00Z",
+        }
+    ])
+    devices_pg.upsert_intune([
+        {
+            "id": "intune-251",
+            "serialNumber": "Gell-251-OSD1",
+            "deviceName": "GELL-251-OSD1",
+            "operatingSystem": "Windows",
+            "managementState": "managed",
+            "lastSyncDateTime": "2026-05-14T02:12:00Z",
+            "enrolledDateTime": "2026-05-14T02:09:00Z",
+        }
+    ])
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-251-OSD1",
+        vm_group_tag="GellNative",
+        source_surface="provision",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=251,
+        vm_uuid="cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f1",
+        node="pve",
+        computer_name="Gell-251-OSD1",
+    )
+    cloudosd_pg.mark_pe_registered(pg_conn, run_id=run["run_id"])
+    cloudosd_pg.mark_osdcloud_started(pg_conn, run_id=run["run_id"])
+    cloudosd_pg.mark_osdcloud_finished(pg_conn, run_id=run["run_id"])
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-251",
+        token="token-251",
+        vmid=251,
+        serial_number="Gell-251-OSD1",
+        computer_name="GELL-251-OSD1",
+        created_from_run_id=run["run_id"],
+    )
+    heartbeat = agent_telemetry_pg.record_heartbeat(
+        pg_conn,
+        agent_id="agent-251",
+        payload={
+            "vmid": 251,
+            "computer_name": "GELL-251-OSD1",
+            "serial_number": "Gell-251-OSD1",
+            "current_run_id": run["run_id"],
+            "current_phase": "cloudosd",
+        },
+    )
+    cloudosd_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        heartbeat_at=heartbeat["received_at"],
+        heartbeat=heartbeat,
+    )
+    cloudosd_pg.ts_engine_pg.mark_steps_done_by_kind(
+        pg_conn,
+        run_id=run["run_id"],
+        kinds={"capture_autopilot_hash", "wait_agent_heartbeat"},
+        agent_id="agent-251",
+    )
+
+    api = cloudosd_client.get("/api/cloudosd/provision/progress")
+    assert api.status_code == 200, api.text
+    rows = api.json()["runs"]
+    row = next(item for item in rows if item["run_id"] == run["run_id"])
+    assert row["vm_name"] == "Gell-251-OSD1"
+    assert row["milestones"]["vm_created"]["state"] == "done"
+    assert row["milestones"]["pe_registered"]["state"] == "done"
+    assert row["milestones"]["osdcloud_done"]["state"] == "done"
+    assert row["milestones"]["agent_heartbeat"]["state"] == "done"
+    assert row["milestones"]["v2_steps_done"]["state"] == "done"
+    assert row["milestones"]["intune_state"]["state"] == "done"
+    assert row["intune_evidence"]["upload"]["autopilot_device_id"] == "ap-251"
+    assert row["intune_evidence"]["assignment"]["status"] == "assignedInSync"
+    assert row["intune_evidence"]["enrollment"]["status"] == "enrolled"
+
+    page = cloudosd_client.get("/provision")
+    assert page.status_code == 200, page.text
+    body = page.text
+    assert "CloudOSD Batch Progress" in body
+    assert "VM created" in body
+    assert "PE registered" in body
+    assert "OSDCloud done" in body
+    assert "Agent heartbeat" in body
+    assert "v2 steps done" in body
+    assert "Intune state" in body
+    assert "Gell-251-OSD1" in body
+    assert "/api/cloudosd/provision/progress" in body
 
 
 def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(

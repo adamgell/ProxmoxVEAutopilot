@@ -209,6 +209,70 @@
 </tr>
 </table>
 </form>
+
+<style>
+  .cloudosd-progress-table {
+    min-width: 1180px;
+  }
+  .cloudosd-progress-wrap {
+    overflow-x: auto;
+    max-width: 100%;
+    margin-top: 10px;
+  }
+  .cloudosd-progress-cell {
+    white-space: nowrap;
+  }
+  .cloudosd-progress-detail {
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+  .badge-red {
+    background: var(--bad-bg);
+    color: var(--bad-fg);
+  }
+</style>
+
+<section class="panel" data-cloudosd-batch-progress style="margin-top:16px;">
+  <h2>CloudOSD Batch Progress</h2>
+  <p class="subtitle">Recent `/provision` CloudOSD runs, one row per VM. Progress updates poll the CloudOSD controller without changing clone or WinPE behavior.</p>
+  <div class="cloudosd-progress-wrap">
+    <table class="cloudosd-progress-table">
+      <thead>
+        <tr>
+          <th>VM</th>
+          <th>VM created</th>
+          <th>PE registered</th>
+          <th>OSDCloud done</th>
+          <th>Agent heartbeat</th>
+          <th>v2 steps done</th>
+          <th>Intune state</th>
+          <th>Progress</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody id="cloudosdBatchProgressRows">
+        {% for row in cloudosd_batch_progress.runs %}
+        <tr data-cloudosd-progress-run="{{ row.run_id }}">
+          <td><b>{{ row.vm_name }}</b>{% if row.vmid %}<br><span class="cloudosd-progress-detail">VMID {{ row.vmid }}</span>{% endif %}</td>
+          <td class="cloudosd-progress-cell"><span class="badge badge-{{ 'green' if row.milestones.vm_created.state == 'done' else ('red' if row.milestones.vm_created.state == 'failed' else 'yellow') }}">{{ row.milestones.vm_created.label }}</span><br><span class="cloudosd-progress-detail">{{ row.milestones.vm_created.detail }}</span></td>
+          <td class="cloudosd-progress-cell"><span class="badge badge-{{ 'green' if row.milestones.pe_registered.state == 'done' else ('red' if row.milestones.pe_registered.state == 'failed' else 'yellow') }}">{{ row.milestones.pe_registered.label }}</span><br><span class="cloudosd-progress-detail">{{ row.milestones.pe_registered.at or row.milestones.pe_registered.detail }}</span></td>
+          <td class="cloudosd-progress-cell"><span class="badge badge-{{ 'green' if row.milestones.osdcloud_done.state == 'done' else ('red' if row.milestones.osdcloud_done.state == 'failed' else 'yellow') }}">{{ row.milestones.osdcloud_done.label }}</span><br><span class="cloudosd-progress-detail">{{ row.milestones.osdcloud_done.at or row.milestones.osdcloud_done.detail }}</span></td>
+          <td class="cloudosd-progress-cell"><span class="badge badge-{{ 'green' if row.milestones.agent_heartbeat.state == 'done' else ('red' if row.milestones.agent_heartbeat.state == 'failed' else 'yellow') }}">{{ row.milestones.agent_heartbeat.label }}</span><br><span class="cloudosd-progress-detail">{{ row.milestones.agent_heartbeat.at or row.milestones.agent_heartbeat.detail }}</span></td>
+          <td class="cloudosd-progress-cell"><span class="badge badge-{{ 'green' if row.milestones.v2_steps_done.state == 'done' else ('red' if row.milestones.v2_steps_done.state == 'failed' else 'yellow') }}">{{ row.milestones.v2_steps_done.label }}</span><br><span class="cloudosd-progress-detail">{{ row.milestones.v2_steps_done.detail }}</span></td>
+          <td class="cloudosd-progress-cell"><span class="badge badge-{{ 'green' if row.milestones.intune_state.state == 'done' else ('red' if row.milestones.intune_state.state == 'failed' else 'yellow') }}">{{ row.milestones.intune_state.label }}</span><br><span class="cloudosd-progress-detail">{{ row.milestones.intune_state.detail }}</span></td>
+          <td>{{ row.done_count }}/{{ row.total_count }}{% if row.failed_count %}<br><span class="status-red">{{ row.failed_count }} failed</span>{% endif %}</td>
+          <td><a href="/cloudosd/runs/{{ row.run_id }}">run</a></td>
+        </tr>
+        {% else %}
+        <tr data-cloudosd-progress-empty>
+          <td colspan="9"><span class="cloudosd-progress-detail">No CloudOSD runs launched from `/provision` yet.</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <script>
 (() => {
   const bootMode = document.getElementById('provision-boot-mode');
@@ -243,6 +307,60 @@
   };
   bootMode.addEventListener('change', sync);
   sync();
+})();
+
+(() => {
+  const body = document.getElementById('cloudosdBatchProgressRows');
+  if (!body) return;
+  function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[ch]);
+  }
+  function badge(state) {
+    if (state === 'done') return 'green';
+    if (state === 'failed') return 'red';
+    return 'yellow';
+  }
+  function milestoneCell(item) {
+    item = item || {};
+    const detail = item.at || item.detail || '';
+    return `<span class="badge badge-${badge(item.state)}">${esc(item.label || item.state || 'waiting')}</span><br><span class="cloudosd-progress-detail">${esc(detail)}</span>`;
+  }
+  function render(rows) {
+    if (!rows || !rows.length) {
+      body.innerHTML = '<tr data-cloudosd-progress-empty><td colspan="9"><span class="cloudosd-progress-detail">No CloudOSD runs launched from `/provision` yet.</span></td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map((row) => {
+      const milestones = row.milestones || {};
+      const vmid = row.vmid ? `<br><span class="cloudosd-progress-detail">VMID ${esc(row.vmid)}</span>` : '';
+      const failed = row.failed_count ? `<br><span class="status-red">${esc(row.failed_count)} failed</span>` : '';
+      return `<tr data-cloudosd-progress-run="${esc(row.run_id)}">
+        <td><b>${esc(row.vm_name)}</b>${vmid}</td>
+        <td class="cloudosd-progress-cell">${milestoneCell(milestones.vm_created)}</td>
+        <td class="cloudosd-progress-cell">${milestoneCell(milestones.pe_registered)}</td>
+        <td class="cloudosd-progress-cell">${milestoneCell(milestones.osdcloud_done)}</td>
+        <td class="cloudosd-progress-cell">${milestoneCell(milestones.agent_heartbeat)}</td>
+        <td class="cloudosd-progress-cell">${milestoneCell(milestones.v2_steps_done)}</td>
+        <td class="cloudosd-progress-cell">${milestoneCell(milestones.intune_state)}</td>
+        <td>${esc(row.done_count)}/${esc(row.total_count)}${failed}</td>
+        <td><a href="/cloudosd/runs/${encodeURIComponent(row.run_id)}">run</a></td>
+      </tr>`;
+    }).join('');
+  }
+  async function refresh() {
+    try {
+      const response = await fetch('/api/cloudosd/provision/progress?limit=25', {cache: 'no-store'});
+      if (!response.ok) return;
+      const data = await response.json();
+      render(data.runs || []);
+    } catch (_) {
+      return;
+    }
+  }
+  refresh();
+  setInterval(refresh, 8000);
 })();
 </script>
 {% endblock %}

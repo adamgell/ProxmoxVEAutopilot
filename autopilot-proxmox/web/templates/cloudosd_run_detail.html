@@ -226,12 +226,18 @@
       <dl class="cloudosd-kv">
         <dt>Summary</dt><dd data-cloudosd-field="intune_summary">{{ intune_evidence.summary }}</dd>
         <dt>Serial candidates</dt><dd data-cloudosd-field="serial_candidates">{{ intune_evidence.serial_candidates | join(', ') if intune_evidence.serial_candidates else '-' }}</dd>
+        <dt>Expected group tag</dt><dd data-cloudosd-field="expected_group_tag">{{ intune_evidence.tracking.expected_group_tag or '-' }}</dd>
         <dt>Hash capture</dt><dd data-cloudosd-field="hash_capture">{{ intune_evidence.hash.status }}{% if intune_evidence.hash.files %}: {{ intune_evidence.hash.files | map(attribute='name') | join(', ') }}{% endif %}</dd>
-        <dt>Autopilot upload</dt><dd data-cloudosd-field="autopilot_upload">{{ intune_evidence.autopilot.status }}{% if intune_evidence.autopilot.id %}: {{ intune_evidence.autopilot.id }}{% endif %}</dd>
-        <dt>Assignment</dt><dd data-cloudosd-field="autopilot_assignment">{{ intune_evidence.assignment.status }}{% if intune_evidence.assignment.group_tag %} / {{ intune_evidence.assignment.group_tag }}{% endif %}</dd>
+        <dt>Upload result</dt><dd data-cloudosd-field="autopilot_upload">{{ intune_evidence.upload.status }}{% if intune_evidence.upload.autopilot_device_id %}: {{ intune_evidence.upload.autopilot_device_id }}{% endif %}</dd>
+        <dt>Autopilot device ID</dt><dd data-cloudosd-field="autopilot_device_id">{{ intune_evidence.upload.autopilot_device_id or '-' }}</dd>
+        <dt>Assignment</dt><dd data-cloudosd-field="autopilot_assignment">{{ intune_evidence.assignment.status }}{% if intune_evidence.assignment.actual_group_tag %} / {{ intune_evidence.assignment.actual_group_tag }}{% endif %}</dd>
+        <dt>Group tag match</dt><dd data-cloudosd-field="group_tag_match">{{ intune_evidence.assignment.group_tag_match if intune_evidence.assignment.group_tag_match is not none else '-' }}</dd>
         <dt>Enrollment</dt><dd data-cloudosd-field="intune_enrollment">{{ intune_evidence.enrollment.status }}{% if intune_evidence.enrollment.intune_device_name %} / {{ intune_evidence.enrollment.intune_device_name }}{% endif %}</dd>
+        <dt>Contact state</dt><dd data-cloudosd-field="contact_state">{{ intune_evidence.enrollment.contact_state or '-' }}</dd>
+        <dt>Last contact/sync</dt><dd data-cloudosd-field="last_contact_sync">{{ intune_evidence.enrollment.autopilot_last_contact or '-' }} / {{ intune_evidence.enrollment.last_sync or '-' }}</dd>
         <dt>Device cache sync</dt><dd data-cloudosd-field="device_cache_sync">{{ intune_evidence.cache_synced_at or '-' }}</dd>
         <dt>Evidence error</dt><dd data-cloudosd-field="intune_evidence_error">{{ intune_evidence.error or '-' }}</dd>
+        <dt>Tracking errors</dt><dd data-cloudosd-field="intune_tracking_errors">{{ intune_evidence.errors | map(attribute='message') | join('; ') if intune_evidence.errors else '-' }}</dd>
       </dl>
     </section>
   </div>
@@ -489,17 +495,26 @@
     evidence = evidence || {};
     const hash = evidence.hash || {};
     const autopilot = evidence.autopilot || {};
+    const upload = evidence.upload || autopilot || {};
     const assignment = evidence.assignment || {};
     const enrollment = evidence.enrollment || {};
+    const tracking = evidence.tracking || {};
     const files = (hash.files || []).map((item) => item.name).filter(Boolean).join(", ");
+    const errors = (evidence.errors || []).map((item) => item.message || item.code).filter(Boolean).join("; ");
     setText("intune_summary", evidence.summary);
     setText("serial_candidates", (evidence.serial_candidates || []).join(", "));
+    setText("expected_group_tag", tracking.expected_group_tag);
     setText("hash_capture", `${text(hash.status, "missing")}${files ? ": " + files : ""}`);
-    setText("autopilot_upload", `${text(autopilot.status, "not_found")}${autopilot.id ? ": " + autopilot.id : ""}`);
-    setText("autopilot_assignment", `${text(assignment.status, "not_found")}${assignment.group_tag ? " / " + assignment.group_tag : ""}`);
+    setText("autopilot_upload", `${text(upload.status || autopilot.status, "not_found")}${upload.autopilot_device_id ? ": " + upload.autopilot_device_id : ""}`);
+    setText("autopilot_device_id", upload.autopilot_device_id || autopilot.id);
+    setText("autopilot_assignment", `${text(assignment.status, "not_found")}${assignment.actual_group_tag ? " / " + assignment.actual_group_tag : ""}`);
+    setText("group_tag_match", assignment.group_tag_match === null || assignment.group_tag_match === undefined ? "-" : assignment.group_tag_match);
     setText("intune_enrollment", `${text(enrollment.status, "not_found")}${enrollment.intune_device_name ? " / " + enrollment.intune_device_name : ""}`);
+    setText("contact_state", enrollment.contact_state);
+    setText("last_contact_sync", `${text(enrollment.autopilot_last_contact)} / ${text(enrollment.last_sync)}`);
     setText("device_cache_sync", evidence.cache_synced_at);
     setText("intune_evidence_error", evidence.error || "-");
+    setText("intune_tracking_errors", errors || "-");
   }
 
   function render(data) {
