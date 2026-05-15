@@ -525,7 +525,8 @@ function startPointerDrag(event, payload) {
     payload,
     startX: event.clientX,
     startY: event.clientY,
-    moved: false
+    moved: false,
+    sourceElement: event.currentTarget
   };
   if (payload.type === "step") {
     draggingStepId = payload.stepId;
@@ -564,7 +565,7 @@ function pointerUpDrag(event) {
     return;
   }
   clearDropTargets();
-  render();
+  if (drag.sourceElement) drag.sourceElement.dataset.dragging = "false";
 }
 
 function paletteClick(event, kind) {

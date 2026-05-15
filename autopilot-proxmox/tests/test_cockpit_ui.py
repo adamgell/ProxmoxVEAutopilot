@@ -642,6 +642,8 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "pointerMoveDrag" in body
     assert "paletteClick(event" in body
     assert "dropOnPhase(event" in body
+    assert "sourceElement: event.currentTarget" in body
+    assert 'drag.sourceElement.dataset.dragging = "false"' in body
     assert "data-enabled=\"${s.enabled !== false}\"" in body
     assert "v2-step-state" in body
     assert "v2-step-card-status" in body
