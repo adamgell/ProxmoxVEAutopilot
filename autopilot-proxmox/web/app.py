@@ -3517,6 +3517,75 @@ _LIVE_QGA_FAILURE_BACKOFF_SECONDS = 60.0
 _LIVE_QGA_FAILURES: dict[int, dict] = {}
 
 
+def _reset_runtime_ui_caches() -> dict:
+    """Clear process-local caches that can make UI tables look stale.
+
+    This does not delete durable Postgres inventory, jobs, telemetry, hashes,
+    CloudOSD runs, or Graph sync state. It only forces the next page/API read
+    to rebuild from the current durable sources.
+    """
+    _VMS_CACHE.update({
+        "data": None,
+        "devices": None,
+        "hash_serials": None,
+        "fetched_at": 0.0,
+        "refreshing": False,
+    })
+    screenshots = len(_SCREENSHOT_CACHE)
+    qga_failures = len(_LIVE_QGA_FAILURES)
+    _SCREENSHOT_CACHE.clear()
+    _LIVE_QGA_FAILURES.clear()
+    _LATEST_VERSION_CACHE.update({
+        "fetched_at": 0,
+        "sha": None,
+        "sha_short": None,
+        "error": None,
+    })
+    return {
+        "vms": "invalidated",
+        "screenshots_cleared": screenshots,
+        "qga_backoffs_cleared": qga_failures,
+        "version": "invalidated",
+    }
+
+
+@app.post("/api/ui/clear-caches")
+async def api_ui_clear_caches():
+    return {"ok": True, "cleared": _reset_runtime_ui_caches()}
+
+
+@app.post("/api/ui/reload-live-data")
+async def api_ui_reload_live_data():
+    """Clear UI caches, then refresh expensive live-backed table sources.
+
+    Fleet refresh runs a monitor sweep and rebuilds /vms from its current
+    snapshot. CloudOSD readiness asks the watcher to reconcile post-deploy
+    Intune state, while still respecting Graph 429 backoff.
+    """
+    import asyncio
+    from web import monitor_main
+
+    cleared = _reset_runtime_ui_caches()
+    refreshes: dict[str, dict] = {}
+
+    try:
+        await _run_monitor_sweep_and_refresh_vms_cache()
+        refreshes["fleet"] = {"ok": True}
+    except Exception as exc:
+        refreshes["fleet"] = {"ok": False, "error": str(exc)}
+
+    try:
+        readiness = await asyncio.to_thread(
+            monitor_main._do_cloudosd_readiness_tick,
+            100,
+        )
+        refreshes["cloudosd_readiness"] = {"ok": True, "result": readiness}
+    except Exception as exc:
+        refreshes["cloudosd_readiness"] = {"ok": False, "error": str(exc)}
+
+    return {"ok": True, "cleared": cleared, "refreshes": refreshes}
+
+
 def _purge_expired_screenshots() -> None:
     now = time.monotonic()
     expired = [

@@ -117,6 +117,97 @@ def test_cockpit_pages_use_shared_full_width_shell(client):
     assert ".cockpit-shell.jobs-wide .cockpit-frame" not in response.text
 
 
+def test_base_shell_exposes_global_cache_and_live_reload_controls(client):
+    response = client.get("/jobs")
+
+    assert response.status_code == 200
+    assert 'id="reloadLiveDataBtn"' in response.text
+    assert 'id="clearUiCachesBtn"' in response.text
+    assert "/api/ui/reload-live-data" in response.text
+    assert "/api/ui/clear-caches" in response.text
+
+
+def test_ui_clear_caches_invalidates_runtime_ui_caches(client):
+    from web import app as app_module
+
+    app_module._VMS_CACHE.update({
+        "data": [{"vmid": 101}],
+        "devices": ([{"serial": "abc"}], ""),
+        "hash_serials": {"abc"},
+        "fetched_at": app_module.time.monotonic(),
+        "refreshing": True,
+    })
+    app_module._SCREENSHOT_CACHE["shot"] = {"expires_at_monotonic": 999999}
+    app_module._LIVE_QGA_FAILURES[101] = {"error": "old failure"}
+    app_module._LATEST_VERSION_CACHE.update({
+        "fetched_at": 123,
+        "sha": "abc",
+        "sha_short": "abc",
+        "error": "old",
+    })
+
+    response = client.post("/api/ui/clear-caches")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["cleared"]["vms"] == "invalidated"
+    assert app_module._VMS_CACHE == {
+        "data": None,
+        "devices": None,
+        "hash_serials": None,
+        "fetched_at": 0.0,
+        "refreshing": False,
+    }
+    assert app_module._SCREENSHOT_CACHE == {}
+    assert app_module._LIVE_QGA_FAILURES == {}
+    assert app_module._LATEST_VERSION_CACHE["fetched_at"] == 0
+    assert app_module._LATEST_VERSION_CACHE["sha"] is None
+
+
+def test_ui_reload_live_data_refreshes_fleet_and_cloudosd(client, monkeypatch):
+    from web import app as app_module
+    from web import monitor_main
+
+    calls = {"fleet": 0, "readiness_limit": None}
+
+    async def fake_fleet_refresh():
+        calls["fleet"] += 1
+
+    def fake_readiness_tick(limit=100):
+        calls["readiness_limit"] = limit
+        return {"watched": 2, "sync_needed": 1, "synced": False}
+
+    monkeypatch.setattr(
+        app_module,
+        "_run_monitor_sweep_and_refresh_vms_cache",
+        fake_fleet_refresh,
+    )
+    monkeypatch.setattr(
+        monitor_main,
+        "_do_cloudosd_readiness_tick",
+        fake_readiness_tick,
+    )
+    app_module._VMS_CACHE.update({
+        "data": [{"vmid": 102}],
+        "devices": ([], ""),
+        "hash_serials": set(),
+        "fetched_at": app_module.time.monotonic(),
+        "refreshing": False,
+    })
+
+    response = client.post("/api/ui/reload-live-data")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert calls == {"fleet": 1, "readiness_limit": 100}
+    assert body["refreshes"]["fleet"]["ok"] is True
+    assert body["refreshes"]["cloudosd_readiness"]["ok"] is True
+    assert body["refreshes"]["cloudosd_readiness"]["result"]["watched"] == 2
+    assert app_module._VMS_CACHE["data"] is None
+
+
 def test_job_detail_not_found(client):
     from web.app import job_manager
     job_manager.get_job.return_value = None

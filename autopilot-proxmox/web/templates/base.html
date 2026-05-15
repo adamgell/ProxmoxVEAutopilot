@@ -1479,16 +1479,61 @@
       }
       .cockpit-shell .theme-toggle,
       .cockpit-shell .live-socket-chip,
-      .cockpit-shell .user-chip {
+      .cockpit-shell .user-chip,
+      .cockpit-shell .operator-action-btn {
         background: rgba(255, 255, 255, 0.065);
         border-color: rgba(142, 163, 191, 0.18);
       }
       html:not([data-theme="dark"]) .cockpit-shell .theme-toggle,
       html:not([data-theme="dark"]) .cockpit-shell .live-socket-chip,
-      html:not([data-theme="dark"]) .cockpit-shell .user-chip {
+      html:not([data-theme="dark"]) .cockpit-shell .user-chip,
+      html:not([data-theme="dark"]) .cockpit-shell .operator-action-btn {
         color: var(--cockpit-ink);
         background: rgba(255, 255, 255, 0.74);
         border-color: rgba(72, 88, 111, 0.18);
+      }
+      .operator-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .operator-action-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 30px;
+        padding: 0 9px;
+        border: 1px solid rgba(142, 163, 191, 0.18);
+        border-radius: 999px;
+        color: rgba(255, 255, 255, 0.82);
+        font-family: "IBM Plex Sans", sans-serif;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .operator-action-btn:hover {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.13);
+      }
+      html:not([data-theme="dark"]) .cockpit-shell .operator-action-btn:hover {
+        color: #1f354a;
+        background: rgba(0, 105, 168, 0.09);
+      }
+      .operator-action-btn:focus-visible {
+        outline: 2px solid var(--ms-blue);
+        outline-offset: 2px;
+      }
+      .operator-action-btn[disabled] {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      .operator-action-btn svg {
+        display: block;
+        flex: 0 0 auto;
       }
       .cockpit-frame {
         width: 100%;
@@ -2117,6 +2162,9 @@
           flex-basis: 100%;
           max-width: none;
         }
+        .operator-action-label {
+          display: none;
+        }
         .cockpit-grid {
           grid-template-columns: 1fr;
         }
@@ -2518,6 +2566,61 @@
             />
           </svg>
         </button>
+        <span class="operator-actions" aria-label="Live data controls">
+          <button
+            id="reloadLiveDataBtn"
+            class="operator-action-btn"
+            type="button"
+            title="Reload tables from live data"
+            aria-label="Reload tables from live data"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 0 1-15 6.7" />
+              <path d="M3 12a9 9 0 0 1 15-6.7" />
+              <path d="M6 19H3v-3" />
+              <path d="M18 5h3v3" />
+            </svg>
+            <span class="operator-action-label">Reload</span>
+          </button>
+          <button
+            id="clearUiCachesBtn"
+            class="operator-action-btn"
+            type="button"
+            title="Clear UI caches and reload this page"
+            aria-label="Clear UI caches and reload this page"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 6h18" />
+              <path d="M8 6V4h8v2" />
+              <path d="M19 6l-1 14H6L5 6" />
+              <path d="M10 11v5" />
+              <path d="M14 11v5" />
+            </svg>
+            <span class="operator-action-label">Clear caches</span>
+          </button>
+        </span>
         <span
           id="liveSocketIndicator"
           class="live-socket-chip"
@@ -3203,6 +3306,79 @@
           return visible;
         }
 
+        function setOperatorDataButtonsBusy(busy) {
+          ["reloadLiveDataBtn", "clearUiCachesBtn"].forEach(function (id) {
+            var btn = document.getElementById(id);
+            if (!btn) return;
+            btn.disabled = !!busy;
+            btn.setAttribute("aria-busy", busy ? "true" : "false");
+          });
+        }
+
+        function reloadWithFreshUrl() {
+          var url = new URL(window.location.href);
+          url.searchParams.set("_live", Date.now().toString());
+          window.location.href = url.toString();
+        }
+
+        async function postOperatorDataAction(url, title, busyText) {
+          setOperatorDataButtonsBusy(true);
+          toast(title, busyText || "Request sent to the controller.", "info");
+          try {
+            var response = await fetch(url, {
+              method: "POST",
+              cache: "no-store",
+              headers: { Accept: "application/json" },
+            });
+            if (!response.ok) {
+              throw new Error((await response.text()).slice(0, 220));
+            }
+            var body = await response.json().catch(function () {
+              return {};
+            });
+            var refreshes = body.refreshes || {};
+            var failed = Object.keys(refreshes).filter(function (key) {
+              return refreshes[key] && refreshes[key].ok === false;
+            });
+            if (failed.length) {
+              toast(
+                title + " partially completed",
+                failed.join(", ") + " refresh failed; reloading visible data.",
+                "warn",
+              );
+            } else {
+              toast(title + " complete", "Reloading this page from fresh data.", "ok");
+            }
+            window.setTimeout(reloadWithFreshUrl, 450);
+          } catch (error) {
+            setOperatorDataButtonsBusy(false);
+            toast(title + " failed", error.message || String(error), "bad");
+          }
+        }
+
+        function wireOperatorDataActions() {
+          var reload = document.getElementById("reloadLiveDataBtn");
+          var clear = document.getElementById("clearUiCachesBtn");
+          if (reload) {
+            reload.addEventListener("click", function () {
+              postOperatorDataAction(
+                "/api/ui/reload-live-data",
+                "Reload live data",
+                "Refreshing fleet and CloudOSD readiness before reload.",
+              );
+            });
+          }
+          if (clear) {
+            clear.addEventListener("click", function () {
+              postOperatorDataAction(
+                "/api/ui/clear-caches",
+                "Clear UI caches",
+                "Invalidating process-local UI caches.",
+              );
+            });
+          }
+        }
+
         function wireCommand() {
           var input = document.getElementById("cockpitCommand");
           if (!input) return;
@@ -3335,12 +3511,27 @@
           openDrawer: openDrawer,
           closeDrawer: closeDrawer,
           filterRows: filterRows,
+          reloadLiveData: function () {
+            return postOperatorDataAction(
+              "/api/ui/reload-live-data",
+              "Reload live data",
+              "Refreshing fleet and CloudOSD readiness before reload.",
+            );
+          },
+          clearCaches: function () {
+            return postOperatorDataAction(
+              "/api/ui/clear-caches",
+              "Clear UI caches",
+              "Invalidating process-local UI caches.",
+            );
+          },
         };
 
         function init() {
           markRail();
           wireCommand();
           wireDataControls();
+          wireOperatorDataActions();
         }
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", init);
