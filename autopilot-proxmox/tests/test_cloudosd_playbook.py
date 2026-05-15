@@ -24,3 +24,12 @@ def test_cloudosd_playbooks_are_additive_and_use_cloudosd_routes():
     assert "boot: \"order=scsi0\"" in text
     assert "Start installed Windows from disk" in text
     assert "complete" in text
+
+
+def test_cloudosd_playbook_polling_handles_missing_json_response():
+    inner = ROOT / "playbooks" / "_provision_proxmox_cloudosd_vm.yml"
+    text = inner.read_text()
+
+    assert ".json.run.state" not in text
+    assert ".json.run.osdcloud_finished_at" not in text
+    assert "get('json', {}).get('run', {}).get('state', '')" in text

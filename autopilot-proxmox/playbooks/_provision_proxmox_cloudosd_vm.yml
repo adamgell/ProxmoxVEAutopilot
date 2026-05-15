@@ -117,14 +117,14 @@
         method: GET
         status_code: [200]
       register: _cloudosd_run
-      until: _cloudosd_run.json.run.state in ['pe_registered', 'complete', 'failed']
+      until: (_cloudosd_run.get('json', {}).get('run', {}).get('state', '')) in ['pe_registered', 'complete', 'failed']
       retries: 240
       delay: 10
 
     - name: Fail if CloudOSD run failed during PE registration
       ansible.builtin.fail:
         msg: "CloudOSD run {{ cloudosd_run_id }} failed before PE handoff."
-      when: _cloudosd_run.json.run.state == 'failed'
+      when: (_cloudosd_run.get('json', {}).get('run', {}).get('state', '')) == 'failed'
 
     - name: Detach CloudOSD ISO after PE registration
       ansible.builtin.uri:
@@ -145,15 +145,15 @@
         status_code: [200]
       register: _cloudosd_pe_complete
       until: >-
-        _cloudosd_pe_complete.json.run.state in ['complete', 'failed'] or
-        ((_cloudosd_pe_complete.json.run.osdcloud_finished_at | default('', true) | string) | length > 0)
+        (_cloudosd_pe_complete.get('json', {}).get('run', {}).get('state', '')) in ['complete', 'failed'] or
+        ((_cloudosd_pe_complete.get('json', {}).get('run', {}).get('osdcloud_finished_at', '') | default('', true) | string) | length > 0)
       retries: 720
       delay: 10
 
     - name: Fail if CloudOSD run failed before disk boot handoff
       ansible.builtin.fail:
         msg: "CloudOSD run {{ cloudosd_run_id }} failed before disk boot handoff."
-      when: _cloudosd_pe_complete.json.run.state == 'failed'
+      when: (_cloudosd_pe_complete.get('json', {}).get('run', {}).get('state', '')) == 'failed'
 
     - name: Wait for CloudOSD PE shutdown
       ansible.builtin.uri:
@@ -230,11 +230,11 @@
         method: GET
         status_code: [200]
       register: _cloudosd_complete
-      until: _cloudosd_complete.json.run.state in ['complete', 'failed']
+      until: (_cloudosd_complete.get('json', {}).get('run', {}).get('state', '')) in ['complete', 'failed']
       retries: 720
       delay: 10
 
     - name: Fail if CloudOSD run failed before completion
       ansible.builtin.fail:
         msg: "CloudOSD run {{ cloudosd_run_id }} failed before heartbeat completion."
-      when: _cloudosd_complete.json.run.state == 'failed'
+      when: (_cloudosd_complete.get('json', {}).get('run', {}).get('state', '')) == 'failed'
