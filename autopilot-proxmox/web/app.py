@@ -19,7 +19,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from web.jobs import JobManager
 from web import devices_pg as devices_db
@@ -8078,6 +8078,34 @@ class _DuplicateReq(BaseModel):
     new_name: str
 
 
+class _V2BuilderNodeIn(BaseModel):
+    id: Optional[str] = None
+    client_id: Optional[str] = None
+    parent_id: Optional[str] = None
+    node_type: str = "step"
+    name: str
+    description: str = ""
+    kind: Optional[str] = None
+    phase: str = "full_os"
+    enabled: bool = True
+    condition: dict = Field(default_factory=dict)
+    variables: dict = Field(default_factory=dict)
+    params: dict = Field(default_factory=dict)
+    content_refs: list[str] = Field(default_factory=list)
+    continue_on_error: bool = False
+    retry_count: int = 0
+    retry_delay_seconds: int = 10
+    timeout_seconds: Optional[int] = None
+    reboot_behavior: str = "none"
+
+
+class _V2BuilderSequenceIn(BaseModel):
+    name: str
+    description: str = ""
+    enabled: bool = True
+    nodes: list[_V2BuilderNodeIn] = Field(default_factory=list)
+
+
 @app.get("/api/sequences")
 def api_sequences_list():
     return sequences_db.list_sequences(SEQUENCES_DB)
@@ -8295,6 +8323,223 @@ def run_detail_page(run_id: int, request: Request):
     )
 
 
+_V2_STEP_TEMPLATES = [
+    {
+        "kind": "cloudosd_preflight",
+        "label": "CloudOSD preflight",
+        "phase": "pe",
+        "category": "CloudOSD",
+        "description": "Validate VM identity, network, artifact, catalog, and package inputs.",
+    },
+    {
+        "kind": "cloudosd_deploy_os",
+        "label": "Run OSDCloud workflow",
+        "phase": "pe",
+        "category": "CloudOSD",
+        "description": "Let OSDCloud partition, apply Windows, and prepare boot files.",
+        "timeout_seconds": 7200,
+    },
+    {
+        "kind": "stage_ad_domain_join_unattend",
+        "label": "Stage AD domain join unattend",
+        "phase": "pe",
+        "category": "Identity",
+        "description": "Inject specialize-pass Microsoft-Windows-UnattendedJoin data without storing plaintext credentials.",
+    },
+    {
+        "kind": "verify_ad_domain_join",
+        "label": "Verify AD domain membership",
+        "phase": "full_os",
+        "category": "Identity",
+        "description": "AutopilotAgent reports full-OS domain membership evidence.",
+        "retry_count": 60,
+        "retry_delay_seconds": 30,
+    },
+    {
+        "kind": "cloudosd_validate_offline_os",
+        "label": "Validate offline Windows",
+        "phase": "pe",
+        "category": "Validation",
+        "description": "Check Windows volume, boot files, VirtIO drivers, and staged payloads before reboot.",
+    },
+    {
+        "kind": "stage_osd_client",
+        "label": "Stage OSD client",
+        "phase": "pe",
+        "category": "Payload",
+        "description": "Copy the existing OSD client payload for first-boot use.",
+    },
+    {
+        "kind": "stage_autopilot_agent",
+        "label": "Stage AutopilotAgent",
+        "phase": "pe",
+        "category": "Payload",
+        "description": "Copy the MSI, postinstall, run token, and first-boot chain.",
+    },
+    {
+        "kind": "capture_autopilot_hash",
+        "label": "Capture Autopilot hardware hash",
+        "phase": "full_os",
+        "category": "Autopilot",
+        "description": "AutopilotAgent captures and posts the hardware hash with group tag evidence.",
+        "retry_count": 2,
+        "retry_delay_seconds": 20,
+    },
+    {
+        "kind": "wait_agent_heartbeat",
+        "label": "Wait for AutopilotAgent heartbeat",
+        "phase": "full_os",
+        "category": "Autopilot",
+        "description": "Controller-side completion gate for the run-bound AutopilotAgent heartbeat.",
+        "retry_count": 60,
+        "retry_delay_seconds": 10,
+    },
+    {
+        "kind": "install_package",
+        "label": "Install package",
+        "phase": "full_os",
+        "category": "Content",
+        "description": "Resolve a content-library package and hand execution to the agent.",
+    },
+    {
+        "kind": "run_script",
+        "label": "Run PowerShell script",
+        "phase": "full_os",
+        "category": "Content",
+        "description": "Execute a managed script step from the v2 plan.",
+    },
+    {
+        "kind": "rename_computer",
+        "label": "Set computer name",
+        "phase": "specialize",
+        "category": "Identity",
+        "description": "Apply the Windows name during specialize when the deployment path supports it.",
+    },
+]
+
+
+def _legacy_step_to_v2_nodes(step: dict, index: int) -> list[dict]:
+    step_type = step.get("step_type")
+    params = dict(step.get("params") or {})
+    enabled = bool(step.get("enabled", True))
+    common = {
+        "enabled": enabled,
+        "params": params,
+        "client_id": f"legacy-{step.get('id') or index}",
+    }
+    mapping = {
+        "set_oem_hardware": ("Apply OEM hardware profile", "set_oem_hardware", "controller"),
+        "local_admin": ("Configure local administrator", "local_admin", "specialize"),
+        "autopilot_entra": ("Prepare Entra Autopilot", "autopilot_entra", "full_os"),
+        "autopilot_hybrid": ("Prepare Hybrid Autopilot", "autopilot_hybrid", "full_os"),
+        "rename_computer": ("Set computer name", "rename_computer", "specialize"),
+        "run_script": ("Run PowerShell script", "run_script", "full_os"),
+        "install_module": ("Install PowerShell module", "install_module", "full_os"),
+        "wait_guest_agent": ("Wait for guest agent", "wait_guest_agent", "controller"),
+        "install_ubuntu_core": ("Install Ubuntu core", "install_ubuntu_core", "install"),
+        "create_ubuntu_user": ("Create Ubuntu user", "create_ubuntu_user", "install"),
+        "install_apt_packages": ("Install apt packages", "install_apt_packages", "install"),
+        "install_snap_packages": ("Install snap packages", "install_snap_packages", "install"),
+        "remove_apt_packages": ("Remove apt packages", "remove_apt_packages", "install"),
+        "install_intune_portal": ("Install Intune Portal", "install_intune_portal", "full_os"),
+        "install_edge": ("Install Microsoft Edge", "install_edge", "full_os"),
+        "install_mde_linux": ("Install MDE Linux", "install_mde_linux", "full_os"),
+        "install_desktop_environment": ("Install desktop environment", "install_desktop_environment", "install"),
+        "run_late_command": ("Run late command", "run_late_command", "install"),
+        "run_firstboot_script": ("Run first-boot script", "run_firstboot_script", "full_os"),
+    }
+    if step_type == "join_ad_domain":
+        return [
+            {
+                **common,
+                "client_id": f"legacy-{step.get('id') or index}-stage",
+                "node_type": "step",
+                "name": "Stage AD domain join unattend",
+                "kind": "stage_ad_domain_join_unattend",
+                "phase": "pe",
+            },
+            {
+                **common,
+                "client_id": f"legacy-{step.get('id') or index}-verify",
+                "node_type": "step",
+                "name": "Verify AD domain membership",
+                "kind": "verify_ad_domain_join",
+                "phase": "full_os",
+                "retry_count": 60,
+                "retry_delay_seconds": 30,
+            },
+        ]
+    label, kind, phase = mapping.get(
+        step_type,
+        (str(step_type or "Legacy step").replace("_", " ").title(), step_type or "legacy_step", "full_os"),
+    )
+    reboot_behavior = "required" if params.get("causes_reboot") else "none"
+    return [{
+        **common,
+        "node_type": "step",
+        "name": label,
+        "kind": kind,
+        "phase": phase,
+        "reboot_behavior": reboot_behavior,
+    }]
+
+
+def _legacy_sequence_to_v2_nodes(legacy: dict) -> list[dict]:
+    nodes: list[dict] = []
+    for index, step in enumerate(legacy.get("steps") or []):
+        nodes.extend(_legacy_step_to_v2_nodes(step, index))
+    kinds = {node.get("kind") for node in nodes}
+    if legacy.get("produces_autopilot_hash") and "capture_autopilot_hash" not in kinds:
+        hash_node = {
+            "client_id": "legacy-autopilot-hash",
+            "node_type": "step",
+            "name": "Capture Autopilot hardware hash",
+            "kind": "capture_autopilot_hash",
+            "phase": "full_os",
+            "params": {"source": "legacy_sequence"},
+            "retry_count": 2,
+            "retry_delay_seconds": 20,
+        }
+        verify_index = next(
+            (index for index, node in enumerate(nodes) if node.get("kind") == "verify_ad_domain_join"),
+            len(nodes),
+        )
+        nodes.insert(verify_index, hash_node)
+    return nodes
+
+
+def _save_v2_builder_sequence(conn, sequence_id: str, body: _V2BuilderSequenceIn) -> str:
+    from web import ts_engine_pg
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="sequence name is required")
+    try:
+        ts_engine_pg.update_sequence(
+            conn,
+            sequence_id,
+            name=name,
+            description=body.description,
+            enabled=body.enabled,
+            updated_by="ui-builder",
+        )
+        ts_engine_pg.replace_sequence_nodes(
+            conn,
+            sequence_id,
+            [node.model_dump() for node in body.nodes],
+            updated_by="ui-builder",
+        )
+        return ts_engine_pg.compile_sequence(conn, sequence_id, compiled_by="ui-builder")
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    except psycopg.IntegrityError as exc:
+        conn.rollback()
+        if _is_unique_violation(exc):
+            raise HTTPException(status_code=409, detail="v2 sequence name already exists")
+        raise
+
+
 @app.get("/task-engine", response_class=HTMLResponse)
 def task_engine_page(request: Request):
     from web import cloudosd_pg, db_pg, ts_engine_pg
@@ -8327,6 +8572,7 @@ def task_engine_page(request: Request):
                 cloudosd_runs.append(run)
         content_items = ts_engine_pg.list_content_items(conn)
         manifest_items = ts_engine_pg.list_recent_manifest_items(conn)
+    legacy_sequences = sequences_db.list_sequences(SEQUENCES_DB)
     return templates.TemplateResponse(
         "task_engine.html",
         {
@@ -8336,8 +8582,120 @@ def task_engine_page(request: Request):
             "cloudosd_runs": cloudosd_runs,
             "content_items": content_items,
             "manifest_items": manifest_items,
+            "legacy_sequences": legacy_sequences,
         },
     )
+
+
+@app.get("/task-engine/sequences/new", response_class=HTMLResponse)
+def task_engine_sequence_new(request: Request, legacy_id: int | None = None):
+    legacy = sequences_db.get_sequence(SEQUENCES_DB, legacy_id) if legacy_id else None
+    sequence = None
+    nodes = []
+    if legacy:
+        sequence = {
+            "id": None,
+            "name": f"{legacy['name']} v2",
+            "description": legacy.get("description") or "",
+            "enabled": True,
+        }
+        nodes = _legacy_sequence_to_v2_nodes(legacy)
+    return templates.TemplateResponse(
+        "task_engine_builder.html",
+        {
+            "request": request,
+            "sequence": sequence,
+            "nodes": nodes,
+            "step_templates": _V2_STEP_TEMPLATES,
+            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
+            "legacy_source_id": legacy_id,
+        },
+    )
+
+
+@app.get("/task-engine/sequences/{sequence_id}/edit", response_class=HTMLResponse)
+def task_engine_sequence_edit(request: Request, sequence_id: str):
+    from web import db_pg, ts_engine_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        sequence = ts_engine_pg.get_sequence(conn, sequence_id)
+        if not sequence:
+            raise HTTPException(status_code=404, detail="v2 sequence not found")
+        nodes = ts_engine_pg.list_sequence_nodes(conn, sequence_id)
+    return templates.TemplateResponse(
+        "task_engine_builder.html",
+        {
+            "request": request,
+            "sequence": sequence,
+            "nodes": nodes,
+            "step_templates": _V2_STEP_TEMPLATES,
+            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
+            "legacy_source_id": None,
+        },
+    )
+
+
+@app.post("/api/osd/v2/builder/sequences", status_code=201)
+def api_v2_builder_create_sequence(body: _V2BuilderSequenceIn):
+    from web import db_pg, ts_engine_pg
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="sequence name is required")
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            sequence_id = ts_engine_pg.create_sequence(
+                conn,
+                name=name,
+                description=body.description,
+                created_by="ui-builder",
+            )
+            version_id = _save_v2_builder_sequence(conn, sequence_id, body)
+        except psycopg.IntegrityError as exc:
+            conn.rollback()
+            if _is_unique_violation(exc):
+                raise HTTPException(status_code=409, detail="v2 sequence name already exists")
+            raise
+    return {"id": sequence_id, "current_version_id": version_id}
+
+
+@app.put("/api/osd/v2/builder/sequences/{sequence_id}")
+def api_v2_builder_update_sequence(sequence_id: str, body: _V2BuilderSequenceIn):
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        version_id = _save_v2_builder_sequence(conn, sequence_id, body)
+    return {"ok": True, "id": sequence_id, "current_version_id": version_id}
+
+
+@app.post("/api/osd/v2/builder/import-legacy/{legacy_id}", status_code=201)
+def api_v2_builder_import_legacy_sequence(legacy_id: int):
+    from web import db_pg, ts_engine_pg
+
+    legacy = sequences_db.get_sequence(SEQUENCES_DB, legacy_id)
+    if legacy is None:
+        raise HTTPException(status_code=404, detail="legacy sequence not found")
+    body = _V2BuilderSequenceIn(
+        name=f"{legacy['name']} v2",
+        description=legacy.get("description") or "",
+        enabled=True,
+        nodes=[_V2BuilderNodeIn(**node) for node in _legacy_sequence_to_v2_nodes(legacy)],
+    )
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            sequence_id = ts_engine_pg.create_sequence(
+                conn,
+                name=body.name,
+                description=body.description,
+                created_by=f"legacy:{legacy_id}",
+            )
+            version_id = _save_v2_builder_sequence(conn, sequence_id, body)
+        except psycopg.IntegrityError as exc:
+            conn.rollback()
+            if _is_unique_violation(exc):
+                raise HTTPException(status_code=409, detail="v2 sequence name already exists")
+            raise
+    return {"id": sequence_id, "current_version_id": version_id}
 
 
 @app.get("/answer-isos", response_class=HTMLResponse)

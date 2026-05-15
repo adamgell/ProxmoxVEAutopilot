@@ -4,6 +4,33 @@
 {% block content %}
 {{ page_head("Task Sequence Engine v2", "Postgres-backed sequence trees, immutable run plans, agent v2 state, and content manifest visibility.") }}
 
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <div style="display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;">
+    <div>
+      <h2 style="margin-top:0;border-bottom:0;padding-bottom:0;">Smart V2 Builder</h2>
+      <p style="margin:4px 0 0;color:var(--ink-muted);max-width:780px;">
+        Build the operator-owned v2 plan directly: phase lanes, full-OS agent steps,
+        CloudOSD deployment gates, content refs, retries, reboot behavior, and
+        legacy v1 sequence migration without changing the old `/sequences` surface.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <a class="button" href="/task-engine/sequences/new">New v2 sequence</a>
+      {% if legacy_sequences %}
+      <label style="display:flex;gap:6px;align-items:center;">
+        <span>Import v1</span>
+        <select id="legacyImportSelect">
+          {% for legacy in legacy_sequences %}
+          <option value="{{ legacy.id }}">{{ legacy.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="button" onclick="importLegacySequence()">Create v2 copy</button>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
 <section class="cockpit-grid" style="margin-bottom:14px;">
   <div class="cockpit-metric cockpit-col-3">
     <div class="cockpit-metric-label">V2 Sequences</div>
@@ -60,6 +87,8 @@
       <td><code>{{ seq.current_version_id or 'uncompiled' }}</code></td>
       <td>{{ seq.updated_at }}</td>
       <td>
+        <a href="/task-engine/sequences/{{ seq.id }}/edit">Edit builder</a>
+        {% if seq.steps %}<br>{% endif %}
         {% if seq.steps %}
         <details>
           <summary>{{ seq.steps|length }} step(s)</summary>
@@ -225,4 +254,19 @@
   </tbody>
 </table>
 {% endif %}
+<script>
+async function importLegacySequence() {
+  const select = document.getElementById("legacyImportSelect");
+  if (!select || !select.value) return;
+  const r = await fetch(`/api/osd/v2/builder/import-legacy/${select.value}`, {method: "POST"});
+  if (r.ok) {
+    const payload = await r.json();
+    location.href = `/task-engine/sequences/${payload.id}/edit`;
+    return;
+  }
+  let detail = r.statusText;
+  try { detail = (await r.json()).detail || detail; } catch (e) {}
+  alert(`Import failed: ${detail}`);
+}
+</script>
 {% endblock %}

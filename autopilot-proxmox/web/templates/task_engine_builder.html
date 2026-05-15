@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block title %}{% if sequence and sequence.id %}Edit{% else %}New{% endif %} V2 Sequence - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head(("Edit v2 sequence: " ~ sequence.name) if sequence and sequence.id else "New v2 task sequence", "Smart builder for CloudOSD desktop deployment, full-OS AutopilotAgent work, content steps, retry behavior, and legacy v1 migration.") }}
+
+<style>
+  .v2-builder-grid {
+    display:grid;
+    grid-template-columns:minmax(260px, 340px) minmax(620px, 1fr) minmax(260px, 360px);
+    gap:14px;
+    align-items:start;
+  }
+  .v2-builder-grid h2 {
+    margin-top:0;
+  }
+  .v2-stack {
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .v2-panel {
+    border:1px solid var(--line);
+    border-radius:8px;
+    background:var(--cockpit-panel);
+    padding:14px;
+  }
+  .v2-field {
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+    margin-bottom:10px;
+  }
+  .v2-field input,
+  .v2-field select,
+  .v2-field textarea {
+    width:100%;
+  }
+  .v2-palette {
+    display:grid;
+    gap:7px;
+  }
+  .v2-palette button {
+    text-align:left;
+    display:block;
+    width:100%;
+  }
+  .v2-lanes {
+    display:grid;
+    grid-template-columns:repeat(5, minmax(150px, 1fr));
+    gap:10px;
+    overflow-x:auto;
+    padding-bottom:4px;
+  }
+  .v2-lane {
+    border:1px solid var(--line);
+    border-radius:8px;
+    background:var(--cockpit-panel-2);
+    min-height:260px;
+    padding:10px;
+  }
+  .v2-lane h3 {
+    margin:0 0 8px;
+    display:flex;
+    justify-content:space-between;
+    gap:8px;
+  }
+  .v2-step-card {
+    border:1px solid var(--line);
+    border-left:4px solid var(--ms-blue-dark);
+    border-radius:7px;
+    background:var(--panel);
+    padding:9px;
+    margin-bottom:8px;
+    cursor:pointer;
+  }
+  .v2-step-card[data-active="true"] {
+    outline:2px solid var(--ms-blue-dark);
+    outline-offset:1px;
+  }
+  .v2-step-card small,
+  .v2-help {
+    color:var(--ink-muted);
+  }
+  .v2-actions {
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    align-items:center;
+  }
+  .v2-validation {
+    margin:0;
+    padding-left:18px;
+  }
+  .v2-validation li {
+    margin:4px 0;
+  }
+  .v2-preview {
+    margin:0;
+    padding-left:18px;
+  }
+  .v2-preview li {
+    margin:5px 0;
+  }
+  @media (max-width: 1180px) {
+    .v2-builder-grid {
+      grid-template-columns:1fr;
+    }
+    .v2-lanes {
+      grid-template-columns:repeat(5, 220px);
+    }
+  }
+</style>
+
+<section class="v2-builder-grid" data-v2-builder>
+  <aside class="v2-stack">
+    <div class="v2-panel">
+      <h2>Sequence</h2>
+      <label class="v2-field">Name
+        <input id="v2-name" type="text" value="{{ sequence.name if sequence else '' }}" placeholder="CloudOSD desktop baseline" required>
+      </label>
+      <label class="v2-field">Description
+        <textarea id="v2-description" rows="4" placeholder="What this plan owns and when it runs">{{ sequence.description if sequence else '' }}</textarea>
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;">
+        <input id="v2-enabled" type="checkbox" {% if not sequence or sequence.enabled %}checked{% endif %}>
+        enabled
+      </label>
+      <div class="v2-actions" style="margin-top:12px;">
+        <button type="button" onclick="saveV2Sequence()">Save and compile</button>
+        <a href="/task-engine">Cancel</a>
+      </div>
+      <div id="v2-flash" class="v2-help" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="v2-panel">
+      <h2>Legacy Import</h2>
+      {% if legacy_sequences %}
+      <label class="v2-field">Start from v1 sequence
+        <select id="legacy-draft-select">
+          {% for legacy in legacy_sequences %}
+          <option value="{{ legacy.id }}" {% if legacy_source_id == legacy.id %}selected{% endif %}>{{ legacy.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="v2-actions">
+        <button type="button" onclick="draftFromLegacy()">Open as draft</button>
+        <button type="button" onclick="createFromLegacy()">Create compiled copy</button>
+      </div>
+      {% else %}
+      <p class="v2-help">No legacy v1 sequences are available to import.</p>
+      {% endif %}
+    </div>
+
+    <div class="v2-panel">
+      <h2>Step Palette</h2>
+      <div id="v2-palette" class="v2-palette"></div>
+    </div>
+  </aside>
+
+  <main class="v2-stack">
+    <div class="v2-panel">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+        <div>
+          <h2>Phase Timeline</h2>
+          <p class="v2-help" style="margin:0;">Drop steps into the phase where they are owned: controller, PE, specialize, full OS, or verification.</p>
+        </div>
+        <div class="v2-actions">
+          <button type="button" onclick="addCloudOSDDesktopBaseline()">Add CloudOSD desktop baseline</button>
+          <button type="button" onclick="clearSteps()">Clear steps</button>
+        </div>
+      </div>
+      <div id="v2-lanes" class="v2-lanes" style="margin-top:12px;"></div>
+    </div>
+  </main>
+
+  <aside class="v2-stack">
+    <div class="v2-panel">
+      <h2>Selected Step</h2>
+      <div id="v2-editor" class="v2-help">Select a step to edit its phase, retries, content refs, and parameters.</div>
+    </div>
+    <div class="v2-panel">
+      <h2>Validation</h2>
+      <ul id="v2-validation" class="v2-validation"></ul>
+    </div>
+    <div class="v2-panel">
+      <h2>Compiled Preview</h2>
+      <ol id="v2-preview" class="v2-preview"></ol>
+    </div>
+  </aside>
+</section>
+
+<script>
+const SEQUENCE_ID = {{ (sequence.id if sequence else none)|tojson }};
+const INITIAL_NODES = {{ nodes|tojson }};
+const STEP_TEMPLATES = {{ step_templates|tojson }};
+const PHASES = [
+  ["controller", "Controller"],
+  ["pe", "WinPE"],
+  ["specialize", "Specialize"],
+  ["full_os", "Full OS"],
+  ["verify", "Verify"]
+];
+let steps = normalizeInitialNodes(INITIAL_NODES);
+let activeId = steps[0] ? steps[0].client_id : null;
+
+function normalizeInitialNodes(nodes) {
+  return (nodes || []).filter(n => (n.node_type || "step") === "step").map((n, idx) => ({
+    client_id: n.client_id || n.id || `step-${Date.now()}-${idx}`,
+    node_type: "step",
+    name: n.name || "",
+    description: n.description || "",
+    kind: n.kind || "",
+    phase: n.phase || "full_os",
+    enabled: n.enabled !== false,
+    condition: n.condition || {},
+    variables: n.variables || {},
+    params: n.params || {},
+    content_refs: n.content_refs || [],
+    continue_on_error: !!n.continue_on_error,
+    retry_count: Number(n.retry_count || 0),
+    retry_delay_seconds: Number(n.retry_delay_seconds || 10),
+    timeout_seconds: n.timeout_seconds,
+    reboot_behavior: n.reboot_behavior || "none"
+  }));
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+
+function templateFor(kind) {
+  return STEP_TEMPLATES.find(t => t.kind === kind) || {
+    kind, label: kind.replaceAll("_", " "), phase: "full_os", category: "Custom", description: ""
+  };
+}
+
+function addStepFromTemplate(kind) {
+  const t = templateFor(kind);
+  const step = {
+    client_id: `step-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    node_type: "step",
+    name: t.label,
+    description: t.description || "",
+    kind: t.kind,
+    phase: t.phase || "full_os",
+    enabled: true,
+    condition: {},
+    variables: {},
+    params: {},
+    content_refs: [],
+    continue_on_error: false,
+    retry_count: Number(t.retry_count || 0),
+    retry_delay_seconds: Number(t.retry_delay_seconds || 10),
+    timeout_seconds: t.timeout_seconds || null,
+    reboot_behavior: "none"
+  };
+  steps.push(step);
+  activeId = step.client_id;
+  render();
+}
+
+function addCloudOSDDesktopBaseline() {
+  [
+    "cloudosd_preflight",
+    "cloudosd_deploy_os",
+    "cloudosd_validate_offline_os",
+    "stage_osd_client",
+    "stage_autopilot_agent",
+    "capture_autopilot_hash",
+    "wait_agent_heartbeat"
+  ].forEach(addStepFromTemplate);
+}
+
+function clearSteps() {
+  steps = [];
+  activeId = null;
+  render();
+}
+
+function renderPalette() {
+  const host = document.getElementById("v2-palette");
+  const groups = {};
+  STEP_TEMPLATES.forEach(t => {
+    groups[t.category || "Custom"] = groups[t.category || "Custom"] || [];
+    groups[t.category || "Custom"].push(t);
+  });
+  host.innerHTML = Object.entries(groups).map(([category, items]) => `
+    <div>
+      <strong>${esc(category)}</strong>
+      ${items.map(t => `
+        <button type="button" onclick="addStepFromTemplate('${esc(t.kind)}')" title="${esc(t.description || "")}">
+          ${esc(t.label)}<br><small>${esc(t.phase)} · ${esc(t.kind)}</small>
+        </button>
+      `).join("")}
+    </div>
+  `).join("");
+}
+
+function renderLanes() {
+  const host = document.getElementById("v2-lanes");
+  host.innerHTML = PHASES.map(([phase, label]) => {
+    const laneSteps = steps.filter(s => s.phase === phase);
+    return `<section class="v2-lane">
+      <h3>${esc(label)} <span class="badge">${laneSteps.length}</span></h3>
+      ${laneSteps.map((s, idx) => stepCard(s, idx)).join("") || `<p class="v2-help">No steps in this phase.</p>`}
+    </section>`;
+  }).join("");
+}
+
+function stepCard(s) {
+  return `<article class="v2-step-card" data-active="${s.client_id === activeId}" onclick="selectStep('${esc(s.client_id)}')">
+    <strong>${esc(s.name || s.kind)}</strong>
+    <br><code>${esc(s.kind)}</code>
+    <br><small>${esc(s.enabled ? "enabled" : "disabled")}${s.retry_count ? ` · ${s.retry_count} retries` : ""}${s.reboot_behavior !== "none" ? ` · reboot ${esc(s.reboot_behavior)}` : ""}</small>
+  </article>`;
+}
+
+function selectStep(id) {
+  activeId = id;
+  render();
+}
+
+function activeStep() {
+  return steps.find(s => s.client_id === activeId) || null;
+}
+
+function renderEditor() {
+  const host = document.getElementById("v2-editor");
+  const s = activeStep();
+  if (!s) {
+    host.className = "v2-help";
+    host.textContent = "Select a step to edit its phase, retries, content refs, and parameters.";
+    return;
+  }
+  host.className = "";
+  host.innerHTML = `
+    <label class="v2-field">Display name
+      <input value="${esc(s.name)}" oninput="patchActive('name', this.value)">
+    </label>
+    <label class="v2-field">Kind
+      <input value="${esc(s.kind)}" oninput="patchActive('kind', this.value)">
+    </label>
+    <label class="v2-field">Phase
+      <select onchange="patchActive('phase', this.value)">
+        ${PHASES.map(([phase, label]) => `<option value="${phase}" ${s.phase === phase ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <label class="v2-field">Retries
+        <input type="number" min="0" value="${Number(s.retry_count || 0)}" oninput="patchActive('retry_count', Number(this.value || 0))">
+      </label>
+      <label class="v2-field">Retry delay
+        <input type="number" min="0" value="${Number(s.retry_delay_seconds || 0)}" oninput="patchActive('retry_delay_seconds', Number(this.value || 0))">
+      </label>
+    </div>
+    <label class="v2-field">Timeout seconds
+      <input type="number" min="0" value="${s.timeout_seconds || ""}" oninput="patchActive('timeout_seconds', this.value ? Number(this.value) : null)">
+    </label>
+    <label class="v2-field">Reboot behavior
+      <select onchange="patchActive('reboot_behavior', this.value)">
+        ${["none","optional","required","deferred"].map(v => `<option value="${v}" ${s.reboot_behavior === v ? "selected" : ""}>${v}</option>`).join("")}
+      </select>
+    </label>
+    <label class="v2-field">Content refs
+      <input value="${esc((s.content_refs || []).join(", "))}" oninput="patchActive('content_refs', this.value.split(',').map(v => v.trim()).filter(Boolean))" placeholder="qemu-guest-agent, cmtraceopen">
+    </label>
+    <label class="v2-field">Params JSON
+      <textarea rows="7" oninput="patchActiveJson('params', this.value)">${esc(JSON.stringify(s.params || {}, null, 2))}</textarea>
+    </label>
+    <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+      <input type="checkbox" ${s.enabled ? "checked" : ""} onchange="patchActive('enabled', this.checked)"> enabled
+    </label>
+    <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+      <input type="checkbox" ${s.continue_on_error ? "checked" : ""} onchange="patchActive('continue_on_error', this.checked)"> continue on error
+    </label>
+    <div class="v2-actions">
+      <button type="button" onclick="moveActive(-1)">Move earlier</button>
+      <button type="button" onclick="moveActive(1)">Move later</button>
+      <button type="button" onclick="deleteActive()">Delete</button>
+    </div>
+  `;
+}
+
+function patchActive(key, value) {
+  const s = activeStep();
+  if (!s) return;
+  s[key] = value;
+  render();
+}
+
+function patchActiveJson(key, text) {
+  const s = activeStep();
+  if (!s) return;
+  try {
+    s[key] = JSON.parse(text || "{}");
+    renderValidationAndPreview();
+  } catch (e) {
+    document.getElementById("v2-validation").innerHTML = `<li><span class="badge missing">invalid JSON</span> ${esc(e.message)}</li>`;
+  }
+}
+
+function moveActive(delta) {
+  const i = steps.findIndex(s => s.client_id === activeId);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= steps.length) return;
+  [steps[i], steps[j]] = [steps[j], steps[i]];
+  render();
+}
+
+function deleteActive() {
+  const i = steps.findIndex(s => s.client_id === activeId);
+  if (i < 0) return;
+  steps.splice(i, 1);
+  activeId = steps[Math.max(0, i - 1)] ? steps[Math.max(0, i - 1)].client_id : null;
+  render();
+}
+
+function validationMessages() {
+  const messages = [];
+  const name = document.getElementById("v2-name").value.trim();
+  if (!name) messages.push(["missing", "Sequence name is required."]);
+  if (!steps.length) messages.push(["missing", "Add at least one v2 step."]);
+  steps.forEach((s, idx) => {
+    if (!s.name.trim()) messages.push(["missing", `Step ${idx + 1} needs a display name.`]);
+    if (!s.kind.trim()) messages.push(["missing", `Step ${idx + 1} needs a kind.`]);
+  });
+  const kinds = new Set(steps.map(s => s.kind));
+  if (kinds.has("stage_ad_domain_join_unattend") && !kinds.has("verify_ad_domain_join")) {
+    messages.push(["warn", "Domain join staging should be paired with full-OS domain verification."]);
+  }
+  if (steps.some(s => s.kind.startsWith("cloudosd_") || s.kind.startsWith("stage_"))) {
+    if (!kinds.has("capture_autopilot_hash")) messages.push(["warn", "CloudOSD desktop plans usually need hardware hash capture."]);
+    if (!kinds.has("wait_agent_heartbeat")) messages.push(["warn", "CloudOSD completion should keep the heartbeat gate."]);
+  }
+  if (!messages.length) messages.push(["ok", "Plan is ready to compile."]);
+  return messages;
+}
+
+function renderValidationAndPreview() {
+  document.getElementById("v2-validation").innerHTML = validationMessages()
+    .map(([level, text]) => `<li><span class="badge ${level}">${esc(level)}</span> ${esc(text)}</li>`)
+    .join("");
+  document.getElementById("v2-preview").innerHTML = steps.map(s => `
+    <li>
+      <strong>${esc(s.name)}</strong>
+      <code>${esc(s.kind)}</code>
+      <small>${esc(s.phase)}${s.content_refs.length ? ` · content ${esc(s.content_refs.join(", "))}` : ""}</small>
+    </li>
+  `).join("");
+}
+
+function render() {
+  renderPalette();
+  renderLanes();
+  renderEditor();
+  renderValidationAndPreview();
+}
+
+async function saveV2Sequence() {
+  const flash = document.getElementById("v2-flash");
+  const body = {
+    name: document.getElementById("v2-name").value.trim(),
+    description: document.getElementById("v2-description").value,
+    enabled: document.getElementById("v2-enabled").checked,
+    nodes: steps
+  };
+  const url = SEQUENCE_ID ? `/api/osd/v2/builder/sequences/${SEQUENCE_ID}` : "/api/osd/v2/builder/sequences";
+  const method = SEQUENCE_ID ? "PUT" : "POST";
+  flash.textContent = "Saving and compiling...";
+  const r = await fetch(url, {
+    method,
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    const payload = await r.json();
+    location.href = `/task-engine/sequences/${payload.id}/edit`;
+    return;
+  }
+  let detail = r.statusText;
+  try { detail = (await r.json()).detail || detail; } catch (e) {}
+  flash.textContent = `Save failed: ${detail}`;
+  flash.style.color = "var(--bad-fg)";
+}
+
+function draftFromLegacy() {
+  const select = document.getElementById("legacy-draft-select");
+  if (select && select.value) location.href = `/task-engine/sequences/new?legacy_id=${select.value}`;
+}
+
+async function createFromLegacy() {
+  const select = document.getElementById("legacy-draft-select");
+  if (!select || !select.value) return;
+  const r = await fetch(`/api/osd/v2/builder/import-legacy/${select.value}`, {method: "POST"});
+  if (r.ok) {
+    const payload = await r.json();
+    location.href = `/task-engine/sequences/${payload.id}/edit`;
+    return;
+  }
+  let detail = r.statusText;
+  try { detail = (await r.json()).detail || detail; } catch (e) {}
+  document.getElementById("v2-flash").textContent = `Import failed: ${detail}`;
+}
+
+render();
+</script>
+{% endblock %}

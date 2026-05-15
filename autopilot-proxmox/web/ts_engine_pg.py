@@ -372,6 +372,233 @@ def list_sequences(conn: Connection) -> list[dict]:
     ]
 
 
+def get_sequence(conn: Connection, sequence_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM ts_task_sequences
+        WHERE id = %s
+        """,
+        (sequence_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": str(row["id"]),
+        "name": row["name"],
+        "description": row["description"] or "",
+        "enabled": bool(row["enabled"]),
+        "current_version_id": (
+            str(row["current_version_id"]) if row["current_version_id"] else None
+        ),
+        "created_at": _iso(row["created_at"]),
+        "updated_at": _iso(row["updated_at"]),
+        "created_by": row["created_by"],
+        "updated_by": row["updated_by"],
+    }
+
+
+def update_sequence(
+    conn: Connection,
+    sequence_id: str,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    enabled: bool | None = None,
+    updated_by: str | None = None,
+) -> None:
+    updates: list[str] = []
+    args: list[Any] = []
+    for column, value in (
+        ("name", name),
+        ("description", description),
+        ("enabled", enabled),
+        ("updated_by", updated_by),
+    ):
+        if value is not None:
+            updates.append(f"{column} = %s")
+            args.append(value)
+    if not updates:
+        return
+    updates.append("updated_at = %s")
+    args.append(_now())
+    args.append(sequence_id)
+    conn.execute(
+        f"UPDATE ts_task_sequences SET {', '.join(updates)} WHERE id = %s",
+        args,
+    )
+    _commit(conn)
+
+
+def list_sequence_nodes(conn: Connection, sequence_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM ts_task_sequence_nodes
+        WHERE sequence_id = %s
+        ORDER BY parent_id NULLS FIRST, position, name
+        """,
+        (sequence_id,),
+    ).fetchall()
+    return [_normalize_sequence_node(row) for row in rows]
+
+
+def _normalize_sequence_node(row: dict) -> dict:
+    return {
+        "id": str(row["id"]),
+        "sequence_id": str(row["sequence_id"]),
+        "parent_id": str(row["parent_id"]) if row["parent_id"] else None,
+        "position": int(row["position"]),
+        "node_type": row["node_type"],
+        "name": row["name"],
+        "description": row["description"] or "",
+        "kind": row["kind"],
+        "phase": row["phase"],
+        "enabled": bool(row["enabled"]),
+        "condition": row["condition_json"] or {},
+        "variables": row["variables_json"] or {},
+        "params": row["params_json"] or {},
+        "content_refs": row["content_refs_json"] or [],
+        "continue_on_error": bool(row["continue_on_error"]),
+        "retry_count": int(row["retry_count"]),
+        "retry_delay_seconds": int(row["retry_delay_seconds"]),
+        "timeout_seconds": row["timeout_seconds"],
+        "reboot_behavior": row["reboot_behavior"],
+        "created_at": _iso(row["created_at"]),
+        "updated_at": _iso(row["updated_at"]),
+    }
+
+
+def replace_sequence_nodes(
+    conn: Connection,
+    sequence_id: str,
+    nodes: list[dict],
+    *,
+    updated_by: str | None = None,
+) -> None:
+    """Replace a draft sequence tree with normalized builder nodes.
+
+    The builder sends client-side ids so groups can be referenced before the
+    server assigns UUIDs. Existing immutable run plans and compiled versions
+    are untouched; a later compile creates a new version if the source changed.
+    """
+    if not get_sequence(conn, sequence_id):
+        raise ValueError(f"sequence not found: {sequence_id}")
+    normalized = _normalize_builder_nodes(nodes)
+    now = _now()
+    id_map: dict[str, str] = {}
+    conn.execute("DELETE FROM ts_task_sequence_nodes WHERE sequence_id = %s", (sequence_id,))
+    for node in normalized:
+        node_id = _new_id()
+        source_ref = node.get("client_id") or node.get("id") or node_id
+        id_map[str(source_ref)] = node_id
+        parent_ref = node.get("parent_ref")
+        parent_id = id_map.get(str(parent_ref)) if parent_ref else None
+        conn.execute(
+            """
+            INSERT INTO ts_task_sequence_nodes (
+                id, sequence_id, parent_id, position, node_type, name, description,
+                kind, phase, enabled, condition_json, variables_json, params_json,
+                content_refs_json, continue_on_error, retry_count,
+                retry_delay_seconds, timeout_seconds, reboot_behavior,
+                created_at, updated_at
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                node_id,
+                sequence_id,
+                parent_id,
+                node["position"],
+                node["node_type"],
+                node["name"],
+                node.get("description") or "",
+                node.get("kind"),
+                node["phase"],
+                bool(node.get("enabled", True)),
+                _json(node.get("condition") or {}),
+                _json(node.get("variables") or {}),
+                _json(node.get("params") or {}),
+                _json(node.get("content_refs") or []),
+                bool(node.get("continue_on_error", False)),
+                int(node.get("retry_count") or 0),
+                int(node.get("retry_delay_seconds") or 10),
+                node.get("timeout_seconds"),
+                node.get("reboot_behavior") or "none",
+                now,
+                now,
+            ),
+        )
+    conn.execute(
+        """
+        UPDATE ts_task_sequences
+        SET updated_at = %s,
+            updated_by = COALESCE(%s, updated_by)
+        WHERE id = %s
+        """,
+        (now, updated_by, sequence_id),
+    )
+    _commit(conn)
+
+
+def _normalize_builder_nodes(nodes: list[dict]) -> list[dict]:
+    counters: dict[str | None, int] = {}
+    normalized: list[dict] = []
+    seen_refs: set[str] = set()
+    for index, raw in enumerate(nodes):
+        node_type = str(raw.get("node_type") or "step").strip().lower()
+        if node_type not in {"group", "step"}:
+            raise ValueError(f"unsupported node_type: {node_type}")
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            raise ValueError("sequence nodes require a name")
+        kind = raw.get("kind")
+        if node_type == "step":
+            kind = str(kind or "").strip()
+            if not kind:
+                raise ValueError(f"step {name!r} requires a kind")
+        else:
+            kind = None
+        phase = str(raw.get("phase") or "any").strip() or "any"
+        reboot_behavior = str(raw.get("reboot_behavior") or "none").strip() or "none"
+        if reboot_behavior not in REBOOT_BEHAVIORS:
+            raise ValueError(f"reboot_behavior must be one of {sorted(REBOOT_BEHAVIORS)}")
+        parent_ref = raw.get("parent_id") or raw.get("parent_ref")
+        parent_key = str(parent_ref) if parent_ref else None
+        counters[parent_key] = counters.get(parent_key, 0)
+        client_ref = str(raw.get("client_id") or raw.get("id") or f"node-{index}")
+        if client_ref in seen_refs:
+            raise ValueError(f"duplicate builder node id: {client_ref}")
+        seen_refs.add(client_ref)
+        normalized.append(
+            {
+                "client_id": client_ref,
+                "parent_ref": parent_key,
+                "position": counters[parent_key],
+                "node_type": node_type,
+                "name": name,
+                "description": str(raw.get("description") or ""),
+                "kind": kind,
+                "phase": phase,
+                "enabled": bool(raw.get("enabled", True)),
+                "condition": raw.get("condition") or {},
+                "variables": raw.get("variables") or {},
+                "params": raw.get("params") or {},
+                "content_refs": raw.get("content_refs") or [],
+                "continue_on_error": bool(raw.get("continue_on_error", False)),
+                "retry_count": int(raw.get("retry_count") or 0),
+                "retry_delay_seconds": int(raw.get("retry_delay_seconds") or 10),
+                "timeout_seconds": raw.get("timeout_seconds"),
+                "reboot_behavior": reboot_behavior,
+            }
+        )
+        counters[parent_key] += 1
+    return normalized
+
+
 def list_sequence_steps(conn: Connection, sequence_id: str) -> list[dict]:
     rows = conn.execute(
         """

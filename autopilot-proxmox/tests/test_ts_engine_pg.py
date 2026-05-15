@@ -192,6 +192,86 @@ def test_compile_ordered_tree_into_immutable_run_plan(pg_conn):
     ]
 
 
+def test_builder_can_replace_sequence_nodes_and_compile_new_version(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(
+        pg_conn,
+        name="Desktop CloudOSD",
+        description="Initial description",
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Old step",
+        kind="old_step",
+        phase="full_os",
+        position=0,
+    )
+    old_version = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+
+    ts_engine_pg.update_sequence(
+        pg_conn,
+        sequence_id,
+        name="Desktop CloudOSD v2",
+        description="Smart builder draft",
+        updated_by="pytest",
+    )
+    ts_engine_pg.replace_sequence_nodes(
+        pg_conn,
+        sequence_id,
+        [
+            {
+                "client_id": "pe",
+                "node_type": "group",
+                "name": "PE deployment",
+            },
+            {
+                "client_id": "deploy",
+                "parent_id": "pe",
+                "node_type": "step",
+                "name": "Run OSDCloud workflow",
+                "kind": "cloudosd_deploy_os",
+                "phase": "pe",
+                "params": {"workflow": "default"},
+            },
+            {
+                "client_id": "hash",
+                "node_type": "step",
+                "name": "Capture Autopilot hardware hash",
+                "kind": "capture_autopilot_hash",
+                "phase": "full_os",
+                "retry_count": 2,
+                "retry_delay_seconds": 30,
+            },
+        ],
+        updated_by="pytest",
+    )
+    new_version = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+
+    assert new_version != old_version
+    seq = ts_engine_pg.get_sequence(pg_conn, sequence_id)
+    assert seq["name"] == "Desktop CloudOSD v2"
+    assert seq["updated_by"] == "pytest"
+
+    nodes = ts_engine_pg.list_sequence_nodes(pg_conn, sequence_id)
+    assert [(n["node_type"], n["name"], n["kind"], n["phase"]) for n in nodes] == [
+        ("group", "PE deployment", None, "any"),
+        ("step", "Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
+        ("step", "Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
+    ]
+
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn,
+        sequence_version_id=new_version,
+    )
+    assert [(s["path"], s["kind"], s["phase"]) for s in ts_engine_pg.list_run_steps(pg_conn, run_id)] == [
+        ("PE deployment / Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
+        ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
+    ]
+
+
 def test_run_content_manifest_is_resolved_per_run(pg_conn):
     from web import ts_engine_pg
 

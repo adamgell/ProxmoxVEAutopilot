@@ -536,6 +536,9 @@ def test_task_engine_page_shows_v2_sequences_runs_and_content(
     assert "queued" in body
     assert "notepad-plus-plus" in body
     assert "Content Manifest" in body
+    assert "Smart V2 Builder" in body
+    assert 'href="/task-engine/sequences/new"' in body
+    assert "Edit builder" in body
 
 
 def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
@@ -592,3 +595,74 @@ def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
     assert "Capture Autopilot hardware hash" in body
     assert "capture_autopilot_hash" in body
     assert "Verify AD domain membership" in body
+
+
+def test_task_engine_builder_renders_smart_lanes_and_palette(
+    web_client: TestClient, pg_conn
+):
+    from web import ts_engine_pg
+
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    sequence_id = ts_engine_pg.create_sequence(
+        pg_conn,
+        name="CloudOSD desktop baseline",
+        description="Desktop client sequence",
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Capture Autopilot hardware hash",
+        kind="capture_autopilot_hash",
+        phase="full_os",
+        position=0,
+        retry_count=2,
+    )
+
+    res = web_client.get(f"/task-engine/sequences/{sequence_id}/edit")
+
+    assert res.status_code == 200
+    body = res.text
+    assert "Smart builder for CloudOSD desktop deployment" in body
+    assert "data-v2-builder" in body
+    assert "Phase Timeline" in body
+    assert "Step Palette" in body
+    assert "CloudOSD desktop baseline" in body
+    assert "capture_autopilot_hash" in body
+    assert "Add CloudOSD desktop baseline" in body
+
+
+def test_task_engine_imports_legacy_sequence_into_v2(
+    web_client: TestClient, pg_conn
+):
+    from web import sequences_db, ts_engine_pg
+    from web.app import SEQUENCES_DB
+
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    legacy_id = sequences_db.create_sequence(
+        SEQUENCES_DB,
+        name="Legacy AD desktop",
+        description="v1 domain join sequence",
+        produces_autopilot_hash=True,
+    )
+    sequences_db.set_sequence_steps(SEQUENCES_DB, legacy_id, [
+        {
+            "step_type": "join_ad_domain",
+            "params": {"credential_id": 7, "ou_path": "OU=Workstations,DC=example,DC=com"},
+            "enabled": True,
+        },
+    ])
+
+    res = web_client.post(f"/api/osd/v2/builder/import-legacy/{legacy_id}")
+
+    assert res.status_code == 201
+    sequence_id = res.json()["id"]
+    nodes = ts_engine_pg.list_sequence_nodes(pg_conn, sequence_id)
+    assert [node["kind"] for node in nodes] == [
+        "stage_ad_domain_join_unattend",
+        "capture_autopilot_hash",
+        "verify_ad_domain_join",
+    ]
+    assert nodes[0]["params"]["ou_path"] == "OU=Workstations,DC=example,DC=com"
