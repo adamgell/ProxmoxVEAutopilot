@@ -45,6 +45,11 @@
     display:grid;
     gap:10px;
   }
+  .v2-palette-section-steps {
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+    gap:8px;
+  }
   .v2-palette-section {
     border:1px solid var(--line);
     border-radius:8px;
@@ -85,7 +90,6 @@
     border-left-style:solid;
     border-radius:7px;
     padding:9px 10px 9px 11px;
-    margin-top:6px;
     background:linear-gradient(180deg, color-mix(in srgb, var(--ms-blue-dark) 18%, var(--cockpit-panel)), var(--cockpit-panel));
   }
   .v2-palette button[data-owner="controller"] { border-left-color:#38a3ff; }
@@ -299,13 +303,6 @@
       <div id="v2-flash" class="v2-help" style="margin-top:10px;"></div>
     </div>
 
-    <div class="v2-panel">
-      <h2>Step Palette</h2>
-      <label class="v2-field">Search full catalog
-        <input id="v2-palette-search" type="search" placeholder="hash, qga, domain, package" oninput="renderPalette()">
-      </label>
-      <div id="v2-palette" class="v2-palette"></div>
-    </div>
   </aside>
 
   <main class="v2-stack">
@@ -321,6 +318,13 @@
         </div>
       </div>
       <div id="v2-lanes" class="v2-lanes" style="margin-top:12px;"></div>
+    </div>
+    <div class="v2-panel">
+      <h2>Step Palette</h2>
+      <label class="v2-field">Search full catalog
+        <input id="v2-palette-search" type="search" placeholder="hash, qga, domain, package" oninput="renderPalette()">
+      </label>
+      <div id="v2-palette" class="v2-palette"></div>
     </div>
   </main>
 
@@ -726,7 +730,9 @@ function renderPalette() {
         <strong>Pinned CloudOSD Desktop</strong>
         <span class="v2-palette-count">${pinnedTemplates.length}</span>
       </div>
-      ${pinnedTemplates.map(t => paletteButton(t, true)).join("")}
+      <div class="v2-palette-section-steps">
+        ${pinnedTemplates.map(t => paletteButton(t, true)).join("")}
+      </div>
     </section>`;
   const catalogHtml = Object.entries(groups).map(([category, items]) => `
     <section class="v2-palette-section">
@@ -734,7 +740,9 @@ function renderPalette() {
         <strong>${esc(category)}</strong>
         <span class="v2-palette-count">${items.length}</span>
       </div>
-      ${items.map(t => paletteButton(t, false)).join("")}
+      <div class="v2-palette-section-steps">
+        ${items.map(t => paletteButton(t, false)).join("")}
+      </div>
     </section>
   `).join("");
   host.innerHTML = pinnedHtml + (catalogHtml || `<p class="v2-palette-empty">No catalog steps match "${esc(query)}".</p>`);

@@ -635,11 +635,16 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "min-width:1440px" in body
     assert "Phase Timeline" in body
     assert "Step Palette" in body
+    assert body.index("Phase Timeline") < body.index("Step Palette")
+    left_sidebar = body.split('<main class="v2-stack">', 1)[0]
+    assert "Step Palette" not in left_sidebar
     assert "Search full catalog" in body
     assert "Pinned CloudOSD Desktop" in body
     assert "PINNED_CLOUDOSD_DESKTOP" in body
     assert "v2-owner-chip" in body
     assert "v2-palette-count" in body
+    assert "v2-palette-section-steps" in body
+    assert "repeat(auto-fit, minmax(220px, 1fr))" in body
     assert "CloudOSD desktop baseline" in body
     assert "capture_autopilot_hash" in body
     for kind in [
