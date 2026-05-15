@@ -191,9 +191,9 @@
 </section>
 
 <script>
-const SEQUENCE_ID = {{ (sequence.id if sequence else none)|tojson }};
-const INITIAL_NODES = {{ nodes|tojson }};
-const STEP_TEMPLATES = {{ step_templates|tojson }};
+const SEQUENCE_ID = {{ (sequence.id if sequence else none)|tojson|safe }};
+const INITIAL_NODES = {{ nodes|tojson|safe }};
+const STEP_TEMPLATES = {{ step_templates|tojson|safe }};
 const PHASES = [
   ["controller", "Controller"],
   ["pe", "WinPE"],

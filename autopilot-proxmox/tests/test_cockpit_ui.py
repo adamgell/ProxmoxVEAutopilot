@@ -631,6 +631,8 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "CloudOSD desktop baseline" in body
     assert "capture_autopilot_hash" in body
     assert "Add CloudOSD desktop baseline" in body
+    assert 'const STEP_TEMPLATES = [{"kind":' in body
+    assert "&#34;kind&#34;" not in body
 
 
 def test_task_engine_imports_legacy_sequence_into_v2(
