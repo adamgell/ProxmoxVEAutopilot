@@ -298,10 +298,38 @@
       </label>
       <div class="v2-actions" style="margin-top:12px;">
         <button type="button" onclick="saveV2Sequence()">Save and compile</button>
-        <a href="/task-engine">Cancel</a>
+        <a href="/task-engine/sequences/list">Cancel</a>
       </div>
       <div id="v2-flash" class="v2-help" style="margin-top:10px;"></div>
     </div>
+
+    {% if template_source %}
+    <div class="v2-panel">
+      <h2>Template source</h2>
+      <p style="margin:0 0 8px;">
+        <span class="badge ok">read-only template cloned</span>
+      </p>
+      <strong>{{ template_source.name }}</strong>
+      <p class="v2-help" style="margin:8px 0;">{{ template_source.description }}</p>
+      <a href="/task-engine/sequences/templates/{{ template_source.id }}">Inspect source template</a>
+    </div>
+    {% endif %}
+
+    {% if not sequence or not sequence.id %}
+    <div class="v2-panel">
+      <h2>Start from template</h2>
+      <p class="v2-help" style="margin-top:0;">Read-only current-flow templates can be cloned into this builder.</p>
+      <div style="display:grid;gap:8px;">
+        {% for template in flow_templates %}
+        <a href="/task-engine/sequences/new?template_id={{ template.id }}">
+          {{ template.name }}
+          <br><small>{{ template.path }} · {{ template.step_count }} steps</small>
+        </a>
+        {% endfor %}
+      </div>
+      <p style="margin:10px 0 0;"><a href="/task-engine/sequences/list#flow-templates">View all templates</a></p>
+    </div>
+    {% endif %}
 
   </aside>
 

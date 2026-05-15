@@ -8509,7 +8509,201 @@ _V2_STEP_TEMPLATES = [
         "category": "Content",
         "description": "Application install step for conditional full-OS app deployment plans.",
     },
+    {
+        "kind": "proxmox_clone_vm",
+        "label": "Clone Proxmox VM",
+        "phase": "controller",
+        "category": "Clone",
+        "description": "Create a VM from the configured Proxmox template and apply base VM policy.",
+    },
+    {
+        "kind": "apply_oem_profile",
+        "label": "Apply OEM profile",
+        "phase": "controller",
+        "category": "Clone",
+        "description": "Apply local OEM profile metadata, serial policy, and VM identity choices.",
+    },
+    {
+        "kind": "set_smbios_chassis",
+        "label": "Set SMBIOS chassis",
+        "phase": "controller",
+        "category": "Clone",
+        "description": "Apply the requested chassis type through the Proxmox VM configuration path.",
+    },
+    {
+        "kind": "wait_guest_agent",
+        "label": "Wait for guest agent",
+        "phase": "controller",
+        "category": "Clone",
+        "description": "Wait for QEMU Guest Agent evidence after the cloned or deployed OS boots.",
+        "retry_count": 60,
+        "retry_delay_seconds": 10,
+    },
 ]
+
+
+def _v2_template_node(kind: str, **overrides) -> dict:
+    source = next((item for item in _V2_STEP_TEMPLATES if item["kind"] == kind), {})
+    node = {
+        "client_id": overrides.pop("client_id", f"template-{kind}"),
+        "node_type": "step",
+        "name": overrides.pop("name", source.get("label") or kind.replace("_", " ").title()),
+        "description": overrides.pop("description", source.get("description") or ""),
+        "kind": kind,
+        "phase": overrides.pop("phase", source.get("phase") or "full_os"),
+        "enabled": overrides.pop("enabled", True),
+        "condition": overrides.pop("condition", {}),
+        "variables": overrides.pop("variables", {}),
+        "params": overrides.pop("params", {}),
+        "content_refs": overrides.pop("content_refs", []),
+        "continue_on_error": overrides.pop("continue_on_error", False),
+        "retry_count": overrides.pop("retry_count", source.get("retry_count", 0)),
+        "retry_delay_seconds": overrides.pop("retry_delay_seconds", source.get("retry_delay_seconds", 10)),
+        "timeout_seconds": overrides.pop("timeout_seconds", source.get("timeout_seconds")),
+        "reboot_behavior": overrides.pop("reboot_behavior", "none"),
+    }
+    node.update(overrides)
+    return node
+
+
+_V2_CURRENT_FLOW_TEMPLATES = [
+    {
+        "id": "cloudosd-desktop",
+        "name": "CloudOSD Desktop Client",
+        "path": "CloudOSD",
+        "status": "primary desktop path",
+        "description": (
+            "Deploy a Windows desktop client through CloudOSD, stage the OSD client "
+            "and AutopilotAgent, capture the Autopilot hash, and keep completion gated "
+            "on the run-bound agent heartbeat."
+        ),
+        "notes": [
+            "Use this as the default Windows desktop client baseline.",
+            "OS deployment evidence comes from PE and OSDCloud; full-OS readiness comes from AutopilotAgent v2.",
+            "Autopilot hash capture and heartbeat remain explicit v2 steps.",
+        ],
+        "nodes": [
+            _v2_template_node("cloudosd_preflight"),
+            _v2_template_node("cloudosd_deploy_os"),
+            _v2_template_node("cloudosd_validate_offline_os"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("capture_autopilot_hash"),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "cloudosd-desktop-domain-join",
+        "name": "CloudOSD Desktop Client + AD Domain Join",
+        "path": "CloudOSD",
+        "status": "desktop identity path",
+        "description": (
+            "Deploy a Windows desktop client through CloudOSD and stage AD domain join "
+            "through specialize unattend while ProxmoxVEAutopilot v2 owns verification."
+        ),
+        "notes": [
+            "Domain credentials are resolved at package generation time and are not stored in the v2 plan.",
+            "SetupComplete remains for agent/bootstrap follow-up, not the primary AD join timing.",
+            "Completion requires heartbeat plus full-OS domain membership evidence.",
+        ],
+        "nodes": [
+            _v2_template_node("cloudosd_preflight"),
+            _v2_template_node("cloudosd_deploy_os"),
+            _v2_template_node("stage_ad_domain_join_unattend"),
+            _v2_template_node("cloudosd_validate_offline_os"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("capture_autopilot_hash"),
+            _v2_template_node("verify_ad_domain_join"),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "winpe-desktop-wim",
+        "name": "WinPE Desktop WIM Deployment",
+        "path": "WinPE",
+        "status": "desktop fallback path",
+        "description": (
+            "Deploy a Windows desktop client through the existing WinPE/WIM flow. This "
+            "template documents the compatibility path without changing `/winpe/*` behavior."
+        ),
+        "notes": [
+            "Keep this path available for fallback and regression checks.",
+            "The existing WinPE orchestration remains independent from CloudOSD.",
+        ],
+        "nodes": [
+            _v2_template_node("capture_hash"),
+            _v2_template_node("partition_disk"),
+            _v2_template_node("apply_wim"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("bake_boot_entry"),
+            _v2_template_node("handoff_to_windows_setup"),
+        ],
+    },
+    {
+        "id": "winpe-server-wim",
+        "name": "WinPE Windows Server WIM Deployment",
+        "path": "WinPE",
+        "status": "server path",
+        "description": (
+            "Deploy Windows Server through the WinPE/WIM substrate. CloudOSD remains "
+            "desktop-focused; server builds stay on WinPE or clone workflows."
+        ),
+        "notes": [
+            "No Autopilot hash capture is included by default for server builds.",
+            "Use this as the v2 planning shape for Windows Server deployments.",
+        ],
+        "nodes": [
+            _v2_template_node("partition_disk"),
+            _v2_template_node("apply_wim", name="Apply Windows Server image"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("bake_boot_entry"),
+            _v2_template_node("handoff_to_windows_setup"),
+        ],
+    },
+    {
+        "id": "clone-desktop-template",
+        "name": "Proxmox Clone Desktop from Template",
+        "path": "Clone",
+        "status": "template clone path",
+        "description": (
+            "Clone from the existing Proxmox template path, apply identity metadata, "
+            "wait for guest-agent evidence, and keep desktop post-boot work explicit."
+        ),
+        "notes": [
+            "This documents the current clone experience as a v2-owned plan shape.",
+            "Use WinPE or clone paths for server-oriented builds.",
+        ],
+        "nodes": [
+            _v2_template_node("proxmox_clone_vm"),
+            _v2_template_node("apply_oem_profile"),
+            _v2_template_node("set_smbios_chassis"),
+            _v2_template_node("rename_computer"),
+            _v2_template_node("wait_guest_agent"),
+            _v2_template_node("install_qga"),
+            _v2_template_node("verify_qga"),
+        ],
+    },
+]
+
+
+def _v2_flow_templates() -> list[dict]:
+    return [
+        {
+            **template,
+            "step_count": len(template["nodes"]),
+            "read_only": True,
+        }
+        for template in _V2_CURRENT_FLOW_TEMPLATES
+    ]
+
+
+def _v2_flow_template(template_id: str | None) -> dict | None:
+    if not template_id:
+        return None
+    return next((item for item in _v2_flow_templates() if item["id"] == template_id), None)
 
 
 def _legacy_step_to_v2_nodes(step: dict, index: int) -> list[dict]:
@@ -8677,16 +8871,50 @@ def task_engine_page(request: Request):
             "content_items": content_items,
             "manifest_items": manifest_items,
             "legacy_sequences": legacy_sequences,
+            "flow_templates": _v2_flow_templates(),
+        },
+    )
+
+
+@app.get("/task-engine/sequences/list", response_class=HTMLResponse)
+def task_engine_sequences_list(request: Request):
+    from web import db_pg, ts_engine_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        sequences = ts_engine_pg.list_sequences(conn)
+        for seq in sequences:
+            seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
+    return templates.TemplateResponse(
+        "task_engine_sequences_list.html",
+        {
+            "request": request,
+            "sequences": sequences,
+            "flow_templates": _v2_flow_templates(),
         },
     )
 
 
 @app.get("/task-engine/sequences/new", response_class=HTMLResponse)
-def task_engine_sequence_new(request: Request, legacy_id: int | None = None):
+def task_engine_sequence_new(
+    request: Request,
+    legacy_id: int | None = None,
+    template_id: str | None = None,
+):
     legacy = sequences_db.get_sequence(SEQUENCES_DB, legacy_id) if legacy_id else None
+    flow_template = _v2_flow_template(template_id)
+    if template_id and not flow_template:
+        raise HTTPException(status_code=404, detail="v2 flow template not found")
     sequence = None
     nodes = []
-    if legacy:
+    if flow_template:
+        sequence = {
+            "id": None,
+            "name": f"{flow_template['name']} copy",
+            "description": flow_template["description"],
+            "enabled": True,
+        }
+        nodes = flow_template["nodes"]
+    elif legacy:
         sequence = {
             "id": None,
             "name": f"{legacy['name']} v2",
@@ -8703,6 +8931,22 @@ def task_engine_sequence_new(request: Request, legacy_id: int | None = None):
             "step_templates": _V2_STEP_TEMPLATES,
             "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
             "legacy_source_id": legacy_id,
+            "flow_templates": _v2_flow_templates(),
+            "template_source": flow_template,
+        },
+    )
+
+
+@app.get("/task-engine/sequences/templates/{template_id}", response_class=HTMLResponse)
+def task_engine_sequence_template_detail(request: Request, template_id: str):
+    flow_template = _v2_flow_template(template_id)
+    if not flow_template:
+        raise HTTPException(status_code=404, detail="v2 flow template not found")
+    return templates.TemplateResponse(
+        "task_engine_sequence_template.html",
+        {
+            "request": request,
+            "template": flow_template,
         },
     )
 
@@ -8725,6 +8969,8 @@ def task_engine_sequence_edit(request: Request, sequence_id: str):
             "step_templates": _V2_STEP_TEMPLATES,
             "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
             "legacy_source_id": None,
+            "flow_templates": _v2_flow_templates(),
+            "template_source": None,
         },
     )
 

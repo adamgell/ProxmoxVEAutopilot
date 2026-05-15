@@ -696,6 +696,87 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "forEach(kind => addStepFromTemplate(kind));" in body
 
 
+def test_task_engine_sequence_list_shows_editable_sequences_and_readonly_templates(
+    web_client: TestClient, pg_conn
+):
+    from web import ts_engine_pg
+
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    sequence_id = ts_engine_pg.create_sequence(
+        pg_conn,
+        name="Operator CloudOSD Desktop",
+        description="Editable production sequence",
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Capture Autopilot hardware hash",
+        kind="capture_autopilot_hash",
+        phase="full_os",
+        position=0,
+    )
+
+    res = web_client.get("/task-engine/sequences/list")
+
+    assert res.status_code == 200
+    body = res.text
+    assert "V2 Sequence Library" in body
+    assert "Operator CloudOSD Desktop" in body
+    assert f"/task-engine/sequences/{sequence_id}/edit" in body
+    assert "Read-only Flow Templates" in body
+    assert "CloudOSD Desktop Client" in body
+    assert "CloudOSD Desktop Client + AD Domain Join" in body
+    assert "WinPE Desktop WIM Deployment" in body
+    assert "WinPE Windows Server WIM Deployment" in body
+    assert "Proxmox Clone Desktop from Template" in body
+    assert "/task-engine/sequences/templates/cloudosd-desktop" in body
+    assert "/task-engine/sequences/new?template_id=cloudosd-desktop" in body
+    assert "Clone into builder" in body
+    assert "read-only" in body
+
+
+def test_task_engine_readonly_template_detail_and_clone_into_builder(
+    web_client: TestClient, pg_conn
+):
+    from web import ts_engine_pg
+
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+
+    detail = web_client.get(
+        "/task-engine/sequences/templates/cloudosd-desktop-domain-join"
+    )
+
+    assert detail.status_code == 200
+    detail_body = detail.text
+    assert "CloudOSD Desktop Client + AD Domain Join" in detail_body
+    assert "read-only template" in detail_body
+    assert "Read-only Step Plan" in detail_body
+    assert "stage_ad_domain_join_unattend" in detail_body
+    assert "verify_ad_domain_join" in detail_body
+    assert (
+        "/task-engine/sequences/new?template_id=cloudosd-desktop-domain-join"
+        in detail_body
+    )
+
+    clone = web_client.get(
+        "/task-engine/sequences/new?template_id=cloudosd-desktop-domain-join"
+    )
+
+    assert clone.status_code == 200
+    clone_body = clone.text
+    assert "New v2 task sequence" in clone_body
+    assert "Template source" in clone_body
+    assert "read-only template cloned" in clone_body
+    assert "CloudOSD Desktop Client + AD Domain Join copy" in clone_body
+    assert "stage_ad_domain_join_unattend" in clone_body
+    assert "verify_ad_domain_join" in clone_body
+    assert "wait_agent_heartbeat" in clone_body
+    assert "data-v2-builder" in clone_body
+
+
 def test_task_engine_imports_legacy_sequence_into_v2(
     web_client: TestClient, pg_conn
 ):

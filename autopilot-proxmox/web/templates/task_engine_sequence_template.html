@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block title %}{{ template.name }} Template - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head(template.name, "Read-only v2 current-flow template. Inspect the plan, then clone a copy into the builder when you need an editable sequence.") }}
+
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+    <div>
+      <p style="margin:0 0 8px;">
+        <span class="badge ok">read-only template</span>
+        <span class="badge">{{ template.path }}</span>
+        <span class="badge">{{ template.status }}</span>
+      </p>
+      <p style="margin:0;color:var(--ink-muted);max-width:900px;">{{ template.description }}</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <a class="button" href="/task-engine/sequences/new?template_id={{ template.id }}">Clone into builder</a>
+      <a class="button" href="/task-engine/sequences/list#flow-templates">Back to library</a>
+    </div>
+  </div>
+</section>
+
+<section class="cockpit-grid" style="margin-bottom:14px;">
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Path</div>
+    <div class="cockpit-metric-value" style="font-size:22px;">{{ template.path }}</div>
+    <div class="cockpit-metric-note">deployment surface</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Steps</div>
+    <div class="cockpit-metric-value">{{ template.step_count }}</div>
+    <div class="cockpit-metric-note">read-only plan nodes</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Editable</div>
+    <div class="cockpit-metric-value" style="font-size:22px;">No</div>
+    <div class="cockpit-metric-note">clone first</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Template ID</div>
+    <div class="cockpit-metric-value" style="font-size:18px;">{{ template.id }}</div>
+    <div class="cockpit-metric-note">stable clone source</div>
+  </div>
+</section>
+
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <h2 style="margin-top:0;">Operator Notes</h2>
+  <ul style="margin:0;padding-left:18px;">
+    {% for note in template.notes %}
+    <li>{{ note }}</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<h2>Read-only Step Plan</h2>
+<table class="cockpit-scanline">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Step</th>
+      <th>Kind</th>
+      <th>Phase</th>
+      <th>Retry</th>
+      <th>Content</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for step in template.nodes %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>
+        <strong>{{ step.name }}</strong>
+        {% if step.description %}<br><small>{{ step.description }}</small>{% endif %}
+      </td>
+      <td><code>{{ step.kind }}</code></td>
+      <td><span class="badge">{{ step.phase }}</span></td>
+      <td>{{ step.retry_count }} / {{ step.retry_delay_seconds }}s</td>
+      <td>{% if step.content_refs %}{{ step.content_refs|join(', ') }}{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
