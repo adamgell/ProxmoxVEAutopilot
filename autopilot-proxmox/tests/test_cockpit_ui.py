@@ -633,6 +633,11 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "Add CloudOSD desktop baseline" in body
     assert 'const STEP_TEMPLATES = [{"kind":' in body
     assert "&#34;kind&#34;" not in body
+    assert 'draggable="true"' in body
+    assert "dragTemplate(event" in body
+    assert "dragStep(event" in body
+    assert "dropOnPhase(event" in body
+    assert "Drag steps here, or reorder inside this phase." in body
 
 
 def test_task_engine_imports_legacy_sequence_into_v2(

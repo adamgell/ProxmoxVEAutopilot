@@ -44,6 +44,10 @@
     text-align:left;
     display:block;
     width:100%;
+    cursor:grab;
+  }
+  .v2-palette button:active {
+    cursor:grabbing;
   }
   .v2-lanes {
     display:grid;
@@ -58,12 +62,34 @@
     background:var(--cockpit-panel-2);
     min-height:260px;
     padding:10px;
+    transition:border-color .12s ease, box-shadow .12s ease, background .12s ease;
+  }
+  .v2-lane[data-drop-active="true"] {
+    border-color:var(--ms-blue-dark);
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--ms-blue-dark) 35%, transparent);
   }
   .v2-lane h3 {
     margin:0 0 8px;
     display:flex;
     justify-content:space-between;
     gap:8px;
+  }
+  .v2-lane-hint {
+    margin:0 0 10px;
+    font-size:11px;
+    color:var(--ink-muted);
+  }
+  .v2-drop-zone {
+    border:1px dashed transparent;
+    border-radius:6px;
+    min-height:10px;
+    margin:3px 0;
+    transition:min-height .12s ease, border-color .12s ease, background .12s ease;
+  }
+  .v2-drop-zone[data-drop-over="true"] {
+    min-height:28px;
+    border-color:var(--ms-blue-dark);
+    background:color-mix(in srgb, var(--ms-blue-dark) 14%, transparent);
   }
   .v2-step-card {
     border:1px solid var(--line);
@@ -72,11 +98,23 @@
     background:var(--panel);
     padding:9px;
     margin-bottom:8px;
-    cursor:pointer;
+    cursor:grab;
+    user-select:none;
+    transition:opacity .12s ease, transform .12s ease, border-color .12s ease;
+  }
+  .v2-step-card:active {
+    cursor:grabbing;
+  }
+  .v2-step-card[data-dragging="true"] {
+    opacity:.52;
+    transform:scale(.99);
   }
   .v2-step-card[data-active="true"] {
     outline:2px solid var(--ms-blue-dark);
     outline-offset:1px;
+  }
+  .v2-step-card code {
+    overflow-wrap:anywhere;
   }
   .v2-step-card small,
   .v2-help {
@@ -203,6 +241,7 @@ const PHASES = [
 ];
 let steps = normalizeInitialNodes(INITIAL_NODES);
 let activeId = steps[0] ? steps[0].client_id : null;
+let draggingStepId = null;
 
 function normalizeInitialNodes(nodes) {
   return (nodes || []).filter(n => (n.node_type || "step") === "step").map((n, idx) => ({
@@ -235,15 +274,15 @@ function templateFor(kind) {
   };
 }
 
-function addStepFromTemplate(kind) {
+function newStepFromTemplate(kind, phaseOverride) {
   const t = templateFor(kind);
-  const step = {
+  return {
     client_id: `step-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     node_type: "step",
     name: t.label,
     description: t.description || "",
     kind: t.kind,
-    phase: t.phase || "full_os",
+    phase: phaseOverride || t.phase || "full_os",
     enabled: true,
     condition: {},
     variables: {},
@@ -255,7 +294,15 @@ function addStepFromTemplate(kind) {
     timeout_seconds: t.timeout_seconds || null,
     reboot_behavior: "none"
   };
-  steps.push(step);
+}
+
+function addStepFromTemplate(kind, phaseOverride, phaseIndex) {
+  const step = newStepFromTemplate(kind, phaseOverride);
+  if (phaseOverride) {
+    insertStepInPhase(step, phaseOverride, phaseIndex);
+  } else {
+    steps.push(step);
+  }
   activeId = step.client_id;
   render();
 }
@@ -278,6 +325,119 @@ function clearSteps() {
   render();
 }
 
+function phaseKeys() {
+  return PHASES.map(([phase]) => phase);
+}
+
+function lanesFromSteps(withoutId) {
+  const lanes = Object.fromEntries(phaseKeys().map(phase => [phase, []]));
+  steps.forEach(step => {
+    if (withoutId && step.client_id === withoutId) return;
+    const phase = lanes[step.phase] ? step.phase : "full_os";
+    lanes[phase].push(step);
+  });
+  return lanes;
+}
+
+function flattenLanes(lanes) {
+  return phaseKeys().flatMap(phase => lanes[phase] || []);
+}
+
+function insertStepInPhase(step, phase, phaseIndex) {
+  const lanes = lanesFromSteps(step.client_id);
+  const target = lanes[phase] || lanes.full_os;
+  const idx = Number.isFinite(Number(phaseIndex))
+    ? Math.max(0, Math.min(Number(phaseIndex), target.length))
+    : target.length;
+  step.phase = phase;
+  target.splice(idx, 0, step);
+  steps = flattenLanes(lanes);
+  activeId = step.client_id;
+}
+
+function moveStepToPhase(stepId, phase, phaseIndex) {
+  const step = steps.find(s => s.client_id === stepId);
+  if (!step) return;
+  insertStepInPhase(step, phase, phaseIndex);
+  render();
+}
+
+function dragData(event, payload) {
+  const json = JSON.stringify(payload);
+  event.dataTransfer.effectAllowed = payload.type === "template" ? "copy" : "move";
+  event.dataTransfer.setData("application/json", json);
+  event.dataTransfer.setData("text/plain", json);
+}
+
+function readDragData(event) {
+  const raw = event.dataTransfer.getData("application/json")
+    || event.dataTransfer.getData("text/plain");
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+
+function dragTemplate(event, kind) {
+  dragData(event, {type: "template", kind});
+}
+
+function dragStep(event, stepId) {
+  draggingStepId = stepId;
+  dragData(event, {type: "step", stepId});
+  event.currentTarget.dataset.dragging = "true";
+}
+
+function endStepDrag(event) {
+  draggingStepId = null;
+  if (event.currentTarget) event.currentTarget.dataset.dragging = "false";
+  document.querySelectorAll("[data-drop-active='true'], [data-drop-over='true']").forEach(el => {
+    el.dataset.dropActive = "false";
+    el.dataset.dropOver = "false";
+  });
+}
+
+function allowLaneDrop(event) {
+  event.preventDefault();
+  const payload = readDragData(event);
+  event.dataTransfer.dropEffect = payload && payload.type === "template" ? "copy" : "move";
+  const lane = event.currentTarget.closest(".v2-lane");
+  if (lane) lane.dataset.dropActive = "true";
+}
+
+function leaveLaneDrop(event) {
+  const lane = event.currentTarget.closest(".v2-lane");
+  if (lane && !lane.contains(event.relatedTarget)) lane.dataset.dropActive = "false";
+}
+
+function allowSlotDrop(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.dataset.dropOver = "true";
+  const lane = event.currentTarget.closest(".v2-lane");
+  if (lane) lane.dataset.dropActive = "true";
+}
+
+function leaveSlotDrop(event) {
+  event.currentTarget.dataset.dropOver = "false";
+}
+
+function dropOnPhase(event, phase, phaseIndex) {
+  event.preventDefault();
+  event.stopPropagation();
+  const payload = readDragData(event);
+  document.querySelectorAll("[data-drop-active='true'], [data-drop-over='true']").forEach(el => {
+    el.dataset.dropActive = "false";
+    el.dataset.dropOver = "false";
+  });
+  if (!payload) return;
+  if (payload.type === "template") {
+    addStepFromTemplate(payload.kind, phase, Number(phaseIndex));
+    return;
+  }
+  if (payload.type === "step") {
+    moveStepToPhase(payload.stepId, phase, Number(phaseIndex));
+  }
+}
+
 function renderPalette() {
   const host = document.getElementById("v2-palette");
   const groups = {};
@@ -289,7 +449,10 @@ function renderPalette() {
     <div>
       <strong>${esc(category)}</strong>
       ${items.map(t => `
-        <button type="button" onclick="addStepFromTemplate('${esc(t.kind)}')" title="${esc(t.description || "")}">
+        <button type="button" draggable="true"
+          ondragstart="dragTemplate(event, '${esc(t.kind)}')"
+          onclick="addStepFromTemplate('${esc(t.kind)}')"
+          title="${esc(t.description || "")}">
           ${esc(t.label)}<br><small>${esc(t.phase)} · ${esc(t.kind)}</small>
         </button>
       `).join("")}
@@ -301,15 +464,37 @@ function renderLanes() {
   const host = document.getElementById("v2-lanes");
   host.innerHTML = PHASES.map(([phase, label]) => {
     const laneSteps = steps.filter(s => s.phase === phase);
-    return `<section class="v2-lane">
+    const cards = laneSteps.map((s, idx) => `${dropZone(phase, idx)}${stepCard(s, idx)}`).join("");
+    return `<section class="v2-lane"
+      data-phase="${esc(phase)}"
+      ondragover="allowLaneDrop(event)"
+      ondragleave="leaveLaneDrop(event)"
+      ondrop="dropOnPhase(event, '${esc(phase)}', ${laneSteps.length})">
       <h3>${esc(label)} <span class="badge">${laneSteps.length}</span></h3>
-      ${laneSteps.map((s, idx) => stepCard(s, idx)).join("") || `<p class="v2-help">No steps in this phase.</p>`}
+      <p class="v2-lane-hint">Drag steps here, or reorder inside this phase.</p>
+      ${cards || `<p class="v2-help">No steps in this phase.</p>`}
+      ${dropZone(phase, laneSteps.length)}
     </section>`;
   }).join("");
 }
 
+function dropZone(phase, index) {
+  return `<div class="v2-drop-zone"
+    data-phase="${esc(phase)}"
+    data-index="${Number(index)}"
+    ondragover="allowSlotDrop(event)"
+    ondragleave="leaveSlotDrop(event)"
+    ondrop="dropOnPhase(event, '${esc(phase)}', ${Number(index)})"></div>`;
+}
+
 function stepCard(s) {
-  return `<article class="v2-step-card" data-active="${s.client_id === activeId}" onclick="selectStep('${esc(s.client_id)}')">
+  return `<article class="v2-step-card"
+    draggable="true"
+    data-active="${s.client_id === activeId}"
+    data-dragging="${s.client_id === draggingStepId}"
+    ondragstart="dragStep(event, '${esc(s.client_id)}')"
+    ondragend="endStepDrag(event)"
+    onclick="selectStep('${esc(s.client_id)}')">
     <strong>${esc(s.name || s.kind)}</strong>
     <br><code>${esc(s.kind)}</code>
     <br><small>${esc(s.enabled ? "enabled" : "disabled")}${s.retry_count ? ` · ${s.retry_count} retries` : ""}${s.reboot_behavior !== "none" ? ` · reboot ${esc(s.reboot_behavior)}` : ""}</small>
