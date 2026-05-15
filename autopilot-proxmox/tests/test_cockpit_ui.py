@@ -636,6 +636,9 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert 'draggable="true"' in body
     assert "dragTemplate(event" in body
     assert "dragStep(event" in body
+    assert "startPointerDrag(event" in body
+    assert "pointerMoveDrag" in body
+    assert "paletteClick(event" in body
     assert "dropOnPhase(event" in body
     assert "Drag steps here, or reorder inside this phase." in body
     assert "forEach(kind => addStepFromTemplate(kind));" in body

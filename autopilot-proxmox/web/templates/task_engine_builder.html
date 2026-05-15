@@ -109,6 +109,10 @@
     opacity:.52;
     transform:scale(.99);
   }
+  body[data-v2-dragging="true"] .v2-step-card,
+  body[data-v2-dragging="true"] .v2-palette button {
+    cursor:grabbing;
+  }
   .v2-step-card[data-active="true"] {
     outline:2px solid var(--ms-blue-dark);
     outline-offset:1px;
@@ -242,6 +246,8 @@ const PHASES = [
 let steps = normalizeInitialNodes(INITIAL_NODES);
 let activeId = steps[0] ? steps[0].client_id : null;
 let draggingStepId = null;
+let pointerDrag = null;
+let suppressNextClick = false;
 
 function normalizeInitialNodes(nodes) {
   return (nodes || []).filter(n => (n.node_type || "step") === "step").map((n, idx) => ({
@@ -425,6 +431,10 @@ function dropOnPhase(event, phase, phaseIndex) {
   event.preventDefault();
   event.stopPropagation();
   const payload = readDragData(event);
+  applyDropPayload(payload, phase, phaseIndex);
+}
+
+function applyDropPayload(payload, phase, phaseIndex) {
   document.querySelectorAll("[data-drop-active='true'], [data-drop-over='true']").forEach(el => {
     el.dataset.dropActive = "false";
     el.dataset.dropOver = "false";
@@ -439,6 +449,104 @@ function dropOnPhase(event, phase, phaseIndex) {
   }
 }
 
+function clearDropTargets() {
+  document.querySelectorAll("[data-drop-active='true'], [data-drop-over='true']").forEach(el => {
+    el.dataset.dropActive = "false";
+    el.dataset.dropOver = "false";
+  });
+}
+
+function dropTargetAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  const slot = el ? el.closest(".v2-drop-zone") : null;
+  if (slot) {
+    return {
+      phase: slot.dataset.phase,
+      index: Number(slot.dataset.index || 0),
+      slot,
+      lane: slot.closest(".v2-lane")
+    };
+  }
+  const lane = el ? el.closest(".v2-lane") : null;
+  if (!lane) return null;
+  const phase = lane.dataset.phase;
+  const index = steps.filter(s => s.phase === phase).length;
+  return {phase, index, lane, slot: null};
+}
+
+function highlightPointerTarget(target) {
+  clearDropTargets();
+  if (!target) return;
+  if (target.lane) target.lane.dataset.dropActive = "true";
+  if (target.slot) target.slot.dataset.dropOver = "true";
+}
+
+function startPointerDrag(event, payload) {
+  if (event.button !== 0) return;
+  pointerDrag = {
+    payload,
+    startX: event.clientX,
+    startY: event.clientY,
+    moved: false
+  };
+  if (payload.type === "step") {
+    draggingStepId = payload.stepId;
+    event.currentTarget.dataset.dragging = "true";
+  }
+  document.addEventListener("pointermove", pointerMoveDrag);
+  document.addEventListener("pointerup", pointerUpDrag, {once: true});
+}
+
+function pointerMoveDrag(event) {
+  if (!pointerDrag) return;
+  const dx = Math.abs(event.clientX - pointerDrag.startX);
+  const dy = Math.abs(event.clientY - pointerDrag.startY);
+  if (!pointerDrag.moved && dx + dy < 7) return;
+  pointerDrag.moved = true;
+  document.body.dataset.v2Dragging = "true";
+  highlightPointerTarget(dropTargetAt(event.clientX, event.clientY));
+  event.preventDefault();
+}
+
+function pointerUpDrag(event) {
+  document.removeEventListener("pointermove", pointerMoveDrag);
+  if (!pointerDrag) return;
+  const drag = pointerDrag;
+  pointerDrag = null;
+  draggingStepId = null;
+  document.body.dataset.v2Dragging = "false";
+  if (drag.moved) {
+    const target = dropTargetAt(event.clientX, event.clientY);
+    if (target) applyDropPayload(drag.payload, target.phase, target.index);
+    clearDropTargets();
+    suppressNextClick = true;
+    window.setTimeout(() => { suppressNextClick = false; }, 75);
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  clearDropTargets();
+  render();
+}
+
+function paletteClick(event, kind) {
+  if (suppressNextClick) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  addStepFromTemplate(kind);
+}
+
+function stepClick(event, id) {
+  if (suppressNextClick) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  selectStep(id);
+}
+
 function renderPalette() {
   const host = document.getElementById("v2-palette");
   const groups = {};
@@ -451,8 +559,9 @@ function renderPalette() {
       <strong>${esc(category)}</strong>
       ${items.map(t => `
         <button type="button" draggable="true"
+          onpointerdown="startPointerDrag(event, {type: 'template', kind: '${esc(t.kind)}'})"
           ondragstart="dragTemplate(event, '${esc(t.kind)}')"
-          onclick="addStepFromTemplate('${esc(t.kind)}')"
+          onclick="paletteClick(event, '${esc(t.kind)}')"
           title="${esc(t.description || "")}">
           ${esc(t.label)}<br><small>${esc(t.phase)} · ${esc(t.kind)}</small>
         </button>
@@ -493,9 +602,10 @@ function stepCard(s) {
     draggable="true"
     data-active="${s.client_id === activeId}"
     data-dragging="${s.client_id === draggingStepId}"
+    onpointerdown="startPointerDrag(event, {type: 'step', stepId: '${esc(s.client_id)}'})"
     ondragstart="dragStep(event, '${esc(s.client_id)}')"
     ondragend="endStepDrag(event)"
-    onclick="selectStep('${esc(s.client_id)}')">
+    onclick="stepClick(event, '${esc(s.client_id)}')">
     <strong>${esc(s.name || s.kind)}</strong>
     <br><code>${esc(s.kind)}</code>
     <br><small>${esc(s.enabled ? "enabled" : "disabled")}${s.retry_count ? ` · ${s.retry_count} retries` : ""}${s.reboot_behavior !== "none" ? ` · reboot ${esc(s.reboot_behavior)}` : ""}</small>
