@@ -625,6 +625,11 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert res.status_code == 200
     body = res.text
     assert "Smart builder for CloudOSD desktop deployment" in body
+    assert "Legacy Import" not in body
+    assert "Start from v1 sequence" not in body
+    assert "No legacy v1 sequences" not in body
+    assert "draftFromLegacy" not in body
+    assert "createFromLegacy" not in body
     assert "data-v2-builder" in body
     assert "v2-builder-scroll" in body
     assert "min-width:1440px" in body
@@ -632,6 +637,33 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "Step Palette" in body
     assert "CloudOSD desktop baseline" in body
     assert "capture_autopilot_hash" in body
+    for kind in [
+        "capture_hash",
+        "partition_disk",
+        "apply_wim",
+        "apply_driver_package",
+        "prepare_windows_setup",
+        "bake_boot_entry",
+        "handoff_to_windows_setup",
+        "cloudosd_preflight",
+        "cloudosd_deploy_os",
+        "stage_ad_domain_join_unattend",
+        "verify_ad_domain_join",
+        "cloudosd_validate_offline_os",
+        "stage_osd_client",
+        "stage_autopilot_agent",
+        "rename_computer",
+        "install_qga",
+        "fix_recovery_partition",
+        "verify_qga",
+        "install_qga_watchdog",
+        "handoff_to_oobe",
+        "install_package",
+        "run_script",
+        "install_app",
+        "wait_agent_heartbeat",
+    ]:
+        assert kind in body
     assert "Add CloudOSD desktop baseline" in body
     assert 'const STEP_TEMPLATES = [{"kind":' in body
     assert "&#34;kind&#34;" not in body

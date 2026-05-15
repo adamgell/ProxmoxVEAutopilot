@@ -2,7 +2,7 @@
 {% from "_macros.html" import page_head %}
 {% block title %}{% if sequence and sequence.id %}Edit{% else %}New{% endif %} V2 Sequence - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-{{ page_head(("Edit v2 sequence: " ~ sequence.name) if sequence and sequence.id else "New v2 task sequence", "Smart builder for CloudOSD desktop deployment, full-OS AutopilotAgent work, content steps, retry behavior, and legacy v1 migration.") }}
+{{ page_head(("Edit v2 sequence: " ~ sequence.name) if sequence and sequence.id else "New v2 task sequence", "Smart builder for CloudOSD desktop deployment, WinPE and OSD handoff steps, full-OS AutopilotAgent work, content steps, and retry behavior.") }}
 
 <style>
   .v2-builder-scroll {
@@ -210,25 +210,6 @@
         <a href="/task-engine">Cancel</a>
       </div>
       <div id="v2-flash" class="v2-help" style="margin-top:10px;"></div>
-    </div>
-
-    <div class="v2-panel">
-      <h2>Legacy Import</h2>
-      {% if legacy_sequences %}
-      <label class="v2-field">Start from v1 sequence
-        <select id="legacy-draft-select">
-          {% for legacy in legacy_sequences %}
-          <option value="{{ legacy.id }}" {% if legacy_source_id == legacy.id %}selected{% endif %}>{{ legacy.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="v2-actions">
-        <button type="button" onclick="draftFromLegacy()">Open as draft</button>
-        <button type="button" onclick="createFromLegacy()">Create compiled copy</button>
-      </div>
-      {% else %}
-      <p class="v2-help">No legacy v1 sequences are available to import.</p>
-      {% endif %}
     </div>
 
     <div class="v2-panel">
@@ -821,25 +802,6 @@ async function saveV2Sequence() {
   try { detail = (await r.json()).detail || detail; } catch (e) {}
   flash.textContent = `Save failed: ${detail}`;
   flash.style.color = "var(--bad-fg)";
-}
-
-function draftFromLegacy() {
-  const select = document.getElementById("legacy-draft-select");
-  if (select && select.value) location.href = `/task-engine/sequences/new?legacy_id=${select.value}`;
-}
-
-async function createFromLegacy() {
-  const select = document.getElementById("legacy-draft-select");
-  if (!select || !select.value) return;
-  const r = await fetch(`/api/osd/v2/builder/import-legacy/${select.value}`, {method: "POST"});
-  if (r.ok) {
-    const payload = await r.json();
-    location.href = `/task-engine/sequences/${payload.id}/edit`;
-    return;
-  }
-  let detail = r.statusText;
-  try { detail = (await r.json()).detail || detail; } catch (e) {}
-  document.getElementById("v2-flash").textContent = `Import failed: ${detail}`;
 }
 
 render();
