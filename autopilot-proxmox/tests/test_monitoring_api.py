@@ -192,3 +192,32 @@ def test_latest_monitor_sweep_status_reads_postgres(client):
     assert status["running"] is False
     assert status["started_at"]
     assert status["ended_at"]
+
+
+def test_deployment_speed_api_returns_normalized_rows(client, pg_conn):
+    from web import deployment_health, jobs_pg
+
+    deployment_health.reset_for_tests(pg_conn)
+    jobs_pg.enqueue(
+        job_id="job-api",
+        job_type="provision_clone",
+        playbook="provision.yml",
+        cmd=["true"],
+        args={"vmid": 121},
+    )
+    jobs_pg.claim_next_job(worker_id="builder-api")
+    jobs_pg.finalize_job("job-api", exit_code=0)
+
+    summary = client.get("/api/monitoring/deployments/summary")
+    rows = client.get("/api/monitoring/deployments/runs")
+    detail = client.get("/api/monitoring/deployments/runs/job:job-api")
+    baselines = client.get("/api/monitoring/deployments/baselines")
+
+    assert summary.status_code == 200
+    assert rows.status_code == 200
+    assert detail.status_code == 200
+    assert baselines.status_code == 200
+    assert summary.json()["total"] >= 1
+    assert any(row["deployment_key"] == "job:job-api" for row in rows.json()["runs"])
+    assert detail.json()["deployment_key"] == "job:job-api"
+    assert detail.json()["phases"]

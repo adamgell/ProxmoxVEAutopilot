@@ -92,3 +92,93 @@ def test_monitoring_page_shows_service_health(client):
     assert "web" in r.text
     assert "builder-xyz" in r.text
     assert "abc1234" in r.text
+
+
+def test_monitoring_page_shows_runtime_logs_surface(client, monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setattr(app_module, "_runtime_container_status", lambda: {
+        "available": True,
+        "error": "",
+        "containers": [
+            {
+                "id": "abc123",
+                "name": "autopilot-mcp",
+                "service": "autopilot-mcp",
+                "image": "ghcr.io/adamgell/proxmox-autopilot:latest",
+                "status": "running",
+                "health": "healthy",
+                "started_at": "2026-05-15T00:00:00Z",
+                "finished_at": "",
+                "restart_count": 0,
+                "log_url": "/api/monitoring/service-logs?container=autopilot-mcp",
+            },
+        ],
+    })
+
+    r = client.get("/monitoring")
+
+    assert r.status_code == 200
+    assert "Runtime logs" in r.text
+    assert "autopilot-mcp" in r.text
+    assert "MCP deployed" in r.text
+    assert 'data-log-container="autopilot-mcp"' in r.text
+
+
+def test_monitoring_service_logs_endpoint_redacts_secrets(client, monkeypatch):
+    from web import app as app_module
+
+    class FakeContainer:
+        name = "autopilot-mcp"
+        short_id = "abc123"
+        status = "running"
+        labels = {"com.docker.compose.service": "autopilot-mcp"}
+        attrs = {
+            "State": {"Status": "running", "StartedAt": "2026-05-15T00:00:00Z"},
+            "Config": {"Image": "ghcr.io/adamgell/proxmox-autopilot:latest"},
+        }
+
+        def logs(self, *, tail, timestamps):
+            assert tail == 42
+            assert timestamps is True
+            return b"2026-05-15T00:00:00Z ready token=super-secret\n"
+
+    class FakeContainers:
+        def get(self, name):
+            assert name == "autopilot-mcp"
+            return FakeContainer()
+
+    class FakeClient:
+        containers = FakeContainers()
+
+    monkeypatch.setattr(app_module, "_docker_client", lambda: FakeClient())
+
+    r = client.get("/api/monitoring/service-logs?container=autopilot-mcp&tail=42")
+
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["container"] == "autopilot-mcp"
+    assert payload["service"] == "autopilot-mcp"
+    assert payload["lines"] == ["2026-05-15T00:00:00Z ready token=[redacted]"]
+
+
+def test_monitoring_page_shows_deployment_speed_section(client, pg_conn):
+    from web import deployment_health, jobs_pg
+
+    deployment_health.reset_for_tests(pg_conn)
+    jobs_pg.enqueue(
+        job_id="job-monitoring",
+        job_type="cloudosd_build_iso",
+        playbook="cloudosd_remote_build",
+        cmd=["true"],
+        args={"artifact": "cloudosd"},
+    )
+    jobs_pg.claim_next_job(worker_id="builder-monitoring")
+    jobs_pg.finalize_job("job-monitoring", exit_code=0)
+
+    r = client.get("/monitoring")
+
+    assert r.status_code == 200
+    assert "Deployment speed" in r.text
+    assert "job-monitoring" in r.text
+    assert "cloudosd_build_iso" in r.text

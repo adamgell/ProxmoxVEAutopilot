@@ -101,6 +101,48 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  autopilot-mcp:
+    image: ghcr.io/adamgell/proxmox-autopilot:latest
+    container_name: autopilot-mcp
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        set -eu
+        for f in /app/web/mcp/__pycache__/*.cpython-*.pyc; do
+          b="$(basename "$$f")"
+          b="$${b%%.cpython-*}"
+          cp "$$f" "/app/web/mcp/$${b}.pyc"
+        done
+        : > /app/web/mcp/__init__.py
+        exec uvicorn web.mcp.server:app --host "$${AUTOPILOT_MCP_HOST:-127.0.0.1}" --port "$${AUTOPILOT_MCP_PORT:-5050}"
+    network_mode: host
+    volumes:
+      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
+      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
+      - ./output:/app/output
+      - autopilot-jobs:/app/jobs
+      - ./secrets:/app/secrets
+      - ..:/repo:ro
+    security_opt:
+      - apparmor=unconfined
+    environment:
+      <<: *common_env
+      AUTOPILOT_MCP_TOKEN: ${AUTOPILOT_MCP_TOKEN:-}
+      AUTOPILOT_MCP_HOST: ${AUTOPILOT_MCP_HOST:-127.0.0.1}
+      AUTOPILOT_MCP_PORT: ${AUTOPILOT_MCP_PORT:-5050}
+      AUTOPILOT_MCP_ALLOWED_ORIGINS: ${AUTOPILOT_MCP_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:15051,http://127.0.0.1:15051}
+      AUTOPILOT_MCP_DOC_ROOTS: ${AUTOPILOT_MCP_DOC_ROOTS:-/repo/README.md,/repo/AGENTS.md,/repo/CLAUDE.md,/repo/.github/copilot-instructions.md,/repo/docs,/repo/tools/winpe-build/README.md,/repo/autopilot-proxmox/README.md,/repo/autopilot-proxmox/MIGRATION-microservice-split.md}
+    depends_on:
+      autopilot-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 5050), 3); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   autopilot-jobs:
   autopilot-postgres:

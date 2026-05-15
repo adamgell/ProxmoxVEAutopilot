@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import threading
 from contextlib import contextmanager
@@ -99,6 +100,65 @@ def test_api_version_treats_short_running_sha_as_current(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["update_available"] is False
+
+
+def test_load_version_falls_back_to_host_repo_when_version_file_is_unknown(
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=repo,
+        check=True,
+    )
+    (repo / "README.md").write_text("test\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "test"], cwd=repo, check=True)
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        text=True,
+    ).strip()
+    version_file = tmp_path / "VERSION"
+    version_file.write_text("unknown\nunknown\n")
+
+    monkeypatch.setenv("APP_VERSION_FILE", str(version_file))
+    monkeypatch.setenv("HOST_REPO_MOUNT", str(repo))
+    monkeypatch.delenv("APP_BUILD_SHA", raising=False)
+    monkeypatch.delenv("APP_BUILD_TIME", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    monkeypatch.delenv("BUILD_TIME", raising=False)
+    monkeypatch.delenv("HOST_REPO_PATH", raising=False)
+
+    loaded = web_app._load_version()
+
+    assert loaded["sha"] == sha
+    assert loaded["sha_short"] == sha[:7]
+    assert loaded["build_time"] != "unknown"
+
+
+def test_update_sidecar_rebuilds_image_with_version_args():
+    from web import app as web_app
+
+    cmd = web_app._build_update_sidecar_command("/opt/ProxmoxVEAutopilot")
+
+    assert "git pull" in cmd
+    assert "docker build" in cmd
+    assert "--build-arg \"GIT_SHA=${GIT_SHA}\"" in cmd
+    assert "--build-arg \"BUILD_TIME=${BUILD_TIME}\"" in cmd
+    assert "services='autopilot autopilot-builder autopilot-monitor'" in cmd
+    assert 'services="$services autopilot-mcp"' in cmd
+    assert "docker compose up -d --force-recreate $services" in cmd
 
 
 def test_cockpit_pages_use_shared_full_width_shell(client):
@@ -608,6 +668,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
         db_pg,
         device_history_pg,
         devices_pg,
+        deployment_health_pg,
         jobs_pg,
         sequences_pg,
         service_health_pg,
@@ -649,6 +710,9 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     def fake_devices_init(conn):
         calls.append(("devices_init", conn.__class__.__name__))
 
+    def fake_deployment_health_init(conn):
+        calls.append(("deployment_health_init", conn.__class__.__name__))
+
     def fake_heartbeat(**kwargs):
         calls.append(("heartbeat", kwargs))
         heartbeat_seen.set()
@@ -663,6 +727,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
     monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
     monkeypatch.setattr(devices_pg, "init", fake_devices_init)
+    monkeypatch.setattr(deployment_health_pg, "init", fake_deployment_health_init)
     monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "sequences.db")
     monkeypatch.setattr(web_app, "SECRETS_DIR", tmp_path / "secrets")
     monkeypatch.setattr(
@@ -677,6 +742,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     assert ("ts_init", "FakeConn") in calls
     assert ("device_history_init", "FakeConn") in calls
     assert ("devices_init", "FakeConn") in calls
+    assert ("deployment_health_init", "FakeConn") in calls
     heartbeat_calls = [call for call in calls if call[0] == "heartbeat"]
     assert heartbeat_calls == [
         (

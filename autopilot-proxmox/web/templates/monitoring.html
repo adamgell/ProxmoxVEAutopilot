@@ -48,6 +48,16 @@
   {% if s.status == 'degraded' %}{% set service_counts.degraded = service_counts.degraded + 1 %}{% endif %}
   {% if s.status not in ['ok', 'degraded'] %}{% set service_counts.dead = service_counts.dead + 1 %}{% endif %}
 {% endfor %}
+{% set runtime = runtime_services | default({'available': false, 'error': '', 'containers': []}) %}
+{% set runtime_containers = runtime.containers | default([]) %}
+{% set runtime_counts = namespace(running=0, stopped=0, mcp=false) %}
+{% for c in runtime_containers %}
+  {% if c.status == 'running' %}{% set runtime_counts.running = runtime_counts.running + 1 %}{% endif %}
+  {% if c.status != 'running' %}{% set runtime_counts.stopped = runtime_counts.stopped + 1 %}{% endif %}
+  {% if c.service == 'autopilot-mcp' or c.name == 'autopilot-mcp' %}{% set runtime_counts.mcp = true %}{% endif %}
+{% endfor %}
+{% set deployment = deployment_health | default({'summary': {}, 'active': [], 'recent_completions': [], 'bottlenecks': []}) %}
+{% set deployment_summary = deployment.summary | default({}) %}
 
 <style>
   .monitoring-page {
@@ -129,7 +139,7 @@
 
   .cockpit-metrics {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 10px;
   }
   .metric-tile {
@@ -286,6 +296,123 @@
     font-size: 12px;
     overflow-wrap: anywhere;
   }
+  .runtime-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+    gap: 10px;
+  }
+  .runtime-table-wrap,
+  .runtime-log-panel {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .runtime-table {
+    margin: 0;
+    min-width: 640px;
+  }
+  .runtime-log-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .runtime-log-title {
+    min-width: 0;
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+  .runtime-log-output {
+    min-height: 260px;
+    max-height: 440px;
+    margin: 0;
+    padding: 12px;
+    overflow: auto;
+    background: color-mix(in srgb, var(--surface-muted) 70%, #000 30%);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .runtime-log-output.is-muted {
+    color: var(--ink-muted);
+  }
+
+  .deployment-speed-band {
+    display: grid;
+    gap: 10px;
+  }
+  .deployment-metrics {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .deployment-tables {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+  .deployment-table-wrap,
+  .bottleneck-panel {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .deployment-table {
+    margin: 0;
+    min-width: 760px;
+  }
+  .deployment-table th,
+  .deployment-table td {
+    vertical-align: top;
+  }
+  .deployment-key {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
+  .deployment-health-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--neutral-bg);
+    color: var(--neutral-fg);
+  }
+  .deployment-health-pill.healthy { background: var(--ok-bg); color: var(--ok-fg); }
+  .deployment-health-pill.learning { background: var(--neutral-bg); color: var(--neutral-fg); }
+  .deployment-health-pill.slow,
+  .deployment-health-pill.regressed,
+  .deployment-health-pill.stuck { background: var(--warn-bg); color: var(--warn-fg); }
+  .deployment-health-pill.failed { background: var(--bad-bg); color: var(--bad-fg); }
+  .bottleneck-panel {
+    padding: 12px;
+  }
+  .bottleneck-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .bottleneck-item {
+    display: grid;
+    gap: 3px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .bottleneck-item:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
 
   .fleet-table-wrap {
     overflow-x: auto;
@@ -375,6 +502,9 @@
 
   @media (max-width: 1050px) {
     .cockpit-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .deployment-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .deployment-tables { grid-template-columns: 1fr; }
+    .runtime-grid { grid-template-columns: 1fr; }
     .lifecycle-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
@@ -386,6 +516,7 @@
       justify-content: flex-start;
     }
     .cockpit-metrics,
+    .deployment-metrics,
     .lifecycle-grid,
     .service-grid {
       grid-template-columns: 1fr;
@@ -476,6 +607,133 @@
       <div class="metric-value">{{ service_health | length }}</div>
       <div class="metric-foot">{{ service_counts.ok }} OK, {{ service_counts.degraded }} degraded, {{ service_counts.dead }} dead</div>
     </article>
+    <article class="metric-tile{% if runtime_counts.stopped %} is-attention{% endif %}">
+      <div class="metric-label">Runtime containers</div>
+      <div class="metric-value">{{ runtime_counts.running }}/{{ runtime_containers | length }}</div>
+      <div class="metric-foot">
+        {% if runtime.available %}
+          {% if runtime_counts.mcp %}MCP deployed{% else %}MCP not deployed{% endif %}
+        {% else %}
+          Docker unavailable
+        {% endif %}
+      </div>
+    </article>
+  </section>
+
+  <section class="cockpit-section deployment-speed-band" aria-labelledby="deployment-speed-heading">
+    <div class="section-head">
+      <h2 id="deployment-speed-heading">Deployment speed</h2>
+      <div class="section-note">Phase timing, progress evidence, and regression signals across active deployment paths</div>
+    </div>
+    <div class="deployment-metrics" aria-label="Deployment speed summary">
+      <article class="metric-tile">
+        <div class="metric-label">Active</div>
+        <div class="metric-value">{{ deployment_summary.active | default(0) }}</div>
+        <div class="metric-foot">Running, pending, or stale</div>
+      </article>
+      <article class="metric-tile{% if deployment_summary.stuck | default(0) %} is-attention{% endif %}">
+        <div class="metric-label">Stuck</div>
+        <div class="metric-value">{{ deployment_summary.stuck | default(0) }}</div>
+        <div class="metric-foot">No recent phase progress</div>
+      </article>
+      <article class="metric-tile{% if deployment_summary.failed | default(0) %} is-attention{% endif %}">
+        <div class="metric-label">Failed</div>
+        <div class="metric-value">{{ deployment_summary.failed | default(0) }}</div>
+        <div class="metric-foot">Terminal failure state</div>
+      </article>
+      <article class="metric-tile{% if deployment_summary.regressed | default(0) %} is-attention{% endif %}">
+        <div class="metric-label">Regressed</div>
+        <div class="metric-value">{{ deployment_summary.regressed | default(0) }}</div>
+        <div class="metric-foot">Past local p95 guardrail</div>
+      </article>
+      <article class="metric-tile">
+        <div class="metric-label">Median</div>
+        <div class="metric-value">{{ deployment_summary.median_completion_seconds | default('--', true) }}</div>
+        <div class="metric-foot">Seconds to completion</div>
+      </article>
+      <article class="metric-tile">
+        <div class="metric-label">P95</div>
+        <div class="metric-value">{{ deployment_summary.p95_completion_seconds | default('--', true) }}</div>
+        <div class="metric-foot">Local completion baseline</div>
+      </article>
+    </div>
+
+    <div class="deployment-tables">
+      <div class="deployment-table-wrap">
+        <table class="deployment-table">
+          <thead>
+            <tr>
+              <th>Active deployment</th>
+              <th>Phase</th>
+              <th>Elapsed</th>
+              <th>Health</th>
+              <th>Next evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for run in deployment.active | default([]) %}
+            <tr>
+              <td>
+                <div class="deployment-key">{{ run.deployment_key }}</div>
+                <span class="row-subtle">{{ run.deployment_type }}{% if run.evidence.vmid %} / VMID {{ run.evidence.vmid }}{% endif %}</span>
+              </td>
+              <td>{{ run.current_phase }}</td>
+              <td>{{ run.elapsed_seconds | default('--', true) }}s</td>
+              <td><span class="deployment-health-pill {{ run.health }}">{{ run.health }}</span></td>
+              <td>{{ run.next_expected_evidence }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5">No active deployment phases are currently open.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="deployment-table-wrap">
+        <table class="deployment-table">
+          <thead>
+            <tr>
+              <th>Recent completion</th>
+              <th>Total</th>
+              <th>Slowest phase</th>
+              <th>Health</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for run in deployment.recent_completions | default([]) %}
+            <tr>
+              <td>
+                <div class="deployment-key">{{ run.deployment_key }}</div>
+                <span class="row-subtle">{{ run.deployment_type }}</span>
+              </td>
+              <td>{{ run.duration_seconds | default('--', true) }}s</td>
+              <td>{{ run.slowest_phase }}{% if run.slowest_phase_seconds is not none %}<span class="row-subtle">{{ run.slowest_phase_seconds }}s</span>{% endif %}</td>
+              <td><span class="deployment-health-pill {{ run.health }}">{{ run.health }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4">No completed deployment timing samples yet.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <aside class="bottleneck-panel" aria-label="Deployment bottlenecks">
+      <div class="section-head">
+        <h2>Bottlenecks</h2>
+        <div class="section-note">Current slow, stuck, failed, or regressed phases</div>
+      </div>
+      <ul class="bottleneck-list">
+      {% for item in deployment.bottlenecks | default([]) %}
+        <li class="bottleneck-item">
+          <strong>{{ item.phase_label }}</strong>
+          <span class="row-subtle">{{ item.deployment_type }} / {{ item.phase_key }} / {{ item.count }} affected / {{ item.health }}</span>
+        </li>
+      {% else %}
+        <li class="row-subtle">No bottleneck phases are currently flagged.</li>
+      {% endfor %}
+      </ul>
+    </aside>
   </section>
 
   <section class="cockpit-section" aria-labelledby="lifecycle-heading">
@@ -541,6 +799,115 @@
     </div>
   </section>
   {% endif %}
+
+  <section class="cockpit-section" aria-labelledby="runtime-heading">
+    <div class="section-head">
+      <h2 id="runtime-heading">Runtime logs</h2>
+      <div class="section-note">Container state and tail logs for deployed Autopilot services{% if runtime_counts.mcp %}, including autopilot-mcp{% endif %}</div>
+    </div>
+    {% if not runtime.available %}
+      {% call alert(level="warn") %}
+        <strong>Docker runtime unavailable.</strong>
+        {{ runtime.error or 'The web container could not read the Docker socket.' }}
+      {% endcall %}
+    {% elif not runtime_containers %}
+      {{ empty_state(
+        "No Autopilot containers detected.",
+        hint="The runtime log surface reads Docker containers whose compose service or name starts with autopilot."
+      ) }}
+    {% else %}
+    <div class="runtime-grid">
+      <div class="runtime-table-wrap">
+        <table class="runtime-table">
+          <thead>
+            <tr>
+              <th>Container</th>
+              <th>Service</th>
+              <th>Status</th>
+              <th>Health</th>
+              <th>Logs</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for c in runtime_containers %}
+            <tr>
+              <td>
+                <span class="service-name">{{ c.name }}</span>
+                <span class="row-subtle">{{ c.image }}</span>
+              </td>
+              <td>{{ c.service }}</td>
+              <td>
+                {% if c.status == 'running' %}
+                  <span class="badge ok">running</span>
+                {% else %}
+                  <span class="badge missing">{{ c.status or 'unknown' }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if c.health == 'healthy' %}
+                  <span class="badge ok">healthy</span>
+                {% elif c.health %}
+                  <span class="badge warn">{{ c.health }}</span>
+                {% else %}
+                  <span class="row-subtle">no healthcheck</span>
+                {% endif %}
+              </td>
+              <td>
+                <button class="cockpit-action" type="button" data-log-container="{{ c.name }}">Tail</button>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="runtime-log-panel">
+        <div class="runtime-log-toolbar">
+          <div class="runtime-log-title" id="runtime-log-title">Select a container to view recent logs.</div>
+          <button class="cockpit-action" type="button" id="runtime-log-refresh" disabled>Refresh</button>
+        </div>
+        <pre class="runtime-log-output is-muted" id="runtime-log-output">No container selected.</pre>
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  <script>
+  (function () {
+    const output = document.getElementById('runtime-log-output');
+    const title = document.getElementById('runtime-log-title');
+    const refresh = document.getElementById('runtime-log-refresh');
+    let selected = null;
+
+    async function loadLogs(container) {
+      if (!output || !title) return;
+      selected = container;
+      refresh && (refresh.disabled = false);
+      title.textContent = 'Recent logs for ' + container;
+      output.classList.add('is-muted');
+      output.textContent = 'Loading logs...';
+      try {
+        const res = await fetch('/api/monitoring/service-logs?tail=180&container=' + encodeURIComponent(container));
+        if (!res.ok) {
+          output.textContent = 'Log request failed: HTTP ' + res.status;
+          return;
+        }
+        const payload = await res.json();
+        output.classList.remove('is-muted');
+        output.textContent = (payload.lines || []).join('\n') || '(no recent log lines)';
+        output.scrollTop = output.scrollHeight;
+      } catch (err) {
+        output.textContent = 'Log request failed: ' + err;
+      }
+    }
+
+    document.querySelectorAll('[data-log-container]').forEach((button) => {
+      button.addEventListener('click', () => loadLogs(button.dataset.logContainer));
+    });
+    refresh && refresh.addEventListener('click', () => {
+      if (selected) loadLogs(selected);
+    });
+  })();
+  </script>
 
   <section class="cockpit-section" aria-labelledby="fleet-heading">
     <div class="section-head">

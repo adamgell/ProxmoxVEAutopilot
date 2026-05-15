@@ -55,20 +55,77 @@ def _is_unique_violation(exc: Exception) -> bool:
 def _load_version() -> dict:
     """Read the build SHA + timestamp baked in at image build time."""
     version_file = os.environ.get("APP_VERSION_FILE", str(BASE_DIR / "VERSION"))
-    sha = "unknown"
-    build_time = "unknown"
+    sha = (
+        os.environ.get("APP_BUILD_SHA")
+        or os.environ.get("GIT_SHA")
+        or "unknown"
+    ).strip() or "unknown"
+    build_time = (
+        os.environ.get("APP_BUILD_TIME")
+        or os.environ.get("BUILD_TIME")
+        or "unknown"
+    ).strip() or "unknown"
     try:
         with open(version_file) as f:
             lines = f.read().splitlines()
-            sha = (lines[0] if lines else "unknown").strip() or "unknown"
-            build_time = (lines[1] if len(lines) > 1 else "unknown").strip() or "unknown"
+            if sha == "unknown":
+                sha = (lines[0] if lines else "unknown").strip() or "unknown"
+            if build_time == "unknown":
+                build_time = (lines[1] if len(lines) > 1 else "unknown").strip() or "unknown"
     except Exception:
         pass
+    if sha == "unknown":
+        for repo_path in (
+            os.environ.get("HOST_REPO_MOUNT", "/host/repo"),
+            os.environ.get("HOST_REPO_PATH", ""),
+            str(BASE_DIR),
+        ):
+            if not repo_path:
+                continue
+            try:
+                found = subprocess.check_output(
+                    ["git", "-C", repo_path, "rev-parse", "HEAD"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                ).strip()
+            except Exception:
+                continue
+            if found:
+                sha = found
+                if build_time == "unknown":
+                    try:
+                        build_time = subprocess.check_output(
+                            ["git", "-C", repo_path, "show", "-s", "--format=%cI", "HEAD"],
+                            text=True,
+                            stderr=subprocess.DEVNULL,
+                            timeout=3,
+                        ).strip() or "unknown"
+                    except Exception:
+                        build_time = "unknown"
+                break
     return {"sha": sha, "sha_short": sha[:7] if sha != "unknown" else sha, "build_time": build_time}
 
 
 _APP_VERSION = _load_version()
 _LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, "error": None}
+_RUNTIME_LOG_SERVICES = {
+    "autopilot",
+    "autopilot-builder",
+    "autopilot-monitor",
+    "autopilot-mcp",
+    "autopilot-postgres",
+}
+_RUNTIME_LOG_NAME_PREFIXES = (
+    "autopilot",
+    "autopilot-monitor",
+    "autopilot-mcp",
+    "autopilot-postgres",
+    "autopilot-proxmox-autopilot-builder-",
+)
+_LOG_SECRET_RE = re.compile(
+    r"(?i)(password|passwd|token|secret|credential|private[_-]?key)([=:]\s*)([^\s\"']+)"
+)
 
 # Two flags, one per startup hook. /healthz gates on BOTH so
 # docker-compose `depends_on: service_healthy` can't release
@@ -917,6 +974,7 @@ def _init_app_database() -> None:
         agent_telemetry_pg,
         cloudosd_pg,
         db_pg,
+        deployment_health_pg,
         device_history_pg,
         devices_pg,
         ts_engine_pg,
@@ -928,6 +986,7 @@ def _init_app_database() -> None:
         devices_pg.init(conn)
         agent_telemetry_pg.init(conn)
         cloudosd_pg.init(conn)
+        deployment_health_pg.init(conn)
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -962,13 +1021,7 @@ _HEALTH_TASK: Optional["asyncio.Task"] = None
 
 def _load_version_sha() -> str:
     """Best-effort running git SHA. Matches the footer's buildSha."""
-    try:
-        path = BASE_DIR / "VERSION"
-        if path.exists():
-            return path.read_text().strip()[:7]
-    except Exception:
-        pass
-    return "unknown"
+    return _APP_VERSION.get("sha_short") or "unknown"
 
 
 @app.on_event("startup")
@@ -3749,7 +3802,7 @@ def _live_recent_ts_runs(limit: int = 50) -> list[dict]:
             rows = conn.execute(
                 """
                 SELECT id, state, phase, vmid, computer_name, serial_number,
-                       cursor_step_id, started_at, completed_at, last_error
+                       cursor_step_id, started_at, finished_at, last_error
                 FROM ts_provisioning_runs
                 ORDER BY started_at DESC
                 LIMIT %s
@@ -3768,7 +3821,8 @@ def _live_recent_ts_runs(limit: int = 50) -> list[dict]:
             "serial_number": row["serial_number"],
             "cursor_step_id": str(row["cursor_step_id"]) if row["cursor_step_id"] else None,
             "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-            "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+            "completed_at": row["finished_at"].isoformat() if row["finished_at"] else None,
             "last_error": row["last_error"],
         }
         for row in rows
@@ -6573,6 +6627,117 @@ async def api_services():
     return {"services": service_health_pg.list_services(), "available": True}
 
 
+def _docker_client():
+    try:
+        import docker as _docker
+    except Exception as exc:
+        raise RuntimeError("docker-py is not installed in the image") from exc
+    try:
+        return _docker.from_env()
+    except Exception as exc:
+        raise RuntimeError(f"cannot reach Docker socket: {exc}") from exc
+
+
+def _runtime_container_service(container) -> str:
+    labels = getattr(container, "labels", {}) or {}
+    service = labels.get("com.docker.compose.service") or ""
+    if service:
+        return service
+    name = str(getattr(container, "name", "") or "").lstrip("/")
+    if name.startswith("autopilot-proxmox-autopilot-builder-"):
+        return "autopilot-builder"
+    return name
+
+
+def _runtime_container_allowed(container) -> bool:
+    name = str(getattr(container, "name", "") or "").lstrip("/")
+    service = _runtime_container_service(container)
+    return service in _RUNTIME_LOG_SERVICES or name.startswith(_RUNTIME_LOG_NAME_PREFIXES)
+
+
+def _container_health_status(container) -> str:
+    try:
+        state = (container.attrs or {}).get("State") or {}
+        health = state.get("Health") or {}
+        return str(health.get("Status") or "")
+    except Exception:
+        return ""
+
+
+def _runtime_container_status() -> dict:
+    try:
+        client = _docker_client()
+        containers = client.containers.list(all=True)
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "containers": [],
+        }
+    rows = []
+    for container in containers:
+        if not _runtime_container_allowed(container):
+            continue
+        attrs = container.attrs or {}
+        state = attrs.get("State") or {}
+        config = attrs.get("Config") or {}
+        image = config.get("Image") or ""
+        name = str(getattr(container, "name", "") or "").lstrip("/")
+        rows.append({
+            "id": str(getattr(container, "short_id", "") or ""),
+            "name": name,
+            "service": _runtime_container_service(container),
+            "image": image,
+            "status": str(getattr(container, "status", "") or state.get("Status") or "unknown"),
+            "health": _container_health_status(container),
+            "started_at": state.get("StartedAt") or "",
+            "finished_at": state.get("FinishedAt") or "",
+            "restart_count": attrs.get("RestartCount") or 0,
+            "log_url": f"/api/monitoring/service-logs?container={quote_plus(name)}",
+        })
+    rows.sort(key=lambda row: (row["service"], row["name"]))
+    return {"available": True, "error": "", "containers": rows}
+
+
+def _redact_log_line(line: str) -> str:
+    return _LOG_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[redacted]", line)
+
+
+@app.get("/api/monitoring/runtime-services")
+async def api_monitoring_runtime_services():
+    return _runtime_container_status()
+
+
+@app.get("/api/monitoring/service-logs")
+async def api_monitoring_service_logs(request: Request):
+    container_name = (request.query_params.get("container") or "").strip()
+    if not container_name:
+        raise HTTPException(400, "container is required")
+    tail_raw = request.query_params.get("tail") or "160"
+    try:
+        tail = max(20, min(int(tail_raw), 500))
+    except ValueError:
+        raise HTTPException(400, "tail must be an integer")
+    try:
+        client = _docker_client()
+        container = client.containers.get(container_name)
+    except Exception as exc:
+        raise HTTPException(404, f"container not found or Docker unavailable: {exc}")
+    if not _runtime_container_allowed(container):
+        raise HTTPException(403, "container logs are not exposed")
+    try:
+        raw = container.logs(tail=tail, timestamps=True).decode("utf-8", errors="replace")
+    except Exception as exc:
+        raise HTTPException(500, f"failed to read container logs: {exc}")
+    lines = [_redact_log_line(line) for line in raw.splitlines()]
+    return {
+        "container": container.name,
+        "service": _runtime_container_service(container),
+        "tail": tail,
+        "lines": lines,
+    }
+
+
 @app.get("/api/fleet/summary")
 async def api_fleet_summary():
     """Fleet enrollment counts + percentages from the most-recent
@@ -7109,10 +7274,42 @@ def _host_repo_path() -> str:
     return os.environ.get("HOST_REPO_PATH", "/opt/ProxmoxVEAutopilot")
 
 
+def _build_update_sidecar_command(host_repo: str) -> str:
+    host_repo_q = shlex.quote(host_repo)
+    image_tag_q = shlex.quote("ghcr.io/adamgell/proxmox-autopilot:latest")
+    return (
+        "set -euo pipefail; "
+        "apk add --no-cache git >/dev/null 2>&1 || apk add --no-cache git; "
+        f"cd {host_repo_q} && "
+        "echo '--- git pull ---' && git pull && "
+        "cd autopilot-proxmox && "
+        "GIT_SHA=\"$(git rev-parse HEAD 2>/dev/null || echo unknown)\" && "
+        "BUILD_TIME=\"$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\" && "
+        "echo \"--- docker build ${GIT_SHA} ---\" && "
+        "DOCKER_BUILDKIT=1 docker build "
+        "--security-opt apparmor=unconfined "
+        f"-t {image_tag_q} "
+        "--build-arg \"GIT_SHA=${GIT_SHA}\" "
+        "--build-arg \"BUILD_TIME=${BUILD_TIME}\" "
+        ". && "
+        "echo '--- docker compose pull support images ---' && "
+        "(docker compose pull autopilot-postgres || true) && "
+        "echo '--- docker compose up -d ---' && "
+        "services='autopilot autopilot-builder autopilot-monitor'; "
+        "if docker compose ps -q autopilot-mcp >/dev/null 2>&1 && "
+        "[ -n \"$(docker compose ps -q autopilot-mcp)\" ]; then "
+        "services=\"$services autopilot-mcp\"; "
+        "fi; "
+        "docker compose up -d --force-recreate $services && "
+        "echo '--- done ---'"
+    )
+
+
 @app.post("/api/update/run")
 async def api_update_run():
     """Start a self-update. Spawns a detached sidecar container that
-    runs `git pull && docker compose pull && docker compose up -d`
+    runs `git pull`, locally rebuilds the app image with build metadata,
+    and recreates web/builder/monitor containers
     (no service arg — rolls web + builder + monitor together). The
     sidecar lives beyond our own restart — by the time docker-compose
     kills us and starts a new container, the sidecar has already
@@ -7160,7 +7357,9 @@ async def api_update_run():
     )
 
     # The sidecar uses docker:27-cli (includes `docker` + compose
-    # plugin). `apk add git` adds git (~5MB) on the fly.
+    # plugin). `apk add git` adds git (~5MB) on the fly. It builds
+    # the app image locally so /app/VERSION is always stamped even
+    # when GHCR `latest` is stale or a compose-only update path runs.
     #
     # CRITICAL bind-mount note: the sidecar mounts the repo at the
     # SAME host path it lives at on the host. When `docker compose
@@ -7174,16 +7373,7 @@ async def api_update_run():
     # which doesn't exist on the host. Mounting at the same path
     # makes the resolution agree with the host.
     host_repo = _host_repo_path()
-    cmd = (
-        "set -euo pipefail; "
-        "apk add --no-cache git >/dev/null 2>&1 || apk add --no-cache git; "
-        f"cd {host_repo} && "
-        "echo '--- git pull ---' && git pull && "
-        "cd autopilot-proxmox && "
-        "echo '--- docker compose pull ---' && docker compose pull && "
-        "echo '--- docker compose up -d ---' && docker compose up -d && "
-        "echo '--- done ---'"
-    )
+    cmd = _build_update_sidecar_command(host_repo)
     run_kwargs = dict(
         image="docker:27-cli",
         command=["sh", "-c", cmd],
@@ -8610,7 +8800,7 @@ def _ad_first_seen_map() -> dict[int, str]:
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
-    from web import monitoring_view, service_health_pg as service_health
+    from web import db_pg, deployment_health, monitoring_view, service_health_pg as service_health
     latest = device_history_db.latest_per_vmid()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = monitoring_view.build_dashboard_rows(
@@ -8621,6 +8811,9 @@ def page_monitoring(request: Request):
     settings = device_history_db.get_settings()
     keytab = device_history_db.get_keytab_health()
     svc_rows = service_health.list_services()
+    runtime_services = _runtime_container_status()
+    with db_pg.connection(_database_url()) as conn:
+        deployment_payload = deployment_health.build_deployments_payload(conn, limit=25)
     return templates.TemplateResponse("monitoring.html", {
         "request": request,
         "rows": rows,
@@ -8628,6 +8821,8 @@ def page_monitoring(request: Request):
         "search_ous": device_history_db.list_search_ous(),
         "keytab": keytab,
         "service_health": svc_rows,
+        "runtime_services": runtime_services,
+        "deployment_health": deployment_payload,
     })
 
 
@@ -8798,3 +8993,43 @@ async def api_monitoring_sweep_now(background_tasks: BackgroundTasks):
 @app.get("/api/monitoring/keytab/health")
 def api_monitoring_keytab_health():
     return device_history_db.get_keytab_health() or {}
+
+
+@app.get("/api/monitoring/deployments/summary")
+def api_monitoring_deployments_summary():
+    from web import db_pg, deployment_health
+
+    with db_pg.connection(_database_url()) as conn:
+        return deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+
+
+@app.get("/api/monitoring/deployments/runs")
+def api_monitoring_deployments_runs(limit: int = 100):
+    from web import db_pg, deployment_health
+
+    with db_pg.connection(_database_url()) as conn:
+        payload = deployment_health.build_deployments_payload(conn, limit=limit)
+    return {
+        "schema_version": payload["schema_version"],
+        "summary": payload["summary"],
+        "runs": payload["runs"],
+    }
+
+
+@app.get("/api/monitoring/deployments/runs/{deployment_key:path}")
+def api_monitoring_deployments_run_detail(deployment_key: str):
+    from web import db_pg, deployment_health
+
+    with db_pg.connection(_database_url()) as conn:
+        detail = deployment_health.build_deployment_detail(conn, deployment_key)
+    if detail["state"] == "missing":
+        raise HTTPException(404, f"deployment run not found: {deployment_key}")
+    return detail
+
+
+@app.get("/api/monitoring/deployments/baselines")
+def api_monitoring_deployments_baselines():
+    from web import db_pg, deployment_health
+
+    with db_pg.connection(_database_url()) as conn:
+        return deployment_health.build_baselines_payload(conn)
