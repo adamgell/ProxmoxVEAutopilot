@@ -43,16 +43,103 @@
   }
   .v2-palette {
     display:grid;
-    gap:7px;
+    gap:10px;
   }
-  .v2-palette button {
+  .v2-palette-section {
+    border:1px solid var(--line);
+    border-radius:8px;
+    background:color-mix(in srgb, var(--cockpit-panel-2) 78%, transparent);
+    padding:10px;
+  }
+  .v2-palette-section[data-pinned="true"] {
+    border-color:color-mix(in srgb, #22c55e 38%, var(--line));
+    background:linear-gradient(180deg, rgba(34, 197, 94, .08), color-mix(in srgb, var(--cockpit-panel-2) 82%, transparent));
+  }
+  .v2-palette-head {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:8px;
+    margin-bottom:8px;
+  }
+  .v2-palette-head strong {
+    text-transform:uppercase;
+    letter-spacing:.07em;
+    font-size:11px;
+  }
+  .v2-palette-count {
+    border:1px solid var(--line);
+    border-radius:999px;
+    padding:1px 7px;
+    color:var(--ink-muted);
+    font-size:11px;
+  }
+  .v2-palette button,
+  .v2-palette-step {
     text-align:left;
     display:block;
     width:100%;
     cursor:grab;
+    position:relative;
+    border-left-width:4px;
+    border-left-style:solid;
+    border-radius:7px;
+    padding:9px 10px 9px 11px;
+    margin-top:6px;
+    background:linear-gradient(180deg, color-mix(in srgb, var(--ms-blue-dark) 18%, var(--cockpit-panel)), var(--cockpit-panel));
+  }
+  .v2-palette button[data-owner="controller"] { border-left-color:#38a3ff; }
+  .v2-palette button[data-owner="pe"] { border-left-color:#22d3ee; }
+  .v2-palette button[data-owner="specialize"] { border-left-color:#f59e0b; }
+  .v2-palette button[data-owner="agent"] { border-left-color:#22c55e; }
+  .v2-palette button[data-owner="verify"] { border-left-color:#a78bfa; }
+  .v2-palette-title {
+    display:block;
+    font-weight:800;
+    overflow-wrap:anywhere;
+  }
+  .v2-palette-meta {
+    display:block;
+    margin-top:3px;
+  }
+  .v2-owner-chip {
+    float:right;
+    border:1px solid var(--line);
+    border-radius:999px;
+    padding:1px 7px;
+    color:var(--ink-muted);
+    font-size:10px;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+  }
+  .v2-palette button[data-owner="pe"] .v2-owner-chip {
+    color:#a5f3fc;
+    border-color:rgba(34, 211, 238, .44);
+    background:rgba(34, 211, 238, .11);
+  }
+  .v2-palette button[data-owner="specialize"] .v2-owner-chip {
+    color:#fde68a;
+    border-color:rgba(245, 158, 11, .46);
+    background:rgba(245, 158, 11, .12);
+  }
+  .v2-palette button[data-owner="agent"] .v2-owner-chip {
+    color:#bbf7d0;
+    border-color:rgba(34, 197, 94, .44);
+    background:rgba(34, 197, 94, .11);
+  }
+  .v2-palette button[data-owner="verify"] .v2-owner-chip {
+    color:#ddd6fe;
+    border-color:rgba(167, 139, 250, .46);
+    background:rgba(167, 139, 250, .12);
   }
   .v2-palette button:active {
     cursor:grabbing;
+  }
+  .v2-palette-empty {
+    margin:0;
+    color:var(--ink-muted);
+    font-size:12px;
   }
   .v2-lanes {
     display:grid;
@@ -214,6 +301,9 @@
 
     <div class="v2-panel">
       <h2>Step Palette</h2>
+      <label class="v2-field">Search full catalog
+        <input id="v2-palette-search" type="search" placeholder="hash, qga, domain, package" oninput="renderPalette()">
+      </label>
       <div id="v2-palette" class="v2-palette"></div>
     </div>
   </aside>
@@ -267,6 +357,15 @@ let activeId = steps[0] ? steps[0].client_id : null;
 let draggingStepId = null;
 let pointerDrag = null;
 let suppressNextClick = false;
+const PINNED_CLOUDOSD_DESKTOP = [
+  "cloudosd_preflight",
+  "cloudosd_deploy_os",
+  "cloudosd_validate_offline_os",
+  "stage_osd_client",
+  "stage_autopilot_agent",
+  "capture_autopilot_hash",
+  "wait_agent_heartbeat"
+];
 
 function normalizeInitialNodes(nodes) {
   return (nodes || []).filter(n => (n.node_type || "step") === "step").map((n, idx) => ({
@@ -567,27 +666,78 @@ function stepClick(event, id) {
   selectStep(id);
 }
 
+function ownerForPhase(phase) {
+  if (phase === "controller") return "controller";
+  if (phase === "pe") return "pe";
+  if (phase === "specialize") return "specialize";
+  if (phase === "verify") return "verify";
+  return "agent";
+}
+
+function ownerLabel(phase) {
+  const labels = {
+    controller: "Controller",
+    pe: "PE",
+    specialize: "Specialize",
+    full_os: "Agent",
+    verify: "Verify"
+  };
+  return labels[phase] || "Agent";
+}
+
+function paletteButton(t, pinned) {
+  return `<button type="button" draggable="true"
+    data-owner="${esc(ownerForPhase(t.phase))}"
+    data-pinned="${pinned ? "true" : "false"}"
+    onpointerdown="startPointerDrag(event, {type: 'template', kind: '${esc(t.kind)}'})"
+    ondragstart="dragTemplate(event, '${esc(t.kind)}')"
+    onclick="paletteClick(event, '${esc(t.kind)}')"
+    title="${esc(t.description || "")}">
+    <span class="v2-owner-chip">${esc(ownerLabel(t.phase))}</span>
+    <span class="v2-palette-title">${esc(t.label)}</span>
+    <small class="v2-palette-meta">${esc(t.phase)} · ${esc(t.kind)}</small>
+  </button>`;
+}
+
 function renderPalette() {
   const host = document.getElementById("v2-palette");
+  const query = (document.getElementById("v2-palette-search")?.value || "").trim().toLowerCase();
+  const pinnedTemplates = PINNED_CLOUDOSD_DESKTOP
+    .map(kind => STEP_TEMPLATES.find(t => t.kind === kind))
+    .filter(Boolean);
+  const searchableTemplates = STEP_TEMPLATES.filter(t => {
+    if (!query) return true;
+    return [
+      t.label,
+      t.kind,
+      t.phase,
+      t.category,
+      t.description
+    ].some(v => String(v || "").toLowerCase().includes(query));
+  });
   const groups = {};
-  STEP_TEMPLATES.forEach(t => {
+  searchableTemplates.forEach(t => {
     groups[t.category || "Custom"] = groups[t.category || "Custom"] || [];
     groups[t.category || "Custom"].push(t);
   });
-  host.innerHTML = Object.entries(groups).map(([category, items]) => `
-    <div>
-      <strong>${esc(category)}</strong>
-      ${items.map(t => `
-        <button type="button" draggable="true"
-          onpointerdown="startPointerDrag(event, {type: 'template', kind: '${esc(t.kind)}'})"
-          ondragstart="dragTemplate(event, '${esc(t.kind)}')"
-          onclick="paletteClick(event, '${esc(t.kind)}')"
-          title="${esc(t.description || "")}">
-          ${esc(t.label)}<br><small>${esc(t.phase)} · ${esc(t.kind)}</small>
-        </button>
-      `).join("")}
-    </div>
+  const pinnedHtml = `
+    <section class="v2-palette-section" data-pinned="true">
+      <div class="v2-palette-head">
+        <strong>Pinned CloudOSD Desktop</strong>
+        <span class="v2-palette-count">${pinnedTemplates.length}</span>
+      </div>
+      ${pinnedTemplates.map(t => paletteButton(t, true)).join("")}
+    </section>`;
+  const catalogHtml = Object.entries(groups).map(([category, items]) => `
+    <section class="v2-palette-section">
+      <div class="v2-palette-head">
+        <strong>${esc(category)}</strong>
+        <span class="v2-palette-count">${items.length}</span>
+      </div>
+      ${items.map(t => paletteButton(t, false)).join("")}
+    </section>
   `).join("");
+  host.innerHTML = pinnedHtml + (catalogHtml || `<p class="v2-palette-empty">No catalog steps match "${esc(query)}".</p>`);
 }
 
 function renderLanes() {

@@ -635,6 +635,11 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "min-width:1440px" in body
     assert "Phase Timeline" in body
     assert "Step Palette" in body
+    assert "Search full catalog" in body
+    assert "Pinned CloudOSD Desktop" in body
+    assert "PINNED_CLOUDOSD_DESKTOP" in body
+    assert "v2-owner-chip" in body
+    assert "v2-palette-count" in body
     assert "CloudOSD desktop baseline" in body
     assert "capture_autopilot_hash" in body
     for kind in [
@@ -673,6 +678,8 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "startPointerDrag(event" in body
     assert "pointerMoveDrag" in body
     assert "paletteClick(event" in body
+    assert "paletteButton(t, pinned)" in body
+    assert "data-pinned=\"${pinned ? \"true\" : \"false\"}\"" in body
     assert "dropOnPhase(event" in body
     assert "sourceElement: event.currentTarget" in body
     assert 'drag.sourceElement.dataset.dragging = "false"' in body
