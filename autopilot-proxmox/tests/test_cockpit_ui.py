@@ -626,6 +626,8 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     body = res.text
     assert "Smart builder for CloudOSD desktop deployment" in body
     assert "data-v2-builder" in body
+    assert "v2-builder-scroll" in body
+    assert "min-width:1440px" in body
     assert "Phase Timeline" in body
     assert "Step Palette" in body
     assert "CloudOSD desktop baseline" in body

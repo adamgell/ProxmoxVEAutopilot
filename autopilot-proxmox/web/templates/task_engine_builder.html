@@ -5,11 +5,16 @@
 {{ page_head(("Edit v2 sequence: " ~ sequence.name) if sequence and sequence.id else "New v2 task sequence", "Smart builder for CloudOSD desktop deployment, full-OS AutopilotAgent work, content steps, retry behavior, and legacy v1 migration.") }}
 
 <style>
+  .v2-builder-scroll {
+    overflow-x:auto;
+    padding-bottom:10px;
+  }
   .v2-builder-grid {
     display:grid;
-    grid-template-columns:minmax(260px, 340px) minmax(620px, 1fr) minmax(260px, 360px);
+    grid-template-columns:320px minmax(780px, 1fr) 320px;
     gap:14px;
     align-items:start;
+    min-width:1440px;
   }
   .v2-builder-grid h2 {
     margin-top:0;
@@ -51,7 +56,7 @@
   }
   .v2-lanes {
     display:grid;
-    grid-template-columns:repeat(5, minmax(150px, 1fr));
+    grid-template-columns:repeat(5, minmax(145px, 1fr));
     gap:10px;
     overflow-x:auto;
     padding-bottom:4px;
@@ -144,16 +149,15 @@
   .v2-preview li {
     margin:5px 0;
   }
-  @media (max-width: 1180px) {
-    .v2-builder-grid {
-      grid-template-columns:1fr;
-    }
-    .v2-lanes {
-      grid-template-columns:repeat(5, 220px);
+  @media (max-width: 1500px) {
+    .v2-builder-scroll {
+      margin-right:-14px;
+      padding-right:14px;
     }
   }
 </style>
 
+<div class="v2-builder-scroll">
 <section class="v2-builder-grid" data-v2-builder>
   <aside class="v2-stack">
     <div class="v2-panel">
@@ -231,6 +235,7 @@
     </div>
   </aside>
 </section>
+</div>
 
 <script>
 const SEQUENCE_ID = {{ (sequence.id if sequence else none)|tojson|safe }};
