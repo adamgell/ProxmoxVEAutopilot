@@ -105,7 +105,18 @@
     margin-bottom:8px;
     cursor:grab;
     user-select:none;
-    transition:opacity .12s ease, transform .12s ease, border-color .12s ease;
+    transition:opacity .12s ease, transform .12s ease, border-color .12s ease, background .12s ease;
+  }
+  .v2-step-card[data-enabled="true"] {
+    border-color:color-mix(in srgb, #22c55e 42%, var(--line));
+    border-left-color:#22c55e;
+    background:linear-gradient(90deg, rgba(34, 197, 94, .14), var(--panel) 42%);
+  }
+  .v2-step-card[data-enabled="false"] {
+    border-color:color-mix(in srgb, #f59e0b 48%, var(--line));
+    border-left-color:#f59e0b;
+    background:linear-gradient(90deg, rgba(245, 158, 11, .16), color-mix(in srgb, var(--panel) 92%, #f59e0b) 48%);
+    opacity:.82;
   }
   .v2-step-card:active {
     cursor:grabbing;
@@ -122,8 +133,31 @@
     outline:2px solid var(--ms-blue-dark);
     outline-offset:1px;
   }
-  .v2-step-card code {
+  .v2-step-card-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+  }
+  .v2-step-card-head strong {
     overflow-wrap:anywhere;
+  }
+  .v2-step-state {
+    flex:0 0 auto;
+    border:1px solid rgba(34, 197, 94, .48);
+    border-radius:999px;
+    padding:2px 7px;
+    color:#bbf7d0;
+    background:rgba(34, 197, 94, .16);
+    font-size:10px;
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+  }
+  .v2-step-card[data-enabled="false"] .v2-step-state {
+    border-color:rgba(245, 158, 11, .58);
+    color:#fde68a;
+    background:rgba(245, 158, 11, .2);
   }
   .v2-step-card small,
   .v2-help {
@@ -606,14 +640,16 @@ function stepCard(s) {
   return `<article class="v2-step-card"
     draggable="true"
     data-active="${s.client_id === activeId}"
+    data-enabled="${s.enabled !== false}"
     data-dragging="${s.client_id === draggingStepId}"
     onpointerdown="startPointerDrag(event, {type: 'step', stepId: '${esc(s.client_id)}'})"
     ondragstart="dragStep(event, '${esc(s.client_id)}')"
     ondragend="endStepDrag(event)"
     onclick="stepClick(event, '${esc(s.client_id)}')">
-    <strong>${esc(s.name || s.kind)}</strong>
-    <br><code>${esc(s.kind)}</code>
-    <br><small>${esc(s.enabled ? "enabled" : "disabled")}${s.retry_count ? ` · ${s.retry_count} retries` : ""}${s.reboot_behavior !== "none" ? ` · reboot ${esc(s.reboot_behavior)}` : ""}</small>
+    <div class="v2-step-card-head">
+      <strong>${esc(s.name || s.kind)}</strong>
+      <span class="v2-step-state">${esc(s.enabled !== false ? "enabled" : "disabled")}</span>
+    </div>
   </article>`;
 }
 
