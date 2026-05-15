@@ -644,6 +644,7 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "dropOnPhase(event" in body
     assert "data-enabled=\"${s.enabled !== false}\"" in body
     assert "v2-step-state" in body
+    assert "v2-step-card-status" in body
     assert "<br><code>${esc(s.kind)}</code>" not in body
     assert "Drag steps here, or reorder inside this phase." in body
     assert "forEach(kind => addStepFromTemplate(kind));" in body

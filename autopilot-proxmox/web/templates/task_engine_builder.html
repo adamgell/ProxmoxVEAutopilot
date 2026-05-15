@@ -133,14 +133,13 @@
     outline:2px solid var(--ms-blue-dark);
     outline-offset:1px;
   }
-  .v2-step-card-head {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:8px;
-  }
-  .v2-step-card-head strong {
+  .v2-step-card-title strong {
+    display:block;
     overflow-wrap:anywhere;
+  }
+  .v2-step-card-status {
+    display:flex;
+    margin-top:7px;
   }
   .v2-step-state {
     flex:0 0 auto;
@@ -646,8 +645,10 @@ function stepCard(s) {
     ondragstart="dragStep(event, '${esc(s.client_id)}')"
     ondragend="endStepDrag(event)"
     onclick="stepClick(event, '${esc(s.client_id)}')">
-    <div class="v2-step-card-head">
+    <div class="v2-step-card-title">
       <strong>${esc(s.name || s.kind)}</strong>
+    </div>
+    <div class="v2-step-card-status">
       <span class="v2-step-state">${esc(s.enabled !== false ? "enabled" : "disabled")}</span>
     </div>
   </article>`;
