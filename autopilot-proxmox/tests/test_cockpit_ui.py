@@ -638,6 +638,7 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     assert "dragStep(event" in body
     assert "dropOnPhase(event" in body
     assert "Drag steps here, or reorder inside this phase." in body
+    assert "forEach(kind => addStepFromTemplate(kind));" in body
 
 
 def test_task_engine_imports_legacy_sequence_into_v2(

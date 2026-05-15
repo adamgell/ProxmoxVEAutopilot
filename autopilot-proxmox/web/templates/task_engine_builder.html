@@ -297,9 +297,10 @@ function newStepFromTemplate(kind, phaseOverride) {
 }
 
 function addStepFromTemplate(kind, phaseOverride, phaseIndex) {
-  const step = newStepFromTemplate(kind, phaseOverride);
-  if (phaseOverride) {
-    insertStepInPhase(step, phaseOverride, phaseIndex);
+  const targetPhase = typeof phaseOverride === "string" ? phaseOverride : null;
+  const step = newStepFromTemplate(kind, targetPhase);
+  if (targetPhase) {
+    insertStepInPhase(step, targetPhase, phaseIndex);
   } else {
     steps.push(step);
   }
@@ -316,7 +317,7 @@ function addCloudOSDDesktopBaseline() {
     "stage_autopilot_agent",
     "capture_autopilot_hash",
     "wait_agent_heartbeat"
-  ].forEach(addStepFromTemplate);
+  ].forEach(kind => addStepFromTemplate(kind));
 }
 
 function clearSteps() {
