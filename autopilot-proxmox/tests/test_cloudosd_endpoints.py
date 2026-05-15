@@ -1191,6 +1191,157 @@ def test_cloudosd_autopilot_readiness_ignores_stale_same_vmid_serial(
     assert readiness["assignment"]["status"] == "waiting_for_upload"
 
 
+def test_cloudosd_autopilot_auto_sync_429_backs_off(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    import requests
+    from web import app as web_app, cloudosd_endpoints, cloudosd_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    hash_file = hash_dir / "20260514T080808Z-vm252-Gell-252-AP5-osd-v2_hwid.csv"
+    hash_file.write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-252-AP5,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-252-AP5",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=252,
+        vm_uuid="cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa",
+        mac="52:54:00:aa:bb:f7",
+        node="pve",
+        computer_name="Gell-252-AP5",
+    )
+    cloudosd_pg.record_autopilot_upload_attempt(
+        pg_conn,
+        run_id=run["run_id"],
+        job_id="upload-252",
+        hash_filename=hash_file.name,
+        expected_group_tag="GellNative",
+        status="complete",
+    )
+
+    calls = []
+
+    def throttled_graph(path, method="GET", json_body=None):
+        calls.append((path, method))
+        response = requests.Response()
+        response.status_code = 429
+        response.headers["Retry-After"] = "120"
+        response.url = f"https://graph.microsoft.com/beta{path}"
+        raise requests.HTTPError("429 Too Many Requests", response=response)
+
+    monkeypatch.setattr(web_app, "_graph_api", throttled_graph)
+    run_row = cloudosd_pg.get_run(pg_conn, run["run_id"])
+    readiness = cloudosd_endpoints.autopilot_readiness_for_run(pg_conn, run_row)
+
+    assert readiness["state"] == "sync_throttled"
+    assert readiness["next_action"] == "wait_for_graph_backoff"
+    assert "Graph throttled, retrying later" in readiness["detail"]
+    assert calls == [("/deviceManagement/windowsAutopilotSettings/sync", "POST")]
+    events = cloudosd_pg.list_events(pg_conn, run["run_id"])
+    assert [event["event_type"] for event in events].count("autopilot_cache_auto_sync_attempted") == 1
+    assert [event["event_type"] for event in events].count("autopilot_cache_sync_throttled") == 1
+
+    second = cloudosd_endpoints.autopilot_readiness_for_run(pg_conn, run_row)
+    assert second["state"] == "sync_throttled"
+    assert calls == [("/deviceManagement/windowsAutopilotSettings/sync", "POST")]
+
+
+def test_cloudosd_readiness_watcher_syncs_once_and_advances_state(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_endpoints, cloudosd_pg, devices_pg, monitor_main
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    hash_file = hash_dir / "20260514T090909Z-vm253-Gell-253-AP6-osd-v2_hwid.csv"
+    hash_file.write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-253-AP6,,hardware-hash,GellNative\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-253-AP6",
+        vm_group_tag="GellNative",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=253,
+        vm_uuid="dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb",
+        mac="52:54:00:aa:bb:f8",
+        node="pve",
+        computer_name="Gell-253-AP6",
+    )
+    cloudosd_pg.record_autopilot_upload_attempt(
+        pg_conn,
+        run_id=run["run_id"],
+        job_id="upload-253",
+        hash_filename=hash_file.name,
+        expected_group_tag="GellNative",
+        status="complete",
+    )
+
+    sync_calls = []
+
+    def fake_sync(conn=None):
+        sync_calls.append(True)
+        devices_pg.upsert_autopilot([
+            {
+                "id": "ap-253",
+                "serialNumber": "Gell-253-AP6",
+                "groupTag": "GellNative",
+                "deploymentProfileAssignmentStatus": "assignedInSync",
+                "enrollmentState": "enrolled",
+                "lastContactedDateTime": "2026-05-14T09:12:00Z",
+            }
+        ])
+        devices_pg.upsert_intune([
+            {
+                "id": "intune-253",
+                "serialNumber": "Gell-253-AP6",
+                "deviceName": "GELL-253-AP6",
+                "operatingSystem": "Windows",
+                "managementState": "managed",
+                "lastSyncDateTime": "2026-05-14T09:12:30Z",
+                "enrolledDateTime": "2026-05-14T09:11:00Z",
+            }
+        ])
+        if conn is not None:
+            cloudosd_pg.clear_graph_sync_backoff(conn)
+        return {"autopilot": 1, "intune": 1, "entra": 0}
+
+    monkeypatch.setattr(cloudosd_endpoints, "_sync_cloud_devices_from_graph", fake_sync)
+    result = monitor_main._do_cloudosd_readiness_tick(limit=10)
+
+    assert result["synced"] is True
+    assert result["sync_needed"] == 1
+    assert len(sync_calls) == 1
+    persisted = cloudosd_pg.get_autopilot_readiness(pg_conn, run["run_id"])
+    assert persisted["state"] == "enrolled"
+    assert persisted["autopilot_device_id"] == "ap-253"
+    assert persisted["assignment_status"] == "assignedInSync"
+
+
 def test_cloudosd_pe_register_rejects_wrong_identity(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
     run = cloudosd_client.post(
@@ -2132,7 +2283,13 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
 
     api = cloudosd_client.get("/api/cloudosd/provision/progress")
     assert api.status_code == 200, api.text
-    rows = api.json()["runs"]
+    payload = api.json()
+    assert payload["summary"]["total"] >= 1
+    assert payload["summary"]["deployed"] >= 1
+    assert payload["summary"]["uploaded"] >= 1
+    assert payload["summary"]["assigned"] >= 1
+    assert payload["summary"]["contacted_enrolled"] >= 1
+    rows = payload["runs"]
     row = next(item for item in rows if item["run_id"] == run["run_id"])
     assert row["vm_name"] == "Gell-251-OSD1"
     assert row["milestones"]["vm_created"]["state"] == "done"
@@ -2159,6 +2316,10 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     assert "Agent heartbeat" in body
     assert "v2 steps done" in body
     assert "Autopilot readiness" in body
+    assert 'data-cloudosd-summary="deployed"' in body
+    assert 'data-cloudosd-summary="uploaded"' in body
+    assert 'data-cloudosd-summary="assigned"' in body
+    assert 'data-cloudosd-summary="contacted_enrolled"' in body
     assert "Gell-251-OSD1" in body
     assert "/api/cloudosd/provision/progress" in body
 
@@ -2227,6 +2388,71 @@ def test_cloudosd_archive_hides_provision_progress_by_default(
     archived_progress = cloudosd_client.get("/api/cloudosd/provision/progress?include_archived=true")
     assert archived_progress.status_code == 200, archived_progress.text
     assert run["run_id"] in {item["run_id"] for item in archived_progress.json()["runs"]}
+
+
+def test_cloudosd_bulk_archive_actions_hide_stale_failed_and_completed_old_runs(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg
+
+    failed = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-Stale-Failed",
+        source_surface="provision",
+    )
+    complete = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-Complete-Old",
+        source_surface="provision",
+    )
+    pg_conn.execute(
+        """
+        UPDATE cloudosd_runs
+        SET state = 'failed', updated_at = now() - interval '13 hours'
+        WHERE run_id = %s
+        """,
+        (failed["run_id"],),
+    )
+    pg_conn.execute(
+        """
+        UPDATE cloudosd_runs
+        SET state = 'complete', updated_at = now() - interval '25 hours'
+        WHERE run_id = %s
+        """,
+        (complete["run_id"],),
+    )
+    pg_conn.commit()
+
+    stale = cloudosd_client.post("/api/cloudosd/runs/archive-stale-failed")
+    assert stale.status_code == 200, stale.text
+    assert stale.json()["archived_count"] == 1
+    completed = cloudosd_client.post("/api/cloudosd/runs/archive-completed-old")
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["archived_count"] == 1
+
+    failed_row = cloudosd_pg.get_run(pg_conn, failed["run_id"])
+    complete_row = cloudosd_pg.get_run(pg_conn, complete["run_id"])
+    assert failed_row["archived"] is True
+    assert complete_row["archived"] is True
+    assert failed_row["archive_reason"] == "stale failed CloudOSD run"
+    assert complete_row["archive_reason"] == "completed CloudOSD run hidden from default history"
+
+    default_progress = cloudosd_client.get("/api/cloudosd/provision/progress")
+    assert failed["run_id"] not in {row["run_id"] for row in default_progress.json()["runs"]}
+    assert complete["run_id"] not in {row["run_id"] for row in default_progress.json()["runs"]}
+
+    events = {
+        event["event_type"]
+        for event in (
+            cloudosd_pg.list_events(pg_conn, failed["run_id"])
+            + cloudosd_pg.list_events(pg_conn, complete["run_id"])
+        )
+    }
+    assert "stale_failed_runs_archived" in events
+    assert "completed_old_runs_archived" in events
 
 
 def test_provision_cloudosd_uppercase_vmid_serial_tokens_allocate_real_vmid(

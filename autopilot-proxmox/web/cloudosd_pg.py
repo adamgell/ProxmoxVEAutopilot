@@ -149,11 +149,20 @@ CREATE TABLE IF NOT EXISTS cloudosd_autopilot_upload_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_cloudosd_autopilot_upload_attempts_run
     ON cloudosd_autopilot_upload_attempts(run_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS cloudosd_graph_sync_state (
+    key text PRIMARY KEY,
+    retry_after_until timestamptz NULL,
+    backoff_attempts integer NOT NULL DEFAULT 0,
+    last_error text NULL,
+    updated_at timestamptz NOT NULL
+);
 """
 
 DROP_SCHEMA_FOR_TESTS = """
 DROP TABLE IF EXISTS cloudosd_autopilot_upload_attempts CASCADE;
 DROP TABLE IF EXISTS cloudosd_autopilot_readiness CASCADE;
+DROP TABLE IF EXISTS cloudosd_graph_sync_state CASCADE;
 DROP TABLE IF EXISTS cloudosd_run_events CASCADE;
 DROP TABLE IF EXISTS cloudosd_runs CASCADE;
 DROP TABLE IF EXISTS cloudosd_artifacts CASCADE;
@@ -479,6 +488,17 @@ def init(conn: Connection) -> None:
         conn.execute("ALTER TABLE cloudosd_autopilot_readiness ADD COLUMN IF NOT EXISTS upload_error text NULL")
         conn.execute("ALTER TABLE cloudosd_autopilot_upload_attempts ADD COLUMN IF NOT EXISTS stdout_tail text NULL")
         conn.execute("ALTER TABLE cloudosd_autopilot_upload_attempts ADD COLUMN IF NOT EXISTS stderr_tail text NULL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cloudosd_graph_sync_state (
+                key text PRIMARY KEY,
+                retry_after_until timestamptz NULL,
+                backoff_attempts integer NOT NULL DEFAULT 0,
+                last_error text NULL,
+                updated_at timestamptz NOT NULL
+            )
+            """,
+        )
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_cloudosd_runs_archive
@@ -902,6 +922,88 @@ def get_autopilot_readiness(conn: Connection, run_id: str) -> dict | None:
         (run_id,),
     ).fetchone()
     return _readiness_row(row)
+
+
+def _graph_sync_state_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "key": row["key"],
+        "retry_after_until": _iso(row.get("retry_after_until")),
+        "backoff_attempts": int(row.get("backoff_attempts") or 0),
+        "last_error": row.get("last_error") or "",
+        "updated_at": _iso(row.get("updated_at")),
+    }
+
+
+def get_graph_sync_state(conn: Connection, key: str = "autopilot_readiness") -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM cloudosd_graph_sync_state WHERE key = %s",
+        (key,),
+    ).fetchone()
+    return _graph_sync_state_row(row)
+
+
+def set_graph_sync_backoff(
+    conn: Connection,
+    *,
+    key: str = "autopilot_readiness",
+    retry_after_until: datetime,
+    last_error: str,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO cloudosd_graph_sync_state (
+            key, retry_after_until, backoff_attempts, last_error, updated_at
+        )
+        VALUES (%s, %s, 1, %s, %s)
+        ON CONFLICT (key) DO UPDATE SET
+            retry_after_until = EXCLUDED.retry_after_until,
+            backoff_attempts = cloudosd_graph_sync_state.backoff_attempts + 1,
+            last_error = EXCLUDED.last_error,
+            updated_at = EXCLUDED.updated_at
+        RETURNING *
+        """,
+        (key, retry_after_until, last_error, now),
+    ).fetchone()
+    conn.commit()
+    return _graph_sync_state_row(row)
+
+
+def clear_graph_sync_backoff(conn: Connection, key: str = "autopilot_readiness") -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO cloudosd_graph_sync_state (
+            key, retry_after_until, backoff_attempts, last_error, updated_at
+        )
+        VALUES (%s, NULL, 0, NULL, %s)
+        ON CONFLICT (key) DO UPDATE SET
+            retry_after_until = NULL,
+            backoff_attempts = 0,
+            last_error = NULL,
+            updated_at = EXCLUDED.updated_at
+        RETURNING *
+        """,
+        (key, now),
+    ).fetchone()
+    conn.commit()
+    return _graph_sync_state_row(row)
+
+
+def graph_sync_backoff_active(conn: Connection, key: str = "autopilot_readiness") -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM cloudosd_graph_sync_state
+        WHERE key = %s
+          AND retry_after_until IS NOT NULL
+          AND retry_after_until > now()
+        """,
+        (key,),
+    ).fetchone()
+    return _graph_sync_state_row(row)
 
 
 def upsert_autopilot_readiness(
@@ -1429,6 +1531,66 @@ def list_runs(
         """,
         tuple(params),
     ).fetchall()
+    return [_run_row(row) for row in rows]
+
+
+def list_readiness_watch_runs(conn: Connection, *, limit: int = 100) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT r.*
+        FROM cloudosd_runs r
+        LEFT JOIN cloudosd_autopilot_readiness readiness
+          ON readiness.run_id = r.run_id
+        WHERE r.archived_at IS NULL
+          AND r.state NOT IN ('failed', 'cancelled', 'canceled')
+          AND COALESCE(readiness.state, '') NOT IN (
+            'enrolled',
+            'upload_failed',
+            'group_tag_mismatch',
+            'blocked'
+          )
+        ORDER BY r.updated_at DESC, r.created_at DESC
+        LIMIT %s
+        """,
+        (max(1, min(int(limit or 100), 500)),),
+    ).fetchall()
+    return [_run_row(row) for row in rows]
+
+
+def archive_runs_by_filter(
+    conn: Connection,
+    *,
+    states: list[str],
+    older_than_hours: int,
+    archived_by: str = "operator",
+    reason: str = "",
+    source_surface: str | None = None,
+) -> list[dict]:
+    if not states:
+        return []
+    now = _now()
+    where = [
+        "archived_at IS NULL",
+        "state = ANY(%s)",
+        "updated_at <= now() - (%s * interval '1 hour')",
+    ]
+    where_params: list[Any] = [states, int(older_than_hours)]
+    if source_surface is not None:
+        where.append("COALESCE(source_surface, 'cloudosd') = %s")
+        where_params.append(source_surface)
+    rows = conn.execute(
+        f"""
+        UPDATE cloudosd_runs
+        SET archived_at = %s,
+            archived_by = %s,
+            archive_reason = NULLIF(%s, ''),
+            updated_at = %s
+        WHERE {' AND '.join(where)}
+        RETURNING *
+        """,
+        (now, archived_by, reason, now, *where_params),
+    ).fetchall()
+    conn.commit()
     return [_run_row(row) for row in rows]
 
 

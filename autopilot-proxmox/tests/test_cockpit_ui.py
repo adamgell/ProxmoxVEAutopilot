@@ -120,6 +120,9 @@ def test_cloudosd_cockpit_renders_archive_history_controls():
     assert "Stale Failed Runs" in template
     assert "data-cloudosd-archive" in template
     assert "data-cloudosd-unarchive" in template
+    assert "data-cloudosd-bulk-archive=\"archive-stale-failed\"" in template
+    assert "data-cloudosd-bulk-archive=\"archive-completed-old\"" in template
+    assert "Hide completed old" in template
 
 
 def test_cloudosd_run_detail_keeps_readiness_live_after_completion():

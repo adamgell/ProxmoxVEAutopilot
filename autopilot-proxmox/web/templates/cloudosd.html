@@ -462,6 +462,8 @@
       <div class="cloudosd-history-actions">
         <a class="action-btn-upload" href="/cloudosd#cloudosd-runs">Default history</a>
         <a class="action-btn-upload" href="/cloudosd?archived=1#cloudosd-runs">Show archived</a>
+        <button type="button" class="action-btn-upload" data-cloudosd-bulk-archive="archive-stale-failed">Archive stale failed</button>
+        <button type="button" class="action-btn-upload" data-cloudosd-bulk-archive="archive-completed-old">Hide completed old</button>
       </div>
     </div>
     <div class="cloudosd-run-strip">
@@ -826,6 +828,28 @@
         } catch (error) {
           button.disabled = false;
           byId("cloudosdLaunchError").textContent = `CloudOSD ${action} failed: ${error.message || error}`;
+        }
+      });
+    });
+    document.querySelectorAll("[data-cloudosd-bulk-archive]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const action = button.dataset.cloudosdBulkArchive;
+        if (!action) return;
+        button.disabled = true;
+        try {
+          const response = await fetch(`/api/cloudosd/runs/${action}`, {
+            method: "POST",
+            headers: { "Accept": "application/json" },
+            cache: "no-store"
+          });
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${response.status}`);
+          }
+          window.location.reload();
+        } catch (error) {
+          button.disabled = false;
+          byId("cloudosdLaunchError").textContent = `CloudOSD archive action failed: ${error.message || error}`;
         }
       });
     });

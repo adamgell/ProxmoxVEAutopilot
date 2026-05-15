@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from contextlib import contextmanager
 from pathlib import Path
@@ -30,6 +30,12 @@ _RECOMMENDED_CLOUDOSD_MEMORY_MB = cloudosd_pg.RECOMMENDED_VM_MEMORY_MB
 _MIN_CLOUDOSD_DISK_GB = cloudosd_pg.MIN_VM_DISK_SIZE_GB
 _APP_ROOT = Path(__file__).resolve().parents[1]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class GraphThrottled(RuntimeError):
+    def __init__(self, message: str, *, retry_after_seconds: int = 600):
+        super().__init__(message)
+        self.retry_after_seconds = max(60, int(retry_after_seconds or 600))
 
 
 def _cloudosd_source_root() -> Path:
@@ -674,6 +680,31 @@ def _readiness_with_sync_error(readiness: dict, message: str) -> dict:
     return updated
 
 
+def _readiness_with_graph_throttle(conn, readiness: dict) -> dict:
+    backoff = cloudosd_pg.graph_sync_backoff_active(conn)
+    if not backoff:
+        return readiness
+    state = readiness.get("state") or ""
+    if state not in {"upload_submitted", "imported", "assigned", "contacted", "sync_failed", "sync_throttled"}:
+        return readiness
+    retry_at = backoff.get("retry_after_until") or ""
+    message = "Graph throttled, retrying later."
+    if retry_at:
+        message = f"{message} Retry after {retry_at}."
+    updated = dict(readiness)
+    errors = [
+        error for error in list(updated.get("errors") or [])
+        if error.get("code") != "graph_throttled"
+    ]
+    errors.append(_readiness_error("sync", "graph_throttled", message))
+    updated["state"] = "sync_throttled"
+    updated["label"] = "Graph throttled"
+    updated["detail"] = message
+    updated["next_action"] = "wait_for_graph_backoff"
+    updated["errors"] = errors
+    return updated
+
+
 def _should_auto_sync_after_upload(readiness: dict) -> bool:
     return (
         readiness.get("state") == "upload_submitted"
@@ -681,6 +712,13 @@ def _should_auto_sync_after_upload(readiness: dict) -> bool:
         and (readiness.get("cache") or {}).get("status") in {"missing", "stale", "expired"}
         and not (readiness.get("autopilot") or {}).get("device_id")
     )
+
+
+def autopilot_readiness_needs_graph_sync(readiness: dict) -> bool:
+    state = str(readiness.get("state") or "")
+    if state in {"upload_submitted", "imported", "assigned", "contacted", "sync_failed", "sync_throttled"}:
+        return True
+    return str(readiness.get("next_action") or "") in {"sync_intune", "wait_for_contact", "wait_for_assignment"}
 
 
 def _maybe_auto_sync_after_upload(conn, run: dict, heartbeat: dict | None, readiness: dict) -> dict:
@@ -704,7 +742,19 @@ def _maybe_auto_sync_after_upload(conn, run: dict, heartbeat: dict | None, readi
         message="CloudOSD Autopilot upload completed; syncing Autopilot and Intune device cache",
     )
     try:
-        counts = _sync_cloud_devices_from_graph()
+        counts = _sync_cloud_devices_from_graph(conn=conn)
+    except GraphThrottled as exc:
+        message = str(exc) or "Graph throttled, retrying later."
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run["run_id"],
+            phase="AutopilotAgent",
+            event_type="autopilot_cache_sync_throttled",
+            severity="warn",
+            message=message,
+            data={"retry_after_seconds": exc.retry_after_seconds},
+        )
+        return _readiness_with_graph_throttle(conn, readiness)
     except Exception as exc:
         message = f"Cloud device sync failed after hash upload: {exc}"
         cloudosd_pg.append_event(
@@ -757,6 +807,23 @@ def _maybe_auto_sync_after_upload(conn, run: dict, heartbeat: dict | None, readi
         heartbeat,
         allow_auto_sync=False,
     )
+
+
+def _http_retry_after_seconds(exc: Exception, default: int = 600) -> int:
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) != 429:
+        return default
+    header = (response.headers or {}).get("Retry-After") if response is not None else None
+    if header:
+        try:
+            return max(60, int(float(header)))
+        except ValueError:
+            pass
+    return default
+
+
+def _is_http_429(exc: Exception) -> bool:
+    return getattr(getattr(exc, "response", None), "status_code", None) == 429
 
 
 def _prefer_hash_file(hash_files: list[dict], preferred_hash_filename: str) -> list[dict]:
@@ -928,29 +995,30 @@ def autopilot_readiness_for_run(
         },
         "errors": errors,
     }
+    readiness = _readiness_with_graph_throttle(conn, readiness)
     cloudosd_pg.upsert_autopilot_readiness(
         conn,
         run_id=run["run_id"],
-        state=state,
-        expected_group_tag=expected_group_tag,
-        hash_status=hash_status,
-        hash_filename=hash_filename,
-        hash_sha256=readiness["hash"]["sha256"],
-        hash_serial=hash_serial,
-        upload_status=upload_status,
-        upload_job_id=upload_job_id,
-        upload_started_at=_parse_timestamp(upload_started_at),
-        upload_finished_at=_parse_timestamp(upload_finished_at),
-        upload_error=upload_error,
-        autopilot_device_id=autopilot_device_id,
-        imported_serial=evidence.get("autopilot", {}).get("serial"),
-        imported_group_tag=imported_group_tag,
-        assignment_status=assignment_status,
-        enrollment_status=enrollment_status,
-        contact_state=contact_state,
-        cache_status=cache_state,
-        cache_synced_at=cache_synced_at,
-        errors=errors,
+        state=readiness["state"],
+        expected_group_tag=readiness.get("expected_group_tag"),
+        hash_status=(readiness.get("hash") or {}).get("status"),
+        hash_filename=(readiness.get("hash") or {}).get("filename"),
+        hash_sha256=(readiness.get("hash") or {}).get("sha256"),
+        hash_serial=(readiness.get("hash") or {}).get("serial"),
+        upload_status=(readiness.get("upload") or {}).get("status"),
+        upload_job_id=(readiness.get("upload") or {}).get("job_id"),
+        upload_started_at=_parse_timestamp((readiness.get("upload") or {}).get("started_at")),
+        upload_finished_at=_parse_timestamp((readiness.get("upload") or {}).get("finished_at")),
+        upload_error=(readiness.get("upload") or {}).get("error"),
+        autopilot_device_id=(readiness.get("autopilot") or {}).get("device_id"),
+        imported_serial=(readiness.get("autopilot") or {}).get("serial"),
+        imported_group_tag=(readiness.get("assignment") or {}).get("actual_group_tag"),
+        assignment_status=(readiness.get("assignment") or {}).get("status"),
+        enrollment_status=(readiness.get("enrollment") or {}).get("status"),
+        contact_state=(readiness.get("contact") or {}).get("state"),
+        cache_status=(readiness.get("cache") or {}).get("status"),
+        cache_synced_at=_parse_timestamp((readiness.get("cache") or {}).get("synced_at")),
+        errors=readiness.get("errors") or [],
     )
     if allow_auto_sync:
         return _maybe_auto_sync_after_upload(conn, run, heartbeat, readiness)
@@ -1055,7 +1123,9 @@ def provision_progress_for_run(conn, run: dict) -> dict:
             label=readiness["label"],
             detail=readiness.get("detail") or "",
         )
-    elif readiness_state in {"upload_failed", "group_tag_mismatch", "blocked"} or readiness.get("errors"):
+    elif readiness_state in {"upload_failed", "group_tag_mismatch", "blocked"} or (
+        readiness.get("errors") and readiness_state != "sync_throttled"
+    ):
         intune_state = _progress_milestone(
             state="failed",
             label=readiness.get("label") or "needs review",
@@ -1114,7 +1184,47 @@ def provision_progress_payload(limit: int = 50, include_archived: bool = False) 
         rows = [provision_progress_for_run(conn, run) for run in runs]
     return {
         "schema_version": 1,
+        "summary": provision_progress_summary(rows),
         "runs": rows,
+    }
+
+
+def provision_progress_summary(rows: list[dict]) -> dict:
+    def done(row: dict, key: str) -> bool:
+        return ((row.get("milestones") or {}).get(key) or {}).get("state") == "done"
+
+    def uploaded(row: dict) -> bool:
+        readiness = row.get("autopilot_readiness") or {}
+        evidence = row.get("intune_evidence") or {}
+        return bool((readiness.get("autopilot") or {}).get("device_id")) or (
+            (readiness.get("upload") or {}).get("status") == "complete"
+        ) or ((evidence.get("upload") or {}).get("status") == "uploaded")
+
+    def assigned(row: dict) -> bool:
+        readiness = row.get("autopilot_readiness") or {}
+        state = readiness.get("state")
+        status = (readiness.get("assignment") or {}).get("status")
+        return state in {"assigned", "contacted", "enrolled"} or _assigned_status(status)
+
+    def contacted_or_enrolled(row: dict) -> bool:
+        readiness = row.get("autopilot_readiness") or {}
+        state = readiness.get("state")
+        contact = (readiness.get("contact") or {}).get("state")
+        enrollment = (readiness.get("enrollment") or {}).get("status")
+        return state in {"contacted", "enrolled"} or enrollment == "enrolled" or contact not in {
+            "",
+            None,
+            "not_found",
+            "not_contacted",
+        }
+
+    return {
+        "total": len(rows),
+        "deployed": sum(1 for row in rows if done(row, "osdcloud_done")),
+        "uploaded": sum(1 for row in rows if uploaded(row)),
+        "assigned": sum(1 for row in rows if assigned(row)),
+        "contacted_enrolled": sum(1 for row in rows if contacted_or_enrolled(row)),
+        "failed": sum(1 for row in rows if row.get("failed_count")),
     }
 
 
@@ -1974,6 +2084,53 @@ def unarchive_run(run_id: str):
         return {"ok": True, "run": run}
 
 
+def _archive_runs_bulk(
+    *,
+    states: list[str],
+    older_than_hours: int,
+    reason: str,
+    event_type: str,
+) -> dict:
+    with _conn() as conn:
+        runs = cloudosd_pg.archive_runs_by_filter(
+            conn,
+            states=states,
+            older_than_hours=older_than_hours,
+            archived_by="operator",
+            reason=reason,
+        )
+        for run in runs:
+            cloudosd_pg.append_event(
+                conn,
+                run_id=run["run_id"],
+                phase="controller",
+                event_type=event_type,
+                message="CloudOSD run hidden from default history",
+                data={"reason": reason, "bulk": True},
+            )
+        return {"ok": True, "archived_count": len(runs), "runs": runs}
+
+
+@router.post("/runs/archive-stale-failed")
+def archive_stale_failed_runs(older_than_hours: int = 12):
+    return _archive_runs_bulk(
+        states=["failed"],
+        older_than_hours=max(1, int(older_than_hours or 12)),
+        reason="stale failed CloudOSD run",
+        event_type="stale_failed_runs_archived",
+    )
+
+
+@router.post("/runs/archive-completed-old")
+def archive_completed_old_runs(older_than_hours: int = 24):
+    return _archive_runs_bulk(
+        states=["complete"],
+        older_than_hours=max(1, int(older_than_hours or 24)),
+        reason="completed CloudOSD run hidden from default history",
+        event_type="completed_old_runs_archived",
+    )
+
+
 @router.get("/runs/{run_id}")
 def get_run(run_id: str):
     with _conn() as conn:
@@ -2034,7 +2191,7 @@ def get_run(run_id: str):
     }
 
 
-def _sync_cloud_devices_from_graph() -> dict:
+def _sync_cloud_devices_from_graph(conn=None) -> dict:
     from web import app as web_app
     from web import devices_pg as devices_db
 
@@ -2042,14 +2199,41 @@ def _sync_cloud_devices_from_graph() -> dict:
     try:
         web_app._graph_api("/deviceManagement/windowsAutopilotSettings/sync", method="POST")
     except Exception as exc:
+        if _is_http_429(exc):
+            retry_after = _http_retry_after_seconds(exc)
+            retry_until = datetime.now(timezone.utc) + timedelta(seconds=retry_after)
+            message = "Graph throttled, retrying later."
+            if conn is not None:
+                cloudosd_pg.set_graph_sync_backoff(
+                    conn,
+                    retry_after_until=retry_until,
+                    last_error=f"{message} {exc}",
+                )
+            raise GraphThrottled(message, retry_after_seconds=retry_after) from exc
         sync_error = str(exc)
-    ap = web_app._graph_api_all("/deviceManagement/windowsAutopilotDeviceIdentities") or []
-    it = web_app._graph_api_all("/deviceManagement/managedDevices") or []
-    en = web_app._graph_api_all("/devices") or []
+    try:
+        ap = web_app._graph_api_all("/deviceManagement/windowsAutopilotDeviceIdentities") or []
+        it = web_app._graph_api_all("/deviceManagement/managedDevices") or []
+        en = web_app._graph_api_all("/devices") or []
+    except Exception as exc:
+        if _is_http_429(exc):
+            retry_after = _http_retry_after_seconds(exc)
+            retry_until = datetime.now(timezone.utc) + timedelta(seconds=retry_after)
+            message = "Graph throttled, retrying later."
+            if conn is not None:
+                cloudosd_pg.set_graph_sync_backoff(
+                    conn,
+                    retry_after_until=retry_until,
+                    last_error=f"{message} {exc}",
+                )
+            raise GraphThrottled(message, retry_after_seconds=retry_after) from exc
+        raise
     devices_db.init()
     devices_db.upsert_autopilot(ap)
     devices_db.upsert_intune(it)
     devices_db.upsert_entra(en)
+    if conn is not None:
+        cloudosd_pg.clear_graph_sync_backoff(conn)
     return {
         "autopilot": len(ap),
         "intune": len(it),
@@ -2224,7 +2408,20 @@ def sync_autopilot_readiness(run_id: str):
         if not run:
             raise HTTPException(status_code=404, detail="CloudOSD run not found")
     try:
-        counts = _sync_cloud_devices_from_graph()
+        with _conn() as conn:
+            counts = _sync_cloud_devices_from_graph(conn=conn)
+    except GraphThrottled as exc:
+        with _conn() as conn:
+            run = cloudosd_pg.get_run(conn, run_id)
+            heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+            readiness = autopilot_readiness_for_run(conn, run, heartbeat, allow_auto_sync=False)
+            return {
+                "ok": False,
+                "run_id": run_id,
+                "message": "Graph throttled, retrying later.",
+                "retry_after_seconds": exc.retry_after_seconds,
+                "autopilot_readiness": readiness,
+            }
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Cloud device sync failed: {exc}")
     with _conn() as conn:

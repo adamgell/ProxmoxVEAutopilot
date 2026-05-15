@@ -59,7 +59,8 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
 
         stop = threading.Event()
         with patch("web.monitor_main._do_sweep_tick", return_value=None), \
-             patch("web.monitor_main._do_keytab_tick", return_value=None):
+             patch("web.monitor_main._do_keytab_tick", return_value=None), \
+             patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}):
             t = threading.Thread(
                 target=monitor_main._run_loops,
                 kwargs={"stop_event": stop,
@@ -67,7 +68,8 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
                         "reaper_interval_seconds": 0.1,
                         "heartbeat_interval_seconds": 0.1,
                         "sweep_interval_seconds": 10,
-                        "keytab_interval_seconds": 10},
+                        "keytab_interval_seconds": 10,
+                        "readiness_interval_seconds": 10},
                 daemon=True,
             )
             t.start()
@@ -75,3 +77,17 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
             stop.set()
             t.join(timeout=2)
         assert jobs_pg.get_job("stale")["status"] == "orphaned"
+
+
+def test_run_monitor_passes_monitor_db_path_to_loops(monkeypatch):
+    from web import monitor_main
+
+    stop = threading.Event()
+    monkeypatch.setattr(monitor_main, "_install_signal_handlers", lambda: stop)
+    with tempfile.TemporaryDirectory() as d:
+        lock_path = Path(d) / "monitor.lock"
+        monitor_db = Path(d) / "device_monitor.db"
+        with patch("web.monitor_main._run_loops") as loops:
+            monitor_main.run_monitor(lock_path=lock_path, monitor_db_path=monitor_db)
+        loops.assert_called_once()
+        assert loops.call_args.kwargs["monitor_db_path"] == monitor_db

@@ -243,11 +243,34 @@
     background: var(--bad-bg);
     color: var(--bad-fg);
   }
+  .cloudosd-progress-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .cloudosd-progress-summary div {
+    border: 1px solid var(--line);
+    background: var(--panel-soft);
+    padding: 8px;
+  }
+  .cloudosd-progress-summary b {
+    display: block;
+    font-size: 18px;
+  }
 </style>
 
 <section class="panel" data-cloudosd-batch-progress style="margin-top:16px;">
   <h2>CloudOSD Batch Progress</h2>
   <p class="subtitle">Recent `/provision` CloudOSD desktop runs, one row per VM. Progress updates poll the CloudOSD controller without changing Clone or WinPE Windows Server behavior.</p>
+  {% set progress_summary = cloudosd_batch_progress.summary or {} %}
+  {% set progress_total = progress_summary.total or 0 %}
+  <div class="cloudosd-progress-summary" data-cloudosd-progress-summary>
+    <div><b data-cloudosd-summary="deployed">{{ progress_summary.deployed or 0 }}/{{ progress_total }}</b><span class="cloudosd-progress-detail">deployed</span></div>
+    <div><b data-cloudosd-summary="uploaded">{{ progress_summary.uploaded or 0 }}/{{ progress_total }}</b><span class="cloudosd-progress-detail">uploaded</span></div>
+    <div><b data-cloudosd-summary="assigned">{{ progress_summary.assigned or 0 }}/{{ progress_total }}</b><span class="cloudosd-progress-detail">assigned</span></div>
+    <div><b data-cloudosd-summary="contacted_enrolled">{{ progress_summary.contacted_enrolled or 0 }}/{{ progress_total }}</b><span class="cloudosd-progress-detail">contacted/enrolled</span></div>
+  </div>
   <div class="cloudosd-progress-wrap">
     <table class="cloudosd-progress-table">
       <thead>
@@ -348,6 +371,14 @@
     const detail = item.at || item.detail || '';
     return `<span class="badge badge-${badge(item.state)}">${esc(item.label || item.state || 'waiting')}</span><br><span class="cloudosd-progress-detail">${esc(detail)}</span>`;
   }
+  function renderSummary(summary) {
+    summary = summary || {};
+    const total = summary.total || 0;
+    ["deployed", "uploaded", "assigned", "contacted_enrolled"].forEach((key) => {
+      const el = document.querySelector(`[data-cloudosd-summary="${key}"]`);
+      if (el) el.textContent = `${summary[key] || 0}/${total}`;
+    });
+  }
   function render(rows) {
     if (!rows || !rows.length) {
       body.innerHTML = '<tr data-cloudosd-progress-empty><td colspan="9"><span class="cloudosd-progress-detail">No CloudOSD runs launched from `/provision` yet.</span></td></tr>';
@@ -375,6 +406,7 @@
       const response = await fetch('/api/cloudosd/provision/progress?limit=25', {cache: 'no-store'});
       if (!response.ok) return;
       const data = await response.json();
+      renderSummary(data.summary || {});
       render(data.runs || []);
     } catch (_) {
       return;

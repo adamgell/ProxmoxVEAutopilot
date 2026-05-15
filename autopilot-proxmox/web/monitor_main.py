@@ -27,6 +27,7 @@ _SWEEP_INTERVAL_DEFAULT = 900       # 15 minutes, same as today
 _REAPER_INTERVAL = 30               # poll for orphans twice a minute
 _HEARTBEAT_INTERVAL = 10            # service_health cadence
 _KEYTAB_CHECK_INTERVAL = 3600       # keytab health checked hourly
+_READINESS_INTERVAL_DEFAULT = 60    # CloudOSD Autopilot readiness watcher
 
 
 def _acquire_singleton_lock(path: Path) -> int | None:
@@ -60,7 +61,7 @@ def run_monitor(*, lock_path: Path | str = _OUTPUT_DIR / "monitor.lock",
 
     _log.info("monitor singleton acquired lock on %s", lock_path)
     try:
-        _run_loops(stop_event=stop_event)
+        _run_loops(stop_event=stop_event, monitor_db_path=monitor_db_path)
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -83,7 +84,8 @@ def _run_loops(*, stop_event: threading.Event,
                sweep_interval_seconds: float = _SWEEP_INTERVAL_DEFAULT,
                reaper_interval_seconds: float = _REAPER_INTERVAL,
                heartbeat_interval_seconds: float = _HEARTBEAT_INTERVAL,
-               keytab_interval_seconds: float = _KEYTAB_CHECK_INTERVAL) -> None:
+               keytab_interval_seconds: float = _KEYTAB_CHECK_INTERVAL,
+               readiness_interval_seconds: float = _READINESS_INTERVAL_DEFAULT) -> None:
     """The heart of the monitor. Four tickers, one process.
 
     Cadences (all independently overridable for tests):
@@ -91,6 +93,7 @@ def _run_loops(*, stop_event: threading.Event,
       - reaper:    every ``reaper_interval_seconds``    (default 30s)
       - sweep:     every ``sweep_interval_seconds``     (default 900s)
       - keytab:    every ``keytab_interval_seconds``    (default 3600s)
+      - readiness: every ``readiness_interval_seconds`` (default 60s)
 
     Each tick is wrapped in ``try/except`` so a transient failure in
     one (e.g., Proxmox API hiccup) never stops the others from firing.
@@ -102,11 +105,13 @@ def _run_loops(*, stop_event: threading.Event,
     last_reap = 0.0
     last_hb = 0.0
     last_keytab = 0.0
+    last_readiness = 0.0
 
     _log.info(
-        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss)",
+        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss)",
         sweep_interval_seconds, reaper_interval_seconds,
         keytab_interval_seconds, heartbeat_interval_seconds,
+        readiness_interval_seconds,
     )
 
     while not stop_event.is_set():
@@ -146,6 +151,15 @@ def _run_loops(*, stop_event: threading.Event,
             except Exception:
                 _log.exception("keytab tick failed")
             last_keytab = now
+
+        if now - last_readiness >= readiness_interval_seconds:
+            try:
+                result = _do_cloudosd_readiness_tick()
+                if result.get("synced"):
+                    _log.info("cloudosd readiness watcher synced Graph cache: %s", result)
+            except Exception:
+                _log.exception("cloudosd readiness tick failed")
+            last_readiness = now
 
         # Short wake interval so cadence rounding stays tight (a 0.1s
         # reaper_interval_seconds in tests needs sub-second wake-ups;
@@ -210,6 +224,73 @@ def _do_keytab_tick() -> None:
         web_app._run_keytab_checks()
     except Exception:
         _log.exception("keytab probe/refresh failed")
+
+
+def _do_cloudosd_readiness_tick(limit: int = 100) -> dict:
+    """Recompute CloudOSD Autopilot readiness and sync Graph at most once."""
+    from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
+
+    with db_pg.connection() as conn:
+        cloudosd_pg.init(conn)
+        agent_telemetry_pg.init(conn)
+        runs = cloudosd_pg.list_readiness_watch_runs(conn, limit=limit)
+        if not runs:
+            return {"watched": 0, "sync_needed": 0, "synced": False}
+        sync_needed: list[dict] = []
+        for run in runs:
+            heartbeat = agent_telemetry_pg.latest_for_run(conn, run["run_id"])
+            readiness = cloudosd_endpoints.autopilot_readiness_for_run(
+                conn,
+                run,
+                heartbeat,
+                allow_auto_sync=False,
+            )
+            if cloudosd_endpoints.autopilot_readiness_needs_graph_sync(readiness):
+                sync_needed.append(run)
+        if not sync_needed:
+            return {"watched": len(runs), "sync_needed": 0, "synced": False}
+        backoff = cloudosd_pg.graph_sync_backoff_active(conn)
+        if backoff:
+            return {
+                "watched": len(runs),
+                "sync_needed": len(sync_needed),
+                "synced": False,
+                "backoff": backoff,
+            }
+        try:
+            counts = cloudosd_endpoints._sync_cloud_devices_from_graph(conn=conn)
+        except cloudosd_endpoints.GraphThrottled as exc:
+            for run in sync_needed:
+                cloudosd_pg.append_event(
+                    conn,
+                    run_id=run["run_id"],
+                    phase="AutopilotAgent",
+                    event_type="autopilot_cache_sync_throttled",
+                    severity="warn",
+                    message="Graph throttled, retrying later.",
+                    data={"retry_after_seconds": exc.retry_after_seconds},
+                )
+            return {
+                "watched": len(runs),
+                "sync_needed": len(sync_needed),
+                "synced": False,
+                "throttled": True,
+                "retry_after_seconds": exc.retry_after_seconds,
+            }
+        for run in sync_needed:
+            heartbeat = agent_telemetry_pg.latest_for_run(conn, run["run_id"])
+            cloudosd_endpoints.autopilot_readiness_for_run(
+                conn,
+                run,
+                heartbeat,
+                allow_auto_sync=False,
+            )
+        return {
+            "watched": len(runs),
+            "sync_needed": len(sync_needed),
+            "synced": True,
+            "counts": counts,
+        }
 
 
 def _version_sha() -> str:
