@@ -36,6 +36,21 @@ CONFIGMGR_WINPE_STEPS = [
 ]
 
 
+def test_osdeploy_agent_msi_resolves_from_host_repo_mount(tmp_path, monkeypatch):
+    from web import osdeploy_endpoints
+
+    host_repo = tmp_path / "host-repo"
+    msi_path = host_repo / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
+    msi_path.parent.mkdir(parents=True)
+    msi_path.write_bytes(b"fake-msi")
+    monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
+    monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
+    monkeypatch.setattr(osdeploy_endpoints, "_APP_ROOT", tmp_path / "app")
+    monkeypatch.setattr(osdeploy_endpoints, "_REPO_ROOT", tmp_path / "repo")
+
+    assert osdeploy_endpoints._asset_path("autopilotagent.msi") == msi_path
+
+
 @pytest.fixture(scope="module")
 def pg_dsn():
     container = subprocess.check_output(
@@ -369,6 +384,114 @@ def test_cloudosd_v2_agent_hash_queues_autopilot_upload(
     assert job["args"]["file"] == files[0].name
     assert job["args"]["file"] == body["hash_filename"]
     assert job["args"]["group_tag"] == "GellNative"
+
+
+def test_osdeploy_package_includes_persistent_agent_install_payloads(monkeypatch):
+    from web import osdeploy_endpoints
+
+    def fake_asset_metadata(name: str, *, required: bool = True):
+        return {
+            "sha256": f"sha-{name}",
+            "available": name != "autopilotagent.msi" or required is False,
+        }
+
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "_asset_metadata",
+        fake_asset_metadata,
+        raising=False,
+    )
+    run = {
+        "run_id": "11111111-2222-3333-4444-555555555555",
+        "workflow_name": "pveautopilot-osdeploy-test",
+        "vmid": 102,
+        "vm_uuid": "vm-102",
+        "mac": "52:54:00:aa:bb:cc",
+        "node": "pve",
+        "requested_vm_name": "AUTOPILOT-E2E-01",
+        "vm_name": "AUTOPILOT-E2E-01",
+        "pve_vm_name": "AUTOPILOT-E2E-01",
+        "expected_computer_name": "AUTOPILOT-E2E",
+        "server_role": "base",
+        "os_version": "Windows 11",
+        "os_edition": "Enterprise",
+        "os_language": "en-us",
+        "secure_boot": True,
+        "outbound_policy": {},
+    }
+    artifact = {
+        "id": "artifact-1",
+        "image_index": 1,
+        "iso_sha256": "a" * 64,
+        "wim_sha256": "b" * 64,
+        "proxmox_volid": "local:iso/osdeploy.iso",
+    }
+
+    body = osdeploy_endpoints._package_response(
+        run=run,
+        artifact=artifact,
+        server_base_url="http://autopilot.test:5000",
+    )
+
+    assert body["payloads"]["autopilotagent_msi"] == {
+        "url": "http://autopilot.test:5000/api/cloudosd/assets/autopilotagent.msi",
+        "sha256": "sha-autopilotagent.msi",
+        "available": True,
+    }
+    assert body["payloads"]["autopilotagent_postinstall"] == {
+        "url": (
+            "http://autopilot.test:5000/api/cloudosd/assets/"
+            "autopilotagent-postinstall.ps1"
+        ),
+        "sha256": "sha-autopilotagent-postinstall.ps1",
+    }
+    assert body["agent"]["phase"] == "full_os"
+    assert body["agent"]["agent_id"] == "agent-autopilot-e2e"
+
+
+def test_osdeploy_task_engine_sequence_installs_agent_before_heartbeat(pg_conn):
+    from web import osdeploy_pg, ts_engine_pg
+
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+    artifact = osdeploy_pg.create_artifact(
+        pg_conn,
+        build_sha="agentinstall",
+        iso_path="/app/output/osdeploy-server-amd64-agentinstall.iso",
+        wim_path="/app/output/osdeploy-server-amd64-agentinstall.wim",
+        manifest_path="/app/output/osdeploy-server-amd64-agentinstall.json",
+        iso_sha256="a" * 64,
+        wim_sha256="b" * 64,
+        source_media="/isos/windows.iso",
+        image_name="Windows 11 Enterprise Evaluation",
+        image_index=1,
+        os_version="Windows 11",
+        os_edition="Enterprise Evaluation",
+        built_by_host="buildhost-101",
+        proxmox_volid="local:iso/osdeploy-server-amd64-agentinstall.iso",
+    )
+
+    run = osdeploy_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="AUTOPILOT-E2E-01",
+        os_version="Windows 11",
+        os_edition="Enterprise Evaluation",
+    )
+
+    kinds = [step["kind"] for step in ts_engine_pg.list_run_steps(pg_conn, run["run_id"])]
+    assert kinds == [
+        "osdeploy_preflight",
+        "apply_wim",
+        "apply_driver_package",
+        "prepare_windows_setup",
+        "bake_boot_entry",
+        "stage_osd_client",
+        "stage_autopilot_agent",
+        "install_autopilot_agent",
+        "wait_agent_heartbeat",
+    ]
+    assert kinds.index("install_autopilot_agent") < kinds.index("wait_agent_heartbeat")
 
 
 @pytest.mark.parametrize(

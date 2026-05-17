@@ -13,3 +13,27 @@
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
   register: _clone_result
+  when: requested_vmid is defined and (requested_vmid | string | length) > 0
+
+- name: Capture first automatic VMID candidate
+  ansible.builtin.set_fact:
+    _initial_auto_vmid: "{{ vm_vmid | int }}"
+  when: requested_vmid is not defined or (requested_vmid | string | length) == 0
+
+- name: Clone template with automatic VMID collision retry
+  ansible.builtin.include_tasks: clone_vm_attempt.yml
+  loop: "{{ range(0, 20) | list }}"
+  loop_control:
+    label: "{{ (_initial_auto_vmid | int) + (item | int) }}"
+  when:
+    - requested_vmid is not defined or (requested_vmid | string | length) == 0
+    - _clone_result is not defined or ((_clone_result.status | default(0)) | int) != 200
+
+- name: Fail if no automatic VMID candidate could be cloned
+  ansible.builtin.fail:
+    msg: >-
+      Unable to clone template {{ proxmox_template_vmid }} after trying VMIDs
+      {{ _initial_auto_vmid }} through {{ (_initial_auto_vmid | int) + 19 }}.
+  when:
+    - requested_vmid is not defined or (requested_vmid | string | length) == 0
+    - _clone_result is not defined or ((_clone_result.status | default(0)) | int) != 200

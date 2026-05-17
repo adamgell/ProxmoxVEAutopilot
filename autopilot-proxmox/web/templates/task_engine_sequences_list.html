@@ -2,7 +2,7 @@
 {% from "_macros.html" import page_head, empty_state %}
 {% block title %}V2 Sequence Library - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-{{ page_head("V2 Sequence Library", "Operator-facing v2 sequence index, read-only current-flow templates, and clone-to-builder starting points.", "/task-engine/sequences/new", "New v2 sequence") }}
+{{ page_head("V2 Sequence Library", "Operator-facing v2 sequence index, read-only current-flow templates, Ubuntu support, and clone-to-builder starting points.", "/task-engine/sequences/new", "New v2 sequence") }}
 
 <section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
@@ -21,9 +21,18 @@
 </section>
 
 <section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
-  <label>Filter sequences and templates
-    <input type="search" data-cockpit-filter=".v2-sequence-library" placeholder="cloudosd, winpe, server, clone, hash, domain" style="width:100%;margin-top:6px;">
-  </label>
+  <div style="display:grid;grid-template-columns:1fr 220px;gap:12px;align-items:end;">
+    <label>Filter sequences and templates
+      <input type="search" data-cockpit-filter=".v2-sequence-library" placeholder="cloudosd, winpe, server, clone, ubuntu, mde" style="width:100%;margin-top:6px;">
+    </label>
+    <label>Target OS
+      <select onchange="const u=new URL(location.href); this.value ? u.searchParams.set('target_os', this.value) : u.searchParams.delete('target_os'); location.href=u.toString();" style="width:100%;margin-top:6px;">
+        <option value="" {% if not target_os_filter %}selected{% endif %}>All</option>
+        <option value="windows" {% if target_os_filter == 'windows' %}selected{% endif %}>Windows</option>
+        <option value="ubuntu" {% if target_os_filter == 'ubuntu' %}selected{% endif %}>Ubuntu</option>
+      </select>
+    </label>
+  </div>
 </section>
 
 <h2>Editable V2 Sequences</h2>
@@ -34,6 +43,7 @@
   <thead>
     <tr>
       <th>Name</th>
+      <th>Target OS</th>
       <th>Status</th>
       <th>Steps</th>
       <th>Current Version</th>
@@ -48,6 +58,7 @@
         <strong>{{ seq.name }}</strong>
         {% if seq.description %}<br><small>{{ seq.description }}</small>{% endif %}
       </td>
+      <td><span class="badge">{{ seq.target_os or 'windows' }}</span></td>
       <td>{% if seq.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge unknown">disabled</span>{% endif %}</td>
       <td>
         {{ seq.step_count }}
@@ -82,7 +93,7 @@
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
       <div>
         <strong>{{ template.name }}</strong>
-        <br><small>{{ template.path }} · {{ template.step_count }} steps</small>
+        <br><small>{{ template.path }} · {{ template.target_os or 'windows' }} · {{ template.step_count }} steps</small>
       </div>
       <span class="badge ok">read-only</span>
     </div>

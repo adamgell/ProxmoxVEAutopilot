@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from statistics import median
+import threading
 from typing import Any
 
 from psycopg import Connection
@@ -54,6 +55,7 @@ HEALTH_PRIORITY = {
     "learning": 1,
     "healthy": 0,
 }
+_SYNC_LOCK = threading.Lock()
 WINPE_STEP_PHASES = {
     "vm_identity": "vm_identity",
     "winpe_boot": "winpe_boot",
@@ -414,16 +416,79 @@ def _sync_legacy_runs(conn: Connection) -> None:
 def _sync_ts_runs(conn: Connection) -> None:
     if not (_table_exists(conn, "ts_provisioning_runs") and _table_exists(conn, "ts_run_plan_steps")):
         return
-    runs = conn.execute(
+    cloudosd_exists = _table_exists(conn, "cloudosd_runs")
+    jobs_exists = _table_exists(conn, "jobs")
+    cloudosd_join = (
         """
-        SELECT id, state, phase, vmid, vm_uuid, computer_name, serial_number,
-               started_at, finished_at, last_error
-        FROM ts_provisioning_runs
+        LEFT JOIN cloudosd_runs cloudosd
+          ON cloudosd.run_id = r.id
+        """
+        if cloudosd_exists
+        else ""
+    )
+    cloudosd_cols = (
+        """
+        cloudosd.state AS cloudosd_state,
+        """
+        if cloudosd_exists
+        else """
+        NULL::text AS cloudosd_state,
+        """
+    )
+    provision_job_join = (
+        """
+        LEFT JOIN LATERAL (
+          SELECT id, status, exit_code, ended_at, last_heartbeat
+          FROM jobs j
+          WHERE j.job_type = 'provision_cloudosd'
+            AND COALESCE(j.args_json->>'cloudosd_run_id', j.args_json->>'run_id') = r.id::text
+          ORDER BY j.created_at DESC
+          LIMIT 1
+        ) provision_job ON true
+        """
+        if jobs_exists
+        else ""
+    )
+    provision_job_cols = (
+        """
+        provision_job.id AS provision_job_id,
+        provision_job.status AS provision_job_status,
+        provision_job.exit_code AS provision_job_exit_code,
+        provision_job.ended_at AS provision_job_ended_at,
+        provision_job.last_heartbeat AS provision_job_last_heartbeat,
+        """
+        if jobs_exists
+        else """
+        NULL::text AS provision_job_id,
+        NULL::text AS provision_job_status,
+        NULL::integer AS provision_job_exit_code,
+        NULL::timestamptz AS provision_job_ended_at,
+        NULL::timestamptz AS provision_job_last_heartbeat,
+        """
+    )
+    runs = conn.execute(
+        f"""
+        SELECT r.id, r.state, r.phase, r.vmid, r.vm_uuid, r.computer_name,
+               r.serial_number, r.started_at, r.finished_at, r.last_error,
+               {cloudosd_cols}
+               {provision_job_cols}
+               NULL::text AS _unused
+        FROM ts_provisioning_runs r
+        {cloudosd_join}
+        {provision_job_join}
         ORDER BY started_at DESC
         LIMIT 500
         """
     ).fetchall()
     for run in runs:
+        provision_job_status = str(run.get("provision_job_status") or "")
+        provision_job_failed = provision_job_status in {"failed", "orphaned", "canceled", "cancelled"}
+        cloudosd_failed = _run_state(run.get("cloudosd_state")) == "failed"
+        effective_failed = _run_state(run.get("state")) == "failed" or cloudosd_failed or provision_job_failed
+        effective_state = "failed" if effective_failed else _run_state(run.get("state"))
+        effective_finished_at = run.get("finished_at") or (
+            run.get("provision_job_ended_at") if effective_failed else None
+        )
         evidence = {
             "run_id": str(run["id"]),
             "vmid": run.get("vmid"),
@@ -432,6 +497,10 @@ def _sync_ts_runs(conn: Connection) -> None:
             "serial_number": run.get("serial_number"),
             "state": run.get("state"),
             "phase": run.get("phase"),
+            "cloudosd_state": run.get("cloudosd_state"),
+            "provision_job_id": run.get("provision_job_id"),
+            "provision_job_status": run.get("provision_job_status"),
+            "provision_job_exit_code": run.get("provision_job_exit_code"),
         }
         _record(
             conn,
@@ -441,12 +510,12 @@ def _sync_ts_runs(conn: Connection) -> None:
             source_id=run["id"],
             phase_key="run",
             phase_label="Task engine run",
-            state=_run_state(run.get("state")),
+            state=effective_state,
             started_at=run["started_at"],
-            ended_at=run.get("finished_at"),
-            last_progress_at=run.get("finished_at") or run.get("started_at"),
+            ended_at=effective_finished_at,
+            last_progress_at=effective_finished_at or run.get("provision_job_last_heartbeat") or run.get("started_at"),
             evidence=evidence,
-            error=run.get("last_error"),
+            error=run.get("last_error") or (provision_job_status if provision_job_failed else None),
         )
     steps = conn.execute(
         """
@@ -555,6 +624,38 @@ def _sync_agent_work(conn: Connection) -> None:
 def _sync_cloudosd(conn: Connection) -> None:
     if not _table_exists(conn, "cloudosd_runs"):
         return
+    jobs_exists = _table_exists(conn, "jobs")
+    provision_job_join = (
+        """
+        LEFT JOIN LATERAL (
+          SELECT id, status, exit_code, ended_at, last_heartbeat
+          FROM jobs j
+          WHERE j.job_type = 'provision_cloudosd'
+            AND COALESCE(j.args_json->>'cloudosd_run_id', j.args_json->>'run_id') = r.run_id::text
+          ORDER BY j.created_at DESC
+          LIMIT 1
+        ) provision_job ON true
+        """
+        if jobs_exists
+        else ""
+    )
+    provision_job_cols = (
+        """
+        provision_job.id AS provision_job_id,
+        provision_job.status AS provision_job_status,
+        provision_job.exit_code AS provision_job_exit_code,
+        provision_job.ended_at AS provision_job_ended_at,
+        provision_job.last_heartbeat AS provision_job_last_heartbeat,
+        """
+        if jobs_exists
+        else """
+        NULL::text AS provision_job_id,
+        NULL::text AS provision_job_status,
+        NULL::integer AS provision_job_exit_code,
+        NULL::timestamptz AS provision_job_ended_at,
+        NULL::timestamptz AS provision_job_last_heartbeat,
+        """
+    )
     readiness_exists = _table_exists(conn, "cloudosd_autopilot_readiness")
     readiness_join = (
         """
@@ -597,9 +698,11 @@ def _sync_cloudosd(conn: Connection) -> None:
                r.expected_computer_name, r.requested_vmid, r.vmid, r.node,
                r.pe_registered_at, r.osdcloud_started_at, r.osdcloud_finished_at,
                r.first_heartbeat_at, r.created_at, r.updated_at,
+               {provision_job_cols}
                {readiness_cols}
                r.vm_uuid
         FROM cloudosd_runs r
+        {provision_job_join}
         {readiness_join}
         ORDER BY r.created_at DESC
         LIMIT 500
@@ -607,7 +710,9 @@ def _sync_cloudosd(conn: Connection) -> None:
     ).fetchall()
     for row in rows:
         deployment_key = f"cloudosd:{row['run_id']}"
-        failed = _run_state(row.get("state")) == "failed"
+        provision_job_status = str(row.get("provision_job_status") or "")
+        provision_job_failed = provision_job_status in {"failed", "orphaned", "canceled", "cancelled"}
+        failed = _run_state(row.get("state")) == "failed" or provision_job_failed
         evidence = {
             "run_id": str(row["run_id"]),
             "workflow_name": row.get("workflow_name"),
@@ -625,7 +730,26 @@ def _sync_cloudosd(conn: Connection) -> None:
             "enrollment_status": row.get("enrollment_status"),
             "contact_state": row.get("contact_state"),
             "cache_status": row.get("cache_status"),
+            "provision_job_id": row.get("provision_job_id"),
+            "provision_job_status": row.get("provision_job_status"),
+            "provision_job_exit_code": row.get("provision_job_exit_code"),
         }
+        provision_end = row.get("pe_registered_at") or (
+            row.get("provision_job_ended_at") if failed else None
+        )
+        provision_progress = (
+            row.get("pe_registered_at")
+            or row.get("provision_job_ended_at")
+            or row.get("provision_job_last_heartbeat")
+            or row.get("updated_at")
+            or row.get("created_at")
+        )
+        if row.get("pe_registered_at"):
+            provision_state = "done"
+        elif failed:
+            provision_state = "failed"
+        else:
+            provision_state = "running"
         _record(
             conn,
             deployment_key=deployment_key,
@@ -634,12 +758,19 @@ def _sync_cloudosd(conn: Connection) -> None:
             source_id=row["run_id"],
             phase_key="proxmox_provision",
             phase_label="Proxmox provision",
-            state="done" if row.get("pe_registered_at") else ("failed" if failed else "running"),
+            state=provision_state,
             started_at=row["created_at"],
-            ended_at=row.get("pe_registered_at"),
-            last_progress_at=row.get("pe_registered_at") or row.get("updated_at") or row.get("created_at"),
+            ended_at=provision_end,
+            last_progress_at=provision_progress,
             evidence=evidence,
+            error=provision_job_status if provision_job_failed else (row.get("state") if failed else None),
         )
+        if row.get("osdcloud_finished_at"):
+            osdcloud_state = "done"
+        elif row.get("osdcloud_started_at"):
+            osdcloud_state = "failed" if failed else "running"
+        else:
+            osdcloud_state = "skipped" if failed else "pending"
         _record(
             conn,
             deployment_key=deployment_key,
@@ -648,11 +779,9 @@ def _sync_cloudosd(conn: Connection) -> None:
             source_id=row["run_id"],
             phase_key="osdcloud",
             phase_label="OSDCloud",
-            state="done" if row.get("osdcloud_finished_at") else (
-                "running" if row.get("osdcloud_started_at") else ("failed" if failed else "pending")
-            ),
+            state=osdcloud_state,
             started_at=row.get("osdcloud_started_at") or row.get("pe_registered_at") or row.get("created_at"),
-            ended_at=row.get("osdcloud_finished_at"),
+            ended_at=row.get("osdcloud_finished_at") or (row.get("provision_job_ended_at") if failed else None),
             last_progress_at=row.get("osdcloud_finished_at") or row.get("osdcloud_started_at") or row.get("pe_registered_at") or row.get("updated_at"),
             evidence=evidence,
             error=row.get("state") if failed else None,
@@ -665,9 +794,9 @@ def _sync_cloudosd(conn: Connection) -> None:
             source_id=row["run_id"],
             phase_key="first_boot",
             phase_label="First boot heartbeat",
-            state="done" if row.get("first_heartbeat_at") else ("failed" if failed else "pending"),
+            state="done" if row.get("first_heartbeat_at") else ("skipped" if failed else "pending"),
             started_at=row.get("osdcloud_finished_at") or row.get("created_at"),
-            ended_at=row.get("first_heartbeat_at"),
+            ended_at=row.get("first_heartbeat_at") or (row.get("provision_job_ended_at") if failed else None),
             last_progress_at=row.get("first_heartbeat_at") or row.get("updated_at") or row.get("created_at"),
             evidence=evidence,
         )
@@ -691,13 +820,17 @@ def _sync_cloudosd(conn: Connection) -> None:
 
 
 def sync_from_sources(conn: Connection) -> None:
-    deployment_health_pg.init(conn)
-    _sync_jobs(conn)
-    _sync_legacy_runs(conn)
-    _sync_ts_runs(conn)
-    _sync_agent_work(conn)
-    _sync_cloudosd(conn)
-    deployment_health_pg.recompute_baselines(conn)
+    # Backfill can upsert the same deployment/phase rows from multiple
+    # monitoring endpoints at once on first page load. Keep it single-flight
+    # inside the web process so Postgres does not deadlock on identical rows.
+    with _SYNC_LOCK:
+        deployment_health_pg.init(conn)
+        _sync_jobs(conn)
+        _sync_legacy_runs(conn)
+        _sync_ts_runs(conn)
+        _sync_agent_work(conn)
+        _sync_cloudosd(conn)
+        deployment_health_pg.recompute_baselines(conn)
 
 
 def _phase_threshold(phase_key: str) -> int:
@@ -769,7 +902,11 @@ def _deployment_row(deployment_key: str, phases: list[dict]) -> dict:
     state = _deployment_state(ordered)
     health = _deployment_health(ordered)
     active = [phase for phase in ordered if phase.get("state") in {"running", "pending"}]
-    current_phase = active[-1] if active else ordered[-1]
+    failed_phases = [phase for phase in ordered if phase.get("state") == "failed"]
+    if state == "failed" and failed_phases:
+        current_phase = failed_phases[-1]
+    else:
+        current_phase = active[-1] if active else ordered[-1]
     started = _coerce_dt(ordered[0].get("started_at"))
     ended = max((_coerce_dt(phase.get("ended_at")) for phase in ordered if phase.get("ended_at")), default=None)
     duration = _duration(started, ended) if state == "done" else None

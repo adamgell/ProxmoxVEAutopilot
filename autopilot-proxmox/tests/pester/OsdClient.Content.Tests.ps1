@@ -254,6 +254,44 @@ Describe 'OsdClient content materialization' {
             Should -Not -Throw
     }
 
+    It 'installs AutopilotAgent for OSDeploy v2 agent install steps' {
+        Mock Invoke-InstallAutopilotAgentForOsdeploy {}
+        $action = [pscustomobject]@{ kind = 'install_autopilot_agent' }
+        $config = [pscustomobject]@{
+            engine = 'v2'
+            run_id = 'run-1'
+            agent_id = 'osd-1'
+            flask_base_url = 'https://autopilot.local'
+            osdeploy_agent = [pscustomobject]@{
+                phase = 'full_os'
+                bootstrap_token = 'bootstrap-token'
+            }
+        }
+
+        Invoke-OsdAction -Action $action -Config $config -BearerToken 'token-1'
+
+        Should -Invoke Invoke-InstallAutopilotAgentForOsdeploy -Times 1 -Exactly
+    }
+
+    It 'uses wait_agent_heartbeat as an OSDeploy agent-install fallback' {
+        Mock Invoke-InstallAutopilotAgentForOsdeploy {}
+        $action = [pscustomobject]@{ kind = 'wait_agent_heartbeat' }
+        $config = [pscustomobject]@{
+            engine = 'v2'
+            run_id = 'run-1'
+            agent_id = 'osd-1'
+            flask_base_url = 'https://autopilot.local'
+            osdeploy_agent = [pscustomobject]@{
+                phase = 'full_os'
+                bootstrap_token = 'bootstrap-token'
+            }
+        }
+
+        Invoke-OsdAction -Action $action -Config $config -BearerToken 'token-1'
+
+        Should -Invoke Invoke-InstallAutopilotAgentForOsdeploy -Times 1 -Exactly
+    }
+
     It 'installs the QGA watchdog script and scheduled task' {
         Mock Invoke-VerifyQga {}
         Mock Set-QgaServiceRecovery {}

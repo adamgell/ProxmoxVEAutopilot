@@ -577,6 +577,133 @@ function Invoke-InstallPackage {
     Write-OsdLog "Package install completed exit=$($proc.ExitCode)"
 }
 
+function Get-OsdObjectProperty {
+    param(
+        [AllowNull()] [object] $Value,
+        [Parameter(Mandatory)] [string] $Name
+    )
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        if ($Value.Contains($Name)) { return $Value[$Name] }
+        return $null
+    }
+    if ($Value.PSObject.Properties.Match($Name).Count -gt 0) {
+        return $Value.$Name
+    }
+    return $null
+}
+
+function Save-OsdVerifiedPayload {
+    param(
+        [Parameter(Mandatory)] [object] $Payload,
+        [Parameter(Mandatory)] [string] $DestinationPath,
+        [Parameter(Mandatory)] [string] $Label
+    )
+    $url = [string] (Get-OsdObjectProperty -Value $Payload -Name 'url')
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        throw "$Label payload is missing url"
+    }
+    $available = Get-OsdObjectProperty -Value $Payload -Name 'available'
+    if ($null -ne $available -and $available -eq $false) {
+        throw "$Label payload is not available from the controller"
+    }
+    New-DirectoryIfMissing -Path (Split-Path -Parent $DestinationPath)
+    Write-OsdLog "Downloading $Label payload from $url"
+    Invoke-WebRequest -Uri $url -OutFile $DestinationPath -UseBasicParsing -TimeoutSec 300
+
+    $expectedSha = ([string] (Get-OsdObjectProperty -Value $Payload -Name 'sha256')).Trim().ToLowerInvariant()
+    if (-not [string]::IsNullOrWhiteSpace($expectedSha)) {
+        $actualSha = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -ne $expectedSha) {
+            throw "$Label SHA256 mismatch expected=$expectedSha actual=$actualSha path=$DestinationPath"
+        }
+    }
+    return $DestinationPath
+}
+
+function Invoke-InstallAutopilotAgentForOsdeploy {
+    param([Parameter(Mandatory)] [object] $Config)
+
+    $agent = Get-OsdObjectProperty -Value $Config -Name 'osdeploy_agent'
+    if (-not $agent) {
+        throw 'OSDeploy AutopilotAgent install requires osdeploy_agent config'
+    }
+    $msiPayload = Get-OsdObjectProperty -Value $Config -Name 'autopilotagent_msi'
+    if (-not $msiPayload) {
+        throw 'OSDeploy AutopilotAgent install requires autopilotagent_msi payload'
+    }
+    $postinstallPayload = Get-OsdObjectProperty -Value $Config -Name 'autopilotagent_postinstall'
+    if (-not $postinstallPayload) {
+        throw 'OSDeploy AutopilotAgent install requires autopilotagent_postinstall payload'
+    }
+
+    $marker = Join-Path $OsdRoot 'autopilotagent-installed.ok'
+    if (Test-Path -LiteralPath $marker) {
+        Write-OsdLog "AutopilotAgent install marker exists; skipping duplicate install. marker=$marker"
+        return
+    }
+
+    $stageDir = Join-Path $OsdRoot 'AutopilotAgent'
+    $msiPath = Save-OsdVerifiedPayload `
+        -Payload $msiPayload `
+        -DestinationPath (Join-Path $stageDir 'AutopilotAgent.msi') `
+        -Label 'AutopilotAgent MSI'
+    $postinstallPath = Save-OsdVerifiedPayload `
+        -Payload $postinstallPayload `
+        -DestinationPath (Join-Path $stageDir 'autopilotagent-postinstall.ps1') `
+        -Label 'AutopilotAgent postinstall'
+
+    $installLog = Join-Path $stageDir 'AutopilotAgent-msi.log'
+    Write-OsdLog "Installing AutopilotAgent MSI from $msiPath"
+    $msiProc = Start-Process -FilePath msiexec.exe `
+        -ArgumentList @('/i', $msiPath, '/qn', '/norestart', '/L*v', $installLog) `
+        -Wait -PassThru
+    if ($msiProc.ExitCode -ne 0 -and $msiProc.ExitCode -ne 3010) {
+        throw "AutopilotAgent MSI installer failed with exit $($msiProc.ExitCode)"
+    }
+
+    $serverUrl = [string] $Config.flask_base_url
+    if ([string]::IsNullOrWhiteSpace($serverUrl)) {
+        throw 'OSDeploy AutopilotAgent install requires flask_base_url'
+    }
+    $bootstrapToken = [string] (Get-OsdObjectProperty -Value $agent -Name 'bootstrap_token')
+    if ([string]::IsNullOrWhiteSpace($bootstrapToken)) {
+        throw 'OSDeploy AutopilotAgent install requires bootstrap_token'
+    }
+    $phase = [string] (Get-OsdObjectProperty -Value $agent -Name 'phase')
+    if ([string]::IsNullOrWhiteSpace($phase)) { $phase = 'full_os' }
+    $runId = [string] $Config.run_id
+    $agentId = [string] (Get-OsdObjectProperty -Value $agent -Name 'agent_id')
+    $vmidValue = Get-OsdObjectProperty -Value $agent -Name 'vmid'
+
+    $postinstallArgs = @(
+        '-ExecutionPolicy', 'Bypass',
+        '-NoProfile',
+        '-File', $postinstallPath,
+        '-ServerUrl', $serverUrl.TrimEnd('/'),
+        '-BootstrapToken', $bootstrapToken,
+        '-RunId', $runId,
+        '-Phase', $phase,
+        '-HeartbeatTimeoutSeconds', '180'
+    )
+    if (-not [string]::IsNullOrWhiteSpace($agentId)) {
+        $postinstallArgs += @('-AgentId', $agentId)
+    }
+    if ($null -ne $vmidValue -and [int] $vmidValue -gt 0) {
+        $postinstallArgs += @('-Vmid', [string] ([int] $vmidValue))
+    }
+
+    Write-OsdLog "Running AutopilotAgent postinstall for OSDeploy phase=$phase run_id=$runId"
+    $postinstallProc = Start-Process -FilePath powershell.exe `
+        -ArgumentList $postinstallArgs `
+        -Wait -PassThru
+    if ($postinstallProc.ExitCode -ne 0) {
+        throw "AutopilotAgent postinstall failed with exit $($postinstallProc.ExitCode)"
+    }
+    Set-Content -LiteralPath $marker -Value (Get-Date -Format o) -Encoding ASCII
+    Write-OsdLog 'AutopilotAgent install/postinstall completed for OSDeploy.'
+}
+
 function Invoke-CaptureAutopilotHash {
     param(
         [Parameter(Mandatory)] [object] $Config,
@@ -698,11 +825,18 @@ function Invoke-OsdAction {
         'fix_recovery_partition' { Invoke-RecoveryFix }
         'verify_qga' { Invoke-VerifyQga }
         'install_qga_watchdog' { Invoke-InstallQgaWatchdog -Action $Action }
+        'install_autopilot_agent' {
+            Invoke-InstallAutopilotAgentForOsdeploy -Config $Config
+        }
         'capture_autopilot_hash' {
             Invoke-CaptureAutopilotHash -Config $Config -BearerToken $BearerToken
         }
         'wait_agent_heartbeat' {
-            Write-OsdLog 'wait_agent_heartbeat is satisfied by the CloudOSD first-boot heartbeat gate.'
+            if (Get-OsdObjectProperty -Value $Config -Name 'osdeploy_agent') {
+                Invoke-InstallAutopilotAgentForOsdeploy -Config $Config
+            } else {
+                Write-OsdLog 'wait_agent_heartbeat is satisfied by the CloudOSD first-boot heartbeat gate.'
+            }
         }
         'handoff_to_oobe' { Invoke-HandoffToOobe }
         'install_package' {

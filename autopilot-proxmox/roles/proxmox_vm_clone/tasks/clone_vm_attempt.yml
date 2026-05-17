@@ -1,0 +1,39 @@
+---
+- name: "Set automatic VMID candidate {{ (_initial_auto_vmid | int) + (item | int) }}"
+  ansible.builtin.set_fact:
+    vm_vmid: "{{ (_initial_auto_vmid | int) + (item | int) }}"
+  when: _clone_result is not defined or ((_clone_result.status | default(0)) | int) != 200
+
+- name: "Clone template to automatic VMID {{ vm_vmid }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ proxmox_template_vmid }}/clone"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      newid: "{{ vm_vmid }}"
+      name: "{{ vm_name | trim }}"
+      full: "1"
+      storage: "{{ proxmox_storage }}"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200, 500]
+  register: _clone_attempt
+  failed_when: false
+  when: _clone_result is not defined or ((_clone_result.status | default(0)) | int) != 200
+
+- name: Stop automatic VMID retry on non-collision clone failure
+  ansible.builtin.fail:
+    msg: "{{ _clone_attempt.json.message | default(_clone_attempt.msg | default('clone failed')) }}"
+  when:
+    - _clone_result is not defined or ((_clone_result.status | default(0)) | int) != 200
+    - _clone_attempt is defined
+    - (_clone_attempt.status | default(0) | int) != 200
+    - "'config file already exists' not in (_clone_attempt.json.message | default(_clone_attempt.msg | default('')))"
+
+- name: Record successful automatic clone attempt
+  ansible.builtin.set_fact:
+    _clone_result: "{{ _clone_attempt }}"
+  when:
+    - _clone_attempt is defined
+    - (_clone_attempt.status | default(0) | int) == 200

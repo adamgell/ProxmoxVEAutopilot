@@ -23,7 +23,7 @@
       <p class="subtitle" style="margin:4px 0 0 0; max-width: 900px;">
         Apply Proxmox permissions over SSH, repair the Autopilot role/ACLs,
         enable snippet storage, seed chassis SMBIOS binaries, and store the
-        root SSH credential used later for OEM/chassis CloudOSD operations.
+        root SSH credential used later for OEM/chassis OSDCloud operations.
       </p>
     </div>
     {% if proxmox_bootstrap.root_password_set %}
@@ -60,7 +60,7 @@
     </label>
     <label style="grid-column: span 2; display:flex; align-items:center; gap:8px;">
       <input type="checkbox" name="save_root_credentials" checked>
-      <span>Save validated root SSH credential for CloudOSD/OEM runtime operations</span>
+      <span>Save validated root SSH credential for OSDCloud/OEM runtime operations</span>
     </label>
     <div style="grid-column: span 2; display:flex; align-items:center; justify-content:flex-end; gap:10px;">
       <span id="proxmox-bootstrap-status" class="subtitle" style="margin:0;"></span>

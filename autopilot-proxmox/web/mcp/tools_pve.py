@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from . import mcp_pg
-from .registry import redact
 from .registry import ToolRegistry, object_schema
 
 
@@ -20,29 +18,12 @@ async def _maybe_await(value: Any) -> Any:
 
 
 def _approval(tool_name: str, args: dict[str, Any], risk: str = "sensitive_mutation") -> dict[str, Any]:
-    safe_args = redact(args)
-    target = str(
-        args.get("target")
-        or args.get("vmid")
-        or args.get("credential_id")
-        or args.get("seq_id")
-        or args.get("sequence_id")
-        or tool_name
-    )
-    row = mcp_pg.create_approval(
-        tool_name=tool_name,
-        arguments=safe_args,
-        target_summary=target,
-        risk_label=risk,
-    )
     return {
         "approval_required": True,
-        "approval_id": row["approval_id"],
         "tool_name": tool_name,
         "risk_label": risk,
-        "target_summary": target,
-        "proposed_arguments": safe_args,
-        "approval": row,
+        "target_summary": str(args.get("target") or args.get("vmid") or args.get("credential_id") or tool_name),
+        "proposed_arguments": args,
         "message": "This MCP surface requires two-step approval before execution.",
     }
 
@@ -164,56 +145,6 @@ def register(registry: ToolRegistry) -> None:
         runtime = await _maybe_await(web_app.api_monitoring_runtime_services())
         return {"services": services, "runtime": runtime}
 
-    @registry.register(
-        "pve_autopilot.list_approvals",
-        "List pending or historical MCP action approvals.",
-        object_schema({"status": {"type": "string"}, "limit": {"type": "integer", "default": 100}}),
-        annotations=READ,
-    )
-    def list_approvals(args: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "approvals": mcp_pg.list_approvals(
-                status=args.get("status"),
-                limit=int(args.get("limit") or 100),
-            )
-        }
-
-    @registry.register(
-        "pve_autopilot.get_approval",
-        "Get one MCP action approval.",
-        object_schema({"approval_id": {"type": "string"}}, required=["approval_id"]),
-        annotations=READ,
-    )
-    def get_approval(args: dict[str, Any]) -> dict[str, Any]:
-        approval = mcp_pg.get_approval(str(args["approval_id"]))
-        return {"approval": approval, "found": bool(approval)}
-
-    @registry.register(
-        "pve_autopilot.reject_action",
-        "Reject a pending MCP action approval.",
-        object_schema(
-            {"approval_id": {"type": "string"}, "reason": {"type": "string"}},
-            required=["approval_id"],
-        ),
-        annotations=MUTATE,
-    )
-    def reject_action(args: dict[str, Any]) -> dict[str, Any]:
-        approval = mcp_pg.reject_approval(
-            str(args["approval_id"]),
-            reason=str(args.get("reason") or ""),
-        )
-        return {"ok": bool(approval), "approval": approval}
-
-    @registry.register(
-        "pve_autopilot.approve_action",
-        "Approve and execute a pending MCP action approval when an executor is registered.",
-        object_schema({"approval_id": {"type": "string"}}, required=["approval_id"]),
-        annotations=MUTATE,
-    )
-    def approve_action(args: dict[str, Any]) -> dict[str, Any]:
-        approval = mcp_pg.approve_approval(str(args["approval_id"]), executors={})
-        return {"ok": bool(approval), "approval": approval}
-
     @registry.register("pve_autopilot.refresh_vms", "Refresh VM cache.", annotations=MUTATE)
     async def refresh_vms(args: dict[str, Any]) -> dict[str, Any]:
         from web import app as web_app
@@ -257,6 +188,7 @@ def register(registry: ToolRegistry) -> None:
         "delete_cloud_device",
         "delete_sequence",
         "overwrite_sequence",
+        "approve_action",
     ):
         registry.register(
             f"pve_autopilot.{name}",

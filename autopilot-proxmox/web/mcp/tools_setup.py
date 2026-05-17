@@ -41,30 +41,6 @@ def register(registry: ToolRegistry) -> None:
 
         return web_app._setup_readiness()["build_host"]
 
-    @registry.register("setup.list_build_host_workloads", "List build-host agent workload work items.", annotations=READ)
-    def list_build_host_workloads(args: dict[str, Any]) -> dict[str, Any]:
-        from web import agent_telemetry_pg
-        from web import app as web_app
-        from web import db_pg
-
-        build_host = web_app._setup_readiness()["build_host"]
-        agent_id = build_host.get("expected_agent_id")
-        if not agent_id:
-            return {"build_host": build_host, "work_items": []}
-        with db_pg.connection(web_app._database_url()) as conn:
-            agent_telemetry_pg.init(conn)
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM agent_work_items
-                WHERE agent_id = %s
-                ORDER BY created_at DESC, id DESC
-                LIMIT %s
-                """,
-                (agent_id, int(args.get("limit") or 100)),
-            ).fetchall()
-        return {"build_host": build_host, "work_items": [dict(row) for row in rows]}
-
     @registry.register("setup.list_artifacts", "List first-run setup artifacts.", annotations=READ)
     def list_artifacts(args: dict[str, Any]) -> dict[str, Any]:
         from web import setup_artifacts

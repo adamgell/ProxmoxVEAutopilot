@@ -7,7 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from . import mcp_pg
-from .registry import ToolRegistry, normalize_exception, redact, tool_text_result
+from .registry import ToolRegistry, normalize_exception, tool_text_result
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -88,7 +88,7 @@ async def mcp(
                 raise ValueError("tools/call arguments must be an object")
             structured = await registry.call(name, arguments)
             result = tool_text_result(structured)
-            mcp_pg.audit_call(tool_name=name, arguments=redact(arguments), result=redact(structured))
+            mcp_pg.audit_call(tool_name=name, arguments=arguments, result=structured)
         else:
             return JSONResponse(
                 {
@@ -100,7 +100,7 @@ async def mcp(
         return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": result})
     except KeyError as exc:
         name = str(exc)
-        mcp_pg.audit_call(tool_name=name, arguments=redact(params), error="unknown tool")
+        mcp_pg.audit_call(tool_name=name, arguments=params, error="unknown tool")
         return JSONResponse(
             {
                 "jsonrpc": "2.0",
@@ -111,7 +111,7 @@ async def mcp(
     except Exception as exc:
         tool_name = str(params.get("name") or "") if isinstance(params, dict) else None
         error_payload = normalize_exception(exc)
-        mcp_pg.audit_call(tool_name=tool_name, arguments=redact(params), result=error_payload, error=str(exc))
+        mcp_pg.audit_call(tool_name=tool_name, arguments=params, result=error_payload, error=str(exc))
         return JSONResponse(
             {
                 "jsonrpc": "2.0",

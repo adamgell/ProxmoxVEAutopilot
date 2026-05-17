@@ -1,0 +1,691 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, empty_state %}
+{% block title %}OSDeploy Server - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("OSDeploy Server", "Advanced Windows Server deployment cockpit for OSDeploy v2 artifacts, cache, preflight, and run evidence.") }}
+
+<style>
+  .osdeploy-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px; }
+  .osdeploy-tabs a, .osdeploy-action { border:1px solid var(--line); border-radius:6px; padding:7px 10px; background:var(--panel); color:var(--ink); }
+  .osdeploy-tabs a[aria-current="page"], .osdeploy-action { border-color:var(--ms-blue-dark); color:var(--ms-blue-dark); font-weight:700; }
+  .osdeploy-panel { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
+  .osdeploy-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:14px; }
+  .osdeploy-metric { border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); }
+  .osdeploy-label { color:var(--ink-muted); text-transform:uppercase; font-size:11px; font-weight:700; }
+  .osdeploy-value { font-size:20px; font-weight:800; }
+  .osdeploy-table-wrap { overflow:auto; }
+  .osdeploy-table { width:100%; border-collapse:collapse; min-width:920px; }
+  .osdeploy-table th, .osdeploy-table td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top; }
+  .osdeploy-badge { display:inline-block; border-radius:999px; padding:2px 8px; font-weight:700; background:var(--neutral-bg); color:var(--neutral-fg); }
+  .osdeploy-badge.ready { background:var(--ok-bg); color:var(--ok-fg); }
+  .osdeploy-badge.warn { background:var(--warn-bg); color:var(--warn-fg); }
+  .osdeploy-badge.block { background:var(--bad-bg); color:var(--bad-fg); }
+  .osdeploy-mini { color:var(--ink-muted); font-size:12px; }
+  .osdeploy-history-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  .osdeploy-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .osdeploy-public-key { width:min(760px, 100%); min-height:42px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+</style>
+
+{% set view = osdeploy_view or 'overview' %}
+<nav class="osdeploy-tabs" aria-label="OSDeploy pages">
+  <a href="/osdeploy" {% if view == 'overview' %}aria-current="page"{% endif %}>Overview</a>
+  <a href="/osdeploy/builder" {% if view == 'builder' %}aria-current="page"{% endif %}>Builder</a>
+  <a href="/osdeploy/cache" {% if view == 'cache' %}aria-current="page"{% endif %}>Cache</a>
+  <a href="/osdeploy/artifacts" {% if view == 'artifacts' %}aria-current="page"{% endif %}>Artifacts</a>
+</nav>
+<div id="osdeployActionStatus" class="osdeploy-mini" role="status" aria-live="polite"></div>
+
+{% if view == 'overview' %}
+<section class="osdeploy-grid" aria-label="OSDeploy status metrics">
+  <div class="osdeploy-metric"><div class="osdeploy-label">OSDeploy Pin</div><div class="osdeploy-value">{{ catalog.defaults.osdeploy_module_version }}</div><div class="osdeploy-mini">image factory pinned</div></div>
+  <div class="osdeploy-metric"><div class="osdeploy-label">Ready Artifacts</div><div class="osdeploy-value">{{ ready_artifacts | length }}</div><div class="osdeploy-mini">hashes plus Proxmox volid</div></div>
+  <div class="osdeploy-metric"><div class="osdeploy-label">Minimum RAM</div><div class="osdeploy-value">{{ catalog.defaults.minimum_vm_memory_mb }} MB</div><div class="osdeploy-mini">{{ catalog.defaults.vm_memory_mb }} MB default</div></div>
+  <div class="osdeploy-metric"><div class="osdeploy-label">Active Runs</div><div class="osdeploy-value">{{ active_runs | length }}</div><div class="osdeploy-mini">waiting on PE or heartbeat</div></div>
+</section>
+
+<section class="osdeploy-panel" id="osdeploy-runs">
+  <div class="osdeploy-history-head">
+    <div>
+      <h2>OSDeploy Run History</h2>
+      <div class="osdeploy-mini">Active Server deployments stay visible first. Archive hides evidence from default history without deleting it.</div>
+    </div>
+    <div class="osdeploy-actions">
+      <a class="osdeploy-action" href="/osdeploy#osdeploy-runs">Default history</a>
+      <a class="osdeploy-action" href="/osdeploy?archived=1#osdeploy-runs">Show archived</a>
+      <button type="button" class="osdeploy-action" data-osdeploy-bulk-archive="archive-stale-failed">Archive stale failed</button>
+      <button type="button" class="osdeploy-action" data-osdeploy-bulk-archive="archive-completed-old">Hide completed old</button>
+    </div>
+  </div>
+  {% if runs %}
+  <div class="osdeploy-table-wrap">
+    <table class="osdeploy-table">
+      <thead><tr><th>State</th><th>Requested name</th><th>VMID</th><th>Server role</th><th>OS</th><th>Created</th><th>Heartbeat</th><th>Job link</th><th>Visibility</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for run in runs %}
+        <tr>
+          <td><span class="osdeploy-badge {{ 'ready' if run.state == 'complete' else 'warn' }}">{{ run.state }}</span></td>
+          <td><a href="/osdeploy/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><br><span class="osdeploy-mini">{{ run.expected_computer_name }}</span></td>
+          <td>{{ run.vmid or '-' }}</td>
+          <td>{{ run.server_role | replace('_', ' ') }}</td>
+          <td>{{ run.os_version }} {{ run.os_edition }}</td>
+          <td>{{ run.created_at }}</td>
+          <td>{{ run.first_heartbeat_at or '-' }}</td>
+          <td><a href="/osdeploy/runs/{{ run.run_id }}">detail</a></td>
+          <td>{% if run.archived %}<span class="osdeploy-badge warn">archived</span>{% else %}<span class="osdeploy-mini">visible</span>{% endif %}</td>
+          <td>{% if run.archived %}<button type="button" class="osdeploy-action" data-osdeploy-unarchive="{{ run.run_id }}">Restore</button>{% else %}<button type="button" class="osdeploy-action" data-osdeploy-archive="{{ run.run_id }}">Archive</button>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state("No OSDeploy runs yet.", hint="Launch is available after a ready Server artifact passes preflight.") }}
+  {% endif %}
+</section>
+{% endif %}
+
+{% if view == 'builder' %}
+<section class="osdeploy-panel" id="osdeploy-builder">
+  <div class="osdeploy-history-head">
+    <div>
+      <h2>Preflight</h2>
+      <div class="osdeploy-mini">Run artifact, cache, Proxmox, sizing, and Server role checks before launch.</div>
+    </div>
+    <button type="button" id="runOsdeployPreflightBtn" class="osdeploy-action">Run Preflight</button>
+  </div>
+  <form id="osdeployRunForm" class="osdeploy-grid">
+    <label>
+      <span class="osdeploy-label">Artifact</span>
+      <select id="osdeploy_artifact_id" name="artifact_id" required {% if not ready_artifacts %}disabled{% endif %}>
+        {% for artifact in ready_artifacts %}
+        <option value="{{ artifact.id }}">{{ artifact.os_version }} {{ artifact.os_edition }} / {{ artifact.build_sha }} / {{ artifact.proxmox_volid }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="osdeploy-label">Requested VM name</span>
+      <input id="osdeploy_vm_name" name="vm_name" value="OSDEPLOY-SRV-001" required>
+    </label>
+    <label>
+      <span class="osdeploy-label">Optional VMID</span>
+      <input id="osdeploy_vmid" name="vmid" type="number" min="1" placeholder="auto">
+    </label>
+    <label>
+      <span class="osdeploy-label">Server role</span>
+      <select id="osdeploy_server_role" name="server_role">
+        {% for role in catalog.server_roles %}
+        <option value="{{ role }}" {% if role == 'base' %}selected{% endif %}>{{ role | replace('_', ' ') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="osdeploy-label">Node</span>
+      <select id="osdeploy_node" name="node"></select>
+    </label>
+    <label>
+      <span class="osdeploy-label">ISO storage</span>
+      <select id="osdeploy_iso_storage" name="iso_storage"></select>
+    </label>
+    <label>
+      <span class="osdeploy-label">VM disk storage</span>
+      <select id="osdeploy_storage" name="storage"></select>
+    </label>
+    <label>
+      <span class="osdeploy-label">Network bridge</span>
+      <select id="osdeploy_network_bridge" name="network_bridge"></select>
+    </label>
+    <label>
+      <span class="osdeploy-label">Version</span>
+      <select id="osdeploy_os_version" name="os_version">
+        {% for value in catalog.os_versions %}
+        <option value="{{ value }}" {% if value == catalog.defaults.os_version %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="osdeploy-label">Edition</span>
+      <select id="osdeploy_os_edition" name="os_edition">
+        {% for value in catalog.os_editions %}
+        <option value="{{ value }}" {% if value == catalog.defaults.os_edition %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="osdeploy-label">Language</span>
+      <select id="osdeploy_os_language" name="os_language">
+        {% for value in catalog.os_languages %}
+        <option value="{{ value }}" {% if value == catalog.defaults.os_language %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="osdeploy-label">vCPU</span>
+      <input id="osdeploy_vm_cores" name="vm_cores" type="number" min="1" value="{{ catalog.defaults.vm_cores }}">
+    </label>
+    <label>
+      <span class="osdeploy-label">Memory MB</span>
+      <input id="osdeploy_vm_memory_mb" name="vm_memory_mb" type="number" min="{{ catalog.defaults.minimum_vm_memory_mb }}" step="512" value="{{ catalog.defaults.vm_memory_mb }}">
+    </label>
+    <label>
+      <span class="osdeploy-label">Disk GB</span>
+      <input id="osdeploy_vm_disk_size_gb" name="vm_disk_size_gb" type="number" min="{{ catalog.defaults.minimum_vm_disk_size_gb }}" value="{{ catalog.defaults.vm_disk_size_gb }}">
+    </label>
+    <label>
+      <span class="osdeploy-label">Firmware</span>
+      <span class="osdeploy-mini"><input type="checkbox" name="secure_boot"> Secure Boot</span>
+    </label>
+  </form>
+  <div class="osdeploy-grid">
+    <div>
+      <b>Blocking Checks</b>
+      <ul id="osdeployBlockingChecks" class="osdeploy-mini"></ul>
+    </div>
+    <div>
+      <b>Warnings</b>
+      <ul id="osdeployWarningChecks" class="osdeploy-mini"></ul>
+    </div>
+    <div>
+      <b>Review &amp; Launch</b>
+      <dl class="osdeploy-mini">
+        <dt>Artifact</dt><dd id="reviewOsdeployArtifact">not selected</dd>
+        <dt>Computer name</dt><dd id="reviewOsdeployComputerName">-</dd>
+        <dt>OS</dt><dd id="reviewOsdeployOs">-</dd>
+        <dt>VM sizing</dt><dd id="reviewOsdeploySizing">-</dd>
+        <dt>Blocking count</dt><dd id="reviewOsdeployBlocking">-</dd>
+      </dl>
+      <div id="osdeployPreflightStatus" class="osdeploy-mini">Waiting for input.</div>
+      <div id="osdeployLaunchError" class="osdeploy-badge block" style="display:none;"></div>
+      <button type="button" id="launchOsdeployBtn" class="osdeploy-action" disabled>Launch OSDeploy VM</button>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if view == 'cache' %}
+<section class="osdeploy-panel" id="osdeploy-cache">
+  {% set cache = osdeploy_cache or {} %}
+  {% set summary = cache.summary or {} %}
+  <div class="osdeploy-history-head">
+    <div>
+      <h2>OSDeploy Cache</h2>
+      <div class="osdeploy-mini">Warm Windows Server images and update content before Server deployments consume them.</div>
+    </div>
+    <div class="osdeploy-actions">
+      <button type="button" class="osdeploy-action" data-osdeploy-cache-action="refresh">Refresh catalog</button>
+      <span class="osdeploy-mini">/api/osdeploy/v1/cache/catalog/refresh</span>
+    </div>
+  </div>
+  <div class="osdeploy-grid">
+    <div class="osdeploy-metric"><div class="osdeploy-label">Ready</div><div class="osdeploy-value">{{ summary.ready or 0 }}/{{ summary.total or 0 }}</div></div>
+    <div class="osdeploy-metric"><div class="osdeploy-label">Warming</div><div class="osdeploy-value">{{ summary.warming or 0 }}</div></div>
+    <div class="osdeploy-metric"><div class="osdeploy-label">Failed</div><div class="osdeploy-value">{{ summary.failed or 0 }}</div></div>
+  </div>
+  {% if cache.entries %}
+  <div class="osdeploy-table-wrap">
+    <table class="osdeploy-table">
+      <thead><tr><th>Status</th><th>Type</th><th>Windows</th><th>Selection</th><th>File</th><th>Size/hash</th><th>Last verified/served</th><th>Error</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for entry in cache.entries %}
+        <tr data-osdeploy-cache-entry="{{ entry.id }}">
+          <td><span class="osdeploy-badge {{ 'ready' if entry.status == 'ready' else ('block' if entry.status == 'failed' else 'warn') }}">{{ entry.status }}</span></td>
+          <td>{{ entry.entry_type | replace('_', ' ') }}</td>
+          <td>{{ entry.windows_version }}<br><span class="osdeploy-mini">{{ entry.architecture }}</span></td>
+          <td>{{ entry.edition or 'all' }} / {{ entry.language or 'neutral' }}</td>
+          <td><code>{{ entry.file_name }}</code></td>
+          <td>{{ entry.size_bytes or entry.expected_size_bytes or '-' }}<br><code>{{ entry.sha256 or entry.expected_sha256 or '-' }}</code></td>
+          <td>{{ entry.verified_at or '-' }}<br><span class="osdeploy-mini">{{ entry.last_served_at or 'not served' }}</span></td>
+          <td><span class="osdeploy-mini">{{ entry.error or '-' }}</span></td>
+          <td>
+            <button type="button" class="osdeploy-action" data-osdeploy-cache-warm="{{ entry.id }}">Warm</button>
+            <button type="button" class="osdeploy-action" data-osdeploy-cache-verify="{{ entry.id }}">Verify</button>
+            {% if entry.status == 'ready' %}
+            <a class="osdeploy-action" data-osdeploy-cache-download="{{ entry.id }}" href="/api/osdeploy/v1/cache/{{ entry.id }}/download/{{ entry.file_name }}">Download</a>
+            {% endif %}
+            <button type="button" class="osdeploy-action" data-osdeploy-cache-delete="{{ entry.id }}">Delete</button>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state("No OSDeploy cache entries yet.", hint="Refresh the catalog to discover Windows Server images and update content.") }}
+  {% endif %}
+</section>
+{% endif %}
+
+{% if view == 'artifacts' %}
+<section class="osdeploy-panel" id="osdeploy-artifacts">
+  <div class="osdeploy-history-head">
+    <h2>Artifacts</h2>
+    <form id="osdeployBuildForm" class="osdeploy-actions" data-endpoint="/api/osdeploy/v1/artifacts/build" data-preflight-endpoint="/api/osdeploy/v1/artifacts/build/preflight">
+      <select name="build_mode" aria-label="Build mode">
+        <option value="auto" selected>Auto</option>
+        <option value="build_host_agent">Build-host agent</option>
+        <option value="ssh">Direct SSH</option>
+      </select>
+      <input name="remote" value="{{ osdeploy_build_defaults.remote }}" aria-label="Remote host">
+      <input name="remote_root" value="{{ osdeploy_build_defaults.remote_root }}" aria-label="Remote root">
+      <input name="build_host_agent_id" value="" placeholder="Build-host agent ID" aria-label="Build-host agent ID">
+      <input name="architecture" value="amd64" readonly aria-label="Architecture">
+      <input name="source_media_path" value="" placeholder="Source media path" aria-label="Source media path">
+      <input name="image_name" value="Windows Server 2022 Datacenter (Desktop Experience)" aria-label="Image name">
+      <input name="image_index" value="4" inputmode="numeric" aria-label="Image index">
+      <input name="os_version" value="Windows Server 2022" aria-label="OS version">
+      <select name="os_edition" aria-label="OS edition">
+        <option value="Datacenter" selected>Datacenter</option>
+        <option value="Standard">Standard</option>
+      </select>
+      <input name="os_language" value="en-us" aria-label="OS language">
+      <span class="osdeploy-mini" data-osdeploy-build-key-status>
+        SSH key: <code>{{ osdeploy_build_defaults.ssh_key_path }}</code>
+        {% if osdeploy_build_defaults.ssh_key_exists %}ready{% else %}missing; run <code>scripts/osdeploy-build-host-key.sh</code>{% endif %}
+      </span>
+      {% if osdeploy_build_defaults.ssh_public_key %}
+      <textarea readonly aria-label="OSDeploy build host public key" class="osdeploy-public-key">{{ osdeploy_build_defaults.ssh_public_key }}</textarea>
+      {% endif %}
+      <span class="osdeploy-mini">Build preflight checks SSH key, build host reachability, and tooling. Configure defaults in <a href="/settings">OSDeploy Build Host</a>.</span>
+      <button type="button" id="repairOsdeployBuildHostBtn" class="osdeploy-action" data-endpoint="/api/osdeploy/v1/build-host/agents/{agent_id}/repair">Repair/Upgrade Agent</button>
+      <button type="button" id="activateOsdeployBuildHostBtn" class="osdeploy-action" data-endpoint="/api/osdeploy/v1/build-host/agents/{agent_id}/activate">Activate Build Host</button>
+      <button type="submit" class="osdeploy-action">Build Artifact</button>
+      <span id="osdeployBuildStatus" class="osdeploy-mini" role="status" aria-live="polite"></span>
+    </form>
+  </div>
+  {% if artifacts %}
+  <div class="osdeploy-table-wrap">
+    <table class="osdeploy-table">
+      <thead><tr><th>Status</th><th>Architecture</th><th>OSDeploy</th><th>OSDBuilder</th><th>ADK</th><th>Build SHA</th><th>Source media</th><th>Image</th><th>ISO path</th><th>WIM path</th><th>Manifest</th><th>Proxmox volid</th><th>Job/log</th><th>Publish</th></tr></thead>
+      <tbody>
+      {% for artifact in artifacts %}
+        <tr data-artifact-row="{{ artifact.id }}">
+          <td><span class="osdeploy-badge {{ 'ready' if artifact.ready else 'block' }}">{{ artifact.readiness | replace('_', ' ') }}</span></td>
+          <td><code>{{ artifact.architecture }}</code></td>
+          <td><code>{{ artifact.osdeploy_module_version }}</code></td>
+          <td><code>{{ artifact.osdbuilder_module_version }}</code></td>
+          <td><code>{{ artifact.adk_version }}</code></td>
+          <td><code>{{ artifact.build_sha }}</code></td>
+          <td>{{ artifact.source_media }}</td>
+          <td>{{ artifact.image_name }}<br><span class="osdeploy-mini">index {{ artifact.image_index }}</span></td>
+          <td><code>{{ artifact.iso_path }}</code></td>
+          <td><code>{{ artifact.wim_path }}</code></td>
+          <td><code>{{ artifact.manifest_path }}</code></td>
+          <td><code>{{ artifact.proxmox_volid or 'not uploaded' }}</code></td>
+          <td>
+            {% if artifact.build_job_url %}<div>Build <a href="{{ artifact.build_job_url }}">job</a> <a href="{{ artifact.build_log_url }}">log</a></div>{% endif %}
+            {% if artifact.publish_job_url %}<div>Publish <a href="{{ artifact.publish_job_url }}">job</a> <a href="{{ artifact.publish_log_url }}">log</a></div>{% endif %}
+            {% if not artifact.build_job_url and not artifact.publish_job_url %}<span class="osdeploy-mini">not recorded</span>{% endif %}
+          </td>
+          <td><button type="button" class="osdeploy-action" data-osdeploy-publish="{{ artifact.id }}">Publish</button></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state("No OSDeploy artifacts yet.", hint="Build and publish a Server artifact before launch.") }}
+  {% endif %}
+</section>
+{% endif %}
+<script>
+  const osdeployState = {
+    artifacts: [
+      {% for artifact in ready_artifacts %}
+      {
+        id: {{ artifact.id | tojson }},
+        build_sha: {{ artifact.build_sha | tojson }},
+        proxmox_volid: {{ artifact.proxmox_volid | tojson }},
+        os_version: {{ artifact.os_version | tojson }},
+        os_edition: {{ artifact.os_edition | tojson }},
+        readiness: {{ artifact.readiness | tojson }}
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ],
+    options: {{ proxmox_options | tojson | safe }},
+    preflight: null,
+    timer: null
+  };
+
+  function initOSDeploy() {
+    const byId = (id) => document.getElementById(id);
+    const actionStatus = byId("osdeployActionStatus");
+    const setStatus = (message) => {
+      if (actionStatus) actionStatus.textContent = message || "";
+    };
+    const buildFormPayload = (form) => {
+      const data = new FormData(form);
+      const payload = {};
+      data.forEach((value, key) => {
+        if (value !== "") payload[key] = value;
+      });
+      if (payload.image_index !== undefined) payload.image_index = Number(payload.image_index);
+      return payload;
+    };
+    const parseJson = async (response) => response.json().catch(() => ({}));
+
+    async function postJson(endpoint, payload = {}) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store"
+      });
+      const body = await parseJson(response);
+      if (!response.ok) {
+        const detail = body.detail || body.message || `HTTP ${response.status}`;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return body;
+    }
+
+    function fillSelect(id, values, selected) {
+      const select = byId(id);
+      if (!select) return;
+      select.innerHTML = "";
+      (values || []).forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        if (value === selected) option.selected = true;
+        select.appendChild(option);
+      });
+    }
+
+    function selectedOsdeployArtifact() {
+      const id = byId("osdeploy_artifact_id") ? byId("osdeploy_artifact_id").value : "";
+      return osdeployState.artifacts.find((artifact) => artifact.id === id) || null;
+    }
+
+    function osdeployFormPayload() {
+      const form = byId("osdeployRunForm");
+      if (!form) return {};
+      const data = {};
+      new FormData(form).forEach((value, key) => {
+        if (value !== "") data[key] = value;
+      });
+      ["vm_cores", "vm_memory_mb", "vm_disk_size_gb", "vmid"].forEach((key) => {
+        if (data[key] !== undefined) data[key] = Number(data[key]);
+        if (data[key] === "") delete data[key];
+      });
+      data.secure_boot = !!form.querySelector('[name="secure_boot"]')?.checked;
+      data.architecture = "amd64";
+      data.outbound_policy = {};
+      return data;
+    }
+
+    function renderOsdeployChecks(target, checks, emptyText) {
+      if (!target) return;
+      target.innerHTML = "";
+      if (!checks || checks.length === 0) {
+        const item = document.createElement("li");
+        item.textContent = emptyText;
+        target.appendChild(item);
+        return;
+      }
+      checks.forEach((check) => {
+        const item = document.createElement("li");
+        item.textContent = `${check.id}: ${check.message}`;
+        target.appendChild(item);
+      });
+    }
+
+    function renderOsdeployReview() {
+      if (!byId("reviewOsdeployArtifact")) return;
+      const payload = osdeployFormPayload();
+      const artifact = selectedOsdeployArtifact();
+      const preflight = osdeployState.preflight;
+      byId("reviewOsdeployArtifact").textContent = artifact ? `${artifact.build_sha} / ${artifact.proxmox_volid}` : "not selected";
+      byId("reviewOsdeployComputerName").textContent = preflight?.target?.computer_name || "-";
+      byId("reviewOsdeployOs").textContent = `${payload.os_version || "-"} ${payload.os_edition || ""} ${payload.os_language || ""}`.trim();
+      byId("reviewOsdeploySizing").textContent = `${payload.vm_cores || 0} vCPU, ${payload.vm_memory_mb || 0} MB, ${payload.vm_disk_size_gb || 0} GB`;
+      byId("reviewOsdeployBlocking").textContent = preflight ? String(preflight.blocking_checks.length) : "-";
+      const launch = byId("launchOsdeployBtn");
+      if (launch) launch.disabled = !preflight || !preflight.launch_allowed;
+    }
+
+    async function runOsdeployPreflight() {
+      const status = byId("osdeployPreflightStatus");
+      const error = byId("osdeployLaunchError");
+      if (status) status.textContent = "checking";
+      if (error) {
+        error.style.display = "none";
+        error.textContent = "";
+      }
+      try {
+        const body = await postJson("/api/osdeploy/v1/preflight", osdeployFormPayload());
+        osdeployState.preflight = body;
+        if (status) status.textContent = body.launch_allowed ? "Launch allowed" : "Launch blocked";
+        renderOsdeployChecks(byId("osdeployBlockingChecks"), body.blocking_checks, "No blocking checks.");
+        renderOsdeployChecks(byId("osdeployWarningChecks"), body.warnings, "No warnings.");
+      } catch (err) {
+        osdeployState.preflight = null;
+        if (status) status.textContent = "preflight failed";
+        if (error) {
+          error.style.display = "inline-block";
+          error.textContent = err.message || String(err);
+        }
+      }
+      renderOsdeployReview();
+    }
+
+    function scheduleOsdeployPreflight() {
+      window.clearTimeout(osdeployState.timer);
+      osdeployState.timer = window.setTimeout(runOsdeployPreflight, 500);
+      renderOsdeployReview();
+    }
+
+    async function launchOsdeploy() {
+      const error = byId("osdeployLaunchError");
+      const launch = byId("launchOsdeployBtn");
+      if (error) {
+        error.style.display = "none";
+        error.textContent = "";
+      }
+      await runOsdeployPreflight();
+      if (!osdeployState.preflight?.launch_allowed) return;
+      if (launch) launch.disabled = true;
+      try {
+        const created = await postJson("/api/osdeploy/v1/runs", osdeployFormPayload());
+        const run = created.run;
+        await postJson(`/api/osdeploy/v1/runs/${run.run_id}/provision`, {});
+        window.location.assign(`/osdeploy/runs/${run.run_id}`);
+      } catch (err) {
+        if (error) {
+          error.style.display = "inline-block";
+          error.textContent = err.message || String(err);
+        }
+        renderOsdeployReview();
+      }
+    }
+
+    function initOsdeployBuilder() {
+      fillSelect("osdeploy_node", osdeployState.options.nodes, osdeployState.options.defaults.node);
+      fillSelect("osdeploy_iso_storage", osdeployState.options.storages.iso, osdeployState.options.defaults.iso_storage);
+      fillSelect("osdeploy_storage", osdeployState.options.storages.disk, osdeployState.options.defaults.disk_storage);
+      fillSelect("osdeploy_network_bridge", osdeployState.options.bridges, osdeployState.options.defaults.bridge);
+      const form = byId("osdeployRunForm");
+      if (form) {
+        form.addEventListener("input", scheduleOsdeployPreflight);
+        form.addEventListener("change", scheduleOsdeployPreflight);
+      }
+      if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
+      if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);
+      renderOsdeployReview();
+      if (form) scheduleOsdeployPreflight();
+    }
+
+    const form = byId("osdeployBuildForm");
+    if (form) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const status = byId("osdeployBuildStatus");
+        const submit = form.querySelector('button[type="submit"]');
+        const payload = buildFormPayload(form);
+        if (status) status.textContent = "preflighting";
+        if (submit) submit.disabled = true;
+        try {
+          const preflight = await postJson(form.dataset.preflightEndpoint, payload);
+          if (preflight.blocking_checks && preflight.blocking_checks.length) {
+            const names = preflight.blocking_checks.map((check) => check.id).join(", ");
+            throw new Error(`blocked: ${names}`);
+          }
+          if (status) status.textContent = "queueing";
+          const queued = await postJson(form.dataset.endpoint, payload);
+          if (status && queued.job_id) {
+            status.innerHTML = `job <a href="/jobs/${encodeURIComponent(queued.job_id)}">${queued.job_id}</a>`;
+          } else if (status && queued.work_item_id) {
+            status.textContent = `build-host work item ${queued.work_item_id}`;
+          } else if (status) {
+            status.textContent = "build queued";
+          }
+        } catch (error) {
+          if (status) status.textContent = `build failed: ${error.message || error}`;
+          if (submit) submit.disabled = false;
+        }
+      });
+      const activateBuildHost = byId("activateOsdeployBuildHostBtn");
+      const repairBuildHost = byId("repairOsdeployBuildHostBtn");
+      if (repairBuildHost) {
+        repairBuildHost.addEventListener("click", async () => {
+          const status = byId("osdeployBuildStatus");
+          const agentId = (form.elements.build_host_agent_id?.value || "").trim();
+          if (!agentId) {
+            if (status) status.textContent = "build-host agent ID required";
+            return;
+          }
+          repairBuildHost.disabled = true;
+          if (status) status.textContent = "repairing build-host agent";
+          try {
+            const endpoint = repairBuildHost.dataset.endpoint.replace("{agent_id}", encodeURIComponent(agentId));
+            const repaired = await postJson(endpoint, {
+              upgrade_agent: true,
+            });
+            if (status) status.textContent = `agent repair queued for VM ${repaired.vmid}`;
+          } catch (error) {
+            if (status) status.textContent = `repair failed: ${error.message || error}`;
+            repairBuildHost.disabled = false;
+          }
+        });
+      }
+      if (activateBuildHost) {
+        activateBuildHost.addEventListener("click", async () => {
+          const status = byId("osdeployBuildStatus");
+          const agentId = (form.elements.build_host_agent_id?.value || "").trim();
+          if (!agentId) {
+            if (status) status.textContent = "build-host agent ID required";
+            return;
+          }
+          activateBuildHost.disabled = true;
+          if (status) status.textContent = "queueing build-host activation";
+          try {
+            const endpoint = activateBuildHost.dataset.endpoint.replace("{agent_id}", encodeURIComponent(agentId));
+            const queued = await postJson(endpoint, {
+              confirm_build_host: true,
+              work_root: "C:\\BuildRoot\\ProxmoxVEAutopilot",
+            });
+            if (status) status.textContent = `activation work item ${queued.work_item_id}`;
+          } catch (error) {
+            if (status) status.textContent = `activation failed: ${error.message || error}`;
+            activateBuildHost.disabled = false;
+          }
+        });
+      }
+    }
+
+    document.querySelectorAll("[data-osdeploy-publish]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const artifactId = encodeURIComponent(button.dataset.osdeployPublish);
+        button.disabled = true;
+        setStatus("queueing publish");
+        try {
+          const body = await postJson(`/api/osdeploy/v1/artifacts/${artifactId}/publish`, {});
+          setStatus(`publish job ${body.job_id}`);
+          window.setTimeout(() => window.location.reload(), 1200);
+        } catch (error) {
+          setStatus(`publish failed: ${error.message || error}`);
+          button.disabled = false;
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-osdeploy-archive], [data-osdeploy-unarchive]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const runId = button.dataset.osdeployArchive || button.dataset.osdeployUnarchive;
+        const action = button.dataset.osdeployArchive ? "archive" : "unarchive";
+        button.disabled = true;
+        setStatus(`${action} queued`);
+        try {
+          await postJson(`/api/osdeploy/v1/runs/${encodeURIComponent(runId)}/${action}`, {});
+          window.location.reload();
+        } catch (error) {
+          setStatus(`run ${action} failed: ${error.message || error}`);
+          button.disabled = false;
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-osdeploy-bulk-archive]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const action = button.dataset.osdeployBulkArchive;
+        if (!action) return;
+        button.disabled = true;
+        setStatus("archive action queued");
+        try {
+          const body = await postJson(`/api/osdeploy/v1/runs/${action}`, {});
+          setStatus(`archived ${body.archived_count || 0}`);
+          window.setTimeout(() => window.location.reload(), 900);
+        } catch (error) {
+          setStatus(`archive action failed: ${error.message || error}`);
+          button.disabled = false;
+        }
+      });
+    });
+
+    async function runCacheAction(button, endpoint, busyText) {
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = busyText;
+      setStatus(busyText.toLowerCase());
+      try {
+        const body = await postJson(endpoint, {});
+        setStatus(body.job_id ? `cache job ${body.job_id}` : "cache action queued");
+        window.setTimeout(() => window.location.reload(), 1200);
+      } catch (error) {
+        setStatus(`cache action failed: ${error.message || error}`);
+        button.disabled = false;
+        button.textContent = original;
+      }
+    }
+
+    document.querySelectorAll("[data-osdeploy-cache-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.osdeployCacheAction === "refresh") {
+          runCacheAction(button, "/api/osdeploy/v1/cache/catalog/refresh", "Refreshing");
+        }
+      });
+    });
+    document.querySelectorAll("[data-osdeploy-cache-warm]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.osdeployCacheWarm);
+        runCacheAction(button, `/api/osdeploy/v1/cache/${id}/warm`, "Warming");
+      });
+    });
+    document.querySelectorAll("[data-osdeploy-cache-verify]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.osdeployCacheVerify);
+        runCacheAction(button, `/api/osdeploy/v1/cache/${id}/verify`, "Verifying");
+      });
+    });
+    document.querySelectorAll("[data-osdeploy-cache-delete]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.osdeployCacheDelete);
+        runCacheAction(button, `/api/osdeploy/v1/cache/${id}/delete`, "Deleting");
+      });
+    });
+    initOsdeployBuilder();
+  }
+  initOSDeploy();
+</script>
+{% endblock %}

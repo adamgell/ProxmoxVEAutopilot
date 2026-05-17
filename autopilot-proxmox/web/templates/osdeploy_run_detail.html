@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, empty_state %}
+{% block title %}OSDeploy Run - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("OSDeploy Run", "Server deployment evidence, v2 task plan, jobs, readiness, and event timeline.") }}
+
+<style>
+  .osdeploy-detail-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:14px; }
+  .osdeploy-detail-panel { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
+  .osdeploy-kv { display:grid; grid-template-columns:150px 1fr; gap:6px 10px; }
+  .osdeploy-kv dt { color:var(--ink-muted); font-weight:700; }
+  .osdeploy-table { width:100%; border-collapse:collapse; }
+  .osdeploy-table th, .osdeploy-table td { border-bottom:1px solid var(--line); padding:8px; text-align:left; }
+  .osdeploy-mini { color:var(--ink-muted); font-size:12px; }
+</style>
+
+<section class="osdeploy-detail-grid">
+  <div class="osdeploy-detail-panel">
+    <h2>Server Readiness</h2>
+    <dl class="osdeploy-kv">
+      <dt>State</dt><dd data-osdeploy-field="readiness_state">{{ readiness.state }}</dd>
+      <dt>QGA</dt><dd>{{ readiness.qga_status or 'pending' }}</dd>
+      <dt>Agent</dt><dd>{{ readiness.agent_status or 'pending' }}</dd>
+      <dt>Heartbeat</dt><dd data-osdeploy-field="heartbeat">{{ readiness.heartbeat_at or (heartbeat.received_at if heartbeat else '-') }}</dd>
+      <dt>Job link</dt><dd data-osdeploy-field="job_link"><a href="/jobs">jobs</a></dd>
+    </dl>
+  </div>
+  <div class="osdeploy-detail-panel">
+    <h2>Run</h2>
+    <dl class="osdeploy-kv">
+      <dt>VM</dt><dd>{{ run.requested_vm_name }} / {{ run.expected_computer_name }}</dd>
+      <dt>Role</dt><dd>{{ run.server_role | replace('_', ' ') }}</dd>
+      <dt>OS</dt><dd>{{ run.os_version }} {{ run.os_edition }}</dd>
+      <dt>Artifact</dt><dd><code>{{ artifact.build_sha if artifact else run.artifact_id }}</code></dd>
+    </dl>
+  </div>
+</section>
+
+<section class="osdeploy-detail-panel">
+  <h2>OSDeploy v2 Plan</h2>
+  {% if v2_steps %}
+  <table class="osdeploy-table" data-osdeploy-v2-steps>
+    <thead><tr><th>Ordinal</th><th>Phase</th><th>Step</th><th>Kind</th><th>State</th><th>Attempt</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for step in v2_steps %}
+      <tr>
+        <td>{{ step.ordinal }}</td>
+        <td>{{ step.phase }}</td>
+        <td>{{ step.name }}</td>
+        <td><code>{{ step.kind }}</code></td>
+        <td>{{ step.state }}</td>
+        <td>{{ step.attempt }}</td>
+        <td><span class="osdeploy-mini">{{ step.last_error or '-' }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ empty_state("No v2 steps recorded.", hint="The OSDeploy run plan appears after launch.") }}
+  {% endif %}
+</section>
+
+<section class="osdeploy-detail-panel">
+  <h2>Events</h2>
+  {% if events %}
+  <table class="osdeploy-table">
+    <thead><tr><th>Time</th><th>Phase</th><th>Type</th><th>Message</th></tr></thead>
+    <tbody>
+    {% for event in events %}
+      <tr><td>{{ event.created_at }}</td><td>{{ event.phase }}</td><td><code>{{ event.event_type }}</code></td><td>{{ event.message or '-' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ empty_state("No OSDeploy events yet.", hint="Controller, PE, full-OS, and role events will appear here.") }}
+  {% endif %}
+</section>
+{% endblock %}

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -25,6 +26,24 @@ from web import service_health_pg as service_health
 from web.paths import JOBS_DIR as _JOBS_DIR, OUTPUT_DIR as _OUTPUT_DIR, REPO_ROOT
 
 _log = logging.getLogger("web.builder")
+
+_OSDEPLOY_VMID_PATTERNS = [
+    re.compile(r"Clone template to new VM\s+(\d+)", re.IGNORECASE),
+    re.compile(r"\bVMID[:=]\s*(\d+)\b", re.IGNORECASE),
+]
+_SECRET_REDACTIONS = [
+    (
+        re.compile(r"(Authorization:\s*Bearer\s+)[^\s\"']+", re.IGNORECASE),
+        r"\1[redacted]",
+    ),
+    (
+        re.compile(
+            r"((?:token|password|secret)[\"']?\s*[:=]\s*[\"']?)[^\"'\s,}]+",
+            re.IGNORECASE,
+        ),
+        r"\1[redacted]",
+    ),
+]
 
 
 def _worker_id(output_dir: Path | None = None) -> str:
@@ -68,6 +87,117 @@ def _version_sha() -> str:
     return "unknown"
 
 
+def _redact_log_text(text: str) -> str:
+    redacted = text.replace("\x00", "")
+    for pattern, replacement in _SECRET_REDACTIONS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
+
+
+def _read_log_tail(path: Path, *, max_bytes: int = 8192, max_chars: int = 4000) -> str:
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        _log.exception("failed to read job log tail from %s", path)
+        return ""
+    text = data[-max_bytes:].decode("utf-8", errors="replace").strip()
+    return _redact_log_text(text)[-max_chars:]
+
+
+def _extract_vmid_from_log(text: str) -> int | None:
+    matches: list[int] = []
+    for pattern in _OSDEPLOY_VMID_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            try:
+                matches.append(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
+    return matches[-1] if matches else None
+
+
+def _extract_failure_message(text: str, *, job_id: str, exit_code: int | None) -> str:
+    for line in reversed((text or "").splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if (
+            "fatal:" in lowered
+            or "failed!" in lowered
+            or "http error" in lowered
+            or '"msg"' in lowered
+        ):
+            return stripped[-1000:]
+    return f"OSDeploy provision job {job_id} failed with exit code {exit_code}"
+
+
+def _finalize_related_deployment(row: dict, *, exit_code: int | None, log_path: Path) -> bool:
+    if exit_code == 0 or row.get("job_type") != "provision_osdeploy":
+        return False
+    args = row.get("args") or {}
+    run_id = args.get("osdeploy_run_id")
+    if not run_id:
+        return False
+
+    log_tail = _read_log_tail(log_path)
+    vmid = _extract_vmid_from_log(log_tail)
+    message = _extract_failure_message(log_tail, job_id=row["id"], exit_code=exit_code)
+    try:
+        from web import db_pg, osdeploy_pg
+
+        with db_pg.connection() as conn:
+            run = osdeploy_pg.mark_failed_from_job(
+                conn,
+                run_id=run_id,
+                job_id=row["id"],
+                exit_code=exit_code,
+                message=message,
+                vmid=vmid,
+                log_tail=log_tail,
+            )
+        if run:
+            _log.warning(
+                "marked OSDeploy run %s failed from job %s (vmid=%s exit_code=%s)",
+                run_id,
+                row["id"],
+                vmid,
+                exit_code,
+            )
+            return True
+    except Exception:
+        _log.exception("failed to finalize related OSDeploy run for job %s", row["id"])
+    return False
+
+
+def reconcile_failed_related_deployments(
+    *,
+    jobs_dir: Path | str = _JOBS_DIR,
+    limit: int = 500,
+) -> int:
+    jobs_dir = Path(jobs_dir)
+    reconciled = 0
+    try:
+        rows = jobs_db.list_jobs(limit=limit)
+    except Exception:
+        _log.exception("failed to list jobs for related deployment reconciliation")
+        return 0
+    for row in rows:
+        if row.get("job_type") != "provision_osdeploy":
+            continue
+        if row.get("status") not in {"failed", "orphaned"}:
+            continue
+        log_path = jobs_dir / f"{row['id']}.log"
+        if _finalize_related_deployment(
+            row,
+            exit_code=row.get("exit_code") if row.get("exit_code") is not None else -1,
+            log_path=log_path,
+        ):
+            reconciled += 1
+    return reconciled
+
+
 def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
                  worker_id: str, stop_event: threading.Event,
                  heartbeat_seconds: float = 5.0) -> None:
@@ -95,6 +225,7 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
             _log.exception("failed to spawn subprocess for job %s", row["id"])
             try:
                 jobs_db.finalize_job(row["id"], exit_code=-1)
+                _finalize_related_deployment(row, exit_code=-1, log_path=log_path)
             except Exception:
                 _log.exception("finalize_job failed for %s", row["id"])
             return
@@ -143,6 +274,7 @@ def _run_one_job(row: dict, *, log_path: Path, db_path: Path,
                         "finalize_job for %s found row already terminal "
                         "(likely reaped mid-run)", row["id"],
                     )
+                _finalize_related_deployment(row, exit_code=exit_code, log_path=log_path)
             except Exception:
                 _log.exception("finalize_job failed for %s", row["id"])
             _log.info("job %s finished with exit_code=%s",
@@ -184,6 +316,9 @@ def run_builder(*, jobs_dir: Path | str = _JOBS_DIR,
         service_id=worker_id, service_type="builder",
         version_sha=version, detail="starting",
     )
+    reconciled = reconcile_failed_related_deployments(jobs_dir=jobs_dir)
+    if reconciled:
+        _log.warning("reconciled %s failed related deployment job(s)", reconciled)
 
     last_service_heartbeat = 0.0
     while not stop_event.is_set():

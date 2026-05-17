@@ -33,3 +33,18 @@ def test_cloudosd_playbook_polling_handles_missing_json_response():
     assert ".json.run.state" not in text
     assert ".json.run.osdcloud_finished_at" not in text
     assert "get('json', {}).get('run', {}).get('state', '')" in text
+
+
+def test_proxmox_clone_role_retries_automatic_vmid_collisions():
+    clone = ROOT / "roles" / "proxmox_vm_clone" / "tasks" / "clone_vm.yml"
+    attempt = ROOT / "roles" / "proxmox_vm_clone" / "tasks" / "clone_vm_attempt.yml"
+
+    clone_text = clone.read_text()
+    attempt_text = attempt.read_text()
+
+    assert "clone_vm_attempt.yml" in clone_text
+    assert "range(0, 20)" in clone_text
+    assert "_initial_auto_vmid" in clone_text
+    assert "config file already exists" in attempt_text
+    assert "Record successful automatic clone attempt" in attempt_text
+    assert attempt_text.count("_clone_result is not defined") >= 3

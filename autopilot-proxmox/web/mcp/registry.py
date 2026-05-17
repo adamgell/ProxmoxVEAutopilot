@@ -14,13 +14,8 @@ from fastapi import HTTPException
 
 JsonDict = dict[str, Any]
 ToolHandler = Callable[[JsonDict], Any]
-SECRET_KEY_RE = re.compile(
-    r"(password|passwd|secret|token|apikey|api_key|client_secret|private_key|credential|bearer)",
-    re.IGNORECASE,
-)
-SECRET_VALUE_RE = re.compile(
-    r"(?i)(authorization:\s*bearer\s+|token[\"'=:\s]+|password[\"'=:\s]+|secret[\"'=:\s]+)([^\\s\"']+)"
-)
+SECRET_KEY_RE = re.compile(r"(password|secret|token|authorization|api[_-]?key|private[_-]?key)", re.I)
+SECRET_VALUE_RE = re.compile(r"(?i)(bearer\s+|token=|password=|secret=)([^\\s&]+)")
 
 
 def jsonable(value: Any) -> Any:

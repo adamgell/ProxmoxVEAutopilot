@@ -119,8 +119,8 @@ def create_approval(
 ) -> dict[str, Any]:
     init()
     cm = _connection()
+    approval_id = str(uuid4())
     if cm is None:
-        approval_id = str(uuid4())
         return {
             "approval_id": approval_id,
             "tool_name": tool_name,
@@ -130,7 +130,6 @@ def create_approval(
             "status": "pending",
             "ephemeral": True,
         }
-    approval_id = str(uuid4())
     with cm as conn:
         row = conn.execute(
             """

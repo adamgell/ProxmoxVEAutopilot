@@ -97,40 +97,6 @@ def register(registry: ToolRegistry) -> None:
                 )
             }
 
-    @registry.register(
-        "autopilot_agent.get_work_item",
-        "Get one AutopilotAgent work item, including diagnostic result when complete.",
-        object_schema({"work_item_id": {"type": "string"}}, required=["work_item_id"]),
-        annotations=READ,
-    )
-    def get_work_item(args: dict[str, Any]) -> dict[str, Any]:
-        from web import agent_telemetry_pg
-
-        with _conn() as conn:
-            agent_telemetry_pg.init(conn)
-            item = agent_telemetry_pg.get_work_item(conn, str(args["work_item_id"]))
-            return {"work_item": item, "found": bool(item)}
-
-    @registry.register(
-        "autopilot_agent.get_diagnostic_result",
-        "Get a curated diagnostic work item result.",
-        object_schema({"work_item_id": {"type": "string"}}, required=["work_item_id"]),
-        annotations=READ,
-    )
-    def get_diagnostic_result(args: dict[str, Any]) -> dict[str, Any]:
-        from web import agent_telemetry_pg
-
-        with _conn() as conn:
-            agent_telemetry_pg.init(conn)
-            item = agent_telemetry_pg.get_work_item(conn, str(args["work_item_id"]))
-        return {
-            "work_item": item,
-            "found": bool(item),
-            "diagnostic": (item or {}).get("request_json", {}).get("diagnostic") if item else None,
-            "result": (item or {}).get("result_json") if item else None,
-            "status": (item or {}).get("status") if item else None,
-        }
-
     @registry.register("autopilot_agent.list_bootstrap_approvals", "List bootstrap approvals.", annotations=READ)
     def list_bootstrap_approvals(args: dict[str, Any]) -> dict[str, Any]:
         from web import agent_telemetry_pg

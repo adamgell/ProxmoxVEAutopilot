@@ -513,7 +513,7 @@ def test_cloudosd_provision_rejects_unsupported_enabled_sequence_step(
     )
 
     assert response.status_code == 400
-    assert "not CloudOSD-compatible" in response.json()["detail"]
+    assert "not OSDCloud-compatible" in response.json()["detail"]
     assert "run_script" in response.json()["detail"]
     assert [
         job for job in jobs_pg.list_jobs(limit=20)
@@ -1632,6 +1632,21 @@ def test_cloudosd_preflight_blocks_missing_agent_assets(
     _assert_blocking(body, "asset_autopilotagent_msi_missing")
 
 
+def test_cloudosd_agent_msi_resolves_from_host_repo_mount(tmp_path, monkeypatch):
+    from web import cloudosd_endpoints
+
+    host_repo = tmp_path / "host-repo"
+    msi_path = host_repo / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
+    msi_path.parent.mkdir(parents=True)
+    msi_path.write_bytes(b"fake-msi")
+    monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
+    monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
+    monkeypatch.setattr(cloudosd_endpoints, "_APP_ROOT", tmp_path / "app")
+    monkeypatch.setattr(cloudosd_endpoints, "_REPO_ROOT", tmp_path / "repo")
+
+    assert cloudosd_endpoints._asset_path("autopilotagent.msi") == msi_path
+
+
 def test_cloudosd_preflight_blocks_unavailable_proxmox_target(
     cloudosd_client,
     pg_conn,
@@ -1965,16 +1980,16 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
     body = response.text
     assert body.index('name="boot_mode"') < body.index('name="sequence_id"')
     assert (
-        '<option value="cloudosd" selected>CloudOSD (Windows desktop clients)</option>'
+        '<option value="cloudosd" selected>OSDCloud (Windows desktop clients)</option>'
         in body
     )
     assert '<option value="" selected data-cloudosd-default="1">' in body
-    assert "CloudOSD base deployment (no legacy sequence)" in body
+    assert "OSDCloud base deployment (no legacy sequence)" in body
     assert body.index('<option value="cloudosd" selected>') < body.index(
         '<option value="winpe">'
     )
     assert 'data-boot-section="cloudosd"' in body
-    assert "CloudOSD blank uses a plain generated serial" in body
+    assert "OSDCloud blank uses a plain generated serial" in body
     assert f'value="{artifact["id"]}"' in body
     for required in (
         'name="artifact_id"',
@@ -2064,7 +2079,7 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
     )
 
     assert response.status_code == 303, response.text
-    assert response.headers["location"].startswith("/cloudosd")
+    assert response.headers["location"].startswith("/osdcloud")
     jobs = [
         job for job in jobs_pg.list_jobs(limit=20)
         if job["job_type"] == "provision_cloudosd"
@@ -2309,7 +2324,7 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     page = cloudosd_client.get("/provision")
     assert page.status_code == 200, page.text
     body = page.text
-    assert "CloudOSD Batch Progress" in body
+    assert "OSDCloud Batch Progress" in body
     assert "VM created" in body
     assert "PE registered" in body
     assert "OSDCloud done" in body
@@ -2785,10 +2800,10 @@ def test_cloudosd_provision_endpoint_enqueues_dedicated_playbook(
 def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
 
-    response = cloudosd_client.get("/cloudosd")
+    response = cloudosd_client.get("/osdcloud/builder")
 
     assert response.status_code == 200
-    assert "CloudOSD" in response.text
+    assert "OSDCloud" in response.text
     assert artifact["iso_sha256"] in response.text
     assert "6144" in response.text
     assert "OSDCloud analytics blocked" in response.text
@@ -2803,13 +2818,11 @@ def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_con
     assert "Single-VM Deployment" in response.text
     assert "Review &amp; Launch" in response.text
     assert "Blocking Checks" in response.text
-    assert "CloudOSD Run History" in response.text
-    assert "Active Runs" in response.text
-    assert "Stale Failed Runs" in response.text
-    assert "Stale failures can be hidden without deleting evidence" in response.text
+    assert "Build a desktop run" in response.text
+    assert "Manage PE artifacts" in response.text
     assert "cloudosd-toggle-line" in response.text
     assert response.text.index("Single-VM Deployment") < response.text.index("OSDCloud Module Pin")
-    assert response.text.index("CloudOSD Run History") < response.text.index("<h2>Artifacts</h2>")
+    assert response.text.index("Build a desktop run") < response.text.index("Single-VM Deployment")
 
 
 def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(
@@ -2835,11 +2848,11 @@ def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(
         },
     ).status_code == 200
 
-    response = cloudosd_client.get(f"/cloudosd/runs/{run['run_id']}")
+    response = cloudosd_client.get(f"/osdcloud/runs/{run['run_id']}")
 
     assert response.status_code == 200
     body = response.text
-    assert "CloudOSD Run" in body
+    assert "OSDCloud Run" in body
     assert "Cloud OSD Lab 001" in body
     assert "CloudOSDLab001" in body
     assert "Heartbeat gate" in body
