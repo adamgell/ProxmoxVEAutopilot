@@ -177,3 +177,11 @@ This log records lab blockers that must be fixed in source, scripts, and tests. 
 - Root cause: The CloudOSD first-boot path installs AutopilotAgent before the OSD client heartbeat gate, but OSDeploy reused the same OSD client action behavior without adding its own persistent-agent install path.
 - Script fix: OSDeploy packages now include source-built AutopilotAgent MSI and postinstall payload metadata. The WinPE bridge writes those payloads plus the run-scoped agent bootstrap contract into `osd-config.json`. Generated OSDeploy v2 plans include a full-OS `install_autopilot_agent` step before `wait_agent_heartbeat`, and the OSD client installs the MSI, runs postinstall, and keeps `wait_agent_heartbeat` as an idempotent fallback.
 - Regression guard: OSD v2 endpoint tests assert OSDeploy packages include the agent payload contract and generated run plans order `install_autopilot_agent` before `wait_agent_heartbeat`. Pester tests assert the OSD client invokes the persistent-agent install path for both explicit install steps and OSDeploy heartbeat fallback.
+
+## Dev-lab reset missed generated batch VM names
+
+- Symptom: `reset-dev-lab` removed the controller, build host, template, and explicit `*-E2E-*` names, but left generated lab batch VMs such as `CSD17185201` and `OSD17191201`.
+- Evidence: The live pvetest inventory still contained CloudOSD `CSD...` and OSDeploy `OSD...` test VMs after the reset allowlist was reviewed. Those names came from the `/provision` batch patterns used during five-machine testing, not the older `CLOUDOSD-E2E-*` and `OSDEPLOY-E2E-*` patterns.
+- Root cause: The destructive reset allowlist only covered the original named E2E patterns and missed the compact generated prefixes used by the current lab batch launch flow.
+- Script fix: `init-proxmox-ve.sh --phase reset-dev-lab` now treats `CSD[0-9]*` and `OSD[0-9]*` as disposable generated dev-lab VM names, alongside the controller/build-host/template and explicit E2E prefixes.
+- Regression guard: First-run init tests assert the reset allowlist includes generated CloudOSD and OSDeploy batch prefixes before the script is used on pvetest.
