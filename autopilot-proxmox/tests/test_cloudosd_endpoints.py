@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import urllib.parse
+from hashlib import sha1
 
 import pytest
 from pathlib import Path
@@ -22,7 +24,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 @pytest.fixture
 def cloudosd_client(pg_conn, monkeypatch):
-    from web import agent_telemetry_pg, cloudosd_pg, devices_pg, jobs_pg, sequences_pg, ts_engine_pg
+    from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, devices_pg, jobs_pg, sequences_pg, ts_engine_pg
 
     sequences_pg.reset_for_tests(pg_conn)
     sequences_pg.init(pg_conn)
@@ -34,6 +36,8 @@ def cloudosd_client(pg_conn, monkeypatch):
     devices_pg.init(pg_conn)
     jobs_pg.reset_for_tests(pg_conn)
     jobs_pg.init(pg_conn)
+    cloudosd_cache.reset_for_tests(pg_conn)
+    cloudosd_cache.init(pg_conn)
     cloudosd_pg.reset_for_tests(pg_conn)
     cloudosd_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
@@ -122,6 +126,35 @@ def _assert_blocking(body: dict, check_id: str):
 def _assert_warning(body: dict, check_id: str):
     ids = {check["id"] for check in body["warnings"]}
     assert check_id in ids, body
+
+
+def _create_feature_cache_entry(pg_conn, **overrides):
+    from web import cloudosd_cache
+
+    values = {
+        "entry_type": "feature_image",
+        "status": "ready",
+        "osdcloud_module_version": "26.4.17.1",
+        "windows_version": "Windows 11 25H2",
+        "release_id": "25H2",
+        "build": "26200.8246",
+        "architecture": "amd64",
+        "language": "en-us",
+        "activation": "Volume",
+        "edition": "Enterprise",
+        "catalog_file": "catalogs/operatingsystem/26200.8246-win11-25h2.xml",
+        "file_name": "cached-win11-25h2-enterprise-volume-en-us.esd",
+        "source_url": "https://download.example.test/cached-win11-25h2-enterprise-volume-en-us.esd",
+        "expected_size_bytes": 7,
+        "expected_sha256": "2bb80d537b1da3e38bd30361aa855686bde0ba99b64dc823580686d235f3f1c8",
+        "sha256": "2bb80d537b1da3e38bd30361aa855686bde0ba99b64dc823580686d235f3f1c8",
+        "size_bytes": 7,
+        "local_path": "/tmp/cached-win11-25h2-enterprise-volume-en-us.esd",
+    }
+    values.update(overrides)
+    entry = cloudosd_cache._upsert_entry(pg_conn, values)
+    pg_conn.commit()
+    return entry
 
 
 def _create_cloudosd_run(cloudosd_client, pg_conn, **overrides):
@@ -377,6 +410,171 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     complete = cloudosd_client.get(f"/api/cloudosd/runs/{run_body['run_id']}")
     assert complete.status_code == 200, complete.text
     assert complete.json()["run"]["state"] == "complete"
+
+
+def test_cloudosd_package_uses_ready_feature_cache_and_download_endpoint(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import cloudosd_cache
+
+    cache_root = tmp_path / "cloudosd-cache"
+    cache_root.mkdir()
+    payload_path = cache_root / "feature.esd"
+    payload_path.write_bytes(b"secret\n")
+    monkeypatch.setenv("AUTOPILOT_CLOUDOSD_CACHE_ROOT", str(cache_root))
+    entry = _create_feature_cache_entry(
+        pg_conn,
+        file_name="feature.esd",
+        local_path=str(payload_path),
+    )
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_client.post("/api/cloudosd/runs", json=_run_payload(artifact["id"]))
+    assert run.status_code == 201, run.text
+    run_id = run.json()["run_id"]
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/identity",
+        json={
+            "vmid": 248,
+            "vm_uuid": "abcdef12-3456-7890-abcd-ef1234567890",
+            "mac": "52:54:00:12:34:56",
+            "node": "pve",
+            "computer_name": "CLOUDOSD-001",
+        },
+    ).status_code == 200
+    registered = cloudosd_client.post(
+        "/api/cloudosd/pe/register",
+        json={
+            "vm_uuid": "abcdef12-3456-7890-abcd-ef1234567890",
+            "mac": "52:54:00:12:34:56",
+            "architecture": "amd64",
+            "build_sha": "cloudosdtest",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    token = registered.json()["bearer_token"]
+    package = cloudosd_client.get(
+        f"/api/cloudosd/pe/package/{run_id}",
+        headers=_bearer(token),
+    )
+    assert package.status_code == 200, package.text
+    cache = package.json()["cache"]
+    assert cache["policy"] == "direct_on_miss"
+    assert cache["feature_image"]["hit"] is True
+    assert cache["feature_image"]["entry_id"] == entry["id"]
+    parsed = urllib.parse.urlparse(cache["feature_image"]["download_url"])
+    download_path = parsed.path + "?" + parsed.query
+    assert parsed.path.endswith("/download/feature.esd")
+    assert urllib.parse.parse_qs(parsed.query)["run_id"] == [run_id]
+
+    head = cloudosd_client.head(download_path)
+    assert head.status_code == 200, head.text
+    assert head.headers["content-length"] == "7"
+    served = cloudosd_client.get(download_path)
+    assert served.status_code == 200, served.text
+    assert served.content == b"secret\n"
+    updated = cloudosd_cache.get_entry(pg_conn, entry["id"])
+    assert updated["served_count"] == 1
+
+
+def test_cloudosd_preflight_reports_feature_cache_hit_and_quality_cache_ready(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_cache
+
+    artifact = _create_artifact(pg_conn)
+    _create_feature_cache_entry(pg_conn)
+    cloudosd_cache._upsert_entry(
+        pg_conn,
+        {
+            "entry_type": "quality_update",
+            "status": "ready",
+            "windows_version": "Windows 11 25H2",
+            "release_id": "25H2",
+            "architecture": "amd64",
+            "language": "neutral",
+            "activation": "all",
+            "edition": "all",
+            "title": "2026-05 Cumulative Update for Windows 11, version 25H2 for x64-based Systems (KB5089549)",
+            "kb": "KB5089549",
+            "file_name": "windows11.0-kb5089549-x64.msu",
+            "source_url": "https://download.windowsupdate.test/windows11.0-kb5089549-x64.msu",
+            "local_path": "/tmp/windows11.0-kb5089549-x64.msu",
+            "sha256": "0" * 64,
+            "size_bytes": 42,
+        },
+    )
+    pg_conn.commit()
+    preflight = cloudosd_client.post(
+        "/api/cloudosd/preflight",
+        json=_run_payload(artifact["id"]),
+    )
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["cache"]["policy"] == "direct_on_miss"
+    assert body["cache"]["feature_image"]["status"] == "ready"
+    assert len(body["cache"]["quality_updates"]) == 1
+    _assert_warning(body, "cloudosd_feature_cache_hit")
+    _assert_warning(body, "cloudosd_quality_cache_ready")
+
+
+def test_cloudosd_quality_cache_warm_verifies_expected_sha1(pg_conn, monkeypatch, tmp_path):
+    from web import cloudosd_cache
+
+    payload = b"quality update payload"
+    expected_sha1 = sha1(payload).hexdigest()
+    cache_root = tmp_path / "cloudosd-cache"
+    cache_root.mkdir()
+    monkeypatch.setenv("AUTOPILOT_CLOUDOSD_CACHE_ROOT", str(cache_root))
+
+    entry = cloudosd_cache._upsert_entry(
+        pg_conn,
+        {
+            "entry_type": "quality_update",
+            "status": "missing",
+            "windows_version": "Windows 11 25H2",
+            "release_id": "25H2",
+            "architecture": "amd64",
+            "language": "neutral",
+            "activation": "all",
+            "edition": "all",
+            "title": "2026-05 Cumulative Update for Windows 11 Version 25H2 for x64-based Systems",
+            "kb": "KB5089549",
+            "file_name": f"windows11.0-kb5089549-x64_{expected_sha1}.msu",
+            "source_url": "https://download.example.test/windows11.0-kb5089549-x64.msu",
+            "expected_sha1": expected_sha1,
+        },
+    )
+    pg_conn.commit()
+
+    class FakeResponse:
+        def __init__(self, body: bytes):
+            self._body = body
+            self._offset = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size: int = -1) -> bytes:
+            if size < 0:
+                size = len(self._body) - self._offset
+            chunk = self._body[self._offset:self._offset + size]
+            self._offset += len(chunk)
+            return chunk
+
+    monkeypatch.setattr(cloudosd_cache.urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse(payload))
+
+    warmed = cloudosd_cache.warm_entry(pg_conn, entry["id"])
+    assert warmed["status"] == "ready"
+    assert warmed["sha1"] == expected_sha1
+    assert warmed["size_bytes"] == len(payload)
+    assert Path(warmed["local_path"]).is_file()
 
 
 def test_cloudosd_provision_sequence_with_domain_join_adds_v2_steps_and_pe_only_secret(
@@ -2012,6 +2210,100 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
         assert required in body
 
 
+def test_provision_page_filters_legacy_sequences_by_boot_mode(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import sequences_pg
+
+    _create_artifact(pg_conn)
+    cloudosd_seq = sequences_pg.create_sequence(
+        None,
+        name="CloudOSD AD Domain Join UI",
+        description="CloudOSD-only domain join intent",
+        target_os="windows",
+        steps=[
+            {
+                "step_type": "join_ad_domain",
+                "params": {"credential_id": 7, "ou_path": ""},
+                "enabled": True,
+            },
+        ],
+    )
+    windows_seq = sequences_pg.create_sequence(
+        None,
+        name="Clone and WinPE Windows UI",
+        description="Generic Windows sequence",
+        target_os="windows",
+        is_default=True,
+        steps=[
+            {"step_type": "autopilot_entra", "params": {}, "enabled": True},
+        ],
+    )
+    winpe_seq = sequences_pg.create_sequence(
+        None,
+        name="WinPE E2E Smoke UI",
+        description="WinPE-only smoke sequence",
+        target_os="windows",
+        steps=[],
+    )
+    sequences_pg.create_sequence(
+        None,
+        name="Ubuntu Plain Legacy UI",
+        description="Legacy Ubuntu sequence should use Ubuntu selector",
+        target_os="ubuntu",
+        steps=[],
+    )
+
+    response = cloudosd_client.get("/provision")
+
+    assert response.status_code == 200, response.text
+    body = response.text
+    assert "not OSDCloud-compatible yet" not in body
+    assert "Ubuntu Plain Legacy UI" not in body
+    assert f'value="{cloudosd_seq}"' in body
+    assert f'value="{windows_seq}"' in body
+    assert f'value="{winpe_seq}"' in body
+    assert 'data-boot-modes="cloudosd"' in body
+    assert 'data-boot-modes="clone winpe"' in body
+    assert 'data-boot-modes="winpe"' in body
+    assert "syncSequenceOptions" in body
+
+
+def test_provision_rejects_sequence_for_wrong_boot_mode(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import sequences_pg
+
+    artifact = _create_artifact(pg_conn)
+    winpe_seq = sequences_pg.create_sequence(
+        None,
+        name="WinPE E2E Smoke UI",
+        description="WinPE-only smoke sequence",
+        target_os="windows",
+        steps=[],
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "profile": "dell",
+            "sequence_id": str(winpe_seq),
+            "artifact_id": artifact["id"],
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "hostname_pattern": "bad-{index}",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "not available for OSDCloud boot mode" in response.json()["detail"]
+
+
 def test_provision_cloudosd_batch_creates_runs_and_jobs(
     cloudosd_client,
     pg_conn,
@@ -2800,29 +3092,48 @@ def test_cloudosd_provision_endpoint_enqueues_dedicated_playbook(
 def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
 
-    response = cloudosd_client.get("/osdcloud/builder")
+    response = cloudosd_client.get("/osdcloud")
+    builder_response = cloudosd_client.get("/osdcloud/builder")
+    artifacts_response = cloudosd_client.get("/osdcloud/artifacts")
 
     assert response.status_code == 200
+    assert builder_response.status_code == 200
+    assert artifacts_response.status_code == 200
     assert "OSDCloud" in response.text
-    assert artifact["iso_sha256"] in response.text
-    assert "6144" in response.text
-    assert '<dt>Analytics</dt><dd id="reviewAnalytics">blocked</dd>' in response.text
-    assert "/api/cloudosd/artifacts/build" in response.text
-    assert "Windows 11 24H2" in response.text
-    assert "Windows 11 21H2" in response.text
-    assert "Windows 10 22H2" in response.text
-    assert "Home N" in response.text
-    assert "Enterprise N" in response.text
-    assert "Education" in response.text
-    assert "de-de" in response.text
-    assert "Single-VM Deployment" in response.text
-    assert "Review &amp; Launch" in response.text
-    assert "Blocking Checks" in response.text
-    assert "Build a desktop run" in response.text
-    assert "Manage PE artifacts" in response.text
-    assert "cloudosd-toggle-line" in response.text
-    assert response.text.index("Single-VM Deployment") < response.text.index("Review &amp; Launch")
-    assert response.text.index("Build a desktop run") < response.text.index("Single-VM Deployment")
+    assert "Operator Flow" in response.text
+    assert 'aria-label="OSDCloud pages"' in response.text
+    assert ">Builder</a>" in response.text
+    assert ">Cache</a>" in response.text
+    assert ">Artifacts</a>" in response.text
+    assert "https://www.osdcloud.com/" in response.text
+    assert "/osdcloud/builder" in response.text
+    assert "/osdcloud/cache" in response.text
+    assert "/osdcloud/artifacts" in response.text
+    assert artifact["iso_sha256"] in artifacts_response.text
+    assert "6144" in builder_response.text
+    assert '<dt>Analytics</dt><dd id="reviewAnalytics">blocked</dd>' in builder_response.text
+    assert "/api/cloudosd/artifacts/build" in artifacts_response.text
+    assert "Windows 11 24H2" in builder_response.text
+    assert "Windows 11 21H2" in builder_response.text
+    assert "Windows 10 22H2" in builder_response.text
+    assert "Home N" in builder_response.text
+    assert "Enterprise N" in builder_response.text
+    assert "Education" in builder_response.text
+    assert "de-de" in builder_response.text
+    assert "Single-VM Deployment" in builder_response.text
+    assert "Review &amp; Launch" in builder_response.text
+    assert "Blocking Checks" in builder_response.text
+    assert "OSDCloud Run History" in response.text
+    assert "Active Runs" in response.text
+    assert "Stale Failed Runs" in response.text
+    assert "Stale failures can be hidden without deleting evidence" in response.text
+    assert "Build a desktop run" in builder_response.text
+    assert "Manage PE artifacts" in builder_response.text
+    assert "cloudosd-toggle-line" in builder_response.text
+    assert "Single-VM Deployment" not in response.text
+    assert "<h2>Artifacts</h2>" not in response.text
+    assert builder_response.text.index("Single-VM Deployment") < builder_response.text.index("Review &amp; Launch")
+    assert builder_response.text.index("Build a desktop run") < builder_response.text.index("Single-VM Deployment")
 
 
 def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(

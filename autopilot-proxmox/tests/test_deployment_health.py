@@ -175,6 +175,67 @@ def test_cloudosd_timeline_backfills_run_and_readiness_phases(pg_conn):
     assert detail["evidence"]["assignment_status"] == "assigned"
 
 
+def test_cloudosd_failed_provision_job_closes_timeline(pg_conn):
+    from web import cloudosd_pg, deployment_health, jobs_pg, ts_engine_pg
+
+    deployment_health.reset_for_tests(pg_conn)
+    cloudosd_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    cloudosd_pg.init(pg_conn)
+    artifact = cloudosd_pg.create_artifact(
+        pg_conn,
+        architecture="amd64",
+        osdcloud_module_version="26.4.17.1",
+        build_sha="abc1234",
+        iso_path="/app/output/cloudosd.iso",
+        wim_path="/app/output/cloudosd.wim",
+        manifest_path="/app/output/cloudosd.json",
+        iso_sha256="a" * 64,
+        wim_sha256="b" * 64,
+        built_by_host="build-host",
+    )
+    run = cloudosd_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="GELL-FAILED-01",
+        node="pve1",
+        storage="local-lvm",
+        network_bridge="vmbr0",
+    )
+    jobs_pg.enqueue(
+        job_id="job-cloudosd-failed",
+        job_type="provision_cloudosd",
+        playbook="provision.yml",
+        cmd=["false"],
+        args={"cloudosd_run_id": run["run_id"], "vmid": 1201},
+    )
+    jobs_pg.claim_next_job(worker_id="builder-1")
+    jobs_pg.finalize_job("job-cloudosd-failed", exit_code=2)
+
+    detail = deployment_health.build_deployment_detail(
+        pg_conn,
+        f"cloudosd:{run['run_id']}",
+    )
+
+    assert detail["state"] == "failed"
+    assert detail["health"] == "failed"
+    assert detail["current_phase_key"] == "proxmox_provision"
+    assert detail["evidence"]["provision_job_id"] == "job-cloudosd-failed"
+    phases = {phase["phase_key"]: phase for phase in detail["phases"]}
+    assert phases["proxmox_provision"]["state"] == "failed"
+    assert phases["osdcloud"]["state"] == "skipped"
+    assert phases["first_boot"]["state"] == "skipped"
+
+    ts_detail = deployment_health.build_deployment_detail(
+        pg_conn,
+        f"ts:{run['run_id']}",
+    )
+    assert ts_detail["state"] == "failed"
+    assert ts_detail["health"] == "failed"
+    assert ts_detail["evidence"]["provision_job_id"] == "job-cloudosd-failed"
+
+
 def test_task_engine_steps_feed_deployment_payload(pg_conn):
     from web import deployment_health, ts_engine_pg
 

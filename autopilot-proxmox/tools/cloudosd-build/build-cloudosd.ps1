@@ -316,7 +316,18 @@ try {
 
     $virtioRoot = $null
     $virtioInfNames = @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')
-    foreach ($candidate in @('D:\virtio','F:\BuildRoot\inputs\virtio','F:\BuildRoot\inputs\virtio-win')) {
+    $virtioCandidates = @(
+        $env:AUTOPILOT_VIRTIO_ROOT,
+        'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio-win',
+        'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio',
+        'C:\BuildRoot\inputs\virtio-win',
+        'C:\BuildRoot\inputs\virtio',
+        'D:\virtio',
+        'D:\',
+        'F:\BuildRoot\inputs\virtio-win',
+        'F:\BuildRoot\inputs\virtio'
+    ) | Where-Object { $_ }
+    foreach ($candidate in $virtioCandidates) {
         if (-not (Test-Path -LiteralPath $candidate)) { continue }
         $missingInf = $false
         foreach ($infName in $virtioInfNames) {
@@ -329,7 +340,7 @@ try {
         if (-not $missingInf) { $virtioRoot = $candidate; break }
     }
     if (-not $virtioRoot) {
-        throw "CloudOSD build needs VirtIO drivers at D:\virtio, F:\BuildRoot\inputs\virtio, or F:\BuildRoot\inputs\virtio-win"
+        throw "CloudOSD build needs VirtIO drivers. Checked: $($virtioCandidates -join ', ')"
     }
     foreach ($infName in $virtioInfNames) {
         $inf = Resolve-VirtioInf -Root $virtioRoot -InfName $infName -Arch $Arch
@@ -340,7 +351,17 @@ try {
 
     $moduleRoot = Join-Path $mountDir 'Program Files\WindowsPowerShell\Modules'
     New-Item -ItemType Directory -Path $moduleRoot -Force | Out-Null
-    Save-Module -Name OSDCloud -RequiredVersion $OSDCloudVersion -Path $moduleRoot -Force
+    $osdCloudModuleRoot = Join-Path $moduleRoot 'OSDCloud'
+    $osdCloudVersionRoot = Join-Path $osdCloudModuleRoot $OSDCloudVersion
+    $osdCloudPackage = Join-Path $env:TEMP "OSDCloud-$OSDCloudVersion.zip"
+    $osdCloudPackageUrl = "https://www.powershellgallery.com/api/v2/package/OSDCloud/$OSDCloudVersion"
+    Remove-Item -LiteralPath $osdCloudModuleRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $osdCloudPackage -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $osdCloudVersionRoot -Force | Out-Null
+    Invoke-Cmd `
+        -Label 'download OSDCloud module' `
+        -CommandLine "`"$curlPath`" --fail --location --retry 3 --connect-timeout 30 --max-time 600 -o `"$osdCloudPackage`" `"$osdCloudPackageUrl`""
+    Expand-Archive -LiteralPath $osdCloudPackage -DestinationPath $osdCloudVersionRoot -Force
 
     Copy-Item $curlPath -Destination (Join-Path $mountDir 'Windows\System32\curl.exe') -Force
 

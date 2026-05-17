@@ -198,6 +198,70 @@ function Wait-CloudOSDServer {
     throw "server health endpoint did not respond: $healthUrl"
 }
 
+function Get-PVEAutopilotQgaExecutablePath {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Qemu-ga\qemu-ga.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Qemu-ga\qemu-ga.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+
+    $svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction SilentlyContinue
+    if ($svcInfo -and $svcInfo.PathName) {
+        if ($svcInfo.PathName -match '"([^"]*qemu-ga\.exe)"') {
+            return $Matches[1]
+        }
+        if ($svcInfo.PathName -match '([^\s]*qemu-ga\.exe)') {
+            return $Matches[1]
+        }
+    }
+
+    throw 'qemu-ga.exe was not found under Program Files and could not be parsed from the service command line.'
+}
+
+function Get-PVEAutopilotQgaServiceCommandLine {
+    param(
+        [Parameter(Mandatory)] [string] $ExePath,
+        [Parameter(Mandatory)] [string] $StateDir,
+        [Parameter(Mandatory)] [string] $LogFile
+    )
+
+    return ('"{0}" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "{1}" -l "{2}"' -f $ExePath, $StateDir, $LogFile)
+}
+
+function Set-PVEAutopilotQgaServiceCommandLine {
+    $stateDir = Join-Path $env:ProgramData 'qemu-ga'
+    $logFile = Join-Path $stateDir 'qemu-ga.log'
+    if (-not (Test-Path -LiteralPath $stateDir)) {
+        New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    }
+
+    $exePath = Get-PVEAutopilotQgaExecutablePath
+    $binPath = Get-PVEAutopilotQgaServiceCommandLine `
+        -ExePath $exePath `
+        -StateDir $stateDir `
+        -LogFile $logFile
+
+    $svcInfo = Get-CimInstance -ClassName Win32_Service -Filter "Name='QEMU-GA'" -ErrorAction Stop
+    $changeResult = Invoke-CimMethod -InputObject $svcInfo -MethodName Change -Arguments @{
+        PathName = $binPath
+    }
+    if ($changeResult.ReturnValue -ne 0) {
+        throw "QEMU Guest Agent service command-line configuration failed with Win32_Service.Change return $($changeResult.ReturnValue)"
+    }
+
+    & sc.exe config QEMU-GA start= delayed-auto | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "QEMU Guest Agent delayed-auto configuration failed with exit $LASTEXITCODE"
+    }
+
+    Write-CloudOSDFirstBootLog "QEMU Guest Agent service command line configured: $binPath"
+    return $binPath
+}
+
 function Install-QemuGuestAgentIfPresent {
     $candidates = @(
         (Join-Path $env:ProgramData 'ProxmoxVEAutopilot\CloudOSD\qemu-ga-x86_64.msi'),
@@ -207,8 +271,7 @@ function Install-QemuGuestAgentIfPresent {
     )
     $msi = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $msi) {
-        Write-CloudOSDFirstBootLog 'QEMU Guest Agent MSI not present; skipping.'
-        return
+        throw 'QEMU Guest Agent MSI not present; first-boot QGA setup cannot continue.'
     }
     Write-CloudOSDFirstBootLog "Installing QEMU Guest Agent from $msi"
     $log = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\CloudOSD\qemu-ga-install.log'
@@ -218,12 +281,26 @@ function Install-QemuGuestAgentIfPresent {
     if ($p.ExitCode -notin @(0, 3010, 1641)) {
         throw "QEMU Guest Agent MSI failed with exit code $($p.ExitCode)"
     }
-    try {
-        Set-Service -Name QEMU-GA -StartupType Automatic -ErrorAction Stop
+    $binPath = Set-PVEAutopilotQgaServiceCommandLine
+    Set-Service -Name QEMU-GA -StartupType Automatic -ErrorAction Stop
+    $svc = Get-Service -Name QEMU-GA -ErrorAction Stop
+    if ($svc.Status -eq 'Running') {
+        Restart-Service -Name QEMU-GA -Force -ErrorAction Stop
+    } else {
         Start-Service -Name QEMU-GA -ErrorAction Stop
-        Write-CloudOSDFirstBootLog 'QEMU Guest Agent service started.'
-    } catch {
-        Write-CloudOSDFirstBootLog "QEMU Guest Agent MSI installed but service did not start yet: $($_.Exception.Message)"
+    }
+    (Get-Service -Name QEMU-GA -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+    $svc = Get-Service -Name QEMU-GA -ErrorAction Stop
+    if ($svc.Status -ne 'Running') {
+        throw "QEMU Guest Agent service did not reach Running state; status=$($svc.Status)"
+    }
+    Write-CloudOSDFirstBootLog 'QEMU Guest Agent service configured and started.'
+    return [pscustomobject]@{
+        installed = $true
+        source = [string] $msi
+        service = 'QEMU-GA'
+        status = [string] $svc.Status
+        command_line = [string] $binPath
     }
 }
 
@@ -410,6 +487,7 @@ function Invoke-PVEAutopilotFirstBoot {
         [object] $RunConfig,
         [scriptblock] $WaitForNetwork = { Wait-CloudOSDNetwork },
         [scriptblock] $WaitForServer = { param($Url) Wait-CloudOSDServer -ServerUrl $Url },
+        [scriptblock] $InstallQga = { Install-QemuGuestAgentIfPresent },
         [scriptblock] $InstallMsi = { param($Path) Install-AutopilotAgentMsi -Path $Path },
         [scriptblock] $RunPostinstall = { param($ScriptPath,$PostinstallArgs) Invoke-AutopilotAgentPostinstall -ScriptPath $ScriptPath -PostinstallArgs $PostinstallArgs },
         [scriptblock] $ConfirmHeartbeat = { param($ConfigUrl,$Token) Confirm-AutopilotAgentHeartbeat -ConfigUrl $ConfigUrl -Token $Token },
@@ -507,7 +585,15 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_server_ready' `
         -Message 'ProxmoxVEAutopilot server is reachable from installed OS'
-    Install-QemuGuestAgentIfPresent
+    $qgaResult = & $InstallQga
+    Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+        -EventType 'firstboot_qga_ready' `
+        -Message 'QEMU Guest Agent service configured and running' `
+        -Data @{
+            source = [string] $qgaResult.source
+            service = [string] $qgaResult.service
+            status = [string] $qgaResult.status
+        }
     & $InstallMsi $msiPath
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_agent_msi_installed' `

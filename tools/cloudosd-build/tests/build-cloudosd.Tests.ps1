@@ -29,7 +29,8 @@ Describe 'build-cloudosd.ps1 parameter validation' {
     It 'pins and stages OSDCloud into the mounted WIM' {
         $content = Get-Content -LiteralPath $script:BuildScript -Raw
         $content | Should -Match '26\.4\.17\.1'
-        $content | Should -Match 'Save-Module'
+        $content | Should -Match 'powershellgallery\.com/api/v2/package/OSDCloud'
+        $content | Should -Match 'Expand-Archive'
         $content | Should -Match 'OSDCloud'
     }
 

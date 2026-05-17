@@ -96,6 +96,112 @@ Describe 'Invoke-CloudOSDDeploy' {
     }
 }
 
+Describe 'CloudOSD cache integration' {
+    It 'patches the OSDCloud catalog FilePath for a ready cached feature image without changing hash metadata' {
+        $moduleRoot = Join-Path $TestDrive 'OSDCloudCacheModule'
+        $catalogDir = Join-Path $moduleRoot 'catalogs/operatingsystem'
+        New-Item -ItemType Directory -Path $catalogDir -Force | Out-Null
+        $catalogPath = Join-Path $catalogDir '26200.8246-win11-25h2.xml'
+        @'
+<Catalog>
+  <File>
+    <FileName>win11-25h2.esd</FileName>
+    <FilePath>https://download.microsoft.test/win11-25h2.esd</FilePath>
+    <Sha256>abcdef</Sha256>
+  </File>
+</Catalog>
+'@ | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+        $package = [pscustomobject]@{
+            cache = [pscustomobject]@{
+                feature_image = [pscustomobject]@{
+                    hit = $true
+                    entry_id = 'cache-entry-1'
+                    catalog_file = 'catalogs/operatingsystem/26200.8246-win11-25h2.xml'
+                    file_name = 'win11-25h2.esd'
+                    expected_sha256 = 'abcdef'
+                    download_url = 'https://autopilot.test/api/cloudosd/cache/cache-entry-1/download/win11-25h2.esd?token=run'
+                }
+            }
+        }
+
+        $result = Set-CloudOSDFeatureImageCacheSource -Package $package -ModuleRoot $moduleRoot
+
+        $result.applied | Should -BeTrue
+        [xml] $catalog = Get-Content -LiteralPath $catalogPath -Raw
+        $catalog.Catalog.File.FilePath | Should -Be 'https://autopilot.test/api/cloudosd/cache/cache-entry-1/download/win11-25h2.esd?token=run'
+        $catalog.Catalog.File.Sha256 | Should -Be 'abcdef'
+    }
+
+    It 'applies cached quality updates to the offline Windows image with DISM' {
+        $offlineRoot = Join-Path $TestDrive 'offline'
+        $windowsRoot = Join-Path $offlineRoot 'Windows'
+        New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null
+        $script:dismCalls = @()
+        $package = [pscustomobject]@{
+            cache = [pscustomobject]@{
+                quality_updates = @(
+                    [pscustomobject]@{
+                        status = 'ready'
+                        file_name = 'windows11.0-kb5089549-x64.msu'
+                        url = 'https://autopilot.test/api/cloudosd/cache/update/download/windows11.0-kb5089549-x64.msu?token=run'
+                    }
+                )
+            }
+        }
+
+        $result = Invoke-CloudOSDQualityUpdateServicing `
+            -Package $package `
+            -WindowsRoot $windowsRoot `
+            -DownloadRoot (Join-Path $TestDrive 'quality-updates') `
+            -Downloader {
+                param($Url, $OutFile)
+                'msu' | Set-Content -LiteralPath $OutFile -Encoding ASCII
+            } `
+            -DismRunner {
+                param($ImageRoot, $PackagePath)
+                $script:dismCalls += @{ ImageRoot = $ImageRoot; PackagePath = $PackagePath }
+                return 0
+            }
+
+        $result.applied | Should -Be 1
+        $script:dismCalls.Count | Should -Be 1
+        $script:dismCalls[0].ImageRoot | Should -Be $offlineRoot
+        $script:dismCalls[0].PackagePath | Should -Match 'windows11\.0-kb5089549-x64\.msu'
+    }
+
+    It 'fails the PE phase when cached quality update servicing fails' {
+        $offlineRoot = Join-Path $TestDrive 'offline-fail'
+        $windowsRoot = Join-Path $offlineRoot 'Windows'
+        New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null
+        $package = [pscustomobject]@{
+            cache = [pscustomobject]@{
+                quality_updates = @(
+                    [pscustomobject]@{
+                        status = 'ready'
+                        file_name = 'windows11.0-kb5089549-x64.msu'
+                        url = 'https://autopilot.test/api/cloudosd/cache/update/download/windows11.0-kb5089549-x64.msu?token=run'
+                    }
+                )
+            }
+        }
+
+        {
+            Invoke-CloudOSDQualityUpdateServicing `
+                -Package $package `
+                -WindowsRoot $windowsRoot `
+                -DownloadRoot (Join-Path $TestDrive 'quality-updates-fail') `
+                -Downloader {
+                    param($Url, $OutFile)
+                    'msu' | Set-Content -LiteralPath $OutFile -Encoding ASCII
+                } `
+                -DismRunner {
+                    param($ImageRoot, $PackagePath)
+                    return 112
+                }
+        } | Should -Throw '*DISM failed*'
+    }
+}
+
 Describe 'Add-PVEAutopilotSetupCompleteChain' {
     It 'preserves existing SetupComplete content and appends the sentinel once' {
         $windowsRoot = Join-Path $TestDrive 'Windows'
@@ -297,8 +403,10 @@ Describe 'Save-CloudOSDRunPackage' {
     It 'downloads first-boot payloads, stages the OSD client package, and records local paths in cloudosd-run.json' {
         $windowsRoot = Join-Path $TestDrive 'Windows'
         $bridgeRoot = Join-Path $TestDrive 'Bridge'
-        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot -Force | Out-Null
+        $virtioRoot = Join-Path $TestDrive 'VirtIOPayloads'
+        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot, (Join-Path $virtioRoot 'guest-agent') -Force | Out-Null
         'firstboot' | Set-Content -LiteralPath (Join-Path $bridgeRoot 'PVEAutopilot-FirstBoot.ps1')
+        'qga-msi' | Set-Content -LiteralPath (Join-Path $virtioRoot 'guest-agent/qemu-ga-x86_64.msi') -Encoding ASCII
         $package = [pscustomobject]@{
             run_id = 'run-1'
             server_base_url = 'https://autopilot.local'
@@ -353,6 +461,7 @@ Describe 'Save-CloudOSDRunPackage' {
             -BridgeRoot $bridgeRoot `
             -BearerToken 'token-1' `
             -OsdClientPackage $osdClientPackage `
+            -QgaSearchRoots @($virtioRoot) `
             -Downloader {
                 param($Url,$OutFile,$Headers)
                 Set-Content -LiteralPath $OutFile -Value $Url -Encoding ASCII
@@ -406,11 +515,34 @@ Describe 'Save-CloudOSDRunPackage' {
         Get-Content -LiteralPath $stagedMsi -Raw | Should -Match 'qga-msi'
     }
 
+    It 'fails when the VirtIO QEMU Guest Agent MSI cannot be staged for first boot' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsQgaMissing'
+        $bridgeRoot = Join-Path $TestDrive 'BridgeQgaMissing'
+        $virtioRoot = Join-Path $TestDrive 'VirtIOMissing'
+        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot, $virtioRoot -Force | Out-Null
+        'firstboot' | Set-Content -LiteralPath (Join-Path $bridgeRoot 'PVEAutopilot-FirstBoot.ps1')
+        $package = [pscustomobject]@{
+            run_id = 'run-qga-missing'
+            server_base_url = 'https://autopilot.local'
+            payloads = [pscustomobject]@{}
+        }
+
+        {
+            Save-CloudOSDRunPackage -Package $package `
+                -WindowsRoot $windowsRoot `
+                -BridgeRoot $bridgeRoot `
+                -BearerToken 'token-1' `
+                -QgaSearchRoots @($virtioRoot)
+        } | Should -Throw '*QEMU Guest Agent MSI not found*'
+    }
+
     It 'redacts PE-only domain join secrets from the offline run package' {
         $windowsRoot = Join-Path $TestDrive 'WindowsRedact'
         $bridgeRoot = Join-Path $TestDrive 'BridgeRedact'
-        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot -Force | Out-Null
+        $virtioRoot = Join-Path $TestDrive 'VirtIORedact'
+        New-Item -ItemType Directory -Path $windowsRoot, $bridgeRoot, (Join-Path $virtioRoot 'guest-agent') -Force | Out-Null
         'firstboot' | Set-Content -LiteralPath (Join-Path $bridgeRoot 'PVEAutopilot-FirstBoot.ps1')
+        'qga-msi' | Set-Content -LiteralPath (Join-Path $virtioRoot 'guest-agent/qemu-ga-x86_64.msi') -Encoding ASCII
         $package = [pscustomobject]@{
             run_id = 'run-domain'
             bearer_token = 'pe-token'
@@ -429,7 +561,8 @@ Describe 'Save-CloudOSDRunPackage' {
         $stageRoot = Save-CloudOSDRunPackage -Package $package `
             -WindowsRoot $windowsRoot `
             -BridgeRoot $bridgeRoot `
-            -BearerToken 'token-1'
+            -BearerToken 'token-1' `
+            -QgaSearchRoots @($virtioRoot)
 
         $jsonText = Get-Content -LiteralPath (Join-Path $stageRoot 'cloudosd-run.json') -Raw
         $jsonText | Should -Not -Match 'join-secret'
