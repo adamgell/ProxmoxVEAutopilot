@@ -51,6 +51,7 @@ public sealed class AgentApiClient(HttpClient httpClient)
     public async Task SendHeartbeatAsync(
         AgentConfig config,
         TelemetrySnapshot snapshot,
+        IReadOnlyCollection<string> capabilities,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(config.ServerUrl))
@@ -89,6 +90,8 @@ public sealed class AgentApiClient(HttpClient httpClient)
                 tenant_id = snapshot.TenantId,
                 current_run_id = config.RunId,
                 current_phase = config.Phase,
+                server_url = config.ServerUrl,
+                capabilities,
                 agent_version = ThisAssembly.Version,
             }),
         };
@@ -461,6 +464,66 @@ public sealed class AgentApiClient(HttpClient httpClient)
             cancellationToken);
     }
 
+    public async Task<ArtifactUploadResponse> UploadArtifactAsync(
+        AgentConfig config,
+        string workItemId,
+        string artifactKind,
+        string filePath,
+        IReadOnlyDictionary<string, object?> metadata,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentToken))
+        {
+            throw new InvalidOperationException("AgentToken is not configured.");
+        }
+        await using var stream = File.OpenRead(filePath);
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(workItemId), "work_item_id");
+        content.Add(new StringContent(artifactKind), "artifact_kind");
+        content.Add(
+            new StringContent(JsonSerializer.Serialize(metadata)),
+            "metadata_json");
+        var fileContent = new StreamContent(stream);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        content.Add(fileContent, "file", Path.GetFileName(filePath));
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/api/agent/v1/artifacts")
+        {
+            Content = content,
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            config.AgentToken);
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("Artifact upload response was empty.");
+    }
+
+    public async Task<JsonElement> PromoteSetupArtifactsAsync(
+        AgentConfig config,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        var response = await httpClient.PostAsJsonAsync(
+            $"{config.ServerUrl.TrimEnd('/')}/api/setup/v1/artifacts/promote",
+            new Dictionary<string, object?>(),
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<JsonElement>(
+            cancellationToken: cancellationToken);
+    }
+
     private async Task PostWorkResultAsync(
         AgentConfig config,
         string workItemId,
@@ -492,8 +555,11 @@ public sealed class AgentApiClient(HttpClient httpClient)
 
 public sealed record BootstrapResponse(
     [property: JsonPropertyName("agent_id")] string AgentId,
-    [property: JsonPropertyName("agent_token")] string AgentToken,
-    [property: JsonPropertyName("heartbeat_interval_seconds")] int HeartbeatIntervalSeconds);
+    [property: JsonPropertyName("agent_token")] string? AgentToken,
+    [property: JsonPropertyName("heartbeat_interval_seconds")] int HeartbeatIntervalSeconds,
+    [property: JsonPropertyName("approval_status")] string? ApprovalStatus = null,
+    [property: JsonPropertyName("poll_url")] string? PollUrl = null,
+    [property: JsonPropertyName("retry_after_seconds")] int? RetryAfterSeconds = null);
 
 public sealed record AgentWorkNextResponse(
     [property: JsonPropertyName("work_item")] AgentWorkItem? WorkItem);
@@ -530,6 +596,10 @@ public sealed record OsdV2Action(
 public sealed record HashUploadResponse(
     [property: JsonPropertyName("ok")] bool Ok,
     [property: JsonPropertyName("filename")] string Filename);
+
+public sealed record ArtifactUploadResponse(
+    [property: JsonPropertyName("ok")] bool Ok,
+    [property: JsonPropertyName("artifact")] Dictionary<string, JsonElement> Artifact);
 
 internal static class ThisAssembly
 {

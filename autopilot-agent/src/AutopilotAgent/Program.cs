@@ -13,7 +13,11 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddSingleton<TelemetryCollector>();
         services.AddSingleton<HashCaptureService>();
         services.AddSingleton<OsdV2WorkService>();
-        services.AddHttpClient<AgentApiClient>();
+        services.AddSingleton<BuildHostWorkService>();
+        services.AddHttpClient<AgentApiClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromHours(12);
+        });
         services.AddHostedService<Worker>();
     });
 

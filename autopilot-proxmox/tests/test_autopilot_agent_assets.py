@@ -103,6 +103,9 @@ def test_signing_scripts_use_artifact_signing_without_storing_credentials():
 
     assert "Remove-Item -Recurse -Force" in build_script
     assert "InstallerPlatform" in build_script
+    assert "Ensure-NuGetOrgSource" in build_script
+    assert "https://api.nuget.org/v3/index.json" in build_script
+    assert "dotnet nuget add source $sourceUrl --name nuget.org" in build_script
     assert '"win-arm64" { "arm64" }' in build_script
     assert "az account show" in env_script
     assert "az account get-access-token" in env_script
