@@ -1,6 +1,12 @@
 # Setup Guide
 
-This is the detailed walkthrough. If you just want the short version, see the [Quick Start in the root README](../README.md#quick-start-5-steps).
+This is the manual fallback walkthrough for operators who intentionally bring
+their own Docker host. The preferred first-run path is the Proxmox VE init
+entrypoint plus Ubuntu controller VM described in
+[FIRST_RUN_E2E.md](FIRST_RUN_E2E.md), [PVE_INIT.md](PVE_INIT.md), and
+[WINDOWS_BUILD_BOX.md](WINDOWS_BUILD_BOX.md).
+
+If you just want the short version, see the [Quick Start in the root README](../README.md#quick-start).
 
 Contents:
 
@@ -197,7 +203,7 @@ If you do use chassis-type overrides (e.g. `chassis_type: 10` for a laptop, `31`
 
 After Entra login, open **Settings -> Proxmox Permission Bootstrap**.
 
-The action SSHes to the Proxmox host as root, repairs the `AutopilotProvisioner` role/ACLs for the configured API token user, enables `snippets` on the selected snippet storage, seeds common chassis SMBIOS binaries, and stores the validated root SSH credential in `vault.yml` for later CloudOSD/OEM runtime operations. No container restart is required.
+The action SSHes to the Proxmox host as root, repairs the `AutopilotProvisioner` role/ACLs for the configured API token user, enables `snippets` on the selected snippet storage, seeds common chassis SMBIOS binaries, and stores the validated root SSH credential in `vault.yml` for later OSDCloud/OEM runtime operations. No container restart is required.
 
 ### Manual fallback
 
