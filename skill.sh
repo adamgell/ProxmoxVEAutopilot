@@ -9,6 +9,7 @@
 #   ./skill.sh proxy
 #   ./skill.sh proxy-install
 #   ./skill.sh proxy-status
+#   ./skill.sh smoke
 #   ./skill.sh shell
 #   ./skill.sh codex "Search the autopilot docs for WinPE and summarize the top result."
 #   ./skill.sh config
@@ -21,6 +22,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REMOTE_HOST="${AUTOPILOT_MCP_REMOTE_HOST:-root@192.168.2.4}"
 REMOTE_APP_DIR="${AUTOPILOT_MCP_REMOTE_APP_DIR:-/opt/ProxmoxVEAutopilot/autopilot-proxmox}"
+REMOTE_ENV_FILE="${AUTOPILOT_MCP_REMOTE_ENV_FILE:-}"
 LOCAL_PORT="${AUTOPILOT_MCP_LOCAL_PORT:-15050}"
 REMOTE_PORT="${AUTOPILOT_MCP_REMOTE_PORT:-5050}"
 LOCAL_URL="http://127.0.0.1:${LOCAL_PORT}/mcp"
@@ -33,12 +35,57 @@ PROXY_PLIST="${HOME}/Library/LaunchAgents/${PROXY_LABEL}.plist"
 PROXY_LOG_DIR="${HOME}/Library/Logs/ProxmoxVEAutopilot"
 
 usage() {
-  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 token() {
   ssh "${REMOTE_HOST}" \
-    "cd '${REMOTE_APP_DIR}' && grep '^AUTOPILOT_MCP_TOKEN=' .env | tail -1 | cut -d= -f2-"
+    "REMOTE_APP_DIR='${REMOTE_APP_DIR}' REMOTE_ENV_FILE='${REMOTE_ENV_FILE}' bash -s" <<'SH'
+set -euo pipefail
+
+candidates=()
+if [[ -n "${REMOTE_ENV_FILE}" ]]; then
+  candidates+=("${REMOTE_ENV_FILE}")
+fi
+candidates+=(
+  "${REMOTE_APP_DIR}/.env"
+  "$(dirname "${REMOTE_APP_DIR}")/.env"
+)
+
+for env_file in "${candidates[@]}"; do
+  if [[ ! -f "${env_file}" ]]; then
+    continue
+  fi
+  awk -F= '
+    $1 == "AUTOPILOT_MCP_TOKEN" {
+      sub(/^[^=]*=/, "")
+      value=$0
+    }
+    END {
+      if (value != "") {
+        print value
+      } else {
+        exit 1
+      }
+    }
+  ' "${env_file}" && exit 0
+done
+
+if command -v docker >/dev/null 2>&1; then
+  token_from_docker="$(
+    docker inspect autopilot-mcp --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+      | sed -n 's/^AUTOPILOT_MCP_TOKEN=//p' \
+      | tail -1
+  )"
+  if [[ -n "${token_from_docker}" ]]; then
+    printf '%s\n' "${token_from_docker}"
+    exit 0
+  fi
+fi
+
+echo "error: AUTOPILOT_MCP_TOKEN not found in remote .env candidates" >&2
+exit 1
+SH
 }
 
 remote_mcp_reachable() {
@@ -209,6 +256,53 @@ cmd_read() {
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["structuredContent"]["content"])'
 }
 
+cmd_smoke() {
+  ensure_tunnel
+  echo "[skill] smoke docs"
+  tool_call "autopilot_docs.search" '{"query":"OSDeploy setup build host","limit":1}' \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]; print("top_doc", (data.get("results") or [{}])[0].get("doc_id"))'
+
+  echo "[skill] smoke setup"
+  tool_call "setup.get_readiness" '{}' \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]; print("phase", data.get("phase"), "health", data.get("health"), "blocking", data.get("blocking_count"))'
+
+  echo "[skill] smoke osdeploy"
+  tool_call "osdeploy.get_catalog" '{}' \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]; print("schema_version", data.get("schema_version"), "server_roles", len(data.get("server_roles") or []))'
+  tool_call "osdeploy.get_proxmox_options" '{}' \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]; print("defaults", data.get("defaults", {}))'
+  tool_call "osdeploy.build_preflight" '{}' \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]; print("build_preflight_keys", sorted(data.keys())[:8])'
+
+  echo "[skill] smoke approval"
+  local approval_id
+  approval_id="$(
+    tool_call "pve_autopilot.write_settings" '{"setting":"mcp-smoke","secret":"must-redact"}' \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["structuredContent"]["approval_id"])'
+  )"
+  echo "approval_id ${approval_id}"
+  tool_call "pve_autopilot.get_approval" "{\"approval_id\":\"${approval_id}\"}" \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]["approval"]; print("approval_status", data.get("status"), "secret", data.get("arguments", {}).get("secret"))'
+  tool_call "pve_autopilot.reject_action" "{\"approval_id\":\"${approval_id}\",\"reason\":\"mcp smoke complete\"}" \
+    | python3 -c 'import json,sys; data=json.load(sys.stdin)["result"]["structuredContent"]["approval"]; print("rejected_status", data.get("status"))'
+
+  echo "[skill] smoke diagnostic"
+  local agent_id
+  agent_id="$(
+    tool_call "autopilot_agent.list_agents" '{}' \
+      | python3 -c 'import json,sys; agents=json.load(sys.stdin)["result"]["structuredContent"].get("agents") or []; print((agents[0] or {}).get("agent_id","") if agents else "")'
+  )"
+  if [[ -n "${agent_id}" ]]; then
+    tool_call "autopilot_agent.run_diagnostic" "{\"agent_id\":\"${agent_id}\",\"diagnostic\":\"system_summary\"}" \
+      | python3 -c 'import json,sys; item=json.load(sys.stdin)["result"]["structuredContent"]["work_item"]; print("diagnostic_work_item", item.get("id"), item.get("status"))'
+  else
+    echo "diagnostic_work_item skipped_no_agents"
+  fi
+
+  echo "[skill] smoke audit"
+  ssh "${REMOTE_HOST}" "docker exec autopilot-postgres psql -U autopilot -d autopilot -tAc \"SELECT count(*) FROM mcp_call_audit WHERE created_at > now() - interval '10 minutes';\""
+}
+
 cmd_tunnel() {
   echo "[skill] opening ${LOCAL_URL}; Ctrl+C closes it" >&2
   exec ssh -o ExitOnForwardFailure=yes -N -L "127.0.0.1:${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}" "${REMOTE_HOST}"
@@ -275,13 +369,13 @@ cmd_shell() {
 }
 
 cmd_codex() {
-  if ! nc -z 127.0.0.1 "${PROXY_PORT}" >/dev/null 2>&1; then
-    echo "error: proxy is not listening on ${PROXY_URL}; run ./skill.sh proxy-install" >&2
-    return 1
-  fi
+  ensure_tunnel
+  local bearer_token
+  bearer_token="$(token)"
   local prompt="${1:-Use the proxmoxveautopilot MCP server. Search autopilot_docs for WinPE CloudOSD and read the top result.}"
-  codex exec --ephemeral --skip-git-repo-check \
-    -c "mcp_servers.${MCP_SERVER_NAME}.url=\"${PROXY_URL}\"" \
+  AUTOPILOT_MCP_TOKEN="${bearer_token}" codex exec --ephemeral --skip-git-repo-check \
+    -c "mcp_servers.${MCP_SERVER_NAME}.url=\"${LOCAL_URL}\"" \
+    -c "mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var=\"AUTOPILOT_MCP_TOKEN\"" \
     "${prompt}"
 }
 
@@ -304,6 +398,7 @@ main() {
     proxy) cmd_proxy "$@" ;;
     proxy-install) cmd_proxy_install "$@" ;;
     proxy-status) cmd_proxy_status "$@" ;;
+    smoke) cmd_smoke "$@" ;;
     shell) cmd_shell "$@" ;;
     codex) cmd_codex "$@" ;;
     config) cmd_config "$@" ;;
