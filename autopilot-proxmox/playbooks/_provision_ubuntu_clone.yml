@@ -33,6 +33,20 @@
            | replace('{vmid}', target_vmid | string)
            | replace('{index}', _vm_index | string)) | trim }}
 
+- name: "Record Ubuntu v2 run identity (vmid {{ target_vmid }})"
+  ansible.builtin.uri:
+    url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/osd/v2/ubuntu/runs/{{ ubuntu_v2_run_id }}/identity"
+    method: POST
+    body_format: json
+    body:
+      vmid: "{{ target_vmid | int }}"
+      hostname: "{{ vm_hostname }}"
+      vm_name: "{{ vm_name }}"
+      sequence_id: "{{ sequence_id | default('') }}"
+      target_os: "ubuntu"
+    status_code: [200]
+  when: ubuntu_v2_run_id is defined and (ubuntu_v2_run_id | string | length) > 0
+
 - name: "Clone + seed + wait for cloud-init (Ubuntu VM {{ target_vmid }})"
   ansible.builtin.include_role:
     name: proxmox_vm_clone_linux
@@ -48,4 +62,6 @@
     status_code: [200, 201]
   # Not fatal if the endpoint doesn't exist yet — just log and continue.
   failed_when: false
-  when: sequence_id is defined
+  when:
+    - sequence_id is defined
+    - not (ubuntu_v2_run_id is defined and (ubuntu_v2_run_id | string | length) > 0)

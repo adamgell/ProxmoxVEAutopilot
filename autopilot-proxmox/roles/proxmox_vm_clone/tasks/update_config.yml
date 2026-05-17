@@ -38,6 +38,11 @@
     _config_body: "{{ _config_body | combine({'ide3': proxmox_virtio_iso + ',media=cdrom'}) }}"
   when: proxmox_virtio_iso is defined and proxmox_virtio_iso | default('') | length > 0
 
+- name: Apply requested firmware mode
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'bios': vm_bios}) }}"
+  when: vm_bios is defined and vm_bios | default('') | length > 0
+
 - name: Update cloned VM configuration with lock-contention retry
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/config"
@@ -100,14 +105,41 @@
       VM {{ vm_vmid }} needs QEMU args updated but neither Proxmox root
       SSH nor root@pam ticket variables are available. Run Settings ->
       Proxmox Permission Bootstrap so the controller can store
-      vault_proxmox_root_password, or disable the profile option that
-      requires QEMU args.
+      vault_proxmox_root_password, re-run init-proxmox-ve.sh so it can
+      repair the controller-to-PVE root SSH key, or disable the profile
+      option that requires QEMU args.
   when:
     - _args_write_required | default(false) | bool
+    - proxmox_root_ssh_key_path is not defined or (proxmox_root_ssh_key_path | string | length) == 0
     - (vault_proxmox_root_password is not defined or (vault_proxmox_root_password | string | length) == 0)
     - _proxmox_root_ticket is not defined or _proxmox_root_csrf_token is not defined
 
-- name: Apply args via Proxmox root SSH
+- name: Apply args via Proxmox root SSH key
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - "{{ proxmox_root_ssh_key_path }}"
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - LogLevel=ERROR
+      - "root@{{ proxmox_node_ssh_host | default(proxmox_host) }}"
+      - "{{ _args_remote_command }}"
+  delegate_to: localhost
+  register: _args_ssh_result
+  retries: "{{ clone_config_retries | default(6) }}"
+  delay: "{{ clone_config_delay | default(5) }}"
+  until: _args_ssh_result.rc == 0
+  no_log: true
+  when:
+    - _args_write_required | default(false) | bool
+    - proxmox_root_ssh_key_path is defined
+    - proxmox_root_ssh_key_path | string | length > 0
+
+- name: Apply args via Proxmox root SSH password
   ansible.builtin.command:
     argv:
       - sshpass
@@ -131,6 +163,7 @@
   no_log: true
   when:
     - _args_write_required | default(false) | bool
+    - proxmox_root_ssh_key_path is not defined or (proxmox_root_ssh_key_path | string | length) == 0
     - vault_proxmox_root_password is defined
     - (vault_proxmox_root_password | string | length) > 0
 
@@ -153,6 +186,7 @@
   no_log: true
   when:
     - _args_write_required | default(false) | bool
+    - proxmox_root_ssh_key_path is not defined or (proxmox_root_ssh_key_path | string | length) == 0
     - vault_proxmox_root_password is not defined or (vault_proxmox_root_password | string | length) == 0
     - _proxmox_root_ticket is defined
     - _proxmox_root_csrf_token is defined

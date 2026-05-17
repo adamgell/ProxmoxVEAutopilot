@@ -7,10 +7,19 @@
 # Required vars: target_vmid, sequence_id, vm_hostname
 # Optional: web_base_url (default http://127.0.0.1:5000)
 
+- name: Build v2 per-VM seed request URL
+  ansible.builtin.set_fact:
+    _ubuntu_seed_request_url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/osd/v2/ubuntu/per-vm-seed?vmid={{ target_vmid }}&run_id={{ ubuntu_v2_run_id }}&hostname={{ vm_hostname }}"
+  when: ubuntu_v2_run_id is defined and (ubuntu_v2_run_id | string | length) > 0
+
+- name: Build legacy per-VM seed request URL
+  ansible.builtin.set_fact:
+    _ubuntu_seed_request_url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/ubuntu/per-vm-seed?vmid={{ target_vmid }}&sequence_id={{ sequence_id }}&hostname={{ vm_hostname }}"
+  when: ubuntu_v2_run_id is not defined or (ubuntu_v2_run_id | string | length) == 0
+
 - name: Request per-VM seed ISO from web backend
   ansible.builtin.uri:
-    url: >-
-      {{ web_base_url | default('http://127.0.0.1:5000') }}/api/ubuntu/per-vm-seed?vmid={{ target_vmid }}&sequence_id={{ sequence_id }}&hostname={{ vm_hostname }}
+    url: "{{ _ubuntu_seed_request_url }}"
     method: POST
     return_content: true
     status_code: [200]
