@@ -481,7 +481,7 @@ def test_osdeploy_package_includes_persistent_agent_install_payloads(monkeypatch
         ),
         "sha256": "sha-autopilotagent-postinstall.ps1",
     }
-    assert body["agent"]["phase"] == "full_os"
+    assert body["agent"]["phase"] == "osdeploy"
     assert body["agent"]["agent_id"] == "agent-autopilot-e2e"
 
 
