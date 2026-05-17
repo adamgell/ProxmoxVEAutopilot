@@ -170,6 +170,8 @@ def test_pve_init_has_explicit_disposable_dev_lab_reset_phase():
     assert "autopilot-buildhost-01" in text
     assert "autopilot-osdeploy-blank-template" in text
     assert "OSDEPLOY-E2E-*" in text
+    assert "OSD[0-9]*" in text
+    assert "CSD[0-9]*" in text
     assert "qm destroy \"${vmid}\" --purge 1 --destroy-unreferenced-disks 1" in text
     assert "virtio-win*.iso" in text
     assert "osdeploy-server-*.iso" in text

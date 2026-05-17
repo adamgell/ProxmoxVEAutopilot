@@ -1260,7 +1260,7 @@ is_dev_lab_vm_name() {
   local name="$1"
   case "${name}" in
     "${CONTROLLER_NAME}"|"${BUILDHOST_NAME}"|autopilot-osdeploy-blank-template|autopilot-cloudosd-blank-template) return 0 ;;
-    OSDEPLOY-E2E-*|CLOUDOSD-E2E-*|AUTOPILOT-E2E-*) return 0 ;;
+    OSDEPLOY-E2E-*|CLOUDOSD-E2E-*|AUTOPILOT-E2E-*|OSD[0-9]*|CSD[0-9]*) return 0 ;;
     *) return 1 ;;
   esac
 }

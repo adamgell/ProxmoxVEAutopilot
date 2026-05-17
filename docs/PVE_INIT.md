@@ -252,7 +252,8 @@ bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --pha
 The reset phase destroys only Autopilot dev-lab VM names and prefixes:
 `autopilot-controller-01`, `autopilot-buildhost-01`,
 `autopilot-osdeploy-blank-template`, `autopilot-cloudosd-blank-template`,
-`OSDEPLOY-E2E-*`, `CLOUDOSD-E2E-*`, and `AUTOPILOT-E2E-*`. With
+`OSDEPLOY-E2E-*`, `CLOUDOSD-E2E-*`, `AUTOPILOT-E2E-*`, generated OSDeploy
+batch names `OSD[0-9]*`, and generated OSDCloud batch names `CSD[0-9]*`. With
 `--reset-media`, it also removes generated/downloaded lab ISOs such as
 Windows evaluation media, `virtio-win*.iso`, build-host seed ISOs, CloudOSD
 ISOs, and OSDeploy ISOs from ISO-capable storage so `--download-windows` and
