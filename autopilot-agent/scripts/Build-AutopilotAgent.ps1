@@ -11,6 +11,29 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = Join-Path $repoRoot "src\AutopilotAgent\AutopilotAgent.csproj"
 $installer = Join-Path $repoRoot "installer\AutopilotAgent.Installer.wixproj"
 
+function Ensure-NuGetOrgSource {
+    $sourceUrl = "https://api.nuget.org/v3/index.json"
+    $sources = (& dotnet nuget list source 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet nuget list source failed with exit code $LASTEXITCODE. $sources"
+    }
+    if ($sources -match "nuget\.org") {
+        & dotnet nuget enable source nuget.org | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet nuget enable source nuget.org failed with exit code $LASTEXITCODE"
+        }
+        return
+    }
+    if ($sources -notmatch [regex]::Escape($sourceUrl)) {
+        & dotnet nuget add source $sourceUrl --name nuget.org | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet nuget add source nuget.org failed with exit code $LASTEXITCODE"
+        }
+    }
+}
+
+Ensure-NuGetOrgSource
+
 foreach ($rid in $RuntimeIdentifiers) {
     $installerPlatform = switch ($rid) {
         "win-x64" { "x64" }

@@ -7,6 +7,7 @@ public sealed class Worker(
     TelemetryCollector telemetryCollector,
     HashCaptureService hashCaptureService,
     OsdV2WorkService osdV2WorkService,
+    BuildHostWorkService buildHostWorkService,
     AgentFileLog log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -16,6 +17,7 @@ public sealed class Worker(
         while (!stoppingToken.IsCancellationRequested)
         {
             var delay = TimeSpan.FromSeconds(30);
+            var bootstrapPending = false;
             try
             {
                 var config = AgentConfig.LoadOrCreate();
@@ -29,16 +31,32 @@ public sealed class Worker(
                         config,
                         telemetry,
                         stoppingToken);
-                    config.AgentId = bootstrap.AgentId;
-                    config.AgentToken = bootstrap.AgentToken;
-                    config.HeartbeatIntervalSeconds = bootstrap.HeartbeatIntervalSeconds;
-                    config.Save();
-                    log.Info("Bootstrap completed.");
+                    if (string.IsNullOrWhiteSpace(bootstrap.AgentToken))
+                    {
+                        bootstrapPending = true;
+                        delay = TimeSpan.FromSeconds(
+                            Math.Max(10, bootstrap.RetryAfterSeconds ?? config.HeartbeatIntervalSeconds));
+                        log.Info(
+                            $"Bootstrap approval pending (status={bootstrap.ApprovalStatus ?? "pending"}).");
+                    }
+                    else
+                    {
+                        config.AgentId = bootstrap.AgentId;
+                        config.AgentToken = bootstrap.AgentToken;
+                        config.HeartbeatIntervalSeconds = bootstrap.HeartbeatIntervalSeconds;
+                        config.Save();
+                        log.Info("Bootstrap completed.");
+                    }
                 }
 
                 if (!string.IsNullOrWhiteSpace(config.AgentToken))
                 {
-                    await apiClient.SendHeartbeatAsync(config, telemetry, stoppingToken);
+                    var supportedKinds = SupportedWorkKinds(config);
+                    await apiClient.SendHeartbeatAsync(
+                        config,
+                        telemetry,
+                        supportedKinds,
+                        stoppingToken);
                     log.Info("Heartbeat sent.");
                     await osdV2WorkService.ProcessOnceAsync(
                         config,
@@ -46,7 +64,7 @@ public sealed class Worker(
                         stoppingToken);
                     var work = await apiClient.GetNextWorkAsync(
                         config,
-                        ["capture_autopilot_hash"],
+                        supportedKinds,
                         stoppingToken);
                     if (work is not null)
                     {
@@ -55,7 +73,10 @@ public sealed class Worker(
                 }
                 else
                 {
-                    log.Warning("AgentToken is missing; heartbeat skipped.");
+                    if (!bootstrapPending)
+                    {
+                        log.Warning("AgentToken is missing; heartbeat skipped.");
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -73,6 +94,23 @@ public sealed class Worker(
         log.Info("AutopilotAgent stopping.");
     }
 
+    private static List<string> SupportedWorkKinds(AgentConfig config)
+    {
+        var supportedKinds = new List<string>
+        {
+            "capture_autopilot_hash",
+            "configure_build_host_role",
+        };
+        if (string.Equals(config.Phase, "build-host", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(config.Role, "build-host", StringComparison.OrdinalIgnoreCase))
+        {
+            supportedKinds.AddRange(
+                BuildHostWorkService.SupportedKinds.Where(
+                    kind => !supportedKinds.Contains(kind, StringComparer.Ordinal)));
+        }
+        return supportedKinds;
+    }
+
     private async Task ProcessWorkAsync(
         AgentConfig config,
         AgentWorkItem work,
@@ -86,6 +124,12 @@ public sealed class Worker(
                 case "capture_autopilot_hash":
                     await hashCaptureService.CaptureAsync(config, work, cancellationToken);
                     log.Info($"Completed work item {work.Id}.");
+                    break;
+                case var kind when BuildHostWorkService.SupportedKinds.Contains(
+                    kind,
+                    StringComparer.Ordinal):
+                    await buildHostWorkService.ProcessAsync(config, work, cancellationToken);
+                    log.Info($"Completed build-host work item {work.Id}.");
                     break;
                 default:
                     await apiClient.FailWorkAsync(

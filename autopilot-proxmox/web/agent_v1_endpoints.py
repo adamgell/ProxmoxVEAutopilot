@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import hmac
+import json
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -16,14 +17,15 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from web import agent_telemetry_pg, ts_engine_pg, winpe_token
+from web import agent_telemetry_pg, setup_artifacts, ts_engine_pg, winpe_token
 
 
 router = APIRouter(prefix="/api/agent/v1", tags=["agent-v1"])
 _HEARTBEAT_INTERVAL_SECONDS = 30
+_SETUP_STATE_PATH = Path(__file__).resolve().parents[1] / "output" / "setup" / "foundation_state.json"
 
 
 class BootstrapBody(BaseModel):
@@ -60,7 +62,9 @@ class HeartbeatBody(BaseModel):
     current_run_id: Optional[str] = None
     current_phase: Optional[str] = None
     current_step_id: Optional[str] = None
+    server_url: Optional[str] = None
     agent_version: Optional[str] = None
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class EventBody(BaseModel):
@@ -137,6 +141,45 @@ def _fleet_bootstrap_token_matches(token: str) -> bool:
         return True
     token_hash = sha256(token.encode("utf-8")).hexdigest()
     return hmac.compare_digest(token_hash, configured_hash)
+
+
+def _read_setup_state() -> dict:
+    try:
+        data = json.loads(_SETUP_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _buildhost_auto_approval_matches(
+    body: BootstrapBody,
+    *,
+    vmid: int | None,
+    computer_name: str | None,
+) -> bool:
+    state = _read_setup_state()
+    if state.get("build_host_agent_auto_approve") is not True:
+        return False
+    expected_vmid = state.get("build_host_vmid") or state.get("buildhost_vmid")
+    try:
+        expected_vmid_int = int(expected_vmid)
+    except (TypeError, ValueError):
+        return False
+    expected_agent_id = (
+        str(state.get("build_host_expected_agent_id") or "").strip()
+        or f"buildhost-{expected_vmid_int}"
+    )
+    expected_computer = (
+        str(state.get("build_host_expected_computer_name") or "").strip()
+        or "AUTOPILOT-BLD"
+    )
+    actual_computer = (computer_name or body.computer_name or "").strip()
+    return (
+        (body.phase or "").casefold() == "build-host"
+        and body.agent_id == expected_agent_id
+        and vmid == expected_vmid_int
+        and actual_computer.casefold() == expected_computer.casefold()
+    )
 
 
 def _bootstrap_run_id(token: str, requested_run_id: Optional[str]) -> str | None:
@@ -266,6 +309,18 @@ def bootstrap_agent(
                 agent_version=body.agent_version,
                 created_from_run_id=run_id,
             )
+            if (
+                approval["status"] == "pending"
+                and _buildhost_auto_approval_matches(
+                    body,
+                    vmid=vmid,
+                    computer_name=computer_name,
+                )
+            ):
+                approval = agent_telemetry_pg.approve_bootstrap_approval(
+                    conn,
+                    approval["approval_id"],
+                )
             if approval["status"] == "approved" and approval.get("agent_token"):
                 agent_telemetry_pg.mark_bootstrap_approval_claimed(
                     conn,
@@ -358,6 +413,16 @@ def heartbeat(body: HeartbeatBody, device: dict = Depends(_require_agent)):
             agent_id=body.agent_id,
             payload=payload,
         )
+        if body.current_run_id and (body.current_phase or "").lower() == "full_os":
+            from web import osdeploy_pg
+
+            osdeploy_pg.init(conn)
+            osdeploy_pg.mark_complete_from_heartbeat(
+                conn,
+                run_id=body.current_run_id,
+                agent_id=body.agent_id,
+                heartbeat=payload,
+            )
     return {
         "status": "ok",
         "heartbeat_interval_seconds": _HEARTBEAT_INTERVAL_SECONDS,
@@ -492,6 +557,59 @@ def post_hash(body: HashBody, device: dict = Depends(_require_agent)):
                     detail="work item is already terminal",
                 )
     return {"ok": True, **result}
+
+
+@router.post("/artifacts")
+async def upload_artifact(
+    work_item_id: str = Form(...),
+    artifact_kind: str = Form(...),
+    metadata_json: str = Form("{}"),
+    file: UploadFile = File(...),
+    device: dict = Depends(_require_agent),
+):
+    safe_kind = "".join(
+        ch for ch in artifact_kind.strip().lower()
+        if ch.isalnum() or ch in ("-", "_", ".")
+    )
+    if safe_kind not in {
+        "agent-msi",
+        "winpe-iso",
+        "cloudosd-iso",
+        "osdeploy-iso",
+        "manifest",
+        "wim",
+        "log",
+    }:
+        raise HTTPException(status_code=400, detail="unsupported artifact kind")
+    with _conn() as conn:
+        work = agent_telemetry_pg.get_work_item(conn, work_item_id)
+    if work is None:
+        raise HTTPException(status_code=404, detail="work item not found")
+    if work["agent_id"] != device["agent_id"]:
+        raise HTTPException(status_code=403, detail="token/work mismatch")
+    try:
+        metadata = json.loads(metadata_json or "{}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid metadata_json: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail="metadata_json must be an object")
+
+    filename = Path(file.filename or f"{safe_kind}.bin").name
+    target = setup_artifacts.safe_artifact_path(safe_kind, filename)
+    with target.open("wb") as handle:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            handle.write(chunk)
+    row = setup_artifacts.register_existing_artifact(
+        kind=safe_kind,
+        path=target,
+        metadata=metadata,
+        producer_agent_id=device["agent_id"],
+        work_item_id=work_item_id,
+    )
+    return {"ok": True, "artifact": row}
 
 
 @router.get("/config")

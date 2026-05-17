@@ -14,6 +14,8 @@ public sealed class AgentConfig
     public string? AgentToken { get; set; }
     public string? RunId { get; set; }
     public string? Phase { get; set; }
+    public string? Role { get; set; }
+    public string[] Capabilities { get; set; } = [];
     public int? Vmid { get; set; }
     public string? VmUuid { get; set; }
     public int HeartbeatIntervalSeconds { get; set; } = 30;

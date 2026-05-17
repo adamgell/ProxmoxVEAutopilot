@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from hashlib import sha256
+from pathlib import Path
 import shutil
 
 import pytest
@@ -174,6 +176,49 @@ def test_agent_bootstrap_with_fleet_token_creates_pending_approval(agent_client,
     assert approval["agent_id"] == "agent-ninja"
     assert approval["status"] == "pending"
     assert approval["vmid"] == 107
+
+
+def test_buildhost_fleet_bootstrap_auto_approves_expected_identity(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg, agent_v1_endpoints
+
+    state_path = tmp_path / "foundation_state.json"
+    state_path.write_text(
+        """
+        {
+          "build_host_agent_auto_approve": true,
+          "build_host_vmid": "100",
+          "build_host_expected_agent_id": "buildhost-100",
+          "build_host_expected_computer_name": "AUTOPILOT-BLD"
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_v1_endpoints, "_SETUP_STATE_PATH", state_path)
+
+    response = _bootstrap_fleet_agent(
+        agent_client,
+        agent_id="buildhost-100",
+        phase="build-host",
+        vmid=100,
+        computer_name="AUTOPILOT-BLD",
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["approval_status"] == "approved"
+    assert body["agent_token"]
+
+    device = agent_telemetry_pg.get_device(pg_conn, "buildhost-100")
+    assert device["vmid"] == 100
+    assert device["computer_name"] == "AUTOPILOT-BLD"
+    approval = agent_telemetry_pg.get_bootstrap_approval(pg_conn, body["approval_id"])
+    assert approval["status"] in {"approved", "claimed"}
+    assert approval["agent_token"]
 
 
 def test_agent_bootstrap_rejects_wrong_fleet_token(agent_client):
@@ -618,6 +663,46 @@ def test_agent_heartbeat_updates_latest_telemetry(agent_client, pg_conn):
     assert config.json()["last_primary_ipv4"] == "10.211.55.119"
 
 
+def test_agent_heartbeat_records_claimable_capabilities(agent_client, pg_conn):
+    from web import agent_telemetry_pg
+
+    reg = _bootstrap_fleet_agent(
+        agent_client,
+        agent_id="agent-capabilities",
+        computer_name="GELL-CAPABILITIES",
+    )
+    approval_id = reg.json()["approval_id"]
+    _approve_bootstrap(agent_client, approval_id, "capabilities-secret")
+    token = agent_client.get(
+        f"/api/agent/v1/bootstrap/claim/{approval_id}",
+        headers=_bearer("fleet-bootstrap"),
+    ).json()["agent_token"]
+
+    response = agent_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer(token),
+        json={
+            "agent_id": "agent-capabilities",
+            "computer_name": "GELL-CAPABILITIES",
+            "primary_ipv4": "10.211.55.122",
+            "current_phase": "bootstrap",
+            "server_url": "http://192.168.2.4:5000",
+            "capabilities": [
+                "capture_autopilot_hash",
+                "configure_build_host_role",
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    latest = agent_telemetry_pg.latest_for_agent(pg_conn, "agent-capabilities")
+    assert latest["raw_json"]["capabilities"] == [
+        "capture_autopilot_hash",
+        "configure_build_host_role",
+    ]
+    assert latest["raw_json"]["server_url"] == "http://192.168.2.4:5000"
+
+
 def test_agent_heartbeat_allows_empty_current_run_id(agent_client, pg_conn):
     reg = _bootstrap_fleet_agent(
         agent_client,
@@ -831,6 +916,362 @@ def test_agent_events_are_recorded(agent_client, pg_conn):
     events = agent_telemetry_pg.list_events(pg_conn, "agent-events")
     assert events[0]["event_type"] == "qga_policy_reset"
     assert events[0]["data_json"]["service"] == "QEMU-GA"
+
+
+def test_build_host_workload_queue_includes_osdeploy_by_default(
+    agent_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg
+    from web import app as web_app
+
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="buildhost-100",
+        token="buildhost-secret",
+        vmid=100,
+        computer_name="AUTOPILOT-BLD",
+    )
+    monkeypatch.setattr(web_app, "_setup_readiness", lambda: {
+        "controller": {"url": "http://controller:5000"},
+        "build_host": {
+            "vmid": 100,
+            "expected_agent_id": "buildhost-100",
+        },
+    })
+
+    response = agent_client.post("/api/setup/v1/build-host/workloads", json={})
+
+    assert response.status_code == 202, response.text
+    queued_kinds = {item["kind"] for item in response.json()["queued"]}
+    assert {
+        "install_build_prerequisites",
+        "fetch_source_bundle",
+        "build_agent_msi",
+        "build_cloudosd",
+        "build_osdeploy",
+        "publish_artifacts",
+    }.issubset(queued_kinds)
+
+    rows = pg_conn.execute(
+        "SELECT kind, request_json FROM agent_work_items WHERE agent_id = %s",
+        ("buildhost-100",),
+    ).fetchall()
+    requests = {row["kind"]: row["request_json"] for row in rows}
+    assert requests["build_osdeploy"]["source_bundle_url"] == (
+        "http://controller:5000/api/setup/v1/source-bundle.zip"
+    )
+    assert requests["build_osdeploy"]["work_root"] == (
+        r"C:\BuildRoot\ProxmoxVEAutopilot"
+    )
+    assert agent_telemetry_pg.get_work_item(pg_conn, response.json()["queued"][0]["id"])
+
+
+def test_agent_worker_dispatches_osdeploy_build_host_work():
+    worker = (
+        Path(__file__).resolve().parents[2]
+        / "autopilot-agent"
+        / "src"
+        / "AutopilotAgent"
+        / "Worker.cs"
+    ).read_text(encoding="utf-8")
+
+    assert "BuildHostWorkService.SupportedKinds.Contains" in worker
+
+
+def test_agent_osdeploy_build_stages_source_bundle_when_source_tree_missing():
+    service = (
+        Path(__file__).resolve().parents[2]
+        / "autopilot-agent"
+        / "src"
+        / "AutopilotAgent"
+        / "BuildHostWorkService.cs"
+    ).read_text(encoding="utf-8")
+
+    assert 'ReadString(work.Request, "source_bundle_url", "")' in service
+    assert "await FetchSourceBundleAsync(config, work, cancellationToken);" in service
+
+
+def test_agent_osdeploy_build_uploads_only_manifest_selected_outputs():
+    service = (
+        Path(__file__).resolve().parents[2]
+        / "autopilot-agent"
+        / "src"
+        / "AutopilotAgent"
+        / "BuildHostWorkService.cs"
+    ).read_text(encoding="utf-8")
+
+    winpe_start = service.index("private async Task<Dictionary<string, object?>> BuildWinPeAsync")
+    cloudosd_start = service.index("private async Task<Dictionary<string, object?>> BuildCloudOsdAsync")
+    osdeploy_start = service.index("private async Task<Dictionary<string, object?>> BuildOsDeployAsync")
+    selector_start = service.index("internal static IReadOnlyList<string> SelectOsDeployBuildOutputs")
+    assert "SelectOsDeployBuildOutputs(outputRoot)" not in service[winpe_start:cloudosd_start]
+    assert "SelectOsDeployBuildOutputs(outputRoot, output.Stdout, buildStartedUtc)" in service[osdeploy_start:selector_start]
+    assert 'EnumerateFiles(outputRoot, "osdeploy-server-*.json"' in service
+    assert 'AddManifestPath(root, paths, "output_wim")' in service
+    assert 'AddManifestPath(root, paths, "output_iso")' in service
+    assert 'stdout={Truncate(output.Stdout, 4000)} stderr={Truncate(output.Stderr, 4000)}' in service
+
+
+def test_agent_build_prerequisites_install_pinned_osdeploy_modules():
+    service = (
+        Path(__file__).resolve().parents[2]
+        / "autopilot-agent"
+        / "src"
+        / "AutopilotAgent"
+        / "BuildHostWorkService.cs"
+    ).read_text(encoding="utf-8")
+
+    assert 'ReadString(work.Request, "osdeploy_version", "26.1.30.5")' in service
+    assert 'ReadString(work.Request, "osdbuilder_version", "24.10.8.1")' in service
+    assert "dotnet --list-sdks" in service
+    assert "[Net.SecurityProtocolType]::Tls12" in service
+    assert "Install-PackageProvider -Name NuGet -MinimumVersion '2.8.5.201' -ForceBootstrap" in service
+    assert "Start-Process -FilePath powershell.exe" not in service
+    assert "Install-Module -Name '$($moduleSpec.Name)' -RequiredVersion '$($moduleSpec.RequiredVersion)'" in service
+    assert "-Scope AllUsers -Force -AllowClobber -Confirm:`$false" in service
+
+
+def test_setup_promote_artifacts_registers_agent_built_osdeploy_artifact(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app
+    from web import osdeploy_pg, setup_artifacts
+
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(setup_artifacts, "REGISTRY_PATH", artifact_root / "artifact_registry.json")
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", tmp_path / "setup-state.json")
+    monkeypatch.setattr(web_app, "_setup_readiness", lambda: {
+        "state": {"pve_node": "pve1", "pve_iso_storage": "local"},
+    })
+    uploads = []
+
+    def fake_proxmox_upload(path, file_path, *, data=None, field_name=None, content_type=None):
+        uploads.append({
+            "path": path,
+            "method": "POST",
+            "data": data,
+            "filename": Path(file_path).name,
+            "field_name": field_name,
+            "content_type": content_type,
+        })
+        return {"data": "local:iso/osdeploy-server-amd64-test.iso"}
+
+    monkeypatch.setattr(web_app, "_proxmox_upload_file", fake_proxmox_upload)
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    iso_path = source_dir / "osdeploy-server-amd64-test.iso"
+    wim_path = source_dir / "osdeploy-server-amd64-test.wim"
+    manifest_path = source_dir / "osdeploy-server-amd64-test.json"
+    iso_path.write_bytes(b"iso bytes")
+    wim_path.write_bytes(b"wim bytes")
+    manifest = {
+        "architecture": "amd64",
+        "osdeploy_module_version": "26.1.30.5",
+        "osdbuilder_module_version": "24.10.8.1",
+        "adk_version": "10.1.26100.1",
+        "build_sha": "abcdef",
+        "source_media": "Windows Server 2025",
+        "image_name": "Windows Server 2025 Datacenter",
+        "image_index": 1,
+        "os_version": "Windows Server 2025",
+        "os_edition": "Datacenter",
+        "os_language": "en-us",
+        "built_by_host": "buildhost-100",
+        "iso_sha256": sha256(iso_path.read_bytes()).hexdigest(),
+        "wim_sha256": sha256(wim_path.read_bytes()).hexdigest(),
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8-sig")
+
+    work_item_id = "work-osdeploy-1"
+    setup_artifacts.register_artifact(
+        kind="manifest",
+        source_path=manifest_path,
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item_id,
+    )
+    setup_artifacts.register_artifact(
+        kind="wim",
+        source_path=wim_path,
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item_id,
+    )
+    iso = setup_artifacts.register_artifact(
+        kind="osdeploy-iso",
+        source_path=iso_path,
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item_id,
+    )
+
+    response = agent_client.post(
+        "/api/setup/v1/artifacts/promote",
+        json={"artifact_ids": [iso["artifact_id"]]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert uploads == [{
+        "path": "/nodes/pve1/storage/local/upload",
+        "method": "POST",
+        "data": {"content": "iso"},
+        "filename": "osdeploy-server-amd64-test.iso",
+        "field_name": "filename",
+        "content_type": "application/octet-stream",
+    }]
+    assert response.json()["promoted"][0]["proxmox_volid"] == (
+        "local:iso/osdeploy-server-amd64-test.iso"
+    )
+    rows = osdeploy_pg.list_artifacts(pg_conn, architecture="amd64")
+    assert len(rows) == 1
+    artifact = rows[0]
+    assert artifact["proxmox_volid"] == "local:iso/osdeploy-server-amd64-test.iso"
+    assert artifact["build_job_id"] == work_item_id
+    assert artifact["built_by_host"] == "buildhost-100"
+    assert artifact["iso_sha256"] == manifest["iso_sha256"]
+    assert artifact["wim_sha256"] == manifest["wim_sha256"]
+    assert artifact["iso_path"].endswith("/osdeploy-iso/osdeploy-server-amd64-test.iso")
+    assert artifact["wim_path"].endswith("/wim/osdeploy-server-amd64-test.wim")
+    assert artifact["manifest_path"].endswith("/manifest/osdeploy-server-amd64-test.json")
+
+
+def test_setup_promote_artifacts_can_mark_pve_pulled_osdeploy_artifact(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app
+    from web import osdeploy_pg, setup_artifacts
+
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(setup_artifacts, "REGISTRY_PATH", artifact_root / "artifact_registry.json")
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", tmp_path / "setup-state.json")
+    monkeypatch.setattr(web_app, "_setup_readiness", lambda: {
+        "state": {"pve_node": "pve1", "pve_iso_storage": "local"},
+    })
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_upload_file",
+        lambda *args, **kwargs: pytest.fail("PVE-pulled artifact should not upload through API"),
+    )
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    iso_path = source_dir / "osdeploy-server-amd64-pulled.iso"
+    wim_path = source_dir / "osdeploy-server-amd64-pulled.wim"
+    manifest_path = source_dir / "osdeploy-server-amd64-pulled.json"
+    iso_path.write_bytes(b"iso bytes")
+    wim_path.write_bytes(b"wim bytes")
+    manifest = {
+        "architecture": "amd64",
+        "osdeploy_module_version": "26.1.30.5",
+        "osdbuilder_module_version": "24.10.8.1",
+        "adk_version": "10.1.26100.1",
+        "build_sha": "abcdef",
+        "source_media": "Windows Server 2025",
+        "image_name": "Windows Server 2025 Datacenter",
+        "image_index": 1,
+        "os_version": "Windows Server 2025",
+        "os_edition": "Datacenter",
+        "os_language": "en-us",
+        "built_by_host": "buildhost-100",
+        "iso_sha256": sha256(iso_path.read_bytes()).hexdigest(),
+        "wim_sha256": sha256(wim_path.read_bytes()).hexdigest(),
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8-sig")
+
+    work_item_id = "work-osdeploy-pulled"
+    setup_artifacts.register_artifact(
+        kind="manifest",
+        source_path=manifest_path,
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item_id,
+    )
+    setup_artifacts.register_artifact(
+        kind="wim",
+        source_path=wim_path,
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item_id,
+    )
+    iso = setup_artifacts.register_artifact(
+        kind="osdeploy-iso",
+        source_path=iso_path,
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item_id,
+    )
+
+    response = agent_client.post(
+        "/api/setup/v1/artifacts/promote",
+        json={
+            "artifact_ids": [iso["artifact_id"]],
+            "storage": "local",
+            "already_copied": True,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["promoted"][0]["proxmox_volid"] == (
+        "local:iso/osdeploy-server-amd64-pulled.iso"
+    )
+    rows = osdeploy_pg.list_artifacts(pg_conn, architecture="amd64")
+    assert len(rows) == 1
+    assert rows[0]["proxmox_volid"] == "local:iso/osdeploy-server-amd64-pulled.iso"
+
+
+def test_setup_promote_artifacts_requires_selection_for_already_copied(agent_client):
+    response = agent_client.post(
+        "/api/setup/v1/artifacts/promote",
+        json={"already_copied": True},
+    )
+
+    assert response.status_code == 400
+    assert "artifact_ids is required" in response.text
+
+
+def test_proxmox_upload_body_streams_file_without_buffering(tmp_path):
+    from web import app as web_app
+
+    payload = b"a" * 1024 * 1024
+    iso_path = tmp_path / "large.iso"
+    iso_path.write_bytes(payload)
+
+    body = web_app._StreamingMultipartBody(
+        fields={"content": "iso"},
+        file_field="filename",
+        file_path=iso_path,
+        content_type="application/octet-stream",
+    )
+    try:
+        assert len(body) > len(payload)
+        assert "multipart/form-data; boundary=" in body.content_type
+        first = body.read(128)
+        second = body.read(128)
+        assert len(first) == 128
+        assert len(second) == 128
+        assert b'name="content"' in first
+        implicit = body.read()
+        assert 0 < len(implicit) <= body._DEFAULT_READ_SIZE
+        remaining = first + second + implicit
+        while True:
+            chunk = body.read()
+            if not chunk:
+                break
+            assert len(chunk) <= body._DEFAULT_READ_SIZE
+            remaining += chunk
+        assert payload in remaining
+        assert remaining.endswith(f"\r\n--{body.boundary}--\r\n".encode("utf-8"))
+    finally:
+        body.close()
 
 
 def test_agent_api_auth_exemption_is_limited_to_agent_prefix():
