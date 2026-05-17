@@ -775,7 +775,7 @@ def _package_response(*, run: dict, artifact: dict, server_base_url: str) -> dic
             },
         },
         "agent": {
-            "phase": "full_os",
+            "phase": "osdeploy",
             "agent_id": agent_id,
             "bootstrap_token": _sign(
                 run["run_id"],
