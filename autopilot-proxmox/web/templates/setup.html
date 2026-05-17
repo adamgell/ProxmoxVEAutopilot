@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>First-run setup - Proxmox VE Autopilot</title>
+  <link rel="icon" type="image/svg+xml" href="/auth/logo">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: #e8eef8;
+      background: #090d14;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .top {
+      border-bottom: 1px solid #273142;
+      background: #111722;
+    }
+    .top-inner,
+    main {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+    .top-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 64px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .brand img {
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 18px; letter-spacing: 0; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    .muted { color: #9aa7b8; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid #334055;
+      color: #d8e4f3;
+      background: #182031;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #ffcc5c;
+    }
+    .status.ready .dot, .pill.ready { background: #84cc16; color: #102000; }
+    .status.blocked .dot { background: #ffcc5c; }
+    main {
+      padding: 22px 0 40px;
+      display: grid;
+      gap: 16px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric,
+    section {
+      border: 1px solid #273142;
+      border-radius: 8px;
+      background: #111722;
+      box-shadow: 0 12px 34px rgba(0,0,0,0.25);
+    }
+    .metric { padding: 14px; }
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 18px;
+    }
+    section { padding: 16px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 9px 8px;
+      border-bottom: 1px solid #273142;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: #9aa7b8;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-width: 68px;
+      justify-content: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #ffcc5c;
+      color: #241900;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    code, pre {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    code {
+      color: #dbeafe;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      margin: 10px 0 0;
+      padding: 11px;
+      overflow-x: auto;
+      color: #dbeafe;
+      background: #0b1019;
+      border: 1px solid #273142;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+    .footer {
+      color: #78869a;
+      font-size: 12px;
+      text-align: right;
+    }
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .links a {
+      color: #dbeafe;
+      text-decoration: none;
+      border: 1px solid #334055;
+      border-radius: 6px;
+      padding: 6px 9px;
+      background: #182031;
+    }
+    .links a:hover { border-color: #4f9bd8; }
+    @media (max-width: 860px) {
+      .top-inner { align-items: flex-start; flex-direction: column; padding: 14px 0; }
+      .summary, .split { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand">
+        <img src="/auth/logo" alt="">
+        <div>
+          <h1>Proxmox VE Autopilot first-run setup</h1>
+          <p class="muted">{{ setup.controller.url or 'controller not published yet' }}</p>
+        </div>
+      </div>
+      <span class="status {{ setup.health }}"><span class="dot"></span>{{ setup.phase }}</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="summary" aria-label="Setup summary">
+      <div class="metric"><span class="muted">Controller</span><strong>{{ setup.controller.ip or setup.controller.name }}</strong></div>
+      <div class="metric"><span class="muted">Node</span><strong>{{ setup.state.get('pve_node') or 'unknown' }}</strong></div>
+      <div class="metric"><span class="muted">ISO storage</span><strong>{{ setup.media.iso_storage }}</strong></div>
+      <div class="metric"><span class="muted">Windows ISO</span><strong>{{ 'ready' if setup.media.windows_iso_ready else 'missing' }}</strong></div>
+    </div>
+
+    <section>
+      <h2>Readiness</h2>
+      <table>
+        <thead><tr><th>Check</th><th>State</th><th>Next evidence</th></tr></thead>
+        <tbody>
+          {% for check in setup.checks %}
+          <tr>
+            <td>{{ check.label }}</td>
+            <td><span class="pill {{ 'ready' if check.ready else '' }}">{{ 'ready' if check.ready else 'blocked' }}</span></td>
+            <td>{{ check.next_step }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Controller VM</h2>
+      <table>
+        <tbody>
+          <tr><th>Name</th><td>{{ setup.controller.name }}</td></tr>
+          <tr><th>VMID</th><td>{{ setup.controller.vmid or 'pending' }}</td></tr>
+          <tr><th>URL</th><td>{% if setup.controller.url %}<code>{{ setup.controller.url }}</code>{% else %}not published{% endif %}</td></tr>
+          <tr><th>Runtime</th><td>{{ 'healthy' if setup.controller.runtime_ready else 'pending' }}</td></tr>
+          <tr><th>Docker/Compose</th><td>{{ 'ready' if setup.controller.docker_ready and setup.controller.compose_ready else 'pending' }}</td></tr>
+          <tr><th>Auth</th><td>{{ 'local auth active' if setup.controller.local_auth_active else setup.controller.auth_mode }}</td></tr>
+          <tr><th>Migration</th><td>{{ 'migration restored' if setup.controller.migration_bundle_restored else (setup.controller.migration_bundle or 'no bundle restored') }}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="split">
+      <section>
+        <h2>Media Gate</h2>
+        <p class="muted">Upload Windows media to <code>{{ setup.media.upload_directory }}</code>.</p>
+        <div class="links" aria-label="Official media sources">
+          <a href="https://www.microsoft.com/en-us/software-download/windows11">Windows 11 ISO</a>
+          <a href="https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise">Windows 11 Enterprise evaluation</a>
+          <a href="https://virtio-win.github.io/Knowledge-Base/Driver-installation.html">VirtIO drivers</a>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>Windows ISO</th><td>{{ setup.media.windows_iso_volid or 'not found' }}</td></tr>
+            {% if setup.media.windows_iso_download_source %}
+            <tr><th>Windows source</th><td>{{ setup.media.windows_iso_download_product or setup.media.windows_iso_download_source }}</td></tr>
+            {% endif %}
+            {% if setup.media.windows_iso_download_error %}
+            <tr><th>Windows download</th><td>{{ setup.media.windows_iso_download_error }}</td></tr>
+            {% endif %}
+            <tr><th>VirtIO ISO</th><td>{{ setup.media.virtio_iso_volid or 'not found' }}</td></tr>
+          </tbody>
+        </table>
+        <pre>{{ setup.commands.resume_bootstrap }}</pre>
+      </section>
+
+      <section>
+        <h2>Seed Agent</h2>
+        <table>
+          <tbody>
+            <tr><th>Producer</th><td>{{ setup.seed_agent.producer or 'not built' }}</td></tr>
+            <tr><th>SDK image</th><td>{{ setup.seed_agent.sdk_image or 'not recorded' }}</td></tr>
+            <tr><th>RID outputs</th><td>{{ setup.seed_agent.runtime_identifiers | join(', ') if setup.seed_agent.runtime_identifiers else 'none' }}</td></tr>
+            <tr><th>Commit</th><td><code>{{ setup.seed_agent.git_sha or 'unknown' }}</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <section>
+      <h2>Build Host</h2>
+      <table>
+        <tbody>
+          <tr><th>VM</th><td>{{ setup.state.get('build_host_name') or 'autopilot-buildhost-01' }}</td></tr>
+          <tr><th>VMID</th><td>{{ setup.state.get('build_host_vmid') or 'not created' }}</td></tr>
+          <tr><th>Node</th><td>{{ setup.state.get('build_host_node') or setup.state.get('pve_node') or 'unknown' }}</td></tr>
+          <tr><th>Seed ISO</th><td>{{ setup.state.get('seed_iso_volid') or 'not generated' }}</td></tr>
+          <tr><th>Answer file</th><td>{{ 'ready' if setup.state.get('build_host_unattend_ready') or setup.state.get('seed_iso_ready') else 'pending' }}</td></tr>
+          <tr><th>Expected agent</th><td>{{ setup.state.get('build_host_expected_agent_id') or 'buildhost-vmid' }}</td></tr>
+          <tr><th>Agent approval</th><td>{{ 'auto for expected identity' if setup.state.get('build_host_agent_auto_approve') else 'operator approval required' }}</td></tr>
+          <tr><th>Windows admin</th><td>{{ setup.state.get('build_host_admin_user') or 'generated during bootstrap' }}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Official Microsoft ISO URL</h2>
+      <p class="muted">Use this only after obtaining a direct Windows ISO URL from Microsoft.</p>
+      <pre>{{ setup.commands.bootstrap_with_windows_url }}</pre>
+    </section>
+
+    <div class="footer">
+      Build <code>{{ build_sha or 'unknown' }}</code>{% if build_time %} / {{ build_time }}{% endif %}
+    </div>
+  </main>
+</body>
+</html>

@@ -8,6 +8,8 @@ A web-based tool for provisioning Windows VMs on Proxmox with OEM-accurate SMBIO
 
 Proxmox VE Autopilot creates Windows VMs that appear as real OEM hardware to Windows Autopilot. Each VM gets manufacturer-specific SMBIOS fields (Lenovo, Dell, HP, Microsoft Surface, or generic), a unique serial number, and a hardware identity. The hardware hash is captured and uploaded to Intune — all from a browser, without touching a physical machine.
 
+For Windows desktop deployments, the primary path uses [OSDCloud](https://www.osdcloud.com/) as the Windows deployment substrate, while Proxmox VE Autopilot owns Proxmox VM creation, identity, cache warming, task-sequence intent, AutopilotAgent bootstrap, and readiness evidence.
+
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐     ┌──────────────────┐
 │  Build Template │────>│   Clone VMs      │────>│  Capture Hashes │────>│  Upload to Intune│
@@ -33,66 +35,83 @@ All communication with guest VMs happens through the Proxmox REST API and QEMU g
 | **Windows ISO** | Stock Windows 11 Enterprise / Business (unmodified)  |
 | **VirtIO ISO**  | `virtio-win.iso` (latest from Fedora / Red Hat)      |
 | **Ubuntu ISO**  | Ubuntu 24.04 live-server ISO (optional — only needed for Ubuntu sequences) |
-| **Docker host** | Any machine with Docker Compose, reachable on :5000  |
+| **Controller VM** | Ubuntu Server 24.04 LTS VM created by first-run init |
 
-Both ISOs must already be uploaded to a Proxmox ISO storage (e.g. `isos`) before you start.
+The primary first-run path keeps the Proxmox VE host clean. PVE creates an
+Ubuntu controller VM; Docker, Compose, Postgres, MCP, builder, monitor, web UI,
+and Windows artifact orchestration run inside that controller. Windows and
+VirtIO media can be uploaded manually or handled by the assisted media gate.
 
-## Quick Start (5 steps)
+## Quick Start
 
-### 1. Create a Proxmox API token
+### 1. Copy the repo to the Proxmox VE node
 
-Run this on your **Proxmox host shell** (copy each line, not the whole block):
-
-```bash
-pveum role add AutopilotProvisioner -privs VM.Allocate,VM.Clone,VM.Config.CPU,VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.Audit,VM.PowerMgmt,VM.Console,VM.Snapshot,VM.Snapshot.Rollback,VM.GuestAgent.Audit,VM.GuestAgent.FileRead,VM.GuestAgent.FileWrite,VM.GuestAgent.FileSystemMgmt,VM.GuestAgent.Unrestricted,Datastore.AllocateSpace,Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
-
-pveum user add autopilot@pve --comment "Autopilot provisioning"
-pveum user token add autopilot@pve ansible --privsep=0 --comment "Automation"
-```
-
-> **Save the token secret — Proxmox shows it once.** If you lose it, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#lost-my-api-token-secret).
-
-Then sign in to the website with Entra and run **Settings -> Proxmox Permission Bootstrap**. That SSH-backed action repairs the role/ACLs for the configured token, enables snippet storage, seeds chassis SMBIOS binaries, and stores the validated root SSH credential needed for CloudOSD/OEM chassis profiles. You can still run the manual ACL commands from [docs/SETUP.md](docs/SETUP.md#1-create-a-proxmox-api-token), but the UI bootstrap is the preferred path.
-
-Full breakdown, including how to find your storage and SDN names: [docs/SETUP.md](docs/SETUP.md#1-create-a-proxmox-api-token).
-
-### 2. Configure credentials
+From the operator workstation:
 
 ```bash
-git clone https://github.com/adamgell/ProxmoxVEAutopilot.git
-cd ProxmoxVEAutopilot/autopilot-proxmox
-cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+rsync -a --delete \
+  --exclude 'autopilot-proxmox/.env' \
+  --exclude 'autopilot-proxmox/inventory/group_vars/all/vault.yml' \
+  --exclude 'autopilot-proxmox/secrets/' \
+  --exclude 'autopilot-proxmox/output/' \
+  '/Users/Adam.Gell/repo/ProxmoxVEAutopilot/' \
+  pve-dev-192-168-2-252:/root/ProxmoxVEAutopilot/
 ```
 
-Open `vault.yml` and paste in the token id (`autopilot@pve!ansible`) and the secret you saved. Entra fields are optional — leave blank if you don't need Intune upload.
+### 2. Run PVE foundation
 
-### 3. Start the container
+Run this on the Proxmox VE node as root. It repairs API token/ACLs/storage,
+creates the Ubuntu controller VM, syncs source/config, starts the controller
+runtime, and verifies `/healthz`.
 
 ```bash
-docker compose up -d
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase foundation --resume --controller-ip 192.168.2.115 --non-interactive'
 ```
 
-Open the web UI at **http://your-host:5000**.
+### 3. Satisfy the media gate
 
-### 4. Configure Proxmox connection in the UI
+The default lab path downloads Windows 11 from Microsoft's official software
+download connector and VirtIO from the official virtio-win source. Manual
+Windows ISO upload and `--windows-iso-url` remain supported recovery paths.
 
-On the **Settings** page, fill in:
+```bash
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase bootstrap --resume --download-windows --download-virtio --controller-ip 192.168.2.115 --non-interactive'
+```
 
-- Proxmox host, port, node
-- Storage (VM disks), ISO storage, network bridge
-- Windows ISO and VirtIO ISO paths (dropdowns populate from Proxmox once the token is valid)
-- VM defaults (cores, memory, disk, OEM profile)
+### 4. Finish `/setup`
 
-Save. Leaving Settings empty will break the next step.
+Open the controller UI:
 
-### 5. Build the answer ISO and template
+```text
+http://192.168.2.115:5000/setup
+```
 
-On the **Build Template** page:
+Use local first-run auth if Entra is not configured. From `/setup`, create or
+repair the Windows build host, queue source-build workloads, promote artifacts,
+and wait for operational readiness.
 
-1. Click **Rebuild Answer ISO** — generates `autounattend.iso` from `files/autounattend.xml` and uploads it to Proxmox.
-2. Click **Build Template** — Windows installs unattended (~20-30 min). Watch progress on the **Jobs** page.
+### 5. Provision a test Windows VM
 
-Done. You can now clone devices from the **Provision VMs** page.
+After `/setup` is operational, use CloudOSD or WinPE artifacts to launch a real
+template/provision workflow. Confirm QGA when available, AutopilotAgent
+heartbeat, hash capture/upload state, and CloudOSD/WinPE readiness evidence.
+
+Full runbook:
+
+- [docs/FIRST_RUN_E2E.md](docs/FIRST_RUN_E2E.md)
+- [docs/PVE_INIT.md](docs/PVE_INIT.md)
+- [docs/WINDOWS_BUILD_BOX.md](docs/WINDOWS_BUILD_BOX.md)
+
+### Manual Fallback
+
+The older manual container setup remains documented in [docs/SETUP.md](docs/SETUP.md).
+Use it only when you intentionally want to bring your own Docker host instead of
+the Ubuntu controller VM first-run path.
+
+The app still supports the legacy Build Template and Provision pages. The
+first-run path adds controller/build-host/artifact automation; it does not
+remove the existing `/winpe/*`, CloudOSD, task sequence, or clone/template
+behavior.
 
 The app ships with three seeded **task sequences** — *Entra Join (default)*, *AD Domain Join — Local Admin*, and *Hybrid Autopilot (stub)*. The default reproduces today's Autopilot flow byte-for-byte; pick a different sequence on the Provision page to join a domain instead. See [docs/SETUP.md#task-sequences-and-credentials](docs/SETUP.md#task-sequences-and-credentials).
 

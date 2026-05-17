@@ -304,3 +304,49 @@ def test_settings_page_treats_pve_alias_as_proxmox(app_client, monkeypatch):
     assert r.status_code == 200
     assert "Proxmox Connection" in r.text
     assert "Proxmox Permission Bootstrap" in r.text
+
+
+def test_settings_page_renders_osdeploy_build_host_fields(app_client):
+    with patch("web.app._load_vars", return_value={
+        "hypervisor_type": "proxmox",
+        "osdeploy_build_remote": "builder@example",
+        "osdeploy_build_remote_root": "F:\\BuildRoot",
+        "osdeploy_build_ssh_key_path": "/app/secrets/osdeploy_key",
+    }), \
+         patch("web.app._load_vault", return_value={}), \
+         patch("web.app._vault_presence", return_value={}), \
+         patch("web.app._load_proxmox_config", return_value={"hypervisor_type": "proxmox"}), \
+         patch("web.app._fetch_settings_options", return_value={}):
+        r = app_client.get("/settings")
+
+    assert r.status_code == 200
+    body = r.text
+    assert "OSDeploy Build Host" in body
+    assert 'name="osdeploy_build_remote"' in body
+    assert 'name="osdeploy_build_remote_root"' in body
+    assert 'name="osdeploy_build_ssh_key_path"' in body
+    assert "builder@example" in body
+    assert "F:\\BuildRoot" in body
+    assert "/app/secrets/osdeploy_key" in body
+
+
+def test_settings_save_persists_osdeploy_build_host_fields(app_client):
+    saved_updates = {}
+
+    def fake_save_vars(updates):
+        saved_updates.update(updates)
+
+    with patch("web.app._load_vars", return_value={"hypervisor_type": "proxmox"}), \
+         patch("web.app._save_vars", side_effect=fake_save_vars), \
+         patch("web.app._save_vault"):
+        r = app_client.post("/api/settings", data={
+            "hypervisor_type": "proxmox",
+            "osdeploy_build_remote": "Adam.Gell@192.168.2.50",
+            "osdeploy_build_remote_root": "F:\\OSDeployBuild",
+            "osdeploy_build_ssh_key_path": "/app/secrets/osdeploy_devmachine_ed25519",
+        }, follow_redirects=False)
+
+    assert r.status_code == 303
+    assert saved_updates["osdeploy_build_remote"] == "Adam.Gell@192.168.2.50"
+    assert saved_updates["osdeploy_build_remote_root"] == "F:\\OSDeployBuild"
+    assert saved_updates["osdeploy_build_ssh_key_path"] == "/app/secrets/osdeploy_devmachine_ed25519"

@@ -160,6 +160,16 @@
     .msbtn:hover { background: linear-gradient(180deg, rgba(59,183,255,0.34), rgba(59,183,255,0.18)); }
     .msbtn:focus-visible { outline: 2px solid #3bb7ff; outline-offset: 3px; }
     .msbtn svg { flex-shrink: 0; }
+    .setup-note {
+      margin: 0 0 14px;
+      padding: 12px;
+      color: #dce9f8;
+      background: rgba(59, 183, 255, 0.10);
+      border: 1px solid rgba(59, 183, 255, 0.26);
+      border-radius: 7px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
     .err {
       background: rgba(255, 121, 95, 0.13);
       color: #ffb0a0;
@@ -209,13 +219,19 @@
     <div class="err">{{ error }}</div>
     {% endif %}
 
-    {% if tenant_label %}
-    <div class="tenant" title="Entra tenant this instance authenticates against">
-      <span>tenant</span>
+    {% if tenant_label and entra_configured %}
+    <div class="tenant" title="Identity tenant this instance authenticates against">
+      <span>provider</span>
       <span class="tenant-label">{{ tenant_label }}</span>
+    </div>
+    {% elif local_enabled %}
+    <div class="tenant" title="Local operator session for first-run and lab use">
+      <span>provider</span>
+      <span class="tenant-label">local operator</span>
     </div>
     {% endif %}
 
+    {% if entra_configured %}
     <a class="msbtn" href="/auth/login/start?next={{ next_url }}">
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
         <rect x="1" y="1" width="9" height="9" fill="#f35325"/>
@@ -225,6 +241,19 @@
       </svg>
       Sign in with Microsoft
     </a>
+    {% elif local_enabled %}
+    <p class="setup-note">Identity provider settings are not configured yet. Use a local operator session for this first-run console.</p>
+    <form method="post" action="/auth/local/start?next={{ next_url }}">
+      <button class="msbtn" type="submit">
+        Continue locally
+      </button>
+    </form>
+    {% else %}
+    <p class="setup-note">Identity provider settings are not configured on this new instance.</p>
+    <a class="msbtn" href="{{ setup_url or '/setup' }}">
+      Open first-run setup
+    </a>
+    {% endif %}
 
     <div class="footer">
       Build <code>{{ build_sha or 'unknown' }}</code>

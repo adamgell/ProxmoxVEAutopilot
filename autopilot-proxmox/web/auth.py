@@ -1,4 +1,4 @@
-"""Entra OIDC authentication for the web UI.
+"""Web UI authentication helpers.
 
 Flow (Authorization Code + PKCE):
 
@@ -6,6 +6,9 @@ Flow (Authorization Code + PKCE):
     /auth/callback → exchange auth code for ID token, validate, drop
                      session cookie, redirect back to `next` (default /)
     /auth/logout   → clear session, redirect to /
+
+Fresh first-run installs can also create a local operator session through
+``/auth/local/start`` when ``AUTOPILOT_AUTH_MODE`` resolves to ``local``.
 
 The session cookie is signed with a per-deployment secret and holds
 only the claims we need (sub, name, email, groups). Protected routes
@@ -45,21 +48,26 @@ log = logging.getLogger(__name__)
 # Ansible controller during WinPE provisioning. /api/agent/v1/* is the
 # persistent Windows agent protocol and validates its own bearer tokens.
 # CloudOSD PE bridge routes use the same HMAC bearer-token model after
-# identity registration.
+# identity registration. /api/osd/v2/ubuntu/* is called by the local
+# Ansible controller during Ubuntu clone provisioning to create per-VM
+# NoCloud seed media and record VM/cloud-init evidence.
 _EXEMPT_PREFIXES = (
     "/auth/",
     "/healthz",
     "/api/version",
+    "/api/setup/v1/",
     "/api/qga/recovery-script.ps1",
     "/api/qga/recovery-command.txt",
     "/winpe/",
     "/osd/client/",
     "/osd/v2/",
+    "/api/osd/v2/ubuntu/",
     "/api/agent/v1/",
     "/api/runs/",
     "/static/",
     "/favicon.ico",
 )
+_EXEMPT_EXACT = {"/setup"}
 
 
 def _is_cloudosd_exempt(path: str) -> bool:
@@ -67,11 +75,25 @@ def _is_cloudosd_exempt(path: str) -> bool:
         return True
     if path.startswith("/api/cloudosd/assets/"):
         return True
+    if path.startswith("/api/cloudosd/cache/") and "/download/" in path:
+        return True
     if path.startswith("/api/cloudosd/runs/") and len(path.rstrip("/").split("/")) == 5:
         return True
     if path.startswith("/api/cloudosd/runs/") and path.endswith("/identity"):
         return True
     if path.startswith("/api/cloudosd/runs/") and path.endswith("/events"):
+        return True
+    return False
+
+
+def _is_osdeploy_exempt(path: str) -> bool:
+    if path.startswith("/api/osdeploy/v1/pe/"):
+        return True
+    if path.startswith("/api/osdeploy/v1/runs/") and len(path.rstrip("/").split("/")) == 6:
+        return True
+    if path.startswith("/api/osdeploy/v1/runs/") and path.endswith("/identity"):
+        return True
+    if path.startswith("/api/osdeploy/v1/runs/") and path.endswith("/events"):
         return True
     return False
 
@@ -144,7 +166,12 @@ def install_session_middleware(app, *, secret: str) -> None:
 # ---------------------------------------------------------------------------
 
 def is_exempt_path(path: str) -> bool:
-    return any(path.startswith(p) for p in _EXEMPT_PREFIXES) or _is_cloudosd_exempt(path)
+    return (
+        path in _EXEMPT_EXACT
+        or any(path.startswith(p) for p in _EXEMPT_PREFIXES)
+        or _is_cloudosd_exempt(path)
+        or _is_osdeploy_exempt(path)
+    )
 
 
 def current_user(request: Request) -> dict:
