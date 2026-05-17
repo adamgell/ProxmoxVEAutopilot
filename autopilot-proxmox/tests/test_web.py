@@ -665,11 +665,16 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     """Startup creates the service_health table before routes can serve."""
     from web import app as web_app
     from web import (
+        agent_telemetry_pg,
+        cloudosd_cache,
+        cloudosd_pg,
         db_pg,
         device_history_pg,
         devices_pg,
         deployment_health_pg,
         jobs_pg,
+        osdeploy_cache,
+        osdeploy_pg,
         sequences_pg,
         service_health_pg,
         ts_engine_pg,
@@ -710,6 +715,21 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     def fake_devices_init(conn):
         calls.append(("devices_init", conn.__class__.__name__))
 
+    def fake_agent_telemetry_init(conn):
+        calls.append(("agent_telemetry_init", conn.__class__.__name__))
+
+    def fake_cloudosd_init(conn):
+        calls.append(("cloudosd_init", conn.__class__.__name__))
+
+    def fake_cloudosd_cache_init(conn):
+        calls.append(("cloudosd_cache_init", conn.__class__.__name__))
+
+    def fake_osdeploy_init(conn):
+        calls.append(("osdeploy_init", conn.__class__.__name__))
+
+    def fake_osdeploy_cache_init(conn):
+        calls.append(("osdeploy_cache_init", conn.__class__.__name__))
+
     def fake_deployment_health_init(conn):
         calls.append(("deployment_health_init", conn.__class__.__name__))
 
@@ -727,6 +747,11 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
     monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
     monkeypatch.setattr(devices_pg, "init", fake_devices_init)
+    monkeypatch.setattr(agent_telemetry_pg, "init", fake_agent_telemetry_init)
+    monkeypatch.setattr(cloudosd_pg, "init", fake_cloudosd_init)
+    monkeypatch.setattr(cloudosd_cache, "init", fake_cloudosd_cache_init)
+    monkeypatch.setattr(osdeploy_pg, "init", fake_osdeploy_init)
+    monkeypatch.setattr(osdeploy_cache, "init", fake_osdeploy_cache_init)
     monkeypatch.setattr(deployment_health_pg, "init", fake_deployment_health_init)
     monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "sequences.db")
     monkeypatch.setattr(web_app, "SECRETS_DIR", tmp_path / "secrets")
@@ -742,6 +767,11 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     assert ("ts_init", "FakeConn") in calls
     assert ("device_history_init", "FakeConn") in calls
     assert ("devices_init", "FakeConn") in calls
+    assert ("agent_telemetry_init", "FakeConn") in calls
+    assert ("cloudosd_init", "FakeConn") in calls
+    assert ("cloudosd_cache_init", "FakeConn") in calls
+    assert ("osdeploy_init", "FakeConn") in calls
+    assert ("osdeploy_cache_init", "FakeConn") in calls
     assert ("deployment_health_init", "FakeConn") in calls
     heartbeat_calls = [call for call in calls if call[0] == "heartbeat"]
     assert heartbeat_calls == [

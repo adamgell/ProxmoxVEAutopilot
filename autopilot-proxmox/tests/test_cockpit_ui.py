@@ -115,7 +115,7 @@ def test_cloudosd_run_detail_renders_autopilot_readiness_section():
 def test_cloudosd_cockpit_renders_archive_history_controls():
     template = Path("autopilot-proxmox/web/templates/cloudosd.html").read_text(encoding="utf-8")
 
-    assert "CloudOSD Run History" in template
+    assert "OSDCloud Run History" in template
     assert "Active Runs" in template
     assert "Stale Failed Runs" in template
     assert "data-cloudosd-archive" in template
@@ -123,6 +123,23 @@ def test_cloudosd_cockpit_renders_archive_history_controls():
     assert "data-cloudosd-bulk-archive=\"archive-stale-failed\"" in template
     assert "data-cloudosd-bulk-archive=\"archive-completed-old\"" in template
     assert "Hide completed old" in template
+
+
+def test_cloudosd_cockpit_renders_cache_warming_surface():
+    template = Path("autopilot-proxmox/web/templates/cloudosd.html").read_text(encoding="utf-8")
+
+    assert 'href="/osdcloud/cache"' in template
+    assert 'id="cloudosd-cache"' in template
+    assert "OSDCloud Cache" in template
+    assert "Warm Windows 11 feature images" in template
+    assert "data-cloudosd-cache-action=\"refresh\"" in template
+    assert "data-cloudosd-cache-action=\"warm-all\"" in template
+    assert "data-cloudosd-cache-warm-feature" in template
+    assert "data-cloudosd-cache-warm-quality" in template
+    assert "data-cloudosd-cache-verify" in template
+    assert "data-cloudosd-cache-delete" in template
+    assert "/api/cloudosd/cache/catalog/refresh" in template
+    assert "/api/cloudosd/cache/warm-all-windows11" in template
 
 
 def test_cloudosd_run_detail_keeps_readiness_live_after_completion():
@@ -144,14 +161,31 @@ def test_provision_page_defaults_to_cloudosd_for_desktop_clients():
 
     assert "primary Windows desktop client path" in template
     assert (
-        '<option value="cloudosd" selected>CloudOSD (Windows desktop clients)</option>'
+        '<option value="cloudosd" selected>OSDCloud (Windows desktop clients)</option>'
         in template
     )
-    assert "WinPE (Windows Server / image apply)" in template
+    assert "OSDeploy v2 (Windows Server / advanced installs)" in template
+    assert "Legacy WinPE (fallback image apply)" in template
     assert "Clone (Windows Server / template builds)" in template
-    assert "CloudOSD base deployment (no legacy sequence)" in template
+    assert "Ubuntu v2 (Desktop / Linux clients)" in template
+    assert 'data-boot-section="ubuntu"' in template
+    assert "Ubuntu v2 sequence" in template
+    assert "Ubuntu template VMID" in template
+    assert 'name="ubuntu_template_vmid"' in template
+    assert "OSDCloud base deployment (no legacy sequence)" in template
+    assert "OSDeploy Server base deployment" in template
+    assert "OSDCloud cache" in template
+    assert "feature image cache hit/miss" in template
+    assert "/osdcloud/cache" in template
+    assert 'data-legacy-sequence-row' in template
+    assert 'data-boot-modes="cloudosd"' in template
     assert "data-cloudosd-compatible" in template
+    assert "not OSDCloud-compatible yet" not in template
+    assert "syncSequenceOptions" in template
     assert template.index('<option value="cloudosd" selected>') < template.index(
+        '<option value="osdeploy">'
+    )
+    assert template.index('<option value="osdeploy">') < template.index(
         '<option value="winpe">'
     )
     assert template.index('<option value="winpe">') < template.index(
@@ -159,6 +193,124 @@ def test_provision_page_defaults_to_cloudosd_for_desktop_clients():
     )
     assert 'data-boot-section="cloudosd" hidden' not in template
     assert '<tbody data-boot-section="cloudosd">' in template
+
+
+def test_v2_builder_supports_ubuntu_target_os_palette_and_phases():
+    template = Path("autopilot-proxmox/web/templates/task_engine_builder.html").read_text(encoding="utf-8")
+
+    assert 'id="v2-target-os"' in template
+    assert '<option value="ubuntu"' in template
+    assert "PHASES_BY_TARGET_OS" in template
+    assert '"install", "Install"' in template
+    assert '"first_boot", "First Boot"' in template
+    assert "PINNED_UBUNTU_DESKTOP" in template
+    assert "isTemplateCompatible" in template
+
+
+def test_v2_sequence_library_surfaces_ubuntu_templates():
+    from web import app as web_app
+
+    names = {template["name"]: template for template in web_app._v2_flow_templates()}
+    assert names["Ubuntu Desktop Plain"]["target_os"] == "ubuntu"
+    assert names["Ubuntu Desktop Intune + Edge"]["target_os"] == "ubuntu"
+    assert names["Ubuntu Desktop Intune + MDE"]["target_os"] == "ubuntu"
+    assert names["Ubuntu Server Minimal"]["target_os"] == "ubuntu"
+    assert names["Ubuntu apt-cache Server"]["target_os"] == "ubuntu"
+    assert any(
+        node["kind"] == "linux_agent_heartbeat"
+        for node in names["Ubuntu Desktop Plain"]["nodes"]
+    )
+    create_user = next(
+        node for node in names["Ubuntu Desktop Plain"]["nodes"]
+        if node["kind"] == "create_ubuntu_user"
+    )
+    assert create_user["params"]["local_admin_credential_id"] == 1
+
+
+def test_linux_agent_download_uses_exempt_v2_namespace():
+    from web import app as web_app
+
+    commands = web_app._linux_agent_bootstrap_commands(
+        run_id="run-1",
+        vmid=123,
+        hostname="ubuntu-test",
+    )
+
+    assert any("/osd/v2/ubuntu/linux-agent.py" in command for command in commands)
+    assert not any("/api/osd/v2/ubuntu/linux-agent.py" in command for command in commands)
+
+
+def test_linux_agent_bootstrap_prefers_guest_reachable_base_url(monkeypatch):
+    import base64
+    import json
+    import re
+
+    from web import app as web_app
+
+    monkeypatch.delenv("AUTOPILOT_BASE_URL", raising=False)
+    monkeypatch.setattr(web_app, "_load_vars", lambda: {
+        "web_base_url": "http://127.0.0.1:5000",
+        "autopilot_base_url": "http://192.168.2.4:5000",
+    })
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "web_base_url": "http://127.0.0.1:5000",
+        "proxmox_host": "192.168.2.200",
+    })
+
+    commands = web_app._linux_agent_bootstrap_commands(
+        run_id="run-1",
+        vmid=123,
+        hostname="ubuntu-test",
+    )
+
+    joined = "\n".join(commands)
+    config_b64 = re.search(r"b64decode\('([^']+)'\)", joined).group(1)
+    config = json.loads(base64.b64decode(config_b64))
+
+    assert "http://192.168.2.4:5000/osd/v2/ubuntu/linux-agent.py" in joined
+    assert config["server_url"] == "http://192.168.2.4:5000"
+
+
+def test_ubuntu_v2_per_vm_seed_runs_runtime_installs_before_agent():
+    from web import app as web_app
+
+    template_user_data = """#cloud-config
+package_update: true
+runcmd:
+- apt-get install -y intune-portal
+- apt-get install -y microsoft-edge-stable
+"""
+    firstboot_user_data = """#cloud-config
+hostname: ubuntu-test
+runcmd:
+- systemctl enable --now qemu-guest-agent
+"""
+
+    merged = web_app._merge_template_runtime_cloud_init_into_firstboot(
+        template_user_data,
+        firstboot_user_data,
+    )
+    merged = web_app._append_cloud_init_runcmd(
+        merged,
+        ["curl -fsSL http://192.168.2.4:5000/osd/v2/ubuntu/linux-agent.py -o /opt/proxmoxveautopilot/autopilot_linux_agent.py"],
+    )
+
+    qga_index = merged.index("systemctl enable --now qemu-guest-agent")
+    intune_index = merged.index("apt-get install -y intune-portal")
+    edge_index = merged.index("apt-get install -y microsoft-edge-stable")
+    agent_index = merged.index("/osd/v2/ubuntu/linux-agent.py")
+    assert qga_index < intune_index < edge_index < agent_index
+
+
+def test_ubuntu_clone_waits_for_cloud_init_exec_status():
+    wait_task = (
+        Path(__file__).resolve().parents[1]
+        / "roles/proxmox_vm_clone_linux/tasks/wait_cloud_init.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "/agent/exec-status?pid={{ _ci_exec.json.data.pid }}" in wait_task
+    assert "cloud_init_exec_status" in wait_task
+    assert "Fail if cloud-init returned a non-zero exit code" in wait_task
 
 
 def test_build_nav_prioritizes_cloudosd_desktop_cockpit():
@@ -171,7 +323,10 @@ def test_build_nav_prioritizes_cloudosd_desktop_cockpit():
             "</ul>", template.index('id="nav-dd-provision"')
         )
     ]
-    assert dropdown.index('href="/cloudosd">CloudOSD Desktop') < dropdown.index(
+    assert dropdown.index('href="/osdcloud">OSDCloud Desktop') < dropdown.index(
+        'href="/osdeploy">OSDeploy Server'
+    )
+    assert dropdown.index('href="/osdeploy">OSDeploy Server') < dropdown.index(
         'href="/provision">Provision VMs'
     )
 
@@ -179,16 +334,20 @@ def test_build_nav_prioritizes_cloudosd_desktop_cockpit():
         template.index('<span class="nav-drawer-group-label">Provision</span>')
         : template.index('<span class="nav-drawer-group-label">Fleet</span>')
     ]
-    assert drawer.index('href="/cloudosd"') < drawer.index('href="/provision"')
-    assert "CloudOSD Desktop" in drawer
+    assert drawer.index('href="/osdcloud"') < drawer.index('href="/provision"')
+    assert drawer.index('href="/osdeploy"') < drawer.index('href="/provision"')
+    assert "OSDCloud Desktop" in drawer
+    assert "OSDeploy Server" in drawer
 
     rail = template[
         template.index('<span class="cockpit-rail-label">Build</span>')
         : template.index('<span class="cockpit-rail-label">Fleet</span>')
     ]
-    assert '<span aria-hidden="true">05</span>CloudOSD Desktop' in rail
-    assert '<span aria-hidden="true">06</span>Provision VMs' in rail
-    assert rail.index('data-route="/cloudosd"') < rail.index('data-route="/provision"')
+    assert '<span aria-hidden="true">05</span>OSDCloud Desktop' in rail
+    assert '<span aria-hidden="true">06</span>OSDeploy Server' in rail
+    assert '<span aria-hidden="true">07</span>Provision VMs' in rail
+    assert rail.index('data-route="/osdcloud"') < rail.index('data-route="/provision"')
+    assert rail.index('data-route="/osdeploy"') < rail.index('data-route="/provision"')
 
 
 def test_cloudosd_cockpit_copy_positions_desktop_factory():
@@ -199,6 +358,15 @@ def test_cloudosd_cockpit_copy_positions_desktop_factory():
     assert "Windows desktop deployment cockpit" in template
     assert "primary client deployment path" in template
     assert "WinPE and Clone stay available for Windows Server" in template
+    assert "Operator Flow" in template
+    assert 'aria-label="OSDCloud pages"' in template
+    assert ">Builder</a>" in template
+    assert ">Cache</a>" in template
+    assert ">Artifacts</a>" in template
+    assert "https://www.osdcloud.com/" in template
+    assert 'href="/osdcloud/builder"' in template
+    assert 'href="/osdcloud/cache"' in template
+    assert 'href="/osdcloud/artifacts"' in template
 
 
 def test_cockpit_shell_has_light_mode_tokens(web_client: TestClient, monkeypatch):
@@ -550,12 +718,12 @@ def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
     ts_engine_pg.init(pg_conn)
     sequence_id = ts_engine_pg.create_sequence(
         pg_conn,
-        name="CloudOSD deployment for GELL-119-AD",
-        description="Generated CloudOSD deployment sequence",
+        name="OSDCloud deployment for GELL-119-AD",
+        description="Generated OSDCloud deployment sequence",
         created_by="cloudosd",
     )
     for position, (name, kind, phase) in enumerate([
-        ("CloudOSD PE preflight", "cloudosd_preflight", "pe"),
+        ("OSDCloud PE preflight", "cloudosd_preflight", "pe"),
         ("Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
         ("Stage OSD client", "stage_osd_client", "pe"),
         ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
@@ -585,7 +753,7 @@ def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
 
     assert res.status_code == 200
     body = res.text
-    assert "CloudOSD V2 OSD Task Plans" in body
+    assert "OSDCloud V2 OSD Task Plans" in body
     assert 'class="cloudosd-v2-task-plan"' in body
     assert run_id in body
     assert "VMID 119" in body
@@ -606,7 +774,7 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     ts_engine_pg.init(pg_conn)
     sequence_id = ts_engine_pg.create_sequence(
         pg_conn,
-        name="CloudOSD desktop baseline",
+        name="OSDCloud desktop baseline",
         description="Desktop client sequence",
     )
     ts_engine_pg.add_step(
@@ -624,7 +792,7 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
 
     assert res.status_code == 200
     body = res.text
-    assert "Smart builder for CloudOSD desktop deployment" in body
+    assert "Smart builder for OSDCloud desktop deployment" in body
     assert "Legacy Import" not in body
     assert "Start from v1 sequence" not in body
     assert "No legacy v1 sequences" not in body
@@ -639,13 +807,13 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
     left_sidebar = body.split('<main class="v2-stack">', 1)[0]
     assert "Step Palette" not in left_sidebar
     assert "Search full catalog" in body
-    assert "Pinned CloudOSD Desktop" in body
+    assert "Pinned OSDCloud Desktop" in body
     assert "PINNED_CLOUDOSD_DESKTOP" in body
     assert "v2-owner-chip" in body
     assert "v2-palette-count" in body
     assert "v2-palette-section-steps" in body
     assert "repeat(auto-fit, minmax(220px, 1fr))" in body
-    assert "CloudOSD desktop baseline" in body
+    assert "Add recommended baseline" in body
     assert "capture_autopilot_hash" in body
     for kind in [
         "capture_hash",
@@ -674,7 +842,7 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
         "wait_agent_heartbeat",
     ]:
         assert kind in body
-    assert "Add CloudOSD desktop baseline" in body
+    assert "addRecommendedBaseline" in body
     assert 'const STEP_TEMPLATES = [{"kind":' in body
     assert "&#34;kind&#34;" not in body
     assert 'draggable="true"' in body
@@ -705,7 +873,7 @@ def test_task_engine_sequence_list_shows_editable_sequences_and_readonly_templat
     ts_engine_pg.init(pg_conn)
     sequence_id = ts_engine_pg.create_sequence(
         pg_conn,
-        name="Operator CloudOSD Desktop",
+        name="Operator OSDCloud Desktop",
         description="Editable production sequence",
     )
     ts_engine_pg.add_step(
@@ -723,11 +891,11 @@ def test_task_engine_sequence_list_shows_editable_sequences_and_readonly_templat
     assert res.status_code == 200
     body = res.text
     assert "V2 Sequence Library" in body
-    assert "Operator CloudOSD Desktop" in body
+    assert "Operator OSDCloud Desktop" in body
     assert f"/task-engine/sequences/{sequence_id}/edit" in body
     assert "Read-only Flow Templates" in body
-    assert "CloudOSD Desktop Client" in body
-    assert "CloudOSD Desktop Client + AD Domain Join" in body
+    assert "OSDCloud Desktop Client" in body
+    assert "OSDCloud Desktop Client + AD Domain Join" in body
     assert "WinPE Desktop WIM Deployment" in body
     assert "WinPE Windows Server WIM Deployment" in body
     assert "Proxmox Clone Desktop from Template" in body
@@ -751,7 +919,7 @@ def test_task_engine_readonly_template_detail_and_clone_into_builder(
 
     assert detail.status_code == 200
     detail_body = detail.text
-    assert "CloudOSD Desktop Client + AD Domain Join" in detail_body
+    assert "OSDCloud Desktop Client + AD Domain Join" in detail_body
     assert "read-only template" in detail_body
     assert "Read-only Step Plan" in detail_body
     assert "stage_ad_domain_join_unattend" in detail_body
@@ -770,7 +938,7 @@ def test_task_engine_readonly_template_detail_and_clone_into_builder(
     assert "New v2 task sequence" in clone_body
     assert "Template source" in clone_body
     assert "read-only template cloned" in clone_body
-    assert "CloudOSD Desktop Client + AD Domain Join copy" in clone_body
+    assert "OSDCloud Desktop Client + AD Domain Join copy" in clone_body
     assert "stage_ad_domain_join_unattend" in clone_body
     assert "verify_ad_domain_join" in clone_body
     assert "wait_agent_heartbeat" in clone_body

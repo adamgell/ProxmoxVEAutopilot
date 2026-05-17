@@ -1,0 +1,8 @@
+{
+  "flask_base_url": "",
+  "fallback_base_url": "",
+  "architecture": "amd64",
+  "osdeploy_module_version": "26.1.30.5",
+  "osdbuilder_module_version": "24.10.8.1",
+  "build_sha": "static"
+}

@@ -518,6 +518,7 @@ def test_cli_build_writes_bundle(tmp_path):
          "--spec", "-", "--out", str(bundle)],
         input=json.dumps(spec_payload),
         capture_output=True, text=True, check=True,
+        cwd=pathlib.Path(__file__).resolve().parents[1],
     )
     out = json.loads(result.stdout)
     assert out["uuid"] == "22222222-2222-2222-2222-222222222222"

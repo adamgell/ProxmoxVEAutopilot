@@ -145,6 +145,14 @@ function Send-ContentStageState {
 }
 
 function Invoke-InstallQga {
+    param([switch] $Required)
+
+    if (Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue) {
+        Invoke-VerifyQga
+        Write-OsdLog 'QEMU Guest Agent was already installed and verified.'
+        return
+    }
+
     $msi = $null
     foreach ($drive in @('D','E','F','G','H','I')) {
         $candidate = "$($drive):\guest-agent\qemu-ga-x86_64.msi"
@@ -154,6 +162,9 @@ function Invoke-InstallQga {
         }
     }
     if (-not $msi) {
+        if ($Required) {
+            throw 'QEMU Guest Agent MSI not found on attached media.'
+        }
         Write-OsdLog 'QEMU Guest Agent MSI not found on attached media; skipping install.'
         return
     }
@@ -812,6 +823,147 @@ function Get-OsdPhase {
     return 'full_os'
 }
 
+function Get-OsdeployAgentEndpoint {
+    param(
+        [Parameter(Mandatory)] [object] $Config,
+        [Parameter(Mandatory)] [object] $AgentConfig,
+        [Parameter(Mandatory)] [string] $PropertyName,
+        [Parameter(Mandatory)] [string] $DefaultPath
+    )
+
+    if ($AgentConfig.PSObject.Properties.Match($PropertyName).Count -gt 0 -and $AgentConfig.$PropertyName) {
+        return [string] $AgentConfig.$PropertyName
+    }
+    if ($Config.PSObject.Properties.Match($PropertyName).Count -gt 0 -and $Config.$PropertyName) {
+        return [string] $Config.$PropertyName
+    }
+    return $Config.flask_base_url.TrimEnd('/') + $DefaultPath
+}
+
+function Invoke-OsdeployAgentRequest {
+    param(
+        [Parameter(Mandatory)] [string] $Uri,
+        [Parameter(Mandatory)] [ValidateSet('GET','POST')] [string] $Method,
+        [hashtable] $Body,
+        [string] $BearerToken,
+        [int] $MaxAttempts = 8
+    )
+
+    $headers = @{}
+    if ($BearerToken) { $headers.Authorization = "Bearer $BearerToken" }
+    $payload = $null
+    if ($Body) { $payload = $Body | ConvertTo-Json -Depth 8 -Compress }
+    $lastErr = $null
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        try {
+            return Invoke-RestMethod -Uri $Uri -Method $Method -Headers $headers `
+                -Body $payload -ContentType 'application/json' -TimeoutSec 30
+        } catch {
+            $lastErr = $_
+            Write-OsdLog "agent request failed attempt=$i uri=$Uri error=$($_.Exception.Message)"
+            Start-Sleep -Seconds ([Math]::Min(20, 2 * $i))
+        }
+    }
+    throw $lastErr
+}
+
+function Get-OsdeployQgaState {
+    $svc = Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue
+    if (-not $svc) { return 'missing' }
+    return ([string] $svc.Status).ToLowerInvariant()
+}
+
+function Get-OsdeployOsName {
+    try {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        if ($os.Caption) { return [string] $os.Caption }
+    } catch {
+        Write-OsdLog "Unable to read OS name for OSDeploy heartbeat: $($_.Exception.Message)"
+    }
+    return ''
+}
+
+function Invoke-OsdeployAgentBootstrapHeartbeat {
+    param([Parameter(Mandatory)] [object] $Config)
+
+    if ($Config.PSObject.Properties.Match('osdeploy_agent').Count -eq 0 -or -not $Config.osdeploy_agent) {
+        return
+    }
+
+    $agentConfig = $Config.osdeploy_agent
+    $bootstrapToken = [string] $agentConfig.bootstrap_token
+    if ([string]::IsNullOrWhiteSpace($bootstrapToken)) {
+        throw 'OSDeploy agent bootstrap config is missing bootstrap_token'
+    }
+
+    $agentId = Get-OsdAgentId -Config $Config
+    $bootstrapUrl = Get-OsdeployAgentEndpoint `
+        -Config $Config `
+        -AgentConfig $agentConfig `
+        -PropertyName 'bootstrap_url' `
+        -DefaultPath '/api/agent/v1/bootstrap'
+    $heartbeatUrl = Get-OsdeployAgentEndpoint `
+        -Config $Config `
+        -AgentConfig $agentConfig `
+        -PropertyName 'agent_heartbeat_url' `
+        -DefaultPath '/api/agent/v1/heartbeat'
+
+    Write-OsdLog "Bootstrapping OSDeploy full-OS heartbeat agent_id=$agentId"
+    $bootstrapBody = @{
+        agent_id = $agentId
+        run_id = [string] $Config.run_id
+        phase = 'osdeploy'
+        computer_name = $env:COMPUTERNAME
+        agent_version = 'osd-client-0.1.0'
+    }
+    if ($agentConfig.PSObject.Properties.Match('vmid').Count -gt 0 -and $agentConfig.vmid) {
+        $bootstrapBody.vmid = [int] $agentConfig.vmid
+    }
+
+    $bootstrap = Invoke-OsdeployAgentRequest `
+        -Uri $bootstrapUrl `
+        -Method POST `
+        -BearerToken $bootstrapToken `
+        -Body $bootstrapBody
+    if (-not $bootstrap.agent_token) {
+        throw 'OSDeploy agent bootstrap did not return agent_token'
+    }
+    if ($bootstrap.agent_id) {
+        $agentId = [string] $bootstrap.agent_id
+    }
+
+    $heartbeatBody = @{
+        agent_id = $agentId
+        computer_name = $env:COMPUTERNAME
+        os_name = Get-OsdeployOsName
+        qga_service_name = 'QEMU-GA'
+        qga_state = Get-OsdeployQgaState
+        current_run_id = [string] $Config.run_id
+        current_phase = 'full_os'
+        current_step_id = 'osdeploy_full_os_heartbeat'
+        agent_version = 'osd-client-0.1.0'
+    }
+    if ($agentConfig.PSObject.Properties.Match('vmid').Count -gt 0 -and $agentConfig.vmid) {
+        $heartbeatBody.vmid = [int] $agentConfig.vmid
+    }
+    Invoke-OsdeployAgentRequest `
+        -Uri $heartbeatUrl `
+        -Method POST `
+        -BearerToken ([string] $bootstrap.agent_token) `
+        -Body $heartbeatBody | Out-Null
+    Write-OsdLog "osdeploy_full_os_heartbeat posted agent_id=$agentId"
+}
+
+function Invoke-OsdeployFirstBootReadiness {
+    param([Parameter(Mandatory)] [object] $Config)
+
+    if ($Config.PSObject.Properties.Match('osdeploy_agent').Count -eq 0 -or -not $Config.osdeploy_agent) {
+        return
+    }
+
+    Invoke-InstallQga -Required
+}
+
 function Invoke-OsdAction {
     param(
         [Parameter(Mandatory)] [object] $Action,
@@ -955,6 +1107,8 @@ try {
     }
     if ($engine -eq 'v2') {
         Invoke-OsdV2Client -Config $cfg
+        Invoke-OsdeployFirstBootReadiness -Config $cfg
+        Invoke-OsdeployAgentBootstrapHeartbeat -Config $cfg
         Write-OsdLog 'OSD v2 client completed.'
         exit 0
     }

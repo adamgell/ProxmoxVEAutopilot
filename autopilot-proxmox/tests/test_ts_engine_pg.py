@@ -104,6 +104,75 @@ def test_init_creates_postgres_engine_tables(pg_conn):
     } <= table_names
 
 
+def test_sequence_target_os_round_trip(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(
+        pg_conn,
+        name="Ubuntu v2",
+        target_os="ubuntu",
+    )
+
+    assert ts_engine_pg.get_sequence(pg_conn, sequence_id)["target_os"] == "ubuntu"
+    rows = ts_engine_pg.list_sequences(pg_conn)
+    assert rows[0]["target_os"] == "ubuntu"
+
+    ts_engine_pg.update_sequence(pg_conn, sequence_id, target_os="windows")
+    assert ts_engine_pg.get_sequence(pg_conn, sequence_id)["target_os"] == "windows"
+
+
+def test_ubuntu_cloud_init_owned_steps_can_be_marked_done(pg_conn):
+    from web import app as web_app
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(
+        pg_conn,
+        name="Ubuntu cloud-init",
+        target_os="ubuntu",
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Install core",
+        kind="install_ubuntu_core",
+        phase="install",
+        position=0,
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Linux heartbeat",
+        kind="linux_agent_heartbeat",
+        phase="full_os",
+        position=1,
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn,
+        sequence_version_id=version_id,
+    )
+
+    completed = web_app._complete_ubuntu_v2_steps(
+        pg_conn,
+        run_id=run_id,
+        agent_id="controller",
+        kinds={"install_ubuntu_core"},
+        phases={"install"},
+        message="cloud-init complete",
+        data={"seed_detached": True},
+    )
+
+    assert len(completed) == 1
+    steps = ts_engine_pg.list_run_steps(pg_conn, run_id)
+    assert {step["kind"]: step["state"] for step in steps} == {
+        "install_ubuntu_core": "done",
+        "linux_agent_heartbeat": "pending",
+    }
+    assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "queued"
+
+
 def test_root_sibling_positions_are_unique(pg_conn):
     from psycopg.errors import UniqueViolation
     from web import ts_engine_pg
