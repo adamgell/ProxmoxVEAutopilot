@@ -11,6 +11,8 @@ services:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
       - ./output:/app/output
+      - ./cache/cloudosd:/app/cache/cloudosd
+      - ./cache/osdeploy:/app/cache/osdeploy
       - autopilot-jobs:/app/jobs
       - ./secrets:/app/secrets
       # Self-update: the footer's [Update] button POSTs to
@@ -34,10 +36,18 @@ services:
       HOST_REPO_PATH: /opt/ProxmoxVEAutopilot
       # Task Sequence Engine v2 uses Postgres. Override
       # AUTOPILOT_POSTGRES_PASSWORD in production.
-      AUTOPILOT_TS_ENGINE_DATABASE_URL: postgresql://autopilot:${AUTOPILOT_POSTGRES_PASSWORD:-autopilot-dev}@127.0.0.1:5432/autopilot
+      AUTOPILOT_TS_ENGINE_DATABASE_URL: host=127.0.0.1 port=5432 dbname=autopilot user=autopilot password=${AUTOPILOT_POSTGRES_PASSWORD:-autopilot-dev}
       # SHA-256 hex digest of the fleet-scoped Ninja/retrofit bootstrap token.
       # Store only the hash in the host .env; Ninja sends the raw secure value.
       AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256: ${AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256:-}
+      # LAN-reachable controller URL used by WinPE/CloudOSD/build-host agents.
+      AUTOPILOT_BASE_URL: ${AUTOPILOT_BASE_URL:-http://127.0.0.1:5000}
+      AUTOPILOT_CLOUDOSD_CACHE_ROOT: ${AUTOPILOT_CLOUDOSD_CACHE_ROOT:-/app/cache/cloudosd}
+      AUTOPILOT_OSDEPLOY_CACHE_ROOT: ${AUTOPILOT_OSDEPLOY_CACHE_ROOT:-/app/cache/osdeploy}
+      AUTOPILOT_SETUP_ARTIFACT_ROOT: ${AUTOPILOT_SETUP_ARTIFACT_ROOT:-/app/cache/osdeploy/setup-artifacts}
+      # Auth provider mode: local for first-run/lab, entra for Microsoft OIDC,
+      # auto to use Entra only when configured.
+      AUTOPILOT_AUTH_MODE: ${AUTOPILOT_AUTH_MODE:-auto}
     depends_on:
       autopilot-postgres:
         condition: service_healthy
@@ -54,6 +64,8 @@ services:
     container_name: autopilot-postgres
     ports:
       - "127.0.0.1:5432:5432"
+    security_opt:
+      - apparmor=unconfined
     environment:
       POSTGRES_DB: autopilot
       POSTGRES_USER: autopilot
@@ -61,7 +73,7 @@ services:
     volumes:
       - autopilot-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autopilot -d autopilot"]
+      test: ["CMD-SHELL", "pg_isready -U autopilot -d autopilot && psql -U autopilot -d autopilot -tAc 'SELECT 1' >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -77,6 +89,8 @@ services:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
       - ./output:/app/output
+      - ./cache/cloudosd:/app/cache/cloudosd
+      - ./cache/osdeploy:/app/cache/osdeploy
       - autopilot-jobs:/app/jobs
       - ./secrets:/app/secrets
     security_opt:
@@ -104,22 +118,14 @@ services:
   autopilot-mcp:
     image: ghcr.io/adamgell/proxmox-autopilot:latest
     container_name: autopilot-mcp
-    entrypoint: ["/bin/sh", "-lc"]
-    command:
-      - |
-        set -eu
-        for f in /app/web/mcp/__pycache__/*.cpython-*.pyc; do
-          b="$(basename "$$f")"
-          b="$${b%%.cpython-*}"
-          cp "$$f" "/app/web/mcp/$${b}.pyc"
-        done
-        : > /app/web/mcp/__init__.py
-        exec uvicorn web.mcp.server:app --host "$${AUTOPILOT_MCP_HOST:-127.0.0.1}" --port "$${AUTOPILOT_MCP_PORT:-5050}"
+    command: ["mcp"]
     network_mode: host
     volumes:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
       - ./output:/app/output
+      - ./cache/cloudosd:/app/cache/cloudosd
+      - ./cache/osdeploy:/app/cache/osdeploy
       - autopilot-jobs:/app/jobs
       - ./secrets:/app/secrets
       - ..:/repo:ro
@@ -131,7 +137,7 @@ services:
       AUTOPILOT_MCP_HOST: ${AUTOPILOT_MCP_HOST:-127.0.0.1}
       AUTOPILOT_MCP_PORT: ${AUTOPILOT_MCP_PORT:-5050}
       AUTOPILOT_MCP_ALLOWED_ORIGINS: ${AUTOPILOT_MCP_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:15051,http://127.0.0.1:15051}
-      AUTOPILOT_MCP_DOC_ROOTS: ${AUTOPILOT_MCP_DOC_ROOTS:-/repo/README.md,/repo/AGENTS.md,/repo/CLAUDE.md,/repo/.github/copilot-instructions.md,/repo/docs,/repo/tools/winpe-build/README.md,/repo/autopilot-proxmox/README.md,/repo/autopilot-proxmox/MIGRATION-microservice-split.md}
+      AUTOPILOT_MCP_DOC_ROOTS: ${AUTOPILOT_MCP_DOC_ROOTS:-/repo/README.md,/repo/AGENTS.md,/repo/CLAUDE.md,/repo/.github/copilot-instructions.md,/repo/docs,/repo/tools/winpe-build/README.md,/repo/tools/cloudosd-build,/repo/tools/osdeploy-build,/repo/autopilot-proxmox/README.md,/repo/autopilot-proxmox/MIGRATION-microservice-split.md,/repo/autopilot-proxmox/tools/cloudosd-build,/repo/autopilot-proxmox/tools/osdeploy-build}
     depends_on:
       autopilot-postgres:
         condition: service_healthy

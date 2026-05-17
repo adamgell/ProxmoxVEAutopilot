@@ -94,10 +94,22 @@ def _run_monitor() -> None:
     )
 
 
+def _run_mcp() -> None:
+    """Start the localhost-bound Streamable HTTP MCP sidecar."""
+    import os
+    import uvicorn
+    from web.mcp.server import app
+
+    host = os.environ.get("AUTOPILOT_MCP_HOST", "127.0.0.1")
+    port = int(os.environ.get("AUTOPILOT_MCP_PORT", "5050"))
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 _MODES = {
     "web": "_run_web",
     "builder": "_run_builder",
     "monitor": "_run_monitor",
+    "mcp": "_run_mcp",
 }
 
 
