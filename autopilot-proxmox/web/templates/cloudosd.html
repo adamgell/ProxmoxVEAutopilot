@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_head, empty_state %}
-{% block title %}CloudOSD Desktop - Proxmox VE Autopilot{% endblock %}
+{% block title %}OSDCloud Desktop - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-{{ page_head("CloudOSD Desktop", "Windows desktop deployment cockpit for the primary client deployment path. WinPE and Clone stay available for Windows Server and fallback builds.") }}
+{{ page_head("OSDCloud Desktop", "Windows desktop deployment cockpit for the primary client deployment path. WinPE and Clone stay available for Windows Server and fallback builds.") }}
 
 <style>
   .cloudosd-cockpit {
@@ -32,6 +32,37 @@
     border-radius: 8px;
     padding: 12px;
     min-width: 0;
+  }
+  .cloudosd-flow {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .cloudosd-flow-card {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+    min-height: 138px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    background: rgba(255,255,255,.02);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .cloudosd-flow-card[aria-current="page"] {
+    border-color: rgba(69, 166, 255, .65);
+    background: rgba(69, 166, 255, .08);
+  }
+  .cloudosd-flow-card strong {
+    font-size: 15px;
+  }
+  .cloudosd-flow-card span {
+    color: var(--ink-soft);
+    font-size: 12px;
+  }
+  .cloudosd-flow-card b {
+    font-size: 22px;
   }
   .cloudosd-panel h2,
   .cloudosd-panel h3 {
@@ -71,6 +102,37 @@
     flex-wrap: wrap;
     gap: 8px;
     justify-content: flex-end;
+  }
+  .cloudosd-subnav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .cloudosd-subnav-label {
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin-right: 4px;
+  }
+  .cloudosd-subnav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 12px;
+    color: var(--ink);
+    background: rgba(255,255,255,.03);
+    text-decoration: none;
+    font-weight: 700;
+  }
+  .cloudosd-subnav a[aria-current="page"] {
+    border-color: rgba(69, 166, 255, .7);
+    background: rgba(69, 166, 255, .12);
+    color: var(--accent);
   }
   .cloudosd-run-strip {
     display: grid;
@@ -155,6 +217,24 @@
   .cloudosd-table code {
     word-break: break-all;
   }
+  .cloudosd-cache-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .cloudosd-cache-summary div {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(255,255,255,.02);
+  }
+  .cloudosd-cache-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
   .cloudosd-badge {
     display: inline-flex;
     align-items: center;
@@ -212,6 +292,9 @@
     .cloudosd-metrics {
       grid-template-columns: repeat(2, minmax(130px, 1fr));
     }
+    .cloudosd-flow {
+      grid-template-columns: 1fr;
+    }
     .cloudosd-layout {
       grid-template-columns: 1fr;
     }
@@ -231,6 +314,51 @@
 </style>
 
 <div class="cloudosd-cockpit">
+  {% set view = cloudosd_view or 'overview' %}
+  <section class="cloudosd-panel" id="osdcloud-pages">
+    <nav class="cloudosd-subnav" aria-label="OSDCloud pages">
+      <span class="cloudosd-subnav-label">OSDCloud pages</span>
+      <a href="/osdcloud" {% if view == 'overview' %}aria-current="page"{% endif %}>Overview</a>
+      <a href="/osdcloud/builder" {% if view == 'builder' %}aria-current="page"{% endif %}>Builder</a>
+      <a href="/osdcloud/cache" {% if view == 'cache' %}aria-current="page"{% endif %}>Cache</a>
+      <a href="/osdcloud/artifacts" {% if view == 'artifacts' %}aria-current="page"{% endif %}>Artifacts</a>
+      <a href="https://www.osdcloud.com/" target="_blank" rel="noopener">OSDCloud docs</a>
+    </nav>
+  </section>
+  <section class="cloudosd-panel" id="cloudosd-operator-flow">
+    <div class="cloudosd-history-head">
+      <div>
+        <h2>Operator Flow</h2>
+        <div class="cloudosd-mini">OSDCloud is the Windows desktop client path. Start from provision for batch work, use builder for one-off runs, keep cache and artifacts separate. Reference: <a href="https://www.osdcloud.com/" target="_blank" rel="noopener">osdcloud.com</a>.</div>
+      </div>
+      <div class="cloudosd-history-actions">
+        <a class="action-btn-upload" href="/provision">Batch provision</a>
+        <a class="action-btn-upload" href="/osdcloud">Overview</a>
+      </div>
+    </div>
+    <div class="cloudosd-flow">
+      <a class="cloudosd-flow-card" href="/osdcloud/builder" {% if view == 'builder' %}aria-current="page"{% endif %}>
+        <strong>1. Build a desktop run</strong>
+        <span>Single-VM launch, preflight, selected artifact, Proxmox placement, Windows catalog, and heartbeat gate.</span>
+        <b>{{ active_runs | length }}</b>
+        <span>active runs</span>
+      </a>
+      <a class="cloudosd-flow-card" href="/osdcloud/cache" {% if view == 'cache' %}aria-current="page"{% endif %}>
+        <strong>2. Warm deployment cache</strong>
+        <span>Feature image cache plus latest quality update packages. Ready entries are served only after verification.</span>
+        <b>{{ (cloudosd_cache.summary.ready if cloudosd_cache and cloudosd_cache.summary else 0) }}/{{ (cloudosd_cache.summary.total if cloudosd_cache and cloudosd_cache.summary else 0) }}</b>
+        <span>ready cache entries</span>
+      </a>
+      <a class="cloudosd-flow-card" href="/osdcloud/artifacts" {% if view == 'artifacts' %}aria-current="page"{% endif %}>
+        <strong>3. Manage PE artifacts</strong>
+        <span>Build, inspect, publish, and verify OSDCloud PE ISO/WIM artifacts before launch.</span>
+        <b>{{ ready_artifacts | length }}</b>
+        <span>ready artifacts</span>
+      </a>
+    </div>
+  </section>
+
+  {% if view == 'builder' %}
   <div class="cloudosd-layout">
     <div class="cloudosd-stack">
       <section class="cloudosd-panel" id="cloudosd-deployment">
@@ -339,7 +467,7 @@
             </div>
           </div>
 
-          <h3>CloudOSD Policy</h3>
+          <h3>OSDCloud Policy</h3>
           <div class="cloudosd-dense-grid">
             <div class="cloudosd-field">
               <label for="driver_pack_policy">Driver pack policy</label>
@@ -421,11 +549,13 @@
         <dt>Heartbeat gate</dt><dd>AutopilotAgent heartbeat required</dd>
         <dt>Blocking count</dt><dd id="reviewBlocking">-</dd>
       </dl>
-      <button type="button" id="launchCloudosdBtn" class="action-btn-upload" disabled>Launch CloudOSD VM</button>
+      <button type="button" id="launchCloudosdBtn" class="action-btn-upload" disabled>Launch OSDCloud VM</button>
     </aside>
   </div>
+  {% endif %}
 
-  <section class="cloudosd-metrics" aria-label="CloudOSD status metrics">
+  {% if view == 'overview' %}
+  <section class="cloudosd-metrics" aria-label="OSDCloud status metrics">
     <div class="cockpit-metric cockpit-scanline">
       <div class="cockpit-metric-label">OSDCloud Module Pin</div>
       <div class="cockpit-metric-value" style="font-size:20px;">{{ catalog.defaults.osdcloud_module_version }}</div>
@@ -452,16 +582,18 @@
       <div class="cockpit-metric-note">default for first lab path</div>
     </div>
   </section>
+  {% endif %}
 
+  {% if view == 'overview' %}
   <section class="cloudosd-panel" id="cloudosd-runs">
     <div class="cloudosd-history-head">
       <div>
-        <h2>CloudOSD Run History</h2>
+        <h2>OSDCloud Run History</h2>
         <div class="cloudosd-mini">Active desktop deployments stay visible first. Stale failures can be hidden without deleting evidence, logs, readiness, or v2 step history.</div>
       </div>
       <div class="cloudosd-history-actions">
-        <a class="action-btn-upload" href="/cloudosd#cloudosd-runs">Default history</a>
-        <a class="action-btn-upload" href="/cloudosd?archived=1#cloudosd-runs">Show archived</a>
+        <a class="action-btn-upload" href="/osdcloud#cloudosd-runs">Default history</a>
+        <a class="action-btn-upload" href="/osdcloud?archived=1#cloudosd-runs">Show archived</a>
         <button type="button" class="action-btn-upload" data-cloudosd-bulk-archive="archive-stale-failed">Archive stale failed</button>
         <button type="button" class="action-btn-upload" data-cloudosd-bulk-archive="archive-completed-old">Hide completed old</button>
       </div>
@@ -472,9 +604,9 @@
         <div class="cloudosd-mini">Created, provisioning, PE, OSDCloud, first boot, or readiness work still moving.</div>
         <div class="cloudosd-run-list">
           {% for run in active_runs %}
-          <div class="cloudosd-run-line"><a href="/cloudosd/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><span>{{ run.state }}</span></div>
+          <div class="cloudosd-run-line"><a href="/osdcloud/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><span>{{ run.state }}</span></div>
           {% else %}
-          <span class="cloudosd-mini">No active CloudOSD desktop runs.</span>
+          <span class="cloudosd-mini">No active OSDCloud desktop runs.</span>
           {% endfor %}
         </div>
       </article>
@@ -483,7 +615,7 @@
         <div class="cloudosd-mini">Failed runs older than 12 hours. Archive them after review to keep the cockpit focused.</div>
         <div class="cloudosd-run-list">
           {% for run in stale_failed_runs %}
-          <div class="cloudosd-run-line"><a href="/cloudosd/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><button type="button" class="action-btn-upload" data-cloudosd-archive="{{ run.run_id }}">Archive</button></div>
+          <div class="cloudosd-run-line"><a href="/osdcloud/runs/{{ run.run_id }}">{{ run.requested_vm_name }}</a><button type="button" class="action-btn-upload" data-cloudosd-archive="{{ run.run_id }}">Archive</button></div>
           {% else %}
           <span class="cloudosd-mini">No stale failed runs.</span>
           {% endfor %}
@@ -533,7 +665,7 @@
             <td>{{ evidence.autopilot.status if evidence.autopilot is defined else '-' }}</td>
             <td>{{ evidence.assignment.status if evidence.assignment is defined else '-' }}</td>
             <td>{{ evidence.enrollment.status if evidence.enrollment is defined else '-' }}</td>
-            <td><a href="/cloudosd/runs/{{ run.run_id }}">detail</a></td>
+            <td><a href="/osdcloud/runs/{{ run.run_id }}">detail</a></td>
             <td>
               {% if run.archived %}
               <span class="cloudosd-badge warn">archived</span><br><span class="cloudosd-mini">{{ run.archived_at }}</span>
@@ -561,10 +693,88 @@
       </table>
     </div>
     {% else %}
-    {{ empty_state("No CloudOSD runs yet.", hint="Launch is available after a ready artifact passes preflight.") }}
+    {{ empty_state("No OSDCloud runs yet.", hint="Launch is available after a ready artifact passes preflight.") }}
     {% endif %}
   </section>
+  {% endif %}
 
+  {% if view == 'cache' %}
+  <section class="cloudosd-panel" id="cloudosd-cache">
+    {% set cache = cloudosd_cache or {} %}
+    {% set cache_storage = cache.storage or {} %}
+    {% set cache_summary = cache.summary or {} %}
+    <div class="cloudosd-history-head">
+      <div>
+        <h2>OSDCloud Cache</h2>
+        <div class="cloudosd-mini">Warm Windows 11 feature images and latest cached LCU/SSU packages. Ready feature images are served to OSDCloud PE; ready quality packages are applied offline before first boot.</div>
+      </div>
+      <div class="cloudosd-cache-actions">
+        <button type="button" class="action-btn-upload" data-cloudosd-cache-action="refresh">Refresh catalog</button>
+        <button type="button" class="action-btn-upload" data-cloudosd-cache-action="warm-all">Warm all Windows 11</button>
+        <span id="cloudosdCacheStatus" class="cloudosd-mini"></span>
+      </div>
+    </div>
+    <div class="cloudosd-cache-summary">
+      <div><b>{{ cache_storage.root or '/app/cache/cloudosd' }}</b><br><span class="cloudosd-mini">cache root</span></div>
+      <div><b>{{ 'ready' if cache_storage.ready else 'not ready' }}</b><br><span class="cloudosd-mini">{{ cache_storage.free_bytes or 0 }} bytes free</span></div>
+      <div><b>{{ cache_summary.ready or 0 }}/{{ cache_summary.total or 0 }}</b><br><span class="cloudosd-mini">ready entries</span></div>
+      <div><b>{{ cache_summary.warming or 0 }}</b><br><span class="cloudosd-mini">warming</span></div>
+      <div><b>{{ cache_summary.failed or 0 }}</b><br><span class="cloudosd-mini">failed</span></div>
+    </div>
+    {% if cache.entries %}
+    <div class="cloudosd-table-wrap">
+      <table class="cloudosd-table cockpit-scanline">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Type</th>
+            <th>Windows</th>
+            <th>Selection</th>
+            <th>KB/title</th>
+            <th>File</th>
+            <th>Size/hash</th>
+            <th>Last verified/served</th>
+            <th>Error</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in cache.entries %}
+          <tr data-cloudosd-cache-entry="{{ entry.id }}">
+            <td><span class="cloudosd-badge {{ 'ready' if entry.status == 'ready' else ('block' if entry.status == 'failed' else 'warn') }}">{{ entry.status }}</span></td>
+            <td>{{ entry.entry_type | replace('_', ' ') }}</td>
+            <td>{{ entry.windows_version }}<br><span class="cloudosd-mini">{{ entry.architecture }}</span></td>
+            <td>{{ entry.edition or 'all' }} / {{ entry.activation or 'all' }} / {{ entry.language or 'neutral' }}</td>
+            <td>{{ entry.kb or '-' }}<br><span class="cloudosd-mini">{{ entry.title or '-' }}</span></td>
+            <td><code>{{ entry.file_name }}</code></td>
+            <td>
+              {{ entry.size_bytes or entry.expected_size_bytes or '-' }}
+              <br>
+              <code>{{ entry.sha256 or entry.expected_sha256 or entry.sha1 or entry.expected_sha1 or '-' }}</code>
+            </td>
+            <td>{{ entry.verified_at or '-' }}<br><span class="cloudosd-mini">{{ entry.last_served_at or 'not served' }}{% if entry.served_count %} ({{ entry.served_count }}){% endif %}</span></td>
+            <td><span class="cloudosd-mini">{{ entry.error or '-' }}</span></td>
+            <td>
+              {% if entry.entry_type == 'feature_image' %}
+              <button type="button" class="action-btn-upload" data-cloudosd-cache-warm-feature="{{ entry.id }}">Warm</button>
+              {% else %}
+              <button type="button" class="action-btn-upload" data-cloudosd-cache-warm-quality="{{ entry.id }}">Warm</button>
+              {% endif %}
+              <button type="button" class="action-btn-upload" data-cloudosd-cache-verify="{{ entry.id }}">Verify</button>
+              <button type="button" class="action-btn-upload" data-cloudosd-cache-delete="{{ entry.id }}">Delete</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ empty_state("No OSDCloud cache entries yet.", hint="Refresh the catalog to discover Windows 11 feature images and latest quality update packages.") }}
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if view == 'artifacts' %}
   <section class="cloudosd-panel" id="cloudosd-artifacts">
     <div class="cloudosd-artifact-head">
       <h2>Artifacts</h2>
@@ -628,8 +838,16 @@
       </table>
     </div>
     {% else %}
-    {{ empty_state("No CloudOSD artifacts yet.", hint="Build an artifact first. Deployment launch stays disabled until an artifact has hashes and a Proxmox volid.") }}
+    {{ empty_state("No OSDCloud artifacts yet.", hint="Build an artifact first. Deployment launch stays disabled until an artifact has hashes and a Proxmox volid.") }}
     {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="cloudosd-panel" id="osdcloud-reference">
+    <div class="cloudosd-inline" style="justify-content:space-between;">
+      <span class="cloudosd-mini">OSDCloud is the upstream Windows deployment substrate used by this desktop path.</span>
+      <a class="action-btn-upload" href="https://www.osdcloud.com/" target="_blank" rel="noopener">OSDCloud docs</a>
+    </div>
   </section>
 </div>
 
@@ -660,6 +878,7 @@
   }
   function formPayload() {
     const form = byId("cloudosdRunForm");
+    if (!form) return {};
     const data = {};
     new FormData(form).forEach((value, key) => {
       if (key.endsWith("_mode")) return;
@@ -673,7 +892,7 @@
       data[key] = !!form.querySelector(`[name="${key}"]`)?.checked;
     });
     data.architecture = "amd64";
-    data.outbound_policy = { mode: byId("outbound_policy_mode").value };
+    data.outbound_policy = { mode: byId("outbound_policy_mode")?.value || "blocked" };
     return data;
   }
   function buildFormPayload(form) {
@@ -683,6 +902,7 @@
   }
   function renderArtifactSummary() {
     const artifact = selectedArtifact();
+    if (!byId("artifactInline") || !byId("artifactVolid")) return;
     byId("artifactInline").textContent = artifact
       ? `${artifact.osdcloud_module_version} ${artifact.build_sha} ${artifact.iso_sha256.slice(0, 12)}`
       : "No ready artifact selected.";
@@ -703,6 +923,7 @@
     });
   }
   function renderReview() {
+    if (!byId("reviewArtifact")) return;
     const payload = formPayload();
     const artifact = selectedArtifact();
     const preflight = cloudosdState.preflight;
@@ -719,6 +940,7 @@
   }
   async function runPreflight() {
     const status = byId("preflightStatus");
+    if (!status) return;
     status.textContent = "checking";
     try {
       const response = await fetch("/api/cloudosd/preflight", {
@@ -746,6 +968,7 @@
     renderReview();
   }
   async function launchCloudosd() {
+    if (!byId("cloudosdLaunchError") || !byId("launchCloudosdBtn")) return;
     byId("cloudosdLaunchError").textContent = "";
     await runPreflight();
     if (!cloudosdState.preflight?.launch_allowed) return;
@@ -768,29 +991,33 @@
       renderReview();
       return;
     }
-    window.location.assign(`/cloudosd/runs/${run.run_id}`);
+    window.location.assign(`/osdcloud/runs/${run.run_id}`);
   }
   function initCloudOSD() {
     fillSelect("node", cloudosdState.options.nodes, cloudosdState.options.defaults.node);
     fillSelect("iso_storage", cloudosdState.options.storages.iso, cloudosdState.options.defaults.iso_storage);
     fillSelect("storage", cloudosdState.options.storages.disk, cloudosdState.options.defaults.disk_storage);
     fillSelect("network_bridge", cloudosdState.options.bridges, cloudosdState.options.defaults.bridge);
-    byId("cloudosdRunForm").addEventListener("input", schedulePreflight);
-    byId("cloudosdRunForm").addEventListener("change", schedulePreflight);
-    byId("runPreflightBtn").addEventListener("click", runPreflight);
-    byId("launchCloudosdBtn").addEventListener("click", launchCloudosd);
-    byId("cloudosdBuildForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const status = byId("cloudosdBuildStatus");
-      status.textContent = "queueing";
-      const response = await fetch("/api/cloudosd/artifacts/build", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildFormPayload(event.currentTarget))
+    if (byId("cloudosdRunForm")) {
+      byId("cloudosdRunForm").addEventListener("input", schedulePreflight);
+      byId("cloudosdRunForm").addEventListener("change", schedulePreflight);
+    }
+    if (byId("runPreflightBtn")) byId("runPreflightBtn").addEventListener("click", runPreflight);
+    if (byId("launchCloudosdBtn")) byId("launchCloudosdBtn").addEventListener("click", launchCloudosd);
+    if (byId("cloudosdBuildForm")) {
+      byId("cloudosdBuildForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const status = byId("cloudosdBuildStatus");
+        status.textContent = "queueing";
+        const response = await fetch("/api/cloudosd/artifacts/build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildFormPayload(event.currentTarget))
+        });
+        const body = await response.json();
+        status.innerHTML = response.ok ? `job <a href="/jobs/${body.job_id}">${body.job_id}</a>` : (body.detail || "build failed");
       });
-      const body = await response.json();
-      status.innerHTML = response.ok ? `job <a href="/jobs/${body.job_id}">${body.job_id}</a>` : (body.detail || "build failed");
-    });
+    }
     document.querySelectorAll("[data-publish-artifact]").forEach((button) => {
       button.addEventListener("click", async () => {
         button.disabled = true;
@@ -803,7 +1030,7 @@
         if (response.ok) window.location.reload();
         else {
           const body = await response.json();
-          byId("cloudosdLaunchError").textContent = body.detail || "publish failed";
+          if (byId("cloudosdLaunchError")) byId("cloudosdLaunchError").textContent = body.detail || "publish failed";
           button.disabled = false;
         }
       });
@@ -827,7 +1054,7 @@
           window.location.reload();
         } catch (error) {
           button.disabled = false;
-          byId("cloudosdLaunchError").textContent = `CloudOSD ${action} failed: ${error.message || error}`;
+          if (byId("cloudosdLaunchError")) byId("cloudosdLaunchError").textContent = `OSDCloud ${action} failed: ${error.message || error}`;
         }
       });
     });
@@ -849,12 +1076,78 @@
           window.location.reload();
         } catch (error) {
           button.disabled = false;
-          byId("cloudosdLaunchError").textContent = `CloudOSD archive action failed: ${error.message || error}`;
+          if (byId("cloudosdLaunchError")) byId("cloudosdLaunchError").textContent = `OSDCloud archive action failed: ${error.message || error}`;
         }
       });
     });
+    async function runCacheAction(button, endpoint, options = {}) {
+      const status = byId("cloudosdCacheStatus");
+      const original = button ? button.textContent : "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = options.busyText || "Working";
+      }
+      if (status) status.textContent = options.statusText || "queueing";
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Accept": "application/json" },
+          cache: "no-store"
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+        if (body.job_id) {
+          status.innerHTML = `job <a href="/jobs/${encodeURIComponent(body.job_id)}">${body.job_id}</a>`;
+        } else if (Array.isArray(body.job_ids)) {
+          const count = body.job_ids.length;
+          status.textContent = count ? `queued ${count} cache job${count === 1 ? "" : "s"}` : "nothing to warm";
+        } else {
+          status.textContent = "queued";
+        }
+        if (options.reload) window.setTimeout(() => window.location.reload(), 1200);
+      } catch (error) {
+        if (status) status.textContent = `cache action failed: ${error.message || error}`;
+        if (button) button.disabled = false;
+      } finally {
+        if (button && !options.reload) button.textContent = original;
+      }
+    }
+    document.querySelectorAll("[data-cloudosd-cache-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.cloudosdCacheAction;
+        if (action === "refresh") {
+          runCacheAction(button, "/api/cloudosd/cache/catalog/refresh", { busyText: "Refreshing", statusText: "refreshing catalog", reload: true });
+        } else if (action === "warm-all") {
+          runCacheAction(button, "/api/cloudosd/cache/warm-all-windows11", { busyText: "Warming", statusText: "queueing warm jobs", reload: true });
+        }
+      });
+    });
+    document.querySelectorAll("[data-cloudosd-cache-warm-feature]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.cloudosdCacheWarmFeature);
+        runCacheAction(button, `/api/cloudosd/cache/feature-images/${id}/warm`, { busyText: "Warming", reload: true });
+      });
+    });
+    document.querySelectorAll("[data-cloudosd-cache-warm-quality]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.cloudosdCacheWarmQuality);
+        runCacheAction(button, `/api/cloudosd/cache/quality-updates/${id}/warm`, { busyText: "Warming", reload: true });
+      });
+    });
+    document.querySelectorAll("[data-cloudosd-cache-verify]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.cloudosdCacheVerify);
+        runCacheAction(button, `/api/cloudosd/cache/${id}/verify`, { busyText: "Verifying", reload: true });
+      });
+    });
+    document.querySelectorAll("[data-cloudosd-cache-delete]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = encodeURIComponent(button.dataset.cloudosdCacheDelete);
+        runCacheAction(button, `/api/cloudosd/cache/${id}/delete`, { busyText: "Deleting", reload: true });
+      });
+    });
     renderArtifactSummary();
-    schedulePreflight();
+    if (byId("cloudosdRunForm")) schedulePreflight();
   }
   initCloudOSD();
 </script>

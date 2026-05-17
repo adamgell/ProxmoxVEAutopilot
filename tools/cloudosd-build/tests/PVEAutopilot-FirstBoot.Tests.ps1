@@ -41,13 +41,174 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         Invoke-PVEAutopilotFirstBoot -RunConfig $runConfig `
             -WaitForNetwork { $script:Calls += 'network' } `
             -WaitForServer { param($Url) $script:Calls += "server:$Url" } `
+            -InstallQga { $script:Calls += 'qga'; [pscustomobject]@{ source = 'C:\Stage\qemu-ga-x86_64.msi'; service = 'QEMU-GA'; status = 'Running' } } `
             -InstallMsi { param($Path) $script:Calls += "msi:$Path" } `
             -RunPostinstall { param($ScriptPath,$PostinstallArgs) $script:Calls += "postinstall:$($ScriptPath):$($PostinstallArgs.Phase)" } `
             -ConfirmHeartbeat { param($ConfigUrl,$Token) $script:Calls += 'heartbeat' } `
-            -RemoveScheduledTask { param($Name) $script:Calls += "cleanup:$Name" }
+            -RunOsdClient { $script:Calls += 'osd-client' } `
+            -RemoveScheduledTask { param($Name) $script:Calls += "cleanup:$Name" } `
+            -EndBootstrapSession { param($Name) $script:Calls += "end-session:$Name" } `
+            -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data) }
 
         ($script:Calls -join '|') |
-            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot'
+            Should -Be 'network|server:https://autopilot.local|qga|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
+    }
+
+    It 'posts SetupComplete and first-boot milestone events to the controller' {
+        $source = Get-Content -LiteralPath $script:FirstBootPath -Raw
+
+        $source | Should -Match 'Write-PVEAutopilotCloudOSDEvent'
+        $source | Should -Match "EventType 'setupcomplete_task_started'"
+        $source | Should -Match "EventType 'firstboot_qga_ready'"
+        $source | Should -Match "EventType 'firstboot_complete'"
+        $source | Should -Match '/api/cloudosd/runs/.*/events'
+    }
+
+    It 'starts QEMU Guest Agent after MSI install and hides the bootstrap account tile' {
+        $source = Get-Content -LiteralPath $script:FirstBootPath -Raw
+
+        $source | Should -Match 'Start-Service -Name QEMU-GA'
+        $source | Should -Match 'SpecialAccounts\\UserList'
+        $source | Should -Match "Name 'PVEAutopilot'"
+    }
+
+    It 'builds the PVE virtio-serial QEMU Guest Agent service command line' {
+        $commandLine = Get-PVEAutopilotQgaServiceCommandLine `
+            -ExePath 'C:\Program Files\Qemu-ga\qemu-ga.exe' `
+            -StateDir 'C:\ProgramData\qemu-ga' `
+            -LogFile 'C:\ProgramData\qemu-ga\qemu-ga.log'
+
+        $commandLine | Should -Be '"C:\Program Files\Qemu-ga\qemu-ga.exe" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "C:\ProgramData\qemu-ga" -l "C:\ProgramData\qemu-ga\qemu-ga.log"'
+    }
+
+    It 'redacts domain join passwords from Panther unattend files during first boot' {
+        $panther = Join-Path $TestDrive 'Panther'
+        New-Item -ItemType Directory -Path $panther -Force | Out-Null
+        $unattend = Join-Path $panther 'Unattend.xml'
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <Identification>
+        <Credentials>
+          <Domain>HOME</Domain>
+          <Username>svc-cloudjoin</Username>
+          <Password>join-secret</Password>
+        </Credentials>
+        <JoinDomain>home.gell.one</JoinDomain>
+      </Identification>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath $unattend -Encoding UTF8
+
+        Clear-PVEAutopilotDomainJoinSecrets -PantherRoot $panther
+
+        $content = Get-Content -LiteralPath $unattend -Raw
+        $content | Should -Not -Match 'join-secret'
+        $content | Should -Match '<Password>REDACTED-BY-PVEAUTOPILOT</Password>'
+        $content | Should -Match '<JoinDomain>home.gell.one</JoinDomain>'
+    }
+
+    It 'redacts CloudOSD OOBE bootstrap account passwords from Panther unattend files' {
+        $panther = Join-Path $TestDrive 'PantherOobe'
+        New-Item -ItemType Directory -Path $panther -Force | Out-Null
+        $unattend = Join-Path $panther 'Unattend.xml'
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount>
+            <Name>PVEAutopilot</Name>
+            <Password>
+              <Value>oobe-secret</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Username>PVEAutopilot</Username>
+        <Password>
+          <Value>autologon-secret</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath $unattend -Encoding UTF8
+
+        $redacted = Clear-PVEAutopilotDomainJoinSecrets -PantherRoot $panther
+
+        $content = Get-Content -LiteralPath $unattend -Raw
+        $redacted | Should -Be 2
+        $content | Should -Not -Match 'oobe-secret'
+        $content | Should -Not -Match 'autologon-secret'
+        ([regex]::Matches($content, '<Value>REDACTED-BY-PVEAUTOPILOT</Value>')).Count |
+            Should -Be 2
+    }
+
+    It 'clears OOBE bootstrap AutoLogon state and disables the temporary account' {
+        $script:CleanupCalls = @()
+
+        Clear-PVEAutopilotOobeBootstrapAccount `
+            -RegistryCleanup { $script:CleanupCalls += 'registry' } `
+            -DisableUser { param($Name) $script:CleanupCalls += "disable:$Name" }
+
+        ($script:CleanupCalls -join '|') |
+            Should -Be 'registry|disable:PVEAutopilot'
+    }
+
+    It 'logs off the temporary OOBE bootstrap desktop session' {
+        $script:LogoffCalls = @()
+        $queryUserOutput = @'
+ USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME
+>PVEAutopilot         console             1  Active      none   5/13/2026 2:11 PM
+ adam                 rdp-tcp#1           2  Active      none   5/13/2026 2:12 PM
+'@
+
+        $loggedOff = Invoke-PVEAutopilotBootstrapSessionLogoff `
+            -UserName 'PVEAutopilot' `
+            -QueryUser { $queryUserOutput -split "`n" } `
+            -LogoffSession { param([int] $SessionId) $script:LogoffCalls += "logoff:$SessionId" }
+
+        $loggedOff | Should -Be 1
+        ($script:LogoffCalls -join '|') |
+            Should -Be 'logoff:1'
+    }
+
+    It 'skips non-unattend Panther XML files during domain join cleanup' {
+        $panther = Join-Path $TestDrive 'Panther'
+        $unattendGc = Join-Path $panther 'UnattendGC'
+        New-Item -ItemType Directory -Path $unattendGc -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $unattendGc 'diagerr.xml') `
+            -Value '<diag><unclosed>' `
+            -Encoding UTF8
+        $unattend = Join-Path $panther 'Unattend.xml'
+        @'
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <Identification>
+        <Credentials>
+          <Domain>HOME</Domain>
+          <Username>svc-cloudjoin</Username>
+          <Password>join-secret</Password>
+        </Credentials>
+        <JoinDomain>home.gell.one</JoinDomain>
+      </Identification>
+    </component>
+  </settings>
+</unattend>
+'@ | Set-Content -LiteralPath $unattend -Encoding UTF8
+
+        { Clear-PVEAutopilotDomainJoinSecrets -PantherRoot $panther } |
+            Should -Not -Throw
+        Get-Content -LiteralPath $unattend -Raw |
+            Should -Match '<Password>REDACTED-BY-PVEAUTOPILOT</Password>'
     }
 
     It 'passes postinstall arguments through the real helper without using the automatic args variable' -Skip:$IsWindows {

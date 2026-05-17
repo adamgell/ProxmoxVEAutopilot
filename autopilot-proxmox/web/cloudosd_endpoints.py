@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
-from web import agent_telemetry_pg, cloudosd_pg, osd_package, winpe_token
+from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, osd_package, winpe_token
 from web.sequence_compiler import _split_domain_user
 
 
@@ -138,6 +138,7 @@ def _conn():
 
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
+        cloudosd_cache.init(conn)
         agent_telemetry_pg.init(conn)
         yield conn
 
@@ -267,6 +268,22 @@ def _package_response(
             "vmid": run["vmid"],
         },
     }
+    try:
+        with _conn() as conn:
+            response["cache"] = cloudosd_cache.package_cache_payload(
+                conn,
+                run=run,
+                artifact=artifact,
+                server_base_url=server_base_url,
+                token=pe_token,
+            )
+    except Exception as exc:
+        response["cache"] = {
+            "policy": "direct_on_miss",
+            "feature_image": None,
+            "quality_updates": [],
+            "error": str(exc),
+        }
     domain_join = domain_join_secret or _domain_join_package_stub(run)
     if domain_join.get("enabled"):
         response["domain_join"] = domain_join
@@ -1364,6 +1381,17 @@ def _asset_path(name: str) -> Path:
         app_output = _APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi"
         if app_output.exists():
             return app_output
+        setup_msi_dir = _APP_ROOT / "output" / "setup" / "artifacts" / "agent-msi"
+        setup_msi_candidates = [
+            *setup_msi_dir.glob("*win-x64*.msi"),
+            *setup_msi_dir.glob("*.msi"),
+        ]
+        setup_msi_candidates = [
+            path for path in setup_msi_candidates
+            if path.is_file() and "arm64" not in path.name.lower()
+        ]
+        if setup_msi_candidates:
+            return max(setup_msi_candidates, key=lambda path: path.stat().st_mtime)
         return _REPO_ROOT / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
     raise HTTPException(status_code=404, detail="CloudOSD asset not found")
 
@@ -1824,6 +1852,53 @@ def preflight_payload(body: RunCreateBody) -> dict:
             "OS outside first-lab set",
             "The default is Windows 11 25H2 Enterprise Volume en-us.",
         ))
+    cache_status = {"policy": "direct_on_miss", "feature_image": None, "quality_updates": []}
+    try:
+        with _conn() as conn:
+            feature = cloudosd_cache.find_feature_entry(
+                conn,
+                windows_version=body.os_version,
+                architecture=body.architecture,
+                language=body.os_language,
+                activation=body.os_activation,
+                edition=body.os_edition,
+            )
+            quality = cloudosd_cache.matching_quality_updates(
+                conn,
+                windows_version=body.os_version,
+                architecture=body.architecture,
+            )
+        cache_status = {
+            "policy": "direct_on_miss",
+            "feature_image": feature,
+            "quality_updates": quality,
+        }
+        if feature and feature.get("status") == "ready":
+            warnings.append(_check(
+                "cloudosd_feature_cache_hit",
+                "CloudOSD feature image cache hit",
+                f"{feature['file_name']} will be served from the controller cache.",
+            ))
+        else:
+            warnings.append(_check(
+                "cloudosd_feature_cache_miss",
+                "CloudOSD feature image cache miss",
+                "Deployment can continue from Microsoft; queue cache warming for faster future runs.",
+            ))
+        if quality:
+            warnings.append(_check(
+                "cloudosd_quality_cache_ready",
+                "CloudOSD quality update cache ready",
+                f"{len(quality)} cached quality update package(s) will be applied offline.",
+            ))
+        else:
+            warnings.append(_check(
+                "cloudosd_quality_cache_missing",
+                "CloudOSD quality update cache missing",
+                "No cached LCU/SSU packages are ready for offline servicing.",
+            ))
+    except Exception as exc:
+        cache_status["error"] = str(exc)
 
     return {
         "schema_version": 1,
@@ -1836,6 +1911,7 @@ def preflight_payload(body: RunCreateBody) -> dict:
         "asset_status": asset_status,
         "proxmox": options,
         "target": target,
+        "cache": cache_status,
         "minimum_vm_memory_mb": _MIN_CLOUDOSD_MEMORY_MB,
         "recommended_vm_memory_mb": _RECOMMENDED_CLOUDOSD_MEMORY_MB,
         "minimum_vm_disk_size_gb": _MIN_CLOUDOSD_DISK_GB,
@@ -1960,6 +2036,150 @@ def proxmox_options():
 @router.get("/assets/status")
 def assets_status():
     return assets_status_payload()
+
+
+def _cache_script_cmd(action: str, *, entry_id: str = "", module_version: str = "") -> list[str]:
+    script = _APP_ROOT / "scripts" / "cloudosd_cache_job.py"
+    cmd = [sys.executable, str(script), action]
+    if entry_id:
+        cmd.extend(["--entry-id", entry_id])
+    if module_version:
+        cmd.extend(["--osdcloud-module-version", module_version])
+    return cmd
+
+
+def _queue_cache_job(job_type: str, cmd: list[str], args: dict) -> str:
+    from web import app as web_app
+
+    job = web_app.job_manager.start(job_type, cmd, args=args)
+    return job["id"]
+
+
+@router.get("/cache")
+def cache_status():
+    with _conn() as conn:
+        return cloudosd_cache.payload(conn)
+
+
+@router.post("/cache/catalog/refresh", status_code=202)
+def refresh_cache_catalog():
+    version = cloudosd_pg.DEFAULT_OSDCLOUD_MODULE_VERSION
+    job_id = _queue_cache_job(
+        "cloudosd_cache_refresh_catalog",
+        _cache_script_cmd("refresh", module_version=version),
+        {"osdcloud_module_version": version},
+    )
+    return {"ok": True, "job_id": job_id}
+
+
+@router.post("/cache/feature-images/{entry_id}/warm", status_code=202)
+def warm_feature_image(entry_id: str):
+    job_id = _queue_cache_job(
+        "cloudosd_cache_feature_image",
+        _cache_script_cmd("warm", entry_id=entry_id),
+        {"entry_id": entry_id, "cache_type": "feature_image"},
+    )
+    return {"ok": True, "job_id": job_id}
+
+
+@router.post("/cache/quality-updates/{entry_id}/warm", status_code=202)
+def warm_quality_update(entry_id: str):
+    job_id = _queue_cache_job(
+        "cloudosd_cache_quality_update",
+        _cache_script_cmd("warm", entry_id=entry_id),
+        {"entry_id": entry_id, "cache_type": "quality_update"},
+    )
+    return {"ok": True, "job_id": job_id}
+
+
+@router.post("/cache/{entry_id}/verify", status_code=202)
+def verify_cache_entry(entry_id: str):
+    job_id = _queue_cache_job(
+        "cloudosd_cache_feature_image",
+        _cache_script_cmd("verify", entry_id=entry_id),
+        {"entry_id": entry_id, "cache_action": "verify"},
+    )
+    return {"ok": True, "job_id": job_id}
+
+
+@router.post("/cache/{entry_id}/delete", status_code=202)
+def delete_cache_entry(entry_id: str):
+    job_id = _queue_cache_job(
+        "cloudosd_cache_feature_image",
+        _cache_script_cmd("delete", entry_id=entry_id),
+        {"entry_id": entry_id, "cache_action": "delete"},
+    )
+    return {"ok": True, "job_id": job_id}
+
+
+@router.post("/cache/warm-all-windows11", status_code=202)
+def warm_all_windows11():
+    with _conn() as conn:
+        entries = cloudosd_cache.list_entries(conn, limit=2000)
+    queued = []
+    for entry in entries:
+        if not entry["windows_version"].startswith("Windows 11 "):
+            continue
+        if entry["status"] == "ready":
+            continue
+        if entry["entry_type"] == "feature_image":
+            job_type = "cloudosd_cache_feature_image"
+        elif entry["entry_type"] == "quality_update":
+            job_type = "cloudosd_cache_quality_update"
+        else:
+            continue
+        queued.append(_queue_cache_job(
+            job_type,
+            _cache_script_cmd("warm", entry_id=entry["id"]),
+            {"entry_id": entry["id"], "cache_type": entry["entry_type"]},
+        ))
+    return {"ok": True, "job_ids": queued}
+
+
+def _download_token_payload(run_id: str, token: str) -> dict:
+    if not run_id or not token:
+        raise HTTPException(status_code=401, detail="missing cache download token")
+    try:
+        payload = winpe_token.verify(token)
+    except winpe_token.TokenExpired:
+        raise HTTPException(status_code=401, detail="token expired")
+    except winpe_token.TokenError:
+        raise HTTPException(status_code=401, detail="invalid token")
+    _require_run_token(run_id, payload)
+    return payload
+
+
+@router.api_route("/cache/{entry_id}/download/{file_name:path}", methods=["GET", "HEAD"])
+def download_cache_entry(entry_id: str, file_name: str, request: Request, run_id: str = "", token: str = ""):
+    _download_token_payload(run_id, token)
+    with _conn() as conn:
+        entry = cloudosd_cache.get_entry(conn, entry_id)
+        if not entry:
+            raise HTTPException(status_code=404, detail="CloudOSD cache entry not found")
+        if entry["status"] != "ready":
+            raise HTTPException(status_code=409, detail="CloudOSD cache entry is not ready")
+        path = Path(entry.get("local_path") or "")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="CloudOSD cache file is missing")
+        if Path(file_name).name != entry["file_name"]:
+            raise HTTPException(status_code=404, detail="CloudOSD cache filename mismatch")
+        headers = {
+            "Content-Length": str(path.stat().st_size),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-store",
+        }
+        if request.method == "HEAD":
+            return Response(status_code=200, headers=headers, media_type="application/octet-stream")
+        cloudosd_cache.mark_served(conn, entry_id)
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run_id,
+            phase="cache",
+            event_type=f"cloudosd_cache_{entry['entry_type']}_served",
+            message=f"Served CloudOSD cache file {entry['file_name']}",
+            data={"entry_id": entry_id, "file_name": entry["file_name"], "size_bytes": path.stat().st_size},
+        )
+    return FileResponse(path, media_type="application/octet-stream", filename=entry["file_name"], headers=headers)
 
 
 @router.post("/preflight")
@@ -2572,13 +2792,15 @@ def cloudosd_provision_extra_vars(
         "hostname_pattern": expected_name,
         "tpm_enabled": run["tpm_enabled"],
         "secure_boot": run["secure_boot"],
+        "vm_oem_profile": run.get("vm_oem_profile") or "",
+        "chassis_type_override": int(run.get("chassis_type_override") or 0),
     }
+    setup_state = web_app._read_json_file(web_app.SETUP_STATE_PATH)
+    virtio_iso = setup_state.get("virtio_iso_volid")
+    if virtio_iso:
+        extra_vars["proxmox_virtio_iso"] = virtio_iso
     if run.get("vm_group_tag"):
         extra_vars["vm_group_tag"] = run["vm_group_tag"]
-    if run.get("vm_oem_profile"):
-        extra_vars["vm_oem_profile"] = run["vm_oem_profile"]
-    if int(run.get("chassis_type_override") or 0) > 0:
-        extra_vars["chassis_type_override"] = int(run["chassis_type_override"])
     if run.get("requested_vmid"):
         extra_vars["requested_vmid"] = run["requested_vmid"]
     if run.get("source_sequence_id"):

@@ -34,7 +34,7 @@ def compile_cloudosd_sequence_intent(
     *,
     resolve_credential: Callable[[int], Optional[dict]],
 ) -> dict:
-    """Return CloudOSD-compatible intent from a legacy sequence.
+    """Return OSDCloud-compatible intent from a legacy sequence.
 
     The returned dict is safe to persist. It intentionally excludes join
     password and account username; those are resolved just-in-time for the PE
@@ -46,7 +46,7 @@ def compile_cloudosd_sequence_intent(
     unsupported = unsupported_enabled_steps(sequence)
     if unsupported:
         raise CloudOSDSequenceError(
-            "CloudOSD selected sequence is not CloudOSD-compatible yet; "
+            "OSDCloud selected sequence is not OSDCloud-compatible yet; "
             f"unsupported enabled step(s): {', '.join(unsupported)}",
         )
 
@@ -59,7 +59,7 @@ def compile_cloudosd_sequence_intent(
         return {"domain_join": {"enabled": False}}
     if len(joins) > 1:
         raise CloudOSDSequenceError(
-            "CloudOSD selected sequence has multiple enabled join_ad_domain steps; "
+            "OSDCloud selected sequence has multiple enabled join_ad_domain steps; "
             "use exactly one.",
         )
 
@@ -68,12 +68,12 @@ def compile_cloudosd_sequence_intent(
     credential_id = params.get("credential_id")
     if not credential_id:
         raise CloudOSDSequenceError(
-            "CloudOSD join_ad_domain step has no credential_id set.",
+            "OSDCloud join_ad_domain step has no credential_id set.",
         )
     credential = resolve_credential(int(credential_id))
     if not credential:
         raise CloudOSDSequenceError(
-            f"CloudOSD join_ad_domain credential id={credential_id} was not found.",
+            f"OSDCloud join_ad_domain credential id={credential_id} was not found.",
         )
     payload = credential.get("payload") or credential
     domain_fqdn = (payload.get("domain_fqdn") or "").strip()
@@ -81,7 +81,7 @@ def compile_cloudosd_sequence_intent(
     password = payload.get("password") or ""
     if not (domain_fqdn and raw_username and password):
         raise CloudOSDSequenceError(
-            "CloudOSD join_ad_domain credential is missing domain_fqdn, "
+            "OSDCloud join_ad_domain credential is missing domain_fqdn, "
             "username, or password.",
         )
 

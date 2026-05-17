@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_head %}
-{% block title %}CloudOSD Run - Proxmox VE Autopilot{% endblock %}
+{% block title %}OSDCloud Run - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-{{ page_head("CloudOSD Run " ~ run.run_id[:8], "Run evidence, identity comparison, and heartbeat-gated completion for a single-VM CloudOSD deployment.") }}
+{{ page_head("OSDCloud Run " ~ run.run_id[:8], "Run evidence, identity comparison, and heartbeat-gated completion for a single-VM OSDCloud deployment.") }}
 
 <style>
   .cloudosd-detail-grid {
@@ -155,7 +155,7 @@
     </section>
 
     <section class="cloudosd-detail-panel">
-      <h2>CloudOSD Evidence</h2>
+      <h2>OSDCloud Evidence</h2>
       {% set offline_events = event_groups.get('offline validation') or [] %}
       {% set domain_events = event_groups.get('Domain join') or [] %}
       {% set setup_events = event_groups.get('SetupComplete') or [] %}

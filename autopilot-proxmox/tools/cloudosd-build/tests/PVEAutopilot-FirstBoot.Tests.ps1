@@ -41,6 +41,7 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         Invoke-PVEAutopilotFirstBoot -RunConfig $runConfig `
             -WaitForNetwork { $script:Calls += 'network' } `
             -WaitForServer { param($Url) $script:Calls += "server:$Url" } `
+            -InstallQga { $script:Calls += 'qga'; [pscustomobject]@{ source = 'C:\Stage\qemu-ga-x86_64.msi'; service = 'QEMU-GA'; status = 'Running' } } `
             -InstallMsi { param($Path) $script:Calls += "msi:$Path" } `
             -RunPostinstall { param($ScriptPath,$PostinstallArgs) $script:Calls += "postinstall:$($ScriptPath):$($PostinstallArgs.Phase)" } `
             -ConfirmHeartbeat { param($ConfigUrl,$Token) $script:Calls += 'heartbeat' } `
@@ -50,7 +51,7 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
             -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data) }
 
         ($script:Calls -join '|') |
-            Should -Be 'network|server:https://autopilot.local|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
+            Should -Be 'network|server:https://autopilot.local|qga|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
     }
 
     It 'posts SetupComplete and first-boot milestone events to the controller' {
@@ -58,6 +59,7 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
 
         $source | Should -Match 'Write-PVEAutopilotCloudOSDEvent'
         $source | Should -Match "EventType 'setupcomplete_task_started'"
+        $source | Should -Match "EventType 'firstboot_qga_ready'"
         $source | Should -Match "EventType 'firstboot_complete'"
         $source | Should -Match '/api/cloudosd/runs/.*/events'
     }
@@ -68,6 +70,15 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
         $source | Should -Match 'Start-Service -Name QEMU-GA'
         $source | Should -Match 'SpecialAccounts\\UserList'
         $source | Should -Match "Name 'PVEAutopilot'"
+    }
+
+    It 'builds the PVE virtio-serial QEMU Guest Agent service command line' {
+        $commandLine = Get-PVEAutopilotQgaServiceCommandLine `
+            -ExePath 'C:\Program Files\Qemu-ga\qemu-ga.exe' `
+            -StateDir 'C:\ProgramData\qemu-ga' `
+            -LogFile 'C:\ProgramData\qemu-ga\qemu-ga.log'
+
+        $commandLine | Should -Be '"C:\Program Files\Qemu-ga\qemu-ga.exe" -d -m virtio-serial -p \\.\Global\org.qemu.guest_agent.0 --retry-path -t "C:\ProgramData\qemu-ga" -l "C:\ProgramData\qemu-ga\qemu-ga.log"'
     }
 
     It 'redacts domain join passwords from Panther unattend files during first boot' {

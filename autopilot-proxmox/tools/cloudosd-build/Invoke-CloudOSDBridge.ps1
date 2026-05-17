@@ -785,9 +785,12 @@ function Save-CloudOSDRunPackage {
                 -NotePropertyValue (Join-Path $stageRoot 'PVEAutopilot-FirstBoot.ps1') `
                 -Force
     }
-    Copy-CloudOSDQemuGuestAgentMsi `
+    $qgaMsi = Copy-CloudOSDQemuGuestAgentMsi `
         -Destination (Join-Path $stageRoot 'qemu-ga-x86_64.msi') `
-        -SearchRoots $QgaSearchRoots | Out-Null
+        -SearchRoots $QgaSearchRoots
+    if (-not $qgaMsi) {
+        throw 'QEMU Guest Agent MSI not found in attached VirtIO media; cannot stage first-boot QGA install.'
+    }
 
     $runJson = Join-Path $stageRoot 'cloudosd-run.json'
     Get-CloudOSDSanitizedRunPackage -Package $Package |
@@ -1295,6 +1298,170 @@ function Add-CloudOSDOfflineVirtIODrivers {
     }
 }
 
+function Set-CloudOSDFeatureImageCacheSource {
+    param(
+        [Parameter(Mandatory)] [object] $Package,
+        [Parameter(Mandatory)] [string] $ModuleRoot
+    )
+
+    $cache = Get-CloudOSDObjectProperty -Value $Package -Name 'cache'
+    $feature = Get-CloudOSDObjectProperty -Value $cache -Name 'feature_image'
+    if (-not $feature) {
+        return [pscustomobject]@{ applied = $false; reason = 'no_feature_cache_payload' }
+    }
+    $hit = Get-CloudOSDObjectProperty -Value $feature -Name 'hit'
+    $downloadUrl = [string] (Get-CloudOSDObjectProperty -Value $feature -Name 'download_url')
+    if (-not $hit -or [string]::IsNullOrWhiteSpace($downloadUrl)) {
+        return [pscustomobject]@{
+            applied = $false
+            reason = 'cache_miss'
+            entry_id = Get-CloudOSDObjectProperty -Value $feature -Name 'entry_id'
+            status = Get-CloudOSDObjectProperty -Value $feature -Name 'status'
+        }
+    }
+
+    $catalogFile = [string] (Get-CloudOSDObjectProperty -Value $feature -Name 'catalog_file')
+    $fileName = [string] (Get-CloudOSDObjectProperty -Value $feature -Name 'file_name')
+    $expectedSha256 = [string] (Get-CloudOSDObjectProperty -Value $feature -Name 'expected_sha256')
+    if ([string]::IsNullOrWhiteSpace($catalogFile)) {
+        throw 'CloudOSD feature cache hit is missing catalog_file'
+    }
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        throw 'CloudOSD feature cache hit is missing file_name'
+    }
+
+    $catalogPath = Join-CloudOSDPath -Root $ModuleRoot -RelativePath $catalogFile
+    if (-not (Test-Path -LiteralPath $catalogPath)) {
+        throw "OSDCloud catalog file not found for cache rewrite: $catalogPath"
+    }
+
+    [xml] $catalog = Get-Content -LiteralPath $catalogPath -Raw
+    $target = $null
+    foreach ($node in @($catalog.SelectNodes('//File'))) {
+        $nameNode = $node.SelectSingleNode('FileName')
+        $shaNode = $node.SelectSingleNode('Sha256')
+        $nameMatches = $nameNode -and ([string] $nameNode.InnerText) -eq $fileName
+        $shaMatches = $false
+        if ($expectedSha256 -and $shaNode) {
+            $shaMatches = ([string] $shaNode.InnerText).ToLowerInvariant() -eq $expectedSha256.ToLowerInvariant()
+        }
+        if ($nameMatches -or $shaMatches) {
+            $target = $node
+            break
+        }
+    }
+    if (-not $target) {
+        throw "OSDCloud catalog entry not found for cached feature image: $fileName"
+    }
+
+    $filePathNode = $target.SelectSingleNode('FilePath')
+    if (-not $filePathNode) {
+        throw "OSDCloud catalog entry has no FilePath node: $fileName"
+    }
+    $originalUrl = [string] $filePathNode.InnerText
+    $filePathNode.InnerText = $downloadUrl
+    $catalog.Save($catalogPath)
+
+    return [pscustomobject]@{
+        applied = $true
+        entry_id = Get-CloudOSDObjectProperty -Value $feature -Name 'entry_id'
+        catalog_file = $catalogFile
+        file_name = $fileName
+        original_url = $originalUrl
+        download_url = $downloadUrl
+        expected_sha256 = $expectedSha256
+    }
+}
+
+function Invoke-CloudOSDQualityUpdateServicing {
+    param(
+        [Parameter(Mandatory)] [object] $Package,
+        [Parameter(Mandatory)] [string] $WindowsRoot,
+        [string] $BaseUrl,
+        [string] $FallbackBaseUrl,
+        [string] $RunId,
+        [string] $BearerToken,
+        [string] $DownloadRoot = 'X:\CloudOSDQualityUpdates',
+        [scriptblock] $Downloader = {
+            param($Url, $OutFile)
+            Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $OutFile -TimeoutSec 900
+        },
+        [scriptblock] $DismRunner = {
+            param($ImageRoot, $PackagePath)
+            & dism.exe /Image:$ImageRoot /Add-Package /PackagePath:$PackagePath | Out-Null
+            return $LASTEXITCODE
+        }
+    )
+
+    $cache = Get-CloudOSDObjectProperty -Value $Package -Name 'cache'
+    $updates = @(Get-CloudOSDObjectProperty -Value $cache -Name 'quality_updates')
+    $readyUpdates = @()
+    foreach ($update in $updates) {
+        $status = [string] (Get-CloudOSDObjectProperty -Value $update -Name 'status')
+        $url = [string] (Get-CloudOSDObjectProperty -Value $update -Name 'url')
+        if ($status -eq 'ready' -and -not [string]::IsNullOrWhiteSpace($url)) {
+            $readyUpdates += $update
+        }
+    }
+
+    if ($readyUpdates.Count -eq 0) {
+        if ($BaseUrl -and $RunId -and $BearerToken) {
+            Write-CloudOSDEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+                -RunId $RunId -BearerToken $BearerToken -Phase 'quality_update' `
+                -EventType 'cloudosd_quality_update_skipped' `
+                -Message 'No ready cached quality update packages were available for offline servicing'
+        }
+        return [pscustomobject]@{ applied = 0; skipped = $true }
+    }
+
+    if ($BaseUrl -and $RunId -and $BearerToken) {
+        Write-CloudOSDEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+            -RunId $RunId -BearerToken $BearerToken -Phase 'quality_update' `
+            -EventType 'cloudosd_quality_update_start' `
+            -Message "Applying $($readyUpdates.Count) cached quality update package(s) offline"
+    }
+
+    $imageRoot = Split-Path -Parent $WindowsRoot
+    New-Item -ItemType Directory -Path $DownloadRoot -Force | Out-Null
+    $applied = @()
+    foreach ($update in $readyUpdates) {
+        $fileName = [string] (Get-CloudOSDObjectProperty -Value $update -Name 'file_name')
+        if ([string]::IsNullOrWhiteSpace($fileName)) {
+            $fileName = [System.IO.Path]::GetFileName(([uri] ([string] (Get-CloudOSDObjectProperty -Value $update -Name 'url'))).AbsolutePath)
+        }
+        $destination = Join-Path $DownloadRoot ([System.IO.Path]::GetFileName($fileName))
+        & $Downloader ([string] (Get-CloudOSDObjectProperty -Value $update -Name 'url')) $destination
+        $expectedSha256 = [string] (Get-CloudOSDObjectProperty -Value $update -Name 'sha256')
+        if ($expectedSha256) {
+            $actualSha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualSha256 -ne $expectedSha256.ToLowerInvariant()) {
+                throw "SHA256 mismatch for cached quality update $fileName"
+            }
+        }
+        $exitCode = & $DismRunner $imageRoot $destination
+        if ($exitCode -ne 0) {
+            if ($BaseUrl -and $RunId -and $BearerToken) {
+                Write-CloudOSDEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+                    -RunId $RunId -BearerToken $BearerToken -Phase 'quality_update' `
+                    -EventType 'cloudosd_quality_update_failed' -Severity 'error' `
+                    -Message "DISM failed while applying cached quality update ${fileName}: $exitCode" `
+                    -Data @{ package = $fileName; exit_code = $exitCode }
+            }
+            throw "DISM failed while applying cached quality update ${fileName}: $exitCode"
+        }
+        $applied += $fileName
+    }
+
+    if ($BaseUrl -and $RunId -and $BearerToken) {
+        Write-CloudOSDEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+            -RunId $RunId -BearerToken $BearerToken -Phase 'quality_update' `
+            -EventType 'cloudosd_quality_update_applied' `
+            -Message "Applied $($applied.Count) cached quality update package(s) offline" `
+            -Data @{ packages = $applied; image_root = $imageRoot }
+    }
+    return [pscustomobject]@{ applied = $applied.Count; packages = $applied }
+}
+
 function Invoke-CloudOSDDeploy {
     param([Parameter(Mandatory)] [string] $WorkflowName)
     Deploy-OSDCloud -WorkflowName $WorkflowName -CLI
@@ -1339,6 +1506,25 @@ function Invoke-CloudOSDBridge {
         -BearerToken $token
 
     $moduleRoot = Import-CloudOSDModule -ExpectedVersion $config.osdcloud_module_version
+    $cachePatch = Set-CloudOSDFeatureImageCacheSource -Package $package -ModuleRoot $moduleRoot
+    if ($cachePatch.applied) {
+        Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+            -RunId $runId -BearerToken $token -Phase 'cache' `
+            -EventType 'cloudosd_cache_feature_image_hit' `
+            -Message "CloudOSD feature image cache source applied: $($cachePatch.file_name)" `
+            -Data @{
+                entry_id = $cachePatch.entry_id
+                catalog_file = $cachePatch.catalog_file
+                file_name = $cachePatch.file_name
+                expected_sha256 = $cachePatch.expected_sha256
+            }
+    } else {
+        Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+            -RunId $runId -BearerToken $token -Phase 'cache' `
+            -EventType 'cloudosd_cache_feature_image_miss' `
+            -Message "CloudOSD feature image cache miss; continuing with OSDCloud source URL" `
+            -Data @{ reason = $cachePatch.reason; entry_id = $cachePatch.entry_id; status = $cachePatch.status }
+    }
     $null = New-CloudOSDWorkflow -ModuleRoot $moduleRoot `
         -Package $package `
         -Architecture $config.architecture
@@ -1353,6 +1539,12 @@ function Invoke-CloudOSDBridge {
         Invoke-CloudOSDDeploy -WorkflowName $package.workflow_name
 
         $windowsRoot = Get-CloudOSDWindowsRoot
+        Invoke-CloudOSDQualityUpdateServicing -Package $package `
+            -WindowsRoot $windowsRoot `
+            -BaseUrl $baseUrl `
+            -FallbackBaseUrl $fallbackUrl `
+            -RunId $runId `
+            -BearerToken $token | Out-Null
         Add-CloudOSDOfflineVirtIODrivers `
             -WindowsRoot $windowsRoot `
             -PreferredOsKey (Get-CloudOSDVirtioOsKey -Package $package)

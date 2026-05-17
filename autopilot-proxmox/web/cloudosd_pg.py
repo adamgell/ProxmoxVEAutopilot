@@ -1,4 +1,4 @@
-"""PostgreSQL repository for CloudOSD deployment artifacts and runs."""
+"""PostgreSQL repository for OSDCloud deployment artifacts and runs."""
 from __future__ import annotations
 
 import re
@@ -248,7 +248,9 @@ CLOUDOSD_MILESTONE_LABELS = [
     "controller",
     "Proxmox playbook",
     "PE bridge",
+    "Cache",
     "OSDCloud",
+    "Quality updates",
     "offline validation",
     "Domain join",
     "SetupComplete",
@@ -302,7 +304,7 @@ def _normalize_mac(value: str | None) -> str | None:
 
 
 def normalize_windows_computer_name(value: str | None) -> str:
-    """Match the CloudOSD PE bridge's offline unattend computer-name rule."""
+    """Match the OSDCloud PE bridge's offline unattend computer-name rule."""
     text = (value or "").strip()
     normalized = re.sub(r"[^A-Za-z0-9-]", "", text)
     if not normalized:
@@ -370,6 +372,10 @@ def milestone_label_for_event(event: dict) -> str:
         return "Proxmox playbook"
     if event_key == "pe_registered":
         return "PE bridge"
+    if "cache" in event_key or phase_key == "cache":
+        return "Cache"
+    if "quality_update" in event_key or phase_key in {"quality_update", "quality updates"}:
+        return "Quality updates"
     if "osdcloud" in event_key:
         return "OSDCloud"
     if "validation" in event_key or phase_key == "offline_validation":
@@ -395,7 +401,7 @@ def milestone_event_groups(events: list[dict]) -> dict[str, list[dict]]:
 
 
 def sync_ts_progress_for_run(conn: Connection, run_id: str) -> int:
-    """Synchronize v2 run-plan progress from CloudOSD lifecycle evidence."""
+    """Synchronize v2 run-plan progress from OSDCloud lifecycle evidence."""
     run = get_run(conn, run_id)
     if not run:
         return 0
@@ -440,7 +446,7 @@ def sync_ts_progress_for_run(conn: Connection, run_id: str) -> int:
         run_id=run_id,
         kinds=done_kinds,
         agent_id="cloudosd-controller",
-        message="CloudOSD lifecycle evidence advanced this v2 run step",
+        message="OSDCloud lifecycle evidence advanced this v2 run step",
         data={"source": "cloudosd_lifecycle"},
     )
 
@@ -748,14 +754,14 @@ def requeue_agent_v2_step(
         raise ValueError("step/run mismatch")
     if step["phase"] != "full_os" or step["kind"] not in _AGENT_OPERATOR_RETRY_KINDS:
         raise ValueError(
-            "only failed agent-owned CloudOSD full-OS steps can be requeued",
+            "only failed agent-owned OSDCloud full-OS steps can be requeued",
         )
     updated = ts_engine_pg.requeue_step(
         conn,
         run_id=run_id,
         step_id=step_id,
         requested_by=requested_by,
-        message=f"Operator requeued CloudOSD v2 step {step['kind']}",
+        message=f"Operator requeued OSDCloud v2 step {step['kind']}",
     )
     conn.execute(
         """
@@ -1282,12 +1288,12 @@ def _create_sequence_for_run(
     sequence_id = ts_engine_pg.create_sequence(
         conn,
         name=name,
-        description="Generated CloudOSD deployment sequence",
+        description="Generated OSDCloud deployment sequence",
         created_by="cloudosd",
     )
     domain_enabled = _domain_join_enabled(domain_join)
     steps = [
-        ("CloudOSD PE preflight", "cloudosd_preflight", "pe"),
+        ("OSDCloud PE preflight", "cloudosd_preflight", "pe"),
         ("Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
     ]
     if domain_enabled:
@@ -1363,14 +1369,14 @@ def create_run(
 ) -> dict:
     artifact = get_artifact(conn, artifact_id)
     if not artifact:
-        raise ValueError(f"CloudOSD artifact not found: {artifact_id}")
+        raise ValueError(f"OSDCloud artifact not found: {artifact_id}")
     if artifact["architecture"] != architecture:
-        raise ValueError("CloudOSD artifact architecture does not match requested run")
+        raise ValueError("OSDCloud artifact architecture does not match requested run")
 
     expected_computer_name = normalize_windows_computer_name(vm_name)
     if not expected_computer_name:
         raise ValueError(
-            "CloudOSD requested VM name does not produce a valid Windows computer name",
+            "OSDCloud requested VM name does not produce a valid Windows computer name",
         )
     domain_join_config = _sanitize_domain_join(
         domain_join,
@@ -1379,7 +1385,7 @@ def create_run(
 
     version_id = _create_sequence_for_run(
         conn,
-        name=f"CloudOSD deployment for {vm_name}",
+        name=f"OSDCloud deployment for {vm_name}",
         domain_join=domain_join_config,
         vm_group_tag=vm_group_tag,
     )
@@ -1484,7 +1490,7 @@ def create_run(
         run_id=run_id,
         phase="controller",
         event_type="run_created",
-        message="CloudOSD run created",
+        message="OSDCloud run created",
     )
     return _run_row(row)
 
@@ -1699,7 +1705,7 @@ def set_run_identity(
         run_id=run_id,
         phase="controller",
         event_type="identity_recorded",
-        message="CloudOSD VM identity recorded",
+        message="OSDCloud VM identity recorded",
         data={
             "vmid": vmid,
             "vm_uuid": normalized_uuid,
@@ -1774,7 +1780,7 @@ def mark_pe_registered(conn: Connection, *, run_id: str) -> dict | None:
             run_id=run_id,
             phase="pe",
             event_type="pe_registered",
-            message="CloudOSD PE bridge registered",
+            message="OSDCloud PE bridge registered",
         )
     return _run_row(row)
 
@@ -1836,7 +1842,7 @@ def mark_complete_from_heartbeat(
                     run_id=run_id,
                     phase="full_os",
                     event_type="autopilotagent_heartbeat",
-                    message="AutopilotAgent heartbeat observed for CloudOSD run",
+                    message="AutopilotAgent heartbeat observed for OSDCloud run",
                     data=heartbeat_payload,
                 )
                 append_event(
@@ -1886,7 +1892,7 @@ def mark_complete_from_heartbeat(
             run_id=run_id,
             phase="full_os",
             event_type="autopilotagent_heartbeat",
-            message="AutopilotAgent heartbeat observed for CloudOSD run",
+            message="AutopilotAgent heartbeat observed for OSDCloud run",
             data=heartbeat_payload,
         )
         sync_ts_progress_for_run(conn, run_id)
@@ -1901,7 +1907,7 @@ def mark_complete_from_heartbeat(
                 run_id=run_id,
                 phase="full_os",
                 event_type="cloudosd_v2_waiting",
-                message="Waiting for AutopilotAgent v2 full-OS steps before CloudOSD completion",
+                message="Waiting for AutopilotAgent v2 full-OS steps before OSDCloud completion",
                 data=status,
             )
             return _run_row(row)
