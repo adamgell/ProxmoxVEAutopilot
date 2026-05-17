@@ -97,6 +97,17 @@
     _smbios_args: "-smbios file={{ _smbios_file_path }}"
   when: _use_per_vm_smbios_file | default(false) | bool
 
+- name: Fail if per-VM SMBIOS staging lacks root SSH access
+  ansible.builtin.fail:
+    msg: >-
+      VM {{ vm_vmid }} needs a per-VM SMBIOS file, but no Proxmox root SSH
+      key or root password is configured. Re-run init-proxmox-ve.sh so it can
+      repair the controller-to-PVE root SSH key.
+  when:
+    - _use_per_vm_smbios_file | default(false) | bool
+    - proxmox_root_ssh_key_path is not defined or (proxmox_root_ssh_key_path | string | length) == 0
+    - vault_proxmox_root_password is not defined or (vault_proxmox_root_password | string | length) == 0
+
 # _smbios1_string was computed by the oem_profile_resolver include above.
 # update_config.yml uses it when _use_per_vm_smbios_file is false (i.e.,
 # no chassis-type override). When a per-VM SMBIOS file is in play,
@@ -114,7 +125,24 @@
 # Proxmox host. This intentionally runs only after the clone task
 # succeeds, so a duplicate requested VMID cannot overwrite the SMBIOS
 # file used by an existing VM before the duplicate clone fails.
-- name: Stage per-VM SMBIOS file on the Proxmox host
+- name: Stage per-VM SMBIOS file on the Proxmox host via root SSH key
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - >-
+        printf '%s' {{ _smbios_file_b64 | quote }} | base64 -d | ssh -i {{ proxmox_root_ssh_key_path | quote }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@{{ proxmox_node_ssh_host | default(proxmox_host) }} {{ ('umask 022; mkdir -p /var/lib/vz/snippets; cat > ' ~ _smbios_file_path ~ '; test -s ' ~ _smbios_file_path ~ ' && echo OK_SMBIOS_WRITTEN') | quote }}
+  delegate_to: localhost
+  register: _smbios_upload
+  changed_when: true
+  failed_when: _smbios_upload.rc != 0 or 'OK_SMBIOS_WRITTEN' not in (_smbios_upload.stdout | default(''))
+  no_log: true
+  when:
+    - _use_per_vm_smbios_file | default(false) | bool
+    - proxmox_root_ssh_key_path is defined
+    - proxmox_root_ssh_key_path | string | length > 0
+
+- name: Stage per-VM SMBIOS file on the Proxmox host via root SSH password
   ansible.builtin.command:
     argv:
       - bash
@@ -128,7 +156,11 @@
   changed_when: true
   failed_when: _smbios_upload.rc != 0 or 'OK_SMBIOS_WRITTEN' not in (_smbios_upload.stdout | default(''))
   no_log: true
-  when: _use_per_vm_smbios_file | default(false) | bool
+  when:
+    - _use_per_vm_smbios_file | default(false) | bool
+    - proxmox_root_ssh_key_path is not defined or (proxmox_root_ssh_key_path | string | length) == 0
+    - vault_proxmox_root_password is defined
+    - vault_proxmox_root_password | string | length > 0
 
 - name: Read current cloned VM config
   ansible.builtin.uri:

@@ -29,6 +29,31 @@
     validate_certs: "{{ proxmox_validate_certs }}"
   register: _ci_exec
 
+- name: Poll cloud-init exec-status until it exits
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/agent/exec-status?pid={{ _ci_exec.json.data.pid }}"
+    method: GET
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    return_content: true
+    status_code: [200, 500]
+  register: _ci_exec_status
+  until: >-
+    (_ci_exec_status.status == 200 and (_ci_exec_status.json.data.exited | default(0)) == 1)
+    or
+    (_ci_exec_status.status == 500 and ('does not exist' in (_ci_exec_status.json.message | default(''))))
+  retries: 240
+  delay: 5
+
+- name: Fail if cloud-init returned a non-zero exit code
+  ansible.builtin.fail:
+    msg: "cloud-init status --wait failed on VM {{ target_vmid }}: {{ _ci_exec_status.json.data | default(_ci_exec_status.json | default({})) }}"
+  when:
+    - _ci_exec_status.status == 200
+    - (_ci_exec_status.json.data.exited | default(0)) == 1
+    - (_ci_exec_status.json.data.exitcode | default(0) | int) != 0
+
 - name: Detach per-VM seed ISO (cloud-init already consumed it)
   ansible.builtin.uri:
     url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ target_vmid }}/config"
@@ -39,3 +64,19 @@
     body:
       delete: "ide3"
     validate_certs: "{{ proxmox_validate_certs }}"
+  register: _seed_detach
+
+- name: Record Ubuntu v2 cloud-init completion
+  ansible.builtin.uri:
+    url: "{{ web_base_url | default('http://127.0.0.1:5000') }}/api/osd/v2/ubuntu/runs/{{ ubuntu_v2_run_id }}/cloud-init-complete"
+    method: POST
+    body_format: json
+    body:
+      vmid: "{{ target_vmid | int }}"
+      hostname: "{{ vm_hostname | default('') }}"
+      cloud_init_exec: "{{ _ci_exec.json | default({}) }}"
+      cloud_init_exec_status: "{{ _ci_exec_status.json | default({}) }}"
+      seed_detach: "{{ _seed_detach.json | default({}) }}"
+      seed_detached: true
+    status_code: [200]
+  when: ubuntu_v2_run_id is defined and (ubuntu_v2_run_id | string | length) > 0
