@@ -1983,7 +1983,7 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
         '<option value="cloudosd" selected>OSDCloud (Windows desktop clients)</option>'
         in body
     )
-    assert '<option value="" selected data-cloudosd-default="1">' in body
+    assert 'value="" selected data-cloudosd-default="1"' in body
     assert "OSDCloud base deployment (no legacy sequence)" in body
     assert body.index('<option value="cloudosd" selected>') < body.index(
         '<option value="winpe">'
@@ -2806,7 +2806,7 @@ def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_con
     assert "OSDCloud" in response.text
     assert artifact["iso_sha256"] in response.text
     assert "6144" in response.text
-    assert "OSDCloud analytics blocked" in response.text
+    assert '<dt>Analytics</dt><dd id="reviewAnalytics">blocked</dd>' in response.text
     assert "/api/cloudosd/artifacts/build" in response.text
     assert "Windows 11 24H2" in response.text
     assert "Windows 11 21H2" in response.text
@@ -2821,7 +2821,7 @@ def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_con
     assert "Build a desktop run" in response.text
     assert "Manage PE artifacts" in response.text
     assert "cloudosd-toggle-line" in response.text
-    assert response.text.index("Single-VM Deployment") < response.text.index("OSDCloud Module Pin")
+    assert response.text.index("Single-VM Deployment") < response.text.index("Review &amp; Launch")
     assert response.text.index("Build a desktop run") < response.text.index("Single-VM Deployment")
 
 
