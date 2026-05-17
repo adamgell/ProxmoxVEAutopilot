@@ -977,6 +977,7 @@ def _init_app_database() -> None:
         deployment_health_pg,
         device_history_pg,
         devices_pg,
+        install_tracking_pg,
         ts_engine_pg,
     )
 
@@ -987,6 +988,7 @@ def _init_app_database() -> None:
         agent_telemetry_pg.init(conn)
         cloudosd_pg.init(conn)
         deployment_health_pg.init(conn)
+        install_tracking_pg.init(conn)
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -2313,6 +2315,13 @@ def _live_jobs_payload() -> dict:
     }
 
 
+class InstallTrackingUpdate(BaseModel):
+    status: str = Field(..., min_length=1, max_length=32)
+    detail: str = Field("", max_length=2000)
+    source: str = Field("", max_length=240)
+    evidence: dict = Field(default_factory=dict)
+
+
 # --- HTML Pages ---
 
 @app.get("/", response_class=HTMLResponse)
@@ -2330,6 +2339,47 @@ async def home(request: Request):
         "initial_queued_count": 0,
         "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
     })
+
+
+def _install_tracking_payload() -> dict:
+    from web import db_pg, install_tracking_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        return install_tracking_pg.payload(conn)
+
+
+@app.get("/install-tracking", response_class=HTMLResponse)
+async def install_tracking_page(request: Request):
+    return templates.TemplateResponse("install_tracking.html", {
+        "request": request,
+        "tracking": _install_tracking_payload(),
+    })
+
+
+@app.get("/api/install-tracking")
+async def install_tracking_api():
+    return _install_tracking_payload()
+
+
+@app.post("/api/install-tracking/items/{item_id}")
+async def install_tracking_update(item_id: str, update: InstallTrackingUpdate):
+    from web import db_pg, install_tracking_pg
+
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            item = install_tracking_pg.update_item(
+                conn,
+                item_id,
+                status=update.status,
+                detail=update.detail,
+                evidence=update.evidence,
+                source=update.source,
+            )
+            return {"item": item, "summary": install_tracking_pg.summary(conn)}
+    except KeyError as exc:
+        raise HTTPException(404, "install tracking item not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/provision", response_class=HTMLResponse)

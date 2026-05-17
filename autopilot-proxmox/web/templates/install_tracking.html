@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block title %}Install Tracking - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{{ page_head("Install Tracking", "Clean install and init path evidence for pvetest and future operator-console bootstrap runs.") }}
+
+{% set summary = tracking["summary"] %}
+<section class="cockpit-grid" style="margin-bottom:14px;">
+  <div class="cockpit-metric cockpit-col-3 cockpit-scanline">
+    <div class="cockpit-metric-label">Complete</div>
+    <div id="install-complete-count" class="cockpit-metric-value">{{ summary.complete }}</div>
+    <div class="cockpit-metric-note">{{ summary.percent }}% of tracked gates</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Running</div>
+    <div id="install-running-count" class="cockpit-metric-value">{{ summary.running }}</div>
+    <div class="cockpit-metric-note">active init paths</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Blockers</div>
+    <div id="install-blocker-count" class="cockpit-metric-value">{{ summary.blockers }}</div>
+    <div class="cockpit-metric-note">blocked or failed gates</div>
+  </div>
+  <div class="cockpit-metric cockpit-col-3">
+    <div class="cockpit-metric-label">Tracked Gates</div>
+    <div id="install-total-count" class="cockpit-metric-value">{{ summary.total }}</div>
+    <div class="cockpit-metric-note">pvetest bootstrap checklist</div>
+  </div>
+</section>
+
+<section class="cockpit-panel" style="padding:16px;margin-bottom:14px;">
+  <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+    <label style="flex:1 1 320px;">Filter install gates
+      <input type="search" data-cockpit-filter="#install-tracking-table" placeholder="category, VMID, source, status, evidence" style="width:100%;margin-top:6px;">
+    </label>
+    <button type="button" data-cockpit-drawer
+            data-drawer-title="Install Tracking"
+            data-drawer-body="<p class='subtitle'>Use this view to keep the clean Proxmox init path honest: bootstrap, media discovery, Windows build-box seeding, OSDeploy artifact publication, run completion, and agent readiness all get explicit evidence.</p>">
+      Tracking Model
+    </button>
+  </div>
+</section>
+
+<table id="install-tracking-table" class="cockpit-scanline">
+  <thead>
+    <tr>
+      <th>Gate</th>
+      <th>Status</th>
+      <th>Target</th>
+      <th>Evidence</th>
+      <th>Update</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for item in tracking["items"] %}
+    <tr data-item-id="{{ item.item_id }}">
+      <td>
+        <strong>{{ item.label }}</strong>
+        <div class="subtitle">{{ item.category }} / {{ item.description }}</div>
+        <div class="subtitle">Source: <code>{{ item.source or 'operator' }}</code></div>
+      </td>
+      <td data-install-field="status">
+        {% if item.status == 'ready' %}
+          <span class="badge ok">READY</span>
+        {% elif item.status == 'running' %}
+          <span class="badge pending">RUNNING</span>
+        {% elif item.status == 'blocked' %}
+          <span class="badge warn">BLOCKED</span>
+        {% elif item.status == 'failed' %}
+          <span class="badge error">FAILED</span>
+        {% elif item.status == 'skipped' %}
+          <span class="badge unknown">SKIPPED</span>
+        {% else %}
+          <span class="badge unknown">PENDING</span>
+        {% endif %}
+      </td>
+      <td>{{ item.target or 'not set' }}</td>
+      <td>
+        <div data-install-field="detail">{{ item.detail or '' }}</div>
+        {% if item.evidence %}
+          <code style="font-size:11px;">{{ item.evidence | tojson }}</code>
+        {% endif %}
+      </td>
+      <td style="min-width:260px;">
+        <form data-install-update="{{ item.item_id }}" style="display:grid;gap:8px;">
+          <select name="status" aria-label="Status for {{ item.label }}">
+            {% for status in ["pending", "running", "ready", "blocked", "failed", "skipped"] %}
+              <option value="{{ status }}" {% if item.status == status %}selected{% endif %}>{{ status }}</option>
+            {% endfor %}
+          </select>
+          <input name="detail" value="{{ item.detail or '' }}" placeholder="Latest evidence note">
+          <input name="source" value="{{ item.source or '' }}" placeholder="source: pvetest, command, run id">
+          <button type="submit">Save</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<section class="cockpit-panel" style="padding:16px;margin-top:14px;">
+  <h2 style="margin-top:0;">Recent Updates</h2>
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Gate</th><th>Status</th><th>Detail</th></tr>
+    </thead>
+    <tbody id="install-events-body">
+    {% for event in tracking["events"] %}
+      <tr>
+        <td>{{ event.created_at[:19] if event.created_at else '' }}</td>
+        <td><code>{{ event.item_id }}</code></td>
+        <td>{{ event.status }}</td>
+        <td>{{ event.detail }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" style="color:var(--ink-muted);text-align:center;padding:16px;">No updates yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<script>
+function installBadge(status) {
+  var s = String(status || "pending").toLowerCase();
+  if (s === "ready") return '<span class="badge ok">READY</span>';
+  if (s === "running") return '<span class="badge pending">RUNNING</span>';
+  if (s === "blocked") return '<span class="badge warn">BLOCKED</span>';
+  if (s === "failed") return '<span class="badge error">FAILED</span>';
+  if (s === "skipped") return '<span class="badge unknown">SKIPPED</span>';
+  return '<span class="badge unknown">PENDING</span>';
+}
+document.querySelectorAll("form[data-install-update]").forEach(function(form) {
+  form.addEventListener("submit", async function(event) {
+    event.preventDefault();
+    var itemId = form.getAttribute("data-install-update");
+    var payload = {
+      status: form.status.value,
+      detail: form.detail.value,
+      source: form.source.value,
+      evidence: {}
+    };
+    var response = await fetch("/api/install-tracking/items/" + encodeURIComponent(itemId), {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      alert("Install tracking update failed: " + await response.text());
+      return;
+    }
+    var data = await response.json();
+    var row = form.closest("tr");
+    row.querySelector('[data-install-field="status"]').innerHTML = installBadge(data.item.status);
+    row.querySelector('[data-install-field="detail"]').textContent = data.item.detail || "";
+    document.getElementById("install-complete-count").textContent = data.summary.complete;
+    document.getElementById("install-running-count").textContent = data.summary.running;
+    document.getElementById("install-blocker-count").textContent = data.summary.blockers;
+    document.getElementById("install-total-count").textContent = data.summary.total;
+  });
+});
+</script>
+{% endblock %}
