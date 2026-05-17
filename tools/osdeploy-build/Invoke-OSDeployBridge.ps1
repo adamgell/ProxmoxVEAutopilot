@@ -256,6 +256,29 @@ function Save-OSDeployOsdClientPackage {
             -Name 'agent_heartbeat_url' `
             -Value (([string] $Package.server_base_url).TrimEnd('/') + '/api/agent/v1/heartbeat')
     }
+    $payloads = Get-OSDeployObjectProperty -Value $Package -Name 'payloads'
+    if ($payloads) {
+        $agentMsi = Get-OSDeployObjectProperty -Value $payloads -Name 'autopilotagent_msi'
+        $agentPostinstall = Get-OSDeployObjectProperty -Value $payloads -Name 'autopilotagent_postinstall'
+        if ($agentMsi) {
+            if (-not (Get-OSDeployObjectProperty -Value $agentMsi -Name 'url')) {
+                throw 'OSDeploy AutopilotAgent MSI payload is missing url'
+            }
+            Set-OSDeployObjectProperty `
+                -InputObject $config `
+                -Name 'autopilotagent_msi' `
+                -Value $agentMsi
+        }
+        if ($agentPostinstall) {
+            if (-not (Get-OSDeployObjectProperty -Value $agentPostinstall -Name 'url')) {
+                throw 'OSDeploy AutopilotAgent postinstall payload is missing url'
+            }
+            Set-OSDeployObjectProperty `
+                -InputObject $config `
+                -Name 'autopilotagent_postinstall' `
+                -Value $agentPostinstall
+        }
+    }
     $config | ConvertTo-Json -Depth 30 |
         Set-Content -LiteralPath (Join-Path $osdRoot 'osd-config.json') -Encoding UTF8
     return $osdRoot
