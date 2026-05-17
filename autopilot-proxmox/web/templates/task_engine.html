@@ -10,7 +10,7 @@
       <h2 style="margin-top:0;border-bottom:0;padding-bottom:0;">Smart V2 Builder</h2>
       <p style="margin:4px 0 0;color:var(--ink-muted);max-width:780px;">
         Build the operator-owned v2 plan directly: phase lanes, full-OS agent steps,
-        CloudOSD deployment gates, content refs, retries, reboot behavior, and
+        OSDCloud deployment gates, content refs, retries, reboot behavior, and
         legacy v1 sequence migration without changing the old `/sequences` surface.
       </p>
     </div>
@@ -175,9 +175,9 @@
 </table>
 {% endif %}
 
-<h2>CloudOSD V2 OSD Task Plans</h2>
+<h2>OSDCloud V2 OSD Task Plans</h2>
 {% if not cloudosd_runs %}
-{{ empty_state("No CloudOSD v2 OSD run plans yet.", hint="CloudOSD provision runs create immutable v2 OSD plans with PE, full-OS, hash, heartbeat, and domain verification tasks.") }}
+{{ empty_state("No OSDCloud v2 OSD run plans yet.", hint="OSDCloud provision runs create immutable v2 OSD plans with PE, full-OS, hash, heartbeat, and domain verification tasks.") }}
 {% else %}
 <table class="cockpit-scanline task-engine-table">
   <thead>

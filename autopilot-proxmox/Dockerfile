@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 # Install system deps + PowerShell in one layer to reduce image size
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg apt-transport-https genisoimage procps \
+    curl git gnupg apt-transport-https genisoimage procps \
     openssh-client sshpass \
     # Kerberos stack for AD monitoring probes (SASL/GSSAPI bind with
     # signing — required by modern Windows DCs with "LDAP signing"
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # are build deps for python-ldap in the pip layer below.
     krb5-user libkrb5-dev libsasl2-modules-gssapi-mit libldap2-dev libsasl2-dev \
     build-essential \
-    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    && python -c "from urllib.request import urlopen; import sys; sys.stdout.buffer.write(urlopen('https://packages.microsoft.com/keys/microsoft.asc', timeout=30).read())" \
        | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/microsoft-debian-bookworm-prod bookworm main" \
        > /etc/apt/sources.list.d/microsoft.list \
@@ -44,7 +44,7 @@ RUN printf '%s\n%s\n' "$GIT_SHA" "$BUILD_TIME" > /app/VERSION
 ENV APP_VERSION_FILE=/app/VERSION
 
 # Create runtime directories
-RUN mkdir -p /app/jobs /app/output/hashes /app/secrets
+RUN mkdir -p /app/jobs /app/output/hashes /app/cache/cloudosd /app/cache/osdeploy /app/secrets
 
 # Enable OpenSSL legacy provider so hashlib.new("md4") works. NTLM
 # auth (used by ldap3 when talking to our DC) needs MD4 for the NT

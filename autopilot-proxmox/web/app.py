@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import csv
+import hashlib
 import io
 import json
 import os
+import secrets
 import subprocess
 import time
 import urllib3
@@ -29,11 +31,12 @@ from web import monitoring_evidence
 from web import proxmox_permissions
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+_sleep = time.sleep
 
 import re
 import shlex
 import socket
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -161,6 +164,8 @@ def _safe_path(base_dir, filename):
     return resolved
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 HASH_DIR = BASE_DIR / "output" / "hashes"
+SETUP_STATE_PATH = BASE_DIR / "output" / "setup" / "foundation_state.json"
+AGENT_SEED_MANIFEST_PATH = BASE_DIR / "output" / "setup" / "agent-seed" / "manifest.json"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
 VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
@@ -280,6 +285,14 @@ SETTINGS_SCHEMA = [
         {"key": "proxmox_windows_iso", "label": "Windows ISO", "type": "text"},
         {"key": "proxmox_virtio_iso", "label": "VirtIO ISO", "type": "text"},
         {"key": "proxmox_answer_iso", "label": "Answer ISO", "type": "text"},
+    ]},
+    {"section": "OSDeploy Build Host", "applies_to": "proxmox", "fields": [
+        {"key": "osdeploy_build_remote", "label": "Build SSH Target", "type": "text",
+         "help": "Windows build host SSH target used for OSDeploy/OSDBuilder media builds, e.g. user@192.168.2.50."},
+        {"key": "osdeploy_build_remote_root", "label": "Build Workspace Root", "type": "text",
+         "help": "Windows path where the OSDeploy build wrapper stages source media, tools, manifests, and output."},
+        {"key": "osdeploy_build_ssh_key_path", "label": "Build SSH Key Path", "type": "text",
+         "help": "Private key path inside the web/builder container. Mount the key under /app/secrets and keep it out of git."},
     ]},
     {"section": "Template", "applies_to": "proxmox", "fields": [
         {"key": "proxmox_template_vmid", "label": "Template VMID", "type": "number"},
@@ -552,6 +565,7 @@ from web.osd_v2_endpoints import (
 )
 from web.agent_v1_endpoints import router as _agent_v1_router
 from web.cloudosd_endpoints import router as _cloudosd_router
+from web.osdeploy_endpoints import router as _osdeploy_router
 _bridge_winpe_vars_to_env()
 app.include_router(_winpe_router)
 app.include_router(_osd_router)
@@ -561,6 +575,7 @@ app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
 app.include_router(_cloudosd_router)
+app.include_router(_osdeploy_router)
 
 
 # ---------------------------------------------------------------------------
@@ -598,9 +613,26 @@ def _auth_config() -> dict:
         "auth_redirect_uri",
         "https://autopilot.gell.one/auth/callback",
     )
+    requested_mode = (
+        os.environ.get("AUTOPILOT_AUTH_MODE")
+        or cfg.get("auth_mode")
+        or "auto"
+    ).strip().lower()
+    if requested_mode not in {"auto", "entra", "local"}:
+        requested_mode = "auto"
+    tenant_id = cfg.get("vault_entra_tenant_id", "")
+    client_id = cfg.get("vault_entra_app_id", "")
+    entra_configured = bool(tenant_id and client_id)
+    active_mode = requested_mode
+    if active_mode == "auto":
+        active_mode = "entra" if entra_configured else "local"
     return {
-        "tenant_id": cfg.get("vault_entra_tenant_id", ""),
-        "client_id": cfg.get("vault_entra_app_id", ""),
+        "mode": active_mode,
+        "requested_mode": requested_mode,
+        "entra_configured": entra_configured,
+        "local_enabled": active_mode == "local",
+        "tenant_id": tenant_id,
+        "client_id": client_id,
         "client_secret": cfg.get("vault_entra_app_secret", ""),
         "redirect_uri": redirect_uri,
         "admin_group_id": cfg.get("vault_entra_admin_group_id") or None,
@@ -652,14 +684,13 @@ async def auth_login(request: Request, next: str = "/",
     (b) callback failures can surface a readable error banner
     instead of a raw HTML error page."""
     cfg = _auth_config()
-    if not cfg["tenant_id"] or not cfg["client_id"]:
-        return HTMLResponse(
-            "<h1>Auth not configured</h1>"
-            "<p>Set <code>vault_entra_tenant_id</code> and "
-            "<code>vault_entra_app_id</code> in vault.yml, then run "
-            "<code>scripts/ad/configure_entra_auth.py</code>.</p>",
-            status_code=500,
-        )
+    entra_configured = bool(
+        cfg.get("entra_configured")
+        or (cfg.get("tenant_id") and cfg.get("client_id"))
+    )
+    configured_local = cfg.get("local_enabled")
+    local_enabled = (not entra_configured) if configured_local is None else bool(configured_local)
+    auth_mode = cfg.get("mode") or ("entra" if entra_configured else "local")
     # Short, human-readable tenant label — prefer ad_realm from
     # vars.yml, then the Kerberos realm baked into /etc/krb5.conf,
     # then fall back to the raw GUID so the page still renders.
@@ -678,13 +709,19 @@ async def auth_login(request: Request, next: str = "/",
     if not tenant_label:
         tenant_label = cfg["tenant_id"]
     from urllib.parse import quote as _q
+    safe_next = _auth.safe_next_url(next)
     return templates.TemplateResponse("login.html", {
         "request": request,
         "error": error,
         # URL-encode so a next path containing ?&= survives being
         # re-emitted into the Sign-in link's query string.
-        "next_url": _q(_auth.safe_next_url(next), safe=""),
+        "next_url": _q(safe_next, safe=""),
         "tenant_label": tenant_label,
+        "auth_configured": entra_configured or local_enabled,
+        "entra_configured": entra_configured,
+        "local_enabled": local_enabled,
+        "auth_mode": auth_mode,
+        "setup_url": "/setup",
         "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
         "build_time": _APP_VERSION.get("build_time", ""),
     })
@@ -697,9 +734,12 @@ async def auth_login_start(request: Request, next: str = "/"):
     button first. State + PKCE are generated here, stashed in the
     session, and validated in /auth/callback."""
     cfg = _auth_config()
-    if not cfg["tenant_id"] or not cfg["client_id"]:
+    if not (
+        cfg.get("entra_configured")
+        or (cfg.get("tenant_id") and cfg.get("client_id"))
+    ):
         return RedirectResponse(
-            url="/auth/login?error=auth+not+configured",
+            url="/auth/login?error=entra+auth+not+configured",
             status_code=302,
         )
     url = _auth.build_login_url(
@@ -710,6 +750,29 @@ async def auth_login_start(request: Request, next: str = "/"):
         next_url=_auth.safe_next_url(next),
     )
     return RedirectResponse(url=url, status_code=302)
+
+
+@app.post("/auth/local/start")
+async def auth_local_start(request: Request, next: str = "/"):
+    """Create a local operator session for first-run and lab installs."""
+    cfg = _auth_config()
+    next_url = _auth.safe_next_url(next)
+    entra_configured = bool(
+        cfg.get("entra_configured")
+        or (cfg.get("tenant_id") and cfg.get("client_id"))
+    )
+    configured_local = cfg.get("local_enabled")
+    local_enabled = (not entra_configured) if configured_local is None else bool(configured_local)
+    if not local_enabled:
+        return _login_error("Local operator sign-in is not enabled.", next_url=next_url)
+    request.session["user"] = {
+        "sub": "local-operator",
+        "name": "Local Operator",
+        "email": "",
+        "groups": [],
+        "provider": "local",
+    }
+    return RedirectResponse(url=next_url, status_code=303)
 
 
 def _login_error(message: str, *, next_url: str = "/") -> RedirectResponse:
@@ -806,6 +869,1009 @@ async def healthz():
     if not (_SEQUENCES_READY and _JOBS_READY):
         raise HTTPException(503, "schema init not complete")
     return {"ok": True}
+
+
+@app.get("/api/setup/v1/state")
+async def setup_state_api():
+    return _setup_readiness()
+
+
+@app.get("/api/setup/v1/readiness")
+async def setup_readiness_api():
+    return _setup_readiness()
+
+
+@app.get("/api/setup/v1/media")
+async def setup_media_api():
+    data = _setup_readiness()
+    return data["media"]
+
+
+class _BuildHostRepairBody(BaseModel):
+    vmid: Optional[int] = None
+    server_url: Optional[str] = None
+    upgrade_agent: bool = True
+    allow_reboot: bool = True
+
+
+class _BuildHostSeedIsoBody(BaseModel):
+    vmid: int = Field(ge=1)
+    node: Optional[str] = None
+    storage: Optional[str] = None
+    controller_url: Optional[str] = None
+
+
+class _BuildHostVmBody(BaseModel):
+    vmid: Optional[int] = Field(default=None, ge=1)
+    name: str = "autopilot-buildhost-01"
+    node: Optional[str] = None
+    iso_storage: Optional[str] = None
+    disk_storage: Optional[str] = None
+    network_bridge: Optional[str] = None
+    windows_iso_volid: Optional[str] = None
+    virtio_iso_volid: Optional[str] = None
+    controller_url: Optional[str] = None
+    cores: int = Field(default=4, ge=1)
+    memory_mb: int = Field(default=8192, ge=2048)
+    disk_size_gb: int = Field(default=160, ge=64)
+    start: bool = True
+
+
+class _BuildHostWorkloadsBody(BaseModel):
+    kinds: list[str] = Field(default_factory=list)
+    force: bool = False
+    install_adk: bool = True
+
+
+class _PromoteSetupArtifactsBody(BaseModel):
+    node: Optional[str] = None
+    storage: Optional[str] = None
+    artifact_ids: list[str] = Field(default_factory=list)
+    already_copied: bool = False
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _repo_git_metadata_for_bundle() -> dict:
+    repo_root = _source_bundle_root()
+
+    def run_git(*args: str) -> tuple[bool, str]:
+        try:
+            out = subprocess.check_output(
+                ["git", "-c", f"safe.directory={repo_root}", *args],
+                cwd=repo_root,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            return True, out
+        except Exception:
+            return False, ""
+
+    sha_ok, sha_out = run_git("rev-parse", "HEAD")
+    status_ok, status = run_git("status", "--porcelain")
+    dirty_state = "dirty" if status else "clean"
+    if not status_ok:
+        dirty_state = "unknown"
+    return {
+        "schema_version": 1,
+        "producer": "setup-source-bundle",
+        "git_sha": sha_out if sha_ok and sha_out else _APP_VERSION.get("sha") or "unknown",
+        "git_dirty": bool(status) if status_ok else None,
+        "git_dirty_state": dirty_state,
+        "git_status_available": status_ok,
+        "build_time": datetime.now(timezone.utc).isoformat(),
+        "source_root": str(repo_root),
+    }
+
+
+def _source_bundle_root() -> Path:
+    configured = os.environ.get("AUTOPILOT_SOURCE_BUNDLE_ROOT", "").strip()
+    if configured:
+        return Path(configured).resolve()
+    host_repo = Path("/host/repo")
+    if host_repo.is_dir():
+        return host_repo.resolve()
+    return BASE_DIR.parent.resolve()
+
+
+def _source_bundle_controller_url() -> str:
+    state = _read_json_file(SETUP_STATE_PATH)
+    candidates = [
+        state.get("controller_url"),
+        state.get("base_url"),
+        os.environ.get("AUTOPILOT_BASE_URL"),
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip().rstrip("/")
+        if value:
+            return value
+    return ""
+
+
+def _create_source_bundle_zip() -> bytes:
+    import os
+    import zipfile
+
+    repo_root = _source_bundle_root()
+    controller_url = _source_bundle_controller_url()
+    skip_dirs = {
+        ".claude",
+        ".git",
+        ".remember",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        ".venv-test",
+        "__pycache__",
+        "bin",
+        "cache",
+        "jobs",
+        "migration",
+        "node_modules",
+        "obj",
+        "output",
+        "secrets",
+        "utm-guest-tools-win",
+    }
+    skip_files = {
+        ".env",
+        ".env.local",
+        "vault.yml",
+    }
+    skip_suffixes = {
+        ".exe",
+        ".gz",
+        ".img",
+        ".iso",
+        ".key",
+        ".msi",
+        ".pem",
+        ".p12",
+        ".pfx",
+        ".qcow2",
+        ".vhd",
+        ".vhdx",
+        ".wim",
+        ".zip",
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "autopilot-source-manifest.json",
+            json.dumps(_repo_git_metadata_for_bundle(), indent=2, sort_keys=True),
+        )
+        for root, dirnames, filenames in os.walk(repo_root):
+            dirnames[:] = [
+                dirname for dirname in dirnames
+                if dirname not in skip_dirs
+            ]
+            root_path = Path(root)
+            for filename in filenames:
+                path = root_path / filename
+                rel = path.relative_to(repo_root)
+                if path.name in skip_files or path.suffix.lower() in skip_suffixes:
+                    continue
+                if rel.as_posix().endswith("tools/cloudosd-build/config.json") and controller_url:
+                    try:
+                        config = json.loads(path.read_text(encoding="utf-8"))
+                    except Exception:
+                        config = {}
+                    if isinstance(config, dict):
+                        config["flask_base_url"] = controller_url
+                        zf.writestr(rel.as_posix(), json.dumps(config, indent=2, sort_keys=True))
+                        continue
+                zf.write(path, rel.as_posix())
+    return buffer.getvalue()
+
+
+@app.get("/api/setup/v1/source-bundle.zip")
+async def setup_source_bundle():
+    body = _create_source_bundle_zip()
+    return Response(
+        content=body,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="ProxmoxVEAutopilot-source.zip"',
+            "X-Source-SHA": _repo_git_metadata_for_bundle().get("git_sha", "unknown"),
+        },
+    )
+
+
+@app.get("/api/setup/v1/agent-seed/{rid}/AutopilotAgent.exe")
+async def setup_seed_agent_exe(rid: str):
+    safe_rid = rid.strip().lower()
+    if safe_rid not in {"win-x64", "win-arm64"}:
+        raise HTTPException(status_code=404, detail="unsupported runtime identifier")
+    path = BASE_DIR / "output" / "setup" / "agent-seed" / safe_rid / "AutopilotAgent.exe"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="seed agent has not been built")
+    return Response(
+        content=path.read_bytes(),
+        media_type="application/vnd.microsoft.portable-executable",
+        headers={
+            "Content-Disposition": 'attachment; filename="AutopilotAgent.exe"',
+        },
+    )
+
+
+@app.get("/api/setup/v1/build-host")
+async def setup_build_host_api():
+    data = _setup_readiness()
+    return {
+        "schema_version": 1,
+        "build_host": data["build_host"],
+        "artifacts": data["artifacts"],
+    }
+
+
+def _read_build_host_bootstrap_token() -> str:
+    token_path = SECRETS_DIR / "fleet-bootstrap-token"
+    try:
+        token = token_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        token = ""
+    if not token:
+        token = _create_build_host_bootstrap_token(token_path)
+    _ensure_build_host_bootstrap_hash(token)
+    return token
+
+
+def _build_host_env_file_candidates() -> list[Path]:
+    candidates = [BASE_DIR / ".env"]
+    host_mount = Path(os.environ.get("HOST_REPO_MOUNT", "/host/repo"))
+    if host_mount.exists():
+        candidates.append(host_mount / "autopilot-proxmox" / ".env")
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(candidate)
+    return unique
+
+
+def _write_env_value(env_path: Path, key: str, value: str) -> None:
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    updated = False
+    next_lines: list[str] = []
+    for line in lines:
+        if line.startswith(f"{key}="):
+            next_lines.append(f"{key}={value}")
+            updated = True
+        else:
+            next_lines.append(line)
+    if not updated:
+        next_lines.append(f"{key}={value}")
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(next_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _ensure_build_host_bootstrap_hash(token: str) -> str:
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    os.environ["AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256"] = token_hash
+    for env_path in _build_host_env_file_candidates():
+        _write_env_value(env_path, "AUTOPILOT_AGENT_BOOTSTRAP_TOKEN_SHA256", token_hash)
+    return token_hash
+
+
+def _create_build_host_bootstrap_token(token_path: Path) -> str:
+    token = secrets.token_urlsafe(48)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(f"{token}\n", encoding="utf-8")
+    token_path.chmod(0o600)
+    return token
+
+
+def _build_host_agent_config(
+    *,
+    vmid: int,
+    controller_url: str,
+    bootstrap_token: str,
+) -> dict:
+    return {
+        "serverUrl": controller_url.rstrip("/"),
+        "bootstrapToken": bootstrap_token,
+        "agentId": f"buildhost-{vmid}",
+        "phase": "build-host",
+        "role": "build-host",
+        "capabilities": sorted(_BUILD_HOST_WORK_KINDS),
+        "vmid": vmid,
+        "heartbeatIntervalSeconds": 15,
+    }
+
+
+def _render_build_host_bootstrap_ps1(controller_url: str) -> str:
+    server = controller_url.rstrip("/")
+    return f"""$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$serverUrl = '{server}'
+$root = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\\AutopilotAgent'
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+$configPath = Join-Path $root 'agent.json'
+$exePath = Join-Path $root 'AutopilotAgent.exe'
+Copy-Item -Force -LiteralPath "$PSScriptRoot\\agent.json" -Destination $configPath
+Set-ItemProperty -LiteralPath $configPath -Name IsReadOnly -Value $false
+Invoke-WebRequest -UseBasicParsing -Uri "$serverUrl/api/setup/v1/agent-seed/win-x64/AutopilotAgent.exe" -OutFile $exePath
+$action = New-ScheduledTaskAction -Execute $exePath
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName 'ProxmoxVEAutopilotBuildHostAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Start-ScheduledTask -TaskName 'ProxmoxVEAutopilotBuildHostAgent'
+"""
+
+
+def _render_build_host_autounattend() -> str:
+    return r"""<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" language="neutral" publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" language="neutral" publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <DiskConfiguration>
+        <Disk wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Size>300</Size><Type>EFI</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Size>16</Size><Type>MSR</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>1</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+    </component>
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" language="neutral" publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <DriverPaths xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\vioscsi\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>E:\vioscsi\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>F:\vioscsi\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4"><Path>G:\vioscsi\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5"><Path>D:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6"><Path>E:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7"><Path>F:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="8"><Path>G:\NetKVM\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="9"><Path>D:\vioserial\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="10"><Path>E:\vioserial\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="11"><Path>F:\vioserial\w11\amd64</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="12"><Path>G:\vioserial\w11\amd64</Path></PathAndCredentials>
+      </DriverPaths>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" language="neutral" publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <ComputerName>AUTOPILOT-BLD</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" language="neutral" publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <NetworkLocation>Work</NetworkLocation>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword><Value>AutopilotBuildHost!2026</Value><PlainText>true</PlainText></AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>Administrator</Username>
+        <Password><Value>AutopilotBuildHost!2026</Value><PlainText>true</PlainText></Password>
+        <LogonCount>1</LogonCount>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>1</Order>
+          <CommandLine>cmd.exe /c for %d in (D E F G) do (if exist %d:\vioserial\w11\amd64\vioser.inf pnputil /add-driver %d:\vioserial\w11\amd64\*.inf /install &amp; if exist %d:\Balloon\w11\amd64\balloon.inf pnputil /add-driver %d:\Balloon\w11\amd64\*.inf /install)</CommandLine>
+          <Description>Install VirtIO serial and balloon drivers</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>2</Order>
+          <CommandLine>cmd.exe /c for %d in (D E F G) do if exist %d:\guest-agent\qemu-ga-x86_64.msi msiexec /i %d:\guest-agent\qemu-ga-x86_64.msi /qn /norestart</CommandLine>
+          <Description>Install QEMU Guest Agent</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>3</Order>
+          <CommandLine>cmd.exe /c for %d in (D E F G) do if exist %d:\bootstrap-build-host.ps1 powershell.exe -ExecutionPolicy Bypass -File %d:\bootstrap-build-host.ps1</CommandLine>
+          <Description>Bootstrap ProxmoxVEAutopilot build-host agent</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" language="neutral" publicKeyToken="31bf3856ad364e35" versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+</unattend>
+"""
+
+
+def _build_oemdrv_iso(stage_dir: Path, iso_path: Path) -> None:
+    subprocess.run(
+        ["genisoimage", "-quiet", "-o", str(iso_path), "-J", "-r", "-V", "OEMDRV", str(stage_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _resolve_build_host_controller_url(value: str | None = None) -> str:
+    controller_url = (
+        value
+        or _setup_readiness()["controller"].get("url")
+        or os.environ.get("AUTOPILOT_BASE_URL")
+        or ""
+    ).rstrip("/")
+    if not controller_url:
+        raise HTTPException(status_code=409, detail="controller URL is required for build-host seed media")
+    return controller_url
+
+
+def _write_build_host_seed_state(
+    *,
+    vmid: int,
+    node: str,
+    seed_iso_volid: str,
+    vm_ready: bool = False,
+    name: str = "autopilot-buildhost-01",
+) -> None:
+    state = _read_json_file(SETUP_STATE_PATH)
+    state.update({
+        "seed_iso_ready": True,
+        "seed_iso_volid": seed_iso_volid,
+        "build_host_unattend_ready": True,
+        "build_host_agent_auto_approve": True,
+        "build_host_expected_agent_id": f"buildhost-{vmid}",
+        "build_host_expected_computer_name": "AUTOPILOT-BLD",
+        "build_host_admin_user": "Administrator",
+        "build_host_vmid": str(vmid),
+        "build_host_node": node,
+        "build_host_name": name,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    if vm_ready:
+        state["build_host_vm_ready"] = True
+    SETUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SETUP_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _write_build_host_identity_state(
+    *,
+    vmid: int,
+    node: str,
+    expected_agent_id: str,
+    expected_computer_name: str,
+    name: str = "autopilot-buildhost-01",
+) -> None:
+    """Persist the approval identity used by build-host agent bootstrap.
+
+    Controller rebuilds can regenerate foundation_state.json from the PVE side.
+    The VM may still exist and be discoverable, but without these fields the
+    fleet bootstrap endpoint cannot safely auto-approve the expected build host.
+    """
+    state = _read_json_file(SETUP_STATE_PATH)
+    state.update({
+        "build_host_agent_auto_approve": True,
+        "build_host_expected_agent_id": expected_agent_id,
+        "build_host_expected_computer_name": expected_computer_name,
+        "build_host_vmid": str(vmid),
+        "build_host_node": node,
+        "build_host_name": name,
+        "build_host_vm_ready": True,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    SETUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SETUP_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _generate_and_upload_build_host_seed_iso(
+    *,
+    vmid: int,
+    node: str,
+    storage: str,
+    controller_url: str,
+    name: str = "autopilot-buildhost-01",
+) -> dict:
+    import tempfile
+
+    bootstrap_token = _read_build_host_bootstrap_token()
+    agent_config = _build_host_agent_config(
+        vmid=vmid,
+        controller_url=controller_url,
+        bootstrap_token=bootstrap_token,
+    )
+    iso_name = f"autopilot-buildhost-seed-{vmid}.iso"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        stage = root / "stage"
+        stage.mkdir()
+        (stage / "Autounattend.xml").write_text(_render_build_host_autounattend(), encoding="utf-8")
+        (stage / "bootstrap-build-host.ps1").write_text(_render_build_host_bootstrap_ps1(controller_url), encoding="utf-8")
+        (stage / "agent.json").write_text(json.dumps(agent_config, indent=2, sort_keys=True), encoding="utf-8")
+        iso_path = root / iso_name
+        try:
+            _build_oemdrv_iso(stage, iso_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail="genisoimage is not installed in the runtime container") from exc
+        except subprocess.CalledProcessError as exc:
+            raise HTTPException(status_code=409, detail=f"genisoimage failed: {exc.stderr[:300]}") from exc
+        with iso_path.open("rb") as handle:
+            _proxmox_api(
+                f"/nodes/{node}/storage/{storage}/upload",
+                method="POST",
+                data={"content": "iso"},
+                files={"filename": (iso_name, handle, "application/octet-stream")},
+            )
+    volid = f"{storage}:iso/{iso_name}"
+    _write_build_host_seed_state(
+        vmid=vmid,
+        node=node,
+        seed_iso_volid=volid,
+        name=name,
+    )
+    return {
+        "ok": True,
+        "seed_iso_volid": volid,
+        "expected_agent_id": f"buildhost-{vmid}",
+        "node": node,
+        "storage": storage,
+    }
+
+
+def _send_build_host_cd_boot_key(
+    node: str,
+    vmid: int,
+    *,
+    attempts: int = 3,
+    initial_delay_seconds: float = 10,
+    delay_seconds: float = 2,
+) -> dict:
+    """Press through Windows BootMgr's CD/DVD prompt after VM start."""
+    sent = 0
+    errors: list[str] = []
+    if initial_delay_seconds > 0:
+        _sleep(initial_delay_seconds)
+    for attempt in range(attempts):
+        try:
+            _proxmox_api(
+                f"/nodes/{node}/qemu/{vmid}/sendkey",
+                method="PUT",
+                data={"key": "spc"},
+            )
+            sent += 1
+        except Exception as exc:
+            errors.append(str(exc))
+        if attempt < attempts - 1 and delay_seconds > 0:
+            _sleep(delay_seconds)
+    if sent <= 0:
+        detail = "; ".join(errors[-3:]) or "no sendkey attempts succeeded"
+        raise HTTPException(status_code=502, detail=f"build-host CD boot key failed: {detail[:500]}")
+    return {"sent": sent, "errors": errors}
+
+
+@app.post("/api/setup/v1/build-host/seed-iso", status_code=202)
+async def setup_build_host_seed_iso(body: _BuildHostSeedIsoBody):
+    cfg = _load_vars()
+    node = body.node or cfg.get("proxmox_node") or _configured_proxmox_node()
+    storage = body.storage or cfg.get("proxmox_iso_storage") or "local"
+    controller_url = _resolve_build_host_controller_url(body.controller_url)
+    return _generate_and_upload_build_host_seed_iso(
+        vmid=body.vmid,
+        node=node,
+        storage=storage,
+        controller_url=controller_url,
+    )
+
+
+@app.post("/api/setup/v1/build-host/vm", status_code=202)
+async def setup_create_build_host_vm(body: _BuildHostVmBody):
+    cfg = _load_vars()
+    state = _public_setup_state()
+    vmid = body.vmid or int(_proxmox_api("/cluster/nextid"))
+    node = body.node or cfg.get("proxmox_node") or _configured_proxmox_node()
+    iso_storage = body.iso_storage or cfg.get("proxmox_iso_storage") or "local"
+    disk_storage = body.disk_storage or cfg.get("proxmox_storage") or "local-lvm"
+    bridge = body.network_bridge or cfg.get("proxmox_bridge") or "vmbr0"
+    windows_iso = body.windows_iso_volid or state.get("windows_iso_volid")
+    virtio_iso = body.virtio_iso_volid or state.get("virtio_iso_volid")
+    if not windows_iso:
+        raise HTTPException(status_code=409, detail="Windows ISO media is required before creating the build-host VM")
+    if not virtio_iso:
+        raise HTTPException(status_code=409, detail="VirtIO ISO media is required before creating the build-host VM")
+    controller_url = _resolve_build_host_controller_url(body.controller_url)
+    seed = _generate_and_upload_build_host_seed_iso(
+        vmid=vmid,
+        node=node,
+        storage=iso_storage,
+        controller_url=controller_url,
+        name=body.name,
+    )
+    vm_data = {
+        "vmid": vmid,
+        "name": body.name,
+        "memory": body.memory_mb,
+        "cores": body.cores,
+        "cpu": "host",
+        "ostype": "win11",
+        "machine": "q35",
+        "bios": "ovmf",
+        "agent": "enabled=1",
+        "scsihw": "virtio-scsi-single",
+        "net0": f"virtio,bridge={bridge}",
+        "efidisk0": f"{disk_storage}:1,efitype=4m,pre-enrolled-keys=1",
+        "tpmstate0": f"{disk_storage}:1,version=v2.0",
+        "scsi0": f"{disk_storage}:{body.disk_size_gb},iothread=1,discard=on",
+        "ide0": f"{seed['seed_iso_volid']},media=cdrom",
+        "ide2": f"{windows_iso},media=cdrom",
+        "ide3": f"{virtio_iso},media=cdrom",
+        "boot": "order=ide2;scsi0;ide0",
+    }
+    _proxmox_api(f"/nodes/{node}/qemu", method="POST", data=vm_data)
+    boot_key = {"sent": 0, "errors": []}
+    if body.start:
+        _proxmox_api(f"/nodes/{node}/qemu/{vmid}/status/start", method="POST", data={})
+        boot_key = _send_build_host_cd_boot_key(node, vmid)
+    _write_build_host_seed_state(
+        vmid=vmid,
+        node=node,
+        seed_iso_volid=seed["seed_iso_volid"],
+        vm_ready=True,
+        name=body.name,
+    )
+    return {
+        "ok": True,
+        "vmid": vmid,
+        "name": body.name,
+        "node": node,
+        "seed_iso_volid": seed["seed_iso_volid"],
+        "expected_agent_id": seed["expected_agent_id"],
+        "started": body.start,
+        "boot_key_sent": boot_key["sent"],
+        "boot_key_errors": boot_key["errors"],
+    }
+
+
+@app.post("/api/setup/v1/build-host/repair-agent")
+async def setup_repair_build_host_agent(body: _BuildHostRepairBody | None = None):
+    body = body or _BuildHostRepairBody()
+    data = _setup_readiness()
+    build_host = data["build_host"]
+    vmid = int(body.vmid or build_host.get("vmid") or 0)
+    if vmid <= 0:
+        raise HTTPException(status_code=409, detail="build-host VMID is not published")
+    node = build_host.get("node") or _resolve_vm_node(vmid)
+    server_url = (body.server_url or data["controller"].get("url") or data["controller"].get("ip") or "").strip()
+    if server_url and not server_url.startswith(("http://", "https://")):
+        server_url = f"http://{server_url}:5000"
+    if not server_url:
+        raise HTTPException(status_code=409, detail="controller URL is not published")
+    expected_agent = build_host.get("expected_agent_id") or f"buildhost-{vmid}"
+    expected_computer = build_host.get("expected_computer_name") or "AUTOPILOT-BLD"
+    _write_build_host_identity_state(
+        vmid=vmid,
+        node=str(node),
+        expected_agent_id=expected_agent,
+        expected_computer_name=expected_computer,
+        name=build_host.get("name") or "autopilot-buildhost-01",
+    )
+    agent_url = f"{server_url.rstrip('/')}/api/setup/v1/agent-seed/win-x64/AutopilotAgent.exe"
+    bootstrap_token = _read_build_host_bootstrap_token()
+    upgrade_literal = "$true" if body.upgrade_agent else "$false"
+    ps = f"""
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$configPath = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\\AutopilotAgent\\agent.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configPath) | Out-Null
+if (Test-Path -LiteralPath $configPath) {{
+  Set-ItemProperty -LiteralPath $configPath -Name IsReadOnly -Value $false
+  $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+}} else {{
+  $config = [pscustomobject]@{{}}
+}}
+$config | Add-Member -NotePropertyName serverUrl -NotePropertyValue {_ps_quote(server_url)} -Force
+$config | Add-Member -NotePropertyName phase -NotePropertyValue 'build-host' -Force
+$config | Add-Member -NotePropertyName role -NotePropertyValue 'build-host' -Force
+$config | Add-Member -NotePropertyName vmid -NotePropertyValue {vmid} -Force
+$config | Add-Member -NotePropertyName agentId -NotePropertyValue {_ps_quote(expected_agent)} -Force
+$config | Add-Member -NotePropertyName bootstrapToken -NotePropertyValue {_ps_quote(bootstrap_token)} -Force
+$config | Add-Member -NotePropertyName agentToken -NotePropertyValue $null -Force
+$config | Add-Member -NotePropertyName capabilities -NotePropertyValue @('install_build_prerequisites','fetch_source_bundle','build_agent_msi','build_winpe','build_cloudosd','build_osdeploy','publish_artifacts') -Force
+$config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $configPath -Encoding UTF8
+$service = Get-CimInstance Win32_Service -Filter "Name='AutopilotAgent'" -ErrorAction SilentlyContinue
+$exe = 'C:\\Program Files\\ProxmoxVEAutopilot\\AutopilotAgent\\AutopilotAgent.exe'
+if (-not (Test-Path -LiteralPath $exe) -and $service -and $service.PathName) {{
+  $raw = $service.PathName.Trim()
+  if ($raw.StartsWith('"')) {{ $exe = ($raw -replace '^"([^"]+)".*$', '$1') }}
+}}
+$programDataExe = Join-Path (Split-Path -Parent $configPath) 'AutopilotAgent.exe'
+$targetExePaths = @($exe, $programDataExe)
+$targetExePaths = $targetExePaths | Where-Object {{
+  $_ -and (Test-Path -LiteralPath (Split-Path -Parent $_))
+}} | Select-Object -Unique
+if ({upgrade_literal} -and $targetExePaths.Count -gt 0) {{
+  Stop-Service -Name AutopilotAgent -Force -ErrorAction SilentlyContinue
+  Stop-ScheduledTask -TaskName 'ProxmoxVEAutopilotBuildHostAgent' -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+  Get-Process -Name AutopilotAgent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  $tmp = "$programDataExe.new"
+  $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
+  if ($curl) {{
+    & $curl --fail --silent --show-error --location --connect-timeout 15 --max-time 180 -o $tmp {_ps_quote(agent_url)}
+    if ($LASTEXITCODE -ne 0) {{ throw "curl.exe failed to download seed agent with exit code $LASTEXITCODE" }}
+  }} else {{
+    Invoke-WebRequest -UseBasicParsing -Uri {_ps_quote(agent_url)} -OutFile $tmp
+  }}
+  if ((Get-Item -LiteralPath $tmp).Length -lt 1048576) {{ throw 'downloaded seed agent is unexpectedly small' }}
+  foreach ($targetExe in $targetExePaths) {{
+    Copy-Item -LiteralPath $tmp -Destination $targetExe -Force
+  }}
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+}}
+$service = Get-CimInstance Win32_Service -Filter "Name='AutopilotAgent'" -ErrorAction SilentlyContinue
+if ($service) {{
+  Start-Service -Name AutopilotAgent
+}} elseif (Get-ScheduledTask -TaskName 'ProxmoxVEAutopilotBuildHostAgent' -ErrorAction SilentlyContinue) {{
+  Start-ScheduledTask -TaskName 'ProxmoxVEAutopilotBuildHostAgent'
+}} else {{
+  throw 'AutopilotAgent service or scheduled task was not found'
+}}
+[pscustomobject]@{{
+  ok = $true
+  vmid = {vmid}
+  serverUrl = {_ps_quote(server_url)}
+  expectedAgentId = {_ps_quote(expected_agent)}
+  expectedComputerName = {_ps_quote(expected_computer)}
+}} | ConvertTo-Json -Compress
+""".strip()
+    status = await asyncio.to_thread(_guest_exec_ps_status, str(node), vmid, ps, timeout_s=300)
+    out = str(status.get("out") or "").strip()
+    if not status.get("ok"):
+        detail = str(status.get("error") or "build-host QGA repair failed")
+        err = str(status.get("err") or "").strip()
+        if err and err not in detail:
+            detail = f"{detail}: {err[:400]}"
+        qga_unavailable = any(
+            marker in detail.casefold()
+            for marker in (
+                "guest agent is not running",
+                "qemu guest agent is not running",
+                "qga command",
+                "agent/exec",
+                "got timeout",
+            )
+        )
+        if body.allow_reboot and qga_unavailable:
+            try:
+                _proxmox_api(
+                    f"/nodes/{node}/qemu/{vmid}/status/reset",
+                    method="POST",
+                    data={},
+                )
+            except Exception as reboot_exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"{detail[:500]}; build-host reboot fallback also failed: {reboot_exc}",
+                )
+            return {
+                "ok": True,
+                "result": {
+                    "rebooted": True,
+                    "vmid": vmid,
+                    "serverUrl": server_url,
+                    "expectedAgentId": expected_agent,
+                    "expectedComputerName": expected_computer,
+                    "reason": "QGA was unavailable during build-host repair; Proxmox reset was requested",
+                    "next_expected_state": "wait_for_qga_then_rerun_repair",
+                },
+            }
+        raise HTTPException(status_code=502, detail=detail[:800])
+    if not out:
+        raise HTTPException(status_code=502, detail="build-host QGA repair did not return success")
+    try:
+        result = json.loads(out)
+    except Exception:
+        result = {"raw": out}
+    return {"ok": True, "result": result}
+
+
+_BUILD_HOST_WORK_KINDS = {
+    "install_build_prerequisites",
+    "fetch_source_bundle",
+    "build_agent_msi",
+    "build_winpe",
+    "build_cloudosd",
+    "build_osdeploy",
+    "publish_artifacts",
+}
+
+
+@app.post("/api/setup/v1/build-host/workloads", status_code=202)
+async def setup_queue_build_host_workloads(body: _BuildHostWorkloadsBody | None = None):
+    body = body or _BuildHostWorkloadsBody()
+    data = _setup_readiness()
+    build_host = data["build_host"]
+    agent_id = build_host.get("expected_agent_id")
+    if not agent_id:
+        raise HTTPException(status_code=409, detail="build-host agent identity is not published")
+    vmid = int(build_host.get("vmid") or 0)
+    kinds = body.kinds or [
+        "install_build_prerequisites",
+        "fetch_source_bundle",
+        "build_agent_msi",
+        "build_cloudosd",
+        "build_osdeploy",
+        "publish_artifacts",
+    ]
+    bad = [kind for kind in kinds if kind not in _BUILD_HOST_WORK_KINDS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"unsupported build-host work kinds: {bad}")
+    controller_url = (data["controller"].get("url") or "").rstrip("/")
+    request_base = {
+        "controller_url": controller_url,
+        "source_bundle_url": f"{controller_url}/api/setup/v1/source-bundle.zip",
+        "work_root": r"C:\BuildRoot\ProxmoxVEAutopilot",
+        "runtime_identifiers": ["win-x64", "win-arm64"],
+        "install_adk": body.install_adk,
+        "adk_url": "https://go.microsoft.com/fwlink/?linkid=2289980",
+        "winpe_addon_url": "https://go.microsoft.com/fwlink/?linkid=2289981",
+        "osdeploy_version": "26.1.30.5",
+        "osdbuilder_version": "24.10.8.1",
+        "adk_version": "10.1.26100.1",
+        "image_name": "Windows 11 Enterprise Evaluation",
+        "image_index": 1,
+        "os_version": "Windows 11",
+        "os_edition": "Enterprise",
+        "os_language": "en-us",
+        "native_media_build": True,
+        "source_manifest": _repo_git_metadata_for_bundle(),
+    }
+    queued: list[dict] = []
+    skipped: list[dict] = []
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        if not agent_telemetry_pg.get_device(conn, agent_id):
+            raise HTTPException(status_code=409, detail=f"build-host agent is not registered: {agent_id}")
+        for kind in kinds:
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM agent_work_items
+                WHERE agent_id = %s AND kind = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (agent_id, kind),
+            ).fetchone()
+            if existing and existing["status"] in {"pending", "claimed"}:
+                skipped.append({"kind": kind, "reason": existing["status"], "id": str(existing["id"])})
+                continue
+            if existing and existing["status"] == "complete" and not body.force:
+                skipped.append({"kind": kind, "reason": "already_complete", "id": str(existing["id"])})
+                continue
+            row = agent_telemetry_pg.create_work_item(
+                conn,
+                agent_id=agent_id,
+                kind=kind,
+                vmid=vmid or None,
+                request={**request_base, "kind": kind},
+            )
+            queued.append({
+                "id": row["id"],
+                "agent_id": row["agent_id"],
+                "kind": row["kind"],
+                "status": row["status"],
+            })
+    return {"ok": True, "queued": queued, "skipped": skipped}
+
+
+@app.post("/api/setup/v1/artifacts/promote")
+async def setup_promote_artifacts(body: _PromoteSetupArtifactsBody | None = None):
+    from web import setup_artifacts
+
+    body = body or _PromoteSetupArtifactsBody()
+    data = _setup_readiness()
+    node = body.node or data["state"].get("pve_node") or _configured_proxmox_node()
+    storage = body.storage or data["state"].get("pve_iso_storage") or "local"
+    selected = set(body.artifact_ids or [])
+    if body.already_copied and not selected:
+        raise HTTPException(
+            status_code=400,
+            detail="artifact_ids is required when already_copied is true",
+        )
+    promoted: list[dict] = []
+    artifacts = setup_artifacts.list_artifacts()
+    for artifact in artifacts:
+        if selected and artifact.get("artifact_id") not in selected:
+            continue
+        if artifact.get("proxmox_volid"):
+            continue
+        if artifact.get("kind") not in {"winpe-iso", "cloudosd-iso", "osdeploy-iso"}:
+            continue
+        path = Path(artifact.get("path") or "")
+        if not path.is_file():
+            continue
+        if not body.already_copied:
+            _proxmox_upload_file(
+                f"/nodes/{node}/storage/{storage}/upload",
+                path,
+                data={"content": "iso"},
+                field_name="filename",
+                content_type="application/octet-stream",
+            )
+        volid = f"{storage}:iso/{path.name}"
+        if artifact.get("kind") == "osdeploy-iso":
+            _register_promoted_setup_osdeploy_artifact(
+                artifact=artifact,
+                volid=volid,
+                rows=artifacts,
+            )
+        if artifact.get("kind") == "cloudosd-iso":
+            _register_promoted_setup_cloudosd_artifact(
+                artifact=artifact,
+                volid=volid,
+                rows=artifacts,
+            )
+        row = setup_artifacts.mark_promoted(artifact["artifact_id"], proxmox_volid=volid)
+        if row:
+            promoted.append(row)
+    if promoted:
+        state = _read_json_file(SETUP_STATE_PATH)
+        state["promoted_artifacts_ready"] = True
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        SETUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETUP_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    return {"ok": True, "promoted": promoted}
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request):
+    data = _setup_readiness()
+    return templates.TemplateResponse("setup.html", {
+        "request": request,
+        "setup": data,
+        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
+        "build_time": _APP_VERSION.get("build_time", ""),
+    })
 
 
 _BLISS_JPG = BASE_DIR / "files" / "bliss.jpg"
@@ -972,11 +2038,14 @@ def _database_url() -> str:
 def _init_app_database() -> None:
     from web import (
         agent_telemetry_pg,
+        cloudosd_cache,
         cloudosd_pg,
         db_pg,
         deployment_health_pg,
         device_history_pg,
         devices_pg,
+        osdeploy_cache,
+        osdeploy_pg,
         ts_engine_pg,
     )
 
@@ -986,6 +2055,9 @@ def _init_app_database() -> None:
         devices_pg.init(conn)
         agent_telemetry_pg.init(conn)
         cloudosd_pg.init(conn)
+        cloudosd_cache.init(conn)
+        osdeploy_pg.init(conn)
+        osdeploy_cache.init(conn)
         deployment_health_pg.init(conn)
 
 
@@ -998,6 +2070,228 @@ def _init_ts_engine_database_if_configured() -> bool:
     with ts_engine_pg.connect(dsn) as conn:
         ts_engine_pg.init(conn)
     return True
+
+
+def _setup_artifact_peer(
+    rows: list[dict],
+    *,
+    artifact: dict,
+    kind: str,
+) -> dict | None:
+    work_item_id = artifact.get("work_item_id") or ""
+    if not work_item_id:
+        return None
+    artifact_stem = Path(
+        artifact.get("filename")
+        or Path(str(artifact.get("path") or "")).name
+    ).stem
+    matches: list[dict] = []
+    for row in rows:
+        if row.get("artifact_id") == artifact.get("artifact_id"):
+            continue
+        if row.get("work_item_id") != work_item_id:
+            continue
+        if row.get("kind") == kind:
+            matches.append(row)
+    if not matches:
+        return None
+    if artifact_stem:
+        for row in matches:
+            row_stem = Path(
+                row.get("filename")
+                or Path(str(row.get("path") or "")).name
+            ).stem
+            if row_stem == artifact_stem:
+                return row
+    return matches[0]
+
+
+def _manifest_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _register_promoted_setup_osdeploy_artifact(
+    *,
+    artifact: dict,
+    volid: str,
+    rows: list[dict],
+) -> dict:
+    from web import db_pg, osdeploy_pg
+
+    manifest_row = _setup_artifact_peer(rows, artifact=artifact, kind="manifest")
+    wim_row = _setup_artifact_peer(rows, artifact=artifact, kind="wim")
+    if not manifest_row or not wim_row:
+        raise HTTPException(
+            status_code=409,
+            detail="OSDeploy promotion requires manifest and WIM artifacts from the same work item",
+        )
+    manifest_path = Path(manifest_row.get("path") or "")
+    wim_path = Path(wim_row.get("path") or "")
+    iso_path = Path(artifact.get("path") or "")
+    if not manifest_path.is_file() or not wim_path.is_file() or not iso_path.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="OSDeploy promotion requires local ISO, WIM, and manifest files",
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=f"invalid OSDeploy manifest: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise HTTPException(status_code=409, detail="invalid OSDeploy manifest")
+
+    with db_pg.connection(_database_url()) as conn:
+        osdeploy_pg.init(conn)
+        return osdeploy_pg.create_artifact(
+            conn,
+            architecture=str(manifest.get("architecture") or osdeploy_pg.DEFAULT_ARCHITECTURE),
+            osdeploy_module_version=str(
+                manifest.get("osdeploy_module_version")
+                or osdeploy_pg.DEFAULT_OSDEPLOY_MODULE_VERSION
+            ),
+            osdbuilder_module_version=str(
+                manifest.get("osdbuilder_module_version")
+                or osdeploy_pg.DEFAULT_OSDBUILDER_MODULE_VERSION
+            ),
+            adk_version=str(manifest.get("adk_version") or osdeploy_pg.DEFAULT_ADK_VERSION),
+            build_sha=str(manifest.get("build_sha") or artifact.get("work_item_id") or "unknown"),
+            iso_path=str(iso_path),
+            wim_path=str(wim_path),
+            manifest_path=str(manifest_path),
+            iso_sha256=str(manifest.get("iso_sha256") or artifact.get("sha256") or ""),
+            wim_sha256=str(manifest.get("wim_sha256") or wim_row.get("sha256") or ""),
+            source_media=str(manifest.get("source_media") or "Windows Server media"),
+            image_name=str(manifest.get("image_name") or osdeploy_pg.DEFAULT_OS_VERSION),
+            image_index=int(manifest.get("image_index") or 1),
+            os_version=str(manifest.get("os_version") or osdeploy_pg.DEFAULT_OS_VERSION),
+            os_edition=str(manifest.get("os_edition") or osdeploy_pg.DEFAULT_OS_EDITION),
+            os_language=str(manifest.get("os_language") or osdeploy_pg.DEFAULT_OS_LANGUAGE),
+            built_by_host=str(
+                manifest.get("built_by_host")
+                or artifact.get("producer_agent_id")
+                or "build-host"
+            ),
+            built_at=_manifest_datetime(manifest.get("built_at")),
+            proxmox_volid=volid,
+            build_job_id=str(artifact.get("work_item_id") or "") or None,
+        )
+
+
+def _register_promoted_setup_cloudosd_artifact(
+    *,
+    artifact: dict,
+    volid: str,
+    rows: list[dict],
+    strict: bool = True,
+) -> dict | None:
+    from web import cloudosd_pg, db_pg
+
+    manifest_row = _setup_artifact_peer(rows, artifact=artifact, kind="manifest")
+    wim_row = _setup_artifact_peer(rows, artifact=artifact, kind="wim")
+    if not manifest_row or not wim_row:
+        if not strict:
+            return None
+        raise HTTPException(
+            status_code=409,
+            detail="CloudOSD promotion requires manifest and WIM artifacts from the same work item",
+        )
+    manifest_path = Path(manifest_row.get("path") or "")
+    wim_path = Path(wim_row.get("path") or "")
+    iso_path = Path(artifact.get("path") or "")
+    if not manifest_path.is_file() or not wim_path.is_file() or not iso_path.is_file():
+        if not strict:
+            return None
+        raise HTTPException(
+            status_code=409,
+            detail="CloudOSD promotion requires local ISO, WIM, and manifest files",
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        if not strict:
+            return None
+        raise HTTPException(status_code=409, detail=f"invalid CloudOSD manifest: {exc}") from exc
+    if not isinstance(manifest, dict):
+        if not strict:
+            return None
+        raise HTTPException(status_code=409, detail="invalid CloudOSD manifest")
+
+    iso_sha256 = str(manifest.get("iso_sha256") or artifact.get("sha256") or "").lower()
+    wim_sha256 = str(manifest.get("wim_sha256") or wim_row.get("sha256") or "").lower()
+    architecture = str(manifest.get("architecture") or cloudosd_pg.DEFAULT_ARCHITECTURE)
+    build_sha = str(manifest.get("build_sha") or artifact.get("work_item_id") or "unknown")
+
+    with db_pg.connection(_database_url()) as conn:
+        cloudosd_pg.init(conn)
+        existing = conn.execute(
+            """
+            SELECT *
+            FROM cloudosd_artifacts
+            WHERE iso_sha256 = %s OR proxmox_volid = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (iso_sha256, volid),
+        ).fetchone()
+        if existing:
+            existing_id = str(existing["id"])
+            if existing["proxmox_volid"] != volid:
+                return cloudosd_pg.update_artifact_proxmox_volid(
+                    conn,
+                    artifact_id=existing_id,
+                    proxmox_volid=volid,
+                    publish_job_id=str(artifact.get("work_item_id") or "") or None,
+                )
+            return cloudosd_pg.get_artifact(conn, existing_id)
+        return cloudosd_pg.create_artifact(
+            conn,
+            architecture=architecture,
+            osdcloud_module_version=str(
+                manifest.get("osdcloud_module_version")
+                or cloudosd_pg.DEFAULT_OSDCLOUD_MODULE_VERSION
+            ),
+            build_sha=build_sha,
+            iso_path=str(iso_path),
+            wim_path=str(wim_path),
+            manifest_path=str(manifest_path),
+            iso_sha256=iso_sha256,
+            wim_sha256=wim_sha256,
+            built_by_host=str(
+                manifest.get("built_by_host")
+                or artifact.get("producer_agent_id")
+                or "build-host"
+            ),
+            built_at=_manifest_datetime(manifest.get("built_at")),
+            proxmox_volid=volid,
+            build_job_id=str(artifact.get("work_item_id") or "") or None,
+        )
+
+
+def _reconcile_setup_cloudosd_artifacts() -> list[dict]:
+    from web import setup_artifacts
+
+    rows = setup_artifacts.list_artifacts()
+    registered: list[dict] = []
+    for artifact in rows:
+        if artifact.get("kind") != "cloudosd-iso":
+            continue
+        volid = str(artifact.get("proxmox_volid") or "")
+        if not volid:
+            continue
+        row = _register_promoted_setup_cloudosd_artifact(
+            artifact=artifact,
+            volid=volid,
+            rows=rows,
+            strict=False,
+        )
+        if row:
+            registered.append(row)
+    return registered
 
 
 @app.on_event("startup")
@@ -1550,6 +2844,387 @@ def _load_proxmox_config():
     return config
 
 
+def _read_json_file(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _auth_is_configured() -> bool:
+    cfg = _auth_config()
+    return bool(
+        cfg.get("local_enabled")
+        or cfg.get("entra_configured")
+        or (cfg.get("tenant_id") and cfg.get("client_id"))
+    )
+
+
+def _public_setup_state() -> dict:
+    raw = _read_json_file(SETUP_STATE_PATH)
+    allowed_keys = {
+        "schema_version",
+        "phase",
+        "updated_at",
+        "clock",
+        "base_url",
+        "pve_host_ip",
+        "pve_node",
+        "pve_bridge",
+        "pve_disk_storage",
+        "pve_iso_storage",
+        "pve_foundation_ready",
+        "pve_host_clean_ready",
+        "pve_runtime_absent",
+        "pve_runtime_stopped",
+        "migration_bundle",
+        "migration_bundle_ready",
+        "migration_postgres_dump_ready",
+        "controller_name",
+        "controller_vmid",
+        "controller_ip",
+        "controller_url",
+        "controller_node",
+        "controller_storage",
+        "controller_bridge",
+        "controller_cloud_image",
+        "controller_vm_ready",
+        "controller_source_synced",
+        "controller_docker_ready",
+        "controller_env_ready",
+        "controller_repo_config_ready",
+        "controller_seed_agent_ready",
+        "controller_compose_ready",
+        "controller_runtime_ready",
+        "controller_auth_mode",
+        "controller_migration_bundle",
+        "controller_migration_bundle_restored",
+        "docker_ready",
+        "apt_ready",
+        "repo_config_ready",
+        "pve_permissions_ready",
+        "seed_agent_ready",
+        "postgres_database_ready",
+        "web_image_ready",
+        "web_image_tag",
+        "compose_ready",
+        "console_health_ready",
+        "windows_iso_ready",
+        "windows_iso_volid",
+        "windows_iso_download_attempted",
+        "windows_iso_download_source",
+        "windows_iso_download_language",
+        "windows_iso_download_product",
+        "windows_iso_download_sku",
+        "windows_iso_download_expires_at",
+        "windows_iso_download_error",
+        "virtio_iso_ready",
+        "virtio_iso_volid",
+        "media_ready",
+        "bootstrap_media_ready",
+        "build_host_creation_owner",
+        "seed_iso_ready",
+        "seed_iso_volid",
+        "build_host_unattend_ready",
+        "build_host_agent_auto_approve",
+        "build_host_expected_agent_id",
+        "build_host_expected_computer_name",
+        "build_host_admin_user",
+        "build_host_vm_ready",
+        "build_host_vmid",
+        "build_host_name",
+        "build_host_node",
+        "buildhost_vm_ready",
+        "buildhost_vmid",
+        "buildhost_node",
+        "buildhost_seed_iso_volid",
+        "build_host_agent_ready",
+        "promoted_artifacts_ready",
+        "web_image_git_sha",
+        "web_image_build_time",
+    }
+    state = {key: raw.get(key) for key in sorted(allowed_keys) if key in raw}
+    if "build_host_vm_ready" not in state and "buildhost_vm_ready" in state:
+        state["build_host_vm_ready"] = state["buildhost_vm_ready"]
+    if "build_host_vmid" not in state and "buildhost_vmid" in state:
+        state["build_host_vmid"] = state["buildhost_vmid"]
+    if "build_host_node" not in state and "buildhost_node" in state:
+        state["build_host_node"] = state["buildhost_node"]
+    if "seed_iso_volid" not in state and "buildhost_seed_iso_volid" in state:
+        state["seed_iso_volid"] = state["buildhost_seed_iso_volid"]
+    if "seed_iso_ready" not in state and state.get("seed_iso_volid"):
+        state["seed_iso_ready"] = True
+    return state
+
+
+def _seed_manifest_summary() -> dict:
+    manifest = _read_json_file(AGENT_SEED_MANIFEST_PATH)
+    files = manifest.get("files") or []
+    exe_files = [
+        item for item in files
+        if str(item.get("path", "")).lower().endswith("autopilotagent.exe")
+    ]
+    return {
+        "exists": bool(manifest),
+        "schema_version": manifest.get("schema_version"),
+        "producer": manifest.get("producer"),
+        "agent_version": manifest.get("agent_version"),
+        "git_sha": manifest.get("git_sha"),
+        "git_dirty": manifest.get("git_dirty"),
+        "build_time": manifest.get("build_time"),
+        "sdk_image": manifest.get("sdk_image"),
+        "runtime_identifiers": manifest.get("runtime_identifiers") or [],
+        "exe_count": len(exe_files),
+    }
+
+
+def _discover_build_host_vm(state: dict) -> dict:
+    vmid = state.get("build_host_vmid")
+    name = state.get("build_host_name") or "autopilot-buildhost-01"
+    if vmid:
+        return {
+            "vmid": str(vmid),
+            "name": name,
+            "node": state.get("build_host_node") or state.get("pve_node"),
+        }
+    try:
+        rows = _proxmox_api("/cluster/resources?type=vm") or []
+    except Exception:
+        return {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("type") != "qemu":
+            continue
+        if str(row.get("name") or "").casefold() != str(name).casefold():
+            continue
+        try:
+            discovered_vmid = int(row.get("vmid"))
+        except (TypeError, ValueError):
+            continue
+        return {
+            "vmid": str(discovered_vmid),
+            "name": str(row.get("name") or name),
+            "node": row.get("node") or state.get("build_host_node") or state.get("pve_node"),
+        }
+    return {}
+
+
+def _setup_build_host_status(state: dict) -> dict:
+    discovered = _discover_build_host_vm(state)
+    vmid = state.get("build_host_vmid") or discovered.get("vmid")
+    expected_agent_id = (
+        state.get("build_host_expected_agent_id")
+        or (
+            f"buildhost-{vmid}"
+            if vmid
+            else ""
+        )
+    )
+    expected_computer = state.get("build_host_expected_computer_name") or "AUTOPILOT-BLD"
+    out = {
+        "vmid": vmid,
+        "name": state.get("build_host_name") or discovered.get("name") or "autopilot-buildhost-01",
+        "node": state.get("build_host_node") or discovered.get("node") or state.get("pve_node"),
+        "expected_agent_id": expected_agent_id,
+        "expected_computer_name": expected_computer,
+        "agent_ready": False,
+        "agent_state": "missing",
+        "last_heartbeat_at": None,
+        "last_heartbeat_age_seconds": None,
+        "agent_version": None,
+        "primary_ipv4": None,
+    }
+    if not expected_agent_id:
+        return out
+    try:
+        from web import db_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            latest = agent_telemetry_pg.latest_for_agent(conn, expected_agent_id)
+            device = agent_telemetry_pg.get_device(conn, expected_agent_id)
+    except Exception:
+        return out
+    row = latest or device or {}
+    if not row:
+        return out
+    heartbeat_at = row.get("received_at") or row.get("last_seen_at")
+    age_seconds = None
+    if heartbeat_at:
+        try:
+            dt = heartbeat_at if isinstance(heartbeat_at, datetime) else datetime.fromisoformat(str(heartbeat_at))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age_seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+        except Exception:
+            age_seconds = None
+    computer_name = row.get("computer_name") or row.get("device_computer_name")
+    vmid_match = not vmid or str(row.get("vmid") or row.get("device_vmid") or vmid) == str(vmid)
+    computer_match = (
+        not expected_computer
+        or not computer_name
+        or str(computer_name).casefold() == str(expected_computer).casefold()
+    )
+    fresh = age_seconds is not None and age_seconds <= 180
+    out.update({
+        "agent_ready": bool(latest and fresh and vmid_match and computer_match),
+        "agent_state": "ready" if latest and fresh else ("stale" if latest else "registered"),
+        "last_heartbeat_at": heartbeat_at.isoformat() if hasattr(heartbeat_at, "isoformat") else heartbeat_at,
+        "last_heartbeat_age_seconds": age_seconds,
+        "agent_version": row.get("agent_version") or row.get("device_agent_version"),
+        "primary_ipv4": row.get("primary_ipv4"),
+        "computer_name": computer_name,
+    })
+    return out
+
+
+def _setup_artifact_summary() -> dict:
+    from web import setup_artifacts
+
+    summary = setup_artifacts.readiness_summary()
+    try:
+        from web import cloudosd_endpoints, cloudosd_pg, db_pg, osdeploy_endpoints, osdeploy_pg
+
+        _reconcile_setup_cloudosd_artifacts()
+        with db_pg.connection(_database_url()) as conn:
+            cloudosd_rows = [
+                cloudosd_endpoints.enrich_artifact(artifact)
+                for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
+            ]
+            osdeploy_rows = [
+                osdeploy_endpoints.enrich_artifact(artifact)
+                for artifact in osdeploy_pg.list_artifacts(conn, architecture="amd64")
+            ]
+    except Exception:
+        cloudosd_rows = []
+        osdeploy_rows = []
+    ready_cloudosd = [row for row in cloudosd_rows if row and row.get("ready")]
+    ready_osdeploy = [row for row in osdeploy_rows if row and row.get("ready")]
+    summary.update({
+        "cloudosd_ready_count": len(ready_cloudosd),
+        "osdeploy_ready_count": len(ready_osdeploy),
+        "cloudosd_artifacts": cloudosd_rows[:10],
+        "osdeploy_artifacts": osdeploy_rows[:10],
+    })
+    summary["ready"] = bool(summary.get("ready") or ready_cloudosd or ready_osdeploy)
+    return summary
+
+
+def _setup_readiness() -> dict:
+    state = _public_setup_state()
+    auth_ready = _auth_is_configured()
+    controller_url = state.get("controller_url") or state.get("base_url")
+    controller_runtime_ready = bool(state.get("controller_runtime_ready") or state.get("console_health_ready"))
+    controller_auth_mode = state.get("controller_auth_mode") or _auth_config().get("mode") or "local"
+    build_host_status = _setup_build_host_status(state)
+    artifact_summary = _setup_artifact_summary()
+    artifacts_ready = bool(state.get("promoted_artifacts_ready") or artifact_summary.get("ready"))
+    if artifacts_ready:
+        state["promoted_artifacts_ready"] = True
+    if build_host_status.get("agent_ready"):
+        state["build_host_agent_ready"] = True
+    checks = [
+        ("pve_foundation", "PVE foundation", state.get("pve_foundation_ready") or state.get("apt_ready"), "Install PVE bootstrap essentials and prepare source/secrets."),
+        ("pve_permissions", "PVE permissions", state.get("pve_permissions_ready"), "Create API role/token/ACLs."),
+        ("controller_vm", "Controller VM", state.get("controller_vm_ready"), "Create and boot the Ubuntu controller VM."),
+        ("controller_runtime", "Controller runtime", controller_runtime_ready, "Run controller bootstrap and verify /healthz."),
+        ("controller_auth", "Controller auth", auth_ready, "Use local first-run sign-in or configure an external identity provider."),
+        ("seed_agent", "Seed agent", state.get("seed_agent_ready") or state.get("controller_seed_agent_ready"), "Build AutopilotAgent from source inside the controller SDK container."),
+        ("virtio_iso", "VirtIO ISO", state.get("virtio_iso_ready"), "Download virtio-win.iso from the official virtio-win source."),
+        ("windows_iso", "Windows ISO", state.get("windows_iso_ready"), "Upload a Windows ISO or provide an official Microsoft direct ISO URL."),
+        ("build_host_unattend", "Build-host answer media", state.get("build_host_unattend_ready") or state.get("seed_iso_ready"), "Generate seed ISO with Autounattend.xml and agent bootstrap payload."),
+        ("build_host_vm", "Build-host VM", state.get("build_host_vm_ready"), "Resume bootstrap after Windows and VirtIO ISO media are ready."),
+        ("build_host_agent", "Build-host agent", build_host_status.get("agent_ready"), "Repair build-host agent URL and wait for a fresh controller heartbeat."),
+        ("artifacts", "Operational artifacts", artifacts_ready, "Publish agent MSI, WinPE ISO, or OSDCloud ISO artifacts from the build host."),
+    ]
+    normalized = []
+    for key, label, ready, next_step in checks:
+        normalized.append({
+            "key": key,
+            "label": label,
+            "ready": bool(ready),
+            "state": "ready" if ready else "blocked",
+            "next_step": next_step,
+        })
+
+    blocking = [item for item in normalized if not item["ready"]]
+    windows_ready = bool(state.get("windows_iso_ready"))
+    virtio_ready = bool(state.get("virtio_iso_ready"))
+    build_host_ready = bool(state.get("build_host_vm_ready"))
+    if artifacts_ready:
+        phase = "operational"
+        health = "ready"
+    elif build_host_ready:
+        phase = "bootstrap"
+        health = "blocked"
+    elif windows_ready and virtio_ready:
+        phase = "media-ready"
+        health = "ready"
+    elif controller_runtime_ready:
+        phase = "media-gated"
+        health = "blocked"
+    elif state.get("controller_vm_ready"):
+        phase = "controller-bootstrap"
+        health = "blocked"
+    else:
+        phase = "foundation"
+        health = "blocked"
+
+    return {
+        "phase": phase,
+        "health": health,
+        "blocking_count": len(blocking),
+        "checks": normalized,
+        "state": state,
+        "controller": {
+            "name": state.get("controller_name") or "autopilot-controller-01",
+            "vmid": state.get("controller_vmid"),
+            "ip": state.get("controller_ip"),
+            "url": controller_url,
+            "node": state.get("controller_node") or state.get("pve_node"),
+            "storage": state.get("controller_storage") or state.get("pve_disk_storage"),
+            "bridge": state.get("controller_bridge") or state.get("pve_bridge"),
+            "runtime_ready": controller_runtime_ready,
+            "vm_ready": bool(state.get("controller_vm_ready")),
+            "docker_ready": bool(state.get("controller_docker_ready") or state.get("docker_ready")),
+            "compose_ready": bool(state.get("controller_compose_ready") or state.get("compose_ready")),
+            "source_synced": bool(state.get("controller_source_synced")),
+            "auth_mode": controller_auth_mode,
+            "local_auth_active": controller_auth_mode == "local",
+            "migration_bundle": state.get("controller_migration_bundle") or state.get("migration_bundle"),
+            "migration_bundle_restored": bool(state.get("controller_migration_bundle_restored")),
+        },
+        "media": {
+            "iso_storage": state.get("pve_iso_storage") or "local",
+            "upload_directory": "/var/lib/vz/template/iso",
+            "windows_iso_ready": windows_ready,
+            "windows_iso_volid": state.get("windows_iso_volid"),
+            "windows_iso_download_attempted": bool(state.get("windows_iso_download_attempted")),
+            "windows_iso_download_source": state.get("windows_iso_download_source"),
+            "windows_iso_download_language": state.get("windows_iso_download_language"),
+            "windows_iso_download_product": state.get("windows_iso_download_product"),
+            "windows_iso_download_sku": state.get("windows_iso_download_sku"),
+            "windows_iso_download_expires_at": state.get("windows_iso_download_expires_at"),
+            "windows_iso_download_error": state.get("windows_iso_download_error"),
+            "virtio_iso_ready": virtio_ready,
+            "virtio_iso_volid": state.get("virtio_iso_volid"),
+        },
+        "seed_agent": _seed_manifest_summary(),
+        "commands": {
+            "resume_foundation": "bash /opt/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase foundation --resume",
+            "resume_bootstrap": "bash /opt/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase bootstrap --resume --download-virtio --non-interactive",
+            "bootstrap_with_windows_url": "bash /opt/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase bootstrap --resume --download-virtio --windows-iso-url \"<official Microsoft direct ISO URL>\" --non-interactive",
+            "generate_build_host_seed_iso": "curl -X POST http://127.0.0.1:5000/api/setup/v1/build-host/seed-iso -H 'Content-Type: application/json' -d '{\"vmid\":100}'",
+            "create_build_host_vm": "curl -X POST http://127.0.0.1:5000/api/setup/v1/build-host/vm -H 'Content-Type: application/json' -d '{}'",
+            "repair_build_host_agent": "curl -X POST http://127.0.0.1:5000/api/setup/v1/build-host/repair-agent",
+            "queue_build_host_workloads": "curl -X POST http://127.0.0.1:5000/api/setup/v1/build-host/workloads",
+        },
+        "build_host": build_host_status,
+        "artifacts": artifact_summary,
+        "auth_configured": auth_ready,
+        "build": _APP_VERSION,
+    }
+
+
 def _proxmox_api(path, method="GET", data=None, files=None):
     cfg = _load_proxmox_config()
     host = cfg.get("proxmox_host", "")
@@ -1565,6 +3240,100 @@ def _proxmox_api(path, method="GET", data=None, files=None):
     )
     resp.raise_for_status()
     return resp.json().get("data", [])
+
+
+class _StreamingMultipartBody:
+    _DEFAULT_READ_SIZE = 1024 * 1024
+
+    def __init__(
+        self,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        file_path: Path,
+        content_type: str,
+    ):
+        self.boundary = f"----ProxmoxVEAutopilot{secrets.token_hex(16)}"
+        field_parts: list[bytes] = []
+        for name, value in fields.items():
+            field_parts.append(
+                (
+                    f"--{self.boundary}\r\n"
+                    f"Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+                    f"{value}\r\n"
+                ).encode("utf-8")
+            )
+        field_parts.append(
+            (
+                f"--{self.boundary}\r\n"
+                f"Content-Disposition: form-data; name=\"{file_field}\"; "
+                f"filename=\"{file_path.name}\"\r\n"
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode("utf-8")
+        )
+        self._prefix = io.BytesIO(b"".join(field_parts))
+        self._file = file_path.open("rb")
+        self._suffix = io.BytesIO(f"\r\n--{self.boundary}--\r\n".encode("utf-8"))
+        self._segments = [self._prefix, self._file, self._suffix]
+        self._index = 0
+        self.length = sum(len(part) for part in field_parts) + file_path.stat().st_size + len(self._suffix.getvalue())
+        self.content_type = f"multipart/form-data; boundary={self.boundary}"
+
+    def __len__(self) -> int:
+        return self.length
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            size = self._DEFAULT_READ_SIZE
+        chunks: list[bytes] = []
+        remaining = size
+        while self._index < len(self._segments) and remaining != 0:
+            segment = self._segments[self._index]
+            chunk = segment.read(remaining)
+            if chunk:
+                chunks.append(chunk)
+                remaining -= len(chunk)
+                if remaining <= 0:
+                    break
+            else:
+                self._index += 1
+        return b"".join(chunks)
+
+    def close(self) -> None:
+        self._file.close()
+
+
+def _proxmox_upload_file(
+    path: str,
+    file_path: Path,
+    *,
+    data: dict[str, str] | None = None,
+    field_name: str = "filename",
+    content_type: str = "application/octet-stream",
+):
+    cfg = _load_proxmox_config()
+    host = cfg.get("proxmox_host", "")
+    port = cfg.get("proxmox_port", 8006)
+    token_id = cfg.get("vault_proxmox_api_token_id", "")
+    token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+    url = f"https://{host}:{port}/api2/json{path}"
+    body = _StreamingMultipartBody(
+        fields={key: str(value) for key, value in (data or {}).items()},
+        file_field=field_name,
+        file_path=file_path,
+        content_type=content_type,
+    )
+    headers = {
+        "Authorization": f"PVEAPIToken={token_id}={token_secret}",
+        "Content-Type": body.content_type,
+        "Content-Length": str(len(body)),
+    }
+    try:
+        resp = requests.post(url, headers=headers, data=body, verify=False, timeout=600)
+        resp.raise_for_status()
+        return resp.json().get("data", [])
+    finally:
+        body.close()
 
 
 def _proxmox_node_ssh_host(node: str | None) -> str:
@@ -1774,28 +3543,45 @@ $domainRole = $cs.DomainRole  # 0=Standalone Workstation, 1=Member Workstation, 
 """.strip()
 
 
-def _guest_exec_ps(node: str, vmid: int, ps: str,
-                   timeout_s: int = 20) -> Optional[str]:
-    """Run a PowerShell one-liner via the Proxmox guest agent and return
-    the captured stdout (decoded). Returns None on any failure (agent
-    unresponsive, exec rejected, non-zero exit). Best-effort — callers
-    must handle absence gracefully."""
-    # POST exec with the script as a single argument to powershell.exe.
+def _guest_exec_ps_status(node: str, vmid: int, ps: str,
+                          timeout_s: int = 20) -> dict:
+    """Run PowerShell through the Proxmox guest agent and return raw status.
+
+    Callers that need best-effort probing can use ``_guest_exec_ps`` below.
+    Setup/repair endpoints use this status shape so guest-side failures are
+    actionable instead of being collapsed into a generic empty response.
+    """
+    # POST exec with the script as an encoded command. Passing multiline
+    # scripts through -Command is fragile once quoting and Proxmox API JSON
+    # encoding get involved.
+    encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
     try:
         exec_resp = _proxmox_api_post(
             f"/nodes/{node}/qemu/{vmid}/agent/exec",
             data={
                 "command": [
                     "powershell.exe", "-NoProfile",
-                    "-ExecutionPolicy", "Bypass", "-Command", ps,
+                    "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded,
                 ],
             },
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"guest exec rejected: {exc}",
+            "exitcode": None,
+            "out": "",
+            "err": "",
+        }
     pid = (exec_resp or {}).get("pid")
     if pid is None:
-        return None
+        return {
+            "ok": False,
+            "error": f"guest exec response missing pid: {exec_resp!r}",
+            "exitcode": None,
+            "out": "",
+            "err": "",
+        }
     # Poll exec-status.
     import time as _time
     deadline = _time.monotonic() + timeout_s
@@ -1804,14 +3590,46 @@ def _guest_exec_ps(node: str, vmid: int, ps: str,
             status = _proxmox_api(
                 f"/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}"
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"guest exec-status failed: {exc}",
+                "exitcode": None,
+                "out": "",
+                "err": "",
+            }
         if status and status.get("exited"):
-            if status.get("exitcode", 1) != 0:
-                return None
-            return (status.get("out-data") or "").strip()
+            exitcode = status.get("exitcode", 1)
+            out = (status.get("out-data") or "").strip()
+            err = (status.get("err-data") or "").strip()
+            return {
+                "ok": exitcode == 0,
+                "error": "" if exitcode == 0 else (err or out or f"guest exit {exitcode}"),
+                "exitcode": exitcode,
+                "out": out,
+                "err": err,
+                "raw": status,
+            }
         _time.sleep(0.3)
-    return None
+    return {
+        "ok": False,
+        "error": f"guest exec timed out after {timeout_s}s",
+        "exitcode": None,
+        "out": "",
+        "err": "",
+    }
+
+
+def _guest_exec_ps(node: str, vmid: int, ps: str,
+                   timeout_s: int = 20) -> Optional[str]:
+    """Run a PowerShell one-liner via the Proxmox guest agent and return
+    the captured stdout (decoded). Returns None on any failure (agent
+    unresponsive, exec rejected, non-zero exit). Best-effort — callers
+    must handle absence gracefully."""
+    status = _guest_exec_ps_status(node, vmid, ps, timeout_s=timeout_s)
+    if not status.get("ok"):
+        return None
+    return str(status.get("out") or "").strip()
 
 
 def _fetch_guest_windows_details(node: str, vmid: int) -> dict:
@@ -2334,7 +4152,7 @@ async def home(request: Request):
 
 @app.get("/provision", response_class=HTMLResponse)
 async def provision_page(request: Request):
-    from web import cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg
+    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
 
     cfg = _load_vars()
     # Best-effort: look up template disk size so the UI can show the minimum.
@@ -2364,17 +4182,38 @@ async def provision_page(request: Request):
     }
     cloudosd_catalog = cloudosd_endpoints.catalog_payload()
     cloudosd_options = cloudosd_endpoints.proxmox_options_payload()
+    osdeploy_catalog = osdeploy_endpoints.catalog_payload()
+    osdeploy_options = osdeploy_endpoints.proxmox_options_payload()
     cloudosd_artifacts = []
+    osdeploy_artifacts = []
+    ubuntu_v2_sequences = []
     cloudosd_batch_progress = {"schema_version": 1, "runs": []}
+    cloudosd_cache_payload = {"schema_version": 1, "storage": {}, "entries": [], "summary": {}}
+    osdeploy_cache_payload = {"schema_version": 1, "storage": {}, "entries": [], "summary": {}}
     try:
         with db_pg.connection(_database_url()) as conn:
             cloudosd_pg.init(conn)
+            cloudosd_cache.init(conn)
+            osdeploy_pg.init(conn)
+            osdeploy_cache.init(conn)
             cloudosd_artifacts = [
                 cloudosd_endpoints.enrich_artifact(artifact)
                 for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
             ]
+            osdeploy_artifacts = [
+                osdeploy_endpoints.enrich_artifact(artifact)
+                for artifact in osdeploy_pg.list_artifacts(conn, architecture="amd64")
+            ]
+            cloudosd_cache_payload = cloudosd_cache.payload(conn)
+            osdeploy_cache_payload = osdeploy_cache.payload(conn)
+            ubuntu_v2_sequences = [
+                seq for seq in ts_engine_pg.list_sequences(conn)
+                if (seq.get("target_os") or "windows") == "ubuntu"
+            ]
     except Exception:
         cloudosd_artifacts = []
+        osdeploy_artifacts = []
+        ubuntu_v2_sequences = []
     try:
         cloudosd_batch_progress = cloudosd_endpoints.provision_progress_payload(limit=25)
     except Exception:
@@ -2388,9 +4227,12 @@ async def provision_page(request: Request):
         row = dict(sequence)
         full_sequence = sequences_db.get_sequence(SEQUENCES_DB, int(sequence["id"]))
         unsupported = cloudosd_sequence.unsupported_enabled_steps(full_sequence)
+        cloudosd_supported = _cloudosd_supported_enabled_steps(full_sequence)
         row["cloudosd_unsupported_steps"] = unsupported
-        row["cloudosd_compatible"] = not unsupported
-        sequence_rows.append(row)
+        row["cloudosd_compatible"] = bool(cloudosd_supported) and not unsupported
+        row["boot_modes"] = _legacy_sequence_boot_modes(full_sequence)
+        if row["boot_modes"]:
+            sequence_rows.append(row)
     return templates.TemplateResponse("provision.html", {
         "request": request,
         "profiles": load_oem_profiles(),
@@ -2401,22 +4243,47 @@ async def provision_page(request: Request):
         "winpe_enabled": _winpe_enabled(),
         "cloudosd_catalog": cloudosd_catalog,
         "cloudosd_options": cloudosd_options,
+        "osdeploy_catalog": osdeploy_catalog,
+        "osdeploy_options": osdeploy_options,
         "cloudosd_artifacts": cloudosd_artifacts,
+        "osdeploy_artifacts": osdeploy_artifacts,
         "cloudosd_ready_artifacts": [
             artifact for artifact in cloudosd_artifacts if artifact.get("ready")
         ],
+        "osdeploy_ready_artifacts": [
+            artifact for artifact in osdeploy_artifacts if artifact.get("ready")
+        ],
         "cloudosd_batch_progress": cloudosd_batch_progress,
+        "cloudosd_cache": cloudosd_cache_payload,
+        "osdeploy_cache": osdeploy_cache_payload,
+        "ubuntu_v2_sequences": ubuntu_v2_sequences,
     })
 
 
+@app.get("/osdcloud/artifacts", response_class=HTMLResponse)
+@app.get("/osdcloud/cache", response_class=HTMLResponse)
+@app.get("/osdcloud/builder", response_class=HTMLResponse)
+@app.get("/osdcloud", response_class=HTMLResponse)
+@app.get("/cloudosd/artifacts", response_class=HTMLResponse)
+@app.get("/cloudosd/cache", response_class=HTMLResponse)
+@app.get("/cloudosd/builder", response_class=HTMLResponse)
 @app.get("/cloudosd", response_class=HTMLResponse)
 async def cloudosd_page(request: Request, archived: str = "0"):
-    from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
+    from web import agent_telemetry_pg, cloudosd_cache, cloudosd_endpoints, cloudosd_pg, db_pg
 
     cfg = _load_vars()
+    cloudosd_view = {
+        "/osdcloud/builder": "builder",
+        "/osdcloud/cache": "cache",
+        "/osdcloud/artifacts": "artifacts",
+        "/cloudosd/builder": "builder",
+        "/cloudosd/cache": "cache",
+        "/cloudosd/artifacts": "artifacts",
+    }.get(request.url.path, "overview")
     show_archived = str(archived or "").lower() in {"1", "true", "yes", "on"}
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
+        cloudosd_cache.init(conn)
         agent_telemetry_pg.init(conn)
         artifacts = [
             cloudosd_endpoints.enrich_artifact(artifact)
@@ -2453,6 +4320,7 @@ async def cloudosd_page(request: Request, archived: str = "0"):
             enrich_run(run)
             for run in cloudosd_pg.list_runs(conn, limit=10, stale_failed_hours=12)
         ]
+        cache_payload = cloudosd_cache.payload(conn)
     assets_status = cloudosd_endpoints.assets_status_payload()
     proxmox_options = cloudosd_endpoints.proxmox_options_payload()
     catalog = cloudosd_endpoints.catalog_payload()
@@ -2464,6 +4332,8 @@ async def cloudosd_page(request: Request, archived: str = "0"):
         "ready_artifacts": ready_artifacts,
         "active_runs": active_runs,
         "stale_failed_runs": stale_failed_runs,
+        "cloudosd_cache": cache_payload,
+        "cloudosd_view": cloudosd_view,
         "show_archived": show_archived,
         "catalog": catalog,
         "assets_status": assets_status,
@@ -2472,6 +4342,82 @@ async def cloudosd_page(request: Request, archived: str = "0"):
     })
 
 
+@app.get("/osdeploy/artifacts", response_class=HTMLResponse)
+@app.get("/osdeploy/cache", response_class=HTMLResponse)
+@app.get("/osdeploy/builder", response_class=HTMLResponse)
+@app.get("/osdeploy", response_class=HTMLResponse)
+async def osdeploy_page(request: Request, archived: str = "0"):
+    from web import agent_telemetry_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg
+
+    cfg = _load_vars()
+    osdeploy_view = {
+        "/osdeploy/builder": "builder",
+        "/osdeploy/cache": "cache",
+        "/osdeploy/artifacts": "artifacts",
+    }.get(request.url.path, "overview")
+    show_archived = str(archived or "").lower() in {"1", "true", "yes", "on"}
+    with db_pg.connection(_database_url()) as conn:
+        osdeploy_pg.init(conn)
+        osdeploy_cache.init(conn)
+        agent_telemetry_pg.init(conn)
+        artifacts = [
+            osdeploy_endpoints.enrich_artifact(artifact)
+            for artifact in osdeploy_pg.list_artifacts(conn, architecture="amd64")
+        ]
+        runs = osdeploy_pg.list_runs(conn, limit=25, include_archived=show_archived)
+        active_runs = osdeploy_pg.list_runs(conn, limit=10, active_only=True)
+        stale_failed_runs = osdeploy_pg.list_runs(conn, limit=10, stale_failed_hours=12)
+        cache_payload = osdeploy_cache.payload(conn)
+    catalog = osdeploy_endpoints.catalog_payload()
+    proxmox_options = osdeploy_endpoints.proxmox_options_payload()
+    build_defaults = osdeploy_endpoints.build_defaults_payload()
+    ready_artifacts = [artifact for artifact in artifacts if artifact and artifact.get("ready")]
+    return templates.TemplateResponse("osdeploy.html", {
+        "request": request,
+        "artifacts": artifacts,
+        "runs": runs,
+        "ready_artifacts": ready_artifacts,
+        "active_runs": active_runs,
+        "stale_failed_runs": stale_failed_runs,
+        "osdeploy_cache": cache_payload,
+        "osdeploy_view": osdeploy_view,
+        "show_archived": show_archived,
+        "catalog": catalog,
+        "proxmox_options": proxmox_options,
+        "osdeploy_build_defaults": build_defaults,
+        "proxmox_node": cfg.get("proxmox_node", "pve"),
+    })
+
+
+@app.get("/osdeploy/runs/{run_id}", response_class=HTMLResponse)
+async def osdeploy_run_detail_page(request: Request, run_id: str):
+    from web import agent_telemetry_pg, db_pg, osdeploy_endpoints, osdeploy_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        osdeploy_pg.init(conn)
+        agent_telemetry_pg.init(conn)
+        run = osdeploy_pg.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="OSDeploy run not found")
+        artifact = osdeploy_endpoints.enrich_artifact(
+            osdeploy_pg.get_artifact(conn, run["artifact_id"])
+        )
+        events = osdeploy_pg.list_events(conn, run_id)
+        readiness = osdeploy_pg.get_readiness(conn, run_id)
+        v2_steps = ts_engine_pg.list_run_steps(conn, run_id)
+        heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
+    return templates.TemplateResponse("osdeploy_run_detail.html", {
+        "request": request,
+        "run": run,
+        "artifact": artifact,
+        "events": events,
+        "readiness": readiness,
+        "v2_steps": v2_steps,
+        "heartbeat": heartbeat,
+    })
+
+
+@app.get("/osdcloud/runs/{run_id}", response_class=HTMLResponse)
 @app.get("/cloudosd/runs/{run_id}", response_class=HTMLResponse)
 async def cloudosd_run_detail_page(request: Request, run_id: str):
     from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
@@ -2481,7 +4427,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         agent_telemetry_pg.init(conn)
         run = cloudosd_pg.get_run(conn, run_id)
         if not run:
-            raise HTTPException(status_code=404, detail="CloudOSD run not found")
+            raise HTTPException(status_code=404, detail="OSDCloud run not found")
         heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
         if heartbeat and run["state"] != "complete":
             run = cloudosd_pg.mark_complete_from_heartbeat(
@@ -3574,7 +5520,7 @@ def _reset_runtime_ui_caches() -> dict:
     """Clear process-local caches that can make UI tables look stale.
 
     This does not delete durable Postgres inventory, jobs, telemetry, hashes,
-    CloudOSD runs, or Graph sync state. It only forces the next page/API read
+    OSDCloud runs, or Graph sync state. It only forces the next page/API read
     to rebuild from the current durable sources.
     """
     _VMS_CACHE.update({
@@ -3612,7 +5558,7 @@ async def api_ui_reload_live_data():
     """Clear UI caches, then refresh expensive live-backed table sources.
 
     Fleet refresh runs a monitor sweep and rebuilds /vms from its current
-    snapshot. CloudOSD readiness asks the watcher to reconcile post-deploy
+    snapshot. OSDCloud readiness asks the watcher to reconcile post-deploy
     Intune state, while still respecting Graph 429 backoff.
     """
     import asyncio
@@ -4415,6 +6361,105 @@ def _cloudosd_unlock_vmid_reservations(conn) -> None:
         conn.commit()
 
 
+_LEGACY_WINDOWS_SEQUENCE_STEPS = {
+    "set_oem_hardware",
+    "autopilot_entra",
+    "local_admin",
+    "join_ad_domain",
+    "rename_computer",
+    "run_script",
+    "install_module",
+}
+
+
+def _enabled_legacy_steps(sequence: dict | None) -> list[dict]:
+    if not sequence:
+        return []
+    return [
+        step
+        for step in sequence.get("steps", []) or []
+        if step.get("enabled", True)
+    ]
+
+
+def _cloudosd_supported_enabled_steps(sequence: dict | None) -> list[str]:
+    return [
+        step.get("step_type", "")
+        for step in _enabled_legacy_steps(sequence)
+        if step.get("step_type") == "join_ad_domain"
+    ]
+
+
+def _legacy_sequence_boot_modes(sequence: dict | None) -> list[str]:
+    """Return /provision boot modes that may select this legacy sequence.
+
+    Ubuntu now uses the v2 sequence selector, so legacy Ubuntu rows are not
+    exposed in the shared Windows sequence dropdown. OSDCloud intentionally
+    accepts only the small supported legacy intent surface it can own today;
+    base OSDCloud deployment is represented by the blank option instead.
+    """
+    from web import cloudosd_sequence as _cloudosd_sequence
+
+    if not sequence or (sequence.get("target_os") or "windows") != "windows":
+        return []
+
+    name = str(sequence.get("name") or "").strip().casefold()
+    enabled_steps = _enabled_legacy_steps(sequence)
+    enabled_types = {step.get("step_type", "") for step in enabled_steps}
+    unsupported_cloudosd = _cloudosd_sequence.unsupported_enabled_steps(sequence)
+    cloudosd_supported = _cloudosd_supported_enabled_steps(sequence)
+    cloudosd_compatible = bool(cloudosd_supported) and not unsupported_cloudosd
+
+    if cloudosd_compatible:
+        return ["cloudosd"]
+    if name.startswith("cloudosd"):
+        return []
+    if name.startswith("winpe"):
+        return ["winpe"]
+    if enabled_types and not enabled_types.issubset(_LEGACY_WINDOWS_SEQUENCE_STEPS):
+        return []
+    if "autopilot_hybrid" in enabled_types:
+        return []
+    return ["clone", "winpe"]
+
+
+def _assert_sequence_allowed_for_boot_mode(sequence_id: int | None, boot_mode: str) -> dict | None:
+    if not sequence_id:
+        return None
+    sequence = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+    if sequence is None:
+        raise HTTPException(404, f"sequence {sequence_id} not found")
+    allowed = _legacy_sequence_boot_modes(sequence)
+    if boot_mode not in allowed:
+        if boot_mode == "cloudosd":
+            from web import cloudosd_sequence as _cloudosd_sequence
+
+            unsupported = _cloudosd_sequence.unsupported_enabled_steps(sequence)
+            if unsupported:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "OSDCloud selected sequence is not OSDCloud-compatible yet; "
+                        f"unsupported enabled step(s): {', '.join(unsupported)}"
+                    ),
+                )
+        labels = {
+            "cloudosd": "OSDCloud",
+            "osdeploy": "OSDeploy v2",
+            "winpe": "WinPE",
+            "clone": "Clone",
+            "ubuntu": "Ubuntu v2",
+        }
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Task sequence {sequence_id} is not available for "
+                f"{labels.get(boot_mode, boot_mode)} boot mode."
+            ),
+        )
+    return sequence
+
+
 def _replace_cloudosd_token(pattern: str, token: str, value: str) -> str:
     return re.sub(
         r"\{" + re.escape(token) + r"\}",
@@ -4446,7 +6491,7 @@ def _cloudosd_batch_names(
         raise HTTPException(
             status_code=400,
             detail=(
-                "CloudOSD hostname pattern contains an invalid placeholder. "
+                "OSDCloud hostname pattern contains an invalid placeholder. "
                 "Use only {index}, {serial}, and {vmid}."
             ),
         )
@@ -4460,7 +6505,7 @@ def _cloudosd_batch_names(
     if len(requested_vmids) != count:
         raise HTTPException(
             status_code=500,
-            detail="CloudOSD VMID reservation returned the wrong number of VMIDs",
+            detail="OSDCloud VMID reservation returned the wrong number of VMIDs",
         )
     plans: list[dict] = []
     for index in range(1, count + 1):
@@ -4478,13 +6523,13 @@ def _cloudosd_batch_names(
         )
         name = _replace_cloudosd_token(name, "serial", serial)
         if not name.strip():
-            raise HTTPException(status_code=400, detail="CloudOSD VM name is empty")
+            raise HTTPException(status_code=400, detail="OSDCloud VM name is empty")
         name = name.strip()
         if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"CloudOSD hostname pattern produced invalid Proxmox VM "
+                    f"OSDCloud hostname pattern produced invalid Proxmox VM "
                     f"name {name!r}. Use letters, numbers, and hyphens only; "
                     "the name cannot start or end with a hyphen."
                 ),
@@ -4498,7 +6543,7 @@ def _cloudosd_batch_names(
     if len({name.lower() for name in names}) != len(names):
         raise HTTPException(
             status_code=400,
-            detail="CloudOSD hostname pattern produced duplicate VM names",
+            detail="OSDCloud hostname pattern produced duplicate VM names",
         )
     return plans
 
@@ -4522,7 +6567,7 @@ def _cloudosd_root_ticket_for_batch(
         raise HTTPException(
             status_code=400,
             detail=(
-                "CloudOSD OEM/chassis provisioning needs Proxmox root SSH "
+                "OSDCloud OEM/chassis provisioning needs Proxmox root SSH "
                 "for host-local SMBIOS staging and QEMU args. Run Settings "
                 "-> Proxmox Permission Bootstrap to apply the hypervisor "
                 "permissions and store the validated root SSH credential."
@@ -4564,9 +6609,9 @@ def _start_cloudosd_provision_batch(
 
     count = int(count or 1)
     if count < 1 or count > 50:
-        raise HTTPException(status_code=400, detail="CloudOSD count must be between 1 and 50")
+        raise HTTPException(status_code=400, detail="OSDCloud count must be between 1 and 50")
     if not artifact_id:
-        raise HTTPException(status_code=400, detail="CloudOSD artifact_id is required")
+        raise HTTPException(status_code=400, detail="OSDCloud artifact_id is required")
 
     vm_cores = int(cores or 0) or cloudosd_pg.DEFAULT_VM_CORES
     vm_memory_mb = int(memory_mb or 0) or cloudosd_pg.DEFAULT_VM_MEMORY_MB
@@ -4574,12 +6619,12 @@ def _start_cloudosd_provision_batch(
     if vm_memory_mb < cloudosd_pg.MIN_VM_MEMORY_MB:
         raise HTTPException(
             status_code=400,
-            detail=f"CloudOSD Proxmox VMs need at least {cloudosd_pg.MIN_VM_MEMORY_MB} MB RAM",
+            detail=f"OSDCloud Proxmox VMs need at least {cloudosd_pg.MIN_VM_MEMORY_MB} MB RAM",
         )
     if vm_disk_size_gb < cloudosd_pg.MIN_VM_DISK_SIZE_GB:
         raise HTTPException(
             status_code=400,
-            detail=f"CloudOSD VMs need at least {cloudosd_pg.MIN_VM_DISK_SIZE_GB} GB disk",
+            detail=f"OSDCloud VMs need at least {cloudosd_pg.MIN_VM_DISK_SIZE_GB} GB disk",
         )
 
     source_sequence_id = int(sequence_id) if sequence_id else None
@@ -4659,7 +6704,7 @@ def _start_cloudosd_provision_batch(
                 raise HTTPException(
                     status_code=409,
                     detail={
-                        "message": "CloudOSD blocking preflight checks failed",
+                        "message": "OSDCloud blocking preflight checks failed",
                         "blocking_checks": blockers,
                     },
                 )
@@ -4673,11 +6718,11 @@ def _start_cloudosd_provision_batch(
                 target = preflight["target"]
                 artifact = cloudosd_pg.get_artifact(conn, body.artifact_id)
                 if not artifact:
-                    raise HTTPException(status_code=404, detail="CloudOSD artifact not found")
+                    raise HTTPException(status_code=404, detail="OSDCloud artifact not found")
                 if not artifact.get("proxmox_volid"):
                     raise HTTPException(
                         status_code=409,
-                        detail="CloudOSD artifact is not uploaded to Proxmox ISO storage",
+                        detail="OSDCloud artifact is not uploaded to Proxmox ISO storage",
                     )
                 try:
                     run = cloudosd_pg.create_run(
@@ -4739,9 +6784,137 @@ def _start_cloudosd_provision_batch(
 
     first_run = run_ids[0] if run_ids else ""
     if len(run_ids) == 1:
-        return RedirectResponse(f"/cloudosd/runs/{first_run}", status_code=303)
+        return RedirectResponse(f"/osdcloud/runs/{first_run}", status_code=303)
     return RedirectResponse(
-        f"/cloudosd?created={len(run_ids)}&first_run={first_run}",
+        f"/osdcloud?created={len(run_ids)}&first_run={first_run}",
+        status_code=303,
+    )
+
+
+def _start_osdeploy_provision_batch(
+    *,
+    request: Request,
+    artifact_id: str,
+    count: int,
+    serial_prefix: str,
+    cores: int,
+    memory_mb: int,
+    disk_size_gb: int,
+    hostname_pattern: str,
+    node: str,
+    iso_storage: str,
+    storage: str,
+    network_bridge: str,
+    server_role: str,
+    os_version: str,
+    os_edition: str,
+    os_language: str,
+    secure_boot: bool,
+    outbound_policy_mode: str,
+) -> RedirectResponse:
+    from web import db_pg, osdeploy_endpoints, osdeploy_pg
+
+    count = int(count or 1)
+    if count < 1 or count > 50:
+        raise HTTPException(status_code=400, detail="OSDeploy count must be between 1 and 50")
+    if not artifact_id:
+        raise HTTPException(status_code=400, detail="OSDeploy artifact_id is required")
+
+    vm_cores = int(cores or 0) or osdeploy_pg.DEFAULT_VM_CORES
+    vm_memory_mb = int(memory_mb or 0) or osdeploy_pg.RECOMMENDED_VM_MEMORY_MB
+    vm_disk_size_gb = int(disk_size_gb or 0) or osdeploy_pg.DEFAULT_VM_DISK_SIZE_GB
+    pattern = (hostname_pattern or "").strip() or "server-{index}"
+    if count > 1 and "{index}" not in pattern.lower():
+        pattern = f"{pattern}-{{index}}"
+
+    run_ids: list[str] = []
+    with db_pg.connection(_database_url()) as conn:
+        osdeploy_pg.init(conn)
+        artifact = osdeploy_pg.get_artifact(conn, artifact_id)
+        if not artifact:
+            raise HTTPException(status_code=400, detail="OSDeploy artifact was not found")
+        for index in range(1, count + 1):
+            name = _replace_cloudosd_token(pattern, "index", f"{index:02d}")
+            name = _replace_cloudosd_token(name, "serial", serial_prefix or f"srv{index:02d}")
+            name = _replace_cloudosd_token(name, "vmid", f"{index:02d}")
+            name = name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="OSDeploy VM name is empty")
+            body = osdeploy_endpoints.RunCreateBody(
+                artifact_id=artifact_id,
+                vm_name=name,
+                node=node or None,
+                iso_storage=iso_storage or None,
+                storage=storage or None,
+                network_bridge=network_bridge or None,
+                architecture=osdeploy_pg.DEFAULT_ARCHITECTURE,
+                server_role=server_role or "base",
+                os_version=os_version or osdeploy_pg.DEFAULT_OS_VERSION,
+                os_edition=os_edition or osdeploy_pg.DEFAULT_OS_EDITION,
+                os_language=os_language or osdeploy_pg.DEFAULT_OS_LANGUAGE,
+                vm_cores=vm_cores,
+                vm_memory_mb=vm_memory_mb,
+                vm_disk_size_gb=vm_disk_size_gb,
+                secure_boot=secure_boot,
+                outbound_policy={"mode": outbound_policy_mode or "blocked"},
+            )
+            preflight = osdeploy_endpoints.preflight_payload(body)
+            if preflight["blocking_checks"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "OSDeploy blocking preflight checks failed",
+                        "blocking_checks": preflight["blocking_checks"],
+                    },
+                )
+            run = osdeploy_pg.create_run(
+                conn,
+                artifact_id=body.artifact_id,
+                vm_name=body.vm_name,
+                node=body.node,
+                iso_storage=body.iso_storage,
+                storage=body.storage,
+                network_bridge=body.network_bridge,
+                architecture=body.architecture,
+                server_role=body.server_role,
+                os_version=body.os_version,
+                os_edition=body.os_edition,
+                os_language=body.os_language,
+                vm_cores=body.vm_cores,
+                vm_memory_mb=body.vm_memory_mb,
+                vm_disk_size_gb=body.vm_disk_size_gb,
+                secure_boot=body.secure_boot,
+                outbound_policy=body.outbound_policy,
+            )
+            run_ids.append(run["run_id"])
+            extra_vars = osdeploy_endpoints.osdeploy_provision_extra_vars(
+                run=run,
+                artifact=artifact,
+                request=request,
+            )
+            cmd = [
+                "ansible-playbook",
+                str(PLAYBOOK_DIR / "provision_proxmox_osdeploy.yml"),
+            ]
+            for key, value in extra_vars.items():
+                cmd.extend(["-e", f"{key}={value}"])
+            job = job_manager.start(
+                "provision_osdeploy",
+                cmd,
+                args=extra_vars,
+            )
+            osdeploy_pg.append_event(
+                conn,
+                run_id=run["run_id"],
+                phase="proxmox_playbook",
+                event_type="provision_job_queued",
+                message="OSDeploy provision job queued",
+                data={"job_id": job["id"]},
+            )
+    if len(run_ids) == 1:
+        return RedirectResponse(f"/osdeploy/runs/{run_ids[0]}", status_code=303)
+    return RedirectResponse(
+        f"/osdeploy?created={len(run_ids)}&first_run={run_ids[0] if run_ids else ''}",
         status_code=303,
     )
 
@@ -4757,10 +6930,21 @@ async def start_provision(
     memory_mb: int = Form(0),
     disk_size_gb: int = Form(0),
     sequence_id_raw: str | None = Form(None, alias="sequence_id"),
+    ubuntu_v2_sequence_id: str = Form(""),
+    ubuntu_template_vmid: int = Form(0),
     hostname_pattern: str = Form("autopilot-{serial}"),
     chassis_type_override: int = Form(0),
     boot_mode: str = Form("clone"),
     artifact_id: str = Form(""),
+    osdeploy_artifact_id: str = Form(""),
+    osdeploy_server_role: str = Form("base"),
+    osdeploy_node: str = Form(""),
+    osdeploy_iso_storage: str = Form(""),
+    osdeploy_storage: str = Form(""),
+    osdeploy_network_bridge: str = Form(""),
+    osdeploy_os_version: str = Form(""),
+    osdeploy_os_edition: str = Form(""),
+    osdeploy_os_language: str = Form(""),
     node: str = Form(""),
     iso_storage: str = Form(""),
     storage: str = Form(""),
@@ -4779,10 +6963,13 @@ async def start_provision(
     profile = _sanitize_input(profile)
     sequence_id = int(str(sequence_id_raw).strip()) if str(sequence_id_raw or "").strip() else None
     boot_mode = (boot_mode or "clone").lower()
-    if boot_mode not in ("clone", "winpe", "cloudosd"):
+    if boot_mode not in ("clone", "winpe", "cloudosd", "osdeploy", "ubuntu"):
         raise HTTPException(
             status_code=400, detail=f"unknown boot_mode: {boot_mode!r}",
         )
+    selected_sequence = None
+    if boot_mode in ("clone", "winpe", "cloudosd"):
+        selected_sequence = _assert_sequence_allowed_for_boot_mode(sequence_id, boot_mode)
     if boot_mode == "winpe":
         if not _winpe_enabled():
             raise HTTPException(
@@ -4846,6 +7033,48 @@ async def start_provision(
             analytics_enabled=_form_flag(analytics_enabled),
             outbound_policy_mode=outbound_policy_mode.strip() or "blocked",
         )
+    if boot_mode == "osdeploy":
+        return _start_osdeploy_provision_batch(
+            request=request,
+            artifact_id=osdeploy_artifact_id.strip(),
+            count=int(count or 1),
+            serial_prefix=serial_prefix,
+            cores=int(cores or 0),
+            memory_mb=int(memory_mb or 0),
+            disk_size_gb=int(disk_size_gb or 0),
+            hostname_pattern=hostname_pattern,
+            node=osdeploy_node.strip(),
+            iso_storage=osdeploy_iso_storage.strip(),
+            storage=osdeploy_storage.strip(),
+            network_bridge=osdeploy_network_bridge.strip(),
+            server_role=osdeploy_server_role.strip() or "base",
+            os_version=osdeploy_os_version.strip(),
+            os_edition=osdeploy_os_edition.strip(),
+            os_language=osdeploy_os_language.strip(),
+            secure_boot=_form_flag(secure_boot),
+            outbound_policy_mode=outbound_policy_mode.strip() or "blocked",
+        )
+    if boot_mode == "ubuntu":
+        sequence_id_v2 = (ubuntu_v2_sequence_id or "").strip()
+        if not sequence_id_v2:
+            raise HTTPException(status_code=400, detail="Ubuntu v2 provisioning requires an Ubuntu v2 sequence")
+        result = api_ubuntu_v2_provision(_UbuntuV2ProvisionIn(
+            sequence_id=sequence_id_v2,
+            count=int(count or 1),
+            vm_name_prefix=serial_prefix or profile or "ubuntu-v2",
+            hostname_pattern=hostname_pattern,
+            group_tag=group_tag,
+            vm_cores=int(cores or 0) or 2,
+            vm_memory_mb=int(memory_mb or 0) or 4096,
+            vm_disk_size_gb=int(disk_size_gb or 0) or 80,
+            proxmox_template_vmid=int(ubuntu_template_vmid or 0) or None,
+            oem_profile=profile,
+            chassis_type=str(chassis_type_override or ""),
+        ))
+        runs = result.get("runs") or []
+        if len(runs) == 1:
+            return RedirectResponse(f"/task-engine?ubuntu_run={runs[0]['run_id']}", status_code=303)
+        return RedirectResponse(f"/task-engine?ubuntu_created={len(runs)}", status_code=303)
 
     # Stage the chassis-type SMBIOS binary(ies) on the Proxmox host for
     # every possible source of the effective chassis type. The compiler
@@ -4859,7 +7088,7 @@ async def start_provision(
     if chassis_type_override and int(chassis_type_override) > 0:
         _chassis_types_to_stage.add(int(chassis_type_override))
     if sequence_id:
-        _seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        _seq = selected_sequence or sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
         if _seq is not None:
             for _step in _seq["steps"]:
                 if _step["step_type"] == "set_oem_hardware" and _step.get("enabled"):
@@ -4948,7 +7177,7 @@ async def start_provision(
     _answer_floppy_path: Optional[str] = None
     _causes_reboot_count = 0
     if sequence_id:
-        seq = sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
+        seq = selected_sequence or sequences_db.get_sequence(SEQUENCES_DB, int(sequence_id))
         if seq is None:
             raise HTTPException(404, f"sequence {sequence_id} not found")
 
@@ -7213,6 +9442,446 @@ async def build_per_vm_seed(vmid: int, sequence_id: int, hostname: str):
     }
 
 
+class _UbuntuV2TemplateBuildIn(BaseModel):
+    sequence_id: str
+    cloud_image: Optional[str] = None
+    node: Optional[str] = None
+    template_vmid: Optional[int] = None
+
+
+class _UbuntuV2ProvisionIn(BaseModel):
+    sequence_id: str
+    count: int = Field(default=1, ge=1, le=20)
+    vm_name_prefix: str = "ubuntu-v2"
+    hostname_pattern: str = "ubuntu-{vmid}"
+    group_tag: str = ""
+    vm_cores: int = Field(default=2, ge=1)
+    vm_memory_mb: int = Field(default=4096, ge=1024)
+    vm_disk_size_gb: int = Field(default=80, ge=20)
+    proxmox_node: Optional[str] = None
+    proxmox_storage: Optional[str] = None
+    proxmox_bridge: Optional[str] = None
+    proxmox_template_vmid: Optional[int] = None
+    oem_profile: str = ""
+    chassis_type: str = ""
+
+
+def _v2_ubuntu_sequence_steps(conn, sequence_id: str) -> list[dict]:
+    from web import ts_engine_pg
+    from web.osd_v2_catalog import validate_steps_for_target_os
+    from web.ubuntu_v2 import v2_plan_steps_to_ubuntu_steps
+
+    seq = ts_engine_pg.get_sequence(conn, sequence_id)
+    if not seq:
+        raise HTTPException(status_code=404, detail="v2 sequence not found")
+    if (seq.get("target_os") or "windows") != "ubuntu":
+        raise HTTPException(status_code=400, detail="v2 sequence target_os is not ubuntu")
+    nodes = ts_engine_pg.list_sequence_nodes(conn, sequence_id)
+    validate_steps_for_target_os("ubuntu", nodes)
+    return v2_plan_steps_to_ubuntu_steps(nodes)
+
+
+def _v2_ubuntu_credentials(steps: list[dict]) -> dict[int, dict]:
+    cipher = _cipher()
+    credentials: dict[int, dict] = {}
+    for cid in _referenced_credential_ids(steps):
+        row = sequences_db.get_credential(SEQUENCES_DB, cipher, cid)
+        if row is not None:
+            credentials[cid] = row.get("payload") or {}
+    return credentials
+
+
+def _append_cloud_init_runcmd(user_data: str, commands: list[str]) -> str:
+    doc = yaml.safe_load(user_data) or {}
+    runcmd = list(doc.get("runcmd") or [])
+    runcmd.extend(commands)
+    doc["runcmd"] = runcmd
+    return "#cloud-config\n" + yaml.safe_dump(doc, sort_keys=False)
+
+
+def _merge_template_runtime_cloud_init_into_firstboot(
+    template_user_data: str,
+    firstboot_user_data: str,
+) -> str:
+    """Move runtime cloud-init contributions into the per-VM seed.
+
+    v2 Ubuntu provisioning clones an existing template, then attaches a per-VM
+    NoCloud seed. The compiler still emits install/package steps into its
+    template-style user-data document. For cloned v2 runs, those runtime steps
+    must execute from the per-VM first-boot seed before the Linux agent verifies
+    readiness.
+    """
+    template_doc = yaml.safe_load(template_user_data) or {}
+    firstboot_doc = yaml.safe_load(firstboot_user_data) or {}
+
+    for key in ("bootcmd", "write_files", "packages", "users", "runcmd"):
+        values = template_doc.get(key)
+        if values:
+            firstboot_doc.setdefault(key, []).extend(list(values))
+
+    for key in ("apt", "package_update", "package_upgrade", "snap"):
+        if key in template_doc and key not in firstboot_doc:
+            firstboot_doc[key] = template_doc[key]
+
+    return "#cloud-config\n" + yaml.safe_dump(firstboot_doc, sort_keys=False)
+
+
+def _is_loopback_base_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False
+    return (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _derive_guest_reachable_base_url(config: dict) -> str:
+    """Derive a host URL that a guest VM can reach.
+
+    Builder/controller calls can use 127.0.0.1 because the containers run on
+    the host network. Cloud-init runs inside the guest, so a loopback URL would
+    point back at the VM and strand the Linux agent bootstrap.
+    """
+    candidates = [
+        os.environ.get("AUTOPILOT_BASE_URL"),
+        (_load_vars() or {}).get("autopilot_base_url"),
+        (_load_vars() or {}).get("guest_base_url"),
+        config.get("autopilot_base_url"),
+        config.get("guest_base_url"),
+        (_load_vars() or {}).get("web_base_url"),
+        config.get("web_base_url"),
+    ]
+    for candidate in candidates:
+        if candidate and not _is_loopback_base_url(str(candidate)):
+            return str(candidate).rstrip("/")
+
+    port = 5000
+    for candidate in candidates:
+        if candidate:
+            parsed = urlparse(str(candidate))
+            if parsed.port:
+                port = parsed.port
+                break
+
+    probe_host = config.get("proxmox_host") or "8.8.8.8"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect((str(probe_host), 8006))
+            host_ip = sock.getsockname()[0]
+        if host_ip and not host_ip.startswith("127."):
+            return f"http://{host_ip}:{port}"
+    except Exception:
+        pass
+
+    return "http://127.0.0.1:5000"
+
+
+def _linux_agent_bootstrap_commands(*, run_id: str, vmid: int, hostname: str) -> list[str]:
+    from web import winpe_token
+
+    base_url = _derive_guest_reachable_base_url(_load_proxmox_config())
+    token = winpe_token.sign(run_id=run_id, ttl_seconds=24 * 60 * 60)
+    config = {
+        "server_url": base_url.rstrip("/"),
+        "run_id": run_id,
+        "agent_id": f"linux-{vmid}",
+        "phase": "verify",
+        "bearer_token": token,
+        "vmid": vmid,
+        "hostname": hostname,
+    }
+    config_b64 = base64.b64encode(json.dumps(config).encode("utf-8")).decode("ascii")
+    unit = """[Unit]
+Description=ProxmoxVEAutopilot Linux v2 Agent
+After=network-online.target cloud-init.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/proxmoxveautopilot/autopilot_linux_agent.py --config /etc/proxmoxveautopilot/linux-agent.json
+Restart=on-failure
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target
+"""
+    unit_b64 = base64.b64encode(unit.encode("utf-8")).decode("ascii")
+    return [
+        "install -d -m 700 /etc/proxmoxveautopilot /opt/proxmoxveautopilot",
+        f"python3 - <<'PY'\nimport base64, pathlib\npathlib.Path('/etc/proxmoxveautopilot/linux-agent.json').write_bytes(base64.b64decode('{config_b64}'))\nPY",
+        f"curl -fsSL {shlex.quote(base_url.rstrip('/') + '/osd/v2/ubuntu/linux-agent.py')} -o /opt/proxmoxveautopilot/autopilot_linux_agent.py",
+        "chmod 0755 /opt/proxmoxveautopilot/autopilot_linux_agent.py",
+        f"python3 - <<'PY'\nimport base64, pathlib\npathlib.Path('/etc/systemd/system/autopilot-linux-agent.service').write_bytes(base64.b64decode('{unit_b64}'))\nPY",
+        "systemctl daemon-reload",
+        "systemctl enable --now autopilot-linux-agent.service",
+    ]
+
+
+def _upload_seed_iso_to_proxmox(*, user_data: str, meta_data: str, iso_name: str) -> dict:
+    import tempfile as _tmp
+    from web.ubuntu_seed_iso import build_seed_iso
+
+    cfg = _load_proxmox_config()
+    iso_storage = cfg.get("proxmox_iso_storage") or "isos"
+    node = cfg.get("proxmox_node", "pve")
+    with _tmp.TemporaryDirectory() as td:
+        iso_path = Path(td) / iso_name
+        build_seed_iso(user_data=user_data, meta_data=meta_data, out_path=iso_path)
+        host = cfg.get("proxmox_host", "")
+        port = cfg.get("proxmox_port", 8006)
+        token_id = cfg.get("vault_proxmox_api_token_id", "")
+        token_secret = cfg.get("vault_proxmox_api_token_secret", "")
+        url = f"https://{host}:{port}/api2/json/nodes/{node}/storage/{iso_storage}/upload"
+        with open(iso_path, "rb") as fh:
+            resp = requests.post(
+                url,
+                headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
+                data={"content": "iso"},
+                files={"filename": (iso_name, fh, "application/x-iso9660-image")},
+                verify=cfg.get("proxmox_validate_certs", False),
+                timeout=60,
+            )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Proxmox ISO upload failed: HTTP {resp.status_code}: {resp.text[:500]}")
+    return {"iso": f"{iso_storage}:iso/{iso_name}", "storage": iso_storage, "node": node}
+
+
+def _complete_ubuntu_v2_steps(
+    conn,
+    *,
+    run_id: str,
+    agent_id: str,
+    message: str,
+    data: dict | None = None,
+    kinds: set[str] | None = None,
+    phases: set[str] | None = None,
+) -> list[dict]:
+    from web import ts_engine_pg
+
+    completed: list[dict] = []
+    for step in ts_engine_pg.list_run_steps(conn, run_id):
+        if step.get("state") not in ("pending", "running"):
+            continue
+        if kinds is not None and step.get("kind") not in kinds:
+            continue
+        if phases is not None and step.get("phase") not in phases:
+            continue
+        completed.append(ts_engine_pg.complete_step(
+            conn,
+            run_id=run_id,
+            step_id=step["id"],
+            agent_id=agent_id,
+            status="success",
+            message=message,
+            data=data or {},
+        ))
+    return completed
+
+
+@app.get("/osd/v2/ubuntu/linux-agent.py", response_class=FileResponse)
+@app.get("/api/osd/v2/ubuntu/linux-agent.py", response_class=FileResponse)
+def ubuntu_v2_linux_agent_script():
+    path = BASE_DIR / "files" / "linux-agent" / "autopilot_linux_agent.py"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="linux agent asset missing")
+    return FileResponse(path, media_type="text/x-python")
+
+
+@app.post("/api/osd/v2/ubuntu/template-builds", status_code=202)
+def api_ubuntu_v2_template_build(body: _UbuntuV2TemplateBuildIn):
+    from web import db_pg, ts_engine_pg
+    from web.ubuntu_compiler import UbuntuCompileError, compile_sequence
+
+    with db_pg.connection(_database_url()) as conn:
+        steps = _v2_ubuntu_sequence_steps(conn, body.sequence_id)
+        version_id = ts_engine_pg.compile_sequence(conn, body.sequence_id, compiled_by="ubuntu-v2")
+    try:
+        user_data, meta_data, _fb_user, _fb_meta = compile_sequence(
+            steps=steps,
+            credentials=_v2_ubuntu_credentials(steps),
+            instance_id=f"v2-seq-{body.sequence_id}",
+            hostname="ubuntu-template",
+        )
+    except UbuntuCompileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    upload = _upload_seed_iso_to_proxmox(
+        user_data=user_data,
+        meta_data=meta_data,
+        iso_name=f"ubuntu-v2-seed-{body.sequence_id}.iso",
+    )
+    cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "build_template.yml")]
+    cmd += ["-e", "target_os=ubuntu", "-e", f"ubuntu_v2_sequence_id={body.sequence_id}"]
+    cmd += ["-e", f"ubuntu_seed_iso={upload['iso']}"]
+    if body.cloud_image:
+        cmd += ["-e", f"ubuntu_cloud_image={body.cloud_image}"]
+    if body.template_vmid:
+        cmd += ["-e", f"proxmox_template_vmid={body.template_vmid}"]
+    if body.node:
+        cmd += ["-e", f"proxmox_node={body.node}"]
+    job = job_manager.start(
+        "build_template_ubuntu_v2",
+        cmd,
+        args={"target_os": "ubuntu", "sequence_id": body.sequence_id, "sequence_version_id": version_id, **upload},
+    )
+    return {"ok": True, "job_id": job["id"], "sequence_version_id": version_id, **upload}
+
+
+@app.post("/api/osd/v2/ubuntu/per-vm-seed")
+def api_ubuntu_v2_per_vm_seed(vmid: int, run_id: str, hostname: str):
+    from web import db_pg, ts_engine_pg
+    from web.ubuntu_compiler import UbuntuCompileError, compile_sequence
+    from web.ubuntu_v2 import v2_plan_steps_to_ubuntu_steps
+
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            run = ts_engine_pg.get_run(conn, run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="v2 run not found")
+        if run.get("target_os") != "ubuntu":
+            raise HTTPException(status_code=400, detail="v2 run target_os is not ubuntu")
+        steps = v2_plan_steps_to_ubuntu_steps(ts_engine_pg.list_run_steps(conn, run_id))
+    try:
+        template_user_data, _m, firstboot_user_data, firstboot_meta_data = compile_sequence(
+            steps=steps,
+            credentials=_v2_ubuntu_credentials(steps),
+            instance_id=f"v2-run-{run_id}-vm-{vmid}",
+            hostname=hostname,
+        )
+    except UbuntuCompileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    firstboot_user_data = _merge_template_runtime_cloud_init_into_firstboot(
+        template_user_data,
+        firstboot_user_data,
+    )
+    firstboot_user_data = _append_cloud_init_runcmd(
+        firstboot_user_data,
+        _linux_agent_bootstrap_commands(run_id=run_id, vmid=vmid, hostname=hostname),
+    )
+    upload = _upload_seed_iso_to_proxmox(
+        user_data=firstboot_user_data,
+        meta_data=firstboot_meta_data,
+        iso_name=f"ubuntu-v2-per-vm-{vmid}.iso",
+    )
+    return {"ok": True, "vmid": vmid, "run_id": run_id, **upload}
+
+
+@app.post("/api/osd/v2/ubuntu/runs/{run_id}/identity")
+async def api_ubuntu_v2_record_identity(run_id: str, request: Request):
+    from web import db_pg, ts_engine_pg
+
+    body = await request.json()
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            run = ts_engine_pg.update_run_identity(
+                conn,
+                run_id=run_id,
+                vmid=body.get("vmid"),
+                vm_uuid=body.get("vm_uuid"),
+                computer_name=body.get("computer_name") or body.get("hostname"),
+                serial_number=body.get("serial_number"),
+                deployment_target_patch=body,
+            )
+        except ValueError:
+            raise HTTPException(status_code=404, detail="v2 run not found")
+        created_steps = _complete_ubuntu_v2_steps(
+            conn,
+            run_id=run_id,
+            agent_id="controller",
+            kinds={"proxmox_clone_vm"},
+            message="Ubuntu v2 VM created and identity recorded",
+            data=body,
+        )
+    return {"ok": True, "run": run, "completed_steps": len(created_steps)}
+
+
+@app.post("/api/osd/v2/ubuntu/runs/{run_id}/cloud-init-complete")
+async def api_ubuntu_v2_cloud_init_complete(run_id: str, request: Request):
+    from web import db_pg, ts_engine_pg
+    from web.osd_v2_catalog import UBUNTU_COMPILE_STEP_KINDS
+
+    body = await request.json()
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            run = ts_engine_pg.get_run(conn, run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="v2 run not found")
+        if run.get("target_os") != "ubuntu":
+            raise HTTPException(status_code=400, detail="v2 run target_os is not ubuntu")
+        completed_steps = _complete_ubuntu_v2_steps(
+            conn,
+            run_id=run_id,
+            agent_id="controller",
+            kinds=set(UBUNTU_COMPILE_STEP_KINDS),
+            phases={"install", "first_boot"},
+            message="Ubuntu cloud-init completed for compile-time and first-boot steps",
+            data=body,
+        )
+    return {"ok": True, "run_id": run_id, "completed_steps": len(completed_steps)}
+
+
+@app.post("/api/osd/v2/ubuntu/provision", status_code=202)
+def api_ubuntu_v2_provision(body: _UbuntuV2ProvisionIn):
+    from web import db_pg, ts_engine_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        _v2_ubuntu_sequence_steps(conn, body.sequence_id)
+        version_id = ts_engine_pg.compile_sequence(conn, body.sequence_id, compiled_by="ubuntu-v2")
+        run_ids = []
+        for index in range(1, body.count + 1):
+            deployment_target = {
+                "target_os": "ubuntu",
+                "hostname_pattern": body.hostname_pattern,
+                "group_tag": body.group_tag,
+                "index": index,
+            }
+            run_id = ts_engine_pg.create_run_from_version(
+                conn,
+                sequence_version_id=version_id,
+                deployment_target=deployment_target,
+                run_variables={
+                    "target_os": "ubuntu",
+                    "group_tag": body.group_tag,
+                    "source_surface": "provision",
+                    "index": index,
+                },
+                created_by="ubuntu-v2-provision",
+            )
+            run_ids.append(run_id)
+
+    jobs = []
+    cfg = _load_proxmox_config()
+    for index, run_id in enumerate(run_ids, start=1):
+        cmd = ["ansible-playbook", str(PLAYBOOK_DIR / "provision_clone.yml")]
+        extra = {
+            "target_os": "ubuntu",
+            "hypervisor_type": "proxmox",
+            "vm_count": 1,
+            "vm_name_prefix": body.vm_name_prefix,
+            "hostname_pattern": body.hostname_pattern,
+            "ubuntu_v2_run_id": run_id,
+            "vm_cores": body.vm_cores,
+            "vm_memory_mb": body.vm_memory_mb,
+            "vm_disk_size_gb": body.vm_disk_size_gb,
+            "proxmox_node": body.proxmox_node or cfg.get("proxmox_node", "pve"),
+            "proxmox_storage": body.proxmox_storage or cfg.get("proxmox_storage", "local-lvm"),
+            "proxmox_bridge": body.proxmox_bridge or cfg.get("proxmox_bridge", "vmbr0"),
+            "group_tag": body.group_tag,
+            "vm_oem_profile": body.oem_profile,
+            "chassis_type_override": body.chassis_type,
+        }
+        if body.proxmox_template_vmid:
+            extra["proxmox_template_vmid"] = body.proxmox_template_vmid
+        for key, value in extra.items():
+            if value is not None and value != "":
+                cmd += ["-e", f"{key}={value}"]
+        job = job_manager.start(
+            "provision_ubuntu_v2",
+            cmd,
+            args={"target_os": "ubuntu", "run_id": run_id, "sequence_id": body.sequence_id, "index": index, **extra},
+        )
+        jobs.append({"job_id": job["id"], "run_id": run_id, "index": index})
+    return {"ok": True, "sequence_version_id": version_id, "runs": jobs}
+
+
 # --- Version / update check ------------------------------------------------
 
 _GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"
@@ -8102,6 +10771,7 @@ class _V2BuilderNodeIn(BaseModel):
 class _V2BuilderSequenceIn(BaseModel):
     name: str
     description: str = ""
+    target_os: str = "windows"
     enabled: bool = True
     nodes: list[_V2BuilderNodeIn] = Field(default_factory=list)
 
@@ -8376,16 +11046,16 @@ _V2_STEP_TEMPLATES = [
     },
     {
         "kind": "cloudosd_preflight",
-        "label": "CloudOSD preflight",
+        "label": "OSDCloud preflight",
         "phase": "pe",
-        "category": "CloudOSD",
+        "category": "OSDCloud",
         "description": "Validate VM identity, network, artifact, catalog, and package inputs.",
     },
     {
         "kind": "cloudosd_deploy_os",
         "label": "Run OSDCloud workflow",
         "phase": "pe",
-        "category": "CloudOSD",
+        "category": "OSDCloud",
         "description": "Let OSDCloud partition, apply Windows, and prepare boot files.",
         "timeout_seconds": 7200,
     },
@@ -8539,7 +11209,135 @@ _V2_STEP_TEMPLATES = [
         "retry_count": 60,
         "retry_delay_seconds": 10,
     },
+    {
+        "kind": "install_ubuntu_core",
+        "label": "Install Ubuntu core",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Set locale, timezone, package update policy, QGA package, and optional apt proxy on the Ubuntu cloud image.",
+    },
+    {
+        "kind": "create_ubuntu_user",
+        "label": "Create Ubuntu user",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Create the local sudo user from a local_admin credential reference.",
+    },
+    {
+        "kind": "install_desktop_environment",
+        "label": "Install desktop environment",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Install the selected Ubuntu desktop metapackage on the template.",
+        "timeout_seconds": 7200,
+    },
+    {
+        "kind": "install_apt_packages",
+        "label": "Install apt packages",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Install apt packages during cloud-init template build.",
+    },
+    {
+        "kind": "remove_apt_packages",
+        "label": "Remove apt packages",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Purge apt packages during cloud-init template build.",
+    },
+    {
+        "kind": "install_snap_packages",
+        "label": "Install snap packages",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Install snap packages during cloud-init template build.",
+    },
+    {
+        "kind": "install_intune_portal",
+        "label": "Install Intune Portal",
+        "phase": "install",
+        "category": "Ubuntu Readiness",
+        "description": "Configure the Microsoft Ubuntu repository and install intune-portal.",
+    },
+    {
+        "kind": "install_edge",
+        "label": "Install Microsoft Edge",
+        "phase": "install",
+        "category": "Ubuntu Readiness",
+        "description": "Configure the Microsoft Edge repository and install microsoft-edge-stable.",
+    },
+    {
+        "kind": "install_mde_linux",
+        "label": "Install MDE for Linux",
+        "phase": "install",
+        "category": "Ubuntu Readiness",
+        "description": "Install mdatp and run the Defender onboarding credential during cloud-init.",
+    },
+    {
+        "kind": "run_late_command",
+        "label": "Run Ubuntu install command",
+        "phase": "install",
+        "category": "Ubuntu",
+        "description": "Run a shell command during Ubuntu template cloud-init.",
+    },
+    {
+        "kind": "run_firstboot_script",
+        "label": "Run Ubuntu first-boot script",
+        "phase": "first_boot",
+        "category": "Ubuntu",
+        "description": "Run a shell command from the per-VM first-boot NoCloud seed.",
+    },
+    {
+        "kind": "wait_cloud_init_complete",
+        "label": "Wait for cloud-init complete",
+        "phase": "verify",
+        "category": "Ubuntu Verify",
+        "description": "Linux agent reports cloud-init status evidence after first boot.",
+        "retry_count": 30,
+        "retry_delay_seconds": 20,
+    },
+    {
+        "kind": "verify_qga_linux",
+        "label": "Verify Linux QGA",
+        "phase": "verify",
+        "category": "Ubuntu Verify",
+        "description": "Linux agent confirms qemu-guest-agent package and service state.",
+        "retry_count": 10,
+        "retry_delay_seconds": 15,
+    },
+    {
+        "kind": "verify_intune_portal",
+        "label": "Verify Intune Portal",
+        "phase": "verify",
+        "category": "Ubuntu Readiness",
+        "description": "Linux agent reports intune-portal install/version and enrollment readiness.",
+        "retry_count": 10,
+        "retry_delay_seconds": 30,
+    },
+    {
+        "kind": "verify_mde_linux",
+        "label": "Verify MDE for Linux",
+        "phase": "verify",
+        "category": "Ubuntu Readiness",
+        "description": "Linux agent reports mdatp health/onboarding state.",
+        "retry_count": 10,
+        "retry_delay_seconds": 30,
+    },
+    {
+        "kind": "linux_agent_heartbeat",
+        "label": "Linux agent heartbeat",
+        "phase": "full_os",
+        "category": "Ubuntu Verify",
+        "description": "Completion gate that proves the Ubuntu v2 agent has registered from the installed OS.",
+        "retry_count": 60,
+        "retry_delay_seconds": 10,
+    },
 ]
+
+from web.osd_v2_catalog import target_for_step_kind
+
+for _template in _V2_STEP_TEMPLATES:
+    _template.setdefault("target_os", target_for_step_kind(_template["kind"]))
 
 
 def _v2_template_node(kind: str, **overrides) -> dict:
@@ -8569,11 +11367,12 @@ def _v2_template_node(kind: str, **overrides) -> dict:
 _V2_CURRENT_FLOW_TEMPLATES = [
     {
         "id": "cloudosd-desktop",
-        "name": "CloudOSD Desktop Client",
-        "path": "CloudOSD",
+        "name": "OSDCloud Desktop Client",
+        "target_os": "windows",
+        "path": "OSDCloud",
         "status": "primary desktop path",
         "description": (
-            "Deploy a Windows desktop client through CloudOSD, stage the OSD client "
+            "Deploy a Windows desktop client through OSDCloud, stage the OSD client "
             "and AutopilotAgent, capture the Autopilot hash, and keep completion gated "
             "on the run-bound agent heartbeat."
         ),
@@ -8594,11 +11393,12 @@ _V2_CURRENT_FLOW_TEMPLATES = [
     },
     {
         "id": "cloudosd-desktop-domain-join",
-        "name": "CloudOSD Desktop Client + AD Domain Join",
-        "path": "CloudOSD",
+        "name": "OSDCloud Desktop Client + AD Domain Join",
+        "target_os": "windows",
+        "path": "OSDCloud",
         "status": "desktop identity path",
         "description": (
-            "Deploy a Windows desktop client through CloudOSD and stage AD domain join "
+            "Deploy a Windows desktop client through OSDCloud and stage AD domain join "
             "through specialize unattend while ProxmoxVEAutopilot v2 owns verification."
         ),
         "notes": [
@@ -8619,8 +11419,119 @@ _V2_CURRENT_FLOW_TEMPLATES = [
         ],
     },
     {
+        "id": "osdeploy-server-base",
+        "name": "OSDeploy Windows Server Base",
+        "target_os": "windows",
+        "path": "OSDeploy",
+        "status": "advanced Server base path",
+        "description": (
+            "Deploy a Windows Server base VM through OSDeploy v2 with artifact, "
+            "cache, PE, full-OS agent, and heartbeat evidence."
+        ),
+        "notes": [
+            "This is the first OSDeploy maturity gate before role automation.",
+            "Completion requires the run-scoped AutopilotAgent heartbeat.",
+        ],
+        "nodes": [
+            _v2_template_node("osdeploy_preflight", name="OSDeploy artifact and cache preflight"),
+            _v2_template_node("apply_wim", name="Apply OSDeploy Server image"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("bake_boot_entry"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "osdeploy-file-server",
+        "name": "OSDeploy File Server",
+        "target_os": "windows",
+        "path": "OSDeploy",
+        "status": "server role template",
+        "description": "Deploy Windows Server base and configure file server prerequisites through v2 role steps.",
+        "notes": [
+            "Role steps run after the OSDeploy base image and agent heartbeat path exists.",
+        ],
+        "nodes": [
+            _v2_template_node("osdeploy_preflight", name="OSDeploy artifact and cache preflight"),
+            _v2_template_node("apply_wim", name="Apply OSDeploy Server image"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("run_script", name="Configure File Server role", params={"server_role": "file_server"}),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "osdeploy-isolated-domain-controller",
+        "name": "OSDeploy Isolated Domain Controller",
+        "target_os": "windows",
+        "path": "OSDeploy",
+        "status": "isolated lab identity template",
+        "description": "Deploy an isolated lab forest domain controller without mutating existing production domains.",
+        "notes": [
+            "Existing-domain operations require a separate approval-gated plan.",
+        ],
+        "nodes": [
+            _v2_template_node("osdeploy_preflight", name="OSDeploy artifact and cache preflight"),
+            _v2_template_node("apply_wim", name="Apply OSDeploy Server image"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("run_script", name="Create isolated lab forest", params={"server_role": "isolated_domain_controller"}),
+            _v2_template_node("verify_ad_domain_join", name="Verify isolated lab domain services"),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "osdeploy-mecm-prereq",
+        "name": "OSDeploy MECM Prereq Baseline",
+        "target_os": "windows",
+        "path": "OSDeploy",
+        "status": "MECM foundation template",
+        "description": "Deploy Windows Server and stage MECM prerequisites before a later dedicated site-server install milestone.",
+        "notes": [
+            "Full MECM site install is intentionally later than prerequisite validation.",
+        ],
+        "nodes": [
+            _v2_template_node("osdeploy_preflight", name="OSDeploy artifact and cache preflight"),
+            _v2_template_node("apply_wim", name="Apply OSDeploy Server image"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("run_script", name="Install MECM prerequisites", params={"server_role": "mecm_prereq"}),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "osdeploy-lab-in-a-box",
+        "name": "OSDeploy Lab in a Box",
+        "target_os": "windows",
+        "path": "OSDeploy",
+        "status": "multi-server lab template",
+        "description": "Template shape for disposable isolated lab bundles composed from OSDeploy Server roles.",
+        "notes": [
+            "M1 creates the template and base run evidence; multi-VM orchestration is a later milestone.",
+        ],
+        "nodes": [
+            _v2_template_node("osdeploy_preflight", name="OSDeploy artifact and cache preflight"),
+            _v2_template_node("apply_wim", name="Apply OSDeploy Server image"),
+            _v2_template_node("apply_driver_package"),
+            _v2_template_node("prepare_windows_setup"),
+            _v2_template_node("stage_osd_client"),
+            _v2_template_node("stage_autopilot_agent"),
+            _v2_template_node("run_script", name="Configure lab bundle role", params={"server_role": "lab_in_a_box"}),
+            _v2_template_node("wait_agent_heartbeat"),
+        ],
+    },
+    {
         "id": "winpe-desktop-wim",
         "name": "WinPE Desktop WIM Deployment",
+        "target_os": "windows",
         "path": "WinPE",
         "status": "desktop fallback path",
         "description": (
@@ -8629,7 +11540,7 @@ _V2_CURRENT_FLOW_TEMPLATES = [
         ),
         "notes": [
             "Keep this path available for fallback and regression checks.",
-            "The existing WinPE orchestration remains independent from CloudOSD.",
+            "The existing WinPE orchestration remains independent from OSDCloud.",
         ],
         "nodes": [
             _v2_template_node("capture_hash"),
@@ -8644,10 +11555,11 @@ _V2_CURRENT_FLOW_TEMPLATES = [
     {
         "id": "winpe-server-wim",
         "name": "WinPE Windows Server WIM Deployment",
+        "target_os": "windows",
         "path": "WinPE",
         "status": "server path",
         "description": (
-            "Deploy Windows Server through the WinPE/WIM substrate. CloudOSD remains "
+            "Deploy Windows Server through the WinPE/WIM substrate. OSDCloud remains "
             "desktop-focused; server builds stay on WinPE or clone workflows."
         ),
         "notes": [
@@ -8666,6 +11578,7 @@ _V2_CURRENT_FLOW_TEMPLATES = [
     {
         "id": "clone-desktop-template",
         "name": "Proxmox Clone Desktop from Template",
+        "target_os": "windows",
         "path": "Clone",
         "status": "template clone path",
         "description": (
@@ -8684,6 +11597,144 @@ _V2_CURRENT_FLOW_TEMPLATES = [
             _v2_template_node("wait_guest_agent"),
             _v2_template_node("install_qga"),
             _v2_template_node("verify_qga"),
+        ],
+    },
+    {
+        "id": "ubuntu-desktop-plain",
+        "name": "Ubuntu Desktop Plain",
+        "target_os": "ubuntu",
+        "path": "Ubuntu",
+        "status": "desktop baseline",
+        "description": (
+            "Build and clone an Ubuntu 24.04 desktop client from the cloud-image "
+            "NoCloud path, then verify cloud-init, QGA, and Linux agent heartbeat."
+        ),
+        "notes": [
+            "No Autopilot hash or Intune upload is used for Ubuntu.",
+            "The Linux v2 agent owns full-OS readiness evidence after first boot.",
+        ],
+        "nodes": [
+            _v2_template_node("proxmox_clone_vm"),
+            _v2_template_node("install_ubuntu_core"),
+            _v2_template_node(
+                "create_ubuntu_user",
+                params={"local_admin_credential_id": 1},
+            ),
+            _v2_template_node(
+                "install_desktop_environment",
+                params={"flavor": "ubuntu-desktop"},
+            ),
+            _v2_template_node("wait_cloud_init_complete"),
+            _v2_template_node("verify_qga_linux"),
+            _v2_template_node("linux_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "ubuntu-desktop-intune-edge",
+        "name": "Ubuntu Desktop Intune + Edge",
+        "target_os": "ubuntu",
+        "path": "Ubuntu",
+        "status": "desktop readiness path",
+        "description": (
+            "Build an Ubuntu desktop with Intune Portal and Microsoft Edge installed, "
+            "then report enrollment as waiting for interactive user sign-in."
+        ),
+        "notes": [
+            "Intune Linux enrollment is not treated as an unattended deployment gate.",
+            "The readiness state can remain waiting_for_user_signin without failing the run.",
+        ],
+        "nodes": [
+            _v2_template_node("proxmox_clone_vm"),
+            _v2_template_node("install_ubuntu_core"),
+            _v2_template_node(
+                "create_ubuntu_user",
+                params={"local_admin_credential_id": 1},
+            ),
+            _v2_template_node("install_intune_portal"),
+            _v2_template_node("install_edge"),
+            _v2_template_node("install_desktop_environment", params={"flavor": "ubuntu-desktop"}),
+            _v2_template_node("wait_cloud_init_complete"),
+            _v2_template_node("verify_intune_portal"),
+            _v2_template_node("linux_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "ubuntu-desktop-intune-mde",
+        "name": "Ubuntu Desktop Intune + MDE",
+        "target_os": "ubuntu",
+        "path": "Ubuntu",
+        "status": "LinuxESP-style path",
+        "description": (
+            "LinuxESP-style Ubuntu desktop with Intune Portal, Edge, and Defender "
+            "for Endpoint onboarding tracked through v2 readiness evidence."
+        ),
+        "notes": [
+            "MDE onboarding is resolved from a credential at compile time.",
+            "Do not persist onboarding script content in v2 plans, job args, or UI JSON.",
+        ],
+        "nodes": [
+            _v2_template_node("proxmox_clone_vm"),
+            _v2_template_node("install_ubuntu_core"),
+            _v2_template_node(
+                "create_ubuntu_user",
+                params={"local_admin_credential_id": 1},
+            ),
+            _v2_template_node("install_apt_packages", params={"packages": ["curl", "git", "wget", "gpg"]}),
+            _v2_template_node("install_intune_portal"),
+            _v2_template_node("install_edge"),
+            _v2_template_node("install_mde_linux", params={"mde_onboarding_credential_id": 0}),
+            _v2_template_node("install_snap_packages", params={"snaps": [{"name": "code", "classic": True}, {"name": "powershell", "classic": True}]}),
+            _v2_template_node("install_desktop_environment", params={"flavor": "ubuntu-desktop"}),
+            _v2_template_node("wait_cloud_init_complete"),
+            _v2_template_node("verify_intune_portal"),
+            _v2_template_node("verify_mde_linux"),
+            _v2_template_node("linux_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "ubuntu-server-minimal",
+        "name": "Ubuntu Server Minimal",
+        "target_os": "ubuntu",
+        "path": "Ubuntu",
+        "status": "server baseline",
+        "description": "Build and clone a minimal Ubuntu 24.04 server with QGA and Linux agent evidence.",
+        "notes": [
+            "This path is for Linux server-style workloads; Windows Server remains on WinPE or clone.",
+        ],
+        "nodes": [
+            _v2_template_node("proxmox_clone_vm"),
+            _v2_template_node("install_ubuntu_core"),
+            _v2_template_node(
+                "create_ubuntu_user",
+                params={"local_admin_credential_id": 1},
+            ),
+            _v2_template_node("wait_cloud_init_complete"),
+            _v2_template_node("verify_qga_linux"),
+            _v2_template_node("linux_agent_heartbeat"),
+        ],
+    },
+    {
+        "id": "ubuntu-apt-cache-server",
+        "name": "Ubuntu apt-cache Server",
+        "target_os": "ubuntu",
+        "path": "Ubuntu",
+        "status": "lab infrastructure",
+        "description": "Provision an Ubuntu apt-cache server and report QGA/Linux agent readiness through v2.",
+        "notes": [
+            "Use this before large Ubuntu desktop batches when the lab benefits from apt caching.",
+        ],
+        "nodes": [
+            _v2_template_node("proxmox_clone_vm"),
+            _v2_template_node("install_ubuntu_core"),
+            _v2_template_node(
+                "create_ubuntu_user",
+                params={"local_admin_credential_id": 1},
+            ),
+            _v2_template_node("install_apt_packages", params={"packages": ["apt-cacher-ng"]}),
+            _v2_template_node("run_late_command", params={"command": "systemctl enable --now apt-cacher-ng"}),
+            _v2_template_node("wait_cloud_init_complete"),
+            _v2_template_node("verify_qga_linux"),
+            _v2_template_node("linux_agent_heartbeat"),
         ],
     },
 ]
@@ -8798,16 +11849,26 @@ def _legacy_sequence_to_v2_nodes(legacy: dict) -> list[dict]:
 
 def _save_v2_builder_sequence(conn, sequence_id: str, body: _V2BuilderSequenceIn) -> str:
     from web import ts_engine_pg
+    from web.osd_v2_catalog import validate_steps_for_target_os
 
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="sequence name is required")
+    target_os = (body.target_os or "windows").strip().lower()
+    try:
+        validate_steps_for_target_os(
+            target_os,
+            [node.model_dump() for node in body.nodes],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     try:
         ts_engine_pg.update_sequence(
             conn,
             sequence_id,
             name=name,
             description=body.description,
+            target_os=target_os,
             enabled=body.enabled,
             updated_by="ui-builder",
         )
@@ -8853,8 +11914,10 @@ def task_engine_page(request: Request):
         for run in runs:
             steps = ts_engine_pg.list_run_steps(conn, run["id"])
             run["steps"] = steps
+            sequence_name = str(run.get("sequence_name") or "")
             if (
-                str(run.get("sequence_name") or "").startswith("CloudOSD deployment")
+                sequence_name.startswith("OSDCloud deployment")
+                or sequence_name.startswith("CloudOSD deployment")
                 or any(step.get("kind") in cloudosd_step_kinds for step in steps)
             ):
                 cloudosd_runs.append(run)
@@ -8877,19 +11940,32 @@ def task_engine_page(request: Request):
 
 
 @app.get("/task-engine/sequences/list", response_class=HTMLResponse)
-def task_engine_sequences_list(request: Request):
+def task_engine_sequences_list(request: Request, target_os: str | None = None):
     from web import db_pg, ts_engine_pg
 
     with db_pg.connection(_database_url()) as conn:
         sequences = ts_engine_pg.list_sequences(conn)
+        target_filter = (target_os or "").strip().lower()
+        if target_filter:
+            sequences = [
+                seq for seq in sequences
+                if (seq.get("target_os") or "windows") == target_filter
+            ]
         for seq in sequences:
             seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
+    templates_for_ui = _v2_flow_templates()
+    if target_filter:
+        templates_for_ui = [
+            template for template in templates_for_ui
+            if (template.get("target_os") or "windows") == target_filter
+        ]
     return templates.TemplateResponse(
         "task_engine_sequences_list.html",
         {
             "request": request,
             "sequences": sequences,
-            "flow_templates": _v2_flow_templates(),
+            "flow_templates": templates_for_ui,
+            "target_os_filter": target_filter,
         },
     )
 
@@ -8911,6 +11987,7 @@ def task_engine_sequence_new(
             "id": None,
             "name": f"{flow_template['name']} copy",
             "description": flow_template["description"],
+            "target_os": flow_template.get("target_os", "windows"),
             "enabled": True,
         }
         nodes = flow_template["nodes"]
@@ -8919,6 +11996,7 @@ def task_engine_sequence_new(
             "id": None,
             "name": f"{legacy['name']} v2",
             "description": legacy.get("description") or "",
+            "target_os": legacy.get("target_os") or "windows",
             "enabled": True,
         }
         nodes = _legacy_sequence_to_v2_nodes(legacy)
@@ -8988,6 +12066,7 @@ def api_v2_builder_create_sequence(body: _V2BuilderSequenceIn):
                 conn,
                 name=name,
                 description=body.description,
+                target_os=(body.target_os or "windows").lower(),
                 created_by="ui-builder",
             )
             version_id = _save_v2_builder_sequence(conn, sequence_id, body)
@@ -9018,6 +12097,7 @@ def api_v2_builder_import_legacy_sequence(legacy_id: int):
     body = _V2BuilderSequenceIn(
         name=f"{legacy['name']} v2",
         description=legacy.get("description") or "",
+        target_os=legacy.get("target_os") or "windows",
         enabled=True,
         nodes=[_V2BuilderNodeIn(**node) for node in _legacy_sequence_to_v2_nodes(legacy)],
     )
@@ -9027,6 +12107,7 @@ def api_v2_builder_import_legacy_sequence(legacy_id: int):
                 conn,
                 name=body.name,
                 description=body.description,
+                target_os=(body.target_os or "windows").lower(),
                 created_by=f"legacy:{legacy_id}",
             )
             version_id = _save_v2_builder_sequence(conn, sequence_id, body)

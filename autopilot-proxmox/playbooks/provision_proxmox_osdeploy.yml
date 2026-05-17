@@ -1,0 +1,3 @@
+---
+- name: Provision Proxmox VM through OSDeploy v2
+  import_playbook: _provision_proxmox_osdeploy_vm.yml

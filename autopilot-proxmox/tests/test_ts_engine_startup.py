@@ -13,12 +13,15 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     from web import app as web_app
     from web import (
         agent_telemetry_pg,
+        cloudosd_cache,
         cloudosd_pg,
         db_pg,
         deployment_health_pg,
         device_history_pg,
         devices_pg,
         jobs_pg,
+        osdeploy_cache,
+        osdeploy_pg,
         sequences_pg,
         service_health_pg,
         ts_engine_pg,
@@ -61,6 +64,15 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     def fake_cloudosd_init(conn):
         calls.append(("cloudosd_init", conn.__class__.__name__))
 
+    def fake_cloudosd_cache_init(conn):
+        calls.append(("cloudosd_cache_init", conn.__class__.__name__))
+
+    def fake_osdeploy_init(conn):
+        calls.append(("osdeploy_init", conn.__class__.__name__))
+
+    def fake_osdeploy_cache_init(conn):
+        calls.append(("osdeploy_cache_init", conn.__class__.__name__))
+
     def fake_deployment_health_init(conn):
         calls.append(("deployment_health_init", conn.__class__.__name__))
 
@@ -76,6 +88,9 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     monkeypatch.setattr(devices_pg, "init", fake_devices_init)
     monkeypatch.setattr(agent_telemetry_pg, "init", fake_agent_telemetry_init)
     monkeypatch.setattr(cloudosd_pg, "init", fake_cloudosd_init)
+    monkeypatch.setattr(cloudosd_cache, "init", fake_cloudosd_cache_init)
+    monkeypatch.setattr(osdeploy_pg, "init", fake_osdeploy_init)
+    monkeypatch.setattr(osdeploy_cache, "init", fake_osdeploy_cache_init)
     monkeypatch.setattr(deployment_health_pg, "init", fake_deployment_health_init)
 
     with TestClient(web_app.app):
@@ -94,6 +109,9 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         ("devices_init", "FakeConn"),
         ("agent_telemetry_init", "FakeConn"),
         ("cloudosd_init", "FakeConn"),
+        ("cloudosd_cache_init", "FakeConn"),
+        ("osdeploy_init", "FakeConn"),
+        ("osdeploy_cache_init", "FakeConn"),
         ("deployment_health_init", "FakeConn"),
     ]
 
@@ -168,9 +186,13 @@ def test_docker_compose_declares_postgres_for_task_sequence_engine():
     assert postgres["image"] == "postgres:16-alpine"
     assert "127.0.0.1:5432:5432" in postgres["ports"]
     assert "autopilot-postgres:/var/lib/postgresql/data" in postgres["volumes"]
+    assert "apparmor=unconfined" in postgres["security_opt"]
     assert postgres["healthcheck"]["test"] == [
         "CMD-SHELL",
-        "pg_isready -U autopilot -d autopilot",
+        (
+            "pg_isready -U autopilot -d autopilot && "
+            "psql -U autopilot -d autopilot -tAc 'SELECT 1' >/dev/null"
+        ),
     ]
 
     autopilot = compose["services"]["autopilot"]
@@ -182,3 +204,17 @@ def test_docker_compose_declares_postgres_for_task_sequence_engine():
         in autopilot["environment"]
     )
     assert "autopilot-postgres" in compose["volumes"]
+
+
+def test_docker_compose_persists_osdeploy_cache_for_all_runtime_services():
+    compose_path = Path(__file__).resolve().parents[1] / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text())
+
+    expected_mount = "./cache/osdeploy:/app/cache/osdeploy"
+    for service_name in ("autopilot", "autopilot-builder", "autopilot-monitor", "autopilot-mcp"):
+        service = compose["services"][service_name]
+        assert expected_mount in service["volumes"]
+        assert (
+            service["environment"]["AUTOPILOT_OSDEPLOY_CACHE_ROOT"]
+            == "${AUTOPILOT_OSDEPLOY_CACHE_ROOT:-/app/cache/osdeploy}"
+        )

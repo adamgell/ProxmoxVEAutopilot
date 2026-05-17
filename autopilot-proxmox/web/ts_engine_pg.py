@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS ts_task_sequences (
     id uuid PRIMARY KEY,
     name text NOT NULL,
     description text,
+    target_os text NOT NULL DEFAULT 'windows',
     enabled boolean NOT NULL DEFAULT true,
     current_version_id uuid NULL,
     created_at timestamptz NOT NULL,
@@ -46,6 +47,9 @@ CREATE TABLE IF NOT EXISTS ts_task_sequences (
     created_by text,
     updated_by text
 );
+
+ALTER TABLE ts_task_sequences
+    ADD COLUMN IF NOT EXISTS target_os text NOT NULL DEFAULT 'windows';
 
 CREATE TABLE IF NOT EXISTS ts_task_sequence_nodes (
     id uuid PRIMARY KEY,
@@ -325,6 +329,7 @@ def create_sequence(
     *,
     name: str,
     description: str = "",
+    target_os: str = "windows",
     created_by: Optional[str] = None,
 ) -> str:
     sequence_id = _new_id()
@@ -332,10 +337,19 @@ def create_sequence(
     conn.execute(
         """
         INSERT INTO ts_task_sequences
-            (id, name, description, created_at, updated_at, created_by, updated_by)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (id, name, description, target_os, created_at, updated_at, created_by, updated_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (sequence_id, name, description, now, now, created_by, created_by),
+        (
+            sequence_id,
+            name,
+            description,
+            (target_os or "windows").lower(),
+            now,
+            now,
+            created_by,
+            created_by,
+        ),
     )
     _commit(conn)
     return sequence_id
@@ -359,6 +373,7 @@ def list_sequences(conn: Connection) -> list[dict]:
             "id": str(row["id"]),
             "name": row["name"],
             "description": row["description"] or "",
+            "target_os": row["target_os"] or "windows",
             "enabled": bool(row["enabled"]),
             "current_version_id": (
                 str(row["current_version_id"]) if row["current_version_id"] else None
@@ -387,6 +402,7 @@ def get_sequence(conn: Connection, sequence_id: str) -> dict | None:
         "id": str(row["id"]),
         "name": row["name"],
         "description": row["description"] or "",
+        "target_os": row["target_os"] or "windows",
         "enabled": bool(row["enabled"]),
         "current_version_id": (
             str(row["current_version_id"]) if row["current_version_id"] else None
@@ -404,6 +420,7 @@ def update_sequence(
     *,
     name: str | None = None,
     description: str | None = None,
+    target_os: str | None = None,
     enabled: bool | None = None,
     updated_by: str | None = None,
 ) -> None:
@@ -412,6 +429,7 @@ def update_sequence(
     for column, value in (
         ("name", name),
         ("description", description),
+        ("target_os", (target_os or "windows").lower() if target_os is not None else None),
         ("enabled", enabled),
         ("updated_by", updated_by),
     ):
@@ -1060,12 +1078,35 @@ def list_run_steps(conn: Connection, run_id: str) -> list[dict]:
     return [_normalize_step(row) for row in rows]
 
 
+def list_run_events(conn: Connection, run_id: str, *, limit: int = 200) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM ts_run_step_events
+        WHERE run_id = %s
+        ORDER BY created_at DESC, id DESC
+        LIMIT %s
+        """,
+        (run_id, limit),
+    ).fetchall()
+    return [
+        {
+            **row,
+            "run_id": str(row["run_id"]),
+            "step_id": str(row["step_id"]) if row["step_id"] else None,
+            "created_at": _iso(row["created_at"]),
+        }
+        for row in rows
+    ]
+
+
 def list_runs(conn: Connection, *, limit: int = 50) -> list[dict]:
     rows = conn.execute(
         """
         SELECT
             r.*,
             s.name AS sequence_name,
+            s.target_os AS sequence_target_os,
             v.version AS sequence_version,
             COUNT(DISTINCT st.id) AS step_count,
             COUNT(DISTINCT st.id) FILTER (WHERE st.state = 'done') AS done_count,
@@ -1077,7 +1118,7 @@ def list_runs(conn: Connection, *, limit: int = 50) -> list[dict]:
         JOIN ts_task_sequence_versions v ON v.id = r.sequence_version_id
         LEFT JOIN ts_run_plan_steps st ON st.run_id = r.id
         LEFT JOIN ts_run_content_manifest m ON m.run_id = r.id
-        GROUP BY r.id, s.name, v.version
+        GROUP BY r.id, s.name, s.target_os, v.version
         ORDER BY r.started_at DESC
         LIMIT %s
         """,
@@ -1089,6 +1130,7 @@ def list_runs(conn: Connection, *, limit: int = 50) -> list[dict]:
             "legacy_run_id": row["legacy_run_id"],
             "sequence_id": str(row["sequence_id"]),
             "sequence_name": row["sequence_name"],
+            "target_os": row["sequence_target_os"] or "windows",
             "sequence_version_id": str(row["sequence_version_id"]),
             "sequence_version": int(row["sequence_version"]),
             "state": row["state"],
@@ -1953,7 +1995,12 @@ def get_step(conn: Connection, step_id: str) -> dict:
 
 def get_run(conn: Connection, run_id: str) -> dict:
     row = conn.execute(
-        "SELECT * FROM ts_provisioning_runs WHERE id = %s",
+        """
+        SELECT r.*, s.target_os AS sequence_target_os, s.name AS sequence_name
+        FROM ts_provisioning_runs r
+        JOIN ts_task_sequences s ON s.id = r.sequence_id
+        WHERE r.id = %s
+        """,
         (run_id,),
     ).fetchone()
     if not row:
@@ -1962,9 +2009,49 @@ def get_run(conn: Connection, run_id: str) -> dict:
         **row,
         "id": str(row["id"]),
         "sequence_id": str(row["sequence_id"]),
+        "sequence_name": row["sequence_name"],
+        "target_os": row["sequence_target_os"] or "windows",
         "sequence_version_id": str(row["sequence_version_id"]),
         "cursor_step_id": str(row["cursor_step_id"]) if row["cursor_step_id"] else None,
     }
+
+
+def update_run_identity(
+    conn: Connection,
+    *,
+    run_id: str,
+    vmid: int | None = None,
+    vm_uuid: str | None = None,
+    computer_name: str | None = None,
+    serial_number: str | None = None,
+    deployment_target_patch: dict | None = None,
+) -> dict:
+    run = get_run(conn, run_id)
+    target = dict(run.get("deployment_target_json") or {})
+    if deployment_target_patch:
+        target.update(deployment_target_patch)
+    conn.execute(
+        """
+        UPDATE ts_provisioning_runs
+        SET vmid = COALESCE(%s, vmid),
+            vm_uuid = COALESCE(%s, vm_uuid),
+            computer_name = COALESCE(%s, computer_name),
+            serial_number = COALESCE(%s, serial_number),
+            deployment_target_json = %s
+        WHERE id = %s
+        """,
+        (vmid, vm_uuid, computer_name, serial_number, _json(target), run_id),
+    )
+    _append_event(
+        conn,
+        run_id=run_id,
+        event_type="identity_recorded",
+        phase="controller",
+        message="Ubuntu v2 VM identity recorded",
+        data=deployment_target_patch or {},
+    )
+    _commit(conn)
+    return get_run(conn, run_id)
 
 
 def requeue_step(

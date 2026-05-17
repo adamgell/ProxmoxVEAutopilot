@@ -10,6 +10,7 @@
       <p style="margin:0 0 8px;">
         <span class="badge ok">read-only template</span>
         <span class="badge">{{ template.path }}</span>
+        <span class="badge">{{ template.target_os or 'windows' }}</span>
         <span class="badge">{{ template.status }}</span>
       </p>
       <p style="margin:0;color:var(--ink-muted);max-width:900px;">{{ template.description }}</p>

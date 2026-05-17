@@ -124,6 +124,42 @@ def test_database_url_prefers_autopilot_database_url(monkeypatch):
     assert osd_v2_endpoints._database_url() == "postgresql://new"
 
 
+def test_v2_sequence_create_accepts_target_os_ubuntu(osd_v2_client, pg_conn):
+    r = osd_v2_client.post(
+        "/api/osd/v2/sequences",
+        json={"name": "Ubuntu v2", "description": "", "target_os": "ubuntu"},
+    )
+
+    assert r.status_code == 201, r.text
+    assert r.json()["target_os"] == "ubuntu"
+
+
+def test_ubuntu_v2_run_blocks_windows_only_steps(osd_v2_client, pg_conn):
+    seq = osd_v2_client.post(
+        "/api/osd/v2/sequences",
+        json={"name": "Bad Ubuntu v2", "target_os": "ubuntu"},
+    ).json()
+    step = osd_v2_client.post(
+        f"/api/osd/v2/sequences/{seq['id']}/steps",
+        json={
+            "name": "Apply Windows Image",
+            "kind": "apply_wim",
+            "phase": "pe",
+            "position": 0,
+        },
+    )
+    assert step.status_code == 201, step.text
+
+    run = osd_v2_client.post(f"/api/osd/v2/sequences/{seq['id']}/runs", json={})
+
+    assert run.status_code == 400
+    assert "incompatible enabled step" in run.json()["detail"]
+
+    compile_resp = osd_v2_client.post(f"/api/osd/v2/sequences/{seq['id']}/compile", json={})
+    assert compile_resp.status_code == 400
+    assert "incompatible enabled step" in compile_resp.json()["detail"]
+
+
 def _create_run(
     pg_conn,
     *,

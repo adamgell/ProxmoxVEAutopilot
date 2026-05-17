@@ -2393,7 +2393,7 @@
           <div
             class="nav-item"
             data-dropdown="provision"
-            data-routes="/provision,/cloudosd,/template,/sequences,/answer-isos"
+            data-routes="/provision,/osdcloud,/cloudosd,/osdeploy,/template,/sequences,/answer-isos"
           >
             <button
               class="nav-tab"
@@ -2406,7 +2406,10 @@
             </button>
             <ul class="nav-dropdown" id="nav-dd-provision" role="menu">
               <li role="none">
-                <a role="menuitem" href="/cloudosd">CloudOSD Desktop</a>
+                <a role="menuitem" href="/osdcloud">OSDCloud Desktop</a>
+              </li>
+              <li role="none">
+                <a role="menuitem" href="/osdeploy">OSDeploy Server</a>
               </li>
               <li role="none">
                 <a role="menuitem" href="/provision">Provision VMs</a>
@@ -2505,7 +2508,8 @@
           <a href="/" data-route="/">Dashboard</a>
           <div class="nav-drawer-group">
             <span class="nav-drawer-group-label">Provision</span>
-            <a href="/cloudosd" data-route="/cloudosd">CloudOSD Desktop</a>
+            <a href="/osdcloud" data-route="/osdcloud">OSDCloud Desktop</a>
+            <a href="/osdeploy" data-route="/osdeploy">OSDeploy Server</a>
             <a href="/provision" data-route="/provision">Provision VMs</a>
             <a href="/template" data-route="/template">Build Template</a>
             <a href="/sequences" data-route="/sequences">Sequences</a>
@@ -2664,20 +2668,23 @@
         </div>
         <div class="cockpit-rail-section">
           <span class="cockpit-rail-label">Build</span>
-          <a class="cockpit-rail-link" data-route="/cloudosd" href="/cloudosd"
-            ><span aria-hidden="true">05</span>CloudOSD Desktop</a
+          <a class="cockpit-rail-link" data-route="/osdcloud" href="/osdcloud"
+            ><span aria-hidden="true">05</span>OSDCloud Desktop</a
+          >
+          <a class="cockpit-rail-link" data-route="/osdeploy" href="/osdeploy"
+            ><span aria-hidden="true">06</span>OSDeploy Server</a
           >
           <a class="cockpit-rail-link" data-route="/provision" href="/provision"
-            ><span aria-hidden="true">06</span>Provision VMs</a
+            ><span aria-hidden="true">07</span>Provision VMs</a
           >
           <a class="cockpit-rail-link" data-route="/template" href="/template"
-            ><span aria-hidden="true">07</span>Build Template</a
+            ><span aria-hidden="true">08</span>Build Template</a
           >
           <a class="cockpit-rail-link" data-route="/sequences" href="/sequences"
-            ><span aria-hidden="true">08</span>Sequences</a
+            ><span aria-hidden="true">09</span>Sequences</a
           >
           <a class="cockpit-rail-link" data-route="/task-engine" href="/task-engine"
-            ><span aria-hidden="true">09</span>Task Engine v2</a
+            ><span aria-hidden="true">10</span>Task Engine v2</a
           >
         </div>
         <div class="cockpit-rail-section">
@@ -3364,7 +3371,7 @@
               postOperatorDataAction(
                 "/api/ui/reload-live-data",
                 "Reload live data",
-                "Refreshing fleet and CloudOSD readiness before reload.",
+                "Refreshing fleet and OSDCloud readiness before reload.",
               );
             });
           }
@@ -3515,7 +3522,7 @@
             return postOperatorDataAction(
               "/api/ui/reload-live-data",
               "Reload live data",
-              "Refreshing fleet and CloudOSD readiness before reload.",
+              "Refreshing fleet and OSDCloud readiness before reload.",
             );
           },
           clearCaches: function () {

@@ -546,7 +546,9 @@ def test_proxmox_args_write_requires_root_ssh_when_smbios_args_needed():
 
     assert "_args_write_required" in text
     assert "Fail if args write needs root SSH or root@pam ticket" in text
-    assert "Apply args via Proxmox root SSH" in text
+    assert "Apply args via Proxmox root SSH key" in text
+    assert "Apply args via Proxmox root SSH password" in text
+    assert "proxmox_root_ssh_key_path" in text
     assert "qm set {{ vm_vmid | int }} --args" in text
     assert "vault_proxmox_root_password is not defined" in text
     assert "_proxmox_root_ticket is not defined" in text

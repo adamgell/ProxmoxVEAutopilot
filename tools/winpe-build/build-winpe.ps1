@@ -164,7 +164,18 @@ try {
     # phase 0 from the still-attached VirtIO ISO -- not baked into WinPE.
     $virtioRoot = $null
     $virtioInfNames = @('vioscsi.inf', 'netkvm.inf', 'vioser.inf')
-    foreach ($candidate in @('D:\virtio','F:\BuildRoot\inputs\virtio','F:\BuildRoot\inputs\virtio-win')) {
+    $virtioCandidates = @(
+        $env:AUTOPILOT_VIRTIO_ROOT,
+        'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio-win',
+        'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio',
+        'C:\BuildRoot\inputs\virtio-win',
+        'C:\BuildRoot\inputs\virtio',
+        'D:\virtio',
+        'D:\',
+        'F:\BuildRoot\inputs\virtio-win',
+        'F:\BuildRoot\inputs\virtio'
+    ) | Where-Object { $_ }
+    foreach ($candidate in $virtioCandidates) {
         if (-not (Test-Path -LiteralPath $candidate)) { continue }
         $missingInf = $false
         foreach ($infName in $virtioInfNames) {
@@ -177,7 +188,7 @@ try {
         if (-not $missingInf) { $virtioRoot = $candidate; break }
     }
     if (-not $virtioRoot) {
-        throw "WinPE build needs a VirtIO driver source at D:\virtio, F:\BuildRoot\inputs\virtio, or F:\BuildRoot\inputs\virtio-win"
+        throw "WinPE build needs a VirtIO driver source. Checked: $($virtioCandidates -join ', ')"
     }
     foreach ($infName in $virtioInfNames) {
         $inf = Resolve-VirtioInf -Root $virtioRoot -InfName $infName -Arch $Arch

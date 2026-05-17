@@ -17,6 +17,8 @@ from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from pydantic import BaseModel, Field
 
 from web import osd_package
+from web.osd_v2_catalog import validate_steps_for_target_os
+from web.ubuntu_v2 import readiness_from_linux_evidence
 from web import ts_engine_pg, winpe_token
 
 
@@ -112,6 +114,7 @@ class ContentVersionCreateBody(BaseModel):
 class SequenceCreateBody(BaseModel):
     name: str = Field(min_length=1)
     description: str = ""
+    target_os: str = Field(default="windows", min_length=1)
 
 
 class SequenceStepCreateBody(BaseModel):
@@ -139,6 +142,10 @@ class SequenceRunCreateBody(BaseModel):
     resolve_content: bool = False
     deployment_target: dict = Field(default_factory=dict)
     run_variables: dict = Field(default_factory=dict)
+
+
+class SequenceCompileBody(BaseModel):
+    compiled_by: str = "api"
 
 
 def _database_url() -> str:
@@ -308,6 +315,40 @@ def _sync_cloudosd_after_step_result(
             )
     except Exception:
         conn.rollback()
+
+
+def _ubuntu_readiness_from_steps(steps: list[dict], events: list[dict] | None = None) -> dict:
+    readiness = {
+        "intune": "not_configured",
+        "mde": "not_configured",
+        "linux_agent": "pending",
+    }
+    step_kind_by_id = {step["id"]: step.get("kind") for step in steps}
+    for event in reversed(events or []):
+        kind = step_kind_by_id.get(event.get("step_id"))
+        if not kind or not str(event.get("event_type") or "").startswith("step_"):
+            continue
+        data = event.get("data_json") or {}
+        normalized = readiness_from_linux_evidence(data)
+        if kind == "verify_intune_portal":
+            readiness["intune"] = normalized["intune"]
+        if kind == "verify_mde_linux":
+            readiness["mde"] = normalized["mde"]
+    for step in steps:
+        kind = step.get("kind")
+        if kind == "linux_agent_heartbeat" and step.get("state") == "done":
+            readiness["linux_agent"] = "heartbeat_observed"
+        if kind not in {"verify_intune_portal", "verify_mde_linux"}:
+            continue
+        data = step.get("result_json")
+        if not data:
+            continue
+        normalized = readiness_from_linux_evidence(data)
+        if kind == "verify_intune_portal":
+            readiness["intune"] = normalized["intune"]
+        if kind == "verify_mde_linux":
+            readiness["mde"] = normalized["mde"]
+    return readiness
 
 
 @router.get("/agent/package/{run_id}")
@@ -612,16 +653,19 @@ def get_run_content_staging(run_id: str):
 
 @api_router.post("/sequences", status_code=201)
 def create_sequence(body: SequenceCreateBody):
+    target_os = (body.target_os or "windows").lower()
     with _conn() as conn:
         sequence_id = ts_engine_pg.create_sequence(
             conn,
             name=body.name,
             description=body.description,
+            target_os=target_os,
         )
     return {
         "id": sequence_id,
         "name": body.name,
         "description": body.description,
+        "target_os": target_os,
     }
 
 
@@ -675,10 +719,47 @@ def create_sequence_step(sequence_id: str, body: SequenceStepCreateBody):
     }
 
 
+@api_router.post("/sequences/{sequence_id}/compile", status_code=201)
+def compile_sequence(sequence_id: str, body: SequenceCompileBody | None = None):
+    compiled_by = (body.compiled_by if body else "api") or "api"
+    with _conn() as conn:
+        try:
+            sequence = ts_engine_pg.get_sequence(conn, sequence_id)
+            if not sequence:
+                raise HTTPException(status_code=404, detail="sequence not found")
+            validate_steps_for_target_os(
+                sequence.get("target_os"),
+                ts_engine_pg.list_sequence_nodes(conn, sequence_id),
+            )
+            version_id = ts_engine_pg.compile_sequence(
+                conn,
+                sequence_id,
+                compiled_by=compiled_by,
+            )
+        except ForeignKeyViolation:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="sequence not found")
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "id": version_id,
+        "sequence_id": sequence_id,
+        "target_os": sequence.get("target_os") or "windows",
+    }
+
+
 @api_router.post("/sequences/{sequence_id}/runs", status_code=201)
 def create_sequence_run(sequence_id: str, body: SequenceRunCreateBody):
     with _conn() as conn:
         try:
+            sequence = ts_engine_pg.get_sequence(conn, sequence_id)
+            if not sequence:
+                raise HTTPException(status_code=404, detail="sequence not found")
+            validate_steps_for_target_os(
+                sequence.get("target_os"),
+                ts_engine_pg.list_sequence_nodes(conn, sequence_id),
+            )
             sequence_version_id = ts_engine_pg.compile_sequence(conn, sequence_id)
             run_id = ts_engine_pg.create_run_from_version(
                 conn,
@@ -700,8 +781,28 @@ def create_sequence_run(sequence_id: str, body: SequenceRunCreateBody):
         "sequence_id": sequence_id,
         "sequence_version_id": sequence_version_id,
         "state": run["state"],
+        "target_os": run.get("target_os") or "windows",
         "content_items": content_items,
     }
+
+
+@api_router.get("/runs/{run_id}")
+def get_run(run_id: str):
+    with _conn() as conn:
+        try:
+            run = ts_engine_pg.get_run(conn, run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+        steps = ts_engine_pg.list_run_steps(conn, run_id)
+        events = ts_engine_pg.list_run_events(conn, run_id)
+    body = {
+        "run": run,
+        "steps": steps,
+        "readiness": {},
+    }
+    if run.get("target_os") == "ubuntu":
+        body["readiness"]["ubuntu"] = _ubuntu_readiness_from_steps(steps, events)
+    return body
 
 
 @api_router.get("/content/items")

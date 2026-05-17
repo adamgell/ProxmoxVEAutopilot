@@ -2,7 +2,7 @@
 {% from "_macros.html" import page_head %}
 {% block title %}{% if sequence and sequence.id %}Edit{% else %}New{% endif %} V2 Sequence - Proxmox VE Autopilot{% endblock %}
 {% block content %}
-{{ page_head(("Edit v2 sequence: " ~ sequence.name) if sequence and sequence.id else "New v2 task sequence", "Smart builder for CloudOSD desktop deployment, WinPE and OSD handoff steps, full-OS AutopilotAgent work, content steps, and retry behavior.") }}
+{{ page_head(("Edit v2 sequence: " ~ sequence.name) if sequence and sequence.id else "New v2 task sequence", "Smart builder for OSDCloud desktop deployment, WinPE and OSD handoff steps, full-OS AutopilotAgent work, content steps, and retry behavior.") }}
 
 <style>
   .v2-builder-scroll {
@@ -95,6 +95,7 @@
   .v2-palette button[data-owner="controller"] { border-left-color:#38a3ff; }
   .v2-palette button[data-owner="pe"] { border-left-color:#22d3ee; }
   .v2-palette button[data-owner="specialize"] { border-left-color:#f59e0b; }
+  .v2-palette button[data-owner="install"] { border-left-color:#14b8a6; }
   .v2-palette button[data-owner="agent"] { border-left-color:#22c55e; }
   .v2-palette button[data-owner="verify"] { border-left-color:#a78bfa; }
   .v2-palette-title {
@@ -126,6 +127,11 @@
     color:#fde68a;
     border-color:rgba(245, 158, 11, .46);
     background:rgba(245, 158, 11, .12);
+  }
+  .v2-palette button[data-owner="install"] .v2-owner-chip {
+    color:#99f6e4;
+    border-color:rgba(20, 184, 166, .46);
+    background:rgba(20, 184, 166, .12);
   }
   .v2-palette button[data-owner="agent"] .v2-owner-chip {
     color:#bbf7d0;
@@ -287,10 +293,17 @@
     <div class="v2-panel">
       <h2>Sequence</h2>
       <label class="v2-field">Name
-        <input id="v2-name" type="text" value="{{ sequence.name if sequence else '' }}" placeholder="CloudOSD desktop baseline" required>
+        <input id="v2-name" type="text" value="{{ sequence.name if sequence else '' }}" placeholder="OSDCloud desktop baseline" required>
       </label>
       <label class="v2-field">Description
         <textarea id="v2-description" rows="4" placeholder="What this plan owns and when it runs">{{ sequence.description if sequence else '' }}</textarea>
+      </label>
+      <label class="v2-field">Target OS
+        <select id="v2-target-os" onchange="setTargetOs(this.value)">
+          {% set current_target_os = sequence.target_os if sequence and sequence.target_os else 'windows' %}
+          <option value="windows" {% if current_target_os == 'windows' %}selected{% endif %}>Windows</option>
+          <option value="ubuntu" {% if current_target_os == 'ubuntu' %}selected{% endif %}>Ubuntu</option>
+        </select>
       </label>
       <label style="display:flex;gap:8px;align-items:center;">
         <input id="v2-enabled" type="checkbox" {% if not sequence or sequence.enabled %}checked{% endif %}>
@@ -338,10 +351,10 @@
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
         <div>
           <h2>Phase Timeline</h2>
-          <p class="v2-help" style="margin:0;">Drop steps into the phase where they are owned: controller, PE, specialize, full OS, or verification.</p>
+          <p class="v2-help" style="margin:0;">Drop steps into the phase where they are owned. The timeline changes with the sequence target OS.</p>
         </div>
         <div class="v2-actions">
-          <button type="button" onclick="addCloudOSDDesktopBaseline()">Add CloudOSD desktop baseline</button>
+          <button type="button" onclick="addRecommendedBaseline()">Add recommended baseline</button>
           <button type="button" onclick="clearSteps()">Clear steps</button>
         </div>
       </div>
@@ -350,7 +363,7 @@
     <div class="v2-panel">
       <h2>Step Palette</h2>
       <label class="v2-field">Search full catalog
-        <input id="v2-palette-search" type="search" placeholder="hash, qga, domain, package" oninput="renderPalette()">
+        <input id="v2-palette-search" type="search" placeholder="hash, qga, domain, package, ubuntu, mde" oninput="renderPalette()">
       </label>
       <div id="v2-palette" class="v2-palette"></div>
     </div>
@@ -377,13 +390,26 @@
 const SEQUENCE_ID = {{ (sequence.id if sequence else none)|tojson|safe }};
 const INITIAL_NODES = {{ nodes|tojson|safe }};
 const STEP_TEMPLATES = {{ step_templates|tojson|safe }};
-const PHASES = [
-  ["controller", "Controller"],
-  ["pe", "WinPE"],
-  ["specialize", "Specialize"],
-  ["full_os", "Full OS"],
-  ["verify", "Verify"]
-];
+let targetOs = {{ ((sequence.target_os if sequence and sequence.target_os else 'windows'))|tojson|safe }};
+const PHASES_BY_TARGET_OS = {
+  windows: [
+    ["controller", "Controller"],
+    ["pe", "WinPE"],
+    ["specialize", "Specialize"],
+    ["full_os", "Full OS"],
+    ["verify", "Verify"]
+  ],
+  ubuntu: [
+    ["controller", "Controller"],
+    ["install", "Install"],
+    ["first_boot", "First Boot"],
+    ["full_os", "Full OS"],
+    ["verify", "Verify"]
+  ]
+};
+function phases() {
+  return PHASES_BY_TARGET_OS[targetOs] || PHASES_BY_TARGET_OS.windows;
+}
 let steps = normalizeInitialNodes(INITIAL_NODES);
 let activeId = steps[0] ? steps[0].client_id : null;
 let draggingStepId = null;
@@ -397,6 +423,15 @@ const PINNED_CLOUDOSD_DESKTOP = [
   "stage_autopilot_agent",
   "capture_autopilot_hash",
   "wait_agent_heartbeat"
+];
+const PINNED_UBUNTU_DESKTOP = [
+  "proxmox_clone_vm",
+  "install_ubuntu_core",
+  "create_ubuntu_user",
+  "install_desktop_environment",
+  "wait_cloud_init_complete",
+  "verify_qga_linux",
+  "linux_agent_heartbeat"
 ];
 
 function normalizeInitialNodes(nodes) {
@@ -428,6 +463,28 @@ function templateFor(kind) {
   return STEP_TEMPLATES.find(t => t.kind === kind) || {
     kind, label: kind.replaceAll("_", " "), phase: "full_os", category: "Custom", description: ""
   };
+}
+
+function targetForTemplate(t) {
+  return (t.target_os || "any").toLowerCase();
+}
+
+function isTemplateCompatible(t) {
+  const tOs = targetForTemplate(t);
+  return tOs === "any" || tOs === targetOs;
+}
+
+function setTargetOs(value) {
+  targetOs = value || "windows";
+  const allowedPhases = new Set(phaseKeys());
+  steps.forEach(step => {
+    if (!allowedPhases.has(step.phase)) {
+      step.phase = step.kind && templateFor(step.kind).phase && allowedPhases.has(templateFor(step.kind).phase)
+        ? templateFor(step.kind).phase
+        : "full_os";
+    }
+  });
+  render();
 }
 
 function newStepFromTemplate(kind, phaseOverride) {
@@ -464,8 +521,8 @@ function addStepFromTemplate(kind, phaseOverride, phaseIndex) {
   render();
 }
 
-function addCloudOSDDesktopBaseline() {
-  [
+function addRecommendedBaseline() {
+  const baseline = targetOs === "ubuntu" ? PINNED_UBUNTU_DESKTOP : [
     "cloudosd_preflight",
     "cloudosd_deploy_os",
     "cloudosd_validate_offline_os",
@@ -473,7 +530,8 @@ function addCloudOSDDesktopBaseline() {
     "stage_autopilot_agent",
     "capture_autopilot_hash",
     "wait_agent_heartbeat"
-  ].forEach(kind => addStepFromTemplate(kind));
+  ];
+  baseline.forEach(kind => addStepFromTemplate(kind));
 }
 
 function clearSteps() {
@@ -483,7 +541,7 @@ function clearSteps() {
 }
 
 function phaseKeys() {
-  return PHASES.map(([phase]) => phase);
+  return phases().map(([phase]) => phase);
 }
 
 function lanesFromSteps(withoutId) {
@@ -702,6 +760,7 @@ function ownerForPhase(phase) {
   if (phase === "controller") return "controller";
   if (phase === "pe") return "pe";
   if (phase === "specialize") return "specialize";
+  if (phase === "install" || phase === "first_boot") return "install";
   if (phase === "verify") return "verify";
   return "agent";
 }
@@ -711,6 +770,8 @@ function ownerLabel(phase) {
     controller: "Controller",
     pe: "PE",
     specialize: "Specialize",
+    install: "Install",
+    first_boot: "First Boot",
     full_os: "Agent",
     verify: "Verify"
   };
@@ -735,9 +796,12 @@ function renderPalette() {
   const host = document.getElementById("v2-palette");
   const query = (document.getElementById("v2-palette-search")?.value || "").trim().toLowerCase();
   const pinnedTemplates = PINNED_CLOUDOSD_DESKTOP
+    .concat(targetOs === "ubuntu" ? PINNED_UBUNTU_DESKTOP : [])
+    .filter((kind, index, items) => items.indexOf(kind) === index)
     .map(kind => STEP_TEMPLATES.find(t => t.kind === kind))
-    .filter(Boolean);
+    .filter(t => t && isTemplateCompatible(t));
   const searchableTemplates = STEP_TEMPLATES.filter(t => {
+    if (!isTemplateCompatible(t)) return false;
     if (!query) return true;
     return [
       t.label,
@@ -755,7 +819,7 @@ function renderPalette() {
   const pinnedHtml = `
     <section class="v2-palette-section" data-pinned="true">
       <div class="v2-palette-head">
-        <strong>Pinned CloudOSD Desktop</strong>
+        <strong>${targetOs === "ubuntu" ? "Pinned Ubuntu" : "Pinned OSDCloud Desktop"}</strong>
         <span class="v2-palette-count">${pinnedTemplates.length}</span>
       </div>
       <div class="v2-palette-section-steps">
@@ -778,7 +842,7 @@ function renderPalette() {
 
 function renderLanes() {
   const host = document.getElementById("v2-lanes");
-  host.innerHTML = PHASES.map(([phase, label]) => {
+  host.innerHTML = phases().map(([phase, label]) => {
     const laneSteps = steps.filter(s => s.phase === phase);
     const cards = laneSteps.map((s, idx) => `${dropZone(phase, idx)}${stepCard(s, idx)}`).join("");
     return `<section class="v2-lane"
@@ -849,7 +913,7 @@ function renderEditor() {
     </label>
     <label class="v2-field">Phase
       <select onchange="patchActive('phase', this.value)">
-        ${PHASES.map(([phase, label]) => `<option value="${phase}" ${s.phase === phase ? "selected" : ""}>${label}</option>`).join("")}
+        ${phases().map(([phase, label]) => `<option value="${phase}" ${s.phase === phase ? "selected" : ""}>${label}</option>`).join("")}
       </select>
     </label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -931,13 +995,17 @@ function validationMessages() {
     if (!s.name.trim()) messages.push(["missing", `Step ${idx + 1} needs a display name.`]);
     if (!s.kind.trim()) messages.push(["missing", `Step ${idx + 1} needs a kind.`]);
   });
+  const incompatible = steps.filter(s => s.enabled !== false && !isTemplateCompatible(templateFor(s.kind)));
+  incompatible.forEach(s => {
+    messages.push(["missing", `${s.name || s.kind} is not compatible with ${targetOs}.`]);
+  });
   const kinds = new Set(steps.map(s => s.kind));
   if (kinds.has("stage_ad_domain_join_unattend") && !kinds.has("verify_ad_domain_join")) {
     messages.push(["warn", "Domain join staging should be paired with full-OS domain verification."]);
   }
   if (steps.some(s => s.kind.startsWith("cloudosd_") || s.kind.startsWith("stage_"))) {
-    if (!kinds.has("capture_autopilot_hash")) messages.push(["warn", "CloudOSD desktop plans usually need hardware hash capture."]);
-    if (!kinds.has("wait_agent_heartbeat")) messages.push(["warn", "CloudOSD completion should keep the heartbeat gate."]);
+    if (!kinds.has("capture_autopilot_hash")) messages.push(["warn", "OSDCloud desktop plans usually need hardware hash capture."]);
+    if (!kinds.has("wait_agent_heartbeat")) messages.push(["warn", "OSDCloud completion should keep the heartbeat gate."]);
   }
   if (!messages.length) messages.push(["ok", "Plan is ready to compile."]);
   return messages;
@@ -968,6 +1036,7 @@ async function saveV2Sequence() {
   const body = {
     name: document.getElementById("v2-name").value.trim(),
     description: document.getElementById("v2-description").value,
+    target_os: targetOs,
     enabled: document.getElementById("v2-enabled").checked,
     nodes: steps
   };
