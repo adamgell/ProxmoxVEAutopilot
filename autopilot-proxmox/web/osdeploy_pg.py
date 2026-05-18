@@ -236,12 +236,22 @@ def _event_row(row: dict | None) -> dict | None:
     return out
 
 
+def _normalize_readiness_errors(value) -> list[dict]:
+    errors: list[dict] = []
+    for item in value or []:
+        if isinstance(item, dict):
+            errors.append(item)
+        elif item is not None:
+            errors.append({"message": str(item)})
+    return errors
+
+
 def _readiness_row(row: dict | None) -> dict | None:
     if row is None:
         return None
     out = dict(row)
     out["run_id"] = str(out["run_id"])
-    out["errors"] = out.pop("errors_json") or []
+    out["errors"] = _normalize_readiness_errors(out.pop("errors_json"))
     for key in ("heartbeat_at", "updated_at"):
         out[key] = _iso(out.get(key))
     return out

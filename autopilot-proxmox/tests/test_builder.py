@@ -348,3 +348,45 @@ def test_builder_startup_reconciles_existing_failed_osdeploy_jobs(tmp_env, pg_co
     assert failed["vmid"] == 105
     assert len(events) == 1
     assert events[0]["data"]["job_id"] == "job-osdeploy-old-fail"
+
+
+def test_builder_reconcile_preserves_legacy_string_readiness_errors(tmp_env, pg_conn):
+    from psycopg.types.json import Jsonb
+
+    from web import builder, jobs_pg as jobs_db, osdeploy_pg
+
+    jobs_dir, _output_dir = tmp_env
+    run = _create_osdeploy_run_for_builder_test(pg_conn)
+    pg_conn.execute(
+        """
+        UPDATE osdeploy_readiness
+        SET state = 'failed',
+            qga_status = 'failed',
+            agent_status = 'failed',
+            server_role_status = 'failed',
+            errors_json = %s,
+            updated_at = NOW()
+        WHERE run_id = %s
+        """,
+        (
+            Jsonb(["VirtIO ISO was detached before first boot."]),
+            run["run_id"],
+        ),
+    )
+    pg_conn.commit()
+    jobs_db.enqueue(
+        job_id="job-osdeploy-legacy-error-fail",
+        job_type="provision_osdeploy",
+        playbook="provision_proxmox_osdeploy.yml",
+        cmd=["ansible-playbook", "provision_proxmox_osdeploy.yml"],
+        args={"osdeploy_run_id": run["run_id"]},
+    )
+    jobs_db.claim_next_job(worker_id="w")
+    jobs_db.finalize_job("job-osdeploy-legacy-error-fail", exit_code=2)
+    _write_osdeploy_preidentity_failure_log(jobs_dir / "job-osdeploy-legacy-error-fail.log")
+
+    assert builder.reconcile_failed_related_deployments(jobs_dir=jobs_dir) == 1
+
+    readiness = osdeploy_pg.get_readiness(pg_conn, run["run_id"])
+    assert readiness["errors"][0]["message"] == "VirtIO ISO was detached before first boot."
+    assert readiness["errors"][1]["job_id"] == "job-osdeploy-legacy-error-fail"
