@@ -41,9 +41,12 @@
   .osdeploy-role-meta-item { border:1px solid var(--line); border-radius:6px; padding:8px; background:var(--panel); min-width:0; }
   .osdeploy-role-meta-item code { white-space:normal; overflow-wrap:anywhere; }
   .osdeploy-role-empty { color:var(--ink-muted); }
+  .osdeploy-role-edit-head { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .osdeploy-role-editor-hint { color:var(--ink-muted); font-size:12px; }
   .osdeploy-role-options { grid-column:1 / -1; display:none; border:0; border-radius:0; padding:0; background:transparent; }
   .osdeploy-role-options.active { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px; }
   .osdeploy-role-options textarea { min-height:130px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .osdeploy-review-json { white-space:pre-wrap; overflow-wrap:anywhere; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 
 {% set view = osdeploy_view or 'overview' %}
@@ -217,6 +220,13 @@
         </div>
       </div>
       <div class="osdeploy-role-empty" data-role-empty>No additional variables are required for the base server role.</div>
+      <div class="osdeploy-role-edit-head" id="osdeployRoleVariableEditor" data-role-editor-head hidden>
+        <div>
+          <div class="osdeploy-label">Editable values</div>
+          <div class="osdeploy-role-editor-hint">Change these values before preflight; launch uses the current field values.</div>
+        </div>
+        <button type="button" class="osdeploy-action" data-role-options-reset>Reset role values</button>
+      </div>
       <div class="osdeploy-role-options" data-role-options-panel="file_server">
         <label><span class="osdeploy-label">Share name</span><input name="role_file_share_name" value="Shared"></label>
         <label><span class="osdeploy-label">Share path</span><input name="role_file_share_path" value="C:\Shares\Shared"></label>
@@ -288,6 +298,7 @@
         <dt>Computer name</dt><dd id="reviewOsdeployComputerName">-</dd>
         <dt>OS</dt><dd id="reviewOsdeployOs">-</dd>
         <dt>VM sizing</dt><dd id="reviewOsdeploySizing">-</dd>
+        <dt>Role variables</dt><dd id="reviewOsdeployRoleOptions" class="osdeploy-review-json">-</dd>
         <dt>Blocking count</dt><dd id="reviewOsdeployBlocking">-</dd>
       </dl>
       <div id="osdeployPreflightStatus" class="osdeploy-mini">Waiting for input.</div>
@@ -568,6 +579,7 @@
       const title = byId("osdeployRoleVariablesTitle");
       const readiness = byId("osdeployRoleReadiness");
       const empty = document.querySelector("[data-role-empty]");
+      const editor = byId("osdeployRoleVariableEditor");
       const requiredFields = metadata.required_fields || [];
       if (title) title.textContent = `${metadata.name || formatRoleField(role)} variables`;
       if (readiness) readiness.textContent = metadata.readiness_status_name || metadata.readiness_status || `${role}_ready`;
@@ -580,6 +592,7 @@
           ? "No additional variables are required for the base server role."
           : "No additional role variables are required.";
       }
+      if (editor) editor.hidden = role === "base";
       document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
         panel.classList.toggle("active", panel.dataset.roleOptionsPanel === role);
       });
@@ -588,6 +601,42 @@
 
     function syncRoleOptionsFromSelectedRole() {
       if (osdeployState.renderedRole !== selectedOsdeployRole()) renderRoleOptions();
+    }
+
+    function resetControlValue(control) {
+      if (control instanceof HTMLSelectElement) {
+        Array.from(control.options).forEach((option) => {
+          option.selected = option.defaultSelected;
+        });
+        if (!control.value && control.options.length) control.selectedIndex = 0;
+      } else if (control.type === "checkbox" || control.type === "radio") {
+        control.checked = control.defaultChecked;
+      } else {
+        control.value = control.defaultValue;
+      }
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function resetActiveRoleOptions() {
+      const role = selectedOsdeployRole();
+      document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
+        if (panel.dataset.roleOptionsPanel !== role) return;
+        panel.querySelectorAll("input, select, textarea").forEach(resetControlValue);
+      });
+      renderRoleOptions();
+      renderOsdeployReview();
+      scheduleOsdeployPreflight();
+    }
+
+    function renderRoleOptionsReview(payload) {
+      const target = byId("reviewOsdeployRoleOptions");
+      if (!target) return;
+      const role = payload.server_role || "base";
+      const options = payload.role_options || {};
+      target.textContent = role === "base" || Object.keys(options).length === 0
+        ? "-"
+        : JSON.stringify(options, null, 2);
     }
 
     function osdeployFormPayload() {
@@ -633,6 +682,7 @@
       byId("reviewOsdeployComputerName").textContent = preflight?.target?.computer_name || "-";
       byId("reviewOsdeployOs").textContent = `${payload.os_version || "-"} ${payload.os_edition || ""} ${payload.os_language || ""}`.trim();
       byId("reviewOsdeploySizing").textContent = `${payload.vm_cores || 0} vCPU, ${payload.vm_memory_mb || 0} MB, ${payload.vm_disk_size_gb || 0} GB`;
+      renderRoleOptionsReview(payload);
       byId("reviewOsdeployBlocking").textContent = preflight ? String(preflight.blocking_checks.length) : "-";
       const launch = byId("launchOsdeployBtn");
       if (launch) launch.disabled = !preflight || !preflight.launch_allowed;
@@ -724,6 +774,9 @@
         roleSelect.addEventListener("blur", renderRoleOptions);
         window.setInterval(syncRoleOptionsFromSelectedRole, 250);
       }
+      document.querySelectorAll("[data-role-options-reset]").forEach((button) => {
+        button.addEventListener("click", resetActiveRoleOptions);
+      });
       if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
       if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);
       renderOsdeployReview();
@@ -924,6 +977,7 @@
       const title = byId("osdeployRoleVariablesTitle");
       const readiness = byId("osdeployRoleReadiness");
       const empty = document.querySelector("[data-role-empty]");
+      const editor = byId("osdeployRoleVariableEditor");
       if (title) title.textContent = `${metadata.name || formatField(role)} variables`;
       if (readiness) readiness.textContent = metadata.readiness_status_name || metadata.readiness_status || `${role}_ready`;
       renderMeta("osdeployRoleRequiredFields", requiredFields, "none");
@@ -935,9 +989,32 @@
           ? "No additional variables are required for the base server role."
           : "No additional role variables are required.";
       }
+      if (editor) editor.hidden = role === "base";
       document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
         panel.classList.toggle("active", panel.dataset.roleOptionsPanel === role);
       });
+    };
+    const resetControl = (control) => {
+      if (control instanceof HTMLSelectElement) {
+        Array.from(control.options).forEach((option) => {
+          option.selected = option.defaultSelected;
+        });
+        if (!control.value && control.options.length) control.selectedIndex = 0;
+      } else if (control.type === "checkbox" || control.type === "radio") {
+        control.checked = control.defaultChecked;
+      } else {
+        control.value = control.defaultValue;
+      }
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const resetVisibleRoleVariables = () => {
+      const role = byId("osdeploy_server_role")?.value || "base";
+      document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
+        if (panel.dataset.roleOptionsPanel !== role) return;
+        panel.querySelectorAll("input, select, textarea").forEach(resetControl);
+      });
+      renderRoleVariables();
     };
     const roleSelect = byId("osdeploy_server_role");
     if (roleSelect) {
@@ -947,6 +1024,9 @@
       window.setInterval(renderRoleVariables, 250);
       renderRoleVariables();
     }
+    document.querySelectorAll("[data-role-options-reset]").forEach((button) => {
+      button.addEventListener("click", resetVisibleRoleVariables);
+    });
   })();
 </script>
 {% endif %}

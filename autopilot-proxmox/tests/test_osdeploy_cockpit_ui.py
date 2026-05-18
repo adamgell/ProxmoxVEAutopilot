@@ -79,8 +79,12 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert 'id="osdeployRoleCredentialFields"' in template
     assert 'id="osdeployRoleStepKinds"' in template
     assert 'id="osdeployRoleReadiness"' in template
+    assert 'id="osdeployRoleVariableEditor"' in template
+    assert 'data-role-options-reset' in template
     assert 'data-role-empty' in template
     assert "formatRoleField" in template
+    assert "resetActiveRoleOptions" in template
+    assert "renderRoleOptionsReview" in template
     assert "selectedOsdeployRole" in template
     assert "syncRoleOptionsFromSelectedRole" in template
     assert "window.setInterval(syncRoleOptionsFromSelectedRole" in template
@@ -99,7 +103,9 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert 'id="osdeployLaunchError"' in template
     assert 'id="reviewOsdeployArtifact"' in template
     assert 'id="reviewOsdeployComputerName"' in template
+    assert 'id="reviewOsdeployRoleOptions"' in template
     assert 'id="reviewOsdeployBlocking"' in template
+    assert "osdeploy-review-json" in template
     assert "const osdeployState" in template
     assert "osdeployState.artifacts" in template
     assert "osdeployState.options" in template
