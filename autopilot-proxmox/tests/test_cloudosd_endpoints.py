@@ -1246,6 +1246,11 @@ def test_cloudosd_autopilot_readiness_upload_is_run_bound(
     hash_dir = tmp_path / "hashes"
     hash_dir.mkdir()
     monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "vault_entra_app_id": "app-id",
+        "vault_entra_tenant_id": "tenant-id",
+        "vault_entra_app_secret": "secret",
+    })
     (hash_dir / "20260514T030303Z-vm247-Gell-247-AP1-osd-v2_hwid.csv").write_text(
         "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
         "Gell-247-AP1,,hardware-hash,GellNative\n",

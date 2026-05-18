@@ -1,0 +1,58 @@
+name: React Migration Validation
+
+on:
+  pull_request:
+    paths:
+      - "autopilot-proxmox/**"
+      - ".github/workflows/react-migration-validation.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        working-directory: autopilot-proxmox
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run React migration Python tests
+        working-directory: autopilot-proxmox
+        run: python -m pytest tests/test_react_shell.py tests/test_react_migration_build.py -v
+
+      - name: Set up Node 25
+        uses: actions/setup-node@v5
+        with:
+          node-version: "25"
+          cache: npm
+          cache-dependency-path: autopilot-proxmox/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: autopilot-proxmox/frontend
+        run: npm ci
+
+      - name: Generate frontend OpenAPI types
+        working-directory: autopilot-proxmox/frontend
+        env:
+          PYTHON: python
+        run: npm run generate:openapi
+
+      - name: Validate frontend
+        working-directory: autopilot-proxmox/frontend
+        run: |
+          npm run typecheck
+          npm run typecheck:ts7
+          npm run lint
+          npm run test
+          npx playwright install chromium
+          npm run test:e2e
+          npm run build
+
+      - name: Docker build smoke
+        run: docker build --platform linux/amd64 -t proxmox-autopilot:react-migration-smoke -f autopilot-proxmox/Dockerfile autopilot-proxmox

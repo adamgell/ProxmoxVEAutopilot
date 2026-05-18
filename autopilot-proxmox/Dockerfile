@@ -1,3 +1,14 @@
+FROM node:25-bookworm-slim AS frontend-build
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+
 FROM python:3.12-slim-bookworm
 
 # Install system deps + PowerShell in one layer to reduce image size
@@ -32,6 +43,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project
 COPY . .
+RUN rm -rf /app/web/static/react && mkdir -p /app/web/static/react
+COPY --from=frontend-build /frontend/dist /app/web/static/react
 
 # Bake in Kerberos config pointing at HOME.GELL.ONE. Operators with a
 # different realm overlay this via docker-compose volume mount.

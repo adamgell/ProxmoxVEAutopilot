@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "autopilot-proxmox/**"
+      - "autopilot-proxmox/frontend/**"
       - ".github/workflows/docker-publish.yml"
 
 env:

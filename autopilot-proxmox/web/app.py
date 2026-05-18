@@ -20,6 +20,7 @@ import yaml
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
@@ -162,7 +163,33 @@ def _safe_path(base_dir, filename):
     if not str(resolved).startswith(str(base_dir.resolve())):
         raise ValueError(f"Path traversal blocked: {filename}")
     return resolved
+
+
+def _react_asset_tags() -> dict[str, list[str]]:
+    """Return Vite-built React asset URLs for the protected shell.
+
+    Tests and source checkouts may not have a built frontend yet, so the
+    fallback shell renders without asset tags until ``frontend/dist`` is copied
+    into ``web/static/react`` by the Docker build.
+    """
+    try:
+        manifest = json.loads(REACT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"scripts": [], "styles": []}
+
+    entry = manifest.get("src/main.tsx") or manifest.get("index.html") or {}
+    scripts: list[str] = []
+    styles: list[str] = []
+    if entry.get("file"):
+        scripts.append(f"/static/react/{entry['file']}")
+    for css_file in entry.get("css") or []:
+        styles.append(f"/static/react/{css_file}")
+    return {"scripts": scripts, "styles": styles}
+
+
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+REACT_DIST_DIR = Path(__file__).resolve().parent / "static" / "react"
+REACT_MANIFEST_PATH = REACT_DIST_DIR / ".vite" / "manifest.json"
 HASH_DIR = BASE_DIR / "output" / "hashes"
 FILE_SHELF_DIR = Path(
     os.environ.get("AUTOPILOT_FILE_SHELF_DIR", str(BASE_DIR / "output" / "files"))
@@ -544,6 +571,11 @@ def _save_vault(updates):
     _save_yaml_file(VAULT_PATH, updates)
 
 app = FastAPI(title="Proxmox VE Autopilot")
+app.mount(
+    "/static/react",
+    StaticFiles(directory=str(REACT_DIST_DIR), check_dir=False),
+    name="react-static",
+)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["tojson"] = lambda x, indent=None: json.dumps(x, indent=indent)
 job_manager = JobManager(
@@ -4335,6 +4367,18 @@ async def home(request: Request):
         "initial_running_count": len(running),
         "initial_queued_count": 0,
         "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
+    })
+
+
+@app.get("/react-shell", response_class=HTMLResponse)
+async def react_shell(request: Request):
+    assets = _react_asset_tags()
+    return templates.TemplateResponse("react_shell.html", {
+        "request": request,
+        "asset_scripts": assets["scripts"],
+        "asset_styles": assets["styles"],
+        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
+        "build_time": _APP_VERSION.get("build_time", ""),
     })
 
 
