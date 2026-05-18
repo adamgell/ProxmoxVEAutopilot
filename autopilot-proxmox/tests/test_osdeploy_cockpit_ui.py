@@ -114,6 +114,8 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "resolveOsdeployNameTemplate" in template
     assert "syncOsdeployOsFromArtifact" in template
     assert "os_language" in template
+    assert "${artifact.os_version} ${artifact.os_edition} (${artifact.os_language})" in template
+    assert "${artifact.build_sha} / ${artifact.proxmox_volid}" not in template
     assert 'id="osdeploy_server_role"' in template
     assert 'id="osdeployBlockingChecks"' in template
     assert 'id="osdeployWarningChecks"' in template

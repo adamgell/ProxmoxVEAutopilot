@@ -845,7 +845,7 @@
       const payload = osdeployFormPayload();
       const artifact = selectedOsdeployArtifact();
       const preflight = osdeployState.preflight;
-      byId("reviewOsdeployArtifact").textContent = artifact ? `${artifact.build_sha} / ${artifact.proxmox_volid}` : "not selected";
+      byId("reviewOsdeployArtifact").textContent = artifact ? `${artifact.os_version} ${artifact.os_edition} (${artifact.os_language})` : "not selected";
       byId("reviewOsdeployComputerName").textContent = preflight?.target?.computer_name || "-";
       byId("reviewOsdeployOs").textContent = `${payload.os_version || "-"} ${payload.os_edition || ""} ${payload.os_language || ""}`.trim();
       byId("reviewOsdeploySizing").textContent = `${payload.vm_cores || 0} vCPU, ${payload.vm_memory_mb || 0} MB, ${payload.vm_disk_size_gb || 0} GB`;
