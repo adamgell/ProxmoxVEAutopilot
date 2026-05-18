@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import re
 import shutil
 
 import pytest
@@ -117,6 +118,17 @@ def _run_payload(artifact_id: str, **overrides):
     }
     values.update(overrides)
     return values
+
+
+def _assert_local_admin(local_admin: dict):
+    assert local_admin["username"] == "localadmin"
+    password = local_admin["password"]
+    assert 8 <= len(password) <= 12
+    assert re.search(r"[A-Z]", password)
+    assert re.search(r"[a-z]", password)
+    assert re.search(r"[0-9]", password)
+    assert re.search(r"[!#%+?]", password)
+    assert not re.search(r"[O0Il1\"'`\s]", password)
 
 
 def _file_server_options(**overrides):
@@ -1830,6 +1842,10 @@ def test_osdeploy_run_identity_and_pe_callbacks(osdeploy_client, pg_conn):
     assert package_body["agent"]["phase"] == "full_os"
     assert package_body["agent"]["role"] == "base"
     assert package_body["agent"]["bootstrap_token"]
+    _assert_local_admin(package_body["local_admin"])
+    detail = osdeploy_client.get(f"/api/osdeploy/v1/runs/{created['run_id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["run"]["local_admin"] == package_body["local_admin"]
 
     event = osdeploy_client.post(
         f"/api/osdeploy/v1/runs/{created['run_id']}/events",

@@ -760,6 +760,10 @@ def _package_response(*, run: dict, artifact: dict, server_base_url: str) -> dic
             "secure_boot": run["secure_boot"],
             "outbound_policy": run.get("outbound_policy") or {},
         },
+        "local_admin": run.get("local_admin") or {
+            "username": osdeploy_pg.DEFAULT_LOCAL_ADMIN_USERNAME,
+            "password": "",
+        },
         "deployment": {
             "path": "osdeploy_v2",
             "factory": "OSDeploy/OSD/OSDBuilder",

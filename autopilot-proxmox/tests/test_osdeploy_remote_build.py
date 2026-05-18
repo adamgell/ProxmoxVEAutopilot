@@ -512,6 +512,51 @@ def test_osdeploy_unattend_omits_product_key_by_default(tmp_path):
     assert result.returncode == 0, result.stderr + result.stdout
 
 
+def test_osdeploy_unattend_uses_packaged_local_admin(tmp_path):
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is required for PowerShell unattend generation contract test")
+
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    bridge = app_root / "tools" / "osdeploy-build" / "Invoke-OSDeployBridge.ps1"
+    windows_root = tmp_path / "Windows"
+    script = f"""
+        $ErrorActionPreference = 'Stop'
+        $env:OSDEPLOY_BRIDGE_LIBRARY_ONLY = '1'
+        . '{bridge.as_posix()}'
+        $path = Add-OSDeployOfflineUnattend `
+            -WindowsRoot '{windows_root.as_posix()}' `
+            -ComputerName 'ServerLab001' `
+            -Version 'Windows Server 2025' `
+            -Edition 'Datacenter' `
+            -ImageName 'Windows Server 2025 Datacenter' `
+            -LocalAdmin ([pscustomobject]@{{
+                username = 'localadmin'
+                password = 'Ab7!cDef9'
+            }})
+        $content = Get-Content -LiteralPath $path -Raw
+        foreach ($expected in @(
+            '<Name>localadmin</Name>',
+            '<Username>localadmin</Username>',
+            '<Value>Ab7!cDef9</Value>',
+            '<Group>Administrators</Group>'
+        )) {{
+            if ($content -notmatch [regex]::Escape($expected)) {{
+                throw "missing $expected"
+            }}
+        }}
+    """
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
 def test_osdeploy_unattend_can_emit_explicit_product_key(tmp_path):
     if shutil.which("pwsh") is None:
         pytest.skip("pwsh is required for PowerShell unattend generation contract test")

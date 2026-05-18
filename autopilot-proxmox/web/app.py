@@ -12992,47 +12992,94 @@ def _known_credentials_for_vmid(vmid: int) -> list[dict]:
     """
     from web import db_pg
 
-    try:
-        with db_pg.connection(_database_url()) as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    run_id,
-                    workflow_name,
-                    COALESCE(pve_vm_name, requested_vm_name, vm_name) AS vm_name,
-                    COALESCE(vmid, requested_vmid) AS matched_vmid,
-                    local_admin_json,
-                    updated_at
-                FROM cloudosd_runs
-                WHERE COALESCE(vmid, requested_vmid) = %s
-                  AND COALESCE(local_admin_json->>'username', '') <> ''
-                  AND COALESCE(local_admin_json->>'password', '') <> ''
-                ORDER BY updated_at DESC, created_at DESC
-                LIMIT 10
-                """,
-                (vmid,),
-            ).fetchall()
-    except Exception:
-        return []
+    def _time_value(value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
 
     credentials = []
-    for row in rows:
-        local_admin = row.get("local_admin_json") or {}
-        username = str(local_admin.get("username") or "").strip()
-        password = str(local_admin.get("password") or "").strip()
-        if not (username and password):
-            continue
-        credentials.append({
-            "source": "CloudOSD",
-            "label": "Local admin",
-            "username": username,
-            "password": password,
-            "vm_name": row.get("vm_name") or "",
-            "run_id": str(row.get("run_id") or ""),
-            "run_url": f"/cloudosd/runs/{row['run_id']}" if row.get("run_id") else "",
-            "updated_at": row.get("updated_at"),
-            "note": "Visible workgroup credential from the deployment run.",
-        })
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            try:
+                cloudosd_rows = conn.execute(
+                    """
+                    SELECT
+                        run_id,
+                        workflow_name,
+                        COALESCE(pve_vm_name, requested_vm_name, vm_name) AS vm_name,
+                        COALESCE(vmid, requested_vmid) AS matched_vmid,
+                        local_admin_json,
+                        updated_at
+                    FROM cloudosd_runs
+                    WHERE COALESCE(vmid, requested_vmid) = %s
+                      AND COALESCE(local_admin_json->>'username', '') <> ''
+                      AND COALESCE(local_admin_json->>'password', '') <> ''
+                    ORDER BY updated_at DESC, created_at DESC
+                    LIMIT 10
+                    """,
+                    (vmid,),
+                ).fetchall()
+            except Exception:
+                cloudosd_rows = []
+            for row in cloudosd_rows:
+                local_admin = row.get("local_admin_json") or {}
+                username = str(local_admin.get("username") or "").strip()
+                password = str(local_admin.get("password") or "").strip()
+                if not (username and password):
+                    continue
+                credentials.append({
+                    "source": "CloudOSD",
+                    "label": "Local admin",
+                    "username": username,
+                    "password": password,
+                    "vm_name": row.get("vm_name") or "",
+                    "run_id": str(row.get("run_id") or ""),
+                    "run_url": f"/cloudosd/runs/{row['run_id']}" if row.get("run_id") else "",
+                    "updated_at": _time_value(row.get("updated_at")),
+                    "note": "Visible workgroup credential from the deployment run.",
+                })
+            try:
+                osdeploy_rows = conn.execute(
+                    """
+                    SELECT
+                        run_id,
+                        workflow_name,
+                        COALESCE(pve_vm_name, requested_vm_name, vm_name) AS vm_name,
+                        COALESCE(vmid, requested_vmid) AS matched_vmid,
+                        local_admin_json,
+                        updated_at
+                    FROM osdeploy_runs
+                    WHERE COALESCE(vmid, requested_vmid) = %s
+                      AND COALESCE(local_admin_json->>'username', '') <> ''
+                      AND COALESCE(local_admin_json->>'password', '') <> ''
+                    ORDER BY updated_at DESC, created_at DESC
+                    LIMIT 10
+                    """,
+                    (vmid,),
+                ).fetchall()
+            except Exception:
+                osdeploy_rows = []
+            for row in osdeploy_rows:
+                local_admin = row.get("local_admin_json") or {}
+                username = str(local_admin.get("username") or "").strip()
+                password = str(local_admin.get("password") or "").strip()
+                if not (username and password):
+                    continue
+                credentials.append({
+                    "source": "OSDeploy",
+                    "label": "Local admin",
+                    "username": username,
+                    "password": password,
+                    "vm_name": row.get("vm_name") or "",
+                    "run_id": str(row.get("run_id") or ""),
+                    "run_url": f"/osdeploy/runs/{row['run_id']}" if row.get("run_id") else "",
+                    "updated_at": _time_value(row.get("updated_at")),
+                    "note": "Visible local administrator credential from the deployment run.",
+                })
+    except Exception:
+        return []
     return credentials
 
 

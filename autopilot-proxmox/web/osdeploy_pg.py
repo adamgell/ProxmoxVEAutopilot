@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from threading import Lock
@@ -31,6 +32,7 @@ RECOMMENDED_VM_MEMORY_MB = 8192
 MIN_VM_DISK_SIZE_GB = 80
 DEFAULT_VM_DISK_SIZE_GB = 120
 DEFAULT_VM_CORES = 4
+DEFAULT_LOCAL_ADMIN_USERNAME = "localadmin"
 
 SERVER_ROLE_CATALOG = [
     "base",
@@ -116,6 +118,7 @@ CREATE TABLE IF NOT EXISTS osdeploy_runs (
     secure_boot boolean NOT NULL DEFAULT true,
     outbound_policy_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     role_options_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    local_admin_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     vmid integer NULL,
     vm_uuid text NULL,
     mac text NULL,
@@ -132,6 +135,9 @@ CREATE TABLE IF NOT EXISTS osdeploy_runs (
 
 ALTER TABLE osdeploy_runs
     ADD COLUMN IF NOT EXISTS role_options_json jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE osdeploy_runs
+    ADD COLUMN IF NOT EXISTS local_admin_json jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_osdeploy_runs_state
     ON osdeploy_runs(state, created_at);
@@ -229,6 +235,40 @@ def _normalize_mac(value: str | None) -> str | None:
     return str(value).strip().lower().replace("-", ":")
 
 
+def _generate_local_admin_password(length: int = 12) -> str:
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    lower = "abcdefghijkmnopqrstuvwxyz"
+    digits = "23456789"
+    symbols = "!#%+?"
+    alphabet = upper + lower + digits + symbols
+    password = [
+        secrets.choice(upper),
+        secrets.choice(lower),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    password.extend(secrets.choice(alphabet) for _ in range(max(8, min(length, 12)) - len(password)))
+    secrets.SystemRandom().shuffle(password)
+    return "".join(password)
+
+
+def _sanitize_local_admin(local_admin: dict | None = None, *, generate_password: bool = False) -> dict:
+    raw = dict(local_admin or {})
+    username = str(raw.get("username") or DEFAULT_LOCAL_ADMIN_USERNAME).strip()
+    if username.casefold() != DEFAULT_LOCAL_ADMIN_USERNAME:
+        username = DEFAULT_LOCAL_ADMIN_USERNAME
+    password = str(raw.get("password") or "").strip()
+    generated = bool(raw.get("generated", False))
+    if not password and generate_password:
+        password = _generate_local_admin_password()
+        generated = True
+    return {
+        "username": username,
+        "password": password,
+        "generated": generated,
+    }
+
+
 def _artifact_row(row: dict | None) -> dict | None:
     if row is None:
         return None
@@ -247,6 +287,7 @@ def _run_row(row: dict | None) -> dict | None:
     out["artifact_id"] = str(out["artifact_id"])
     out["outbound_policy"] = out.pop("outbound_policy_json") or {}
     out["role_options"] = out.pop("role_options_json", None) or {}
+    out["local_admin"] = _sanitize_local_admin(out.pop("local_admin_json", None) or {})
     out["archived"] = bool(out.get("archived_at"))
     for key in (
         "pe_registered_at",
@@ -537,6 +578,7 @@ def create_run(
     secure_boot: bool = True,
     outbound_policy: dict | None = None,
     role_options: dict | None = None,
+    local_admin: dict | None = None,
 ) -> dict:
     artifact = get_artifact(conn, artifact_id)
     if not artifact:
@@ -547,6 +589,7 @@ def create_run(
     if not expected_computer_name:
         raise ValueError("OSDeploy requested VM name does not produce a valid Windows computer name")
     sanitized_role_options = osdeploy_roles.sanitize_role_options(server_role, role_options)
+    local_admin_config = _sanitize_local_admin(local_admin, generate_password=True)
 
     version_id = _create_sequence_for_run(
         conn,
@@ -571,6 +614,7 @@ def create_run(
             "os_version": os_version,
             "os_edition": os_edition,
             "os_language": os_language,
+            "local_admin": local_admin_config,
         },
         created_by="osdeploy",
         resolve_content=False,
@@ -585,13 +629,13 @@ def create_run(
             requested_vm_name, expected_computer_name, requested_vmid,
             node, iso_storage, storage, network_bridge, vm_cores,
             vm_memory_mb, vm_disk_size_gb, secure_boot, outbound_policy_json,
-            role_options_json,
+            role_options_json, local_admin_json,
             created_at, updated_at
         )
         VALUES (
             %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s
+            %s, %s, %s, %s
         )
         RETURNING *
         """,
@@ -618,6 +662,7 @@ def create_run(
             bool(secure_boot),
             _json(outbound_policy or {}),
             _json(sanitized_role_options),
+            _json(local_admin_config),
             now,
             now,
         ),

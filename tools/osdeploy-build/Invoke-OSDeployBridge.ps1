@@ -617,7 +617,8 @@ function Add-OSDeployOfflineUnattend {
         [string] $Locale = 'en-US',
         [string] $Version = 'Windows Server 2022',
         [string] $Edition = 'Datacenter',
-        [string] $ImageName
+        [string] $ImageName,
+        [AllowNull()] [object] $LocalAdmin
     )
     $unattendPath = Join-OSDeployPath -Root $WindowsRoot -RelativePath 'Panther\Unattend.xml'
     $pantherRoot = Split-Path -Parent $unattendPath
@@ -775,8 +776,12 @@ function Add-OSDeployOfflineUnattend {
             -Value $entry.Value | Out-Null
     }
 
-    $bootstrapUser = 'PVEAutopilot'
-    $bootstrapPassword = New-OSDeployBootstrapPassword
+    $bootstrapUser = [string] (Get-OSDeployObjectProperty -Value $LocalAdmin -Name 'username')
+    $bootstrapPassword = [string] (Get-OSDeployObjectProperty -Value $LocalAdmin -Name 'password')
+    if ([string]::IsNullOrWhiteSpace($bootstrapUser) -or [string]::IsNullOrWhiteSpace($bootstrapPassword)) {
+        $bootstrapUser = 'PVEAutopilot'
+        $bootstrapPassword = New-OSDeployBootstrapPassword
+    }
     $userAccounts = $shellOobe.SelectSingleNode('u:UserAccounts', $ns)
     if (-not $userAccounts) {
         $userAccounts = $xml.CreateElement('UserAccounts', $unattendNs)
@@ -1197,6 +1202,7 @@ function Invoke-OSDeployBridge {
     $packageIdentity = Get-OSDeployObjectProperty -Value $package -Name 'identity'
     $packageServerSettings = Get-OSDeployObjectProperty -Value $package -Name 'server_settings'
     $packageArtifact = Get-OSDeployObjectProperty -Value $package -Name 'artifact'
+    $packageLocalAdmin = Get-OSDeployObjectProperty -Value $package -Name 'local_admin'
     $unattendPath = Invoke-OSDeployPeStep @stepArgs -Name 'stage_unattend' -ScriptBlock {
         Add-OSDeployOfflineUnattend `
             -WindowsRoot $disk.WindowsRoot `
@@ -1204,7 +1210,8 @@ function Invoke-OSDeployBridge {
             -Locale (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_language') `
             -Version (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_version') `
             -Edition (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_edition') `
-            -ImageName (Get-OSDeployObjectProperty -Value $packageArtifact -Name 'image_name')
+            -ImageName (Get-OSDeployObjectProperty -Value $packageArtifact -Name 'image_name') `
+            -LocalAdmin $packageLocalAdmin
     }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `

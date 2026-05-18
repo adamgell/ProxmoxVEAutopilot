@@ -132,6 +132,58 @@ def test_device_detail_shows_known_credentials(client, monkeypatch):
     assert "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5" in r.text
 
 
+def test_known_credentials_includes_osdeploy_local_admin(pg_conn):
+    from web import app as app_module, cloudosd_pg, osdeploy_pg, ts_engine_pg
+
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    cloudosd_pg.reset_for_tests(pg_conn)
+    cloudosd_pg.init(pg_conn)
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+    artifact = osdeploy_pg.create_artifact(
+        pg_conn,
+        architecture="amd64",
+        osdeploy_module_version="26.1.30.5",
+        osdbuilder_module_version="24.10.8.1",
+        adk_version="10.1.26100.1",
+        build_sha="servercredtest",
+        iso_path="/app/output/osdeploy.iso",
+        wim_path="/app/output/osdeploy.wim",
+        manifest_path="/app/output/osdeploy.json",
+        iso_sha256="c" * 64,
+        wim_sha256="d" * 64,
+        source_media="Windows Server 2025",
+        image_name="Windows Server 2025 Datacenter",
+        image_index=4,
+        os_version="Windows Server 2025",
+        os_edition="Datacenter",
+        os_language="en-us",
+        built_by_host="builder",
+        proxmox_volid="local:iso/osdeploy.iso",
+    )
+    run = osdeploy_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="FS01",
+        requested_vmid=9109,
+    )
+
+    known = app_module._known_credentials_for_vmid(9109)
+
+    assert known == [{
+        "source": "OSDeploy",
+        "label": "Local admin",
+        "username": run["local_admin"]["username"],
+        "password": run["local_admin"]["password"],
+        "vm_name": "FS01",
+        "run_id": run["run_id"],
+        "run_url": f"/osdeploy/runs/{run['run_id']}",
+        "updated_at": run["updated_at"],
+        "note": "Visible local administrator credential from the deployment run.",
+    }]
+
+
 def test_device_detail_404_for_unknown_vmid(client):
     c, _ = client
     r = c.get("/devices/99999")
