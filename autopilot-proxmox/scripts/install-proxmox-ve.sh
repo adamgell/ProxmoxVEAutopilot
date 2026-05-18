@@ -120,8 +120,10 @@ prompt_yes_no() {
     suffix="y/N"
   fi
   if [[ "${YES}" == "1" ]]; then
-    [[ "${default}" == "yes" ]]
-    return $?
+    if [[ "${default}" == "yes" ]]; then
+      return 0
+    fi
+    return 1
   fi
   while true; do
     read -r -p "${label} [${suffix}]: " answer
@@ -199,6 +201,7 @@ build_common_args() {
   [[ -n "${CONTROLLER_VMID}" ]] && COMMON_ARGS+=(--controller-vmid "${CONTROLLER_VMID}")
   [[ -n "${CONTROLLER_STORAGE}" ]] && COMMON_ARGS+=(--controller-storage "${CONTROLLER_STORAGE}")
   [[ -n "${CONTROLLER_BRIDGE}" ]] && COMMON_ARGS+=(--controller-bridge "${CONTROLLER_BRIDGE}")
+  return 0
 }
 
 build_media_args() {
@@ -211,6 +214,7 @@ build_media_args() {
   esac
   [[ -n "${WINDOWS_ISO_LANGUAGE}" ]] && MEDIA_ARGS+=(--windows-iso-language "${WINDOWS_ISO_LANGUAGE}")
   [[ "${DOWNLOAD_VIRTIO}" == "1" ]] && MEDIA_ARGS+=(--download-virtio)
+  return 0
 }
 
 run_init_phase() {
@@ -298,15 +302,57 @@ PY
 }
 
 guided_install() {
+  local rc
   configure_interactive
+  set +e
   run_init_phase foundation
+  rc=$?
+  set -e
+  if [[ "${rc}" != "0" ]]; then
+    show_state
+    return "${rc}"
+  fi
   show_state
+  set +e
   run_init_phase bootstrap
+  rc=$?
+  set -e
+  if [[ "${rc}" != "0" ]]; then
+    show_state
+    if [[ "${rc}" == "20" ]]; then
+      echo
+      echo "Resume from this installer after media is available with action 3 or:"
+      echo "  bash ${0} --action bootstrap --yes --download-windows --download-virtio"
+    fi
+    return "${rc}"
+  fi
   show_state
+  set +e
   run_init_phase operational
+  rc=$?
+  set -e
+  if [[ "${rc}" != "0" ]]; then
+    show_state
+    return "${rc}"
+  fi
   show_state
   echo
   echo "Core operator console init path completed. Open /setup on the controller URL above for build-host and artifact readiness."
+}
+
+run_single_phase() {
+  local phase="$1"
+  local rc
+  configure_interactive
+  set +e
+  run_init_phase "${phase}"
+  rc=$?
+  set -e
+  if [[ "${rc}" != "0" ]]; then
+    show_state
+    return "${rc}"
+  fi
+  show_state
 }
 
 confirm_reset() {
@@ -368,12 +414,12 @@ menu_loop() {
     echo
     read -r -p "Select action: " choice
     case "${choice}" in
-      1) guided_install ;;
-      2) configure_interactive; run_init_phase foundation; show_state ;;
-      3) configure_interactive; run_init_phase bootstrap; show_state ;;
-      4) configure_interactive; run_init_phase operational; show_state ;;
-      5) configure_interactive; run_init_phase runtime-config; show_state ;;
-      6) run_reset; show_state ;;
+      1) guided_install || true ;;
+      2) run_single_phase foundation || true ;;
+      3) run_single_phase bootstrap || true ;;
+      4) run_single_phase operational || true ;;
+      5) run_single_phase runtime-config || true ;;
+      6) run_reset || true; show_state ;;
       7) show_one_liners ;;
       0|q|Q) return 0 ;;
       *) echo "Invalid selection." ;;
@@ -423,10 +469,10 @@ main() {
   case "${ACTION}" in
     menu) menu_loop ;;
     guided) guided_install ;;
-    foundation) configure_interactive; run_init_phase foundation; show_state ;;
-    bootstrap) configure_interactive; run_init_phase bootstrap; show_state ;;
-    operational) configure_interactive; run_init_phase operational; show_state ;;
-    runtime-config) configure_interactive; run_init_phase runtime-config; show_state ;;
+    foundation) run_single_phase foundation ;;
+    bootstrap) run_single_phase bootstrap ;;
+    operational) run_single_phase operational ;;
+    runtime-config) run_single_phase runtime-config ;;
     status) show_state ;;
     reset-dev-lab) run_reset; show_state ;;
     *) die "invalid --action: ${ACTION}" ;;
