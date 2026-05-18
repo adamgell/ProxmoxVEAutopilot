@@ -214,31 +214,39 @@ function Invoke-OSDeployNativeProcessWithHeartbeat {
         [Parameter(Mandatory)] [string] $BearerToken,
         [string] $FallbackBaseUrl
     )
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $FileName
-    $startInfo.Arguments = Join-OSDeployNativeArguments -Arguments $Arguments
-    $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $startInfo
-    [void] $process.Start()
-    $lastHeartbeat = Get-Date
-    while (-not $process.WaitForExit(1000)) {
-        if (((Get-Date) - $lastHeartbeat).TotalSeconds -ge $script:OSDeployHeartbeatIntervalSeconds) {
-            $lastHeartbeat = Get-Date
-            Write-OSDeployConsoleProgress -Step $Step -Message "pid=$($process.Id)"
-            Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
-                -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
-                -EventType 'osdeploy_pe_step_heartbeat' `
-                -Message "OSDeploy PE step still running: $Step" `
-                -Data @{ step = $Step; pid = $process.Id }
+    $outputRoot = 'X:\autopilot\osdeploy\native-output'
+    New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+    $outputId = [guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path $outputRoot "$Step-$outputId.out.log"
+    $stderrPath = Join-Path $outputRoot "$Step-$outputId.err.log"
+    $argumentLine = Join-OSDeployNativeArguments -Arguments $Arguments
+    $process = Start-Process `
+        -FilePath $FileName `
+        -ArgumentList $argumentLine `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath `
+        -NoNewWindow `
+        -PassThru
+    try {
+        $lastHeartbeat = Get-Date
+        while (-not $process.WaitForExit(1000)) {
+            if (((Get-Date) - $lastHeartbeat).TotalSeconds -ge $script:OSDeployHeartbeatIntervalSeconds) {
+                $lastHeartbeat = Get-Date
+                Write-OSDeployConsoleProgress -Step $Step -Message "pid=$($process.Id)"
+                Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+                    -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
+                    -EventType 'osdeploy_pe_step_heartbeat' `
+                    -Message "OSDeploy PE step still running: $Step" `
+                    -Data @{ step = $Step; pid = $process.Id }
+            }
         }
+        $process.Refresh()
+        $exitCode = if ($null -ne $process.ExitCode) { [int] $process.ExitCode } else { 0 }
+    } finally {
+        $process.Dispose()
     }
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
-    $exitCode = $process.ExitCode
-    $process.Dispose()
+    $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue } else { '' }
+    $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue } else { '' }
     return [pscustomobject]@{
         ExitCode = $exitCode
         Stdout = $stdout
@@ -553,6 +561,13 @@ function Resolve-OSDeployProductKey {
         [AllowNull()] [string] $Edition,
         [AllowNull()] [string] $ImageName
     )
+    $explicitKey = [Environment]::GetEnvironmentVariable('OSDEPLOY_UNATTEND_PRODUCT_KEY')
+    if (-not [string]::IsNullOrWhiteSpace($explicitKey)) {
+        return $explicitKey.Trim()
+    }
+    if ([Environment]::GetEnvironmentVariable('OSDEPLOY_ALLOW_DEFAULT_GVLK') -ne '1') {
+        return $null
+    }
     $product = "$Version $Edition $ImageName"
     if ($product -match '(?i)\bEvaluation\b') {
         return $null
@@ -629,7 +644,7 @@ function Add-OSDeployOfflineUnattend {
     if (-not $rootElement.NamespaceURI) {
         throw 'Existing offline Unattend.xml root does not use the Windows unattend namespace'
     }
-    $rootElement.SetAttribute('xmlns:wcm', $wcmNs)
+    [void] $rootElement.SetAttribute('xmlns:wcm', $wcmNs)
 
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('u', $unattendNs)
@@ -638,17 +653,17 @@ function Add-OSDeployOfflineUnattend {
     $specialize = $rootElement.SelectSingleNode("u:settings[@pass='specialize']", $ns)
     if (-not $specialize) {
         $specialize = $xml.CreateElement('settings', $unattendNs)
-        $specialize.SetAttribute('pass', 'specialize')
+        [void] $specialize.SetAttribute('pass', 'specialize')
         $rootElement.AppendChild($specialize) | Out-Null
     }
     $shellSpecialize = $specialize.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup' and @processorArchitecture='amd64']", $ns)
     if (-not $shellSpecialize) {
         $shellSpecialize = $xml.CreateElement('component', $unattendNs)
-        $shellSpecialize.SetAttribute('name', 'Microsoft-Windows-Shell-Setup')
-        $shellSpecialize.SetAttribute('processorArchitecture', 'amd64')
-        $shellSpecialize.SetAttribute('publicKeyToken', '31bf3856ad364e35')
-        $shellSpecialize.SetAttribute('language', 'neutral')
-        $shellSpecialize.SetAttribute('versionScope', 'nonSxS')
+        [void] $shellSpecialize.SetAttribute('name', 'Microsoft-Windows-Shell-Setup')
+        [void] $shellSpecialize.SetAttribute('processorArchitecture', 'amd64')
+        [void] $shellSpecialize.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        [void] $shellSpecialize.SetAttribute('language', 'neutral')
+        [void] $shellSpecialize.SetAttribute('versionScope', 'nonSxS')
         $specialize.AppendChild($shellSpecialize) | Out-Null
     }
     $windowsComputerName = ConvertTo-OSDeployWindowsComputerName -Name $ComputerName
@@ -678,26 +693,27 @@ function Add-OSDeployOfflineUnattend {
             -Value $productKey | Out-Null
     }
 
-    $deployment = $specialize.SelectSingleNode("u:component[@name='Microsoft-Windows-Deployment' and @processorArchitecture='amd64']", $ns)
-    if (-not $deployment) {
-        $deployment = $xml.CreateElement('component', $unattendNs)
-        $deployment.SetAttribute('name', 'Microsoft-Windows-Deployment')
-        $deployment.SetAttribute('processorArchitecture', 'amd64')
-        $deployment.SetAttribute('publicKeyToken', '31bf3856ad364e35')
-        $deployment.SetAttribute('language', 'neutral')
-        $deployment.SetAttribute('versionScope', 'nonSxS')
-        $specialize.AppendChild($deployment) | Out-Null
+    $sppUx = $specialize.SelectSingleNode("u:component[@name='Microsoft-Windows-Security-SPP-UX' and @processorArchitecture='amd64']", $ns)
+    if (-not $sppUx) {
+        $sppUx = $xml.CreateElement('component', $unattendNs)
+        [void] $sppUx.SetAttribute('name', 'Microsoft-Windows-Security-SPP-UX')
+        [void] $sppUx.SetAttribute('processorArchitecture', 'amd64')
+        [void] $sppUx.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        [void] $sppUx.SetAttribute('language', 'neutral')
+        [void] $sppUx.SetAttribute('versionScope', 'nonSxS')
+        $specialize.AppendChild($sppUx) | Out-Null
     }
-    $runSync = $deployment.SelectSingleNode('u:RunSynchronous', $ns)
-    if (-not $runSync) {
-        $runSync = $xml.CreateElement('RunSynchronous', $unattendNs)
-        $deployment.AppendChild($runSync) | Out-Null
-    }
+    Set-OSDeployUnattendTextElement -Xml $xml `
+        -Parent $sppUx `
+        -NamespaceManager $ns `
+        -Namespace $unattendNs `
+        -Name 'SkipAutoActivation' `
+        -Value 'true' | Out-Null
 
     $oobeSettings = $rootElement.SelectSingleNode("u:settings[@pass='oobeSystem']", $ns)
     if (-not $oobeSettings) {
         $oobeSettings = $xml.CreateElement('settings', $unattendNs)
-        $oobeSettings.SetAttribute('pass', 'oobeSystem')
+        [void] $oobeSettings.SetAttribute('pass', 'oobeSystem')
         $rootElement.AppendChild($oobeSettings) | Out-Null
     }
     if ([string]::IsNullOrWhiteSpace($Locale)) {
@@ -706,11 +722,11 @@ function Add-OSDeployOfflineUnattend {
     $internationalOobe = $oobeSettings.SelectSingleNode("u:component[@name='Microsoft-Windows-International-Core' and @processorArchitecture='amd64']", $ns)
     if (-not $internationalOobe) {
         $internationalOobe = $xml.CreateElement('component', $unattendNs)
-        $internationalOobe.SetAttribute('name', 'Microsoft-Windows-International-Core')
-        $internationalOobe.SetAttribute('processorArchitecture', 'amd64')
-        $internationalOobe.SetAttribute('publicKeyToken', '31bf3856ad364e35')
-        $internationalOobe.SetAttribute('language', 'neutral')
-        $internationalOobe.SetAttribute('versionScope', 'nonSxS')
+        [void] $internationalOobe.SetAttribute('name', 'Microsoft-Windows-International-Core')
+        [void] $internationalOobe.SetAttribute('processorArchitecture', 'amd64')
+        [void] $internationalOobe.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        [void] $internationalOobe.SetAttribute('language', 'neutral')
+        [void] $internationalOobe.SetAttribute('versionScope', 'nonSxS')
         $oobeSettings.AppendChild($internationalOobe) | Out-Null
     }
     foreach ($entry in @(
@@ -729,11 +745,11 @@ function Add-OSDeployOfflineUnattend {
     $shellOobe = $oobeSettings.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup' and @processorArchitecture='amd64']", $ns)
     if (-not $shellOobe) {
         $shellOobe = $xml.CreateElement('component', $unattendNs)
-        $shellOobe.SetAttribute('name', 'Microsoft-Windows-Shell-Setup')
-        $shellOobe.SetAttribute('processorArchitecture', 'amd64')
-        $shellOobe.SetAttribute('publicKeyToken', '31bf3856ad364e35')
-        $shellOobe.SetAttribute('language', 'neutral')
-        $shellOobe.SetAttribute('versionScope', 'nonSxS')
+        [void] $shellOobe.SetAttribute('name', 'Microsoft-Windows-Shell-Setup')
+        [void] $shellOobe.SetAttribute('processorArchitecture', 'amd64')
+        [void] $shellOobe.SetAttribute('publicKeyToken', '31bf3856ad364e35')
+        [void] $shellOobe.SetAttribute('language', 'neutral')
+        [void] $shellOobe.SetAttribute('versionScope', 'nonSxS')
         $oobeSettings.AppendChild($shellOobe) | Out-Null
     }
     $oobe = $shellOobe.SelectSingleNode('u:OOBE', $ns)
@@ -747,6 +763,8 @@ function Add-OSDeployOfflineUnattend {
         @{ Name = 'HideOEMRegistrationScreen'; Value = 'true' },
         @{ Name = 'HideOnlineAccountScreens'; Value = 'true' },
         @{ Name = 'HideWirelessSetupInOOBE'; Value = 'true' },
+        @{ Name = 'SkipMachineOOBE'; Value = 'true' },
+        @{ Name = 'SkipUserOOBE'; Value = 'true' },
         @{ Name = 'ProtectYourPC'; Value = '3' }
     )) {
         Set-OSDeployUnattendTextElement -Xml $xml `
@@ -772,7 +790,7 @@ function Add-OSDeployOfflineUnattend {
     $localAccount = $localAccounts.SelectSingleNode("u:LocalAccount[u:Name='$bootstrapUser']", $ns)
     if (-not $localAccount) {
         $localAccount = $xml.CreateElement('LocalAccount', $unattendNs)
-        $localAccount.SetAttribute('action', $wcmNs, 'add')
+        [void] $localAccount.SetAttribute('action', $wcmNs, 'add')
         $localAccounts.AppendChild($localAccount) | Out-Null
     }
     Set-OSDeployUnattendTextElement -Xml $xml -Parent $localAccount -NamespaceManager $ns -Namespace $unattendNs -Name 'Name' -Value $bootstrapUser | Out-Null

@@ -711,10 +711,13 @@ ensure_osdeploy_blank_template() {
     --cpu host \
     --ostype win11 \
     --machine q35 \
+    --bios ovmf \
     --agent enabled=1 \
     --scsihw virtio-scsi-single \
     --net0 "virtio,bridge=${bridge}" \
     --boot order=scsi0
+  qm set "${vmid}" --efidisk0 "${disk_storage}:1,efitype=4m,pre-enrolled-keys=1" >/dev/null
+  qm set "${vmid}" --tpmstate0 "${disk_storage}:4,version=v2.0" >/dev/null
   qm set "${vmid}" --scsi0 "${disk_storage}:8,discard=on,iothread=1" >/dev/null
   qm template "${vmid}"
   write_osdeploy_blank_template_vmid "${vmid}"
@@ -1189,6 +1192,12 @@ PY
   fi
 }
 
+collect_controller_bootstrap_debug() {
+  local ip="$1"
+  log "collecting controller bootstrap diagnostics"
+  ssh_controller "${ip}" "cd '${CONTROLLER_REMOTE_APP}' 2>/dev/null && sudo docker compose ps -a || true; sudo docker logs autopilot-postgres --tail 80 || true" || true
+}
+
 run_controller_init() {
   local ip="$1"
   local pve_ip="$2"
@@ -1205,7 +1214,26 @@ run_controller_init() {
   if [[ -n "${remote_bundle}" ]]; then
     cmd="${cmd} --restore-bundle '${remote_bundle}'"
   fi
+  local rc
+  set +e
   ssh_controller "${ip}" "${cmd}"
+  rc=$?
+  set -e
+  if [[ "${rc}" == "0" ]]; then
+    return 0
+  fi
+
+  log "Ubuntu controller bootstrap exited with rc=${rc}; retrying once to repair partial first-run state"
+  collect_controller_bootstrap_debug "${ip}"
+  sleep 5
+  set +e
+  ssh_controller "${ip}" "${cmd}"
+  rc=$?
+  set -e
+  if [[ "${rc}" != "0" ]]; then
+    collect_controller_bootstrap_debug "${ip}"
+    return "${rc}"
+  fi
 }
 
 verify_controller_health() {
@@ -1260,7 +1288,7 @@ is_dev_lab_vm_name() {
   local name="$1"
   case "${name}" in
     "${CONTROLLER_NAME}"|"${BUILDHOST_NAME}"|autopilot-osdeploy-blank-template|autopilot-cloudosd-blank-template) return 0 ;;
-    OSDEPLOY-E2E-*|CLOUDOSD-E2E-*|AUTOPILOT-E2E-*|OSD[0-9]*|CSD[0-9]*) return 0 ;;
+    OSDEPLOY-E2E-*|CLOUDOSD-E2E-*|AUTOPILOT-E2E-*|OSD[0-9]*|CSD[0-9]*|APE2E[0-9]*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1313,6 +1341,7 @@ reset_dev_lab_media() {
         -iname '*windows*enterprise*eval*.iso' -o \
         -iname '*cliententerpriseeval*.iso' -o \
         -iname 'autopilot-buildhost-seed-*.iso' -o \
+        -iname 'winpe-autopilot-*.iso' -o \
         -iname 'cloudosd-autopilot-*.iso' -o \
         -iname 'osdeploy-server-*.iso' \
       \) -print

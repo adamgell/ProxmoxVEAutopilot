@@ -236,17 +236,17 @@ local:iso/cloudosd-autopilot-amd64-b0f58d98948ff451.iso
 
 ## CloudOSD Blank Template
 
-CloudOSD v2 provisions from a blank template VM. Until this is fully folded into
-the PVE init script, create the template once on a new dev node:
+CloudOSD v2 provisions from a blank template VM. PVE init creates or repairs
+this template on first-run. For manual recovery on a dev node:
 
 ```bash
-ssh pve-dev-192-168-2-252 'qm status 9000 >/dev/null 2>&1 || qm create 9000 --name autopilot-cloudosd-blank-template --memory 4096 --cores 2 --cpu host --machine q35 --bios ovmf --ostype win11 --scsihw virtio-scsi-single --net0 virtio,bridge=vmbr0 --agent enabled=1 --efidisk0 local-zfs:1,efitype=4m,pre-enrolled-keys=1 --tpmstate0 local-zfs:4,version=v2.0 --scsi0 local-zfs:64,discard=on,iothread=1,ssd=1 --boot order=scsi0 && qm template 9000'
+ssh pve-dev-192-168-2-252 'qm status 9001 >/dev/null 2>&1 || (qm create 9001 --name autopilot-osdeploy-blank-template --memory 4096 --cores 2 --cpu host --machine q35 --bios ovmf --ostype win11 --scsihw virtio-scsi-single --net0 virtio,bridge=vmbr0 --agent enabled=1 --boot order=scsi0 && qm set 9001 --efidisk0 local-zfs:1,efitype=4m,pre-enrolled-keys=1 && qm set 9001 --tpmstate0 local-zfs:4,version=v2.0 && qm set 9001 --scsi0 local-zfs:64,discard=on,iothread=1,ssd=1 && qm template 9001)'
 ```
 
 Publish the VMID to the controller/PVE inventory:
 
 ```bash
-ssh pve-dev-192-168-2-252 'grep -q "^cloudosd_blank_template_vmid:" /root/ProxmoxVEAutopilot/autopilot-proxmox/inventory/group_vars/all/vars.yml && sed -i "s/^cloudosd_blank_template_vmid:.*/cloudosd_blank_template_vmid: 9000/" /root/ProxmoxVEAutopilot/autopilot-proxmox/inventory/group_vars/all/vars.yml || printf "\ncloudosd_blank_template_vmid: 9000\n" >> /root/ProxmoxVEAutopilot/autopilot-proxmox/inventory/group_vars/all/vars.yml'
+ssh pve-dev-192-168-2-252 'grep -q "^cloudosd_blank_template_vmid:" /root/ProxmoxVEAutopilot/autopilot-proxmox/inventory/group_vars/all/vars.yml && sed -i "s/^cloudosd_blank_template_vmid:.*/cloudosd_blank_template_vmid: 9001/" /root/ProxmoxVEAutopilot/autopilot-proxmox/inventory/group_vars/all/vars.yml || printf "\ncloudosd_blank_template_vmid: 9001\n" >> /root/ProxmoxVEAutopilot/autopilot-proxmox/inventory/group_vars/all/vars.yml'
 ```
 
 ## Provision Acceptance

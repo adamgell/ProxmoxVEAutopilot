@@ -2,6 +2,18 @@
 # Update the cloned VM configuration with APHVTools settings.
 # Retries on lock contention (mirrors PowerShell maxConfigAttempts=6, 5s delay).
 
+- name: Resolve requested firmware features
+  ansible.builtin.set_fact:
+    _explicit_legacy_bios: "{{ (vm_bios | default('') | string | lower) == 'seabios' }}"
+    _secure_boot_requested: "{{ secure_boot | default(false) | bool }}"
+    _tpm_requested: "{{ tpm_enabled | default(false) | bool }}"
+    _uefi_requested: >-
+      {{ (vm_bios | default('') | string | lower) == 'ovmf'
+         or (
+           (vm_bios | default('') | string | lower) != 'seabios'
+           and ((secure_boot | default(false) | bool) or (tpm_enabled | default(false) | bool))
+         ) }}
+
 - name: Build config update body
   ansible.builtin.set_fact:
     _config_body:
@@ -42,6 +54,28 @@
   ansible.builtin.set_fact:
     _config_body: "{{ _config_body | combine({'bios': vm_bios}) }}"
   when: vm_bios is defined and vm_bios | default('') | length > 0
+
+- name: Apply UEFI firmware when Secure Boot or TPM is requested
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'bios': 'ovmf'}) }}"
+  when:
+    - _uefi_requested | bool
+    - not (_explicit_legacy_bios | bool)
+
+- name: Add EFI disk when UEFI firmware is requested and missing
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'efidisk0': proxmox_storage ~ ':1,efitype=4m,pre-enrolled-keys=' ~ ('1' if (_secure_boot_requested | bool) else '0')}) }}"
+  when:
+    - _uefi_requested | bool
+    - (_clone_config.json.data.efidisk0 | default('') | string | length) == 0
+
+- name: Add TPM state when requested and missing
+  ansible.builtin.set_fact:
+    _config_body: "{{ _config_body | combine({'tpmstate0': proxmox_storage ~ ':4,version=v2.0'}) }}"
+  when:
+    - _tpm_requested | bool
+    - not (_explicit_legacy_bios | bool)
+    - (_clone_config.json.data.tpmstate0 | default('') | string | length) == 0
 
 - name: Update cloned VM configuration with lock-contention retry
   ansible.builtin.uri:

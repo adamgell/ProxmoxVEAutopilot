@@ -13,6 +13,7 @@
     <Compile Include="../../src/AutopilotAgent/AgentFileLog.cs" Link="AgentFileLog.cs" />
     <Compile Include="../../src/AutopilotAgent/BuildHostWorkService.cs" Link="BuildHostWorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/HashCaptureService.cs" Link="HashCaptureService.cs" />
+    <Compile Include="../../src/AutopilotAgent/OsDeployRoleWorkService.cs" Link="OsDeployRoleWorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/OsdV2WorkService.cs" Link="OsdV2WorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/TelemetryCollector.cs" Link="TelemetryCollector.cs" />
   </ItemGroup>

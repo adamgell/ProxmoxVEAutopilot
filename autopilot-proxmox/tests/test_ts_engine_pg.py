@@ -950,3 +950,131 @@ def test_claim_next_step_honors_phase_and_advances_one_step(pg_conn):
     assert ts_engine_pg.claim_next_step(
         pg_conn, run_id=run_id, phase="winpe", agent_id="winpe-1"
     ) is None
+
+
+def test_claim_next_step_does_not_skip_running_same_phase_step(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Ordered Full OS")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="First",
+        kind="first_full_os",
+        phase="full_os",
+        position=0,
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Second",
+        kind="second_full_os",
+        phase="full_os",
+        position=1,
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn, sequence_version_id=version_id
+    )
+
+    first = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="agent-1"
+    )
+    assert first["kind"] == "first_full_os"
+
+    assert ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="agent-2"
+    ) is None
+
+    ts_engine_pg.complete_step(
+        pg_conn,
+        run_id=run_id,
+        step_id=first["id"],
+        agent_id="agent-1",
+        status="success",
+    )
+    second = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="agent-2"
+    )
+    assert second["kind"] == "second_full_os"
+
+
+def test_claim_next_step_filters_by_supported_kinds(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Capability Filter")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Role step",
+        kind="configure_file_server_role",
+        phase="full_os",
+        position=0,
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn, sequence_version_id=version_id
+    )
+
+    assert ts_engine_pg.claim_next_step(
+        pg_conn,
+        run_id=run_id,
+        phase="full_os",
+        agent_id="osd-fullos",
+        supported_kinds={"install_autopilot_agent"},
+    ) is None
+
+    claim = ts_engine_pg.claim_next_step(
+        pg_conn,
+        run_id=run_id,
+        phase="full_os",
+        agent_id="agent-role",
+        supported_kinds={"configure_file_server_role"},
+    )
+    assert claim["kind"] == "configure_file_server_role"
+
+
+def test_claim_next_step_stops_after_failed_same_phase_step(pg_conn):
+    from web import ts_engine_pg
+
+    sequence_id = ts_engine_pg.create_sequence(pg_conn, name="Failed Step Gate")
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="First",
+        kind="first_full_os",
+        phase="full_os",
+        position=0,
+    )
+    ts_engine_pg.add_step(
+        pg_conn,
+        sequence_id=sequence_id,
+        parent_id=None,
+        name="Second",
+        kind="second_full_os",
+        phase="full_os",
+        position=1,
+    )
+    version_id = ts_engine_pg.compile_sequence(pg_conn, sequence_id)
+    run_id = ts_engine_pg.create_run_from_version(
+        pg_conn, sequence_version_id=version_id
+    )
+    first = ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="agent-1"
+    )
+    ts_engine_pg.complete_step(
+        pg_conn,
+        run_id=run_id,
+        step_id=first["id"],
+        agent_id="agent-1",
+        status="failed",
+        message="boom",
+    )
+
+    assert ts_engine_pg.claim_next_step(
+        pg_conn, run_id=run_id, phase="full_os", agent_id="agent-2"
+    ) is None

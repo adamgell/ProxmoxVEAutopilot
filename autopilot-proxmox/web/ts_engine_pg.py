@@ -1924,19 +1924,53 @@ def claim_next_step(
     run_id: str,
     phase: str,
     agent_id: str,
+    supported_kinds: list[str] | tuple[str, ...] | set[str] | None = None,
+    allow_running_claimed_by_same_agent: bool = False,
 ) -> Optional[dict]:
+    normalized_supported = sorted({str(kind) for kind in (supported_kinds or []) if str(kind)})
+    supported_sql = ""
+    params: list[Any] = [
+        run_id,
+        phase,
+        phase,
+        bool(allow_running_claimed_by_same_agent),
+        agent_id,
+    ]
+    if normalized_supported:
+        supported_sql = "AND step.kind = ANY(%s)"
+        params.append(normalized_supported)
     row = conn.execute(
-        """
-        SELECT *
-        FROM ts_run_plan_steps
-        WHERE run_id = %s
-          AND state = 'pending'
-          AND phase IN (%s, 'any')
+        f"""
+        SELECT step.*
+        FROM ts_run_plan_steps step
+        JOIN ts_provisioning_runs run ON run.id = step.run_id
+        WHERE step.run_id = %s
+          AND run.state NOT IN ('done', 'failed', 'canceled')
+          AND step.state = 'pending'
+          AND step.phase IN (%s, 'any')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM ts_run_plan_steps prev
+              WHERE prev.run_id = step.run_id
+                AND prev.ordinal < step.ordinal
+                AND prev.phase IN (%s, 'any')
+                AND (
+                    prev.state IN ('pending', 'awaiting_reboot', 'failed')
+                    OR (
+                        prev.state = 'running'
+                        AND (
+                            NOT %s
+                            OR COALESCE(prev.claimed_by, '') <> %s
+                        )
+                    )
+                )
+          )
+          {supported_sql}
         ORDER BY ordinal
         FOR UPDATE SKIP LOCKED
         LIMIT 1
         """,
-        (run_id, phase),
+        params,
     ).fetchone()
     if not row:
         _commit(conn)

@@ -5,6 +5,7 @@ namespace AutopilotAgent;
 public sealed class OsdV2WorkService(
     AgentApiClient apiClient,
     HashCaptureService hashCaptureService,
+    OsDeployRoleWorkService roleWorkService,
     AgentFileLog log)
 {
     public const string FullOsPhase = "full_os";
@@ -14,6 +15,11 @@ public sealed class OsdV2WorkService(
         "capture_autopilot_hash",
         "verify_ad_domain_join",
         "wait_agent_heartbeat",
+        "join_domain_role",
+        "configure_file_server_role",
+        "configure_isolated_domain_controller_role",
+        "verify_isolated_domain_controller_role",
+        "configure_mecm_prereq_role",
     ];
 
     public async Task ProcessOnceAsync(
@@ -21,7 +27,7 @@ public sealed class OsdV2WorkService(
         TelemetrySnapshot telemetry,
         CancellationToken cancellationToken)
     {
-        if (!IsCloudOsdV2Eligible(config))
+        if (!IsOsdV2Eligible(config))
         {
             return;
         }
@@ -35,6 +41,7 @@ public sealed class OsdV2WorkService(
         var next = await apiClient.GetNextOsdV2ActionAsync(
             config,
             bearerToken,
+            SupportedKinds,
             cancellationToken);
         foreach (var action in next.Actions)
         {
@@ -50,6 +57,13 @@ public sealed class OsdV2WorkService(
     public static bool IsCloudOsdV2Eligible(AgentConfig config) =>
         !string.IsNullOrWhiteSpace(config.RunId)
         && string.Equals(config.Phase, "cloudosd", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsOsdV2Eligible(AgentConfig config) =>
+        !string.IsNullOrWhiteSpace(config.RunId)
+        && (
+            string.Equals(config.Phase, "cloudosd", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(config.Phase, FullOsPhase, StringComparison.OrdinalIgnoreCase)
+        );
 
     public static bool IsDomainJoinSatisfied(
         TelemetrySnapshot telemetry,
@@ -155,6 +169,28 @@ public sealed class OsdV2WorkService(
                     }
                     break;
 
+                case "configure_file_server_role":
+                case "join_domain_role":
+                case "configure_isolated_domain_controller_role":
+                case "verify_isolated_domain_controller_role":
+                case "configure_mecm_prereq_role":
+                    var result = await roleWorkService.ProcessAsync(
+                        action.Kind,
+                        action.Params,
+                        cancellationToken);
+                    await apiClient.CompleteOsdV2StepAsync(
+                        config,
+                        bearerToken,
+                        action.StepId,
+                        $"OSDeploy role step completed: {action.Kind}",
+                        result,
+                        cancellationToken);
+                    if (ShouldRequestReboot(action.RebootBehavior, "success"))
+                    {
+                        await RequestRebootAsync(action.Kind, cancellationToken);
+                    }
+                    break;
+
                 default:
                     await apiClient.FailOsdV2StepAsync(
                         config,
@@ -192,6 +228,41 @@ public sealed class OsdV2WorkService(
         ["domain_joined"] = telemetry.DomainJoined,
         ["qga_state"] = telemetry.QgaState,
     };
+
+    public static bool ShouldRequestReboot(string? rebootBehavior, string status) =>
+        string.Equals(status, "success", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(rebootBehavior, "required", StringComparison.OrdinalIgnoreCase);
+
+    private async Task RequestRebootAsync(string kind, CancellationToken cancellationToken)
+    {
+        log.Info($"OSD v2 step {kind} requires reboot; requesting Windows restart.");
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "shutdown.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            ArgumentList =
+            {
+                "/r",
+                "/t",
+                "15",
+                "/c",
+                $"ProxmoxVEAutopilot OSD v2 step {kind} requires reboot",
+            },
+        });
+        if (process is null)
+        {
+            throw new InvalidOperationException("Failed to start shutdown.exe for required reboot.");
+        }
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0)
+        {
+            var error = await process.StandardError.ReadToEndAsync(cancellationToken);
+            throw new InvalidOperationException($"shutdown.exe failed with exit {process.ExitCode}: {error}");
+        }
+    }
 
     private static string ReadString(
         IReadOnlyDictionary<string, JsonElement> values,

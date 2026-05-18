@@ -58,6 +58,46 @@ This log records lab blockers that must be fixed in source, scripts, and tests. 
 - Script fix: `init-proxmox-ve.sh --phase operational` pulls unpromoted setup ISO artifacts from the Ubuntu controller into PVE ISO storage, then calls the controller promotion API with `already_copied=true`.
 - Regression guard: First-run init tests assert PVE-pull promotion exists, and setup promotion tests assert `already_copied=true` marks an artifact without retrying Proxmox API upload.
 
+## Build-host publish tried to push a large ISO through the controller API
+
+- Symptom: The build host completed MSI, WinPE, CloudOSD, and OSDeploy builds, then `publish_artifacts` failed with `HttpRequestException` and the work row stayed `claimed` because the controller web service was unavailable when the agent tried to report failure.
+- Evidence: The controller had the OSDeploy manifest, WIM, and 7.6 GB ISO under `cache/osdeploy/setup-artifacts`, while PVE ISO storage only had the smaller WinPE and CloudOSD ISOs. Agent logs showed `publish_artifacts` failed and then the agent continued to later queued work.
+- Root cause: Build-host `publish_artifacts` called the normal controller promotion endpoint, which attempted Proxmox API upload for every ISO. Multi-GB setup ISOs must use the PVE-pull promotion path instead of controller-to-PVE multipart upload.
+- Script fix: Controller promotion now defers API upload for artifacts larger than `AUTOPILOT_SETUP_PROMOTE_API_MAX_BYTES` (default 1 GiB) and returns `pve_pull_required_for_large_artifact`. `init-proxmox-ve.sh --phase operational` remains the owner for copying those large artifacts into PVE ISO storage and marking them promoted with `already_copied=true`. Setup and monitoring also treat a claimed build-host work item as no longer active when the same agent has already completed later work, so a lost failure report cannot leave first-run looking permanently busy.
+- Regression guard: Agent endpoint tests assert large setup ISO promotion is deferred without calling the Proxmox upload API, small ISO promotion and PVE-pulled promotion behavior remain unchanged, setup readiness ignores superseded claimed work, and deployment monitoring records the superseded claim as terminal instead of active.
+
+## Selected hash upload missed hash output default
+
+- Symptom: A completed CloudOSD v2 test captured `20260518T030221Z-vm102-APE2E004-osd-v2_hwid.csv`, but the upload job failed before reaching Graph with `hash_output_dir is undefined`.
+- Evidence: The upload playbook was launched with a selected `hash_file` path. The discovery task was skipped, but the upload task still rendered `HASH_DIR: "{{ hash_output_dir }}"` in its environment.
+- Root cause: `upload_hashes.yml` relied on the hash-capture role default without importing that role. Selected-file uploads still need a controller-local hash directory default because the PowerShell uploader accepts both `HASH_FILE` and `HASH_DIR`.
+- Script fix: `upload_hashes.yml` now defines `upload_hash_output_dir` with a repo-relative default and uses it for discovery, no-file messages, and the uploader environment.
+- Regression guard: Agent asset tests assert the selected-file upload contract keeps `HASH_FILE`, group tags, and the defaulted `HASH_DIR` wrapper.
+
+## CloudOSD upload queued without Entra upload credentials
+
+- Symptom: After the hash-output default was fixed, retrying the CloudOSD Autopilot upload failed immediately with `Missing Entra credentials`.
+- Evidence: The completed test VM had QGA, AutopilotAgent heartbeat, and hash capture, but the controller vault for this dev first-run path had no Graph upload credentials.
+- Root cause: Local first-run auth is intentionally allowed, but CloudOSD upload retry still treated missing Graph credentials as a failed deployment job instead of a configuration boundary.
+- Script fix: CloudOSD Autopilot upload now checks Entra upload credential presence before queueing. If credentials are missing, readiness becomes `upload_not_configured`, no job is queued, and the next action is `configure_entra`.
+- Regression guard: CloudOSD endpoint tests assert uploads queue when credentials exist and return `upload_not_configured` without creating a job when credentials are absent.
+
+## CloudOSD monitoring kept failed hash-upload state after Entra boundary repair
+
+- Symptom: `/api/cloudosd/.../autopilot/readiness` correctly reported `upload_not_configured`, but `/monitoring` still marked the same completed CloudOSD run as `failed` at the `Hash upload` phase.
+- Evidence: Monitoring evidence showed `state=complete`, `hash_status=captured`, `upload_status=not_configured`, and `readiness_state=upload_not_configured`, while the deployment row still had `health=failed`.
+- Root cause: The monitoring backfill treated any `upload_error` as a hash-upload failure and the phase telemetry store kept prior failed rows sticky even after the authoritative readiness state changed to a terminal non-failure.
+- Script fix: CloudOSD deployment monitoring now classifies `upload_status=not_configured` or `readiness_state=upload_not_configured` as a terminal skipped hash-upload phase. The telemetry upsert can also recover a failed phase to authoritative terminal `done` or `skipped` state and clears stale errors for those recovered terminal states.
+- Regression guard: Deployment health tests assert upload-not-configured CloudOSD runs become completed monitoring rows, and deployment telemetry tests assert terminal source truth can recover a failed phase without keeping the old error.
+
+## Aborted CloudOSD run stayed active after PE registration and hash capture
+
+- Symptom: `/monitoring` showed an old CloudOSD run as active/stuck in `Hash upload` even though its Proxmox provision job had already failed.
+- Evidence: The row had `provision_job_status=failed`, `provision_job_exit_code=-15`, `state=pe_registered`, `hash_status=captured`, and `upload_status=not_started`.
+- Root cause: CloudOSD monitoring treated PE registration as a completed provision phase and hash capture as enough to open the upload phase, but it did not close downstream phases when the owning provision job failed before OSDCloud completion.
+- Script fix: If the provision job fails after PE registration but before OSDCloud starts/finishes, monitoring marks the OSDCloud phase failed and skips hash upload when no upload was started. Failed aborted runs no longer remain active solely because a readiness row exists.
+- Regression guard: Deployment health tests assert a post-PE provision failure does not leave `hash_upload` active and is absent from the active deployment list.
+
 ## Proxmox API token secret drift after resumed setup
 
 - Symptom: OSDeploy provisioning failed on `/cluster/nextid` with `401 invalid token value`.
@@ -113,6 +153,22 @@ This log records lab blockers that must be fixed in source, scripts, and tests. 
 - Root cause: The PVE bootstrap source sync used `rsync --delete` against the controller repo and did not exclude controller-local runtime files. The later runtime sync copied PVE host `.env` and all PVE secrets, including a different `postgres-password`, over the controller's Docker runtime contract.
 - Script fix: PVE source sync now excludes controller-local `.env`, `secrets/`, `cache/`, `jobs/`, and `output/`. PVE runtime sync copies only the Proxmox API config/vault and selected PVE root SSH key files. Controller init preserves a known Postgres password from `migration/restored.env` or existing `.env` when a Postgres data volume already exists, then reconciles the `autopilot` database role password to the active `.env` before starting the web app.
 - Regression guard: First-run init tests assert controller runtime files are excluded from source sync, PVE runtime sync no longer copies `.env` or all secrets, controller init preserves the Postgres password for existing volumes, and bootstrap verifies TCP password auth before marking Postgres ready.
+
+## Controller bootstrap stopped with only Postgres running
+
+- Symptom: Guided foundation created the Ubuntu controller, built the seed agent and web image, then returned to the installer with only `autopilot-postgres` running. The controller web UI was not listening on port 5000.
+- Evidence: Controller setup state had `web_image_ready=true` and `controller_seed_agent_ready=true`, but no `postgres_database_ready`, `compose_ready`, `controller_runtime_ready`, or `console_health_ready`. Compose showed only `autopilot-postgres` healthy; rerunning the controller init script completed and started `autopilot`, `autopilot-builder`, `autopilot-monitor`, and `autopilot-mcp`.
+- Root cause: On a fresh Postgres volume, `pg_isready` can report ready during the image entrypoint's temporary bootstrap server before the normal fast shutdown/restart. The controller init script treated that early readiness as stable and could race the restart while running setup SQL, exiting before launching the app services.
+- Script fix: Controller init now waits for the Postgres container healthcheck plus a stable SQL probe before database repair, records a non-secret `controller_bootstrap_error` when bootstrap fails, and restores the controller `phase` after migration bundle restore. PVE foundation retries the controller bootstrap once and prints Compose/Postgres diagnostics so a partial Postgres-only first-run state is repaired automatically.
+- Regression guard: First-run init tests assert controller bootstrap waits for container health, records failure state, and the PVE controller bootstrap path retries once after a partial first-run failure.
+
+## Build-host agent looked stale during long prerequisite install
+
+- Symptom: `/setup` reported the build-host agent as stale while the Windows build host was actively running the ADK/WinPE prerequisite workload.
+- Evidence: VMID 101 had `adkwinpesetup.exe` and `msiexec.exe` running through QGA, while `/api/setup/v1/state` showed the last heartbeat aging past 180 seconds and blocked `build_host_agent`.
+- Root cause: The Windows agent processes long build-host work items synchronously after its heartbeat loop, so it does not emit another heartbeat until the workload finishes. Setup readiness treated heartbeat age alone as agent health.
+- Script fix: `/setup` now looks for a claimed build-host work item for the expected agent. If the claimed work is still inside its workload-specific timeout, the agent is reported as `busy` and the active work details are surfaced instead of blocking as stale.
+- Regression guard: First-run setup tests assert a stale heartbeat plus an in-window claimed `install_build_prerequisites` item reports `agent_state=busy` and keeps the build-host agent readiness unblocked.
 
 ## OSDeploy evaluation media failed Windows specialize from invalid product key
 
@@ -185,3 +241,43 @@ This log records lab blockers that must be fixed in source, scripts, and tests. 
 - Root cause: The destructive reset allowlist only covered the original named E2E patterns and missed the compact generated prefixes used by the current lab batch launch flow.
 - Script fix: `init-proxmox-ve.sh --phase reset-dev-lab` now treats `CSD[0-9]*` and `OSD[0-9]*` as disposable generated dev-lab VM names, alongside the controller/build-host/template and explicit E2E prefixes.
 - Regression guard: First-run init tests assert the reset allowlist includes generated CloudOSD and OSDeploy batch prefixes before the script is used on pvetest.
+
+## Dev-lab reset missed final APE2E acceptance VM
+
+- Symptom: After a successful guided-install acceptance run, `reset-dev-lab` would have removed the controller, build host, and blank template but left the final CloudOSD test VM `APE2E004`.
+- Evidence: The live pvetest inventory showed `100 autopilot-controller-01`, `101 autopilot-buildhost-01`, `102 APE2E004`, and `9001 autopilot-osdeploy-blank-template`; only `APE2E004` did not match the reset allowlist.
+- Root cause: The single-VM acceptance flow used the `APE2E###` naming pattern instead of the earlier `CSD###`, `OSD###`, or explicit `*-E2E-*` dev-lab names.
+- Script fix: `init-proxmox-ve.sh --phase reset-dev-lab` now treats `APE2E[0-9]*` as disposable dev-lab VM names.
+- Regression guard: First-run init tests assert the APE2E reset pattern is present before teardown.
+
+## Dev-lab reset missed generated WinPE artifact media
+
+- Symptom: Running `reset-dev-lab --reset-media` removed Windows, VirtIO, CloudOSD, OSDeploy, and build-host seed media, but left `winpe-autopilot-amd64-401fe155b3d54fb3.iso` in PVE ISO storage.
+- Evidence: After reset, the generated-media match set was empty but `find /var/lib/vz/template/iso -name '*.iso'` still showed the WinPE artifact ISO.
+- Root cause: The reset media allowlist included CloudOSD and OSDeploy artifact patterns but not the generated WinPE artifact naming pattern.
+- Script fix: `reset-dev-lab --reset-media` now removes `winpe-autopilot-*.iso` alongside the other generated setup artifacts.
+- Regression guard: First-run init tests assert the WinPE artifact reset pattern is present.
+
+## CloudOSD provisioning omitted the blank-template VMID contract
+
+- Symptom: A CloudOSD run failed before cloning with `winpe_blank_template_vmid` undefined.
+- Evidence: The provision job command had CloudOSD artifact/media fields but no blank-template VMID, while setup state had the shared blank template VMID `9001`.
+- Root cause: The CloudOSD provision endpoint did not pass `cloudosd_blank_template_vmid` from setup state/config into the playbook, and the playbook default expression referenced `winpe_blank_template_vmid` without guarding it.
+- Script fix: CloudOSD provision jobs now pass `cloudosd_blank_template_vmid` and a `winpe_blank_template_vmid` fallback from setup state/config. The playbook guards the fallback with `default(None)`.
+- Regression guard: CloudOSD endpoint tests assert the provision job receives both blank-template fields.
+
+## Requested-VMID CloudOSD clone tripped the automatic retry loop label
+
+- Symptom: A requested-VMID CloudOSD clone created VMID `102`, then the Ansible job failed in the skipped automatic VMID retry loop with `_initial_auto_vmid is undefined`.
+- Evidence: PVE showed the cloned VM existed, but the job failed before VM configuration because Ansible evaluated `loop_control.label` for the skipped retry task.
+- Root cause: `_initial_auto_vmid` was only set for automatic-VMID runs. Requested-VMID runs skip the retry loop, but Ansible can still template loop labels while reporting skipped items.
+- Script fix: The clone role now captures the first VMID candidate unconditionally before the automatic retry task, so skipped labels are safe and requested VMIDs continue past clone.
+- Regression guard: CloudOSD playbook tests assert the candidate fact is unconditional and the retry label still has a `default(vm_vmid)` fallback.
+
+## CloudOSD disk handoff produced an empty EFI system partition
+
+- Symptom: CloudOSD PE applied Windows, passed offline validation, detached media, and rebooted, but the VM stopped at `No bootable option or device was found`.
+- Evidence: PVE disk inspection showed a GPT disk with a 500 MiB EFI system partition and Windows OS partition, but the EFI partition contained no boot files. The VM also inherited SeaBIOS from the stale blank template until repaired.
+- Root cause: The CloudOSD bridge delegated partitioning to OSDCloud but did not explicitly run `bcdboot` or pass an EFI root into offline validation. The blank template creation path also did not create OVMF EFI/TPM devices.
+- Script fix: The CloudOSD bridge now locates or assigns the EFI system partition, runs `bcdboot.exe <WindowsRoot> /s <EfiRoot> /f UEFI`, emits a `uefi_boot_files_staged` event, and validates EFI BCD files before PE completion. The clone role adds OVMF, EFI disk, and TPM state when Secure Boot or TPM is requested, and PVE init creates new blank templates with OVMF/EFI/TPM.
+- Regression guard: CloudOSD bridge Pester tests assert the bcdboot staging path and EFI validation are present. Clone role and first-run init tests assert UEFI/EFI/TPM configuration is applied.

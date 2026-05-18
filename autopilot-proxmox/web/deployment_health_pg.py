@@ -117,6 +117,8 @@ def _merge_state(existing: str | None, incoming: str) -> str:
         raise ValueError(f"unsupported phase state: {incoming!r}")
     if incoming == "failed":
         return "failed"
+    if existing == "failed" and incoming in {"done", "skipped"}:
+        return incoming
     if existing == "failed" and incoming != "done":
         return "failed"
     if existing in TERMINAL_STATES and incoming in {"pending", "running"}:
@@ -229,7 +231,10 @@ def record_phase(
                 last_progress_at = %s,
                 duration_seconds = %s,
                 evidence_json = %s,
-                error = COALESCE(%s, error),
+                error = CASE
+                    WHEN %s IN ('done', 'skipped') THEN %s
+                    ELSE COALESCE(%s, error)
+                END,
                 updated_at = %s
             WHERE deployment_key = %s AND phase_key = %s
             RETURNING *
@@ -245,6 +250,8 @@ def record_phase(
                 merged_progress,
                 _duration(merged_started, merged_ended),
                 Jsonb(merged_evidence),
+                state,
+                error,
                 error,
                 _now(),
                 deployment_key,

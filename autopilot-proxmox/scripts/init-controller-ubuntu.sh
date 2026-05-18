@@ -5,7 +5,7 @@
 # Postgres readiness, source builds, the seed agent build container, and
 # controller-local first-run state.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -201,6 +201,32 @@ docker_compose() {
     docker-compose "$@"
   fi
 }
+
+log_compose_status() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+  log "Compose status after controller bootstrap failure"
+  (
+    cd "${APP_DIR}" 2>/dev/null || return 0
+    docker_compose ps -a >&2 || true
+  )
+  docker logs autopilot-postgres --tail 80 >&2 || true
+}
+
+on_error() {
+  local rc=$?
+  local line="${BASH_LINENO[0]:-${LINENO}}"
+  trap - ERR
+  log "controller bootstrap failed at line ${line} (rc=${rc})"
+  state_text controller_bootstrap_error "controller bootstrap failed at line ${line} rc ${rc}" || true
+  state_bool controller_runtime_ready false || true
+  state_bool console_health_ready false || true
+  log_compose_status || true
+  exit "${rc}"
+}
+
+trap on_error ERR
 
 sha256_text() {
   python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$1"
@@ -443,14 +469,21 @@ ensure_postgres_database() {
   local postgres_password
   postgres_password="$(env_file_value "${ENV_FILE}" AUTOPILOT_POSTGRES_PASSWORD)"
   [[ -n "${postgres_password}" ]] || die "AUTOPILOT_POSTGRES_PASSWORD is missing from controller .env"
-  for attempt in $(seq 1 60); do
+  local health_status
+  for attempt in $(seq 1 90); do
     : "${attempt}"
-    if docker exec autopilot-postgres pg_isready -U autopilot -d postgres >/dev/null 2>&1; then
+    health_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' autopilot-postgres 2>/dev/null || true)"
+    if [[ "${health_status}" == "healthy" ]] \
+      && docker exec autopilot-postgres pg_isready -U autopilot -d autopilot >/dev/null 2>&1 \
+      && docker exec autopilot-postgres psql -U autopilot -d postgres -Atc "SELECT 1" >/dev/null 2>&1; then
       break
     fi
-    sleep 1
+    sleep 2
   done
-  if ! docker exec autopilot-postgres pg_isready -U autopilot -d postgres >/dev/null 2>&1; then
+  health_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' autopilot-postgres 2>/dev/null || true)"
+  if [[ "${health_status}" != "healthy" ]] \
+    || ! docker exec autopilot-postgres pg_isready -U autopilot -d autopilot >/dev/null 2>&1 \
+    || ! docker exec autopilot-postgres psql -U autopilot -d postgres -Atc "SELECT 1" >/dev/null 2>&1; then
     docker logs autopilot-postgres --tail 120 >&2 || true
     die "Postgres did not become ready for setup repair"
   fi
@@ -526,6 +559,7 @@ main() {
   state_bool pve_host_clean_ready true
   install_runtime_prereqs
   restore_migration_bundle
+  state_text phase "controller-bootstrap"
   state_bool controller_docker_ready true
   ensure_env
   update_vars_yml

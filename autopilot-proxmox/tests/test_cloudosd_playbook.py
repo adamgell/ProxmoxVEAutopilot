@@ -44,7 +44,29 @@ def test_proxmox_clone_role_retries_automatic_vmid_collisions():
 
     assert "clone_vm_attempt.yml" in clone_text
     assert "range(0, 20)" in clone_text
-    assert "_initial_auto_vmid" in clone_text
+    assert "default(vm_vmid)" in clone_text
+    assert "Capture first VMID candidate" in clone_text
+    capture_block = clone_text.split("- name: Capture first VMID candidate", 1)[1].split(
+        "- name: Clone template with automatic VMID collision retry", 1
+    )[0]
+    assert "_initial_auto_vmid: \"{{ vm_vmid | int }}\"" in capture_block
+    assert "when:" not in capture_block
     assert "config file already exists" in attempt_text
     assert "Record successful automatic clone attempt" in attempt_text
     assert attempt_text.count("_clone_result is not defined") >= 3
+
+
+def test_proxmox_clone_role_applies_uefi_for_secure_boot_clones():
+    update_config = ROOT / "roles" / "proxmox_vm_clone" / "tasks" / "update_config.yml"
+    text = update_config.read_text()
+
+    assert "Resolve requested firmware features" in text
+    assert "_uefi_requested" in text
+    assert "Apply UEFI firmware when Secure Boot or TPM is requested" in text
+    assert "'bios': 'ovmf'" in text
+    assert "Add EFI disk when UEFI firmware is requested and missing" in text
+    assert "efidisk0" in text
+    assert "pre-enrolled-keys=" in text
+    assert "Add TPM state when requested and missing" in text
+    assert "tpmstate0" in text
+    assert "_explicit_legacy_bios" in text

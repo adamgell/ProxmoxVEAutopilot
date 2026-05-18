@@ -84,6 +84,14 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "const osdeployState" in template
     assert "osdeployState.artifacts" in template
     assert "osdeployState.options" in template
+    assert "roleCatalog:" in template
+    assert 'data-role-options-panel="file_server"' in template
+    assert 'data-role-options-panel="isolated_domain_controller"' in template
+    assert 'data-role-options-panel="mecm_prereq"' in template
+    assert 'data-role-options-panel="lab_in_a_box"' in template
+    assert "roleOptionsPayload" in template
+    assert "role_options" in template
+    assert '"/api/osdeploy/v1/bundles"' in template
     assert '"/api/osdeploy/v1/preflight"' in template
     assert '"/api/osdeploy/v1/runs"' in template
     assert "/api/osdeploy/v1/runs/${run.run_id}/provision" in template
@@ -97,6 +105,7 @@ def test_osdeploy_run_detail_template_has_v2_plan_and_readiness():
     assert "Server Readiness" in template
     assert "data-osdeploy-v2-steps" in template
     assert "data-osdeploy-field=\"readiness_state\"" in template
+    assert "data-osdeploy-field=\"role_status\"" in template
     assert "data-osdeploy-field=\"heartbeat\"" in template
     assert "data-osdeploy-field=\"job_link\"" in template
 
@@ -144,3 +153,7 @@ def test_v2_sequence_library_surfaces_osdeploy_role_templates():
         assert any(node["kind"] == "osdeploy_preflight" for node in names[name]["nodes"])
         assert not any(node["kind"] == "cloudosd_preflight" for node in names[name]["nodes"])
         assert any(node["kind"] == "wait_agent_heartbeat" for node in names[name]["nodes"])
+    assert any(node["kind"] == "configure_file_server_role" for node in names["OSDeploy File Server"]["nodes"])
+    assert any(node["kind"] == "configure_isolated_domain_controller_role" for node in names["OSDeploy Isolated Domain Controller"]["nodes"])
+    assert any(node["kind"] == "configure_mecm_prereq_role" for node in names["OSDeploy MECM Prereq Baseline"]["nodes"])
+    assert not any(node["kind"] == "run_script" for name in names.values() for node in name["nodes"] if str(name["name"]).startswith("OSDeploy"))

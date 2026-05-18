@@ -50,6 +50,9 @@ def test_pve_init_provisions_controller_without_host_docker_runtime():
     assert "ensure_osdeploy_blank_template" in text
     assert "autopilot-osdeploy-blank-template" in text
     assert "osdeploy_blank_template_vmid" in text
+    assert "--bios ovmf" in text
+    assert "--efidisk0" in text
+    assert "--tpmstate0" in text
     assert "qm template \"${vmid}\"" in text
     assert "osdeploy_blank_template_ready" in text
     assert "ensure_pve_root_ssh_key" in text
@@ -91,10 +94,14 @@ def test_controller_init_owns_docker_compose_and_source_builds():
     assert "--security-opt seccomp=unconfined" in text
     assert "build_seed_agent_container.sh" in text
     assert "ensure_postgres_database" in text
+    assert "docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' autopilot-postgres" in text
+    assert '[[ "${health_status}" == "healthy" ]]' in text
     assert "createdb -U autopilot autopilot" in text
     assert "ALTER ROLE autopilot WITH PASSWORD :'autopilot_password';" in text
     assert 'psql -h 127.0.0.1 -U autopilot -d autopilot' in text
     assert "docker_compose up -d --force-recreate" in text
+    assert "controller_bootstrap_error" in text
+    assert "log_compose_status" in text
     assert "http://${controller_ip}:5000/healthz" in text
     assert "controller_runtime_ready" in text
     assert "migration_bundle_restored" in text
@@ -174,8 +181,10 @@ def test_pve_init_has_explicit_disposable_dev_lab_reset_phase():
     assert "OSDEPLOY-E2E-*" in text
     assert "OSD[0-9]*" in text
     assert "CSD[0-9]*" in text
+    assert "APE2E[0-9]*" in text
     assert "qm destroy \"${vmid}\" --purge 1 --destroy-unreferenced-disks 1" in text
     assert "virtio-win*.iso" in text
+    assert "winpe-autopilot-*.iso" in text
     assert "osdeploy-server-*.iso" in text
     assert "cloudosd-autopilot-*.iso" in text
     assert "autopilot-buildhost-seed-*.iso" in text
@@ -350,6 +359,16 @@ def test_foundation_publishes_final_state_after_controller_health():
 
     assert phase.index('verify_controller_health "${controller_ip}"') < phase.index("stop_pve_runtime_stack")
     assert phase.index("stop_pve_runtime_stack") < phase.index("publish_setup_state_to_controller")
+
+
+def test_pve_controller_bootstrap_retries_partial_first_run_state():
+    text = INIT.read_text(encoding="utf-8")
+    phase = text[text.index("run_controller_init()") : text.index("verify_controller_health()")]
+
+    assert "collect_controller_bootstrap_debug" in text
+    assert "Ubuntu controller bootstrap exited with rc=" in phase
+    assert "retrying once to repair partial first-run state" in phase
+    assert phase.count('ssh_controller "${ip}" "${cmd}"') == 2
 
 
 def test_controller_bootstrap_key_lives_outside_synced_repo_tree():

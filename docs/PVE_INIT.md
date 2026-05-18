@@ -187,6 +187,7 @@ Important state keys:
 | `pve_node` | Proxmox node selected for VM operations |
 | `pve_host_ip` | LAN IP the controller should use for Proxmox API |
 | `osdeploy_blank_template_vmid` | Blank template VMID created or reused for OSDeploy |
+| `cloudosd_blank_template_vmid` | Blank template VMID created or reused for CloudOSD |
 | `pve_root_ssh_key_ready` | Root SSH key for controller-to-PVE host-local operations is installed |
 | `controller_vmid` | Ubuntu controller VMID |
 | `controller_ip` | Controller LAN IP |
@@ -250,6 +251,19 @@ Verify controller health from PVE:
 
 ```bash
 curl -fsS http://192.168.2.115:5000/healthz
+```
+
+Verify controller build metadata:
+
+```bash
+curl -fsS http://192.168.2.115:5000/api/version
+```
+
+If the version reports `unknown`, rerun foundation so `init-controller-ubuntu.sh`
+rebuilds the controller image with `GIT_SHA` and `BUILD_TIME` build args:
+
+```bash
+bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase foundation --resume --controller-ip 192.168.2.115 --non-interactive
 ```
 
 Re-run foundation after source changes:

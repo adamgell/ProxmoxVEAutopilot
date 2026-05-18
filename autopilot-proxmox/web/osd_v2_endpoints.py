@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,7 @@ class AgentNextBody(BaseModel):
     agent_id: str
     phase: str
     batch_size: int = 1
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class StepLogBody(BaseModel):
@@ -187,6 +188,13 @@ def _require_run_token(run_id: str, payload: dict) -> None:
 
 
 def _action_from_step(conn, step: dict) -> dict:
+    params = dict(step["resolved_params_json"] or {})
+    if step.get("kind") in {
+        "join_domain_role",
+        "configure_isolated_domain_controller_role",
+        "verify_isolated_domain_controller_role",
+    }:
+        params = _resolve_osdeploy_role_agent_params(params)
     return {
         "step_id": step["id"],
         "kind": step["kind"],
@@ -196,9 +204,78 @@ def _action_from_step(conn, step: dict) -> dict:
         "retry_count": step["retry_count"],
         "retry_delay_seconds": step["retry_delay_seconds"],
         "reboot_behavior": step["reboot_behavior"],
-        "params": step["resolved_params_json"],
+        "params": params,
         "content": ts_engine_pg.content_for_step(conn, step["id"]),
     }
+
+
+def _resolve_osdeploy_role_agent_params(params: dict) -> dict:
+    out = dict(params)
+    try:
+        from web import app as web_app, sequences_pg
+
+        dsrm_id = out.get("dsrm_credential_id")
+        if dsrm_id:
+            dsrm = sequences_pg.get_credential(
+                web_app.SEQUENCES_DB,
+                web_app._cipher(),
+                int(dsrm_id),
+            )
+            payload = (dsrm or {}).get("payload") or {}
+            if payload.get("password"):
+                out["dsrm_password"] = payload["password"]
+        forest_admin_id = out.get("forest_admin_credential_id")
+        if forest_admin_id:
+            admin = sequences_pg.get_credential(
+                web_app.SEQUENCES_DB,
+                web_app._cipher(),
+                int(forest_admin_id),
+            )
+            payload = (admin or {}).get("payload") or {}
+            out["forest_admin_username"] = payload.get("username")
+            if payload.get("password"):
+                out["forest_admin_password"] = payload["password"]
+        join_id = out.get("credential_id")
+        if join_id:
+            join = sequences_pg.get_credential(
+                web_app.SEQUENCES_DB,
+                web_app._cipher(),
+                int(join_id),
+            )
+            payload = (join or {}).get("payload") or {}
+            if payload.get("username"):
+                out["domain_join_username"] = payload["username"]
+            if payload.get("password"):
+                out["domain_join_password"] = payload["password"]
+            if payload.get("domain_fqdn") and not out.get("domain_fqdn"):
+                out["domain_fqdn"] = payload["domain_fqdn"]
+            if payload.get("credential_domain") and not out.get("credential_domain"):
+                out["credential_domain"] = payload["credential_domain"]
+    except Exception:
+        return out
+    return out
+
+
+_POWER_SHELL_OSD_CLIENT_FULL_OS_KINDS = {
+    "capture_autopilot_hash",
+    "fix_recovery_partition",
+    "handoff_to_oobe",
+    "install_autopilot_agent",
+    "install_package",
+    "install_qga",
+    "install_qga_watchdog",
+    "verify_qga",
+    "wait_agent_heartbeat",
+}
+
+
+def _supported_kinds_for_next(body: AgentNextBody) -> list[str] | None:
+    explicit = sorted({str(kind) for kind in body.capabilities if str(kind)})
+    if explicit:
+        return explicit
+    if body.phase == "full_os" and body.agent_id.startswith("osd-fullos-"):
+        return sorted(_POWER_SHELL_OSD_CLIENT_FULL_OS_KINDS)
+    return None
 
 
 def _manifest_response(conn, run_id: str) -> dict:
@@ -317,6 +394,48 @@ def _sync_cloudosd_after_step_result(
         conn.rollback()
 
 
+def _sync_osdeploy_after_step_result(
+    conn,
+    *,
+    step: dict,
+    updated: dict,
+    body: StepResultBody,
+) -> None:
+    kind = str(step.get("kind") or "")
+    if kind not in {
+        "configure_file_server_role",
+        "configure_isolated_domain_controller_role",
+        "verify_isolated_domain_controller_role",
+        "configure_mecm_prereq_role",
+    }:
+        return
+    try:
+        from web import osdeploy_pg
+
+        if body.status == "success" and updated.get("state") in {"done", "awaiting_reboot"}:
+            osdeploy_pg.mark_role_step_result(
+                conn,
+                run_id=body.run_id,
+                step_kind=kind,
+                agent_id=body.agent_id,
+                status="success",
+                message=body.message,
+                data=body.data or {},
+            )
+        elif body.status == "failed" and updated.get("state") == "failed":
+            osdeploy_pg.mark_role_step_result(
+                conn,
+                run_id=body.run_id,
+                step_kind=kind,
+                agent_id=body.agent_id,
+                status="failed",
+                message=body.message,
+                data=body.data or {},
+            )
+    except Exception:
+        conn.rollback()
+
+
 def _ubuntu_readiness_from_steps(steps: list[dict], events: list[dict] | None = None) -> dict:
     readiness = {
         "intune": "not_configured",
@@ -351,9 +470,50 @@ def _ubuntu_readiness_from_steps(steps: list[dict], events: list[dict] | None = 
     return readiness
 
 
+def _enrich_osdeploy_agent_package_config(
+    conn,
+    *,
+    run_id: str,
+    config: dict,
+    request: Request,
+) -> dict:
+    try:
+        from web import osdeploy_endpoints, osdeploy_pg
+
+        osdeploy_run = osdeploy_pg.get_run(conn, run_id)
+        if not osdeploy_run:
+            return config
+        artifact = osdeploy_pg.get_artifact(conn, str(osdeploy_run["artifact_id"]))
+        if not artifact:
+            return config
+        package = osdeploy_endpoints._package_response(
+            run=osdeploy_run,
+            artifact=artifact,
+            server_base_url=osdeploy_endpoints._base_url(request),
+        )
+    except Exception:
+        return config
+
+    server_base_url = str(package.get("server_base_url") or "").rstrip("/")
+    payloads = dict(package.get("payloads") or {})
+    enriched = {
+        **config,
+        "flask_base_url": server_base_url or config.get("flask_base_url") or "",
+        "osdeploy_agent": dict(package.get("agent") or {}),
+    }
+    if server_base_url:
+        enriched["agent_heartbeat_url"] = f"{server_base_url}/api/agent/v1/heartbeat"
+    if payloads.get("autopilotagent_msi"):
+        enriched["autopilotagent_msi"] = payloads["autopilotagent_msi"]
+    if payloads.get("autopilotagent_postinstall"):
+        enriched["autopilotagent_postinstall"] = payloads["autopilotagent_postinstall"]
+    return enriched
+
+
 @router.get("/agent/package/{run_id}")
 def get_v2_agent_package(
     run_id: str,
+    request: Request,
     phase: str = "full_os",
     payload: dict = Depends(_require_bearer),
 ):
@@ -381,6 +541,14 @@ def get_v2_agent_package(
         "phase": phase,
         "bearer_token": token,
     }
+    if phase == "full_os":
+        with _conn() as conn:
+            config = _enrich_osdeploy_agent_package_config(
+                conn,
+                run_id=run_id,
+                config=config,
+                request=request,
+            )
     return {
         "schema_version": 2,
         "engine": "v2",
@@ -435,13 +603,18 @@ def register_agent(body: AgentRegisterBody):
             run = ts_engine_pg.get_run(conn, body.run_id)
         except ValueError:
             raise HTTPException(status_code=404, detail="run not found")
-        if run["state"] == "awaiting_reboot" and run["cursor_step_id"]:
-            ts_engine_pg.mark_reboot_complete(
-                conn,
-                run_id=body.run_id,
-                step_id=run["cursor_step_id"],
-                agent_id=body.agent_id,
-            )
+        if run["cursor_step_id"]:
+            try:
+                cursor_step = ts_engine_pg.get_step(conn, run["cursor_step_id"])
+            except ValueError:
+                cursor_step = None
+            if cursor_step and cursor_step["state"] == "awaiting_reboot":
+                ts_engine_pg.mark_reboot_complete(
+                    conn,
+                    run_id=body.run_id,
+                    step_id=run["cursor_step_id"],
+                    agent_id=body.agent_id,
+                )
     return {
         "run_id": body.run_id,
         "agent_id": body.agent_id,
@@ -455,6 +628,7 @@ def next_action(body: AgentNextBody, payload: dict = Depends(_require_bearer)):
     _require_run_token(body.run_id, payload)
     actions = []
     batch_size = max(1, min(int(body.batch_size or 1), 10))
+    supported_kinds = _supported_kinds_for_next(body)
     with _conn() as conn:
         for _ in range(batch_size):
             step = ts_engine_pg.claim_next_step(
@@ -462,6 +636,8 @@ def next_action(body: AgentNextBody, payload: dict = Depends(_require_bearer)):
                 run_id=body.run_id,
                 phase=body.phase,
                 agent_id=body.agent_id,
+                supported_kinds=supported_kinds,
+                allow_running_claimed_by_same_agent=bool(actions),
             )
             if step is None:
                 break
@@ -529,6 +705,12 @@ def post_step_result(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         _sync_cloudosd_after_step_result(
+            conn,
+            step=step,
+            updated=updated,
+            body=body,
+        )
+        _sync_osdeploy_after_step_result(
             conn,
             step=step,
             updated=updated,

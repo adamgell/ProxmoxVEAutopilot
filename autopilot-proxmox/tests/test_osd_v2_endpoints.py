@@ -51,6 +51,32 @@ def test_osdeploy_agent_msi_resolves_from_host_repo_mount(tmp_path, monkeypatch)
     assert osdeploy_endpoints._asset_path("autopilotagent.msi") == msi_path
 
 
+def test_osdeploy_agent_msi_prefers_setup_registry_over_legacy_output(tmp_path, monkeypatch):
+    from web import osdeploy_endpoints, setup_artifacts
+
+    legacy_msi = tmp_path / "app" / "output" / "cloudosd" / "AutopilotAgent.msi"
+    legacy_msi.parent.mkdir(parents=True)
+    legacy_msi.write_bytes(b"legacy-msi")
+    setup_msi = tmp_path / "setup-artifacts" / "agent-msi" / "AutopilotAgent-0.1.2-win-x64.msi"
+    setup_msi.parent.mkdir(parents=True)
+    setup_msi.write_bytes(b"current-msi")
+
+    monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
+    monkeypatch.setattr(osdeploy_endpoints, "_APP_ROOT", tmp_path / "app")
+    monkeypatch.setattr(osdeploy_endpoints, "_REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(
+        setup_artifacts,
+        "list_artifacts",
+        lambda kind=None: [{
+            "kind": "agent-msi",
+            "filename": setup_msi.name,
+            "path": str(setup_msi),
+        }],
+    )
+
+    assert osdeploy_endpoints._asset_path("autopilotagent.msi") == setup_msi
+
+
 @pytest.fixture(scope="module")
 def pg_dsn():
     container = subprocess.check_output(
@@ -274,6 +300,80 @@ def test_v2_agent_package_returns_server_authored_config(osd_v2_client, pg_conn)
         assert file["size_bytes"] > 0
 
 
+def test_osdeploy_v2_agent_package_is_self_contained_for_full_os(
+    osd_v2_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import osdeploy_endpoints, osdeploy_pg
+
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+    monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://controller.local:5000")
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "_asset_metadata",
+        lambda name, required=True: {
+            "sha256": f"sha-{name}",
+            "available": True,
+        },
+        raising=False,
+    )
+    artifact = osdeploy_pg.create_artifact(
+        pg_conn,
+        build_sha="selfcontained",
+        iso_path="/app/output/osdeploy.iso",
+        wim_path="/app/output/osdeploy.wim",
+        manifest_path="/app/output/osdeploy.json",
+        iso_sha256="a" * 64,
+        wim_sha256="b" * 64,
+        source_media="/isos/windows-server.iso",
+        image_name="Windows Server 2025 Standard",
+        image_index=1,
+        built_by_host="builder",
+        proxmox_volid="isos:iso/osdeploy.iso",
+    )
+    run = osdeploy_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="OSDeploy-FS-01",
+        requested_vmid=9101,
+        server_role="file_server",
+        role_options={
+            "share_name": "Data",
+            "share_path": r"C:\Shares\Data",
+            "full_access_principals": ["Administrators"],
+            "change_access_principals": ["Authenticated Users"],
+            "read_access_principals": ["Everyone"],
+        },
+    )
+    reg = osd_v2_client.post(
+        "/osd/v2/agent/register",
+        json={"run_id": run["run_id"], "agent_id": "osd-1", "phase": "full_os"},
+    )
+    assert reg.status_code == 200, reg.text
+
+    response = osd_v2_client.get(
+        f"/osd/v2/agent/package/{run['run_id']}?phase=full_os",
+        headers=_bearer(reg.json()["bearer_token"]),
+    )
+
+    assert response.status_code == 200, response.text
+    config = response.json()["config"]
+    assert config["flask_base_url"] == "http://controller.local:5000"
+    assert config["osdeploy_agent"]["phase"] == "full_os"
+    assert config["osdeploy_agent"]["role"] == "file_server"
+    assert config["osdeploy_agent"]["run_id"] == run["run_id"]
+    assert config["autopilotagent_msi"] == {
+        "url": "http://controller.local:5000/api/cloudosd/assets/autopilotagent.msi",
+        "sha256": "sha-autopilotagent.msi",
+        "available": True,
+    }
+    assert config["autopilotagent_postinstall"]["url"].endswith(
+        "/api/cloudosd/assets/autopilotagent-postinstall.ps1"
+    )
+
+
 def test_v2_agent_package_requires_bearer(osd_v2_client, pg_conn):
     run_id = _create_run(pg_conn, winpe_only=False)
 
@@ -485,7 +585,8 @@ def test_osdeploy_package_includes_persistent_agent_install_payloads(monkeypatch
         ),
         "sha256": "sha-autopilotagent-postinstall.ps1",
     }
-    assert body["agent"]["phase"] == "osdeploy"
+    assert body["agent"]["phase"] == "full_os"
+    assert body["agent"]["role"] == "base"
     assert body["agent"]["agent_id"] == "agent-autopilot-e2e"
 
 
@@ -908,6 +1009,11 @@ def test_agent_register_after_reboot_resumes_cursor(osd_v2_client, pg_conn):
     )
     assert rebooting.status_code == 200, rebooting.text
     assert ts_engine_pg.get_run(pg_conn, run_id)["state"] == "awaiting_reboot"
+    pg_conn.execute(
+        "UPDATE ts_provisioning_runs SET state = 'role_pending' WHERE id = %s",
+        (run_id,),
+    )
+    pg_conn.commit()
 
     resumed = osd_v2_client.post(
         "/osd/v2/agent/register",

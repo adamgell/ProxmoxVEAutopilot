@@ -21,6 +21,7 @@
       <dt>State</dt><dd data-osdeploy-field="readiness_state">{{ readiness.state }}</dd>
       <dt>QGA</dt><dd>{{ readiness.qga_status or 'pending' }}</dd>
       <dt>Agent</dt><dd>{{ readiness.agent_status or 'pending' }}</dd>
+      <dt>Role</dt><dd data-osdeploy-field="role_status">{{ readiness.server_role_status or 'pending' }}</dd>
       <dt>Heartbeat</dt><dd data-osdeploy-field="heartbeat">{{ readiness.heartbeat_at or (heartbeat.received_at if heartbeat else '-') }}</dd>
       <dt>Job link</dt><dd data-osdeploy-field="job_link"><a href="/jobs">jobs</a></dd>
     </dl>

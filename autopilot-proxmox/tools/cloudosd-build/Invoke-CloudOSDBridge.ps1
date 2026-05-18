@@ -579,6 +579,51 @@ function Get-CloudOSDWindowsRoot {
     throw 'could not locate offline Windows volume'
 }
 
+function Get-CloudOSDEfiSystemRoot {
+    param([string] $PreferredDriveLetter = 'S')
+
+    $efi = Get-Partition |
+        Where-Object {
+            ($_.GptType -and $_.GptType.ToString().Trim('{}').Equals('c12a7328-f81f-11d2-ba4b-00a0c93ec93b', [System.StringComparison]::OrdinalIgnoreCase)) -or
+            ($_.Type -eq 'System')
+        } |
+        Sort-Object DiskNumber, PartitionNumber |
+        Select-Object -First 1
+    if (-not $efi) {
+        throw 'could not locate EFI system partition'
+    }
+
+    $letter = [string] $efi.DriveLetter
+    if ([string]::IsNullOrWhiteSpace($letter)) {
+        $used = @(Get-Volume | Where-Object DriveLetter | ForEach-Object { [string] $_.DriveLetter })
+        $letter = @($PreferredDriveLetter, 'T', 'U', 'V', 'W', 'Y') |
+            Where-Object { $used -notcontains $_ } |
+            Select-Object -First 1
+        if ([string]::IsNullOrWhiteSpace($letter)) {
+            throw 'no drive letter is available for EFI system partition'
+        }
+        Add-PartitionAccessPath `
+            -DiskNumber $efi.DiskNumber `
+            -PartitionNumber $efi.PartitionNumber `
+            -AccessPath "$letter`:" | Out-Null
+    }
+
+    return "$letter`:"
+}
+
+function Invoke-CloudOSDBootFiles {
+    param(
+        [Parameter(Mandatory)] [string] $WindowsRoot,
+        [Parameter(Mandatory)] [string] $EfiRoot
+    )
+
+    $bcdboot = Get-Command bcdboot.exe -ErrorAction Stop
+    & $bcdboot.Source $WindowsRoot /s $EfiRoot /f UEFI
+    if ($LASTEXITCODE -ne 0) {
+        throw "bcdboot failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Get-OfflineProgramDataPath {
     param([Parameter(Mandatory)] [string] $WindowsRoot)
     $root = [System.IO.Path]::GetPathRoot($WindowsRoot)
@@ -1539,6 +1584,13 @@ function Invoke-CloudOSDBridge {
         Invoke-CloudOSDDeploy -WorkflowName $package.workflow_name
 
         $windowsRoot = Get-CloudOSDWindowsRoot
+        $efiRoot = Get-CloudOSDEfiSystemRoot
+        Invoke-CloudOSDBootFiles -WindowsRoot $windowsRoot -EfiRoot $efiRoot
+        Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+            -RunId $runId -BearerToken $token -Phase 'pe' `
+            -EventType 'uefi_boot_files_staged' `
+            -Message 'UEFI boot files staged with bcdboot' `
+            -Data @{ windows_root = $windowsRoot; efi_root = $efiRoot }
         Invoke-CloudOSDQualityUpdateServicing -Package $package `
             -WindowsRoot $windowsRoot `
             -BaseUrl $baseUrl `
@@ -1570,6 +1622,7 @@ function Invoke-CloudOSDBridge {
         Add-PVEAutopilotSetupSpecializePackage -WindowsRoot $windowsRoot -ModuleRoot $moduleRoot
         Disable-PVEAutopilotAutomaticDeviceEncryption -WindowsRoot $windowsRoot
         $validation = Test-CloudOSDOfflineWindows -WindowsRoot $windowsRoot `
+            -EfiRoot $efiRoot `
             -DomainJoin $package.domain_join
         if (-not $validation.ok) {
             Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `

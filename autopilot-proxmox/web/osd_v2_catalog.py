@@ -54,6 +54,11 @@ WINDOWS_STEP_KINDS = frozenset({
     "handoff_to_oobe",
     "run_script",
     "rename_computer",
+    "join_domain_role",
+    "configure_file_server_role",
+    "configure_isolated_domain_controller_role",
+    "verify_isolated_domain_controller_role",
+    "configure_mecm_prereq_role",
 })
 
 ANY_STEP_KINDS = frozenset({

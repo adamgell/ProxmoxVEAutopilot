@@ -924,6 +924,9 @@ def autopilot_readiness_for_run(
     elif upload_status in {"failed", "canceled"}:
         state = "upload_failed"
         next_action = "retry_upload"
+    elif upload_status == "not_configured":
+        state = "upload_not_configured"
+        next_action = "configure_entra"
     elif autopilot_device_id:
         if group_tag_match is False:
             state = "group_tag_mismatch"
@@ -960,6 +963,8 @@ def autopilot_readiness_for_run(
     detail = evidence.get("summary") or state_label
     if state == "upload_failed" and upload_error:
         detail = upload_error
+    elif state == "upload_not_configured":
+        detail = upload_error or "Hash captured; Entra upload credentials are not configured"
     elif state == "upload_submitted" and cache_state in {"stale", "expired", "missing"}:
         detail = f"Upload submitted; device cache is {cache_state}; sync Intune"
 
@@ -1378,9 +1383,19 @@ def _asset_path(name: str) -> Path:
         configured = os.environ.get("AUTOPILOT_AGENT_MSI_PATH", "").strip()
         if configured:
             return Path(configured)
-        app_output = _APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi"
-        if app_output.exists():
-            return app_output
+        try:
+            from web import setup_artifacts
+
+            registered = [
+                Path(row.get("path") or "")
+                for row in setup_artifacts.list_artifacts(kind="agent-msi")
+                if "arm64" not in str(row.get("filename") or "").lower()
+            ]
+            registered = [path for path in registered if path.is_file()]
+            if registered:
+                return max(registered, key=lambda path: path.stat().st_mtime)
+        except Exception:
+            pass
         setup_msi_dir = _APP_ROOT / "output" / "setup" / "artifacts" / "agent-msi"
         setup_msi_candidates = [
             *setup_msi_dir.glob("*win-x64*.msi"),
@@ -1392,6 +1407,9 @@ def _asset_path(name: str) -> Path:
         ]
         if setup_msi_candidates:
             return max(setup_msi_candidates, key=lambda path: path.stat().st_mtime)
+        app_output = _APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi"
+        if app_output.exists():
+            return app_output
         for repo_root in [
             Path(os.environ.get("HOST_REPO_MOUNT", "/host/repo")),
             Path(os.environ.get("HOST_REPO_PATH", "")) if os.environ.get("HOST_REPO_PATH", "").strip() else None,
@@ -2522,6 +2540,51 @@ def _queue_autopilot_hash_upload(
     hash_file = web_app.HASH_DIR / hash_filename
     if not hash_file.is_file():
         raise HTTPException(status_code=409, detail=f"CloudOSD hash file is missing: {hash_filename}")
+    cfg = web_app._load_proxmox_config()
+    missing_credentials = [
+        label
+        for label, key in (
+            ("ENTRA_APP_ID", "vault_entra_app_id"),
+            ("ENTRA_TENANT_ID", "vault_entra_tenant_id"),
+            ("ENTRA_APP_SECRET", "vault_entra_app_secret"),
+        )
+        if not str(cfg.get(key) or "").strip() or "{{" in str(cfg.get(key) or "")
+    ]
+    if missing_credentials:
+        message = (
+            "Hash captured; Entra upload credentials are not configured: "
+            + ", ".join(missing_credentials)
+        )
+        cloudosd_pg.record_autopilot_upload_attempt(
+            conn,
+            run_id=run["run_id"],
+            job_id=None,
+            hash_filename=hash_filename,
+            expected_group_tag=str(run.get("vm_group_tag") or "").strip(),
+            status="not_configured",
+            error=message,
+        )
+        cloudosd_pg.append_event(
+            conn,
+            run_id=run["run_id"],
+            phase="AutopilotAgent",
+            event_type="autopilot_hash_upload_not_configured",
+            message=message,
+            data={"missing": missing_credentials, "hash_filename": hash_filename, "source": source},
+        )
+        readiness = autopilot_readiness_for_run(
+            conn,
+            run,
+            heartbeat,
+            preferred_hash_filename=hash_filename,
+        )
+        return {
+            "queued": False,
+            "job_id": None,
+            "reason": "entra_credentials_missing",
+            "missing": missing_credentials,
+            "autopilot_readiness": readiness,
+        }
     cmd = [
         "ansible-playbook",
         str(web_app.PLAYBOOK_DIR / "upload_hashes.yml"),
@@ -2670,6 +2733,8 @@ def upload_autopilot_hash(run_id: str):
         return {
             "ok": True,
             "run_id": run["run_id"],
+            "queued": bool(result.get("queued")),
+            "reason": result.get("reason"),
             "autopilot_readiness": result["autopilot_readiness"],
             "job_id": result.get("job_id"),
         }
@@ -2808,6 +2873,18 @@ def cloudosd_provision_extra_vars(
     virtio_iso = setup_state.get("virtio_iso_volid")
     if virtio_iso:
         extra_vars["proxmox_virtio_iso"] = virtio_iso
+    cfg = web_app._load_proxmox_config()
+    blank_template_vmid = (
+        setup_state.get("cloudosd_blank_template_vmid")
+        or setup_state.get("winpe_blank_template_vmid")
+        or setup_state.get("osdeploy_blank_template_vmid")
+        or cfg.get("cloudosd_blank_template_vmid")
+        or cfg.get("winpe_blank_template_vmid")
+        or cfg.get("osdeploy_blank_template_vmid")
+    )
+    if blank_template_vmid:
+        extra_vars["cloudosd_blank_template_vmid"] = blank_template_vmid
+        extra_vars.setdefault("winpe_blank_template_vmid", blank_template_vmid)
     if run.get("vm_group_tag"):
         extra_vars["vm_group_tag"] = run["vm_group_tag"]
     if run.get("requested_vmid"):
@@ -2821,7 +2898,6 @@ def cloudosd_provision_extra_vars(
         else require_root_ticket
     )
     if needs_root_ticket:
-        cfg = web_app._load_proxmox_config()
         root_password = cfg.get("vault_proxmox_root_password", "")
         if not root_password and not (root_ticket and root_csrf_token):
             raise HTTPException(

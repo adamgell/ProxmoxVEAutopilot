@@ -62,6 +62,8 @@ def test_hash_upload_playbook_preserves_selected_file_contract():
 
     assert "Check selected hash file" in playbook
     assert "Fail if selected hash file is missing" in playbook
+    assert "upload_hash_output_dir:" in playbook
+    assert "HASH_DIR: \"{{ upload_hash_output_dir }}\"" in playbook
     assert "hash_file is defined" in playbook
     assert "HASH_FILE: \"{{ hash_file | default('') }}\"" in playbook
     assert "GROUP_TAG: \"{{ vm_group_tag | default('') }}\"" in playbook

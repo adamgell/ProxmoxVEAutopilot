@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from web import agent_telemetry_pg, osdeploy_cache, osdeploy_pg, ts_engine_pg, winpe_token
+from web import agent_telemetry_pg, osdeploy_cache, osdeploy_pg, osdeploy_roles, ts_engine_pg, winpe_token
 
 
 router = APIRouter(prefix="/api/osdeploy/v1", tags=["osdeploy"])
@@ -63,9 +63,19 @@ def _asset_path(name: str) -> Path:
         configured = os.environ.get("AUTOPILOT_AGENT_MSI_PATH", "").strip()
         if configured:
             return Path(configured)
-        app_output = _APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi"
-        if app_output.exists():
-            return app_output
+        try:
+            from web import setup_artifacts
+
+            registered = [
+                Path(row.get("path") or "")
+                for row in setup_artifacts.list_artifacts(kind="agent-msi")
+                if "arm64" not in str(row.get("filename") or "").lower()
+            ]
+            registered = [path for path in registered if path.is_file()]
+            if registered:
+                return max(registered, key=lambda path: path.stat().st_mtime)
+        except Exception:
+            pass
         setup_msi_dir = _APP_ROOT / "output" / "setup" / "artifacts" / "agent-msi"
         setup_msi_candidates = [
             *setup_msi_dir.glob("*win-x64*.msi"),
@@ -77,6 +87,9 @@ def _asset_path(name: str) -> Path:
         ]
         if setup_msi_candidates:
             return max(setup_msi_candidates, key=lambda path: path.stat().st_mtime)
+        app_output = _APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi"
+        if app_output.exists():
+            return app_output
         for repo_root in [
             Path(os.environ.get("HOST_REPO_MOUNT", "/host/repo")),
             Path(os.environ.get("HOST_REPO_PATH", "")) if os.environ.get("HOST_REPO_PATH", "").strip() else None,
@@ -440,6 +453,7 @@ class RunCreateBody(BaseModel):
     vm_disk_size_gb: int = Field(default=osdeploy_pg.DEFAULT_VM_DISK_SIZE_GB, ge=1)
     secure_boot: bool = False
     outbound_policy: dict = Field(default_factory=dict)
+    role_options: dict = Field(default_factory=dict)
 
 
 class IdentityBody(BaseModel):
@@ -511,6 +525,7 @@ def catalog_payload() -> dict:
             "minimum_vm_disk_size_gb": osdeploy_pg.MIN_VM_DISK_SIZE_GB,
         },
         "server_roles": osdeploy_pg.SERVER_ROLE_CATALOG,
+        "role_catalog": osdeploy_roles.catalog_payload(),
         "os_versions": ["Windows Server 2022", "Windows Server 2025"],
         "os_editions": ["Datacenter", "Standard"],
         "os_languages": ["en-us"],
@@ -775,7 +790,8 @@ def _package_response(*, run: dict, artifact: dict, server_base_url: str) -> dic
             },
         },
         "agent": {
-            "phase": "osdeploy",
+            "phase": "full_os",
+            "role": run["server_role"],
             "agent_id": agent_id,
             "bootstrap_token": _sign(
                 run["run_id"],
@@ -1288,6 +1304,15 @@ def preflight_payload(body: RunCreateBody) -> dict:
     with _conn() as conn:
         artifact = osdeploy_pg.get_artifact(conn, body.artifact_id)
         cache_payload = osdeploy_cache.payload(conn)
+        try:
+            from web import sequences_pg
+
+            credential_ids = {
+                int(item["id"])
+                for item in sequences_pg.list_credentials(conn)
+            }
+        except Exception:
+            credential_ids = set()
     if not artifact:
         blocking.append(_blocking_check("artifact_missing", "OSDeploy artifact was not found."))
     else:
@@ -1305,13 +1330,12 @@ def preflight_payload(body: RunCreateBody) -> dict:
         blocking.append(_blocking_check("memory_too_small", f"OSDeploy Server VMs need at least {osdeploy_pg.MIN_VM_MEMORY_MB} MB RAM."))
     if body.vm_disk_size_gb < osdeploy_pg.MIN_VM_DISK_SIZE_GB:
         blocking.append(_blocking_check("disk_too_small", f"OSDeploy Server VMs need at least {osdeploy_pg.MIN_VM_DISK_SIZE_GB} GB disk."))
-    if body.server_role not in osdeploy_pg.SERVER_ROLE_CATALOG:
-        blocking.append(_blocking_check("unsupported_server_role", f"Unsupported OSDeploy server role: {body.server_role}"))
-    elif body.server_role not in osdeploy_pg.M1_LAUNCHABLE_SERVER_ROLES:
-        blocking.append(_blocking_check(
-            "server_role_not_ready",
-            "OSDeploy M1 only launches Windows Server Base; this role remains planned for the post-base role automation phase.",
-        ))
+    role_checks = osdeploy_roles.validate_role_options(
+        body.server_role,
+        body.role_options,
+        credential_exists=(lambda cred_id: int(cred_id) in credential_ids),
+    )
+    blocking.extend(role_checks)
     selected_iso_storage = body.iso_storage or cfg.get("proxmox_iso_storage", "local")
     selected_disk_storage = body.storage or cfg.get("proxmox_storage", "local-lvm")
     storage_names = _storage_names_by_content(web_app)
@@ -1330,7 +1354,8 @@ def preflight_payload(body: RunCreateBody) -> dict:
                     f"for images. Available image storage: {available}."
                 ),
             ))
-    virtio_iso = _resolve_virtio_iso_volid(web_app, cfg, body.node)
+    selected_node = body.node or cfg.get("proxmox_node") or ""
+    virtio_iso = _resolve_virtio_iso_volid(web_app, cfg, str(selected_node))
     if not virtio_iso:
         blocking.append(_blocking_check("virtio_iso_missing", "OSDeploy requires a configured VirtIO driver ISO."))
     else:
@@ -1349,6 +1374,7 @@ def preflight_payload(body: RunCreateBody) -> dict:
         "warnings": warnings,
         "artifact": artifact,
         "cache": cache_payload,
+        "role": osdeploy_roles.catalog_payload().get(body.server_role),
         "target": {
             "vm_name": body.vm_name,
             "computer_name": osdeploy_pg.normalize_windows_computer_name(body.vm_name),
@@ -1657,10 +1683,50 @@ def create_run(body: RunCreateBody):
                 vm_disk_size_gb=body.vm_disk_size_gb,
                 secure_boot=body.secure_boot,
                 outbound_policy=body.outbound_policy,
+                role_options=body.role_options,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True, "run": run}
+
+
+@router.post("/bundles", status_code=201)
+def create_bundle(body: RunCreateBody):
+    if body.server_role != "lab_in_a_box":
+        raise HTTPException(status_code=400, detail="Only lab_in_a_box bundles are supported.")
+    preflight = preflight_payload(body)
+    if preflight["blocking_checks"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "OSDeploy bundle blocking preflight checks failed",
+                "blocking_checks": preflight["blocking_checks"],
+            },
+        )
+    with _conn() as conn:
+        try:
+            created = osdeploy_pg.create_lab_bundle(
+                conn,
+                artifact_id=body.artifact_id,
+                vm_name=body.vm_name,
+                node=body.node,
+                iso_storage=body.iso_storage,
+                storage=body.storage,
+                network_bridge=body.network_bridge,
+                architecture=body.architecture,
+                os_version=body.os_version,
+                os_edition=body.os_edition,
+                os_language=body.os_language,
+                vm_cores=body.vm_cores,
+                vm_memory_mb=body.vm_memory_mb,
+                vm_disk_size_gb=body.vm_disk_size_gb,
+                secure_boot=body.secure_boot,
+                outbound_policy=body.outbound_policy,
+                role_options=body.role_options,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, **created}
 
 
 @router.get("/runs")

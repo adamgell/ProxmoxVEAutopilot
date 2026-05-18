@@ -566,7 +566,17 @@ def _sync_agent_work(conn: Connection) -> None:
         SELECT wi.id, wi.agent_id, wi.kind, wi.status, wi.vmid, wi.job_id,
                wi.request_json, wi.result_json, wi.error, wi.created_at,
                wi.claimed_at, wi.completed_at, wi.updated_at,
-               d.last_seen_at AS agent_last_seen_at
+               d.last_seen_at AS agent_last_seen_at,
+               (
+                 wi.status = 'claimed' AND EXISTS (
+                 SELECT 1
+                 FROM agent_work_items later
+                 WHERE later.agent_id = wi.agent_id
+                   AND later.status IN ('complete', 'completed', 'failed', 'error', 'cancelled', 'canceled')
+                   AND COALESCE(later.completed_at, later.updated_at, later.claimed_at, later.created_at)
+                       > COALESCE(wi.claimed_at, wi.created_at)
+                 )
+               ) AS superseded_by_later_terminal_work
         FROM agent_work_items wi
         LEFT JOIN agent_devices d ON d.agent_id = wi.agent_id
         ORDER BY wi.created_at DESC
@@ -586,7 +596,18 @@ def _sync_agent_work(conn: Connection) -> None:
             "agent_last_seen_at": row.get("agent_last_seen_at"),
             "request": _json_value(row.get("request_json")),
             "result": _json_value(row.get("result_json")),
+            "superseded_by_later_terminal_work": bool(row.get("superseded_by_later_terminal_work")),
         }
+        work_state = _run_state(row.get("status"))
+        work_error = row.get("error")
+        if (
+            str(row.get("status") or "") == "claimed"
+            and row.get("superseded_by_later_terminal_work")
+        ):
+            work_state = "failed"
+            work_error = work_error or (
+                "claimed work item was superseded by later terminal work from the same agent"
+            )
         queue_state = "done" if row.get("claimed_at") else (
             "running" if row.get("status") == "pending" else "skipped"
         )
@@ -612,12 +633,12 @@ def _sync_agent_work(conn: Connection) -> None:
             source_id=row["id"],
             phase_key=BUILD_HOST_WORK_PHASES.get(str(row.get("kind") or ""), "execution"),
             phase_label=str(row.get("kind") or "Agent work").replace("_", " ").title(),
-            state=_run_state(row.get("status")),
+            state=work_state,
             started_at=row.get("claimed_at") or row.get("created_at"),
             ended_at=row.get("completed_at"),
             last_progress_at=row.get("completed_at") or row.get("updated_at") or row.get("claimed_at") or row.get("created_at"),
             evidence=evidence,
-            error=row.get("error"),
+            error=work_error,
         )
 
 
@@ -769,6 +790,8 @@ def _sync_cloudosd(conn: Connection) -> None:
             osdcloud_state = "done"
         elif row.get("osdcloud_started_at"):
             osdcloud_state = "failed" if failed else "running"
+        elif row.get("pe_registered_at") and failed:
+            osdcloud_state = "failed"
         else:
             osdcloud_state = "skipped" if failed else "pending"
         _record(
@@ -801,7 +824,39 @@ def _sync_cloudosd(conn: Connection) -> None:
             evidence=evidence,
         )
         if readiness_exists and (row.get("upload_started_at") or row.get("upload_finished_at") or row.get("hash_status")):
-            upload_failed = bool(row.get("upload_error")) or row.get("upload_status") == "failed"
+            upload_status = str(row.get("upload_status") or "")
+            readiness_state = str(row.get("readiness_state") or "")
+            upload_not_configured = (
+                upload_status == "not_configured"
+                or readiness_state == "upload_not_configured"
+            )
+            upload_failed = (
+                upload_status in {"failed", "canceled", "cancelled"}
+                or readiness_state == "upload_failed"
+                or (bool(row.get("upload_error")) and not upload_not_configured)
+            )
+            if upload_not_configured:
+                upload_state = "skipped"
+                upload_ended_at = (
+                    row.get("upload_finished_at")
+                    or row.get("upload_started_at")
+                    or row.get("first_heartbeat_at")
+                    or row.get("updated_at")
+                )
+                upload_error = None
+            elif upload_failed:
+                upload_state = "failed"
+                upload_ended_at = row.get("upload_finished_at") or row.get("updated_at")
+                upload_error = row.get("upload_error") or upload_status or readiness_state
+            elif failed and upload_status in {"", "not_started"} and not row.get("upload_started_at"):
+                upload_state = "skipped"
+                upload_ended_at = row.get("provision_job_ended_at") or row.get("updated_at")
+                upload_error = None
+            else:
+                upload_done = bool(row.get("upload_finished_at")) or upload_status == "complete"
+                upload_state = "done" if upload_done else "running"
+                upload_ended_at = row.get("upload_finished_at") or (row.get("updated_at") if upload_done else None)
+                upload_error = row.get("upload_error")
             _record(
                 conn,
                 deployment_key=deployment_key,
@@ -810,12 +865,12 @@ def _sync_cloudosd(conn: Connection) -> None:
                 source_id=row["run_id"],
                 phase_key="hash_upload",
                 phase_label="Hash upload",
-                state="done" if row.get("upload_finished_at") else ("failed" if upload_failed else "running"),
+                state=upload_state,
                 started_at=row.get("upload_started_at") or row.get("first_heartbeat_at") or row.get("created_at"),
-                ended_at=row.get("upload_finished_at"),
+                ended_at=upload_ended_at,
                 last_progress_at=row.get("upload_finished_at") or row.get("upload_started_at") or row.get("updated_at"),
                 evidence=evidence,
-                error=row.get("upload_error"),
+                error=upload_error,
             )
 
 

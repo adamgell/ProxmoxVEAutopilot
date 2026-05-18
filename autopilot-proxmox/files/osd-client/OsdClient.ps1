@@ -1036,6 +1036,17 @@ function Invoke-OsdV2Client {
     $agentId = Get-OsdAgentId -Config $Config
     $phase = Get-OsdPhase -Config $Config
     $token = [string] $Config.bearer_token
+    $capabilities = @(
+        'capture_autopilot_hash',
+        'fix_recovery_partition',
+        'handoff_to_oobe',
+        'install_autopilot_agent',
+        'install_package',
+        'install_qga',
+        'install_qga_watchdog',
+        'verify_qga',
+        'wait_agent_heartbeat'
+    )
 
     $reg = Invoke-OsdRequest -Config $Config -Path '/osd/v2/agent/register' `
         -Method POST -BearerToken $token `
@@ -1044,7 +1055,7 @@ function Invoke-OsdV2Client {
             agent_id = $agentId
             phase = $phase
             computer_name = $env:COMPUTERNAME
-            capabilities = @('content', 'packages', 'hash_capture')
+            capabilities = $capabilities
         }
     if ($reg.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $reg.bearer_token) {
         $token = [string] $reg.bearer_token
@@ -1058,6 +1069,7 @@ function Invoke-OsdV2Client {
                 agent_id = $agentId
                 phase = $phase
                 batch_size = 1
+                capabilities = $capabilities
             }
         if ($next.PSObject.Properties.Match('bearer_token').Count -gt 0 -and $next.bearer_token) {
             $token = [string] $next.bearer_token

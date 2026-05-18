@@ -11,6 +11,7 @@ from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from web import ts_engine_pg
+from web import osdeploy_roles
 
 
 _INIT_LOCK = Lock()
@@ -39,6 +40,13 @@ SERVER_ROLE_CATALOG = [
     "lab_in_a_box",
 ]
 M1_LAUNCHABLE_SERVER_ROLES = {"base"}
+LAUNCHABLE_SERVER_ROLES = set(SERVER_ROLE_CATALOG)
+ROLE_STEP_KINDS = {
+    kind
+    for role in SERVER_ROLE_CATALOG
+    for kind in osdeploy_roles.role_step_kinds(role)
+}
+FULL_OS_ROLE_ACTION_KINDS = set(osdeploy_roles.FULL_OS_ROLE_ACTION_KINDS)
 
 PE_EVENT_STEP_KINDS = {
     "pe_registered": ("osdeploy_preflight",),
@@ -107,6 +115,7 @@ CREATE TABLE IF NOT EXISTS osdeploy_runs (
     vm_disk_size_gb integer NOT NULL,
     secure_boot boolean NOT NULL DEFAULT true,
     outbound_policy_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    role_options_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     vmid integer NULL,
     vm_uuid text NULL,
     mac text NULL,
@@ -120,6 +129,9 @@ CREATE TABLE IF NOT EXISTS osdeploy_runs (
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL
 );
+
+ALTER TABLE osdeploy_runs
+    ADD COLUMN IF NOT EXISTS role_options_json jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_osdeploy_runs_state
     ON osdeploy_runs(state, created_at);
@@ -145,10 +157,33 @@ CREATE TABLE IF NOT EXISTS osdeploy_readiness (
     errors_json jsonb NOT NULL DEFAULT '[]'::jsonb,
     updated_at timestamptz NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS osdeploy_role_bundles (
+    id uuid PRIMARY KEY,
+    state text NOT NULL,
+    server_role text NOT NULL,
+    bundle_name text NOT NULL,
+    artifact_id uuid NOT NULL REFERENCES osdeploy_artifacts(id),
+    role_options_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS osdeploy_role_bundle_children (
+    id uuid PRIMARY KEY,
+    bundle_id uuid NOT NULL REFERENCES osdeploy_role_bundles(id) ON DELETE CASCADE,
+    dependency_order integer NOT NULL,
+    server_role text NOT NULL,
+    child_run_id uuid NOT NULL REFERENCES osdeploy_runs(run_id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL,
+    UNIQUE (bundle_id, dependency_order)
+);
 """
 
 DROP_SCHEMA_FOR_TESTS = """
 DROP TABLE IF EXISTS osdeploy_readiness CASCADE;
+DROP TABLE IF EXISTS osdeploy_role_bundle_children CASCADE;
+DROP TABLE IF EXISTS osdeploy_role_bundles CASCADE;
 DROP TABLE IF EXISTS osdeploy_run_events CASCADE;
 DROP TABLE IF EXISTS osdeploy_runs CASCADE;
 DROP TABLE IF EXISTS osdeploy_artifacts CASCADE;
@@ -211,6 +246,7 @@ def _run_row(row: dict | None) -> dict | None:
     out["run_id"] = str(out["run_id"])
     out["artifact_id"] = str(out["artifact_id"])
     out["outbound_policy"] = out.pop("outbound_policy_json") or {}
+    out["role_options"] = out.pop("role_options_json", None) or {}
     out["archived"] = bool(out.get("archived_at"))
     for key in (
         "pe_registered_at",
@@ -415,7 +451,13 @@ def update_artifact_publish_job(
     return _artifact_row(row)
 
 
-def _create_sequence_for_run(conn: Connection, *, name: str, server_role: str) -> str:
+def _create_sequence_for_run(
+    conn: Connection,
+    *,
+    name: str,
+    server_role: str,
+    role_options: dict | None = None,
+) -> str:
     sequence_id = ts_engine_pg.create_sequence(
         conn,
         name=name,
@@ -434,12 +476,26 @@ def _create_sequence_for_run(conn: Connection, *, name: str, server_role: str) -
         ("Install AutopilotAgent", "install_autopilot_agent", "full_os"),
         ("Wait for AutopilotAgent heartbeat", "wait_agent_heartbeat", "full_os"),
     ]
-    if server_role != "base":
-        steps.insert(
-            -1,
-            ("Run server role baseline", "run_script", "full_os"),
-        )
+    role_step_names = {
+        "join_domain_role": "Join isolated domain",
+        "verify_ad_domain_join": "Verify AD domain membership",
+        "configure_file_server_role": "Configure File Server role",
+        "configure_isolated_domain_controller_role": "Promote isolated domain controller",
+        "verify_isolated_domain_controller_role": "Verify isolated domain controller",
+        "configure_mecm_prereq_role": "Install MECM prerequisite baseline",
+    }
+    domain_join = dict((role_options or {}).get("domain_join") or {})
+    for role_kind in osdeploy_roles.generated_step_kinds(server_role, role_options):
+        steps.insert(-1, (role_step_names.get(role_kind, role_kind), role_kind, "full_os"))
     for position, (step_name, kind, phase) in enumerate(steps):
+        params = {}
+        if kind in {"join_domain_role", "verify_ad_domain_join"}:
+            params = dict(domain_join)
+        if kind in ROLE_STEP_KINDS:
+            params = {
+                "server_role": server_role,
+                **(role_options or {}),
+            }
         ts_engine_pg.add_step(
             conn,
             sequence_id=sequence_id,
@@ -448,10 +504,14 @@ def _create_sequence_for_run(conn: Connection, *, name: str, server_role: str) -
             kind=kind,
             phase=phase,
             position=position,
-            params={"server_role": server_role} if kind == "run_script" else {},
+            params=params,
             retry_count=60 if kind == "wait_agent_heartbeat" else 0,
-            retry_delay_seconds=10,
-            reboot_behavior="none",
+            retry_delay_seconds=30 if kind == "verify_ad_domain_join" else 10,
+            reboot_behavior=(
+                "required"
+                if kind in {"configure_isolated_domain_controller_role", "join_domain_role"}
+                else "none"
+            ),
         )
     return ts_engine_pg.compile_sequence(conn, sequence_id, compiled_by="osdeploy")
 
@@ -476,6 +536,7 @@ def create_run(
     vm_disk_size_gb: int = DEFAULT_VM_DISK_SIZE_GB,
     secure_boot: bool = True,
     outbound_policy: dict | None = None,
+    role_options: dict | None = None,
 ) -> dict:
     artifact = get_artifact(conn, artifact_id)
     if not artifact:
@@ -485,11 +546,13 @@ def create_run(
     expected_computer_name = normalize_windows_computer_name(vm_name)
     if not expected_computer_name:
         raise ValueError("OSDeploy requested VM name does not produce a valid Windows computer name")
+    sanitized_role_options = osdeploy_roles.sanitize_role_options(server_role, role_options)
 
     version_id = _create_sequence_for_run(
         conn,
         name=f"OSDeploy deployment for {vm_name}",
         server_role=server_role,
+        role_options=sanitized_role_options,
     )
     run_id = ts_engine_pg.create_run_from_version(
         conn,
@@ -504,6 +567,7 @@ def create_run(
             "deployment_path": "osdeploy_v2",
             "artifact_id": artifact_id,
             "server_role": server_role,
+            "role_options": sanitized_role_options,
             "os_version": os_version,
             "os_edition": os_edition,
             "os_language": os_language,
@@ -521,12 +585,13 @@ def create_run(
             requested_vm_name, expected_computer_name, requested_vmid,
             node, iso_storage, storage, network_bridge, vm_cores,
             vm_memory_mb, vm_disk_size_gb, secure_boot, outbound_policy_json,
+            role_options_json,
             created_at, updated_at
         )
         VALUES (
             %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s
+            %s, %s, %s
         )
         RETURNING *
         """,
@@ -552,6 +617,7 @@ def create_run(
             int(vm_disk_size_gb),
             bool(secure_boot),
             _json(outbound_policy or {}),
+            _json(sanitized_role_options),
             now,
             now,
         ),
@@ -583,6 +649,160 @@ def create_run(
         message="OSDeploy run created",
     )
     return _run_row(row)
+
+
+def _bundle_row(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    out = dict(row)
+    out["id"] = str(out["id"])
+    out["artifact_id"] = str(out["artifact_id"])
+    out["role_options"] = out.pop("role_options_json", None) or {}
+    for key in ("created_at", "updated_at"):
+        out[key] = _iso(out.get(key))
+    return out
+
+
+def create_lab_bundle(
+    conn: Connection,
+    *,
+    artifact_id: str,
+    vm_name: str,
+    node: str | None = None,
+    iso_storage: str | None = None,
+    storage: str | None = None,
+    network_bridge: str | None = None,
+    architecture: str = DEFAULT_ARCHITECTURE,
+    os_version: str = DEFAULT_OS_VERSION,
+    os_edition: str = DEFAULT_OS_EDITION,
+    os_language: str = DEFAULT_OS_LANGUAGE,
+    vm_cores: int = DEFAULT_VM_CORES,
+    vm_memory_mb: int = RECOMMENDED_VM_MEMORY_MB,
+    vm_disk_size_gb: int = DEFAULT_VM_DISK_SIZE_GB,
+    secure_boot: bool = True,
+    outbound_policy: dict | None = None,
+    role_options: dict | None = None,
+) -> dict:
+    sanitized = osdeploy_roles.sanitize_role_options("lab_in_a_box", role_options)
+    now = _now()
+    bundle_id = _new_id()
+    bundle_row = conn.execute(
+        """
+        INSERT INTO osdeploy_role_bundles (
+            id, state, server_role, bundle_name, artifact_id,
+            role_options_json, created_at, updated_at
+        )
+        VALUES (%s, 'created', 'lab_in_a_box', %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            bundle_id,
+            sanitized.get("bundle_name") or vm_name,
+            artifact_id,
+            _json(sanitized),
+            now,
+            now,
+        ),
+    ).fetchone()
+    children = []
+    dc_child = next(
+        (
+            child for child in sanitized.get("children") or []
+            if child.get("role") == "isolated_domain_controller"
+        ),
+        {},
+    )
+    lab_domain_join = {
+        "credential_id": sanitized.get("domain_join_credential_id"),
+        "domain_fqdn": (dc_child.get("role_options") or {}).get("forest_fqdn"),
+    }
+    for order, child in enumerate(sanitized.get("children") or [], start=1):
+        child_role_options = dict(child.get("role_options") or {})
+        if child["role"] in {"file_server", "mecm_prereq"}:
+            child_role_options["domain_join"] = lab_domain_join
+        child_run = create_run(
+            conn,
+            artifact_id=artifact_id,
+            vm_name=child["vm_name"],
+            node=node,
+            iso_storage=iso_storage,
+            storage=storage,
+            network_bridge=network_bridge,
+            architecture=architecture,
+            server_role=child["role"],
+            os_version=os_version,
+            os_edition=os_edition,
+            os_language=os_language,
+            vm_cores=vm_cores,
+            vm_memory_mb=vm_memory_mb,
+            vm_disk_size_gb=vm_disk_size_gb,
+            secure_boot=secure_boot,
+            outbound_policy=outbound_policy,
+            role_options=child_role_options,
+        )
+        row = conn.execute(
+            """
+            INSERT INTO osdeploy_role_bundle_children (
+                id, bundle_id, dependency_order, server_role, child_run_id, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (_new_id(), bundle_id, order, child["role"], child_run["run_id"], now),
+        ).fetchone()
+        conn.commit()
+        children.append({
+            "id": str(row["id"]),
+            "bundle_id": str(row["bundle_id"]),
+            "dependency_order": int(row["dependency_order"]),
+            "server_role": row["server_role"],
+            "child_run_id": str(row["child_run_id"]),
+            "run": child_run,
+        })
+    return {"bundle": _bundle_row(bundle_row), "children": children}
+
+
+def _sync_bundle_state_for_child(conn: Connection, run_id: str) -> None:
+    bundle = conn.execute(
+        """
+        SELECT bundle_id
+        FROM osdeploy_role_bundle_children
+        WHERE child_run_id = %s
+        """,
+        (run_id,),
+    ).fetchone()
+    if not bundle:
+        return
+    rows = conn.execute(
+        """
+        SELECT r.state
+        FROM osdeploy_role_bundle_children child
+        JOIN osdeploy_runs r ON r.run_id = child.child_run_id
+        WHERE child.bundle_id = %s
+        ORDER BY child.dependency_order
+        """,
+        (bundle["bundle_id"],),
+    ).fetchall()
+    states = [str(row["state"] or "") for row in rows]
+    if not states:
+        return
+    if any(state in {"failed", "canceled"} for state in states):
+        next_state = "failed"
+    elif all(state == "complete" for state in states):
+        next_state = "complete"
+    elif any(state not in {"created"} for state in states):
+        next_state = "running"
+    else:
+        next_state = "created"
+    conn.execute(
+        """
+        UPDATE osdeploy_role_bundles
+        SET state = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (next_state, _now(), bundle["bundle_id"]),
+    )
 
 
 def get_run(conn: Connection, run_id: str) -> dict | None:
@@ -871,16 +1091,16 @@ def mark_complete_from_heartbeat(
     if not run:
         return None
     now = _now()
-    role_is_ready = run.get("server_role") in M1_LAUNCHABLE_SERVER_ROLES
+    role_is_ready = run.get("server_role") == "base"
     step_rows = conn.execute(
         """
         SELECT DISTINCT kind
         FROM ts_run_plan_steps
         WHERE run_id = %s
           AND state <> 'skipped'
-          AND (%s OR kind <> 'run_script')
+          AND (%s OR NOT (kind = ANY(%s)))
         """,
-        (run_id, role_is_ready),
+        (run_id, role_is_ready, sorted(FULL_OS_ROLE_ACTION_KINDS)),
     ).fetchall()
     ts_engine_pg.mark_steps_done_by_kind(
         conn,
@@ -898,6 +1118,41 @@ def mark_complete_from_heartbeat(
     next_state = "complete" if role_is_ready else "role_pending"
     readiness_state = "complete" if role_is_ready else "role_pending"
     server_role_status = "base_ready" if role_is_ready else "pending"
+    existing_readiness = get_readiness(conn, run_id)
+    final_role_step_done = False
+    if not role_is_ready:
+        final_role_step = osdeploy_roles.final_role_step_kind(
+            str(run.get("server_role") or "")
+        )
+        final_role_step_done = bool(
+            conn.execute(
+                """
+                SELECT 1
+                FROM ts_run_plan_steps
+                WHERE run_id = %s
+                  AND kind = %s
+                  AND state = 'done'
+                LIMIT 1
+                """,
+                (run_id, final_role_step),
+            ).fetchone()
+        )
+    role_already_ready = (
+        not role_is_ready
+        and (
+            run.get("state") == "complete"
+            or (existing_readiness or {}).get("state") == "complete"
+            or (existing_readiness or {}).get("server_role_status")
+            == osdeploy_roles.role_readiness_status(str(run.get("server_role") or ""))
+            or final_role_step_done
+        )
+    )
+    if role_already_ready:
+        next_state = "complete"
+        readiness_state = "complete"
+        server_role_status = osdeploy_roles.role_readiness_status(
+            str(run.get("server_role") or "")
+        )
     row = conn.execute(
         """
         UPDATE osdeploy_runs
@@ -935,7 +1190,7 @@ def mark_complete_from_heartbeat(
             now,
         ),
     )
-    if role_is_ready:
+    if role_is_ready or role_already_ready:
         conn.execute(
             """
             UPDATE ts_provisioning_runs
@@ -971,6 +1226,143 @@ def mark_complete_from_heartbeat(
             "os_name": heartbeat.get("os_name"),
             "qga_state": heartbeat.get("qga_state"),
         },
+    )
+    return _run_row(row)
+
+
+def mark_role_step_result(
+    conn: Connection,
+    *,
+    run_id: str,
+    step_kind: str,
+    agent_id: str,
+    status: str,
+    message: str | None = None,
+    data: dict | None = None,
+) -> dict | None:
+    run = get_run(conn, run_id)
+    if not run or run.get("server_role") == "base":
+        return None
+    server_role = str(run.get("server_role") or "")
+    now = _now()
+    if status == "success" and step_kind != osdeploy_roles.final_role_step_kind(server_role):
+        append_event(
+            conn,
+            run_id=run_id,
+            phase="full_os",
+            event_type="server_role_step_complete",
+            message=message or f"OSDeploy role step completed: {step_kind}",
+            data={"agent_id": agent_id, "step_kind": step_kind, **(data or {})},
+        )
+        return run
+    if status == "success":
+        role_status = osdeploy_roles.role_readiness_status(server_role)
+        row = conn.execute(
+            """
+            UPDATE osdeploy_runs
+            SET state = 'complete',
+                updated_at = %s
+            WHERE run_id = %s
+            RETURNING *
+            """,
+            (now, run_id),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO osdeploy_readiness (
+                run_id, state, qga_status, agent_status, heartbeat_at,
+                server_role_status, errors_json, updated_at
+            )
+            VALUES (%s, 'complete', 'running', 'online', %s, %s, %s, %s)
+            ON CONFLICT (run_id) DO UPDATE SET
+                state = 'complete',
+                qga_status = COALESCE(osdeploy_readiness.qga_status, 'running'),
+                agent_status = 'online',
+                server_role_status = EXCLUDED.server_role_status,
+                errors_json = EXCLUDED.errors_json,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (run_id, now, role_status, Jsonb([]), now),
+        )
+        conn.execute(
+            """
+            UPDATE ts_provisioning_runs
+            SET state = 'done',
+                phase = 'full_os',
+                finished_at = COALESCE(finished_at, %s),
+                last_error = NULL
+            WHERE id = %s
+              AND state <> 'failed'
+            """,
+            (now, run_id),
+        )
+        _sync_bundle_state_for_child(conn, run_id)
+        conn.commit()
+        append_event(
+            conn,
+            run_id=run_id,
+            phase="full_os",
+            event_type="server_role_ready",
+            message=message or f"OSDeploy server role ready: {server_role}",
+            data={"agent_id": agent_id, "step_kind": step_kind, **(data or {})},
+        )
+        return _run_row(row)
+
+    error_entry = {
+        "source": "server_role",
+        "agent_id": agent_id,
+        "step_kind": step_kind,
+        "message": message or f"OSDeploy role step failed: {step_kind}",
+    }
+    if data:
+        error_entry["data"] = data
+    row = conn.execute(
+        """
+        UPDATE osdeploy_runs
+        SET state = 'failed',
+            updated_at = %s
+        WHERE run_id = %s
+        RETURNING *
+        """,
+        (now, run_id),
+    ).fetchone()
+    conn.execute(
+        """
+        INSERT INTO osdeploy_readiness (
+            run_id, state, qga_status, agent_status, heartbeat_at,
+            server_role_status, errors_json, updated_at
+        )
+        VALUES (%s, 'failed', 'unknown', 'online', %s, 'failed', %s, %s)
+        ON CONFLICT (run_id) DO UPDATE SET
+            state = 'failed',
+            agent_status = 'online',
+            server_role_status = 'failed',
+            errors_json = EXCLUDED.errors_json,
+            updated_at = EXCLUDED.updated_at
+        """,
+        (run_id, now, Jsonb([error_entry]), now),
+    )
+    conn.execute(
+        """
+        UPDATE ts_provisioning_runs
+        SET state = 'failed',
+            phase = 'full_os',
+            finished_at = COALESCE(finished_at, %s),
+            last_error = %s
+        WHERE id = %s
+        """,
+        (now, error_entry["message"], run_id),
+    )
+    _sync_bundle_state_for_child(conn, run_id)
+    conn.commit()
+    append_event(
+        conn,
+        run_id=run_id,
+        phase="full_os",
+        event_type="server_role_failed",
+        severity="error",
+        message=error_entry["message"],
+        data={"agent_id": agent_id, "step_kind": step_kind, **(data or {})},
     )
     return _run_row(row)
 
@@ -1070,6 +1462,7 @@ def mark_failed_from_job(
         """,
         (run_id, Jsonb(errors), now),
     )
+    _sync_bundle_state_for_child(conn, run_id)
     conn.commit()
     failed = _run_row(row)
     if failed and not event_exists:

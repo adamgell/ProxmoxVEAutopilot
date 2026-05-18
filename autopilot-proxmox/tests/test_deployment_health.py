@@ -83,6 +83,65 @@ def test_collect_deployment_timings_from_jobs_winpe_and_agent_work(pg_conn):
     assert all("download_url" not in str(row["evidence"]) for row in payload["runs"])
 
 
+def test_superseded_claimed_agent_work_is_not_reported_active(pg_conn):
+    from web import agent_telemetry_pg, deployment_health
+
+    deployment_health.reset_for_tests(pg_conn)
+    agent_telemetry_pg.reset_for_tests(pg_conn)
+    agent_telemetry_pg.init(pg_conn)
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="buildhost-101",
+        token="agent-token",
+        vmid=101,
+        computer_name="AUTOPILOT-BLD",
+    )
+    stale = agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        kind="publish_artifacts",
+        request={},
+        vmid=101,
+    )
+    claimed = agent_telemetry_pg.claim_next_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        supported_kinds=["publish_artifacts"],
+    )
+    assert claimed["id"] == stale["id"]
+    later = agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        kind="fetch_source_bundle",
+        request={},
+        vmid=101,
+    )
+    claimed_later = agent_telemetry_pg.claim_next_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        supported_kinds=["fetch_source_bundle"],
+    )
+    assert claimed_later["id"] == later["id"]
+    agent_telemetry_pg.complete_work_item(
+        pg_conn,
+        later["id"],
+        agent_id="buildhost-101",
+        result={"ok": True},
+    )
+
+    payload = deployment_health.build_deployments_payload(pg_conn)
+    active_keys = {row["deployment_key"] for row in payload["active"]}
+    detail = deployment_health.build_deployment_detail(
+        pg_conn,
+        f"agent-work:{stale['id']}",
+    )
+
+    assert f"agent-work:{stale['id']}" not in active_keys
+    assert detail["state"] == "failed"
+    assert detail["current_phase_key"] == "artifact_publish"
+    assert "superseded" in detail["phases"][-1]["error"]
+
+
 def test_deployment_detail_flags_stuck_phase(pg_conn):
     from web import deployment_health, deployment_health_pg
 
@@ -175,6 +234,87 @@ def test_cloudosd_timeline_backfills_run_and_readiness_phases(pg_conn):
     assert detail["evidence"]["assignment_status"] == "assigned"
 
 
+def test_cloudosd_hash_upload_not_configured_is_terminal_not_failed(pg_conn):
+    from web import cloudosd_pg, deployment_health, ts_engine_pg
+
+    deployment_health.reset_for_tests(pg_conn)
+    cloudosd_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    cloudosd_pg.init(pg_conn)
+    artifact = cloudosd_pg.create_artifact(
+        pg_conn,
+        architecture="amd64",
+        osdcloud_module_version="26.4.17.1",
+        build_sha="abc1234",
+        iso_path="/app/output/cloudosd.iso",
+        wim_path="/app/output/cloudosd.wim",
+        manifest_path="/app/output/cloudosd.json",
+        iso_sha256="a" * 64,
+        wim_sha256="b" * 64,
+        built_by_host="build-host",
+    )
+    run = cloudosd_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="GELL-MONITOR-NO-ENTRA",
+        node="pve1",
+        storage="local-lvm",
+        network_bridge="vmbr0",
+    )
+    cloudosd_pg.mark_pe_registered(pg_conn, run_id=run["run_id"])
+    cloudosd_pg.mark_osdcloud_started(pg_conn, run_id=run["run_id"])
+    cloudosd_pg.mark_osdcloud_finished(pg_conn, run_id=run["run_id"])
+    heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=60)
+    cloudosd_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        heartbeat_at=heartbeat_at,
+        heartbeat={"ComputerName": "GELL-MONITOR-NO-ENTRA"},
+    )
+    upload_started = heartbeat_at + timedelta(seconds=10)
+    cloudosd_pg.upsert_autopilot_readiness(
+        pg_conn,
+        run_id=run["run_id"],
+        state="upload_failed",
+        hash_status="captured",
+        upload_status="failed",
+        upload_started_at=upload_started,
+        upload_finished_at=upload_started + timedelta(seconds=30),
+        upload_error="Missing Entra credentials",
+    )
+    failed_detail = deployment_health.build_deployment_detail(
+        pg_conn,
+        f"cloudosd:{run['run_id']}",
+    )
+    assert failed_detail["state"] == "failed"
+
+    cloudosd_pg.upsert_autopilot_readiness(
+        pg_conn,
+        run_id=run["run_id"],
+        state="upload_not_configured",
+        hash_status="captured",
+        upload_status="not_configured",
+        upload_started_at=upload_started,
+        upload_finished_at=None,
+        upload_error="Hash captured; Entra upload credentials are not configured",
+    )
+
+    detail = deployment_health.build_deployment_detail(
+        pg_conn,
+        f"cloudosd:{run['run_id']}",
+    )
+    phases = {phase["phase_key"]: phase for phase in detail["phases"]}
+
+    assert detail["state"] == "done"
+    assert detail["health"] in {"healthy", "learning"}
+    assert detail["evidence"]["upload_status"] == "not_configured"
+    assert detail["evidence"]["readiness_state"] == "upload_not_configured"
+    assert phases["hash_upload"]["state"] == "skipped"
+    assert phases["hash_upload"]["error"] is None
+    assert all(phase["state"] != "failed" for phase in detail["phases"])
+
+
 def test_cloudosd_failed_provision_job_closes_timeline(pg_conn):
     from web import cloudosd_pg, deployment_health, jobs_pg, ts_engine_pg
 
@@ -234,6 +374,70 @@ def test_cloudosd_failed_provision_job_closes_timeline(pg_conn):
     assert ts_detail["state"] == "failed"
     assert ts_detail["health"] == "failed"
     assert ts_detail["evidence"]["provision_job_id"] == "job-cloudosd-failed"
+
+
+def test_cloudosd_failed_after_pe_registration_does_not_leave_hash_upload_active(pg_conn):
+    from web import cloudosd_pg, deployment_health, jobs_pg, ts_engine_pg
+
+    deployment_health.reset_for_tests(pg_conn)
+    cloudosd_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.reset_for_tests(pg_conn)
+    ts_engine_pg.init(pg_conn)
+    cloudosd_pg.init(pg_conn)
+    artifact = cloudosd_pg.create_artifact(
+        pg_conn,
+        architecture="amd64",
+        osdcloud_module_version="26.4.17.1",
+        build_sha="abc1234",
+        iso_path="/app/output/cloudosd.iso",
+        wim_path="/app/output/cloudosd.wim",
+        manifest_path="/app/output/cloudosd.json",
+        iso_sha256="a" * 64,
+        wim_sha256="b" * 64,
+        built_by_host="build-host",
+    )
+    run = cloudosd_pg.create_run(
+        pg_conn,
+        artifact_id=artifact["id"],
+        vm_name="GELL-PE-FAILED",
+        node="pve1",
+        storage="local-lvm",
+        network_bridge="vmbr0",
+    )
+    cloudosd_pg.mark_pe_registered(pg_conn, run_id=run["run_id"])
+    cloudosd_pg.upsert_autopilot_readiness(
+        pg_conn,
+        run_id=run["run_id"],
+        state="hash_captured",
+        hash_status="captured",
+        upload_status="not_started",
+        assignment_status="waiting_for_upload",
+    )
+    jobs_pg.enqueue(
+        job_id="job-cloudosd-pe-failed",
+        job_type="provision_cloudosd",
+        playbook="provision.yml",
+        cmd=["false"],
+        args={"cloudosd_run_id": run["run_id"], "vmid": 1202},
+    )
+    jobs_pg.claim_next_job(worker_id="builder-1")
+    jobs_pg.finalize_job("job-cloudosd-pe-failed", exit_code=-15)
+
+    detail = deployment_health.build_deployment_detail(
+        pg_conn,
+        f"cloudosd:{run['run_id']}",
+    )
+    phases = {phase["phase_key"]: phase for phase in detail["phases"]}
+
+    assert detail["state"] == "failed"
+    assert detail["health"] == "failed"
+    assert phases["proxmox_provision"]["state"] == "done"
+    assert phases["osdcloud"]["state"] == "failed"
+    assert phases["hash_upload"]["state"] == "skipped"
+
+    payload = deployment_health.build_deployments_payload(pg_conn)
+    active_keys = {row["deployment_key"] for row in payload["active"]}
+    assert f"cloudosd:{run['run_id']}" not in active_keys
 
 
 def test_task_engine_steps_feed_deployment_payload(pg_conn):

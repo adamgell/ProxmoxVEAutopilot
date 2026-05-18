@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -191,6 +192,100 @@ def test_setup_build_host_status_discovers_existing_vm_when_state_was_recreated(
     assert status["node"] == "pvetest"
     assert status["expected_agent_id"] == "buildhost-101"
     assert status["agent_state"] == "missing"
+
+
+def test_setup_build_host_status_treats_claimed_work_as_busy(monkeypatch):
+    from web import agent_telemetry_pg, app as web_app, db_pg
+
+    class DummyConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    now = datetime.now(timezone.utc)
+    heartbeat_at = now - timedelta(minutes=12)
+    claimed_at = now - timedelta(minutes=45)
+
+    monkeypatch.setattr(db_pg, "connection", lambda _dsn: DummyConnection())
+    monkeypatch.setattr(web_app, "_database_url", lambda: "postgresql://autopilot-test")
+    monkeypatch.setattr(agent_telemetry_pg, "init", lambda _conn: None)
+    monkeypatch.setattr(agent_telemetry_pg, "latest_for_agent", lambda _conn, _agent_id: {
+        "agent_id": "buildhost-101",
+        "received_at": heartbeat_at,
+        "vmid": 101,
+        "computer_name": "AUTOPILOT-BLD",
+        "agent_version": "0.1.2.0",
+        "primary_ipv4": "192.168.2.129",
+    })
+    monkeypatch.setattr(agent_telemetry_pg, "get_device", lambda _conn, _agent_id: {})
+    monkeypatch.setattr(web_app, "_latest_claimed_build_host_work", lambda _conn, _agent_id: {
+        "id": "work-1",
+        "kind": "install_build_prerequisites",
+        "status": "claimed",
+        "claimed_at": claimed_at,
+    })
+
+    status = web_app._setup_build_host_status({
+        "build_host_vmid": "101",
+        "build_host_expected_agent_id": "buildhost-101",
+        "build_host_expected_computer_name": "AUTOPILOT-BLD",
+    })
+
+    assert status["agent_ready"] is True
+    assert status["agent_state"] == "busy"
+    assert status["last_heartbeat_age_seconds"] >= 12 * 60
+    assert status["active_work"]["kind"] == "install_build_prerequisites"
+    assert status["active_work"]["within_timeout"] is True
+
+
+def test_latest_claimed_build_host_work_ignores_superseded_claim(pg_conn):
+    from web import agent_telemetry_pg, app as web_app
+
+    agent_telemetry_pg.reset_for_tests(pg_conn)
+    agent_telemetry_pg.init(pg_conn)
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="buildhost-101",
+        token="agent-token",
+        vmid=101,
+        computer_name="AUTOPILOT-BLD",
+    )
+    stale = agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        kind="publish_artifacts",
+        request={},
+        vmid=101,
+    )
+    claimed = agent_telemetry_pg.claim_next_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        supported_kinds=["publish_artifacts"],
+    )
+    assert claimed["id"] == stale["id"]
+    later = agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        kind="fetch_source_bundle",
+        request={},
+        vmid=101,
+    )
+    claimed_later = agent_telemetry_pg.claim_next_work_item(
+        pg_conn,
+        agent_id="buildhost-101",
+        supported_kinds=["fetch_source_bundle"],
+    )
+    assert claimed_later["id"] == later["id"]
+    agent_telemetry_pg.complete_work_item(
+        pg_conn,
+        later["id"],
+        agent_id="buildhost-101",
+        result={"ok": True},
+    )
+
+    assert web_app._latest_claimed_build_host_work(pg_conn, "buildhost-101") is None
 
 
 def test_setup_page_and_unconfigured_login_render_first_run_path(tmp_path, monkeypatch):

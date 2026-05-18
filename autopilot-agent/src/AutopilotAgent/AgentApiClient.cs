@@ -182,6 +182,7 @@ public sealed class AgentApiClient(HttpClient httpClient)
     public async Task<OsdV2NextResponse> GetNextOsdV2ActionAsync(
         AgentConfig config,
         string bearerToken,
+        IReadOnlyCollection<string> capabilities,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(config.ServerUrl))
@@ -207,6 +208,7 @@ public sealed class AgentApiClient(HttpClient httpClient)
                 agent_id = config.AgentId,
                 phase = OsdV2WorkService.FullOsPhase,
                 batch_size = 1,
+                capabilities,
             }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue(

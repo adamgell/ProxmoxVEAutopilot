@@ -272,6 +272,10 @@
           <tr><th>Seed ISO</th><td>{{ setup.state.get('seed_iso_volid') or 'not generated' }}</td></tr>
           <tr><th>Answer file</th><td>{{ 'ready' if setup.state.get('build_host_unattend_ready') or setup.state.get('seed_iso_ready') else 'pending' }}</td></tr>
           <tr><th>Expected agent</th><td>{{ setup.state.get('build_host_expected_agent_id') or 'buildhost-vmid' }}</td></tr>
+          <tr><th>Agent state</th><td>{{ setup.build_host.get('agent_state') or 'unknown' }}{% if setup.build_host.get('last_heartbeat_age_seconds') is not none %} ({{ setup.build_host.get('last_heartbeat_age_seconds') }}s since heartbeat){% endif %}</td></tr>
+          {% if setup.build_host.get('active_work') %}
+          <tr><th>Active work</th><td>{{ setup.build_host.active_work.get('kind') }}{% if setup.build_host.active_work.get('age_seconds') is not none %} ({{ setup.build_host.active_work.get('age_seconds') }}s){% endif %}</td></tr>
+          {% endif %}
           <tr><th>Agent approval</th><td>{{ 'auto for expected identity' if setup.state.get('build_host_agent_auto_approve') else 'operator approval required' }}</td></tr>
           <tr><th>Windows admin</th><td>{{ setup.state.get('build_host_admin_user') or 'generated during bootstrap' }}</td></tr>
         </tbody>

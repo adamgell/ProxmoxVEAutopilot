@@ -98,3 +98,43 @@ def test_baselines_are_learning_until_five_successful_samples(pg_conn):
     assert execution["health"] == "healthy"
     assert execution["p50_seconds"] == 30
     assert execution["p95_seconds"] == 50
+
+
+def test_terminal_source_truth_can_recover_failed_phase(pg_conn):
+    from web import deployment_health_pg
+
+    deployment_health_pg.reset_for_tests(pg_conn)
+    deployment_health_pg.init(pg_conn)
+    started = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
+
+    deployment_health_pg.record_phase(
+        pg_conn,
+        deployment_key="cloudosd:run-1",
+        deployment_type="cloudosd",
+        source="cloudosd_autopilot_readiness",
+        source_id="run-1",
+        phase_key="hash_upload",
+        phase_label="Hash upload",
+        state="failed",
+        started_at=started,
+        ended_at=started + timedelta(seconds=30),
+        error="Missing Entra credentials",
+    )
+    deployment_health_pg.record_phase(
+        pg_conn,
+        deployment_key="cloudosd:run-1",
+        deployment_type="cloudosd",
+        source="cloudosd_autopilot_readiness",
+        source_id="run-1",
+        phase_key="hash_upload",
+        phase_label="Hash upload",
+        state="skipped",
+        started_at=started,
+        ended_at=started + timedelta(seconds=45),
+        evidence={"upload_status": "not_configured"},
+    )
+
+    phase = deployment_health_pg.list_phases(pg_conn, "cloudosd:run-1")[0]
+
+    assert phase["state"] == "skipped"
+    assert phase["error"] is None

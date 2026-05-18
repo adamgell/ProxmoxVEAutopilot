@@ -12,11 +12,13 @@
 - name: Upload hardware hashes to Intune
   hosts: localhost
   gather_facts: false
+  vars:
+    upload_hash_output_dir: "{{ hash_output_dir | default(playbook_dir ~ '/../output/hashes', true) }}"
 
   tasks:
     - name: Check for hash files
       ansible.builtin.find:
-        paths: "{{ hash_output_dir }}"
+        paths: "{{ upload_hash_output_dir }}"
         patterns: "*_hwid.csv"
       register: _hash_files
       when: hash_file is not defined or (hash_file | string | length) == 0
@@ -29,7 +31,7 @@
 
     - name: Fail if no hash files found
       ansible.builtin.fail:
-        msg: "No hardware hash CSV files found in {{ hash_output_dir }}"
+        msg: "No hardware hash CSV files found in {{ upload_hash_output_dir }}"
       when:
         - hash_file is not defined or (hash_file | string | length) == 0
         - _hash_files.matched == 0
@@ -48,7 +50,7 @@
         ENTRA_APP_ID: "{{ vault_entra_app_id }}"
         ENTRA_TENANT_ID: "{{ vault_entra_tenant_id }}"
         ENTRA_APP_SECRET: "{{ vault_entra_app_secret }}"
-        HASH_DIR: "{{ hash_output_dir }}"
+        HASH_DIR: "{{ upload_hash_output_dir }}"
         HASH_FILE: "{{ hash_file | default('') }}"
         GROUP_TAG: "{{ vm_group_tag | default('') }}"
       async: 1800

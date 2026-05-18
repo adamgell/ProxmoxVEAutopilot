@@ -933,6 +933,11 @@ def test_cloudosd_run_surfaces_hash_upload_assignment_and_enrollment_evidence(
     hash_dir = tmp_path / "hashes"
     hash_dir.mkdir()
     monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "vault_entra_app_id": "app-id",
+        "vault_entra_tenant_id": "tenant-id",
+        "vault_entra_app_secret": "secret",
+    })
     (hash_dir / "20260514T010101Z-vm245-Gell-245-ABC-osd-v2_hwid.csv").write_text(
         "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
         "Gell-245-ABC,,hardware-hash,GellNative\n",
@@ -1110,6 +1115,7 @@ def test_cloudosd_autopilot_readiness_upload_is_run_bound(
     assert upload.status_code == 202, upload.text
     body = upload.json()
     assert body["ok"] is True
+    assert body["queued"] is True
     assert body["autopilot_readiness"]["state"] == "upload_queued"
     assert body["autopilot_readiness"]["upload"]["job_id"]
 
@@ -1136,6 +1142,11 @@ def test_cloudosd_autopilot_readiness_surfaces_failed_upload(
     hash_dir = tmp_path / "hashes"
     hash_dir.mkdir()
     monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "vault_entra_app_id": "app-id",
+        "vault_entra_tenant_id": "tenant-id",
+        "vault_entra_app_secret": "secret",
+    })
     (hash_dir / "20260514T040404Z-vm248-Gell-248-AP2-osd-v2_hwid.csv").write_text(
         "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
         "Gell-248-AP2,,hardware-hash,GellNative\n",
@@ -1181,6 +1192,57 @@ def test_cloudosd_autopilot_readiness_surfaces_failed_upload(
     assert readiness["upload"]["status"] == "failed"
     assert "invalid client secret" in readiness["upload"]["error"]
     assert readiness["errors"][0]["code"] == "upload_failed"
+
+
+def test_cloudosd_autopilot_upload_without_entra_credentials_is_not_queued(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "vault_entra_app_id": "",
+        "vault_entra_tenant_id": "",
+        "vault_entra_app_secret": "",
+    })
+    (hash_dir / "20260514T041414Z-vm250-Gell-250-AP4-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-250-AP4,,hardware-hash,\n",
+        encoding="utf-8",
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-250-AP4",
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=250,
+        vm_uuid="efefefef-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f4",
+        node="pve",
+        computer_name="Gell-250-AP4",
+    )
+
+    upload = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/autopilot/upload")
+
+    assert upload.status_code == 202, upload.text
+    body = upload.json()
+    assert body["ok"] is True
+    assert body["queued"] is False
+    assert body["reason"] == "entra_credentials_missing"
+    readiness = body["autopilot_readiness"]
+    assert readiness["state"] == "upload_not_configured"
+    assert readiness["next_action"] == "configure_entra"
+    assert readiness["upload"]["status"] == "not_configured"
+    assert readiness["errors"] == []
+    assert jobs_pg.list_jobs(limit=10) == []
 
 
 def test_cloudosd_autopilot_readiness_sync_reconciles_import_and_assignment(
@@ -1845,6 +1907,37 @@ def test_cloudosd_agent_msi_resolves_from_host_repo_mount(tmp_path, monkeypatch)
     assert cloudosd_endpoints._asset_path("autopilotagent.msi") == msi_path
 
 
+def test_cloudosd_agent_msi_prefers_setup_registry_x64_artifact(tmp_path, monkeypatch):
+    from web import cloudosd_endpoints, setup_artifacts
+
+    host_repo = tmp_path / "host-repo"
+    placeholder = host_repo / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
+    placeholder.parent.mkdir(parents=True)
+    placeholder.write_bytes(b"placeholder")
+    legacy_msi = tmp_path / "app" / "output" / "cloudosd" / "AutopilotAgent.msi"
+    legacy_msi.parent.mkdir(parents=True)
+    legacy_msi.write_bytes(b"legacy-msi")
+    setup_msi = tmp_path / "setup-artifacts" / "agent-msi" / "AutopilotAgent-0.1.2-win-x64.msi"
+    setup_msi.parent.mkdir(parents=True)
+    setup_msi.write_bytes(b"real-msi")
+
+    monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
+    monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
+    monkeypatch.setattr(cloudosd_endpoints, "_APP_ROOT", tmp_path / "app")
+    monkeypatch.setattr(cloudosd_endpoints, "_REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(
+        setup_artifacts,
+        "list_artifacts",
+        lambda kind=None: [{
+            "kind": "agent-msi",
+            "filename": setup_msi.name,
+            "path": str(setup_msi),
+        }],
+    )
+
+    assert cloudosd_endpoints._asset_path("autopilotagent.msi") == setup_msi
+
+
 def test_cloudosd_preflight_blocks_unavailable_proxmox_target(
     cloudosd_client,
     pg_conn,
@@ -1963,7 +2056,18 @@ def test_cloudosd_runs_events_endpoint_lists_grouped_evidence(
 def test_cloudosd_provision_job_is_normalized_into_playbook_milestones(
     cloudosd_client,
     pg_conn,
+    monkeypatch,
 ):
+    from web import app as web_app, jobs_pg
+
+    monkeypatch.setattr(
+        web_app,
+        "_read_json_file",
+        lambda _path: {
+            "osdeploy_blank_template_vmid": 9001,
+            "virtio_iso_volid": "local:iso/virtio-win.iso",
+        },
+    )
     artifact = _create_artifact(pg_conn)
     run = cloudosd_client.post(
         "/api/cloudosd/runs",
@@ -1981,6 +2085,9 @@ def test_cloudosd_provision_job_is_normalized_into_playbook_milestones(
     assert playbook_events
     assert playbook_events[-1]["event_type"] == "provision_job_status"
     assert "provision_cloudosd" in playbook_events[-1]["message"]
+    job = jobs_pg.get_job(provision.json()["job_id"])
+    assert job["args"]["cloudosd_blank_template_vmid"] == 9001
+    assert job["args"]["winpe_blank_template_vmid"] == 9001
 
 
 def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(

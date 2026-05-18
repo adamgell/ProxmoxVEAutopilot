@@ -6,6 +6,7 @@ await AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent();
 await AgentApiClientTreatsPendingBootstrapAsTokenless();
 await AgentApiClientPostsClaimableCapabilitiesOnHeartbeat();
 VerifyDomainJoinMatcher();
+VerifyOsDeployRoleAutomationContracts();
 VerifyBuildHostContracts();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
 Console.WriteLine("AutopilotAgent contract tests passed.");
@@ -127,6 +128,83 @@ static void VerifyDomainJoinMatcher()
             }),
         "workgroup telemetry must not satisfy domain join");
 }
+
+static void VerifyOsDeployRoleAutomationContracts()
+{
+    Assert(
+        OsdV2WorkService.IsOsdV2Eligible(new AgentConfig
+        {
+            RunId = "run-osdeploy",
+            Phase = "full_os",
+            Role = "file_server",
+        }),
+        "OSDeploy full-OS agents must process OSD v2 role steps");
+    Assert(
+        OsdV2WorkService.SupportedKinds.Contains("configure_file_server_role"),
+        "file server role step kind is not registered");
+    Assert(
+        OsdV2WorkService.SupportedKinds.Contains("join_domain_role"),
+        "lab domain join role step kind is not registered");
+    Assert(
+        OsdV2WorkService.SupportedKinds.Contains("configure_isolated_domain_controller_role"),
+        "isolated domain controller role step kind is not registered");
+    Assert(
+        OsdV2WorkService.SupportedKinds.Contains("verify_isolated_domain_controller_role"),
+        "isolated domain controller verify step kind is not registered");
+    Assert(
+        OsdV2WorkService.SupportedKinds.Contains("configure_mecm_prereq_role"),
+        "MECM prereq role step kind is not registered");
+
+    var fileServerScript = OsDeployRoleWorkService.BuildFileServerScript(
+        new Dictionary<string, JsonElement>
+        {
+            ["share_name"] = JsonSerializer.SerializeToElement("Shared"),
+            ["share_path"] = JsonSerializer.SerializeToElement(@"C:\Shares\Shared"),
+            ["full_access_principals"] = JsonSerializer.SerializeToElement(new[] { @"HOME\Domain Admins" }),
+            ["change_access_principals"] = JsonSerializer.SerializeToElement(new[] { @"HOME\Domain Users" }),
+            ["read_access_principals"] = JsonSerializer.SerializeToElement(Array.Empty<string>()),
+        });
+    Assert(fileServerScript.Contains("Install-WindowsFeature -Name FS-FileServer", StringComparison.Ordinal), "file server script must install FS-FileServer");
+    Assert(fileServerScript.Contains("New-SmbShare", StringComparison.Ordinal), "file server script must create or update an SMB share");
+
+    var joinScript = OsDeployRoleWorkService.BuildJoinDomainScript(
+        new Dictionary<string, JsonElement>
+        {
+            ["domain_fqdn"] = JsonSerializer.SerializeToElement("lab.gell.one"),
+            ["domain_join_username"] = JsonSerializer.SerializeToElement(@"LAB\joiner"),
+            ["domain_join_password"] = JsonSerializer.SerializeToElement("secret"),
+            ["domain_controller_ipv4"] = JsonSerializer.SerializeToElement("192.168.2.120"),
+        });
+    Assert(joinScript.Contains("Add-Computer -DomainName", StringComparison.Ordinal), "lab child domain join must call Add-Computer");
+    Assert(joinScript.Contains("Set-DnsClientServerAddress", StringComparison.Ordinal), "lab child domain join must pin DNS to the isolated DC when provided");
+    Assert(joinScript.Contains("will not be moved", StringComparison.Ordinal), "domain join must not move an already domain-joined server");
+
+    var dcScript = OsDeployRoleWorkService.BuildIsolatedDomainControllerScript(
+        new Dictionary<string, JsonElement>
+        {
+            ["forest_fqdn"] = JsonSerializer.SerializeToElement("lab.gell.one"),
+            ["netbios_name"] = JsonSerializer.SerializeToElement("LAB"),
+            ["forest_admin_username"] = JsonSerializer.SerializeToElement(@"LAB\Administrator"),
+            ["forest_admin_password"] = JsonSerializer.SerializeToElement("secret"),
+            ["dsrm_password"] = JsonSerializer.SerializeToElement("secret"),
+        });
+    Assert(dcScript.Contains("SetPassword", StringComparison.Ordinal), "DC role must set the local Administrator password before promotion");
+    Assert(dcScript.Contains("Install-ADDSForest", StringComparison.Ordinal), "DC role must promote a new isolated forest");
+    Assert(!dcScript.Contains("Add-Computer", StringComparison.Ordinal), "DC role must not join or mutate an existing domain");
+
+    var mecmScript = OsDeployRoleWorkService.BuildMecmPrereqScript(
+        new Dictionary<string, JsonElement>
+        {
+            ["prereq_profile"] = JsonSerializer.SerializeToElement("site_server_foundation"),
+            ["content_root"] = JsonSerializer.SerializeToElement(@"C:\MECMContent"),
+        });
+    Assert(mecmScript.Contains("Web-Server", StringComparison.Ordinal), "MECM prereq script must include Windows feature baseline");
+    Assert(!mecmScript.Contains("SQL", StringComparison.OrdinalIgnoreCase), "MECM prereq baseline must not install SQL");
+    Assert(
+        OsdV2WorkService.ShouldRequestReboot("required", "success"),
+        "successful required-reboot OSD v2 steps must request a reboot");
+}
+
 
 static async Task AgentApiClientPostsClaimableCapabilitiesOnHeartbeat()
 {

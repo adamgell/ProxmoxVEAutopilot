@@ -119,6 +119,95 @@ def _run_payload(artifact_id: str, **overrides):
     return values
 
 
+def _file_server_options(**overrides):
+    values = {
+        "share_name": "Shared",
+        "share_path": r"C:\Shares\Shared",
+        "full_access_principals": ["HOME\\Domain Admins"],
+        "change_access_principals": ["HOME\\Domain Users"],
+        "read_access_principals": [],
+    }
+    values.update(overrides)
+    return values
+
+
+def _isolated_dc_options(**overrides):
+    values = {
+        "forest_fqdn": "lab.gell.one",
+        "netbios_name": "LAB",
+        "forest_admin_credential_id": 101,
+        "dsrm_credential_id": 102,
+    }
+    values.update(overrides)
+    return values
+
+
+def _mecm_options(**overrides):
+    values = {
+        "prereq_profile": "site_server_foundation",
+        "content_root": r"C:\MECMContent",
+    }
+    values.update(overrides)
+    return values
+
+
+def _lab_bundle_options(**overrides):
+    values = {
+        "bundle_name": "Lab Bundle 01",
+        "domain_join_credential_id": 103,
+        "children": [
+            {
+                "role": "isolated_domain_controller",
+                "vm_name": "LAB-DC01",
+                "role_options": _isolated_dc_options(),
+            },
+            {
+                "role": "file_server",
+                "vm_name": "LAB-FS01",
+                "role_options": _file_server_options(),
+            },
+            {
+                "role": "mecm_prereq",
+                "vm_name": "LAB-CM01",
+                "role_options": _mecm_options(),
+            },
+        ],
+    }
+    values.update(overrides)
+    return values
+
+
+def _create_role_credentials(pg_conn):
+    from web import app as web_app, sequences_pg
+
+    cipher = web_app._cipher()
+    creds = {
+        "forest_admin": sequences_pg.create_credential(
+            pg_conn,
+            cipher,
+            name="lab-forest-admin",
+            type="domain_join",
+            payload={"username": "LAB\\Administrator", "password": "secret"},
+        ),
+        "dsrm": sequences_pg.create_credential(
+            pg_conn,
+            cipher,
+            name="lab-dsrm",
+            type="local_admin",
+            payload={"username": "Administrator", "password": "secret"},
+        ),
+        "domain_join": sequences_pg.create_credential(
+            pg_conn,
+            cipher,
+            name="lab-domain-join",
+            type="domain_join",
+            payload={"username": "LAB\\joiner", "password": "secret"},
+        ),
+    }
+    pg_conn.commit()
+    return creds
+
+
 def test_osdeploy_schema_creates_maturity_parity_tables(pg_conn):
     from web import osdeploy_cache, osdeploy_pg
 
@@ -392,30 +481,133 @@ def test_osdeploy_preflight_and_provision_recover_stale_virtio_storage(
     assert job["args"]["proxmox_virtio_iso"] == "local:iso/virtio-win.iso"
 
 
-def test_osdeploy_preflight_blocks_future_server_roles_for_m1(osdeploy_client, pg_conn):
+def test_osdeploy_preflight_uses_configured_node_for_virtio_when_node_omitted(
+    osdeploy_client,
+    pg_conn,
+):
+    artifact = _create_osdeploy_artifact(pg_conn)
+    payload = _run_payload(artifact["id"])
+    payload.pop("node")
+
+    preflight = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=payload,
+    )
+
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["launch_allowed"] is True
+    assert "virtio_iso_missing" not in {
+        check["id"] for check in body["blocking_checks"]
+    }
+
+
+def test_osdeploy_preflight_accepts_launchable_role_with_required_options(
+    osdeploy_client,
+    pg_conn,
+):
     artifact = _create_osdeploy_artifact(pg_conn)
 
     catalog = osdeploy_client.get("/api/osdeploy/v1/catalog")
     assert catalog.status_code == 200
     assert "file_server" in catalog.json()["server_roles"]
+    role_catalog = catalog.json()["role_catalog"]
+    assert role_catalog["file_server"]["launchable"] is True
+    assert role_catalog["file_server"]["step_kinds"] == ["configure_file_server_role"]
+    assert role_catalog["file_server"]["readiness_status_name"] == "file_server_ready"
 
     preflight = osdeploy_client.post(
         "/api/osdeploy/v1/preflight",
-        json=_run_payload(artifact["id"], server_role="file_server"),
+        json=_run_payload(
+            artifact["id"],
+            server_role="file_server",
+            role_options=_file_server_options(),
+        ),
+    )
+
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["launch_allowed"] is True
+    assert body["role"]["id"] == "file_server"
+
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            server_role="file_server",
+            role_options=_file_server_options(),
+        ),
+    )
+    assert created.status_code == 201, created.text
+    run = created.json()["run"]
+    assert run["server_role"] == "file_server"
+    assert run["role_options"]["share_name"] == "Shared"
+    detail = osdeploy_client.get(f"/api/osdeploy/v1/runs/{run['run_id']}").json()
+    assert [step["kind"] for step in detail["v2_steps"]][-2:] == [
+        "configure_file_server_role",
+        "wait_agent_heartbeat",
+    ]
+
+
+def test_osdeploy_preflight_rejects_role_missing_required_options(osdeploy_client, pg_conn):
+    artifact = _create_osdeploy_artifact(pg_conn)
+
+    preflight = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=_run_payload(
+            artifact["id"],
+            server_role="file_server",
+            role_options={"share_name": "Shared"},
+        ),
     )
 
     assert preflight.status_code == 200
     body = preflight.json()
     assert body["launch_allowed"] is False
-    assert "server_role_not_ready" in {
+    assert {
         check["id"] for check in body["blocking_checks"]
+    } >= {"role_option_missing_share_path", "role_option_missing_full_access_principals"}
+
+
+def test_osdeploy_launches_all_role_sequences_with_typed_steps(osdeploy_client, pg_conn):
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+    cases = {
+        "file_server": (
+            _file_server_options(),
+            ["configure_file_server_role", "wait_agent_heartbeat"],
+        ),
+        "isolated_domain_controller": (
+            _isolated_dc_options(
+                forest_admin_credential_id=creds["forest_admin"],
+                dsrm_credential_id=creds["dsrm"],
+            ),
+            [
+                "configure_isolated_domain_controller_role",
+                "verify_isolated_domain_controller_role",
+                "wait_agent_heartbeat",
+            ],
+        ),
+        "mecm_prereq": (
+            _mecm_options(),
+            ["configure_mecm_prereq_role", "wait_agent_heartbeat"],
+        ),
     }
 
-    created = osdeploy_client.post(
-        "/api/osdeploy/v1/runs",
-        json=_run_payload(artifact["id"], server_role="file_server"),
-    )
-    assert created.status_code == 409
+    for role, (role_options, expected_tail) in cases.items():
+        created = osdeploy_client.post(
+            "/api/osdeploy/v1/runs",
+            json=_run_payload(
+                artifact["id"],
+                vm_name=f"OSDEPLOY-{role[:6]}",
+                server_role=role,
+                role_options=role_options,
+            ),
+        )
+        assert created.status_code == 201, created.text
+        run = created.json()["run"]
+        detail = osdeploy_client.get(f"/api/osdeploy/v1/runs/{run['run_id']}").json()
+        assert [step["kind"] for step in detail["v2_steps"]][-len(expected_tail):] == expected_tail
 
 
 def test_osdeploy_cache_catalog_and_entry_lifecycle(osdeploy_client, pg_conn):
@@ -1635,7 +1827,8 @@ def test_osdeploy_run_identity_and_pe_callbacks(osdeploy_client, pg_conn):
     assert package_body["payloads"]["osd_client"]["url"].endswith(
         f"/osd/v2/agent/package/{created['run_id']}?phase=full_os"
     )
-    assert package_body["agent"]["phase"] == "osdeploy"
+    assert package_body["agent"]["phase"] == "full_os"
+    assert package_body["agent"]["role"] == "base"
     assert package_body["agent"]["bootstrap_token"]
 
     event = osdeploy_client.post(
@@ -1885,7 +2078,407 @@ def test_osdeploy_heartbeat_does_not_complete_future_role_step(pg_conn):
         for step in ts_engine_pg.list_run_steps(pg_conn, run["run_id"])
     }
     assert states["wait_agent_heartbeat"] == "done"
-    assert states["run_script"] == "pending"
+    assert states["configure_file_server_role"] == "pending"
+
+
+def test_osdeploy_role_step_success_marks_role_ready(osdeploy_client, pg_conn):
+    from web import osdeploy_pg
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="OSDEPLOY-FILE",
+            server_role="file_server",
+            role_options=_file_server_options(),
+        ),
+    )
+    assert created.status_code == 201, created.text
+    run = created.json()["run"]
+    osdeploy_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        agent_id="agent-osdeploy-file",
+        heartbeat={
+            "computer_name": "OSDEPLOY-FILE",
+            "os_name": "Microsoft Windows Server 2025 Datacenter",
+            "qga_state": "running",
+            "current_phase": "full_os",
+        },
+    )
+
+    registered = osdeploy_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-osdeploy-file",
+            "phase": "full_os",
+            "capabilities": ["configure_file_server_role"],
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    bearer = registered.json()["bearer_token"]
+    next_step = osdeploy_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(bearer),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-osdeploy-file",
+            "phase": "full_os",
+        },
+    )
+    assert next_step.status_code == 200, next_step.text
+    action = next_step.json()["actions"][0]
+    assert action["kind"] == "configure_file_server_role"
+    assert action["params"]["share_name"] == "Shared"
+
+    result = osdeploy_client.post(
+        f"/osd/v2/agent/step/{action['step_id']}/result",
+        headers=_bearer(bearer),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-osdeploy-file",
+            "phase": "full_os",
+            "status": "success",
+            "message": "File Server role configured",
+            "data": {"share_name": "Shared", "share_path": r"C:\Shares\Shared"},
+        },
+    )
+    assert result.status_code == 200, result.text
+    readiness = osdeploy_pg.get_readiness(pg_conn, run["run_id"])
+    assert readiness["state"] == "complete"
+    assert readiness["server_role_status"] == "file_server_ready"
+
+    pg_conn.execute(
+        "UPDATE osdeploy_runs SET state = 'role_pending' WHERE run_id = %s",
+        (run["run_id"],),
+    )
+    pg_conn.execute(
+        """
+        UPDATE osdeploy_readiness
+        SET state = 'role_pending',
+            server_role_status = 'pending'
+        WHERE run_id = %s
+        """,
+        (run["run_id"],),
+    )
+    pg_conn.commit()
+
+    osdeploy_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        agent_id="agent-osdeploy-file",
+        heartbeat={
+            "computer_name": "OSDEPLOY-FILE",
+            "os_name": "Microsoft Windows Server 2025 Datacenter",
+            "qga_state": "running",
+            "current_phase": "full_os",
+        },
+    )
+    readiness = osdeploy_pg.get_readiness(pg_conn, run["run_id"])
+    assert readiness["state"] == "complete"
+    assert readiness["server_role_status"] == "file_server_ready"
+
+
+def test_osdeploy_full_os_client_does_not_claim_role_steps(osdeploy_client, pg_conn):
+    from web import osdeploy_pg, ts_engine_pg
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="OSDEPLOY-FILE",
+            server_role="file_server",
+            role_options=_file_server_options(),
+        ),
+    )
+    assert created.status_code == 201, created.text
+    run = created.json()["run"]
+    osdeploy_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        agent_id="agent-osdeploy-file",
+        heartbeat={
+            "computer_name": "OSDEPLOY-FILE",
+            "os_name": "Microsoft Windows Server 2025 Datacenter",
+            "qga_state": "running",
+            "current_phase": "full_os",
+        },
+    )
+    ts_engine_pg.mark_steps_done_by_kind(
+        pg_conn,
+        run_id=run["run_id"],
+        kinds=["install_autopilot_agent"],
+        agent_id="osd-fullos-test",
+    )
+
+    registered = osdeploy_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run["run_id"],
+            "agent_id": f"osd-fullos-{run['run_id'][:8]}",
+            "phase": "full_os",
+            "capabilities": ["install_autopilot_agent", "wait_agent_heartbeat"],
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    bearer = registered.json()["bearer_token"]
+    next_step = osdeploy_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(bearer),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": f"osd-fullos-{run['run_id'][:8]}",
+            "phase": "full_os",
+            "capabilities": ["install_autopilot_agent", "wait_agent_heartbeat"],
+        },
+    )
+    assert next_step.status_code == 200, next_step.text
+    assert next_step.json()["actions"] == []
+
+    role_agent = osdeploy_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-osdeploy-file",
+            "phase": "full_os",
+            "capabilities": ["configure_file_server_role"],
+        },
+    )
+    assert role_agent.status_code == 200, role_agent.text
+    role_bearer = role_agent.json()["bearer_token"]
+    role_next = osdeploy_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(role_bearer),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-osdeploy-file",
+            "phase": "full_os",
+            "capabilities": ["configure_file_server_role"],
+        },
+    )
+    assert role_next.status_code == 200, role_next.text
+    assert role_next.json()["actions"][0]["kind"] == "configure_file_server_role"
+
+
+def test_osdeploy_lab_bundle_creates_child_runs_in_dependency_order(
+    osdeploy_client,
+    pg_conn,
+):
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+    lab_options = _lab_bundle_options(
+        domain_join_credential_id=creds["domain_join"],
+        children=[
+            {
+                "role": "isolated_domain_controller",
+                "vm_name": "LAB-DC01",
+                "role_options": _isolated_dc_options(
+                    forest_admin_credential_id=creds["forest_admin"],
+                    dsrm_credential_id=creds["dsrm"],
+                ),
+            },
+            {
+                "role": "file_server",
+                "vm_name": "LAB-FS01",
+                "role_options": _file_server_options(),
+            },
+            {
+                "role": "mecm_prereq",
+                "vm_name": "LAB-CM01",
+                "role_options": _mecm_options(),
+            },
+        ],
+    )
+
+    response = osdeploy_client.post(
+        "/api/osdeploy/v1/bundles",
+        json=_run_payload(
+            artifact["id"],
+            server_role="lab_in_a_box",
+            role_options=lab_options,
+        ),
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["bundle"]["server_role"] == "lab_in_a_box"
+    children = body["children"]
+    assert [child["server_role"] for child in children] == [
+        "isolated_domain_controller",
+        "file_server",
+        "mecm_prereq",
+    ]
+    assert [child["dependency_order"] for child in children] == [1, 2, 3]
+    child_steps = {}
+    for child in children:
+        detail = osdeploy_client.get(f"/api/osdeploy/v1/runs/{child['child_run_id']}")
+        assert detail.status_code == 200, detail.text
+        child_steps[child["server_role"]] = [
+            step["kind"] for step in detail.json()["v2_steps"]
+        ]
+    assert child_steps["file_server"].index("join_domain_role") < child_steps["file_server"].index("configure_file_server_role")
+    assert child_steps["file_server"].index("verify_ad_domain_join") < child_steps["file_server"].index("configure_file_server_role")
+    assert child_steps["mecm_prereq"].index("join_domain_role") < child_steps["mecm_prereq"].index("configure_mecm_prereq_role")
+    assert child_steps["mecm_prereq"].index("verify_ad_domain_join") < child_steps["mecm_prereq"].index("configure_mecm_prereq_role")
+
+
+def test_osdeploy_lab_domain_join_step_resolves_secret_only_at_claim(
+    osdeploy_client,
+    pg_conn,
+):
+    from web import osdeploy_pg
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+    lab_options = _lab_bundle_options(
+        domain_join_credential_id=creds["domain_join"],
+        children=[
+            {
+                "role": "isolated_domain_controller",
+                "vm_name": "LAB-DC01",
+                "role_options": _isolated_dc_options(
+                    forest_admin_credential_id=creds["forest_admin"],
+                    dsrm_credential_id=creds["dsrm"],
+                ),
+            },
+            {
+                "role": "file_server",
+                "vm_name": "LAB-FS01",
+                "role_options": _file_server_options(),
+            },
+            {
+                "role": "mecm_prereq",
+                "vm_name": "LAB-CM01",
+                "role_options": _mecm_options(),
+            },
+        ],
+    )
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/bundles",
+        json=_run_payload(
+            artifact["id"],
+            server_role="lab_in_a_box",
+            role_options=lab_options,
+        ),
+    )
+    assert created.status_code == 201, created.text
+    file_child = next(
+        child for child in created.json()["children"]
+        if child["server_role"] == "file_server"
+    )
+    run = osdeploy_pg.get_run(pg_conn, file_child["child_run_id"])
+    assert "password" not in json.dumps(run["role_options"]).lower()
+
+    osdeploy_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=file_child["child_run_id"],
+        agent_id="agent-lab-fs",
+        heartbeat={
+            "computer_name": "LAB-FS01",
+            "os_name": "Microsoft Windows Server 2025 Datacenter",
+            "qga_state": "running",
+            "current_phase": "full_os",
+        },
+    )
+    states = {
+        step["kind"]: step["state"]
+        for step in osdeploy_pg.ts_engine_pg.list_run_steps(pg_conn, file_child["child_run_id"])
+    }
+    assert states["join_domain_role"] == "pending"
+    assert states["verify_ad_domain_join"] == "pending"
+    registered = osdeploy_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": file_child["child_run_id"],
+            "agent_id": "agent-lab-fs",
+            "phase": "full_os",
+            "capabilities": ["join_domain_role"],
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    next_step = osdeploy_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(registered.json()["bearer_token"]),
+        json={
+            "run_id": file_child["child_run_id"],
+            "agent_id": "agent-lab-fs",
+            "phase": "full_os",
+        },
+    )
+    assert next_step.status_code == 200, next_step.text
+    action = next_step.json()["actions"][0]
+    assert action["kind"] == "join_domain_role"
+    assert action["params"]["domain_fqdn"] == "lab.gell.one"
+    assert action["params"]["domain_join_username"] == "LAB\\joiner"
+    assert action["params"]["domain_join_password"] == "secret"
+    refreshed = osdeploy_pg.get_run(pg_conn, file_child["child_run_id"])
+    assert "password" not in json.dumps(refreshed["role_options"]).lower()
+
+
+def test_osdeploy_lab_bundle_state_rolls_up_from_child_runs(
+    osdeploy_client,
+    pg_conn,
+):
+    from web import osdeploy_pg
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/bundles",
+        json=_run_payload(
+            artifact["id"],
+            server_role="lab_in_a_box",
+            role_options=_lab_bundle_options(
+                domain_join_credential_id=creds["domain_join"],
+                children=[
+                    {
+                        "role": "isolated_domain_controller",
+                        "vm_name": "LAB-DC01",
+                        "role_options": _isolated_dc_options(
+                            forest_admin_credential_id=creds["forest_admin"],
+                            dsrm_credential_id=creds["dsrm"],
+                        ),
+                    },
+                    {
+                        "role": "file_server",
+                        "vm_name": "LAB-FS01",
+                        "role_options": _file_server_options(),
+                    },
+                    {
+                        "role": "mecm_prereq",
+                        "vm_name": "LAB-CM01",
+                        "role_options": _mecm_options(),
+                    },
+                ],
+            ),
+        ),
+    )
+    assert created.status_code == 201, created.text
+    bundle_id = created.json()["bundle"]["id"]
+    children = created.json()["children"]
+
+    final_steps = {
+        "isolated_domain_controller": "verify_isolated_domain_controller_role",
+        "file_server": "configure_file_server_role",
+        "mecm_prereq": "configure_mecm_prereq_role",
+    }
+    for child in children:
+        osdeploy_pg.mark_role_step_result(
+            pg_conn,
+            run_id=child["child_run_id"],
+            step_kind=final_steps[child["server_role"]],
+            agent_id=f"agent-{child['server_role']}",
+            status="success",
+        )
+
+    row = pg_conn.execute(
+        "SELECT state FROM osdeploy_role_bundles WHERE id=%s",
+        (bundle_id,),
+    ).fetchone()
+    assert row["state"] == "complete"
 
 
 def test_osdeploy_pe_register_matches_recorded_vm_identity(osdeploy_client, pg_conn):

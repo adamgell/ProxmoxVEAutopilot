@@ -12,11 +12,11 @@ back with metadata, and lets the controller promote them into Proxmox storage.
 
 ```text
 VM name: autopilot-buildhost-01
-VMID: 100
+VMID: 101
 Computer name: AUTOPILOT-BLD
-Agent ID: buildhost-100
+Agent ID: buildhost-101
 Agent role: build-host
-Controller URL: http://192.168.2.115:5000
+Controller URL: http://<controller-ip>:5000
 ```
 
 The seed agent initially uses a bootstrap token. The controller approves the
@@ -41,14 +41,14 @@ The controller owns the build-host workflow through `/setup` and
 6. The controller approves or waits for operator approval.
 7. The controller queues allowlisted build workloads.
 
-## Repair Existing VMID 100
+## Repair Existing Build Host
 
-If VMID 100 already exists but the agent is stale, repair it through QGA:
+If the build-host VM already exists but the agent is stale, repair it through QGA:
 
 ```bash
-curl -fsS -X POST 'http://192.168.2.115:5000/api/setup/v1/build-host/repair-agent' \
+tmp=$(mktemp); curl -fsS -c "$tmp" -X POST 'http://<controller-ip>:5000/auth/local/start?next=/setup' -o /tmp/autopilot-login.html; curl -fsS -b "$tmp" -X POST 'http://<controller-ip>:5000/api/setup/v1/build-host/repair-agent' \
   -H 'Content-Type: application/json' \
-  -d '{"vmid":"100","agent_id":"buildhost-100","computer_name":"AUTOPILOT-BLD","auto_approve":true}'
+  -d '{"vmid":"101","agent_id":"buildhost-101","computer_name":"AUTOPILOT-BLD","auto_approve":true}'; rm -f "$tmp"
 ```
 
 The repair action:
@@ -78,9 +78,9 @@ Unsupported work is rejected by the agent.
 Queue the normal first-run set:
 
 ```bash
-curl -fsS -X POST 'http://192.168.2.115:5000/api/setup/v1/build-host/workloads' \
+tmp=$(mktemp); curl -fsS -c "$tmp" -X POST 'http://<controller-ip>:5000/auth/local/start?next=/setup' -o /tmp/autopilot-login.html; curl -fsS -b "$tmp" -X POST 'http://<controller-ip>:5000/api/setup/v1/build-host/workloads' \
   -H 'Content-Type: application/json' \
-  -d '{"force":true,"kinds":["fetch_source_bundle","build_agent_msi","build_winpe","build_cloudosd","publish_artifacts"]}'
+  -d '{"force":true,"kinds":["fetch_source_bundle","build_agent_msi","build_winpe","build_cloudosd","publish_artifacts"]}'; rm -f "$tmp"
 ```
 
 ## Artifact Metadata
@@ -142,7 +142,7 @@ tmp=$(mktemp); curl -fsS -c "$tmp" -X POST 'http://192.168.2.115:5000/auth/local
 Agent work status from Postgres through PVE:
 
 ```bash
-ssh pve-dev-192-168-2-252 'ssh -i /root/.local/share/proxmoxveautopilot/controller-bootstrap-ed25519 -o BatchMode=yes -o StrictHostKeyChecking=accept-new autopilot@192.168.2.115 "sudo docker exec -i autopilot-postgres psql -U autopilot -d autopilot -c \"select kind,status,error,created_at,claimed_at,completed_at from agent_work_items where agent_id='\''buildhost-100'\'' order by created_at desc limit 10;\""'
+ssh pve-dev-192-168-2-252 'ssh -i /opt/ProxmoxVEAutopilot/autopilot-proxmox/secrets/controller-bootstrap-ed25519 -o BatchMode=yes -o StrictHostKeyChecking=accept-new autopilot@<controller-ip> "sudo docker exec -i autopilot-postgres psql -U autopilot -d autopilot -c \"select kind,status,error,created_at,claimed_at,completed_at from agent_work_items where agent_id='\''buildhost-101'\'' order by created_at desc limit 10;\""'
 ```
 
 Promoted CloudOSD/WinPE artifacts from setup readiness:
@@ -158,8 +158,8 @@ and verify the Windows, VirtIO, and seed ISOs are attached.
 
 If the agent is installed but not heartbeating:
 
-1. Confirm VMID 100 is running.
-2. Confirm QGA works for the build host: `qm guest cmd 100 ping`.
+1. Confirm the build-host VM is running.
+2. Confirm QGA works for the build host: `qm guest cmd <build-host-vmid> ping`.
 3. Re-run the repair endpoint.
 4. Check agent work errors in Postgres.
 
@@ -168,7 +168,7 @@ If artifact publish succeeds but `/setup` is not operational:
 1. Re-run artifact promotion:
 
    ```bash
-   curl -fsS -X POST 'http://192.168.2.115:5000/api/setup/v1/artifacts/promote' -H 'Content-Type: application/json' -d '{}'
+   tmp=$(mktemp); curl -fsS -c "$tmp" -X POST 'http://<controller-ip>:5000/auth/local/start?next=/setup' -o /tmp/autopilot-login.html; curl -fsS -b "$tmp" -X POST 'http://<controller-ip>:5000/api/setup/v1/artifacts/promote' -H 'Content-Type: application/json' -d '{}'; rm -f "$tmp"
    ```
 
 2. Re-run PVE operational phase:

@@ -87,7 +87,7 @@ def _load_version() -> dict:
                 continue
             try:
                 found = subprocess.check_output(
-                    ["git", "-C", repo_path, "rev-parse", "HEAD"],
+                    ["git", "-c", f"safe.directory={repo_path}", "-C", repo_path, "rev-parse", "HEAD"],
                     text=True,
                     stderr=subprocess.DEVNULL,
                     timeout=3,
@@ -99,7 +99,7 @@ def _load_version() -> dict:
                 if build_time == "unknown":
                     try:
                         build_time = subprocess.check_output(
-                            ["git", "-C", repo_path, "show", "-s", "--format=%cI", "HEAD"],
+                            ["git", "-c", f"safe.directory={repo_path}", "-C", repo_path, "show", "-s", "--format=%cI", "HEAD"],
                             text=True,
                             stderr=subprocess.DEVNULL,
                             timeout=3,
@@ -934,6 +934,16 @@ class _PromoteSetupArtifactsBody(BaseModel):
     already_copied: bool = False
 
 
+def _setup_promote_api_upload_max_bytes() -> int:
+    raw = os.environ.get("AUTOPILOT_SETUP_PROMOTE_API_MAX_BYTES", "").strip()
+    if not raw:
+        return 1024 * 1024 * 1024
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 1024 * 1024 * 1024
+
+
 def _ps_quote(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -1744,8 +1754,8 @@ async def setup_queue_build_host_workloads(body: _BuildHostWorkloadsBody | None 
         "install_build_prerequisites",
         "fetch_source_bundle",
         "build_agent_msi",
+        "build_winpe",
         "build_cloudosd",
-        "build_osdeploy",
         "publish_artifacts",
     ]
     bad = [kind for kind in kinds if kind not in _BUILD_HOST_WORK_KINDS]
@@ -1827,7 +1837,9 @@ async def setup_promote_artifacts(body: _PromoteSetupArtifactsBody | None = None
             detail="artifact_ids is required when already_copied is true",
         )
     promoted: list[dict] = []
+    deferred: list[dict] = []
     artifacts = setup_artifacts.list_artifacts()
+    max_api_upload_bytes = _setup_promote_api_upload_max_bytes()
     for artifact in artifacts:
         if selected and artifact.get("artifact_id") not in selected:
             continue
@@ -1839,6 +1851,17 @@ async def setup_promote_artifacts(body: _PromoteSetupArtifactsBody | None = None
         if not path.is_file():
             continue
         if not body.already_copied:
+            size_bytes = path.stat().st_size
+            if max_api_upload_bytes and size_bytes > max_api_upload_bytes:
+                deferred.append({
+                    "artifact_id": artifact.get("artifact_id"),
+                    "kind": artifact.get("kind"),
+                    "filename": path.name,
+                    "size_bytes": size_bytes,
+                    "reason": "pve_pull_required_for_large_artifact",
+                    "max_api_upload_bytes": max_api_upload_bytes,
+                })
+                continue
             _proxmox_upload_file(
                 f"/nodes/{node}/storage/{storage}/upload",
                 path,
@@ -1868,7 +1891,7 @@ async def setup_promote_artifacts(body: _PromoteSetupArtifactsBody | None = None
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         SETUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         SETUP_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-    return {"ok": True, "promoted": promoted}
+    return {"ok": True, "promoted": promoted, "deferred": deferred}
 
 
 @app.get("/setup", response_class=HTMLResponse)
@@ -3016,6 +3039,52 @@ def _discover_build_host_vm(state: dict) -> dict:
     return {}
 
 
+_BUILD_HOST_ACTIVE_WORK_TIMEOUT_SECONDS = {
+    "install_build_prerequisites": 3 * 60 * 60,
+    "fetch_source_bundle": 30 * 60,
+    "build_agent_msi": 90 * 60,
+    "build_winpe": 4 * 60 * 60,
+    "build_cloudosd": 4 * 60 * 60,
+    "build_osdeploy": 4 * 60 * 60,
+    "publish_artifacts": 30 * 60,
+}
+
+
+def _setup_age_seconds(value) -> int | None:
+    if not value:
+        return None
+    try:
+        dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+    except Exception:
+        return None
+
+
+def _latest_claimed_build_host_work(conn, agent_id: str) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, kind, status, claimed_at, created_at
+            FROM agent_work_items
+            WHERE agent_id = %s AND status = 'claimed'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM agent_work_items later
+                WHERE later.agent_id = agent_work_items.agent_id
+                  AND later.status IN ('complete', 'completed', 'failed', 'error', 'cancelled', 'canceled')
+                  AND COALESCE(later.completed_at, later.updated_at, later.claimed_at, later.created_at)
+                      > COALESCE(agent_work_items.claimed_at, agent_work_items.created_at)
+              )
+            ORDER BY claimed_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+            """,
+            (agent_id,),
+        )
+        return cur.fetchone()
+
+
 def _setup_build_host_status(state: dict) -> dict:
     discovered = _discover_build_host_vm(state)
     vmid = state.get("build_host_vmid") or discovered.get("vmid")
@@ -3040,9 +3109,11 @@ def _setup_build_host_status(state: dict) -> dict:
         "last_heartbeat_age_seconds": None,
         "agent_version": None,
         "primary_ipv4": None,
+        "active_work": None,
     }
     if not expected_agent_id:
         return out
+    active_work = None
     try:
         from web import db_pg
 
@@ -3050,21 +3121,14 @@ def _setup_build_host_status(state: dict) -> dict:
             agent_telemetry_pg.init(conn)
             latest = agent_telemetry_pg.latest_for_agent(conn, expected_agent_id)
             device = agent_telemetry_pg.get_device(conn, expected_agent_id)
+            active_work = _latest_claimed_build_host_work(conn, expected_agent_id)
     except Exception:
         return out
     row = latest or device or {}
     if not row:
         return out
     heartbeat_at = row.get("received_at") or row.get("last_seen_at")
-    age_seconds = None
-    if heartbeat_at:
-        try:
-            dt = heartbeat_at if isinstance(heartbeat_at, datetime) else datetime.fromisoformat(str(heartbeat_at))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            age_seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
-        except Exception:
-            age_seconds = None
+    age_seconds = _setup_age_seconds(heartbeat_at)
     computer_name = row.get("computer_name") or row.get("device_computer_name")
     vmid_match = not vmid or str(row.get("vmid") or row.get("device_vmid") or vmid) == str(vmid)
     computer_match = (
@@ -3073,14 +3137,41 @@ def _setup_build_host_status(state: dict) -> dict:
         or str(computer_name).casefold() == str(expected_computer).casefold()
     )
     fresh = age_seconds is not None and age_seconds <= 180
+    active_work_summary = None
+    active_work_fresh = False
+    if active_work:
+        work_kind = str(active_work.get("kind") or "")
+        claimed_at = active_work.get("claimed_at")
+        work_age_seconds = _setup_age_seconds(claimed_at)
+        timeout_seconds = _BUILD_HOST_ACTIVE_WORK_TIMEOUT_SECONDS.get(work_kind, 60 * 60)
+        active_work_fresh = (
+            work_age_seconds is not None
+            and work_age_seconds <= timeout_seconds
+        )
+        active_work_summary = {
+            "id": active_work.get("id"),
+            "kind": work_kind,
+            "status": active_work.get("status"),
+            "claimed_at": claimed_at.isoformat() if hasattr(claimed_at, "isoformat") else claimed_at,
+            "age_seconds": work_age_seconds,
+            "timeout_seconds": timeout_seconds,
+            "within_timeout": active_work_fresh,
+        }
+    busy = bool(latest and active_work_fresh and vmid_match and computer_match)
+    ready = bool(latest and (fresh or busy) and vmid_match and computer_match)
     out.update({
-        "agent_ready": bool(latest and fresh and vmid_match and computer_match),
-        "agent_state": "ready" if latest and fresh else ("stale" if latest else "registered"),
+        "agent_ready": ready,
+        "agent_state": (
+            "ready"
+            if latest and fresh
+            else ("busy" if busy else ("stale" if latest else "registered"))
+        ),
         "last_heartbeat_at": heartbeat_at.isoformat() if hasattr(heartbeat_at, "isoformat") else heartbeat_at,
         "last_heartbeat_age_seconds": age_seconds,
         "agent_version": row.get("agent_version") or row.get("device_agent_version"),
         "primary_ipv4": row.get("primary_ipv4"),
         "computer_name": computer_name,
+        "active_work": active_work_summary,
     })
     return out
 
@@ -4497,7 +4588,7 @@ async def cloudosd_page(request: Request, archived: str = "0"):
 @app.get("/osdeploy/builder", response_class=HTMLResponse)
 @app.get("/osdeploy", response_class=HTMLResponse)
 async def osdeploy_page(request: Request, archived: str = "0"):
-    from web import agent_telemetry_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg
+    from web import agent_telemetry_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, sequences_pg
 
     cfg = _load_vars()
     osdeploy_view = {
@@ -4518,6 +4609,7 @@ async def osdeploy_page(request: Request, archived: str = "0"):
         active_runs = osdeploy_pg.list_runs(conn, limit=10, active_only=True)
         stale_failed_runs = osdeploy_pg.list_runs(conn, limit=10, stale_failed_hours=12)
         cache_payload = osdeploy_cache.payload(conn)
+        credentials = sequences_pg.list_credentials(conn)
     catalog = osdeploy_endpoints.catalog_payload()
     proxmox_options = osdeploy_endpoints.proxmox_options_payload()
     build_defaults = osdeploy_endpoints.build_defaults_payload()
@@ -4535,6 +4627,7 @@ async def osdeploy_page(request: Request, archived: str = "0"):
         "catalog": catalog,
         "proxmox_options": proxmox_options,
         "osdeploy_build_defaults": build_defaults,
+        "osdeploy_credentials": credentials,
         "proxmox_node": cfg.get("proxmox_node", "pve"),
     })
 
@@ -11316,6 +11409,41 @@ _V2_STEP_TEMPLATES = [
         "description": "Finish OSD client work and hand Windows back to OOBE.",
     },
     {
+        "kind": "join_domain_role",
+        "label": "Join isolated domain",
+        "phase": "full_os",
+        "category": "OSDeploy Role",
+        "description": "Join a lab child server to the isolated domain using an operator-provided credential.",
+    },
+    {
+        "kind": "configure_file_server_role",
+        "label": "Configure File Server role",
+        "phase": "full_os",
+        "category": "OSDeploy Role",
+        "description": "Install FS-FileServer, create the requested folder/share, and apply SMB/NTFS access.",
+    },
+    {
+        "kind": "configure_isolated_domain_controller_role",
+        "label": "Configure isolated domain controller",
+        "phase": "full_os",
+        "category": "OSDeploy Role",
+        "description": "Install AD DS/DNS and promote a new isolated forest.",
+    },
+    {
+        "kind": "verify_isolated_domain_controller_role",
+        "label": "Verify isolated domain controller",
+        "phase": "full_os",
+        "category": "OSDeploy Role",
+        "description": "Verify AD DS, DNS, SYSVOL, and NETLOGON evidence after promotion.",
+    },
+    {
+        "kind": "configure_mecm_prereq_role",
+        "label": "Configure MECM prereq baseline",
+        "phase": "full_os",
+        "category": "OSDeploy Role",
+        "description": "Install the Windows feature prerequisite baseline for a future MECM site server.",
+    },
+    {
         "kind": "install_package",
         "label": "Install package",
         "phase": "full_os",
@@ -11617,7 +11745,7 @@ _V2_CURRENT_FLOW_TEMPLATES = [
             _v2_template_node("prepare_windows_setup"),
             _v2_template_node("stage_osd_client"),
             _v2_template_node("stage_autopilot_agent"),
-            _v2_template_node("run_script", name="Configure File Server role", params={"server_role": "file_server"}),
+            _v2_template_node("configure_file_server_role", name="Configure File Server role", params={"server_role": "file_server"}),
             _v2_template_node("wait_agent_heartbeat"),
         ],
     },
@@ -11638,8 +11766,8 @@ _V2_CURRENT_FLOW_TEMPLATES = [
             _v2_template_node("prepare_windows_setup"),
             _v2_template_node("stage_osd_client"),
             _v2_template_node("stage_autopilot_agent"),
-            _v2_template_node("run_script", name="Create isolated lab forest", params={"server_role": "isolated_domain_controller"}),
-            _v2_template_node("verify_ad_domain_join", name="Verify isolated lab domain services"),
+            _v2_template_node("configure_isolated_domain_controller_role", name="Create isolated lab forest", params={"server_role": "isolated_domain_controller"}),
+            _v2_template_node("verify_isolated_domain_controller_role", name="Verify isolated lab domain services"),
             _v2_template_node("wait_agent_heartbeat"),
         ],
     },
@@ -11660,7 +11788,7 @@ _V2_CURRENT_FLOW_TEMPLATES = [
             _v2_template_node("prepare_windows_setup"),
             _v2_template_node("stage_osd_client"),
             _v2_template_node("stage_autopilot_agent"),
-            _v2_template_node("run_script", name="Install MECM prerequisites", params={"server_role": "mecm_prereq"}),
+            _v2_template_node("configure_mecm_prereq_role", name="Install MECM prerequisites", params={"server_role": "mecm_prereq"}),
             _v2_template_node("wait_agent_heartbeat"),
         ],
     },
@@ -11672,7 +11800,7 @@ _V2_CURRENT_FLOW_TEMPLATES = [
         "status": "multi-server lab template",
         "description": "Template shape for disposable isolated lab bundles composed from OSDeploy Server roles.",
         "notes": [
-            "M1 creates the template and base run evidence; multi-VM orchestration is a later milestone.",
+            "Creates child OSDeploy runs in dependency order and uses an operator-provided domain join credential.",
         ],
         "nodes": [
             _v2_template_node("osdeploy_preflight", name="OSDeploy artifact and cache preflight"),
@@ -11681,7 +11809,11 @@ _V2_CURRENT_FLOW_TEMPLATES = [
             _v2_template_node("prepare_windows_setup"),
             _v2_template_node("stage_osd_client"),
             _v2_template_node("stage_autopilot_agent"),
-            _v2_template_node("run_script", name="Configure lab bundle role", params={"server_role": "lab_in_a_box"}),
+            _v2_template_node("configure_isolated_domain_controller_role", name="Create lab bundle domain controller", params={"server_role": "isolated_domain_controller"}),
+            _v2_template_node("join_domain_role", name="Join lab child servers to domain"),
+            _v2_template_node("verify_ad_domain_join", name="Verify lab child domain membership"),
+            _v2_template_node("configure_file_server_role", name="Configure lab bundle file server", params={"server_role": "file_server"}),
+            _v2_template_node("configure_mecm_prereq_role", name="Configure lab bundle MECM prereq server", params={"server_role": "mecm_prereq"}),
             _v2_template_node("wait_agent_heartbeat"),
         ],
     },

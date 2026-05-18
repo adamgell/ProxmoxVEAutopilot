@@ -432,11 +432,14 @@ def test_osdeploy_bridge_stages_offline_unattend_for_server_first_boot():
     assert "Panther\\Unattend.xml" in bridge
     assert "Microsoft-Windows-Shell-Setup" in bridge
     assert "Microsoft-Windows-International-Core" in bridge
-    assert "Microsoft-Windows-Deployment" in bridge
+    assert "Microsoft-Windows-Security-SPP-UX" in bridge
+    assert "SkipAutoActivation" in bridge
     assert "ComputerName" in bridge
     assert "Resolve-OSDeployProductKey" in bridge
     assert "Remove-OSDeployUnattendElement" in bridge
     assert "ProductKey" in bridge
+    assert "OSDEPLOY_UNATTEND_PRODUCT_KEY" in bridge
+    assert "OSDEPLOY_ALLOW_DEFAULT_GVLK" in bridge
     assert "Evaluation" in bridge
     assert "NPPR9-FWDCX-D2C8J-H872K-2YT43" in bridge
     assert "WX4NM-KYWYW-QJJR4-XV3QB-6VM33" in bridge
@@ -450,12 +453,14 @@ def test_osdeploy_bridge_stages_offline_unattend_for_server_first_boot():
     assert "OOBE" in bridge
     assert "HideEULAPage" in bridge
     assert "HideLocalAccountScreen" in bridge
+    assert "SkipMachineOOBE" in bridge
+    assert "SkipUserOOBE" in bridge
     assert "LocalAccount" in bridge
     assert "AutoLogon" in bridge
     assert "osdeploy_unattend_staged" in bridge
 
 
-def test_osdeploy_unattend_omits_product_key_for_evaluation_images(tmp_path):
+def test_osdeploy_unattend_omits_product_key_by_default(tmp_path):
     if shutil.which("pwsh") is None:
         pytest.skip("pwsh is required for PowerShell unattend generation contract test")
 
@@ -467,6 +472,8 @@ def test_osdeploy_unattend_omits_product_key_for_evaluation_images(tmp_path):
     script = f"""
         $ErrorActionPreference = 'Stop'
         $env:OSDEPLOY_BRIDGE_LIBRARY_ONLY = '1'
+        $env:OSDEPLOY_ALLOW_DEFAULT_GVLK = $null
+        $env:OSDEPLOY_UNATTEND_PRODUCT_KEY = $null
         . '{bridge.as_posix()}'
         $path = Add-OSDeployOfflineUnattend `
             -WindowsRoot '{windows_root.as_posix()}' `
@@ -474,18 +481,64 @@ def test_osdeploy_unattend_omits_product_key_for_evaluation_images(tmp_path):
             -Version 'Windows Server 2022' `
             -Edition 'Datacenter' `
             -ImageName 'Windows Server 2022 Datacenter'
-        $path = Add-OSDeployOfflineUnattend `
-            -WindowsRoot '{windows_root.as_posix()}' `
-            -ComputerName 'EvalClient001' `
-            -Version 'Windows 11' `
-            -Edition 'Enterprise' `
-            -ImageName 'Windows 11 Enterprise Evaluation'
         [xml]$xml = Get-Content -LiteralPath $path -Raw
         $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
         $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
         $productKey = $xml.SelectSingleNode("//u:settings[@pass='specialize']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:ProductKey", $ns)
         if ($null -ne $productKey) {{
-            throw "ProductKey should be omitted for evaluation images but was $($productKey.InnerText)"
+            throw "ProductKey should be omitted by default but was $($productKey.InnerText)"
+        }}
+        $deployment = $xml.SelectSingleNode("//u:settings[@pass='specialize']/u:component[@name='Microsoft-Windows-Deployment']", $ns)
+        if ($null -ne $deployment) {{
+            throw "Microsoft-Windows-Deployment should not be emitted when there are no specialize commands"
+        }}
+        $spp = $xml.SelectSingleNode("//u:settings[@pass='specialize']/u:component[@name='Microsoft-Windows-Security-SPP-UX']/u:SkipAutoActivation", $ns)
+        if ($null -eq $spp -or $spp.InnerText -ne 'true') {{
+            throw "SkipAutoActivation should be emitted for unattended role first boot"
+        }}
+        $skipMachine = $xml.SelectSingleNode("//u:settings[@pass='oobeSystem']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:OOBE/u:SkipMachineOOBE", $ns)
+        $skipUser = $xml.SelectSingleNode("//u:settings[@pass='oobeSystem']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:OOBE/u:SkipUserOOBE", $ns)
+        if ($null -eq $skipMachine -or $skipMachine.InnerText -ne 'true' -or $null -eq $skipUser -or $skipUser.InnerText -ne 'true') {{
+            throw "OOBE skip flags should be emitted for unattended role first boot"
+        }}
+    """
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_osdeploy_unattend_can_emit_explicit_product_key(tmp_path):
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is required for PowerShell unattend generation contract test")
+
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    bridge = app_root / "tools" / "osdeploy-build" / "Invoke-OSDeployBridge.ps1"
+    windows_root = tmp_path / "Windows"
+    explicit_key = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
+    script = f"""
+        $ErrorActionPreference = 'Stop'
+        $env:OSDEPLOY_BRIDGE_LIBRARY_ONLY = '1'
+        $env:OSDEPLOY_UNATTEND_PRODUCT_KEY = '{explicit_key}'
+        . '{bridge.as_posix()}'
+        $path = Add-OSDeployOfflineUnattend `
+            -WindowsRoot '{windows_root.as_posix()}' `
+            -ComputerName 'EvalClient001' `
+            -Version 'Windows Server 2025' `
+            -Edition 'Datacenter' `
+            -ImageName 'Windows Server 2025 Datacenter'
+        [xml]$xml = Get-Content -LiteralPath $path -Raw
+        $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+        $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+        $productKey = $xml.SelectSingleNode("//u:settings[@pass='specialize']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:ProductKey", $ns)
+        if ($null -eq $productKey -or $productKey.InnerText -ne '{explicit_key}') {{
+            throw "Explicit ProductKey was not emitted"
         }}
     """
     result = subprocess.run(

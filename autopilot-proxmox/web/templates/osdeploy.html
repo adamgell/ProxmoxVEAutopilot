@@ -24,6 +24,9 @@
   .osdeploy-history-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
   .osdeploy-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .osdeploy-public-key { width:min(760px, 100%); min-height:42px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+  .osdeploy-role-options { grid-column:1 / -1; display:none; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); }
+  .osdeploy-role-options.active { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px; }
+  .osdeploy-role-options textarea { min-height:130px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 
 {% set view = osdeploy_view or 'overview' %}
@@ -174,6 +177,59 @@
       <span class="osdeploy-label">Firmware</span>
       <span class="osdeploy-mini"><input type="checkbox" name="secure_boot"> Secure Boot</span>
     </label>
+    <div class="osdeploy-role-options" data-role-options-panel="file_server">
+      <label><span class="osdeploy-label">Share name</span><input name="role_file_share_name" value="Shared"></label>
+      <label><span class="osdeploy-label">Share path</span><input name="role_file_share_path" value="C:\Shares\Shared"></label>
+      <label><span class="osdeploy-label">Full access</span><input name="role_file_full_access" value="HOME\Domain Admins"></label>
+      <label><span class="osdeploy-label">Change access</span><input name="role_file_change_access" value="HOME\Domain Users"></label>
+      <label><span class="osdeploy-label">Read access</span><input name="role_file_read_access" value=""></label>
+    </div>
+    <div class="osdeploy-role-options" data-role-options-panel="isolated_domain_controller">
+      <label><span class="osdeploy-label">Forest FQDN</span><input name="role_dc_forest_fqdn" placeholder="lab.gell.one"></label>
+      <label><span class="osdeploy-label">NetBIOS name</span><input name="role_dc_netbios_name" placeholder="LAB"></label>
+      <label>
+        <span class="osdeploy-label">Forest admin credential</span>
+        <select name="role_dc_forest_admin_credential_id">
+          <option value="">select credential</option>
+          {% for credential in osdeploy_credentials %}
+          <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span class="osdeploy-label">DSRM credential</span>
+        <select name="role_dc_dsrm_credential_id">
+          <option value="">select credential</option>
+          {% for credential in osdeploy_credentials %}
+          <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="osdeploy-role-options" data-role-options-panel="mecm_prereq">
+      <label><span class="osdeploy-label">Prereq profile</span><select name="role_mecm_prereq_profile"><option value="site_server_foundation">site_server_foundation</option></select></label>
+      <label><span class="osdeploy-label">Content root</span><input name="role_mecm_content_root" value="C:\MECMContent"></label>
+    </div>
+    <div class="osdeploy-role-options" data-role-options-panel="lab_in_a_box">
+      <label><span class="osdeploy-label">Bundle name</span><input name="role_lab_bundle_name" value="Lab Bundle 01"></label>
+      <label>
+        <span class="osdeploy-label">Domain join credential</span>
+        <select name="role_lab_domain_join_credential_id">
+          <option value="">select credential</option>
+          {% for credential in osdeploy_credentials %}
+          <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="grid-column:1 / -1;">
+        <span class="osdeploy-label">Child VM config JSON</span>
+        <textarea name="role_lab_children_json">[
+  {"role":"isolated_domain_controller","vm_name":"LAB-DC01","role_options":{"forest_fqdn":"lab.gell.one","netbios_name":"LAB","forest_admin_credential_id":0,"dsrm_credential_id":0}},
+  {"role":"file_server","vm_name":"LAB-FS01","role_options":{"share_name":"Shared","share_path":"C:\\Shares\\Shared","full_access_principals":["LAB\\Domain Admins"],"change_access_principals":["LAB\\Domain Users"],"read_access_principals":[]}},
+  {"role":"mecm_prereq","vm_name":"LAB-CM01","role_options":{"prereq_profile":"site_server_foundation","content_root":"C:\\MECMContent"}}
+]</textarea>
+      </label>
+    </div>
   </form>
   <div class="osdeploy-grid">
     <div>
@@ -341,6 +397,8 @@
       {% endfor %}
     ],
     options: {{ proxmox_options | tojson | safe }},
+    roleCatalog: {{ catalog.role_catalog | tojson | safe }},
+    credentials: {{ osdeploy_credentials | tojson | safe }},
     preflight: null,
     timer: null
   };
@@ -398,6 +456,61 @@
       return osdeployState.artifacts.find((artifact) => artifact.id === id) || null;
     }
 
+    function csvList(value) {
+      return String(value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function roleOptionsPayload(form, role) {
+      const value = (name) => form.elements[name]?.value || "";
+      if (role === "file_server") {
+        return {
+          share_name: value("role_file_share_name"),
+          share_path: value("role_file_share_path"),
+          full_access_principals: csvList(value("role_file_full_access")),
+          change_access_principals: csvList(value("role_file_change_access")),
+          read_access_principals: csvList(value("role_file_read_access"))
+        };
+      }
+      if (role === "isolated_domain_controller") {
+        return {
+          forest_fqdn: value("role_dc_forest_fqdn"),
+          netbios_name: value("role_dc_netbios_name"),
+          forest_admin_credential_id: Number(value("role_dc_forest_admin_credential_id") || 0),
+          dsrm_credential_id: Number(value("role_dc_dsrm_credential_id") || 0)
+        };
+      }
+      if (role === "mecm_prereq") {
+        return {
+          prereq_profile: value("role_mecm_prereq_profile"),
+          content_root: value("role_mecm_content_root")
+        };
+      }
+      if (role === "lab_in_a_box") {
+        let children = [];
+        try {
+          children = JSON.parse(value("role_lab_children_json") || "[]");
+        } catch (_err) {
+          children = [];
+        }
+        return {
+          bundle_name: value("role_lab_bundle_name"),
+          domain_join_credential_id: Number(value("role_lab_domain_join_credential_id") || 0),
+          children
+        };
+      }
+      return {};
+    }
+
+    function renderRoleOptions() {
+      const role = byId("osdeploy_server_role")?.value || "base";
+      document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.roleOptionsPanel === role);
+      });
+    }
+
     function osdeployFormPayload() {
       const form = byId("osdeployRunForm");
       if (!form) return {};
@@ -412,6 +525,7 @@
       data.secure_boot = !!form.querySelector('[name="secure_boot"]')?.checked;
       data.architecture = "amd64";
       data.outbound_policy = {};
+      data.role_options = roleOptionsPayload(form, data.server_role || "base");
       return data;
     }
 
@@ -487,7 +601,14 @@
       if (!osdeployState.preflight?.launch_allowed) return;
       if (launch) launch.disabled = true;
       try {
-        const created = await postJson("/api/osdeploy/v1/runs", osdeployFormPayload());
+        const payload = osdeployFormPayload();
+        if (payload.server_role === "lab_in_a_box") {
+          const created = await postJson("/api/osdeploy/v1/bundles", payload);
+          const first = (created.children || [])[0];
+          if (first?.child_run_id) window.location.assign(`/osdeploy/runs/${first.child_run_id}`);
+          return;
+        }
+        const created = await postJson("/api/osdeploy/v1/runs", payload);
         const run = created.run;
         await postJson(`/api/osdeploy/v1/runs/${run.run_id}/provision`, {});
         window.location.assign(`/osdeploy/runs/${run.run_id}`);
@@ -508,11 +629,15 @@
       const form = byId("osdeployRunForm");
       if (form) {
         form.addEventListener("input", scheduleOsdeployPreflight);
-        form.addEventListener("change", scheduleOsdeployPreflight);
+        form.addEventListener("change", () => {
+          renderRoleOptions();
+          scheduleOsdeployPreflight();
+        });
       }
       if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
       if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);
       renderOsdeployReview();
+      renderRoleOptions();
       if (form) scheduleOsdeployPreflight();
     }
 

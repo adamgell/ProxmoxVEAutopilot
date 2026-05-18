@@ -918,7 +918,7 @@ def test_agent_events_are_recorded(agent_client, pg_conn):
     assert events[0]["data_json"]["service"] == "QEMU-GA"
 
 
-def test_build_host_workload_queue_includes_osdeploy_by_default(
+def test_build_host_workload_queue_uses_first_run_default_artifact_path(
     agent_client,
     pg_conn,
     monkeypatch,
@@ -949,20 +949,21 @@ def test_build_host_workload_queue_includes_osdeploy_by_default(
         "install_build_prerequisites",
         "fetch_source_bundle",
         "build_agent_msi",
+        "build_winpe",
         "build_cloudosd",
-        "build_osdeploy",
         "publish_artifacts",
     }.issubset(queued_kinds)
+    assert "build_osdeploy" not in queued_kinds
 
     rows = pg_conn.execute(
         "SELECT kind, request_json FROM agent_work_items WHERE agent_id = %s",
         ("buildhost-100",),
     ).fetchall()
     requests = {row["kind"]: row["request_json"] for row in rows}
-    assert requests["build_osdeploy"]["source_bundle_url"] == (
+    assert requests["build_winpe"]["source_bundle_url"] == (
         "http://controller:5000/api/setup/v1/source-bundle.zip"
     )
-    assert requests["build_osdeploy"]["work_root"] == (
+    assert requests["build_winpe"]["work_root"] == (
         r"C:\BuildRoot\ProxmoxVEAutopilot"
     )
     assert agent_telemetry_pg.get_work_item(pg_conn, response.json()["queued"][0]["id"])
@@ -1226,6 +1227,62 @@ def test_setup_promote_artifacts_can_mark_pve_pulled_osdeploy_artifact(
     rows = osdeploy_pg.list_artifacts(pg_conn, architecture="amd64")
     assert len(rows) == 1
     assert rows[0]["proxmox_volid"] == "local:iso/osdeploy-server-amd64-pulled.iso"
+
+
+def test_setup_promote_artifacts_defers_large_api_upload(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app
+    from web import osdeploy_pg, setup_artifacts
+
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(setup_artifacts, "REGISTRY_PATH", artifact_root / "artifact_registry.json")
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", tmp_path / "setup-state.json")
+    monkeypatch.setattr(web_app, "_setup_readiness", lambda: {
+        "state": {"pve_node": "pve1", "pve_iso_storage": "local"},
+    })
+    monkeypatch.setattr(web_app, "_setup_promote_api_upload_max_bytes", lambda: 4)
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_upload_file",
+        lambda *args, **kwargs: pytest.fail("large setup artifact should be pulled by PVE"),
+    )
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    iso_path = source_dir / "osdeploy-server-amd64-large.iso"
+    iso_path.write_bytes(b"large iso bytes")
+    iso = setup_artifacts.register_artifact(
+        kind="osdeploy-iso",
+        source_path=iso_path,
+        producer_agent_id="buildhost-100",
+        work_item_id="work-large",
+    )
+
+    response = agent_client.post(
+        "/api/setup/v1/artifacts/promote",
+        json={"artifact_ids": [iso["artifact_id"]]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["promoted"] == []
+    assert body["deferred"] == [{
+        "artifact_id": iso["artifact_id"],
+        "kind": "osdeploy-iso",
+        "filename": "osdeploy-server-amd64-large.iso",
+        "size_bytes": len(b"large iso bytes"),
+        "reason": "pve_pull_required_for_large_artifact",
+        "max_api_upload_bytes": 4,
+    }]
+    rows = osdeploy_pg.list_artifacts(pg_conn, architecture="amd64")
+    assert rows == []
 
 
 def test_setup_promote_artifacts_requires_selection_for_already_copied(agent_client):

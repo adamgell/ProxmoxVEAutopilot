@@ -660,6 +660,17 @@ Describe 'Test-CloudOSDOfflineWindows' {
         $source | Should -Match "EventType 'setupcomplete_chained'"
         $source | Should -Match "Phase 'setupcomplete'"
     }
+
+    It 'stages and validates UEFI boot files before PE completion' {
+        $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' 'Invoke-CloudOSDBridge.ps1') -Raw
+
+        $source | Should -Match 'function Get-CloudOSDEfiSystemRoot'
+        $source | Should -Match 'function Invoke-CloudOSDBootFiles'
+        $source | Should -Match 'bcdboot\.exe'
+        $source | Should -Match '/f UEFI'
+        $source | Should -Match "EventType 'uefi_boot_files_staged'"
+        $source | Should -Match '-EfiRoot \$efiRoot'
+    }
 }
 
 Describe 'Add-CloudOSDOfflineVirtIODrivers' {
