@@ -96,6 +96,11 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "text-overflow:ellipsis" in template
     assert 'id="osdeploy_artifact_id"' in template
     assert 'id="osdeploy_vm_name"' in template
+    assert 'id="osdeployNameBuilder"' in template
+    assert 'data-name-token="{role}"' in template
+    assert 'data-name-token="{date}"' in template
+    assert 'id="osdeployNamePreview"' in template
+    assert "resolveOsdeployNameTemplate" in template
     assert 'id="osdeploy_server_role"' in template
     assert 'id="osdeployBlockingChecks"' in template
     assert 'id="osdeployWarningChecks"' in template

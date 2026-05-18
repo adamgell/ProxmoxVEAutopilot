@@ -31,8 +31,13 @@
   .osdeploy-builder-form textarea { width:100%; max-width:100%; min-width:0; }
   .osdeploy-builder-form select { overflow:hidden; text-overflow:ellipsis; }
   .osdeploy-field-artifact { grid-column:span 2; }
+  .osdeploy-field-name { grid-column:span 2; }
+  .osdeploy-name-builder { display:grid; gap:6px; }
+  .osdeploy-name-tokens { display:flex; flex-wrap:wrap; gap:6px; }
+  .osdeploy-name-token { border:1px solid var(--line); border-radius:6px; padding:4px 7px; background:var(--surface-muted); color:var(--ink); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+  .osdeploy-name-preview { color:var(--ink-muted); font-size:12px; overflow-wrap:anywhere; }
   @media (max-width: 980px) {
-    .osdeploy-field-artifact { grid-column:1 / -1; }
+    .osdeploy-field-artifact, .osdeploy-field-name { grid-column:1 / -1; }
   }
   .osdeploy-role-shell { grid-column:1 / -1; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); display:grid; gap:12px; }
   .osdeploy-role-shell-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
@@ -125,9 +130,21 @@
         {% endfor %}
       </select>
     </label>
-    <label>
+    <label class="osdeploy-field-name">
       <span class="osdeploy-label">Requested VM name</span>
-      <input id="osdeploy_vm_name" name="vm_name" value="OSDEPLOY-SRV-001" required>
+      <input id="osdeploy_vm_name" name="vm_name" value="OSDEPLOY-{role}-{date}-{rand}" required>
+      <div id="osdeployNameBuilder" class="osdeploy-name-builder">
+        <div class="osdeploy-name-tokens" aria-label="Requested name variables">
+          <button type="button" class="osdeploy-name-token" data-name-token="{role}">{role}</button>
+          <button type="button" class="osdeploy-name-token" data-name-token="{date}">{date}</button>
+          <button type="button" class="osdeploy-name-token" data-name-token="{time}">{time}</button>
+          <button type="button" class="osdeploy-name-token" data-name-token="{rand}">{rand}</button>
+          <button type="button" class="osdeploy-name-token" data-name-token="{node}">{node}</button>
+          <button type="button" class="osdeploy-name-token" data-name-token="{edition}">{edition}</button>
+          <button type="button" class="osdeploy-name-token" data-name-token="{netbios}">{netbios}</button>
+        </div>
+        <div class="osdeploy-name-preview">Resolves to <code id="osdeployNamePreview">-</code></div>
+      </div>
     </label>
     <label>
       <span class="osdeploy-label">Optional VMID</span>
@@ -473,6 +490,7 @@
     options: {{ proxmox_options | tojson | safe }},
     roleCatalog: {{ catalog.role_catalog | tojson | safe }},
     credentials: {{ osdeploy_credentials | tojson | safe }},
+    nameRandom: Math.random().toString(36).replace(/[^a-z0-9]/g, "").slice(0, 4).toUpperCase() || "0000",
     preflight: null,
     timer: null
   };
@@ -595,6 +613,82 @@
       return byId("osdeploy_server_role")?.value || "base";
     }
 
+    function cleanNameToken(value, fallback = "") {
+      const cleaned = String(value || fallback)
+        .replace(/[^A-Za-z0-9-]/g, "")
+        .toUpperCase();
+      return cleaned || fallback;
+    }
+
+    function osdeployRoleNameToken(role) {
+      return {
+        base: "BASE",
+        file_server: "FS",
+        isolated_domain_controller: "DC",
+        mecm_prereq: "MECM",
+        lab_in_a_box: "LAB"
+      }[role] || cleanNameToken(role, "SRV");
+    }
+
+    function osdeployEditionNameToken(edition) {
+      return {
+        Datacenter: "DC",
+        Standard: "STD"
+      }[edition] || cleanNameToken(edition, "SRV");
+    }
+
+    function osdeployNameVariables() {
+      const now = new Date();
+      const pad = (value) => String(value).padStart(2, "0");
+      const year = String(now.getFullYear()).slice(-2);
+      const role = selectedOsdeployRole();
+      const artifact = selectedOsdeployArtifact();
+      return {
+        role: osdeployRoleNameToken(role),
+        role_id: cleanNameToken(role, "SRV"),
+        date: `${year}${pad(now.getMonth() + 1)}${pad(now.getDate())}`,
+        time: `${pad(now.getHours())}${pad(now.getMinutes())}`,
+        rand: osdeployState.nameRandom,
+        node: cleanNameToken(byId("osdeploy_node")?.value, "NODE"),
+        edition: osdeployEditionNameToken(byId("osdeploy_os_edition")?.value),
+        version: cleanNameToken(byId("osdeploy_os_version")?.value, "WIN"),
+        language: cleanNameToken(byId("osdeploy_os_language")?.value, "ENUS"),
+        netbios: cleanNameToken(byId("role_dc_netbios_name")?.value, "LAB"),
+        artifact: cleanNameToken(artifact?.build_sha, "ART")
+      };
+    }
+
+    function resolveOsdeployNameTemplate(template) {
+      const variables = osdeployNameVariables();
+      const resolved = String(template || "")
+        .replace(/\{([A-Za-z0-9_]+)\}/g, (_match, key) => variables[key] || "")
+        .replace(/\s+/g, "-")
+        .replace(/[^A-Za-z0-9_.-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      return resolved || "OSDEPLOY-SRV-001";
+    }
+
+    function renderOsdeployNamePreview() {
+      const input = byId("osdeploy_vm_name");
+      const preview = byId("osdeployNamePreview");
+      if (!input || !preview) return;
+      preview.textContent = resolveOsdeployNameTemplate(input.value);
+    }
+
+    function insertOsdeployNameToken(token) {
+      const input = byId("osdeploy_vm_name");
+      if (!input) return;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      input.value = `${input.value.slice(0, start)}${token}${input.value.slice(end)}`;
+      const cursor = start + token.length;
+      input.focus();
+      input.setSelectionRange(cursor, cursor);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
     function renderRoleOptions() {
       const role = selectedOsdeployRole();
       const metadata = osdeployState.roleCatalog[role] || {};
@@ -668,6 +762,7 @@
       new FormData(form).forEach((value, key) => {
         if (value !== "") data[key] = value;
       });
+      if (data.vm_name !== undefined) data.vm_name = resolveOsdeployNameTemplate(data.vm_name);
       ["vm_cores", "vm_memory_mb", "vm_disk_size_gb", "vmid"].forEach((key) => {
         if (data[key] !== undefined) data[key] = Number(data[key]);
         if (data[key] === "") delete data[key];
@@ -706,6 +801,7 @@
       byId("reviewOsdeploySizing").textContent = `${payload.vm_cores || 0} vCPU, ${payload.vm_memory_mb || 0} MB, ${payload.vm_disk_size_gb || 0} GB`;
       renderRoleOptionsReview(payload);
       byId("reviewOsdeployBlocking").textContent = preflight ? String(preflight.blocking_checks.length) : "-";
+      renderOsdeployNamePreview();
       const launch = byId("launchOsdeployBtn");
       if (launch) launch.disabled = !preflight || !preflight.launch_allowed;
     }
@@ -799,9 +895,13 @@
       document.querySelectorAll("[data-role-options-reset]").forEach((button) => {
         button.addEventListener("click", resetActiveRoleOptions);
       });
+      document.querySelectorAll("[data-name-token]").forEach((button) => {
+        button.addEventListener("click", () => insertOsdeployNameToken(button.dataset.nameToken || ""));
+      });
       if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
       if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);
       renderOsdeployReview();
+      renderOsdeployNamePreview();
       renderRoleOptions();
       if (form) scheduleOsdeployPreflight();
     }
