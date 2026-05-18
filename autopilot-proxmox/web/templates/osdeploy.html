@@ -24,6 +24,16 @@
   .osdeploy-history-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
   .osdeploy-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .osdeploy-public-key { width:min(760px, 100%); min-height:42px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+  .osdeploy-builder-form { align-items:end; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); }
+  .osdeploy-builder-form > label { min-width:0; display:flex; flex-direction:column; gap:4px; }
+  .osdeploy-builder-form input,
+  .osdeploy-builder-form select,
+  .osdeploy-builder-form textarea { width:100%; max-width:100%; min-width:0; }
+  .osdeploy-builder-form select { overflow:hidden; text-overflow:ellipsis; }
+  .osdeploy-field-artifact { grid-column:span 2; }
+  @media (max-width: 980px) {
+    .osdeploy-field-artifact { grid-column:1 / -1; }
+  }
   .osdeploy-role-options { grid-column:1 / -1; display:none; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); }
   .osdeploy-role-options.active { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px; }
   .osdeploy-role-options textarea { min-height:130px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -96,8 +106,8 @@
     </div>
     <button type="button" id="runOsdeployPreflightBtn" class="osdeploy-action">Run Preflight</button>
   </div>
-  <form id="osdeployRunForm" class="osdeploy-grid">
-    <label>
+  <form id="osdeployRunForm" class="osdeploy-grid osdeploy-builder-form">
+    <label class="osdeploy-field osdeploy-field-artifact">
       <span class="osdeploy-label">Artifact</span>
       <select id="osdeploy_artifact_id" name="artifact_id" required {% if not ready_artifacts %}disabled{% endif %}>
         {% for artifact in ready_artifacts %}

@@ -71,6 +71,11 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     template = (ROOT / "web/templates/osdeploy.html").read_text(encoding="utf-8")
 
     assert 'id="osdeployRunForm"' in template
+    assert 'class="osdeploy-grid osdeploy-builder-form"' in template
+    assert 'class="osdeploy-field osdeploy-field-artifact"' in template
+    assert ".osdeploy-builder-form > label { min-width:0;" in template
+    assert ".osdeploy-builder-form select" in template
+    assert "text-overflow:ellipsis" in template
     assert 'id="osdeploy_artifact_id"' in template
     assert 'id="osdeploy_vm_name"' in template
     assert 'id="osdeploy_server_role"' in template
