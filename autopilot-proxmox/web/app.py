@@ -164,6 +164,9 @@ def _safe_path(base_dir, filename):
     return resolved
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 HASH_DIR = BASE_DIR / "output" / "hashes"
+FILE_SHELF_DIR = Path(
+    os.environ.get("AUTOPILOT_FILE_SHELF_DIR", str(BASE_DIR / "output" / "files"))
+)
 SETUP_STATE_PATH = BASE_DIR / "output" / "setup" / "foundation_state.json"
 AGENT_SEED_MANIFEST_PATH = BASE_DIR / "output" / "setup" / "agent-seed" / "manifest.json"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
@@ -4095,6 +4098,36 @@ def get_hash_files():
     return files
 
 
+def _safe_file_shelf_name(filename: str | None) -> str:
+    raw_name = (filename or "").replace("\\", "/").split("/")[-1].strip()
+    safe_name = re.sub(r"[^\w\-.]", "_", raw_name)
+    safe_name = safe_name.lstrip(".")
+    if not safe_name or Path(safe_name).suffix.lower() != ".msi":
+        return ""
+    return safe_name
+
+
+def get_file_shelf_items():
+    if not FILE_SHELF_DIR.exists():
+        return []
+    files = []
+    for f in sorted(FILE_SHELF_DIR.glob("*.msi"), key=lambda item: item.name.lower()):
+        if not f.is_file():
+            continue
+        stat = f.stat()
+        files.append({
+            "name": f.name,
+            "url": f"/files/{f.name}",
+            "size": f"{stat.st_size:,} bytes",
+            "size_bytes": stat.st_size,
+            "modified": datetime.fromtimestamp(
+                stat.st_mtime, tz=timezone.utc
+            ).strftime("%Y-%m-%d %H:%M"),
+            "modified_epoch": int(stat.st_mtime),
+        })
+    return files
+
+
 def compute_duration(job):
     if not job.get("started"):
         return None
@@ -4755,6 +4788,16 @@ async def hashes_page(request: Request, uploaded: str = "", error: str = ""):
     return templates.TemplateResponse("hashes.html", {
         "request": request,
         "hash_files": hash_files,
+        "uploaded": uploaded,
+        "error": error,
+    })
+
+
+@app.get("/files", response_class=HTMLResponse)
+async def files_page(request: Request, uploaded: str = "", error: str = ""):
+    return templates.TemplateResponse("files.html", {
+        "request": request,
+        "files": get_file_shelf_items(),
         "uploaded": uploaded,
         "error": error,
     })
@@ -9333,6 +9376,22 @@ async def download_hash(filename: str):
     return FileResponse(file_path, filename=filename)
 
 
+@app.get("/files/{filename}")
+async def download_file_shelf_item(filename: str):
+    if Path(filename).suffix.lower() != ".msi":
+        return HTMLResponse("<h1>File not found</h1>", status_code=404)
+    safe_name = _safe_file_shelf_name(filename)
+    if not safe_name or safe_name != filename:
+        return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
+    try:
+        file_path = _safe_path(FILE_SHELF_DIR, safe_name)
+    except ValueError:
+        return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
+    if not file_path.exists() or file_path.suffix.lower() != ".msi":
+        return HTMLResponse("<h1>File not found</h1>", status_code=404)
+    return FileResponse(file_path, media_type="application/octet-stream", filename=safe_name)
+
+
 @app.post("/api/hashes/upload")
 async def upload_hash_files(files: list[UploadFile] = File(...)):
     HASH_DIR.mkdir(parents=True, exist_ok=True)
@@ -9353,6 +9412,25 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
     if saved == 0:
         return _redirect_with_error("/hashes", "No valid CSV files found")
     return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
+
+
+@app.post("/api/files/upload")
+async def upload_file_shelf_items(files: list[UploadFile] = File(...)):
+    FILE_SHELF_DIR.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    for upload in files:
+        safe_name = _safe_file_shelf_name(upload.filename)
+        if not safe_name:
+            continue
+        dest = FILE_SHELF_DIR / safe_name
+        content = await upload.read()
+        if not content:
+            continue
+        dest.write_bytes(content)
+        saved += 1
+    if saved == 0:
+        return _redirect_with_error("/files", "No valid MSI files found")
+    return RedirectResponse(f"/files?uploaded={saved}", status_code=303)
 
 
 # --- Answer ISO rebuild ----------------------------------------------------

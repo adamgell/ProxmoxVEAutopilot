@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, alert, empty_state %}
+{% block title %}MSI Files - Proxmox VE Autopilot{% endblock %}
+{% block content %}
+{% if uploaded %}
+{{ alert(uploaded ~ " MSI file(s) uploaded.", level="ok") }}
+{% endif %}
+{% if error %}
+{{ alert(error, level="bad") }}
+{% endif %}
+
+{{ page_head("MSI Files", "Published installer shelf for operator-uploaded MSI packages.") }}
+
+<h3>Upload MSI Files</h3>
+<form method="POST" action="/api/files/upload" enctype="multipart/form-data" style="margin-bottom:15px;">
+  <input type="file" name="files" accept=".msi,application/octet-stream" multiple required>
+  <input type="submit" value="Upload MSI Files">
+</form>
+
+{% if files %}
+<h3>Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Size</th>
+      <th>Modified</th>
+      <th>URL</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in files %}
+    <tr>
+      <td><a href="{{ f.url }}">{{ f.name }}</a></td>
+      <td>{{ f.size }}</td>
+      <td>{{ f.modified }}</td>
+      <td><code>{{ f.url }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+{{ empty_state("No MSI files yet.", hint="Upload MSI packages above.") }}
+{% endif %}
+{% endblock %}

@@ -65,9 +65,10 @@ _EXEMPT_PREFIXES = (
     "/api/agent/v1/",
     "/api/runs/",
     "/static/",
+    "/files/",
     "/favicon.ico",
 )
-_EXEMPT_EXACT = {"/setup"}
+_EXEMPT_EXACT = {"/setup", "/files"}
 
 
 def _is_cloudosd_exempt(path: str) -> bool:
