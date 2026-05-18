@@ -5,6 +5,49 @@
 # image, stages the v2 full-OS client, emits lifecycle events, and reboots.
 
 $ErrorActionPreference = 'Stop'
+$script:OSDeployHeartbeatIntervalSeconds = 15
+$script:OSDeployPeSteps = @(
+    'register',
+    'package',
+    'locate_image',
+    'guard_existing_windows',
+    'partition',
+    'apply_image',
+    'inject_drivers',
+    'stage_osd_client',
+    'stage_unattend',
+    'bcdboot',
+    'handoff'
+)
+
+function Write-OSDeployConsoleStep {
+    param(
+        [Parameter(Mandatory)] [string] $Step,
+        [Parameter(Mandatory)] [string] $State,
+        [string] $Message = ''
+    )
+    $line = "[OSDeploy PE] [$State] $Step"
+    if (-not [string]::IsNullOrWhiteSpace($Message)) {
+        $line = "$line - $Message"
+    }
+    Write-Host $line
+}
+
+function Write-OSDeployConsoleProgress {
+    param(
+        [Parameter(Mandatory)] [string] $Step,
+        [string] $Message = ''
+    )
+    Write-Host "[OSDeploy PE] [heartbeat] $Step - $Message"
+}
+
+function Write-OSDeployConsoleError {
+    param(
+        [Parameter(Mandatory)] [string] $Step,
+        [Parameter(Mandatory)] [string] $Message
+    )
+    Write-Host "[OSDeploy PE] [error] $Step - $Message"
+}
 
 function Read-OSDeployConfig {
     param([Parameter(Mandatory)] [string] $Path)
@@ -109,6 +152,100 @@ function Write-OSDeployEvent {
     }
 }
 
+function Invoke-OSDeployPeStep {
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [Parameter(Mandatory)] [scriptblock] $ScriptBlock,
+        [string] $FallbackBaseUrl,
+        [hashtable] $Data = @{}
+    )
+    Write-OSDeployConsoleStep -Step $Name -State 'starting'
+    Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+        -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
+        -EventType 'osdeploy_pe_step_starting' `
+        -Message "OSDeploy PE step starting: $Name" `
+        -Data (@{ step = $Name } + $Data)
+    $started = Get-Date
+    try {
+        $result = & $ScriptBlock
+        $elapsed = [math]::Round(((Get-Date) - $started).TotalSeconds, 3)
+        Write-OSDeployConsoleStep -Step $Name -State 'ok' -Message "${elapsed}s"
+        Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+            -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
+            -EventType 'osdeploy_pe_step_ok' `
+            -Message "OSDeploy PE step completed: $Name" `
+            -Data (@{ step = $Name; elapsed_seconds = $elapsed } + $Data)
+        return $result
+    } catch {
+        $elapsed = [math]::Round(((Get-Date) - $started).TotalSeconds, 3)
+        Write-OSDeployConsoleError -Step $Name -Message $_.Exception.Message
+        Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+            -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
+            -EventType 'osdeploy_pe_step_error' `
+            -Severity 'error' `
+            -Message $_.Exception.Message `
+            -Data (@{ step = $Name; elapsed_seconds = $elapsed } + $Data)
+        throw
+    }
+}
+
+function Join-OSDeployNativeArguments {
+    param([Parameter(Mandatory)] [string[]] $Arguments)
+    return ($Arguments | ForEach-Object {
+        $value = [string] $_
+        if ($value -match '[\s"]') {
+            '"' + ($value -replace '"', '\"') + '"'
+        } else {
+            $value
+        }
+    }) -join ' '
+}
+
+function Invoke-OSDeployNativeProcessWithHeartbeat {
+    param(
+        [Parameter(Mandatory)] [string] $FileName,
+        [Parameter(Mandatory)] [string[]] $Arguments,
+        [Parameter(Mandatory)] [string] $Step,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl
+    )
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FileName
+    $startInfo.Arguments = Join-OSDeployNativeArguments -Arguments $Arguments
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    [void] $process.Start()
+    $lastHeartbeat = Get-Date
+    while (-not $process.WaitForExit(1000)) {
+        if (((Get-Date) - $lastHeartbeat).TotalSeconds -ge $script:OSDeployHeartbeatIntervalSeconds) {
+            $lastHeartbeat = Get-Date
+            Write-OSDeployConsoleProgress -Step $Step -Message "pid=$($process.Id)"
+            Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+                -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
+                -EventType 'osdeploy_pe_step_heartbeat' `
+                -Message "OSDeploy PE step still running: $Step" `
+                -Data @{ step = $Step; pid = $process.Id }
+        }
+    }
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $exitCode = $process.ExitCode
+    $process.Dispose()
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Stdout = $stdout
+        Stderr = $stderr
+    }
+}
+
 function Save-OSDeployRunPackage {
     param(
         [Parameter(Mandatory)] [object] $Package,
@@ -155,6 +292,35 @@ function Set-OSDeployObjectProperty {
     }
 }
 
+function Verify-OSDeployStagedFileHash {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [AllowNull()] [string] $ExpectedSha256,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl,
+        [string] $SourcePath = ''
+    )
+    $expected = ([string] $ExpectedSha256).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($expected)) {
+        return
+    }
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) {
+        throw "staged file SHA256 mismatch expected=$expected actual=$actual path=$Path"
+    }
+    Write-OSDeployEvent -BaseUrl $BaseUrl -FallbackBaseUrl $FallbackBaseUrl `
+        -RunId $RunId -BearerToken $BearerToken -Phase 'pe' `
+        -EventType 'osdeploy_staged_file_verified' `
+        -Message 'OSDeploy staged file SHA256 verified' `
+        -Data @{
+            path = $Path
+            source_path = $SourcePath
+            sha256 = $actual
+        }
+}
+
 function Join-OSDeployPath {
     param(
         [Parameter(Mandatory)] [string] $Root,
@@ -195,7 +361,10 @@ function Save-OSDeployOsdClientPackage {
     param(
         [Parameter(Mandatory)] [object] $Package,
         [Parameter(Mandatory)] [string] $WindowsRoot,
-        [Parameter(Mandatory)] [string] $BearerToken
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [string] $FallbackBaseUrl
     )
     if (-not (Get-OSDeployObjectProperty -Value $Package -Name 'payloads')) {
         throw 'OSDeploy package is missing payloads'
@@ -221,6 +390,14 @@ function Save-OSDeployOsdClientPackage {
             $destination,
             [Convert]::FromBase64String([string] $file.content_b64)
         )
+        Verify-OSDeployStagedFileHash `
+            -Path $destination `
+            -ExpectedSha256 ([string] (Get-OSDeployObjectProperty -Value $file -Name 'sha256')) `
+            -BaseUrl $BaseUrl `
+            -RunId $RunId `
+            -BearerToken $BearerToken `
+            -FallbackBaseUrl $FallbackBaseUrl `
+            -SourcePath $targetPath
     }
 
     $programDataRoot = Get-OSDeployOfflineProgramDataPath -WindowsRoot $WindowsRoot
@@ -645,6 +822,29 @@ function Get-OSDeployFirmwareType {
     return 'UEFI'
 }
 
+function Test-OSDeployExistingWindowsInstall {
+    param(
+        [string[]] $ExcludedRoots = @('X:\')
+    )
+    foreach ($drive in Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue) {
+        $root = [string] $drive.Root
+        if ($ExcludedRoots -contains $root) { continue }
+        $kernel = Join-Path $root 'Windows\System32\ntoskrnl.exe'
+        if (Test-Path -LiteralPath $kernel -PathType Leaf) {
+            return [pscustomobject]@{
+                Found = $true
+                Root = $root
+                KernelPath = $kernel
+            }
+        }
+    }
+    return [pscustomobject]@{
+        Found = $false
+        Root = $null
+        KernelPath = $null
+    }
+}
+
 function Initialize-OSDeploySystemDisk {
     param(
         [int] $DiskNumber = 0,
@@ -693,12 +893,24 @@ function Invoke-OSDeployImageApply {
     param(
         [Parameter(Mandatory)] [string] $InstallImage,
         [int] $ImageIndex = 1,
-        [string] $WindowsDrive = 'W:'
+        [string] $WindowsDrive = 'W:',
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl
     )
     $applyDir = $WindowsDrive.TrimEnd('\') + '\'
-    & dism.exe /Apply-Image /ImageFile:$InstallImage /Index:$ImageIndex /ApplyDir:$applyDir
-    if ($LASTEXITCODE -ne 0) {
-        throw "DISM image apply failed with exit code $LASTEXITCODE"
+    # Equivalent native command: dism.exe /Apply-Image /ImageFile:$InstallImage /Index:$ImageIndex /ApplyDir:$applyDir
+    $result = Invoke-OSDeployNativeProcessWithHeartbeat `
+        -FileName 'dism.exe' `
+        -Arguments @('/Apply-Image', "/ImageFile:$InstallImage", "/Index:$ImageIndex", "/ApplyDir:$applyDir") `
+        -Step 'apply_image' `
+        -BaseUrl $BaseUrl `
+        -RunId $RunId `
+        -BearerToken $BearerToken `
+        -FallbackBaseUrl $FallbackBaseUrl
+    if ($result.ExitCode -ne 0) {
+        throw "DISM image apply failed with exit code $($result.ExitCode): $($result.Stderr) $($result.Stdout)"
     }
 }
 
@@ -733,7 +945,13 @@ function Resolve-OSDeployVirtIOInf {
 }
 
 function Add-OSDeployVirtIODrivers {
-    param([Parameter(Mandatory)] [string] $WindowsRoot)
+    param(
+        [Parameter(Mandatory)] [string] $WindowsRoot,
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl
+    )
     $driverRoot = Find-OSDeployVirtIODriverRoot
     if (-not $driverRoot) {
         throw 'VirtIO driver media not found'
@@ -755,9 +973,17 @@ function Add-OSDeployVirtIODrivers {
     }
 
     foreach ($driverPath in $driverPaths) {
-        & dism.exe /Image:$imageRoot /Add-Driver /Driver:$driverPath /ForceUnsigned | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "DISM driver injection failed for $driverPath with exit code $LASTEXITCODE"
+        # Equivalent native command: dism.exe /Image:$imageRoot /Add-Driver /Driver:$driverPath /ForceUnsigned
+        $result = Invoke-OSDeployNativeProcessWithHeartbeat `
+            -FileName 'dism.exe' `
+            -Arguments @("/Image:$imageRoot", '/Add-Driver', "/Driver:$driverPath", '/ForceUnsigned') `
+            -Step 'inject_drivers' `
+            -BaseUrl $BaseUrl `
+            -RunId $RunId `
+            -BearerToken $BearerToken `
+            -FallbackBaseUrl $FallbackBaseUrl
+        if ($result.ExitCode -ne 0) {
+            throw "DISM driver injection failed for $driverPath with exit code $($result.ExitCode): $($result.Stderr) $($result.Stdout)"
         }
     }
     return [pscustomobject]@{
@@ -773,12 +999,23 @@ function Invoke-OSDeployBootFiles {
     param(
         [Parameter(Mandatory)] [string] $WindowsRoot,
         [string] $SystemDrive = 'S:',
-        [ValidateSet('BIOS','UEFI')] [string] $FirmwareType = 'UEFI'
+        [ValidateSet('BIOS','UEFI')] [string] $FirmwareType = 'UEFI',
+        [Parameter(Mandatory)] [string] $BaseUrl,
+        [Parameter(Mandatory)] [string] $RunId,
+        [Parameter(Mandatory)] [string] $BearerToken,
+        [string] $FallbackBaseUrl
     )
     $bootMode = $(if ($FirmwareType -eq 'BIOS') { 'BIOS' } else { 'UEFI' })
-    & bcdboot.exe $WindowsRoot /s $SystemDrive /f $bootMode
-    if ($LASTEXITCODE -ne 0) {
-        throw "bcdboot failed with exit code $LASTEXITCODE"
+    $result = Invoke-OSDeployNativeProcessWithHeartbeat `
+        -FileName 'bcdboot.exe' `
+        -Arguments @($WindowsRoot, '/s', $SystemDrive, '/f', $bootMode) `
+        -Step 'bcdboot' `
+        -BaseUrl $BaseUrl `
+        -RunId $RunId `
+        -BearerToken $BearerToken `
+        -FallbackBaseUrl $FallbackBaseUrl
+    if ($result.ExitCode -ne 0) {
+        throw "bcdboot failed with exit code $($result.ExitCode): $($result.Stderr) $($result.Stdout)"
     }
 }
 
@@ -810,38 +1047,76 @@ function Invoke-OSDeployBridge {
         }
     $token = [string] $register.bearer_token
     $runId = [string] $register.run_id
+    Write-OSDeployConsoleStep -Step 'register' -State 'ok' -Message "run_id=$runId"
 
-    $package = Invoke-OSDeployRequest -BaseUrl $baseUrl `
-        -FallbackBaseUrl $fallbackUrl `
-        -Path "/api/osdeploy/v1/pe/package/$runId" `
-        -Method GET `
-        -BearerToken $token
+    $stepArgs = @{
+        BaseUrl = $baseUrl
+        FallbackBaseUrl = $fallbackUrl
+        RunId = $runId
+        BearerToken = $token
+    }
 
-    $stageRoot = Save-OSDeployRunPackage -Package $package -BearerToken $token
+    $package = Invoke-OSDeployPeStep @stepArgs -Name 'package' -ScriptBlock {
+        Invoke-OSDeployRequest -BaseUrl $baseUrl `
+            -FallbackBaseUrl $fallbackUrl `
+            -Path "/api/osdeploy/v1/pe/package/$runId" `
+            -Method GET `
+            -BearerToken $token
+    }
+
+    $stageRoot = Invoke-OSDeployPeStep @stepArgs -Name 'stage_package' -ScriptBlock {
+        Save-OSDeployRunPackage -Package $package -BearerToken $token
+    }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_pe_package_staged' `
         -Message 'OSDeploy run package staged in WinPE' `
         -Data @{ staged_root = $stageRoot }
 
-    $installImage = Find-OSDeployInstallImage
-    $artifact = Get-OSDeployObjectProperty -Value $package -Name 'artifact'
-    $imageIndex = [int] (Get-OSDeployObjectProperty -Value $artifact -Name 'apply_image_index')
-    if ($imageIndex -lt 1) {
-        $imageIndex = [int] (Get-OSDeployObjectProperty -Value $artifact -Name 'output_image_index')
+    $imageSelection = Invoke-OSDeployPeStep @stepArgs -Name 'locate_image' -ScriptBlock {
+        $installImage = Find-OSDeployInstallImage
+        $artifact = Get-OSDeployObjectProperty -Value $package -Name 'artifact'
+        $imageIndex = [int] (Get-OSDeployObjectProperty -Value $artifact -Name 'apply_image_index')
+        if ($imageIndex -lt 1) {
+            $imageIndex = [int] (Get-OSDeployObjectProperty -Value $artifact -Name 'output_image_index')
+        }
+        if ($imageIndex -lt 1) {
+            $imageIndex = [int] (Get-OSDeployObjectProperty -Value $artifact -Name 'image_index')
+        }
+        if ($imageIndex -lt 1) { $imageIndex = 1 }
+        [pscustomobject]@{
+            InstallImage = $installImage
+            ImageIndex = $imageIndex
+        }
     }
-    if ($imageIndex -lt 1) {
-        $imageIndex = [int] (Get-OSDeployObjectProperty -Value $artifact -Name 'image_index')
-    }
-    if ($imageIndex -lt 1) { $imageIndex = 1 }
+    $installImage = $imageSelection.InstallImage
+    $imageIndex = [int] $imageSelection.ImageIndex
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_install_image_found' `
         -Message 'OSDeploy install image located' `
         -Data @{ install_image = $installImage; image_index = $imageIndex }
 
+    Invoke-OSDeployPeStep @stepArgs -Name 'guard_existing_windows' -ScriptBlock {
+        $existingWindows = Test-OSDeployExistingWindowsInstall
+        if ($existingWindows.Found) {
+            Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
+                -RunId $runId -BearerToken $token -Phase 'pe' `
+                -EventType 'osdeploy_existing_windows_guard_blocked' `
+                -Severity 'error' `
+                -Message 'Existing Windows installation detected; refusing to clean disk' `
+                -Data @{
+                    root = $existingWindows.Root
+                    kernel_path = $existingWindows.KernelPath
+                }
+            throw "existing Windows installation detected at $($existingWindows.Root); refusing to clean disk"
+        }
+    } | Out-Null
+
     $firmwareType = Get-OSDeployFirmwareType
-    $disk = Initialize-OSDeploySystemDisk -FirmwareType $firmwareType
+    $disk = Invoke-OSDeployPeStep @stepArgs -Name 'partition' -ScriptBlock {
+        Initialize-OSDeploySystemDisk -FirmwareType $firmwareType
+    }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_disk_partitioned' `
@@ -852,17 +1127,30 @@ function Invoke-OSDeployBridge {
             firmware_type = $disk.FirmwareType
         }
 
-    Invoke-OSDeployImageApply `
-        -InstallImage $installImage `
-        -ImageIndex $imageIndex `
-        -WindowsDrive $disk.WindowsDrive
+    Invoke-OSDeployPeStep @stepArgs -Name 'apply_image' -ScriptBlock {
+        Invoke-OSDeployImageApply `
+            -InstallImage $installImage `
+            -ImageIndex $imageIndex `
+            -WindowsDrive $disk.WindowsDrive `
+            -BaseUrl $baseUrl `
+            -RunId $runId `
+            -BearerToken $token `
+            -FallbackBaseUrl $fallbackUrl
+    } | Out-Null
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_image_applied' `
         -Message 'OSDeploy Server image applied' `
         -Data @{ windows_root = $disk.WindowsRoot; image_index = $imageIndex }
 
-    $driverResult = Add-OSDeployVirtIODrivers -WindowsRoot $disk.WindowsRoot
+    $driverResult = Invoke-OSDeployPeStep @stepArgs -Name 'inject_drivers' -ScriptBlock {
+        Add-OSDeployVirtIODrivers `
+            -WindowsRoot $disk.WindowsRoot `
+            -BaseUrl $baseUrl `
+            -RunId $runId `
+            -BearerToken $token `
+            -FallbackBaseUrl $fallbackUrl
+    }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_drivers_applied' `
@@ -873,10 +1161,15 @@ function Invoke-OSDeployBridge {
             driver_paths = @($driverResult.DriverPaths)
         }
 
-    $osdRoot = Save-OSDeployOsdClientPackage `
-        -Package $package `
-        -WindowsRoot $disk.WindowsRoot `
-        -BearerToken $token
+    $osdRoot = Invoke-OSDeployPeStep @stepArgs -Name 'stage_osd_client' -ScriptBlock {
+        Save-OSDeployOsdClientPackage `
+            -Package $package `
+            -WindowsRoot $disk.WindowsRoot `
+            -BearerToken $token `
+            -BaseUrl $baseUrl `
+            -RunId $runId `
+            -FallbackBaseUrl $fallbackUrl
+    }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_setupcomplete_staged' `
@@ -886,30 +1179,40 @@ function Invoke-OSDeployBridge {
     $packageIdentity = Get-OSDeployObjectProperty -Value $package -Name 'identity'
     $packageServerSettings = Get-OSDeployObjectProperty -Value $package -Name 'server_settings'
     $packageArtifact = Get-OSDeployObjectProperty -Value $package -Name 'artifact'
-    $unattendPath = Add-OSDeployOfflineUnattend `
-        -WindowsRoot $disk.WindowsRoot `
-        -ComputerName (Get-OSDeployObjectProperty -Value $packageIdentity -Name 'computer_name') `
-        -Locale (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_language') `
-        -Version (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_version') `
-        -Edition (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_edition') `
-        -ImageName (Get-OSDeployObjectProperty -Value $packageArtifact -Name 'image_name')
+    $unattendPath = Invoke-OSDeployPeStep @stepArgs -Name 'stage_unattend' -ScriptBlock {
+        Add-OSDeployOfflineUnattend `
+            -WindowsRoot $disk.WindowsRoot `
+            -ComputerName (Get-OSDeployObjectProperty -Value $packageIdentity -Name 'computer_name') `
+            -Locale (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_language') `
+            -Version (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_version') `
+            -Edition (Get-OSDeployObjectProperty -Value $packageServerSettings -Name 'os_edition') `
+            -ImageName (Get-OSDeployObjectProperty -Value $packageArtifact -Name 'image_name')
+    }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_unattend_staged' `
         -Message 'OSDeploy offline unattend staged for first boot' `
         -Data @{ unattend = $unattendPath }
 
-    Invoke-OSDeployBootFiles `
-        -WindowsRoot $disk.WindowsRoot `
-        -SystemDrive $disk.SystemDrive `
-        -FirmwareType $disk.FirmwareType
+    Invoke-OSDeployPeStep @stepArgs -Name 'bcdboot' -ScriptBlock {
+        Invoke-OSDeployBootFiles `
+            -WindowsRoot $disk.WindowsRoot `
+            -SystemDrive $disk.SystemDrive `
+            -FirmwareType $disk.FirmwareType `
+            -BaseUrl $baseUrl `
+            -RunId $runId `
+            -BearerToken $token `
+            -FallbackBaseUrl $fallbackUrl
+    } | Out-Null
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
         -EventType 'osdeploy_boot_files_staged' `
         -Message 'OSDeploy boot files staged; stopping WinPE for disk boot handoff' `
         -Data @{ windows_root = $disk.WindowsRoot; system_drive = $disk.SystemDrive }
 
-    Stop-OSDeployWinPEForDiskBoot
+    Invoke-OSDeployPeStep @stepArgs -Name 'handoff' -ScriptBlock {
+        Stop-OSDeployWinPEForDiskBoot
+    } | Out-Null
 }
 
 if ($env:OSDEPLOY_BRIDGE_LIBRARY_ONLY -ne '1') {

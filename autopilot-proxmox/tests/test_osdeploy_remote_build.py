@@ -301,6 +301,68 @@ def test_osdeploy_bridge_applies_server_image_and_stages_v2_agent_package():
     assert "Restart-Computer" not in bridge
 
 
+def test_osdeploy_bridge_has_fixed_pe_step_progress_and_heartbeat_contract():
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    bridge = (
+        app_root / "tools" / "osdeploy-build" / "Invoke-OSDeployBridge.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "$script:OSDeployHeartbeatIntervalSeconds = 15" in bridge
+    assert "$script:OSDeployPeSteps = @(" in bridge
+    for step in (
+        "register",
+        "package",
+        "locate_image",
+        "guard_existing_windows",
+        "partition",
+        "apply_image",
+        "inject_drivers",
+        "stage_osd_client",
+        "stage_unattend",
+        "bcdboot",
+        "handoff",
+    ):
+        assert f"'{step}'" in bridge
+    assert "Invoke-OSDeployPeStep" in bridge
+    assert "osdeploy_pe_step_starting" in bridge
+    assert "osdeploy_pe_step_heartbeat" in bridge
+    assert "osdeploy_pe_step_ok" in bridge
+    assert "osdeploy_pe_step_error" in bridge
+    assert "Invoke-Expression" not in bridge
+
+
+def test_osdeploy_bridge_blocks_existing_windows_before_disk_clean():
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    bridge = (
+        app_root / "tools" / "osdeploy-build" / "Invoke-OSDeployBridge.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "Test-OSDeployExistingWindowsInstall" in bridge
+    assert "osdeploy_existing_windows_guard_blocked" in bridge
+    assert "Windows\\System32\\ntoskrnl.exe" in bridge
+    assert bridge.index("Test-OSDeployExistingWindowsInstall") < bridge.index(
+        "Initialize-OSDeploySystemDisk -FirmwareType $firmwareType"
+    )
+
+
+def test_osdeploy_bridge_verifies_staged_osd_client_file_hashes():
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    bridge = (
+        app_root / "tools" / "osdeploy-build" / "Invoke-OSDeployBridge.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "Verify-OSDeployStagedFileHash" in bridge
+    assert "staged file SHA256 mismatch" in bridge
+    assert "osdeploy_staged_file_verified" in bridge
+    assert "Save-OSDeployOsdClientPackage" in bridge
+
+
 def test_osdeploy_bridge_carries_agent_bootstrap_into_full_os_config():
     from pathlib import Path
 

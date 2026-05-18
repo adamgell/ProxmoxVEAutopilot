@@ -268,6 +268,10 @@ def test_v2_agent_package_returns_server_authored_config(osd_v2_client, pg_conn)
     assert body["config"]["bearer_token"]
     assert body["config"]["flask_base_url"] == ""
     assert any(file["path"].endswith("OsdClient.ps1") for file in body["files"])
+    for file in body["files"]:
+        assert file["sha256"]
+        assert len(file["sha256"]) == 64
+        assert file["size_bytes"] > 0
 
 
 def test_v2_agent_package_requires_bearer(osd_v2_client, pg_conn):

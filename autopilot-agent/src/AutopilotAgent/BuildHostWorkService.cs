@@ -382,6 +382,12 @@ Write-Output $destination
         {
             throw new FileNotFoundException("WinPE build script is missing.", scriptPath);
         }
+        var preflight = await RunBuildHostPreflightAsync(
+            work,
+            "build_winpe",
+            outputRoot,
+            sourceMediaPath: "",
+            cancellationToken);
         var virtioRoot = await StageVirtioDriversAsync(work, cancellationToken);
         var command = $"$ProgressPreference = 'SilentlyContinue'; $env:AUTOPILOT_VIRTIO_ROOT = '{PowerShellLiteral(virtioRoot)}'; & '{PowerShellLiteral(scriptPath)}' -Arch amd64 -OutputDir '{PowerShellLiteral(outputRoot)}'";
         var output = await RunPowerShellAsync(command, TimeSpan.FromHours(3), cancellationToken);
@@ -410,6 +416,7 @@ Write-Output $destination
         return new Dictionary<string, object?>
         {
             ["output_root"] = outputRoot,
+            ["preflight"] = preflight,
             ["uploads"] = uploads,
             ["stdout"] = Truncate(output.Stdout),
             ["stderr"] = Truncate(output.Stderr),
@@ -430,6 +437,12 @@ Write-Output $destination
             throw new FileNotFoundException("CloudOSD build script is missing.", scriptPath);
         }
         var osdCloudVersion = ReadString(work.Request, "osdcloud_version", "26.4.17.1");
+        var preflight = await RunBuildHostPreflightAsync(
+            work,
+            "build_cloudosd",
+            outputRoot,
+            sourceMediaPath: "",
+            cancellationToken);
         var virtioRoot = await StageVirtioDriversAsync(work, cancellationToken);
         var command = $"$ProgressPreference = 'SilentlyContinue'; $env:AUTOPILOT_VIRTIO_ROOT = '{PowerShellLiteral(virtioRoot)}'; & '{PowerShellLiteral(scriptPath)}' -Arch amd64 -OutputDir '{PowerShellLiteral(outputRoot)}' -OSDCloudVersion '{PowerShellLiteral(osdCloudVersion)}'";
         var output = await RunPowerShellAsync(command, TimeSpan.FromHours(3), cancellationToken);
@@ -458,6 +471,7 @@ Write-Output $destination
         return new Dictionary<string, object?>
         {
             ["output_root"] = outputRoot,
+            ["preflight"] = preflight,
             ["uploads"] = uploads,
             ["stdout"] = Truncate(output.Stdout),
             ["stderr"] = Truncate(output.Stderr),
@@ -493,6 +507,12 @@ Write-Output $destination
         var controllerUrl = ReadString(work.Request, "controller_url", config.ServerUrl ?? "").TrimEnd('/');
         var fallbackControllerUrl = ReadString(work.Request, "fallback_controller_url", "");
         var nativeMediaBuild = ReadBool(work.Request, "native_media_build", false);
+        var preflight = await RunBuildHostPreflightAsync(
+            work,
+            "build_osdeploy",
+            outputRoot,
+            sourceMediaPath,
+            cancellationToken);
         var command = $$"""
 $ProgressPreference = 'SilentlyContinue'
 $sourceMediaPath = '{{PowerShellLiteral(sourceMediaPath)}}'
@@ -570,10 +590,134 @@ $osDeployArgs.SourceMediaPath = $sourceMediaPath
         return new Dictionary<string, object?>
         {
             ["output_root"] = outputRoot,
+            ["preflight"] = preflight,
             ["uploads"] = uploads,
             ["stdout"] = Truncate(output.Stdout),
             ["stderr"] = Truncate(output.Stderr),
         };
+    }
+
+    private async Task<Dictionary<string, object?>> RunBuildHostPreflightAsync(
+        AgentWorkItem work,
+        string workload,
+        string outputRoot,
+        string sourceMediaPath,
+        CancellationToken cancellationToken)
+    {
+        var workRoot = WorkRoot(work);
+        var script = $$"""
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$checks = @()
+
+function Add-Check {
+  param(
+    [Parameter(Mandatory)][string] $Name,
+    [Parameter(Mandatory)][bool] $Ok,
+    [string] $Detail = ''
+  )
+  $script:checks += [pscustomobject]@{
+    name = $Name
+    ok = $Ok
+    detail = $Detail
+  }
+}
+
+function Test-WritableDirectory {
+  param([Parameter(Mandatory)][string] $Path)
+  try {
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    $probe = Join-Path $Path ".preflight-$([guid]::NewGuid().ToString('N')).tmp"
+    Set-Content -LiteralPath $probe -Value 'ok' -Encoding ASCII
+    Remove-Item -LiteralPath $probe -Force
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Test-VirtioInput {
+  $requiredInf = @('vioscsi.inf','netkvm.inf','vioser.inf')
+  $roots = @()
+  if ($env:AUTOPILOT_VIRTIO_ROOT) { $roots += $env:AUTOPILOT_VIRTIO_ROOT }
+  $roots += @(
+    'D:\virtio',
+    'D:\',
+    'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio-win',
+    'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio',
+    'C:\BuildRoot\inputs\virtio-win',
+    'C:\BuildRoot\inputs\virtio'
+  )
+  foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
+    if (-not (Test-Path -LiteralPath $root)) { continue }
+    $missing = $false
+    foreach ($inf in $requiredInf) {
+      if (-not (Get-ChildItem -LiteralPath $root -Recurse -Filter $inf -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        $missing = $true
+        break
+      }
+    }
+    if (-not $missing) { return $root }
+  }
+  return ''
+}
+
+function Resolve-SourceMedia {
+  param([string] $ConfiguredPath)
+  if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath) -and (Test-Path -LiteralPath $ConfiguredPath)) {
+    return $ConfiguredPath
+  }
+  $mounted = Get-PSDrive -PSProvider FileSystem |
+    ForEach-Object { $_.Root } |
+    Where-Object {
+      (Test-Path -LiteralPath (Join-Path $_ 'sources\install.wim')) -or
+      (Test-Path -LiteralPath (Join-Path $_ 'sources\install.esd'))
+    } |
+    Select-Object -First 1
+  if ($mounted) { return $mounted }
+  return ''
+}
+
+$kitsRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit"
+$oscdimg = Join-Path $kitsRoot 'Deployment Tools\amd64\Oscdimg\oscdimg.exe'
+$copype = Join-Path $kitsRoot 'Windows Preinstallation Environment\copype.cmd'
+$winpeWim = Join-Path $kitsRoot 'Windows Preinstallation Environment\amd64\en-us\winpe.wim'
+
+Add-Check -Name 'ADK Deployment Tools' -Ok (Test-Path -LiteralPath $oscdimg) -Detail $oscdimg
+Add-Check -Name 'WinPE add-on' -Ok ((Test-Path -LiteralPath $copype) -and (Test-Path -LiteralPath $winpeWim)) -Detail "$copype | $winpeWim"
+Add-Check -Name 'oscdimg.exe' -Ok (Test-Path -LiteralPath $oscdimg) -Detail $oscdimg
+Add-Check -Name 'copype.cmd' -Ok (Test-Path -LiteralPath $copype) -Detail $copype
+Add-Check -Name 'PowerShell/module availability' -Ok ($PSVersionTable.PSVersion.Major -ge 5) -Detail $PSVersionTable.PSVersion.ToString()
+Add-Check -Name 'writable work root' -Ok (Test-WritableDirectory -Path '{{PowerShellLiteral(workRoot)}}') -Detail '{{PowerShellLiteral(workRoot)}}'
+Add-Check -Name 'writable output root' -Ok (Test-WritableDirectory -Path '{{PowerShellLiteral(outputRoot)}}') -Detail '{{PowerShellLiteral(outputRoot)}}'
+$virtioRoot = Test-VirtioInput
+Add-Check -Name 'VirtIO input' -Ok (-not [string]::IsNullOrWhiteSpace($virtioRoot)) -Detail $virtioRoot
+
+$sourceMedia = Resolve-SourceMedia -ConfiguredPath '{{PowerShellLiteral(sourceMediaPath)}}'
+if ('{{PowerShellLiteral(workload)}}' -eq 'build_osdeploy') {
+  Add-Check -Name 'source media' -Ok (-not [string]::IsNullOrWhiteSpace($sourceMedia)) -Detail $sourceMedia
+}
+
+$blocking = @($checks | Where-Object { -not $_.ok } | ForEach-Object { $_.name })
+[pscustomobject]@{
+  event_type = 'osdeploy_build_host_preflight'
+  workload = '{{PowerShellLiteral(workload)}}'
+  ok = ($blocking.Count -eq 0)
+  checks = $checks
+  blocking_checks = $blocking
+} | ConvertTo-Json -Depth 6 -Compress
+""";
+        var output = await RunPowerShellAsync(script, TimeSpan.FromMinutes(5), cancellationToken);
+        var json = output.Stdout
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault(line => line.StartsWith("{", StringComparison.Ordinal))
+            ?? "{}";
+        var parsed = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+            json,
+            AgentConfig.JsonOptions()) ?? new Dictionary<string, object?>();
+        parsed["stdout"] = Truncate(output.Stdout);
+        parsed["stderr"] = Truncate(output.Stderr);
+        return parsed;
     }
 
     internal static IReadOnlyList<string> SelectOsDeployBuildOutputs(

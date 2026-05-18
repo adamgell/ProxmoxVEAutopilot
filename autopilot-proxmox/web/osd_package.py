@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from hashlib import sha256
 from pathlib import Path
 
 
@@ -37,6 +38,14 @@ def content_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def sha256_file(path: Path) -> str:
+    h = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def osd_client_files(root: Path | None = None) -> list[dict[str, str]]:
     package_root = root or files_dir()
     sources = [(package_root / relative_path, target_path)
@@ -46,6 +55,11 @@ def osd_client_files(root: Path | None = None) -> list[dict[str, str]]:
     if missing:
         raise FileNotFoundError(", ".join(missing))
     return [
-        {"path": target_path, "content_b64": content_b64(source_path)}
+        {
+            "path": target_path,
+            "content_b64": content_b64(source_path),
+            "sha256": sha256_file(source_path),
+            "size_bytes": source_path.stat().st_size,
+        }
         for source_path, target_path in sources
     ]

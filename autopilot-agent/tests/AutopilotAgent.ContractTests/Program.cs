@@ -268,6 +268,15 @@ static void VerifyBuildHostContracts()
         "Invoke-BoundedPowerShell -Name \"install-module-$($moduleSpec.Name)\" -TimeoutSeconds 2700",
         "Install-Module -Name '$($moduleSpec.Name)' -RequiredVersion '$($moduleSpec.RequiredVersion)' -Scope AllUsers -Force -AllowClobber",
         "OSDeploy build completed without producing an ISO",
+        "RunBuildHostPreflightAsync",
+        "osdeploy_build_host_preflight",
+        "ADK Deployment Tools",
+        "WinPE add-on",
+        "oscdimg.exe",
+        "copype.cmd",
+        "VirtIO input",
+        "source media",
+        "[\"preflight\"] = preflight",
     })
     {
         Assert(
