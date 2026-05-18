@@ -101,6 +101,37 @@ def test_device_detail_happy_path_renders_all_columns(client):
     assert 'href="/monitoring"' in r.text
 
 
+def test_device_detail_shows_known_credentials(client, monkeypatch):
+    from web import app as app_module
+
+    c, db = client
+    _seed_healthy_vm(db, vmid=105)
+    monkeypatch.setattr(
+        app_module,
+        "_known_credentials_for_vmid",
+        lambda vmid: [{
+            "source": "CloudOSD",
+            "label": "Local admin",
+            "username": "localadmin",
+            "password": "Mep7!Qav2",
+            "vm_name": "WrkGrp-8F47E090",
+            "run_url": "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5",
+            "updated_at": "2026-05-18T17:10:00+00:00",
+            "note": "Visible workgroup credential from the deployment run.",
+        }] if vmid == 105 else [],
+    )
+
+    r = c.get("/devices/105")
+
+    assert r.status_code == 200
+    assert "Known credentials" in r.text
+    assert "CloudOSD" in r.text
+    assert "Local admin" in r.text
+    assert "localadmin" in r.text
+    assert "Mep7!Qav2" in r.text
+    assert "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5" in r.text
+
+
 def test_device_detail_404_for_unknown_vmid(client):
     c, _ = client
     r = c.get("/devices/99999")

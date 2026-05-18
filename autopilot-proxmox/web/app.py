@@ -12983,6 +12983,59 @@ def _linkage_health(pve_row: dict, probe_row: dict) -> list[dict]:
     return checks
 
 
+def _known_credentials_for_vmid(vmid: int) -> list[dict]:
+    """Return operator-visible credentials already attached to known runs.
+
+    This intentionally does not decrypt the generic credential vault. It only
+    surfaces credentials that deployment records already mark as UI-visible,
+    such as CloudOSD local workgroup admins.
+    """
+    from web import db_pg
+
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    run_id,
+                    workflow_name,
+                    COALESCE(pve_vm_name, requested_vm_name, vm_name) AS vm_name,
+                    COALESCE(vmid, requested_vmid) AS matched_vmid,
+                    local_admin_json,
+                    updated_at
+                FROM cloudosd_runs
+                WHERE COALESCE(vmid, requested_vmid) = %s
+                  AND COALESCE(local_admin_json->>'username', '') <> ''
+                  AND COALESCE(local_admin_json->>'password', '') <> ''
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 10
+                """,
+                (vmid,),
+            ).fetchall()
+    except Exception:
+        return []
+
+    credentials = []
+    for row in rows:
+        local_admin = row.get("local_admin_json") or {}
+        username = str(local_admin.get("username") or "").strip()
+        password = str(local_admin.get("password") or "").strip()
+        if not (username and password):
+            continue
+        credentials.append({
+            "source": "CloudOSD",
+            "label": "Local admin",
+            "username": username,
+            "password": password,
+            "vm_name": row.get("vm_name") or "",
+            "run_id": str(row.get("run_id") or ""),
+            "run_url": f"/cloudosd/runs/{row['run_id']}" if row.get("run_id") else "",
+            "updated_at": row.get("updated_at"),
+            "note": "Visible workgroup credential from the deployment run.",
+        })
+    return credentials
+
+
 @app.get("/devices/{vmid}", response_class=HTMLResponse)
 def page_device_detail(request: Request, vmid: int):
     from web import device_regression, monitoring_view
@@ -13006,6 +13059,7 @@ def page_device_detail(request: Request, vmid: int):
     ad_matches = _json_obj((probe_dict or {}).get("ad_matches_json"), [])
     entra_matches = _json_obj((probe_dict or {}).get("entra_matches_json"), [])
     intune_matches = _json_obj((probe_dict or {}).get("intune_matches_json"), [])
+    known_credentials = _known_credentials_for_vmid(vmid)
     return templates.TemplateResponse("device_detail.html", {
         "request": request,
         "vmid": vmid,
@@ -13015,6 +13069,7 @@ def page_device_detail(request: Request, vmid: int):
         "entra_matches": entra_matches,
         "intune_matches": intune_matches,
         "linkage": linkage,
+        "known_credentials": known_credentials,
         "timeline": timeline,
         "history": history,
     })
