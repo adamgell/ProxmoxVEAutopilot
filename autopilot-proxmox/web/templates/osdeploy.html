@@ -558,8 +558,12 @@
       target.textContent = list.length ? list.map(formatRoleField).join(", ") : emptyText;
     }
 
+    function selectedOsdeployRole() {
+      return byId("osdeploy_server_role")?.value || "base";
+    }
+
     function renderRoleOptions() {
-      const role = byId("osdeploy_server_role")?.value || "base";
+      const role = selectedOsdeployRole();
       const metadata = osdeployState.roleCatalog[role] || {};
       const title = byId("osdeployRoleVariablesTitle");
       const readiness = byId("osdeployRoleReadiness");
@@ -579,6 +583,11 @@
       document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
         panel.classList.toggle("active", panel.dataset.roleOptionsPanel === role);
       });
+      osdeployState.renderedRole = role;
+    }
+
+    function syncRoleOptionsFromSelectedRole() {
+      if (osdeployState.renderedRole !== selectedOsdeployRole()) renderRoleOptions();
     }
 
     function osdeployFormPayload() {
@@ -655,6 +664,7 @@
     }
 
     function scheduleOsdeployPreflight() {
+      syncRoleOptionsFromSelectedRole();
       window.clearTimeout(osdeployState.timer);
       osdeployState.timer = window.setTimeout(runOsdeployPreflight, 500);
       renderOsdeployReview();
@@ -698,11 +708,21 @@
       fillSelect("osdeploy_network_bridge", osdeployState.options.bridges, osdeployState.options.defaults.bridge);
       const form = byId("osdeployRunForm");
       if (form) {
-        form.addEventListener("input", scheduleOsdeployPreflight);
-        form.addEventListener("change", () => {
-          renderRoleOptions();
+        form.addEventListener("input", () => {
+          syncRoleOptionsFromSelectedRole();
           scheduleOsdeployPreflight();
         });
+        form.addEventListener("change", () => {
+          syncRoleOptionsFromSelectedRole();
+          scheduleOsdeployPreflight();
+        });
+      }
+      const roleSelect = byId("osdeploy_server_role");
+      if (roleSelect) {
+        roleSelect.addEventListener("input", renderRoleOptions);
+        roleSelect.addEventListener("change", renderRoleOptions);
+        roleSelect.addEventListener("blur", renderRoleOptions);
+        window.setInterval(syncRoleOptionsFromSelectedRole, 250);
       }
       if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
       if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);

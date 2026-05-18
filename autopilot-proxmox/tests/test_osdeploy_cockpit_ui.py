@@ -81,6 +81,9 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert 'id="osdeployRoleReadiness"' in template
     assert 'data-role-empty' in template
     assert "formatRoleField" in template
+    assert "selectedOsdeployRole" in template
+    assert "syncRoleOptionsFromSelectedRole" in template
+    assert "window.setInterval(syncRoleOptionsFromSelectedRole" in template
     assert ".osdeploy-builder-form > label { min-width:0;" in template
     assert ".osdeploy-builder-form select" in template
     assert "text-overflow:ellipsis" in template
