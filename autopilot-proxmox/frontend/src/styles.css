@@ -16,9 +16,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    radial-gradient(900px 460px at 40% -20%, rgba(0, 105, 168, 0.28), transparent 62%),
-    #0a0d14;
+  background: #0a0d14;
 }
 
 a {
@@ -113,6 +111,263 @@ h2 {
   font-weight: 700;
 }
 
+.console {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
+}
+
+.console__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 0 0 18px;
+  border-bottom: 1px solid #262b39;
+  font-size: 14px;
+}
+
+.console__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 22px 0;
+}
+
+.console__eyebrow {
+  margin: 0 0 8px;
+  color: #8fce1a;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.socket-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid #384154;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 18px;
+  border: 1px solid #262b39;
+  background: #262b39;
+}
+
+.metric-strip div {
+  min-width: 0;
+  padding: 14px;
+  background: #111722;
+}
+
+.metric-strip span {
+  display: block;
+  margin-bottom: 6px;
+  color: #9aa8ba;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.metric-strip strong {
+  display: block;
+  color: #f5f7fb;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.panel {
+  min-width: 0;
+  padding: 16px 0;
+  border-top: 1px solid #262b39;
+}
+
+.panel h2 {
+  margin-bottom: 12px;
+}
+
+.row-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.row-list li {
+  display: grid;
+  grid-template-columns: max-content minmax(110px, 0.7fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid #202637;
+}
+
+.row-list strong,
+.row-list span,
+.jobs-table td,
+.jobs-table th {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-width: 72px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #4b5566;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status--good {
+  border-color: #4f7f24;
+  color: #b7f06a;
+}
+
+.status--active {
+  border-color: #237299;
+  color: #80d6ff;
+}
+
+.status--bad {
+  border-color: #98544f;
+  color: #ffb1aa;
+}
+
+.empty,
+.notice {
+  margin: 0;
+  color: #9aa8ba;
+  font-size: 14px;
+}
+
+.notice {
+  margin-bottom: 16px;
+  color: #ffb1aa;
+}
+
+.fleet-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid #262b39;
+  background: #262b39;
+}
+
+.fleet-grid div {
+  min-width: 0;
+  padding: 12px;
+  background: #111722;
+}
+
+.fleet-grid dt {
+  color: #9aa8ba;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fleet-grid dd {
+  margin: 6px 0 0;
+  color: #f5f7fb;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.link-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.link-grid a {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #384154;
+  background: #111722;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.filter {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  color: #9aa8ba;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.filter input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #384154;
+  border-radius: 0;
+  color: #f5f7fb;
+  background: #111722;
+  font: inherit;
+  font-weight: 400;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.jobs-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.jobs-table th,
+.jobs-table td {
+  padding: 10px;
+  border-bottom: 1px solid #202637;
+  text-align: left;
+  vertical-align: top;
+}
+
+.jobs-table th {
+  color: #9aa8ba;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.jobs-table--compact {
+  min-width: 620px;
+}
+
 @media (max-width: 720px) {
   .shell__hero {
     grid-template-columns: 1fr;
@@ -120,5 +375,24 @@ h2 {
 
   .shell__status {
     justify-items: start;
+  }
+
+  .console__header {
+    display: grid;
+  }
+
+  .metric-strip,
+  .dashboard-grid,
+  .fleet-grid,
+  .link-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .row-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .jobs-table {
+    min-width: 640px;
   }
 }

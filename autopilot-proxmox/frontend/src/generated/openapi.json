@@ -838,6 +838,42 @@
         "title": "BuildHostRepairBody",
         "type": "object"
       },
+      "CockpitSummaryResponse": {
+        "properties": {
+          "fleet": {
+            "$ref": "#/components/schemas/FleetSummaryResponse"
+          },
+          "jobs": {
+            "$ref": "#/components/schemas/RunningJobsResponse"
+          },
+          "monitoring": {
+            "$ref": "#/components/schemas/MonitoringSummaryResponse"
+          },
+          "readiness_score": {
+            "default": 0,
+            "title": "Readiness Score",
+            "type": "integer"
+          },
+          "recent_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/RecentJobResponse"
+            },
+            "title": "Recent Jobs",
+            "type": "array"
+          },
+          "services": {
+            "$ref": "#/components/schemas/ServicesResponse"
+          }
+        },
+        "required": [
+          "jobs",
+          "services",
+          "fleet",
+          "monitoring"
+        ],
+        "title": "CockpitSummaryResponse",
+        "type": "object"
+      },
       "ContentItemCreateBody": {
         "properties": {
           "content_type": {
@@ -978,6 +1014,18 @@
           "source_uri"
         ],
         "title": "ContentVersionCreateBody",
+        "type": "object"
+      },
+      "FleetSummaryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "FleetSummaryResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1319,6 +1367,111 @@
         "title": "InstallTrackingUpdate",
         "type": "object"
       },
+      "JobTableRowResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "ended": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "playbook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playbook"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "JobTableRowResponse",
+        "type": "object"
+      },
+      "MonitoringSummaryResponse": {
+        "properties": {
+          "ad": {
+            "default": 0,
+            "title": "Ad",
+            "type": "integer"
+          },
+          "devices": {
+            "default": 0,
+            "title": "Devices",
+            "type": "integer"
+          },
+          "entra": {
+            "default": 0,
+            "title": "Entra",
+            "type": "integer"
+          },
+          "intune": {
+            "default": 0,
+            "title": "Intune",
+            "type": "integer"
+          }
+        },
+        "title": "MonitoringSummaryResponse",
+        "type": "object"
+      },
       "OsdRegisterBody": {
         "properties": {
           "computer_name": {
@@ -1461,6 +1614,93 @@
         "title": "RebootingBody",
         "type": "object"
       },
+      "RecentJobResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "duration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "ended": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "playbook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playbook"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "RecentJobResponse",
+        "type": "object"
+      },
+      "RecentJobsResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/RecentJobResponse"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "title": "RecentJobsResponse",
+        "type": "object"
+      },
       "RegisterBody": {
         "properties": {
           "build_sha": {
@@ -1530,6 +1770,79 @@
           "mac"
         ],
         "title": "RunIdentityBody",
+        "type": "object"
+      },
+      "RunningJobResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "elapsed_seconds": {
+            "default": 0,
+            "title": "Elapsed Seconds",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "playbook": {
+            "default": "",
+            "title": "Playbook",
+            "type": "string"
+          },
+          "progress_pct": {
+            "default": 0,
+            "title": "Progress Pct",
+            "type": "integer"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "RunningJobResponse",
+        "type": "object"
+      },
+      "RunningJobsResponse": {
+        "properties": {
+          "queued_count": {
+            "default": 0,
+            "title": "Queued Count",
+            "type": "integer"
+          },
+          "running": {
+            "items": {
+              "$ref": "#/components/schemas/RunningJobResponse"
+            },
+            "title": "Running",
+            "type": "array"
+          },
+          "running_count": {
+            "default": 0,
+            "title": "Running Count",
+            "type": "integer"
+          }
+        },
+        "title": "RunningJobsResponse",
         "type": "object"
       },
       "SequenceCompileBody": {
@@ -1692,6 +2005,30 @@
           "position"
         ],
         "title": "SequenceStepCreateBody",
+        "type": "object"
+      },
+      "ServicesResponse": {
+        "properties": {
+          "available": {
+            "default": true,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "title": "ServicesResponse",
         "type": "object"
       },
       "StepLogBody": {
@@ -6227,7 +6564,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/CockpitSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6581,7 +6920,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6977,7 +7318,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobTableRowResponse"
+                  },
+                  "title": "Response Api List Jobs Api Jobs Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -7152,7 +7499,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RecentJobsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -7179,7 +7528,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RunningJobsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -10293,7 +10644,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ServicesResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -14525,24 +14878,6 @@
           }
         },
         "summary": "Provision Page"
-      }
-    },
-    "/react-shell": {
-      "get": {
-        "operationId": "react_shell_react_shell_get",
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "React Shell"
       }
     },
     "/runs": {

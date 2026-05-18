@@ -4,23 +4,79 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from web import auth
 
 
 def test_react_shell_auth_boundary_is_narrow():
     assert auth.is_exempt_path("/static/react/assets/app.js")
     assert not auth.is_exempt_path("/react-shell")
+    assert not auth.is_exempt_path("/react/dashboard")
+    assert not auth.is_exempt_path("/react/jobs")
+    assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/app")
+    assert not auth.is_exempt_path("/app/jobs")
     assert not auth.is_exempt_path("/openapi.json")
 
 
-def test_react_shell_route_renders_authenticated_bootstrap(web_client):
-    response = web_client.get("/react-shell")
+@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs"])
+def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
+    response = web_client.get(path)
 
     assert response.status_code == 200
     assert 'id="react-root"' in response.text
     assert 'data-react-shell="protected"' in response.text
     assert "Proxmox VE Autopilot" in response.text
+
+
+def test_react_read_api_response_shapes(web_client):
+    jobs = web_client.get("/api/jobs")
+    assert jobs.status_code == 200
+    assert isinstance(jobs.json(), list)
+
+    running = web_client.get("/api/jobs/running")
+    assert running.status_code == 200
+    assert set(running.json()) >= {"running", "running_count", "queued_count"}
+    assert isinstance(running.json()["running"], list)
+
+    recent = web_client.get("/api/jobs/recent?limit=5")
+    assert recent.status_code == 200
+    assert set(recent.json()) >= {"jobs"}
+    assert isinstance(recent.json()["jobs"], list)
+
+    services = web_client.get("/api/services")
+    assert services.status_code == 200
+    assert set(services.json()) >= {"services", "available"}
+    assert isinstance(services.json()["services"], list)
+
+    fleet = web_client.get("/api/fleet/summary")
+    assert fleet.status_code == 200
+    assert "total" in fleet.json()
+
+    summary = web_client.get("/api/cockpit/summary")
+    assert summary.status_code == 200
+    body = summary.json()
+    assert set(body) >= {
+        "readiness_score",
+        "jobs",
+        "recent_jobs",
+        "services",
+        "fleet",
+        "monitoring",
+    }
+    assert set(body["jobs"]) >= {"running", "running_count", "queued_count"}
+
+
+def test_live_jobs_payload_contract(web_client):
+    from web import app as web_app
+
+    payload = web_app._live_jobs_payload()
+
+    assert set(payload) >= {"running", "recent", "table", "generated_at"}
+    assert set(payload["running"]) >= {"running", "running_count", "queued_count"}
+    assert "jobs" in payload["recent"]
+    assert "jobs" in payload["table"]
 
 
 def test_openapi_export_script_uses_local_app_import(tmp_path):

@@ -11,7 +11,7 @@ import time
 import urllib3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import requests
@@ -22,7 +22,7 @@ from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from web.jobs import JobManager
 from web import devices_pg as devices_db
@@ -4295,6 +4295,88 @@ def _live_jobs_payload() -> dict:
     }
 
 
+class ApiExtraModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class JobTableRowResponse(ApiExtraModel):
+    id: str
+    playbook: str | None = None
+    status: str | None = None
+    started: str | None = None
+    ended: str | None = None
+    duration: str | None = None
+    args: dict[str, Any] = Field(default_factory=dict)
+    paused: bool = False
+
+
+class RecentJobResponse(ApiExtraModel):
+    id: str
+    playbook: str | None = None
+    status: str | None = None
+    started: str | None = None
+    ended: str | None = None
+    duration: str | None = None
+    target: str = ""
+
+
+class RunningJobResponse(ApiExtraModel):
+    id: str
+    playbook: str = ""
+    target: str = ""
+    started: str | None = None
+    elapsed_seconds: int = 0
+    progress_pct: int = 0
+    paused: bool = False
+
+
+class RunningJobsResponse(BaseModel):
+    running: list[RunningJobResponse] = Field(default_factory=list)
+    running_count: int = 0
+    queued_count: int = 0
+
+
+class RecentJobsResponse(BaseModel):
+    jobs: list[RecentJobResponse] = Field(default_factory=list)
+
+
+class JobsTableResponse(BaseModel):
+    jobs: list[JobTableRowResponse] = Field(default_factory=list)
+
+
+class LiveJobsPayloadResponse(BaseModel):
+    running: RunningJobsResponse
+    recent: RecentJobsResponse
+    table: JobsTableResponse
+    generated_at: str
+
+
+class ServicesResponse(BaseModel):
+    services: list[dict[str, Any]] = Field(default_factory=list)
+    available: bool = True
+    error: str = ""
+
+
+class FleetSummaryResponse(ApiExtraModel):
+    total: int = 0
+
+
+class MonitoringSummaryResponse(BaseModel):
+    devices: int = 0
+    ad: int = 0
+    entra: int = 0
+    intune: int = 0
+
+
+class CockpitSummaryResponse(BaseModel):
+    readiness_score: int = 0
+    jobs: RunningJobsResponse
+    recent_jobs: list[RecentJobResponse] = Field(default_factory=list)
+    services: ServicesResponse
+    fleet: FleetSummaryResponse
+    monitoring: MonitoringSummaryResponse
+
+
 class InstallTrackingUpdate(BaseModel):
     status: str = Field(..., min_length=1, max_length=32)
     detail: str = Field("", max_length=2000)
@@ -4370,8 +4452,7 @@ async def home(request: Request):
     })
 
 
-@app.get("/react-shell", response_class=HTMLResponse)
-async def react_shell(request: Request):
+def _render_react_shell(request: Request):
     assets = _react_asset_tags()
     return templates.TemplateResponse("react_shell.html", {
         "request": request,
@@ -4380,6 +4461,21 @@ async def react_shell(request: Request):
         "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
         "build_time": _APP_VERSION.get("build_time", ""),
     })
+
+
+@app.get("/react-shell", response_class=HTMLResponse, include_in_schema=False)
+async def react_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def react_dashboard_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/jobs", response_class=HTMLResponse, include_in_schema=False)
+async def react_jobs_shell(request: Request):
+    return _render_react_shell(request)
 
 
 @app.get("/install-tracking", response_class=HTMLResponse)
@@ -9119,9 +9215,9 @@ async def start_upload(
     return RedirectResponse("/hashes?uploaded=1", status_code=303)
 
 
-@app.get("/api/jobs")
+@app.get("/api/jobs", response_model=list[JobTableRowResponse])
 async def api_list_jobs():
-    return job_manager.list_jobs()
+    return _job_table_rows()
 
 
 @app.post("/api/jobs/{job_id}/kill")
@@ -9154,7 +9250,7 @@ if os.environ.get("AUTOPILOT_ENABLE_TEST_JOBS") == "1":
         return {"id": entry["id"]}
 
 
-@app.get("/api/jobs/recent")
+@app.get("/api/jobs/recent", response_model=RecentJobsResponse)
 async def api_recent_jobs(limit: int = 5):
     """Return the N most recently-started jobs, newest first.
 
@@ -9166,7 +9262,7 @@ async def api_recent_jobs(limit: int = 5):
     return _recent_jobs_payload(limit=limit)
 
 
-@app.get("/api/jobs/running")
+@app.get("/api/jobs/running", response_model=RunningJobsResponse)
 async def api_running_jobs():
     """Return currently-running jobs with elapsed seconds + a
     rough progress estimate (0-99).
@@ -9178,12 +9274,15 @@ async def api_running_jobs():
     return _running_jobs_payload()
 
 
-@app.get("/api/services")
+@app.get("/api/services", response_model=ServicesResponse)
 async def api_services():
     """Read per-service heartbeats from the PostgreSQL service_health table."""
     from web import service_health_pg
 
-    return {"services": service_health_pg.list_services(), "available": True}
+    try:
+        return {"services": service_health_pg.list_services(), "available": True, "error": ""}
+    except Exception as exc:
+        return {"services": [], "available": False, "error": str(exc)}
 
 
 def _docker_client():
@@ -9297,7 +9396,7 @@ async def api_monitoring_service_logs(request: Request):
     }
 
 
-@app.get("/api/fleet/summary")
+@app.get("/api/fleet/summary", response_model=FleetSummaryResponse)
 async def api_fleet_summary():
     """Fleet enrollment counts + percentages from the most-recent
     sweep's ``device_probes`` rows.
@@ -9313,7 +9412,7 @@ async def api_fleet_summary():
         return {"total": 0}
 
 
-@app.get("/api/cockpit/summary")
+@app.get("/api/cockpit/summary", response_model=CockpitSummaryResponse)
 async def api_cockpit_summary():
     """Aggregate the existing dashboard data sources for the cockpit UI.
 

@@ -587,6 +587,24 @@ export type BuildHostRepairBody = {
 };
 
 /**
+ * CockpitSummaryResponse
+ */
+export type CockpitSummaryResponse = {
+    fleet: FleetSummaryResponse;
+    jobs: RunningJobsResponse;
+    monitoring: MonitoringSummaryResponse;
+    /**
+     * Readiness Score
+     */
+    readiness_score?: number;
+    /**
+     * Recent Jobs
+     */
+    recent_jobs?: Array<RecentJobResponse>;
+    services: ServicesResponse;
+};
+
+/**
  * ContentItemCreateBody
  */
 export type ContentItemCreateBody = {
@@ -678,6 +696,17 @@ export type ContentVersionCreateBody = {
      * Version
      */
     version: string;
+};
+
+/**
+ * FleetSummaryResponse
+ */
+export type FleetSummaryResponse = {
+    /**
+     * Total
+     */
+    total?: number;
+    [key: string]: unknown;
 };
 
 /**
@@ -841,6 +870,69 @@ export type InstallTrackingUpdate = {
 };
 
 /**
+ * JobTableRowResponse
+ */
+export type JobTableRowResponse = {
+    /**
+     * Args
+     */
+    args?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Duration
+     */
+    duration?: string | null;
+    /**
+     * Ended
+     */
+    ended?: string | null;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Paused
+     */
+    paused?: boolean;
+    /**
+     * Playbook
+     */
+    playbook?: string | null;
+    /**
+     * Started
+     */
+    started?: string | null;
+    /**
+     * Status
+     */
+    status?: string | null;
+    [key: string]: unknown;
+};
+
+/**
+ * MonitoringSummaryResponse
+ */
+export type MonitoringSummaryResponse = {
+    /**
+     * Ad
+     */
+    ad?: number;
+    /**
+     * Devices
+     */
+    devices?: number;
+    /**
+     * Entra
+     */
+    entra?: number;
+    /**
+     * Intune
+     */
+    intune?: number;
+};
+
+/**
  * OsdRegisterBody
  */
 export type OsdRegisterBody = {
@@ -931,6 +1023,51 @@ export type RebootingBody = {
 };
 
 /**
+ * RecentJobResponse
+ */
+export type RecentJobResponse = {
+    /**
+     * Duration
+     */
+    duration?: string | null;
+    /**
+     * Ended
+     */
+    ended?: string | null;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Playbook
+     */
+    playbook?: string | null;
+    /**
+     * Started
+     */
+    started?: string | null;
+    /**
+     * Status
+     */
+    status?: string | null;
+    /**
+     * Target
+     */
+    target?: string;
+    [key: string]: unknown;
+};
+
+/**
+ * RecentJobsResponse
+ */
+export type RecentJobsResponse = {
+    /**
+     * Jobs
+     */
+    jobs?: Array<RecentJobResponse>;
+};
+
+/**
  * RegisterBody
  */
 export type RegisterBody = {
@@ -972,6 +1109,59 @@ export type RunIdentityBody = {
      * Vmid
      */
     vmid: number;
+};
+
+/**
+ * RunningJobResponse
+ */
+export type RunningJobResponse = {
+    /**
+     * Elapsed Seconds
+     */
+    elapsed_seconds?: number;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Paused
+     */
+    paused?: boolean;
+    /**
+     * Playbook
+     */
+    playbook?: string;
+    /**
+     * Progress Pct
+     */
+    progress_pct?: number;
+    /**
+     * Started
+     */
+    started?: string | null;
+    /**
+     * Target
+     */
+    target?: string;
+    [key: string]: unknown;
+};
+
+/**
+ * RunningJobsResponse
+ */
+export type RunningJobsResponse = {
+    /**
+     * Queued Count
+     */
+    queued_count?: number;
+    /**
+     * Running
+     */
+    running?: Array<RunningJobResponse>;
+    /**
+     * Running Count
+     */
+    running_count?: number;
 };
 
 /**
@@ -1094,6 +1284,26 @@ export type SequenceStepCreateBody = {
     variables?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * ServicesResponse
+ */
+export type ServicesResponse = {
+    /**
+     * Available
+     */
+    available?: boolean;
+    /**
+     * Error
+     */
+    error?: string;
+    /**
+     * Services
+     */
+    services?: Array<{
+        [key: string]: unknown;
+    }>;
 };
 
 /**
@@ -3931,8 +4141,10 @@ export type ApiCockpitSummaryApiCockpitSummaryGetResponses = {
     /**
      * Successful Response
      */
-    200: unknown;
+    200: CockpitSummaryResponse;
 };
+
+export type ApiCockpitSummaryApiCockpitSummaryGetResponse = ApiCockpitSummaryApiCockpitSummaryGetResponses[keyof ApiCockpitSummaryApiCockpitSummaryGetResponses];
 
 export type ListGlobalContentItemsApiContentItemsGetData = {
     body?: never;
@@ -4173,8 +4385,10 @@ export type ApiFleetSummaryApiFleetSummaryGetResponses = {
     /**
      * Successful Response
      */
-    200: unknown;
+    200: FleetSummaryResponse;
 };
+
+export type ApiFleetSummaryApiFleetSummaryGetResponse = ApiFleetSummaryApiFleetSummaryGetResponses[keyof ApiFleetSummaryApiFleetSummaryGetResponses];
 
 export type DeleteHashesApiHashesDeletePostData = {
     body: BodyDeleteHashesApiHashesDeletePost;
@@ -4440,10 +4654,14 @@ export type ApiListJobsApiJobsGetData = {
 
 export type ApiListJobsApiJobsGetResponses = {
     /**
+     * Response Api List Jobs Api Jobs Get
+     *
      * Successful Response
      */
-    200: unknown;
+    200: Array<JobTableRowResponse>;
 };
+
+export type ApiListJobsApiJobsGetResponse = ApiListJobsApiJobsGetResponses[keyof ApiListJobsApiJobsGetResponses];
 
 export type StartBulkCaptureApiJobsBulkCapturePostData = {
     body: BodyStartBulkCaptureApiJobsBulkCapturePost;
@@ -4562,8 +4780,10 @@ export type ApiRecentJobsApiJobsRecentGetResponses = {
     /**
      * Successful Response
      */
-    200: unknown;
+    200: RecentJobsResponse;
 };
+
+export type ApiRecentJobsApiJobsRecentGetResponse = ApiRecentJobsApiJobsRecentGetResponses[keyof ApiRecentJobsApiJobsRecentGetResponses];
 
 export type ApiRunningJobsApiJobsRunningGetData = {
     body?: never;
@@ -4576,8 +4796,10 @@ export type ApiRunningJobsApiJobsRunningGetResponses = {
     /**
      * Successful Response
      */
-    200: unknown;
+    200: RunningJobsResponse;
 };
+
+export type ApiRunningJobsApiJobsRunningGetResponse = ApiRunningJobsApiJobsRunningGetResponses[keyof ApiRunningJobsApiJobsRunningGetResponses];
 
 export type StartTemplateApiJobsTemplatePostData = {
     body?: BodyStartTemplateApiJobsTemplatePost;
@@ -6654,8 +6876,10 @@ export type ApiServicesApiServicesGetResponses = {
     /**
      * Successful Response
      */
-    200: unknown;
+    200: ServicesResponse;
 };
+
+export type ApiServicesApiServicesGetResponse = ApiServicesApiServicesGetResponses[keyof ApiServicesApiServicesGetResponses];
 
 export type SaveSettingsApiSettingsPostData = {
     body?: never;
@@ -9574,22 +9798,6 @@ export type ProvisionPageProvisionGetResponses = {
 };
 
 export type ProvisionPageProvisionGetResponse = ProvisionPageProvisionGetResponses[keyof ProvisionPageProvisionGetResponses];
-
-export type ReactShellReactShellGetData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/react-shell';
-};
-
-export type ReactShellReactShellGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type ReactShellReactShellGetResponse = ReactShellReactShellGetResponses[keyof ReactShellReactShellGetResponses];
 
 export type RunsPageRunsGetData = {
     body?: never;
