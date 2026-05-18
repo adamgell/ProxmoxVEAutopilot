@@ -71,7 +71,14 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     template = (ROOT / "web/templates/osdeploy.html").read_text(encoding="utf-8")
 
     assert 'id="osdeployRunForm"' in template
-    assert 'class="osdeploy-grid osdeploy-builder-form"' in template
+    assert 'class="osdeploy-builder-form"' in template
+    assert 'id="osdeployBuilderActionBar"' in template
+    assert 'id="osdeployTargetSection"' in template
+    assert 'id="osdeployPlacementSection"' in template
+    assert 'id="osdeployImageSection"' in template
+    assert "Target" in template
+    assert "Placement" in template
+    assert "Image" in template
     assert 'class="osdeploy-field osdeploy-field-artifact"' in template
     assert 'id="osdeployRoleVariables"' in template
     assert 'id="osdeployRoleVariablesTitle"' in template
@@ -91,7 +98,8 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "const roleCatalog = {{ catalog.role_catalog | tojson | safe }}" in template
     assert "const renderRoleVariables = () =>" in template
     assert "window.setInterval(renderRoleVariables" in template
-    assert ".osdeploy-builder-form > label { min-width:0;" in template
+    assert ".osdeploy-builder-section label { min-width:0;" in template
+    assert ".osdeploy-results-grid" in template
     assert ".osdeploy-builder-form select" in template
     assert "text-overflow:ellipsis" in template
     assert 'id="osdeploy_artifact_id"' in template
