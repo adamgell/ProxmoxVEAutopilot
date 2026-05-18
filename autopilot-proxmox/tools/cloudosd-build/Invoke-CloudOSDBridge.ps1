@@ -317,7 +317,8 @@ function Add-PVEAutopilotOobeSystemUnattend {
         [Parameter(Mandatory)] [System.Xml.XmlDocument] $Xml,
         [Parameter(Mandatory)] [System.Xml.XmlElement] $RootElement,
         [Parameter(Mandatory)] [System.Xml.XmlNamespaceManager] $NamespaceManager,
-        [Parameter(Mandatory)] [string] $UnattendNamespace
+        [Parameter(Mandatory)] [string] $UnattendNamespace,
+        [AllowNull()] [object] $LocalAdmin
     )
 
     $settings = $RootElement.SelectSingleNode("u:settings[@pass='oobeSystem']", $NamespaceManager)
@@ -358,8 +359,12 @@ function Add-PVEAutopilotOobeSystemUnattend {
             -Value $entry.Value | Out-Null
     }
 
-    $bootstrapUser = 'PVEAutopilot'
-    $bootstrapPassword = New-PVEAutopilotOobeBootstrapPassword
+    $bootstrapUser = [string] (Get-CloudOSDObjectProperty -Value $LocalAdmin -Name 'username')
+    $bootstrapPassword = [string] (Get-CloudOSDObjectProperty -Value $LocalAdmin -Name 'password')
+    if ([string]::IsNullOrWhiteSpace($bootstrapUser) -or [string]::IsNullOrWhiteSpace($bootstrapPassword)) {
+        $bootstrapUser = 'PVEAutopilot'
+        $bootstrapPassword = New-PVEAutopilotOobeBootstrapPassword
+    }
     $userAccounts = $shellComponent.SelectSingleNode('u:UserAccounts', $NamespaceManager)
     if (-not $userAccounts) {
         $userAccounts = $Xml.CreateElement('UserAccounts', $UnattendNamespace)
@@ -928,7 +933,8 @@ function Add-PVEAutopilotSpecializeUnattend {
     param(
         [Parameter(Mandatory)] [string] $WindowsRoot,
         [string] $ComputerName,
-        [object] $DomainJoin
+        [object] $DomainJoin,
+        [object] $LocalAdmin
     )
 
     $pantherRoot = Join-Path $WindowsRoot 'Panther'
@@ -1042,7 +1048,8 @@ function Add-PVEAutopilotSpecializeUnattend {
     Add-PVEAutopilotOobeSystemUnattend -Xml $xml `
         -RootElement $rootElement `
         -NamespaceManager $ns `
-        -UnattendNamespace $unattendNs
+        -UnattendNamespace $unattendNs `
+        -LocalAdmin $LocalAdmin
 
     $writerSettings = New-Object System.Xml.XmlWriterSettings
     $writerSettings.Encoding = New-Object System.Text.UTF8Encoding($false)
@@ -1612,7 +1619,8 @@ function Invoke-CloudOSDBridge {
             -Data @{ windows_root = $windowsRoot; staged_root = $stageRoot }
         Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot `
             -ComputerName (Get-PVEAutopilotPackageComputerName -Package $package) `
-            -DomainJoin $package.domain_join
+            -DomainJoin $package.domain_join `
+            -LocalAdmin $package.local_admin
         if (Test-CloudOSDDomainJoinEnabled -DomainJoin $package.domain_join) {
             Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
                 -RunId $runId -BearerToken $token -Phase 'domain_join' `

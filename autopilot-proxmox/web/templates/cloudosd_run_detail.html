@@ -155,6 +155,15 @@
     </section>
 
     <section class="cloudosd-detail-panel">
+      <h2>Local credentials</h2>
+      {% set local_admin = run.local_admin or {} %}
+      <dl class="cloudosd-kv">
+        <dt>Username</dt><dd data-cloudosd-field="local_admin_username"><code>{{ local_admin.username or 'localadmin' }}</code></dd>
+        <dt>Password</dt><dd data-cloudosd-field="local_admin_password"><code>{{ local_admin.password or '-' }}</code></dd>
+      </dl>
+    </section>
+
+    <section class="cloudosd-detail-panel">
       <h2>OSDCloud Evidence</h2>
       {% set offline_events = event_groups.get('offline validation') or [] %}
       {% set domain_events = event_groups.get('Domain join') or [] %}
@@ -357,6 +366,14 @@
     const el = field("state");
     if (!el) return;
     el.innerHTML = `<span class="cloudosd-badge ${badgeClass(state)}">${escapeHtml(state || "-")}</span>`;
+  }
+
+  function renderLocalAdmin(localAdmin) {
+    localAdmin = localAdmin || {};
+    const username = field("local_admin_username");
+    const password = field("local_admin_password");
+    if (username) username.innerHTML = `<code>${escapeHtml(localAdmin.username || "localadmin")}</code>`;
+    if (password) password.innerHTML = `<code>${escapeHtml(localAdmin.password || "-")}</code>`;
   }
 
   function setNameFlag(comparison) {
@@ -670,6 +687,7 @@
     setText("vm_uuid", run.vm_uuid);
     setText("mac", run.mac);
     setText("node", run.node);
+    renderLocalAdmin(run.local_admin || {});
 
     const buildSha = artifact.build_sha || run.artifact_id;
     const artifactField = field("artifact_build_sha");

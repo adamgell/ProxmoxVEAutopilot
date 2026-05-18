@@ -223,6 +223,10 @@ def _package_response(
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
         "task": cloudosd_pg.task_settings(run),
+        "local_admin": run.get("local_admin") or {
+            "username": cloudosd_pg.DEFAULT_LOCAL_ADMIN_USERNAME,
+            "password": "",
+        },
         "deployment": {
             "path": "cloudosd",
             "source_surface": run.get("source_surface") or "cloudosd",

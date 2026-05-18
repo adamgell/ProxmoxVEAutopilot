@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import urllib.parse
 from hashlib import sha1
@@ -126,6 +127,17 @@ def _assert_blocking(body: dict, check_id: str):
 def _assert_warning(body: dict, check_id: str):
     ids = {check["id"] for check in body["warnings"]}
     assert check_id in ids, body
+
+
+def _assert_local_admin(local_admin: dict):
+    assert local_admin["username"] == "localadmin"
+    password = local_admin["password"]
+    assert 8 <= len(password) <= 12
+    assert re.search(r"[A-Z]", password)
+    assert re.search(r"[a-z]", password)
+    assert re.search(r"[0-9]", password)
+    assert re.search(r"[!#%+?]", password)
+    assert not re.search(r"[O0Il1\"'`\s]", password)
 
 
 def _create_feature_cache_entry(pg_conn, **overrides):
@@ -329,6 +341,10 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     assert body["task"]["name"] == "osdcloud-nofirmware"
     assert body["agent"]["phase"] == "cloudosd"
     assert body["agent"]["bootstrap_token"]
+    _assert_local_admin(body["local_admin"])
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run_body['run_id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["run"]["local_admin"] == body["local_admin"]
     before_heartbeat = cloudosd_client.get(f"/api/cloudosd/runs/{run_body['run_id']}")
     assert before_heartbeat.status_code == 200
     assert before_heartbeat.json()["run"]["state"] != "complete"
@@ -722,6 +738,46 @@ def test_cloudosd_provision_sequence_with_domain_join_adds_v2_steps_and_pe_only_
     assert domain_join["enabled"] is True
     assert domain_join["password"] == "join-secret-for-tests"
     assert domain_join["username"] == "svc-cloudjoin"
+
+
+def test_cloudosd_workgroup_run_generates_visible_local_admin_credential(
+    cloudosd_client,
+    pg_conn,
+):
+    artifact = _create_artifact(pg_conn)
+
+    run = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(artifact["id"], vm_name="WRKGRP-CRED"),
+    )
+
+    assert run.status_code == 201, run.text
+    local_admin = run.json()["local_admin"]
+    _assert_local_admin(local_admin)
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run.json()['run_id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["run"]["local_admin"] == local_admin
+
+
+def test_cloudosd_legacy_run_without_local_admin_does_not_invent_password(
+    cloudosd_client,
+    pg_conn,
+):
+    run = _create_cloudosd_run(cloudosd_client, pg_conn, vm_name="WRKGRP-LEGACY")
+    pg_conn.execute(
+        "UPDATE cloudosd_runs SET local_admin_json = '{}'::jsonb WHERE run_id = %s",
+        (run["run_id"],),
+    )
+    pg_conn.commit()
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["run"]["local_admin"] == {
+        "username": "localadmin",
+        "password": "",
+        "generated": False,
+    }
 
 
 def test_cloudosd_provision_rejects_unsupported_enabled_sequence_step(
@@ -2301,6 +2357,10 @@ def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
     assert 'data-cloudosd-field="pe_registered_at"' in response.text
     assert 'data-cloudosd-field="domain_join_target"' in response.text
     assert 'data-cloudosd-field="domain_join_verification"' in response.text
+    assert 'data-cloudosd-field="local_admin_username"' in response.text
+    assert 'data-cloudosd-field="local_admin_password"' in response.text
+    assert "localadmin" in response.text
+    assert run["local_admin"]["password"] in response.text
     assert "Domain join" in response.text
     assert f"/api/cloudosd/runs/${{encodeURIComponent(runId)}}" in response.text
     assert "window.setTimeout(refresh, 5000)" in response.text

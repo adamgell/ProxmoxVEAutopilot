@@ -272,6 +272,24 @@ Describe 'Add-PVEAutopilotSpecializeUnattend' {
         $content | Should -Not -Match 'Nsta1200'
     }
 
+    It 'uses packaged local admin credentials for OOBE and autologon' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsLocalAdmin'
+        New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null
+
+        Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot `
+            -ComputerName 'WRKGRP-CRED' `
+            -LocalAdmin ([pscustomobject]@{
+                username = 'localadmin'
+                password = 'Ab7!cDef9'
+            })
+
+        $content = Get-Content -LiteralPath (Join-Path $windowsRoot 'Panther/Unattend.xml') -Raw
+        $content | Should -Match '<Name>localadmin</Name>'
+        $content | Should -Match '<Username>localadmin</Username>'
+        $content | Should -Match '<Value>Ab7!cDef9</Value>'
+        $content | Should -Match '<Group>Administrators</Group>'
+    }
+
     It 'writes Microsoft-Windows-UnattendedJoin when domain join is requested' {
         $windowsRoot = Join-Path $TestDrive 'WindowsDomain'
         New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null

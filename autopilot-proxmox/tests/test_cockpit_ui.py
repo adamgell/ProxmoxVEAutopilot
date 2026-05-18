@@ -98,6 +98,18 @@ def test_cloudosd_run_detail_renders_v2_plan_live_section():
     assert "renderV2Steps" in template
 
 
+def test_cloudosd_run_detail_shows_local_admin_credentials():
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "web/templates/cloudosd_run_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert "Local credentials" in template
+    assert 'data-cloudosd-field="local_admin_username"' in template
+    assert 'data-cloudosd-field="local_admin_password"' in template
+    assert "renderLocalAdmin" in template
+
+
 def test_cloudosd_run_detail_renders_autopilot_readiness_section():
     template = (
         Path(__file__).resolve().parents[1]

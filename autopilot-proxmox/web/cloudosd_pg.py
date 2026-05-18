@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
 from datetime import datetime, timezone
 from threading import Lock
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS cloudosd_runs (
     analytics_enabled boolean NOT NULL DEFAULT false,
     outbound_policy_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     domain_join_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    local_admin_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     vmid integer NULL,
     vm_uuid text NULL,
     mac text NULL,
@@ -241,6 +243,7 @@ OS_LANGUAGE_CATALOG = [
 DEFAULT_VM_CORES = 4
 DEFAULT_VM_MEMORY_MB = 8192
 DEFAULT_VM_DISK_SIZE_GB = 80
+DEFAULT_LOCAL_ADMIN_USERNAME = "localadmin"
 MIN_VM_MEMORY_MB = 6144
 RECOMMENDED_VM_MEMORY_MB = 8192
 MIN_VM_DISK_SIZE_GB = 80
@@ -301,6 +304,40 @@ def _normalize_mac(value: str | None) -> str | None:
     if not value:
         return None
     return str(value).strip().lower().replace("-", ":")
+
+
+def _generate_local_admin_password(length: int = 12) -> str:
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    lower = "abcdefghijkmnopqrstuvwxyz"
+    digits = "23456789"
+    symbols = "!#%+?"
+    alphabet = upper + lower + digits + symbols
+    password = [
+        secrets.choice(upper),
+        secrets.choice(lower),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    password.extend(secrets.choice(alphabet) for _ in range(max(8, min(length, 12)) - len(password)))
+    secrets.SystemRandom().shuffle(password)
+    return "".join(password)
+
+
+def _sanitize_local_admin(local_admin: dict | None = None, *, generate_password: bool = False) -> dict:
+    raw = dict(local_admin or {})
+    username = str(raw.get("username") or DEFAULT_LOCAL_ADMIN_USERNAME).strip()
+    if username.casefold() != DEFAULT_LOCAL_ADMIN_USERNAME:
+        username = DEFAULT_LOCAL_ADMIN_USERNAME
+    password = str(raw.get("password") or "").strip()
+    generated = bool(raw.get("generated", False))
+    if not password and generate_password:
+        password = _generate_local_admin_password()
+        generated = True
+    return {
+        "username": username,
+        "password": password,
+        "generated": generated,
+    }
 
 
 def normalize_windows_computer_name(value: str | None) -> str:
@@ -488,6 +525,7 @@ def init(conn: Connection) -> None:
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_surface text NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS source_sequence_id integer NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS domain_join_json jsonb NOT NULL DEFAULT '{}'::jsonb")
+        conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS local_admin_json jsonb NOT NULL DEFAULT '{}'::jsonb")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS archived_at timestamptz NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS archived_by text NULL")
         conn.execute("ALTER TABLE cloudosd_runs ADD COLUMN IF NOT EXISTS archive_reason text NULL")
@@ -857,6 +895,7 @@ def _run_row(row: dict | None) -> dict | None:
             row.get("domain_join_json") or {},
             expected_computer_name=expected_name,
         ),
+        "local_admin": _sanitize_local_admin(row.get("local_admin_json") or {}),
         "vmid": row["vmid"],
         "vm_uuid": row["vm_uuid"],
         "mac": row["mac"],
@@ -1366,6 +1405,7 @@ def create_run(
     analytics_enabled: bool = False,
     outbound_policy: Optional[dict] = None,
     domain_join: Optional[dict] = None,
+    local_admin: Optional[dict] = None,
 ) -> dict:
     artifact = get_artifact(conn, artifact_id)
     if not artifact:
@@ -1382,6 +1422,7 @@ def create_run(
         domain_join,
         expected_computer_name=expected_computer_name,
     )
+    local_admin_config = _sanitize_local_admin(local_admin, generate_password=True)
 
     version_id = _create_sequence_for_run(
         conn,
@@ -1413,6 +1454,7 @@ def create_run(
             "driver_pack_policy": driver_pack_policy,
             "firmware_updates_enabled": firmware_updates_enabled,
             "domain_join": domain_join_config,
+            "local_admin": local_admin_config,
         },
         created_by="cloudosd",
         resolve_content=False,
@@ -1430,13 +1472,13 @@ def create_run(
             chassis_type_override, source_surface, source_sequence_id,
             tpm_enabled, secure_boot, firmware_updates_enabled,
             driver_pack_policy, analytics_enabled, outbound_policy_json,
-            domain_join_json,
+            domain_join_json, local_admin_json,
             created_at, updated_at
         )
         VALUES (
             %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         RETURNING *
         """,
@@ -1472,6 +1514,7 @@ def create_run(
             analytics_enabled,
             _json(outbound_policy or {}),
             _json(domain_join_config),
+            _json(local_admin_config),
             now,
             now,
         ),
