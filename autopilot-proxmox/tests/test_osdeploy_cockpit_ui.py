@@ -84,6 +84,9 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "selectedOsdeployRole" in template
     assert "syncRoleOptionsFromSelectedRole" in template
     assert "window.setInterval(syncRoleOptionsFromSelectedRole" in template
+    assert "const roleCatalog = {{ catalog.role_catalog | tojson | safe }}" in template
+    assert "const renderRoleVariables = () =>" in template
+    assert "window.setInterval(renderRoleVariables" in template
     assert ".osdeploy-builder-form > label { min-width:0;" in template
     assert ".osdeploy-builder-form select" in template
     assert "text-overflow:ellipsis" in template

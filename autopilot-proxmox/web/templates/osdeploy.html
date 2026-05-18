@@ -903,4 +903,51 @@
   }
   initOSDeploy();
 </script>
+{% if view == 'builder' %}
+<script>
+  (() => {
+    const roleCatalog = {{ catalog.role_catalog | tojson | safe }};
+    const byId = (id) => document.getElementById(id);
+    const formatField = (value) => String(value || "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+    const renderMeta = (id, values, emptyText) => {
+      const target = byId(id);
+      if (!target) return;
+      const list = (values || []).filter(Boolean);
+      target.textContent = list.length ? list.map(formatField).join(", ") : emptyText;
+    };
+    const renderRoleVariables = () => {
+      const role = byId("osdeploy_server_role")?.value || "base";
+      const metadata = roleCatalog[role] || {};
+      const requiredFields = metadata.required_fields || [];
+      const title = byId("osdeployRoleVariablesTitle");
+      const readiness = byId("osdeployRoleReadiness");
+      const empty = document.querySelector("[data-role-empty]");
+      if (title) title.textContent = `${metadata.name || formatField(role)} variables`;
+      if (readiness) readiness.textContent = metadata.readiness_status_name || metadata.readiness_status || `${role}_ready`;
+      renderMeta("osdeployRoleRequiredFields", requiredFields, "none");
+      renderMeta("osdeployRoleCredentialFields", metadata.credential_fields, "none");
+      renderMeta("osdeployRoleStepKinds", metadata.step_kinds, "base only");
+      if (empty) {
+        empty.hidden = requiredFields.length > 0;
+        empty.textContent = role === "base"
+          ? "No additional variables are required for the base server role."
+          : "No additional role variables are required.";
+      }
+      document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.roleOptionsPanel === role);
+      });
+    };
+    const roleSelect = byId("osdeploy_server_role");
+    if (roleSelect) {
+      roleSelect.addEventListener("input", renderRoleVariables);
+      roleSelect.addEventListener("change", renderRoleVariables);
+      roleSelect.addEventListener("blur", renderRoleVariables);
+      window.setInterval(renderRoleVariables, 250);
+      renderRoleVariables();
+    }
+  })();
+</script>
+{% endif %}
 {% endblock %}
