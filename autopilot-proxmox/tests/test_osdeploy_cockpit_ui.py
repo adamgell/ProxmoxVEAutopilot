@@ -73,6 +73,14 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert 'id="osdeployRunForm"' in template
     assert 'class="osdeploy-grid osdeploy-builder-form"' in template
     assert 'class="osdeploy-field osdeploy-field-artifact"' in template
+    assert 'id="osdeployRoleVariables"' in template
+    assert 'id="osdeployRoleVariablesTitle"' in template
+    assert 'id="osdeployRoleRequiredFields"' in template
+    assert 'id="osdeployRoleCredentialFields"' in template
+    assert 'id="osdeployRoleStepKinds"' in template
+    assert 'id="osdeployRoleReadiness"' in template
+    assert 'data-role-empty' in template
+    assert "formatRoleField" in template
     assert ".osdeploy-builder-form > label { min-width:0;" in template
     assert ".osdeploy-builder-form select" in template
     assert "text-overflow:ellipsis" in template

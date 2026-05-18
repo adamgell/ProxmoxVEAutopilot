@@ -34,7 +34,14 @@
   @media (max-width: 980px) {
     .osdeploy-field-artifact { grid-column:1 / -1; }
   }
-  .osdeploy-role-options { grid-column:1 / -1; display:none; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); }
+  .osdeploy-role-shell { grid-column:1 / -1; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); display:grid; gap:12px; }
+  .osdeploy-role-shell-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  .osdeploy-role-title { font-size:15px; font-weight:800; }
+  .osdeploy-role-meta { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px; }
+  .osdeploy-role-meta-item { border:1px solid var(--line); border-radius:6px; padding:8px; background:var(--panel); min-width:0; }
+  .osdeploy-role-meta-item code { white-space:normal; overflow-wrap:anywhere; }
+  .osdeploy-role-empty { color:var(--ink-muted); }
+  .osdeploy-role-options { grid-column:1 / -1; display:none; border:0; border-radius:0; padding:0; background:transparent; }
   .osdeploy-role-options.active { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px; }
   .osdeploy-role-options textarea { min-height:130px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
@@ -187,59 +194,83 @@
       <span class="osdeploy-label">Firmware</span>
       <span class="osdeploy-mini"><input type="checkbox" name="secure_boot"> Secure Boot</span>
     </label>
-    <div class="osdeploy-role-options" data-role-options-panel="file_server">
-      <label><span class="osdeploy-label">Share name</span><input name="role_file_share_name" value="Shared"></label>
-      <label><span class="osdeploy-label">Share path</span><input name="role_file_share_path" value="C:\Shares\Shared"></label>
-      <label><span class="osdeploy-label">Full access</span><input name="role_file_full_access" value="HOME\Domain Admins"></label>
-      <label><span class="osdeploy-label">Change access</span><input name="role_file_change_access" value="HOME\Domain Users"></label>
-      <label><span class="osdeploy-label">Read access</span><input name="role_file_read_access" value=""></label>
-    </div>
-    <div class="osdeploy-role-options" data-role-options-panel="isolated_domain_controller">
-      <label><span class="osdeploy-label">Forest FQDN</span><input name="role_dc_forest_fqdn" placeholder="lab.gell.one"></label>
-      <label><span class="osdeploy-label">NetBIOS name</span><input name="role_dc_netbios_name" placeholder="LAB"></label>
-      <label>
-        <span class="osdeploy-label">Forest admin credential</span>
-        <select name="role_dc_forest_admin_credential_id">
-          <option value="">select credential</option>
-          {% for credential in osdeploy_credentials %}
-          <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>
-        <span class="osdeploy-label">DSRM credential</span>
-        <select name="role_dc_dsrm_credential_id">
-          <option value="">select credential</option>
-          {% for credential in osdeploy_credentials %}
-          <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
-    <div class="osdeploy-role-options" data-role-options-panel="mecm_prereq">
-      <label><span class="osdeploy-label">Prereq profile</span><select name="role_mecm_prereq_profile"><option value="site_server_foundation">site_server_foundation</option></select></label>
-      <label><span class="osdeploy-label">Content root</span><input name="role_mecm_content_root" value="C:\MECMContent"></label>
-    </div>
-    <div class="osdeploy-role-options" data-role-options-panel="lab_in_a_box">
-      <label><span class="osdeploy-label">Bundle name</span><input name="role_lab_bundle_name" value="Lab Bundle 01"></label>
-      <label>
-        <span class="osdeploy-label">Domain join credential</span>
-        <select name="role_lab_domain_join_credential_id">
-          <option value="">select credential</option>
-          {% for credential in osdeploy_credentials %}
-          <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label style="grid-column:1 / -1;">
-        <span class="osdeploy-label">Child VM config JSON</span>
-        <textarea name="role_lab_children_json">[
+    <section class="osdeploy-role-shell" id="osdeployRoleVariables">
+      <div class="osdeploy-role-shell-head">
+        <div>
+          <div class="osdeploy-label">Role variables</div>
+          <div class="osdeploy-role-title" id="osdeployRoleVariablesTitle">Windows Server Base variables</div>
+        </div>
+        <div class="osdeploy-mini" id="osdeployRoleReadiness">base_ready</div>
+      </div>
+      <div class="osdeploy-role-meta">
+        <div class="osdeploy-role-meta-item">
+          <div class="osdeploy-label">Required fields</div>
+          <code id="osdeployRoleRequiredFields">none</code>
+        </div>
+        <div class="osdeploy-role-meta-item">
+          <div class="osdeploy-label">Credential refs</div>
+          <code id="osdeployRoleCredentialFields">none</code>
+        </div>
+        <div class="osdeploy-role-meta-item">
+          <div class="osdeploy-label">Generated steps</div>
+          <code id="osdeployRoleStepKinds">base only</code>
+        </div>
+      </div>
+      <div class="osdeploy-role-empty" data-role-empty>No additional variables are required for the base server role.</div>
+      <div class="osdeploy-role-options" data-role-options-panel="file_server">
+        <label><span class="osdeploy-label">Share name</span><input name="role_file_share_name" value="Shared"></label>
+        <label><span class="osdeploy-label">Share path</span><input name="role_file_share_path" value="C:\Shares\Shared"></label>
+        <label><span class="osdeploy-label">Full access</span><input name="role_file_full_access" value="HOME\Domain Admins"></label>
+        <label><span class="osdeploy-label">Change access</span><input name="role_file_change_access" value="HOME\Domain Users"></label>
+        <label><span class="osdeploy-label">Read access</span><input name="role_file_read_access" value=""></label>
+      </div>
+      <div class="osdeploy-role-options" data-role-options-panel="isolated_domain_controller">
+        <label><span class="osdeploy-label">Forest FQDN</span><input name="role_dc_forest_fqdn" placeholder="lab.gell.one"></label>
+        <label><span class="osdeploy-label">NetBIOS name</span><input name="role_dc_netbios_name" placeholder="LAB"></label>
+        <label>
+          <span class="osdeploy-label">Forest admin credential</span>
+          <select name="role_dc_forest_admin_credential_id">
+            <option value="">select credential</option>
+            {% for credential in osdeploy_credentials %}
+            <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="osdeploy-label">DSRM credential</span>
+          <select name="role_dc_dsrm_credential_id">
+            <option value="">select credential</option>
+            {% for credential in osdeploy_credentials %}
+            <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="osdeploy-role-options" data-role-options-panel="mecm_prereq">
+        <label><span class="osdeploy-label">Prereq profile</span><select name="role_mecm_prereq_profile"><option value="site_server_foundation">site_server_foundation</option></select></label>
+        <label><span class="osdeploy-label">Content root</span><input name="role_mecm_content_root" value="C:\MECMContent"></label>
+      </div>
+      <div class="osdeploy-role-options" data-role-options-panel="lab_in_a_box">
+        <label><span class="osdeploy-label">Bundle name</span><input name="role_lab_bundle_name" value="Lab Bundle 01"></label>
+        <label>
+          <span class="osdeploy-label">Domain join credential</span>
+          <select name="role_lab_domain_join_credential_id">
+            <option value="">select credential</option>
+            {% for credential in osdeploy_credentials %}
+            <option value="{{ credential.id }}">{{ credential.name }} / {{ credential.type }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label style="grid-column:1 / -1;">
+          <span class="osdeploy-label">Child VM config JSON</span>
+          <textarea name="role_lab_children_json">[
   {"role":"isolated_domain_controller","vm_name":"LAB-DC01","role_options":{"forest_fqdn":"lab.gell.one","netbios_name":"LAB","forest_admin_credential_id":0,"dsrm_credential_id":0}},
   {"role":"file_server","vm_name":"LAB-FS01","role_options":{"share_name":"Shared","share_path":"C:\\Shares\\Shared","full_access_principals":["LAB\\Domain Admins"],"change_access_principals":["LAB\\Domain Users"],"read_access_principals":[]}},
   {"role":"mecm_prereq","vm_name":"LAB-CM01","role_options":{"prereq_profile":"site_server_foundation","content_root":"C:\\MECMContent"}}
 ]</textarea>
-      </label>
-    </div>
+        </label>
+      </div>
+    </section>
   </form>
   <div class="osdeploy-grid">
     <div>
@@ -514,8 +545,37 @@
       return {};
     }
 
+    function formatRoleField(value) {
+      return String(value || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+    }
+
+    function renderRoleMeta(id, values, emptyText) {
+      const target = byId(id);
+      if (!target) return;
+      const list = (values || []).filter(Boolean);
+      target.textContent = list.length ? list.map(formatRoleField).join(", ") : emptyText;
+    }
+
     function renderRoleOptions() {
       const role = byId("osdeploy_server_role")?.value || "base";
+      const metadata = osdeployState.roleCatalog[role] || {};
+      const title = byId("osdeployRoleVariablesTitle");
+      const readiness = byId("osdeployRoleReadiness");
+      const empty = document.querySelector("[data-role-empty]");
+      const requiredFields = metadata.required_fields || [];
+      if (title) title.textContent = `${metadata.name || formatRoleField(role)} variables`;
+      if (readiness) readiness.textContent = metadata.readiness_status_name || metadata.readiness_status || `${role}_ready`;
+      renderRoleMeta("osdeployRoleRequiredFields", requiredFields, "none");
+      renderRoleMeta("osdeployRoleCredentialFields", metadata.credential_fields, "none");
+      renderRoleMeta("osdeployRoleStepKinds", metadata.step_kinds, "base only");
+      if (empty) {
+        empty.hidden = requiredFields.length > 0;
+        empty.textContent = role === "base"
+          ? "No additional variables are required for the base server role."
+          : "No additional role variables are required.";
+      }
       document.querySelectorAll("[data-role-options-panel]").forEach((panel) => {
         panel.classList.toggle("active", panel.dataset.roleOptionsPanel === role);
       });
