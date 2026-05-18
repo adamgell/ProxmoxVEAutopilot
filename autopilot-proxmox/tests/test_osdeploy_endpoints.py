@@ -309,6 +309,7 @@ def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_
     assert '<option value="local" selected>local</option>' in body
     assert '<option value="local-lvm" selected>local-lvm</option>' in body
     assert '<option value="vmbr0" selected>vmbr0</option>' in body
+    assert "&#34;" not in body
 
 
 def test_osdeploy_v2_catalog_owns_osdeploy_step_kind():

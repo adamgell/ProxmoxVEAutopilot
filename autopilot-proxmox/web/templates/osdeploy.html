@@ -461,12 +461,12 @@
     artifacts: [
       {% for artifact in ready_artifacts %}
       {
-        id: {{ artifact.id | tojson }},
-        build_sha: {{ artifact.build_sha | tojson }},
-        proxmox_volid: {{ artifact.proxmox_volid | tojson }},
-        os_version: {{ artifact.os_version | tojson }},
-        os_edition: {{ artifact.os_edition | tojson }},
-        readiness: {{ artifact.readiness | tojson }}
+        id: {{ artifact.id | tojson | safe }},
+        build_sha: {{ artifact.build_sha | tojson | safe }},
+        proxmox_volid: {{ artifact.proxmox_volid | tojson | safe }},
+        os_version: {{ artifact.os_version | tojson | safe }},
+        os_edition: {{ artifact.os_edition | tojson | safe }},
+        readiness: {{ artifact.readiness | tojson | safe }}
       }{% if not loop.last %},{% endif %}
       {% endfor %}
     ],
