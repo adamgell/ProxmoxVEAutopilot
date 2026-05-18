@@ -1,8 +1,10 @@
+import subprocess
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / "scripts" / "init-proxmox-ve.sh"
+INSTALLER = ROOT / "scripts" / "install-proxmox-ve.sh"
 CONTROLLER_INIT = ROOT / "scripts" / "init-controller-ubuntu.sh"
 SEED_BUILD = ROOT / "scripts" / "build_seed_agent_container.sh"
 COMPOSE = ROOT / "docker-compose.yml"
@@ -180,6 +182,78 @@ def test_pve_init_has_explicit_disposable_dev_lab_reset_phase():
     assert 'rm -rf "${SETUP_DIR}" "${SECRETS_DIR}" "${PVE_RUNTIME_DIR}"' in text
     assert 'rm -f "${ENV_FILE}" "${VARS_FILE}" "${VAULT_FILE}"' in text
     assert "dev_lab_reset_ready" in text
+
+
+def test_shell_installer_wraps_pve_init_with_console_actions():
+    text = INSTALLER.read_text(encoding="utf-8")
+
+    assert "ProxmoxVEAutopilot First-Run Installer" in text
+    assert 'INIT_SCRIPT="${SCRIPT_DIR}/init-proxmox-ve.sh"' in text
+    assert "--action menu|guided|foundation|bootstrap|operational|runtime-config|status|reset-dev-lab" in text
+    assert "Guided install: Foundation -> Bootstrap -> Operational" in text
+    assert "run_init_phase foundation" in text
+    assert "run_init_phase bootstrap" in text
+    assert "run_init_phase operational" in text
+    assert "--download-windows" in text
+    assert "--windows-iso-url" in text
+    assert "--download-virtio" in text
+    assert "Media gate is still blocked" in text
+    assert "run_init_phase reset-dev-lab" in text
+    assert "RESET_MEDIA" in text
+    assert "--dry-run" in text
+    assert "docker.io" not in text
+    assert "systemctl enable --now docker" not in text
+
+
+def test_shell_installer_dry_run_prints_guided_phase_commands():
+    result = subprocess.run(
+        [
+            "bash",
+            str(INSTALLER),
+            "--action",
+            "guided",
+            "--yes",
+            "--dry-run",
+            "--controller-ip",
+            "192.168.2.115",
+            "--node",
+            "pvetest",
+            "--iso-storage",
+            "local",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--phase foundation" in result.stdout
+    assert "--phase bootstrap" in result.stdout
+    assert "--phase operational" in result.stdout
+    assert "--download-windows" in result.stdout
+    assert "--download-virtio" in result.stdout
+    assert "--controller-ip 192.168.2.115" in result.stdout
+    assert "--node pvetest" in result.stdout
+    assert "--iso-storage local" in result.stdout
+
+
+def test_shell_installer_dry_run_prints_reset_media_command():
+    result = subprocess.run(
+        [
+            "bash",
+            str(INSTALLER),
+            "--action",
+            "reset-dev-lab",
+            "--reset-media",
+            "--yes",
+            "--dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--phase reset-dev-lab" in result.stdout
+    assert "--reset-media" in result.stdout
 
 
 def test_pve_operational_repairs_token_and_syncs_controller_config_before_publish():

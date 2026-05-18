@@ -58,7 +58,23 @@ rsync -a --delete \
   pve-dev-192-168-2-252:/root/ProxmoxVEAutopilot/
 ```
 
-### 2. Run PVE foundation
+### 2. Run the console installer
+
+Run this on the Proxmox VE node as root. The installer is a numbered shell UI
+for the core first-run path: Foundation -> Bootstrap -> Operational. It keeps
+the PVE host clean by delegating all mutations to `init-proxmox-ve.sh`.
+
+```bash
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/install-proxmox-ve.sh'
+```
+
+For an unattended lab run with defaults:
+
+```bash
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/install-proxmox-ve.sh --action guided --yes --controller-ip 192.168.2.115'
+```
+
+### 3. Foundation fallback
 
 Run this on the Proxmox VE node as root. It repairs API token/ACLs/storage,
 creates the Ubuntu controller VM, syncs source/config, starts the controller
@@ -68,7 +84,7 @@ runtime, and verifies `/healthz`.
 ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase foundation --resume --controller-ip 192.168.2.115 --non-interactive'
 ```
 
-### 3. Satisfy the media gate
+### 4. Satisfy the media gate
 
 The default lab path downloads Windows 11 from Microsoft's official software
 download connector and VirtIO from the official virtio-win source. Manual
@@ -78,7 +94,7 @@ Windows ISO upload and `--windows-iso-url` remain supported recovery paths.
 ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase bootstrap --resume --download-windows --download-virtio --controller-ip 192.168.2.115 --non-interactive'
 ```
 
-### 4. Finish `/setup`
+### 5. Finish `/setup`
 
 Open the controller UI:
 

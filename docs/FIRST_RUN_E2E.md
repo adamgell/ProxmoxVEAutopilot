@@ -72,7 +72,19 @@ ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scrip
 ```
 
 For repeatable dev-lab replay from a clean Autopilot state, the preferred
-single operator command is:
+operator command is the console installer:
+
+```bash
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/install-proxmox-ve.sh'
+```
+
+For unattended lab replay with defaults:
+
+```bash
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/install-proxmox-ve.sh --action guided --yes --download-windows --download-virtio'
+```
+
+The lower-level equivalent is:
 
 ```bash
 ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase all --resume --download-windows --download-virtio --non-interactive'

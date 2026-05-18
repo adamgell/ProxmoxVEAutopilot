@@ -1,8 +1,40 @@
 # Proxmox VE Init Reference
 
-`autopilot-proxmox/scripts/init-proxmox-ve.sh` is the shell entrypoint that runs
-as root on a Proxmox VE host. It is a hypervisor bootstrapper only. The
-Autopilot runtime belongs in the Ubuntu controller VM.
+`autopilot-proxmox/scripts/install-proxmox-ve.sh` is the operator-facing console
+installer. It presents a numbered shell UI for the core first-run path and
+delegates each action to `init-proxmox-ve.sh`.
+
+`autopilot-proxmox/scripts/init-proxmox-ve.sh` is the lower-level shell
+entrypoint that runs as root on a Proxmox VE host. It is a hypervisor
+bootstrapper only. The Autopilot runtime belongs in the Ubuntu controller VM.
+
+## Console Installer
+
+Start here for a new PVE node:
+
+```bash
+bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/install-proxmox-ve.sh
+```
+
+The console installer exposes:
+
+- Guided install: Foundation -> Bootstrap -> Operational.
+- Foundation only: PVE access, storage, Ubuntu controller VM, controller
+  runtime health.
+- Bootstrap media: Windows/VirtIO media download or manual media gate.
+- Operational repair/promote: controller health and setup artifact promotion.
+- Runtime config repair: token/config/media resync without rebuilding runtime.
+- Dev-lab reset: disposable lab VM/media cleanup.
+- Status and copy/paste one-liners.
+
+The unattended equivalent for a lab node is:
+
+```bash
+bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/install-proxmox-ve.sh --action guided --yes --controller-ip 192.168.2.115
+```
+
+Use `--dry-run` to print the underlying `init-proxmox-ve.sh` commands without
+changing PVE.
 
 ## What PVE Init Does
 
@@ -35,7 +67,7 @@ Windows build tools on PVE.
 ## Script Options
 
 ```text
---phase foundation|bootstrap|operational|all
+--phase foundation|bootstrap|operational|runtime-config|reset-dev-lab|all
 --resume
 --wait-for-media
 --download-windows
@@ -51,6 +83,7 @@ Windows build tools on PVE.
 --controller-vmid <vmid>
 --controller-storage <storage>
 --controller-bridge <bridge>
+--reset-media
 --non-interactive
 ```
 
