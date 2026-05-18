@@ -305,6 +305,10 @@ def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_
     assert "/api/osdeploy/v1/preflight" in body
     assert "/api/osdeploy/v1/runs" in body
     assert "Launch OSDeploy VM" in body
+    assert '<option value="pve" selected>pve</option>' in body
+    assert '<option value="local" selected>local</option>' in body
+    assert '<option value="local-lvm" selected>local-lvm</option>' in body
+    assert '<option value="vmbr0" selected>vmbr0</option>' in body
 
 
 def test_osdeploy_v2_catalog_owns_osdeploy_step_kind():

@@ -143,19 +143,35 @@
     </label>
     <label>
       <span class="osdeploy-label">Node</span>
-      <select id="osdeploy_node" name="node"></select>
+      <select id="osdeploy_node" name="node">
+        {% for value in proxmox_options.nodes %}
+        <option value="{{ value }}" {% if value == proxmox_options.defaults.node %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>
       <span class="osdeploy-label">ISO storage</span>
-      <select id="osdeploy_iso_storage" name="iso_storage"></select>
+      <select id="osdeploy_iso_storage" name="iso_storage">
+        {% for value in proxmox_options.storages.iso %}
+        <option value="{{ value }}" {% if value == proxmox_options.defaults.iso_storage %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>
       <span class="osdeploy-label">VM disk storage</span>
-      <select id="osdeploy_storage" name="storage"></select>
+      <select id="osdeploy_storage" name="storage">
+        {% for value in proxmox_options.storages.disk %}
+        <option value="{{ value }}" {% if value == proxmox_options.defaults.disk_storage %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>
       <span class="osdeploy-label">Network bridge</span>
-      <select id="osdeploy_network_bridge" name="network_bridge"></select>
+      <select id="osdeploy_network_bridge" name="network_bridge">
+        {% for value in proxmox_options.bridges %}
+        <option value="{{ value }}" {% if value == proxmox_options.defaults.bridge %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>
       <span class="osdeploy-label">Version</span>
