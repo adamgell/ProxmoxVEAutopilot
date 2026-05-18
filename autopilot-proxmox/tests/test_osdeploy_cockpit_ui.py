@@ -112,6 +112,10 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "roleCatalog:" in template
     assert 'data-role-options-panel="file_server"' in template
     assert 'data-role-options-panel="isolated_domain_controller"' in template
+    assert 'id="role_dc_forest_fqdn"' in template
+    assert 'name="role_dc_forest_fqdn" value="lab.gell.one"' in template
+    assert 'id="role_dc_netbios_name"' in template
+    assert 'name="role_dc_netbios_name" value="LAB"' in template
     assert 'data-role-options-panel="mecm_prereq"' in template
     assert 'data-role-options-panel="lab_in_a_box"' in template
     assert "roleOptionsPayload" in template

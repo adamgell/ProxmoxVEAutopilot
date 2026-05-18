@@ -235,8 +235,14 @@
         <label><span class="osdeploy-label">Read access</span><input name="role_file_read_access" value=""></label>
       </div>
       <div class="osdeploy-role-options" data-role-options-panel="isolated_domain_controller">
-        <label><span class="osdeploy-label">Forest FQDN</span><input name="role_dc_forest_fqdn" placeholder="lab.gell.one"></label>
-        <label><span class="osdeploy-label">NetBIOS name</span><input name="role_dc_netbios_name" placeholder="LAB"></label>
+        <label>
+          <span class="osdeploy-label">Domain / forest FQDN</span>
+          <input id="role_dc_forest_fqdn" name="role_dc_forest_fqdn" value="lab.gell.one" autocomplete="off">
+        </label>
+        <label>
+          <span class="osdeploy-label">NetBIOS name</span>
+          <input id="role_dc_netbios_name" name="role_dc_netbios_name" value="LAB" autocomplete="off">
+        </label>
         <label>
           <span class="osdeploy-label">Forest admin credential</span>
           <select name="role_dc_forest_admin_credential_id">
