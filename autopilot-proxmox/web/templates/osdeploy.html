@@ -37,7 +37,7 @@
   .osdeploy-builder-form select,
   .osdeploy-builder-form textarea { width:100%; max-width:100%; min-width:0; }
   .osdeploy-builder-form select { overflow:hidden; text-overflow:ellipsis; }
-  .osdeploy-field-artifact { grid-column:span 2; }
+  .osdeploy-field-os { grid-column:span 2; }
   .osdeploy-field-name { grid-column:span 2; }
   .osdeploy-name-builder { display:grid; gap:6px; }
   .osdeploy-name-tokens { display:flex; flex-wrap:wrap; gap:6px; }
@@ -46,7 +46,7 @@
   .osdeploy-results-grid { display:grid; grid-template-columns:minmax(220px, 1fr) minmax(220px, 1fr) minmax(280px, .9fr); gap:14px; align-items:start; }
   .osdeploy-review-panel { border:1px solid var(--line); border-radius:8px; padding:10px; background:rgba(255,255,255,.025); }
   @media (max-width: 980px) {
-    .osdeploy-field-artifact, .osdeploy-field-name { grid-column:1 / -1; }
+    .osdeploy-field-os, .osdeploy-field-name { grid-column:1 / -1; }
     .osdeploy-builder-actions { justify-content:flex-start; max-width:none; }
     .osdeploy-builder-actions .osdeploy-mini { text-align:left; }
     .osdeploy-results-grid { grid-template-columns:1fr; }
@@ -129,7 +129,7 @@
   <div class="osdeploy-history-head">
     <div>
       <h2>Preflight</h2>
-      <div class="osdeploy-mini">Run artifact, cache, Proxmox, sizing, and Server role checks before launch.</div>
+      <div class="osdeploy-mini">Run OS image, cache, Proxmox, sizing, and Server role checks before launch.</div>
     </div>
     <div id="osdeployBuilderActionBar" class="osdeploy-builder-actions">
       <div id="osdeployPreflightStatus" class="osdeploy-mini" role="status" aria-live="polite">Waiting for input.</div>
@@ -138,20 +138,23 @@
       <div id="osdeployLaunchError" class="osdeploy-badge block" style="display:none;"></div>
     </div>
   </div>
+  {% set selected_artifact = ready_artifacts[0] if ready_artifacts else none %}
   <form id="osdeployRunForm" class="osdeploy-builder-form">
     <section id="osdeployTargetSection" class="osdeploy-builder-section">
       <div class="osdeploy-builder-section-head">
         <div class="osdeploy-builder-section-title">Target</div>
-        <div class="osdeploy-mini">Artifact, name, and role</div>
+        <div class="osdeploy-mini">Deployable OS, name, and role</div>
       </div>
       <div class="osdeploy-builder-section-grid osdeploy-target-grid">
-        <label class="osdeploy-field osdeploy-field-artifact">
-          <span class="osdeploy-label">Artifact</span>
-          <select id="osdeploy_artifact_id" name="artifact_id" required {% if not ready_artifacts %}disabled{% endif %}>
+        <label class="osdeploy-field osdeploy-field-os">
+          <span class="osdeploy-label">Deployable OS</span>
+          <select id="osdeploy_deployable_os" required {% if not ready_artifacts %}disabled{% endif %}>
             {% for artifact in ready_artifacts %}
-            <option value="{{ artifact.id }}">{{ artifact.os_version }} {{ artifact.os_edition }} / {{ artifact.build_sha }} / {{ artifact.proxmox_volid }}</option>
+            <option value="{{ artifact.id }}">{{ artifact.os_version }} {{ artifact.os_edition }} ({{ artifact.os_language }})</option>
             {% endfor %}
           </select>
+          <input id="osdeploy_artifact_id" name="artifact_id" type="hidden" value="{{ selected_artifact.id if selected_artifact else '' }}" required>
+          <div class="osdeploy-mini">OSDeploy picks the matching ready image automatically.</div>
         </label>
         <label class="osdeploy-field-name">
           <span class="osdeploy-label">Requested VM name</span>
@@ -226,33 +229,12 @@
     <section id="osdeployImageSection" class="osdeploy-builder-section">
       <div class="osdeploy-builder-section-head">
         <div class="osdeploy-builder-section-title">Image</div>
-        <div class="osdeploy-mini">OS metadata and VM sizing</div>
+        <div class="osdeploy-mini">VM sizing and firmware</div>
       </div>
+      <input id="osdeploy_os_version" name="os_version" type="hidden" value="{{ selected_artifact.os_version if selected_artifact else catalog.defaults.os_version }}">
+      <input id="osdeploy_os_edition" name="os_edition" type="hidden" value="{{ selected_artifact.os_edition if selected_artifact else catalog.defaults.os_edition }}">
+      <input id="osdeploy_os_language" name="os_language" type="hidden" value="{{ selected_artifact.os_language if selected_artifact else catalog.defaults.os_language }}">
       <div class="osdeploy-builder-section-grid">
-        <label>
-          <span class="osdeploy-label">Version</span>
-          <select id="osdeploy_os_version" name="os_version">
-            {% for value in catalog.os_versions %}
-            <option value="{{ value }}" {% if value == catalog.defaults.os_version %}selected{% endif %}>{{ value }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label>
-          <span class="osdeploy-label">Edition</span>
-          <select id="osdeploy_os_edition" name="os_edition">
-            {% for value in catalog.os_editions %}
-            <option value="{{ value }}" {% if value == catalog.defaults.os_edition %}selected{% endif %}>{{ value }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label>
-          <span class="osdeploy-label">Language</span>
-          <select id="osdeploy_os_language" name="os_language">
-            {% for value in catalog.os_languages %}
-            <option value="{{ value }}" {% if value == catalog.defaults.os_language %}selected{% endif %}>{{ value }}</option>
-            {% endfor %}
-          </select>
-        </label>
         <label>
           <span class="osdeploy-label">vCPU</span>
           <input id="osdeploy_vm_cores" name="vm_cores" type="number" min="1" value="{{ catalog.defaults.vm_cores }}">
@@ -374,7 +356,7 @@
     <div class="osdeploy-review-panel">
       <b>Review &amp; Launch</b>
       <dl class="osdeploy-mini">
-        <dt>Artifact</dt><dd id="reviewOsdeployArtifact">not selected</dd>
+        <dt>Deployable OS</dt><dd id="reviewOsdeployArtifact">not selected</dd>
         <dt>Computer name</dt><dd id="reviewOsdeployComputerName">-</dd>
         <dt>OS</dt><dd id="reviewOsdeployOs">-</dd>
         <dt>VM sizing</dt><dd id="reviewOsdeploySizing">-</dd>
@@ -521,6 +503,7 @@
         proxmox_volid: {{ artifact.proxmox_volid | tojson | safe }},
         os_version: {{ artifact.os_version | tojson | safe }},
         os_edition: {{ artifact.os_edition | tojson | safe }},
+        os_language: {{ artifact.os_language | tojson | safe }},
         readiness: {{ artifact.readiness | tojson | safe }}
       }{% if not loop.last %},{% endif %}
       {% endfor %}
@@ -727,6 +710,35 @@
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    function setControlValueIfExists(id, value) {
+      const control = byId(id);
+      if (!control || !value) return false;
+      if (control instanceof HTMLSelectElement) {
+        const match = Array.from(control.options).find((option) => option.value === value);
+        if (!match) return false;
+      }
+      control.value = value;
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    }
+
+    function syncOsdeployArtifactFromDeployableOs() {
+      const deployableOs = byId("osdeploy_deployable_os");
+      const artifactId = byId("osdeploy_artifact_id");
+      if (!deployableOs || !artifactId) return;
+      artifactId.value = deployableOs.value;
+      artifactId.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function syncOsdeployOsFromArtifact() {
+      const artifact = selectedOsdeployArtifact();
+      if (!artifact) return;
+      setControlValueIfExists("osdeploy_os_version", artifact.os_version);
+      setControlValueIfExists("osdeploy_os_edition", artifact.os_edition);
+      setControlValueIfExists("osdeploy_os_language", artifact.os_language);
+    }
+
     function renderRoleOptions() {
       const role = selectedOsdeployRole();
       const metadata = osdeployState.roleCatalog[role] || {};
@@ -923,6 +935,14 @@
           scheduleOsdeployPreflight();
         });
       }
+      const deployableOsSelect = byId("osdeploy_deployable_os");
+      if (deployableOsSelect) {
+        deployableOsSelect.addEventListener("change", () => {
+          syncOsdeployArtifactFromDeployableOs();
+          syncOsdeployOsFromArtifact();
+          scheduleOsdeployPreflight();
+        });
+      }
       const roleSelect = byId("osdeploy_server_role");
       if (roleSelect) {
         roleSelect.addEventListener("input", renderRoleOptions);
@@ -938,6 +958,8 @@
       });
       if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
       if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);
+      syncOsdeployArtifactFromDeployableOs();
+      syncOsdeployOsFromArtifact();
       renderOsdeployReview();
       renderOsdeployNamePreview();
       renderRoleOptions();

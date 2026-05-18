@@ -79,7 +79,10 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert "Target" in template
     assert "Placement" in template
     assert "Image" in template
-    assert 'class="osdeploy-field osdeploy-field-artifact"' in template
+    assert "Deployable OS" in template
+    assert 'id="osdeploy_deployable_os"' in template
+    assert 'id="osdeploy_artifact_id" name="artifact_id" type="hidden"' in template
+    assert '<span class="osdeploy-label">Artifact</span>' not in template
     assert 'id="osdeployRoleVariables"' in template
     assert 'id="osdeployRoleVariablesTitle"' in template
     assert 'id="osdeployRoleRequiredFields"' in template
@@ -109,6 +112,8 @@ def test_osdeploy_builder_is_operational_server_base_launcher():
     assert 'data-name-token="{date}"' in template
     assert 'id="osdeployNamePreview"' in template
     assert "resolveOsdeployNameTemplate" in template
+    assert "syncOsdeployOsFromArtifact" in template
+    assert "os_language" in template
     assert 'id="osdeploy_server_role"' in template
     assert 'id="osdeployBlockingChecks"' in template
     assert 'id="osdeployWarningChecks"' in template
