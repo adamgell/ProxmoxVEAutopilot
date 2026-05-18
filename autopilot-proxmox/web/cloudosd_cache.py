@@ -340,6 +340,23 @@ def get_entry(conn: Connection, entry_id: str) -> dict | None:
     return _row(row)
 
 
+def _ready_file_missing(entry: dict | None) -> bool:
+    if not entry or entry.get("status") != "ready":
+        return False
+    path = Path(entry.get("local_path") or "")
+    return not path.is_file()
+
+
+def _mark_missing_file(conn: Connection, entry: dict) -> dict | None:
+    path = Path(entry.get("local_path") or "")
+    return mark_status(
+        conn,
+        entry["id"],
+        status="missing",
+        error=f"cache file missing: {path}",
+    )
+
+
 def find_feature_entry(
     conn: Connection,
     *,
@@ -366,7 +383,28 @@ def find_feature_entry(
         """,
         (windows_version, architecture, language, activation, edition),
     ).fetchone()
-    return _row(row)
+    entry = _row(row)
+    if _ready_file_missing(entry):
+        _mark_missing_file(conn, entry)
+        row = conn.execute(
+            """
+            SELECT *
+            FROM cloudosd_cache_entries
+            WHERE entry_type = 'feature_image'
+              AND windows_version = %s
+              AND architecture = %s
+              AND language = %s
+              AND activation = %s
+              AND edition = %s
+            ORDER BY
+              CASE status WHEN 'ready' THEN 0 WHEN 'warming' THEN 1 WHEN 'missing' THEN 2 ELSE 3 END,
+              updated_at DESC
+            LIMIT 1
+            """,
+            (windows_version, architecture, language, activation, edition),
+        ).fetchone()
+        entry = _row(row)
+    return entry
 
 
 def _find_feature_in_nupkg(
@@ -870,7 +908,16 @@ def matching_quality_updates(conn: Connection, *, windows_version: str, architec
         """,
         (windows_version, architecture),
     ).fetchall()
-    return [_row(row) for row in rows]
+    entries: list[dict] = []
+    for row in rows:
+        entry = _row(row)
+        if not entry:
+            continue
+        if _ready_file_missing(entry):
+            _mark_missing_file(conn, entry)
+            continue
+        entries.append(entry)
+    return entries
 
 
 def package_cache_payload(

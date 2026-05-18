@@ -489,7 +489,7 @@ def intune_evidence_for_run(run: dict, heartbeat: dict | None = None) -> dict:
     )
     actual_group_tag = str((autopilot or {}).get("group_tag") or "").strip()
     group_tag_match = None
-    if expected_group_tag or actual_group_tag:
+    if expected_group_tag:
         group_tag_match = _same_text(expected_group_tag, actual_group_tag)
     enrollment_status = (
         "enrolled"
@@ -2187,6 +2187,12 @@ def download_cache_entry(entry_id: str, file_name: str, request: Request, run_id
             raise HTTPException(status_code=409, detail="CloudOSD cache entry is not ready")
         path = Path(entry.get("local_path") or "")
         if not path.is_file():
+            cloudosd_cache.mark_status(
+                conn,
+                entry_id,
+                status="missing",
+                error=f"cache file missing: {path}",
+            )
             raise HTTPException(status_code=404, detail="CloudOSD cache file is missing")
         if Path(file_name).name != entry["file_name"]:
             raise HTTPException(status_code=404, detail="CloudOSD cache filename mismatch")

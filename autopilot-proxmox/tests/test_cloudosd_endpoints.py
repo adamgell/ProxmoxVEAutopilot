@@ -482,11 +482,16 @@ def test_cloudosd_package_uses_ready_feature_cache_and_download_endpoint(
 def test_cloudosd_preflight_reports_feature_cache_hit_and_quality_cache_ready(
     cloudosd_client,
     pg_conn,
+    tmp_path,
 ):
     from web import cloudosd_cache
 
     artifact = _create_artifact(pg_conn)
-    _create_feature_cache_entry(pg_conn)
+    feature_path = tmp_path / "cached-win11-25h2-enterprise-volume-en-us.esd"
+    feature_path.write_bytes(b"secret\n")
+    quality_path = tmp_path / "windows11.0-kb5089549-x64.msu"
+    quality_path.write_bytes(b"quality\n")
+    _create_feature_cache_entry(pg_conn, local_path=str(feature_path))
     cloudosd_cache._upsert_entry(
         pg_conn,
         {
@@ -502,9 +507,9 @@ def test_cloudosd_preflight_reports_feature_cache_hit_and_quality_cache_ready(
             "kb": "KB5089549",
             "file_name": "windows11.0-kb5089549-x64.msu",
             "source_url": "https://download.windowsupdate.test/windows11.0-kb5089549-x64.msu",
-            "local_path": "/tmp/windows11.0-kb5089549-x64.msu",
+            "local_path": str(quality_path),
             "sha256": "0" * 64,
-            "size_bytes": 42,
+            "size_bytes": 8,
         },
     )
     pg_conn.commit()
@@ -519,6 +524,51 @@ def test_cloudosd_preflight_reports_feature_cache_hit_and_quality_cache_ready(
     assert len(body["cache"]["quality_updates"]) == 1
     _assert_warning(body, "cloudosd_feature_cache_hit")
     _assert_warning(body, "cloudosd_quality_cache_ready")
+
+
+def test_cloudosd_preflight_demotes_stale_ready_cache_entries(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_cache
+
+    artifact = _create_artifact(pg_conn)
+    feature = _create_feature_cache_entry(pg_conn, local_path="/tmp/missing-feature.esd")
+    quality = cloudosd_cache._upsert_entry(
+        pg_conn,
+        {
+            "entry_type": "quality_update",
+            "status": "ready",
+            "windows_version": "Windows 11 25H2",
+            "release_id": "25H2",
+            "architecture": "amd64",
+            "language": "neutral",
+            "activation": "all",
+            "edition": "all",
+            "title": "2026-05 Cumulative Update for Windows 11, version 25H2 for x64-based Systems (KB5089549)",
+            "kb": "KB5089549",
+            "file_name": "windows11.0-kb5089549-x64.msu",
+            "source_url": "https://download.windowsupdate.test/windows11.0-kb5089549-x64.msu",
+            "local_path": "/tmp/missing-quality.msu",
+            "sha256": "0" * 64,
+            "size_bytes": 42,
+        },
+    )
+    pg_conn.commit()
+
+    preflight = cloudosd_client.post(
+        "/api/cloudosd/preflight",
+        json=_run_payload(artifact["id"]),
+    )
+
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["cache"]["feature_image"]["status"] == "missing"
+    assert body["cache"]["quality_updates"] == []
+    _assert_warning(body, "cloudosd_feature_cache_miss")
+    _assert_warning(body, "cloudosd_quality_cache_missing")
+    assert cloudosd_cache.get_entry(pg_conn, feature["id"])["status"] == "missing"
+    assert cloudosd_cache.get_entry(pg_conn, quality["id"])["status"] == "missing"
 
 
 def test_cloudosd_quality_cache_warm_verifies_expected_sha1(pg_conn, monkeypatch, tmp_path):
@@ -1069,6 +1119,64 @@ def test_cloudosd_run_flags_autopilot_group_tag_mismatch(
             "message": "Autopilot group tag WrongTag does not match expected GellNative",
         }
     ]
+
+
+def test_cloudosd_run_without_expected_group_tag_does_not_mismatch(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, devices_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    (hash_dir / "20260514T020202Z-vm247-Gell-247-ABC-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Gell-247-ABC,,hardware-hash,\n",
+        encoding="utf-8",
+    )
+    devices_pg.reset_for_tests(pg_conn)
+    devices_pg.init(pg_conn)
+    devices_pg.upsert_autopilot([
+        {
+            "id": "ap-247",
+            "serialNumber": "Gell-247-ABC",
+            "groupTag": "None",
+            "deploymentProfileAssignmentStatus": "notAssigned",
+            "enrollmentState": "notContacted",
+            "displayName": "GELL-247-ABC",
+        }
+    ])
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Gell-247-ABC",
+    )
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run['run_id']}/identity",
+        json={
+            "vmid": 247,
+            "vm_uuid": "cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "mac": "52:54:00:aa:bb:f0",
+            "node": "pve",
+            "computer_name": "Gell-247-ABC",
+        },
+    ).status_code == 200
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}")
+
+    assert detail.status_code == 200, detail.text
+    evidence = detail.json()["intune_evidence"]
+    readiness = detail.json()["autopilot_readiness"]
+    assert evidence["assignment"]["status"] == "notAssigned"
+    assert evidence["assignment"]["expected_group_tag"] == ""
+    assert evidence["assignment"]["actual_group_tag"] == "None"
+    assert evidence["assignment"]["group_tag_match"] is None
+    assert evidence["errors"] == []
+    assert readiness["state"] == "imported"
+    assert readiness["assignment"]["group_tag_match"] is None
 
 
 def test_cloudosd_autopilot_readiness_upload_is_run_bound(
