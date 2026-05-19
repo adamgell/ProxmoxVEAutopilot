@@ -13,7 +13,9 @@ import {
   rankedSignalPaths,
   statusLabel,
   statusTone,
-  summarizeJobs
+  summarizeFleet,
+  summarizeJobs,
+  vmJoinLabels
 } from "./viewModels";
 
 describe("operator view models", () => {
@@ -136,5 +138,71 @@ describe("operator view models", () => {
 
     expect(rankedSignalPaths(paths).map((path) => path.id)).toEqual(["media", "watch"]);
     expect(paths.map((path) => path.id)).toEqual(["watch", "media"]);
+  });
+
+  test("maps normalized lifecycle states to fleet chips", () => {
+    expect(vmJoinLabels({
+      vmid: 105,
+      name: "WrkGrp-8F47E090",
+      status: "running",
+      lifecycle_state: "workgroup_unenrolled",
+      lifecycle_label: "unenrolled"
+    })).toEqual(["unenrolled"]);
+    expect(vmJoinLabels({
+      vmid: 106,
+      name: "Domain-106",
+      lifecycle_state: "ad_domain_joined",
+      lifecycle_label: "domain",
+      lifecycle_domain_joined: true
+    })).toEqual(["domain"]);
+    expect(vmJoinLabels({
+      vmid: 107,
+      name: "Entra-107",
+      lifecycle_state: "entra_joined",
+      lifecycle_label: "Entra ID",
+      lifecycle_entra_joined: true
+    })).toEqual(["Entra ID"]);
+    expect(vmJoinLabels({
+      vmid: 108,
+      name: "Intune-108",
+      lifecycle_state: "intune_enrolled",
+      lifecycle_label: "Intune",
+      lifecycle_domain_joined: true,
+      lifecycle_entra_joined: true,
+      lifecycle_intune_enrolled: true,
+      lifecycle_autopilot_registered: true
+    })).toEqual(["domain", "Entra ID", "Intune", "Autopilot ID"]);
+  });
+
+  test("counts workgroup lifecycle machines as fleet attention", () => {
+    expect(summarizeFleet({
+      vms: [
+        {
+          vmid: 105,
+          name: "WrkGrp-8F47E090",
+          status: "running",
+          lifecycle_state: "workgroup_unenrolled",
+          lifecycle_label: "unenrolled"
+        },
+        {
+          vmid: 106,
+          name: "Domain-106",
+          status: "running",
+          lifecycle_state: "ad_domain_joined",
+          lifecycle_label: "domain",
+          lifecycle_domain_joined: true
+        }
+      ],
+      missing_vms: [],
+      agents: [],
+      autopilot_devices: [],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-05-19T00:00:00Z"
+    })).toMatchObject({
+      total: 2,
+      running: 2,
+      attention: 1
+    });
   });
 });

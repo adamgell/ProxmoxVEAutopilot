@@ -28,6 +28,7 @@ from web.jobs import JobManager
 from web import devices_pg as devices_db
 from web import jobs_pg as jobs_db
 from web.live import LiveHub, utc_now_iso
+from web import machine_lifecycle_pg
 from web import monitoring_evidence
 from web import proxmox_permissions
 
@@ -2110,6 +2111,7 @@ def _init_app_database() -> None:
         deployment_health_pg,
         device_history_pg,
         devices_pg,
+        machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
         ts_engine_pg,
@@ -2119,6 +2121,7 @@ def _init_app_database() -> None:
         ts_engine_pg.init(conn)
         device_history_pg.init(conn)
         devices_pg.init(conn)
+        machine_lifecycle_pg.init(conn)
         agent_telemetry_pg.init(conn)
         cloudosd_pg.init(conn)
         cloudosd_cache.init(conn)
@@ -4509,6 +4512,14 @@ class VmFleetRowResponse(ApiExtraModel):
     hybrid_joined: bool = False
     entra_id_joined: bool = False
     has_hash: bool = False
+    lifecycle_state: str = ""
+    lifecycle_label: str = ""
+    lifecycle_source: str = ""
+    lifecycle_observed_at: str = ""
+    lifecycle_domain_joined: bool = False
+    lifecycle_entra_joined: bool = False
+    lifecycle_intune_enrolled: bool = False
+    lifecycle_autopilot_registered: bool = False
     target_os: str = "windows"
     sequence_name: str | None = None
 
@@ -4526,6 +4537,14 @@ class AgentFleetRowResponse(ApiExtraModel):
     qga_state: str = ""
     domain_joined: bool | None = None
     entra_joined: bool | None = None
+    lifecycle_state: str = ""
+    lifecycle_label: str = ""
+    lifecycle_source: str = ""
+    lifecycle_observed_at: str = ""
+    lifecycle_domain_joined: bool = False
+    lifecycle_entra_joined: bool = False
+    lifecycle_intune_enrolled: bool = False
+    lifecycle_autopilot_registered: bool = False
     current_phase: str = ""
     current_run_id: str = ""
     agent_version: str = ""
@@ -5930,6 +5949,28 @@ def _enrich_agent_vmid_from_pve(agent: dict, pve_vms: list[dict] | None = None) 
     return agent
 
 
+def _apply_lifecycle(row: dict, lifecycle: dict | None) -> dict:
+    if not lifecycle:
+        row.setdefault("lifecycle_state", "")
+        row.setdefault("lifecycle_label", "")
+        row.setdefault("lifecycle_source", "")
+        row.setdefault("lifecycle_observed_at", "")
+        row.setdefault("lifecycle_domain_joined", False)
+        row.setdefault("lifecycle_entra_joined", False)
+        row.setdefault("lifecycle_intune_enrolled", False)
+        row.setdefault("lifecycle_autopilot_registered", False)
+        return row
+    row["lifecycle_state"] = lifecycle.get("state") or ""
+    row["lifecycle_label"] = lifecycle.get("label") or ""
+    row["lifecycle_source"] = lifecycle.get("source") or ""
+    row["lifecycle_observed_at"] = lifecycle.get("last_observed_at") or ""
+    row["lifecycle_domain_joined"] = bool(lifecycle.get("domain_joined"))
+    row["lifecycle_entra_joined"] = bool(lifecycle.get("entra_joined"))
+    row["lifecycle_intune_enrolled"] = bool(lifecycle.get("intune_enrolled"))
+    row["lifecycle_autopilot_registered"] = bool(lifecycle.get("autopilot_registered"))
+    return row
+
+
 def _agent_inventory_rows() -> list[dict]:
     pve_vms = list(_VMS_CACHE.get("data") or [])
     try:
@@ -6013,7 +6054,16 @@ def _agent_inventory_rows() -> list[dict]:
             "last_heartbeat_at": "",
             "last_seen_at": _iso_or_blank(row.get("requested_at")),
         }, pve_vms))
-    return out
+    try:
+        lifecycles = machine_lifecycle_pg.current_by_agents([
+            agent["agent_id"] for agent in out if agent.get("agent_id")
+        ])
+    except Exception:
+        lifecycles = {}
+    return [
+        _apply_lifecycle(agent, lifecycles.get(agent.get("agent_id") or ""))
+        for agent in out
+    ]
 
 
 def _fetch_vms_payload_live():
@@ -6863,6 +6913,36 @@ async def _vms_fleet_payload() -> dict:
             seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
         vm["target_os"] = (seq or {}).get("target_os") or "windows"
         vm["sequence_name"] = (seq or {}).get("name")
+
+    autopilot_vms = [vm for vm in vms if vm.get("in_autopilot")]
+    if autopilot_vms:
+        try:
+            from web import db_pg
+
+            with db_pg.connection(_database_url()) as conn:
+                for vm in autopilot_vms:
+                    machine_lifecycle_pg.observe_autopilot_registration(
+                        conn,
+                        vmid=vm.get("vmid"),
+                        serial_number=vm.get("serial") or "",
+                        computer_name=vm.get("hostname") or vm.get("name") or "",
+                        registered=True,
+                        evidence={"serial": vm.get("serial") or ""},
+                    )
+                conn.commit()
+        except Exception:
+            pass
+
+    try:
+        lifecycles = machine_lifecycle_pg.current_by_vmids([
+            int(vm["vmid"]) for vm in vms if vm.get("vmid") is not None
+        ])
+    except Exception:
+        lifecycles = {}
+    vms = [
+        _apply_lifecycle(vm, lifecycles.get(int(vm["vmid"])))
+        for vm in vms
+    ]
 
     missing_vms = [
         vm for vm in vms

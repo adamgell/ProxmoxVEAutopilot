@@ -218,6 +218,27 @@ export function vmDisplayName(vm: VmFleetRow): string {
 
 export function vmJoinLabels(vm: VmFleetRow): readonly string[] {
   const labels: string[] = [];
+  if (vm.lifecycle_state) {
+    if (vm.lifecycle_domain_joined || vm.lifecycle_state === "ad_domain_joined" || vm.lifecycle_state === "hybrid_joined") {
+      labels.push("domain");
+    }
+    if (vm.lifecycle_entra_joined || vm.lifecycle_state === "entra_joined" || vm.lifecycle_state === "hybrid_joined") {
+      labels.push("Entra ID");
+    }
+    if (vm.lifecycle_intune_enrolled || vm.lifecycle_state === "intune_enrolled") {
+      labels.push("Intune");
+    }
+    if (vm.lifecycle_autopilot_registered || vm.lifecycle_state === "autopilot_registered") {
+      labels.push("Autopilot ID");
+    }
+    if (vm.lifecycle_state === "workgroup_unenrolled" && !labels.length) {
+      labels.push("unenrolled");
+    }
+    if (vm.has_hash) {
+      labels.push("hash");
+    }
+    return labels;
+  }
   if (vm.part_of_domain || vm.hybrid_joined) {
     labels.push("domain");
   }
@@ -235,6 +256,46 @@ export function vmJoinLabels(vm: VmFleetRow): readonly string[] {
   }
   if (!labels.length && (vm.status || "").toLowerCase() === "running") {
     labels.push("unenrolled");
+  }
+  return labels;
+}
+
+export function agentLifecycleLabels(agent: AgentFleetRow): readonly string[] {
+  const labels: string[] = [];
+  if (agent.lifecycle_state) {
+    if (
+      agent.lifecycle_domain_joined
+      || agent.lifecycle_state === "ad_domain_joined"
+      || agent.lifecycle_state === "hybrid_joined"
+    ) {
+      labels.push("domain");
+    }
+    if (
+      agent.lifecycle_entra_joined
+      || agent.lifecycle_state === "entra_joined"
+      || agent.lifecycle_state === "hybrid_joined"
+    ) {
+      labels.push("Entra ID");
+    }
+    if (agent.lifecycle_intune_enrolled || agent.lifecycle_state === "intune_enrolled") {
+      labels.push("Intune");
+    }
+    if (agent.lifecycle_autopilot_registered || agent.lifecycle_state === "autopilot_registered") {
+      labels.push("Autopilot ID");
+    }
+    if (agent.lifecycle_state === "workgroup_unenrolled" && !labels.length) {
+      labels.push("unenrolled");
+    }
+  } else {
+    if (agent.domain_joined) {
+      labels.push("domain");
+    }
+    if (agent.entra_joined) {
+      labels.push("Entra ID");
+    }
+  }
+  if (agent.hash_capture_supported) {
+    labels.push("hash");
   }
   return labels;
 }

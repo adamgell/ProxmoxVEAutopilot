@@ -57,6 +57,38 @@ export type AgentFleetRowResponse = {
      */
     last_seen_at?: string;
     /**
+     * Lifecycle Autopilot Registered
+     */
+    lifecycle_autopilot_registered?: boolean;
+    /**
+     * Lifecycle Domain Joined
+     */
+    lifecycle_domain_joined?: boolean;
+    /**
+     * Lifecycle Entra Joined
+     */
+    lifecycle_entra_joined?: boolean;
+    /**
+     * Lifecycle Intune Enrolled
+     */
+    lifecycle_intune_enrolled?: boolean;
+    /**
+     * Lifecycle Label
+     */
+    lifecycle_label?: string;
+    /**
+     * Lifecycle Observed At
+     */
+    lifecycle_observed_at?: string;
+    /**
+     * Lifecycle Source
+     */
+    lifecycle_source?: string;
+    /**
+     * Lifecycle State
+     */
+    lifecycle_state?: string;
+    /**
      * Os Build
      */
     os_build?: string;
@@ -1767,6 +1799,38 @@ export type VmFleetRowResponse = {
      * Ip Address
      */
     ip_address?: string;
+    /**
+     * Lifecycle Autopilot Registered
+     */
+    lifecycle_autopilot_registered?: boolean;
+    /**
+     * Lifecycle Domain Joined
+     */
+    lifecycle_domain_joined?: boolean;
+    /**
+     * Lifecycle Entra Joined
+     */
+    lifecycle_entra_joined?: boolean;
+    /**
+     * Lifecycle Intune Enrolled
+     */
+    lifecycle_intune_enrolled?: boolean;
+    /**
+     * Lifecycle Label
+     */
+    lifecycle_label?: string;
+    /**
+     * Lifecycle Observed At
+     */
+    lifecycle_observed_at?: string;
+    /**
+     * Lifecycle Source
+     */
+    lifecycle_source?: string;
+    /**
+     * Lifecycle State
+     */
+    lifecycle_state?: string;
     /**
      * Name
      */
@@ -3880,7 +3944,7 @@ export type DeleteCacheEntryApiCloudosdCacheEntryIdDeletePostResponses = {
     202: unknown;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetData = {
+export type GetCloudosdCacheEntryDownloadData = {
     body?: never;
     path: {
         /**
@@ -3905,23 +3969,23 @@ export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetData = {
     url: '/api/cloudosd/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors = {
+export type GetCloudosdCacheEntryDownloadErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetError = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors];
+export type GetCloudosdCacheEntryDownloadError = GetCloudosdCacheEntryDownloadErrors[keyof GetCloudosdCacheEntryDownloadErrors];
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetResponses = {
+export type GetCloudosdCacheEntryDownloadResponses = {
     /**
      * Successful Response
      */
     200: unknown;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Data = {
+export type HeadCloudosdCacheEntryDownloadData = {
     body?: never;
     path: {
         /**
@@ -3946,16 +4010,16 @@ export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Data = 
     url: '/api/cloudosd/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors = {
+export type HeadCloudosdCacheEntryDownloadErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Error = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors];
+export type HeadCloudosdCacheEntryDownloadError = HeadCloudosdCacheEntryDownloadErrors[keyof HeadCloudosdCacheEntryDownloadErrors];
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Responses = {
+export type HeadCloudosdCacheEntryDownloadResponses = {
     /**
      * Successful Response
      */
@@ -6495,7 +6559,7 @@ export type DeleteCacheEntryApiOsdeployV1CacheEntryIdDeletePostResponses = {
     202: unknown;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetData = {
+export type GetOsdeployCacheEntryDownloadData = {
     body?: never;
     path: {
         /**
@@ -6511,23 +6575,23 @@ export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetData =
     url: '/api/osdeploy/v1/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors = {
+export type GetOsdeployCacheEntryDownloadErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetError = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors];
+export type GetOsdeployCacheEntryDownloadError = GetOsdeployCacheEntryDownloadErrors[keyof GetOsdeployCacheEntryDownloadErrors];
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetResponses = {
+export type GetOsdeployCacheEntryDownloadResponses = {
     /**
      * Successful Response
      */
     200: unknown;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Data = {
+export type HeadOsdeployCacheEntryDownloadData = {
     body?: never;
     path: {
         /**
@@ -6543,16 +6607,16 @@ export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Data 
     url: '/api/osdeploy/v1/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors = {
+export type HeadOsdeployCacheEntryDownloadErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Error = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors];
+export type HeadOsdeployCacheEntryDownloadError = HeadOsdeployCacheEntryDownloadErrors[keyof HeadOsdeployCacheEntryDownloadErrors];
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Responses = {
+export type HeadOsdeployCacheEntryDownloadResponses = {
     /**
      * Successful Response
      */

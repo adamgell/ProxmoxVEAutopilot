@@ -75,6 +75,46 @@
             "title": "Last Seen At",
             "type": "string"
           },
+          "lifecycle_autopilot_registered": {
+            "default": false,
+            "title": "Lifecycle Autopilot Registered",
+            "type": "boolean"
+          },
+          "lifecycle_domain_joined": {
+            "default": false,
+            "title": "Lifecycle Domain Joined",
+            "type": "boolean"
+          },
+          "lifecycle_entra_joined": {
+            "default": false,
+            "title": "Lifecycle Entra Joined",
+            "type": "boolean"
+          },
+          "lifecycle_intune_enrolled": {
+            "default": false,
+            "title": "Lifecycle Intune Enrolled",
+            "type": "boolean"
+          },
+          "lifecycle_label": {
+            "default": "",
+            "title": "Lifecycle Label",
+            "type": "string"
+          },
+          "lifecycle_observed_at": {
+            "default": "",
+            "title": "Lifecycle Observed At",
+            "type": "string"
+          },
+          "lifecycle_source": {
+            "default": "",
+            "title": "Lifecycle Source",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "default": "",
+            "title": "Lifecycle State",
+            "type": "string"
+          },
           "os_build": {
             "default": "",
             "title": "Os Build",
@@ -2661,6 +2701,46 @@
           "ip_address": {
             "default": "",
             "title": "Ip Address",
+            "type": "string"
+          },
+          "lifecycle_autopilot_registered": {
+            "default": false,
+            "title": "Lifecycle Autopilot Registered",
+            "type": "boolean"
+          },
+          "lifecycle_domain_joined": {
+            "default": false,
+            "title": "Lifecycle Domain Joined",
+            "type": "boolean"
+          },
+          "lifecycle_entra_joined": {
+            "default": false,
+            "title": "Lifecycle Entra Joined",
+            "type": "boolean"
+          },
+          "lifecycle_intune_enrolled": {
+            "default": false,
+            "title": "Lifecycle Intune Enrolled",
+            "type": "boolean"
+          },
+          "lifecycle_label": {
+            "default": "",
+            "title": "Lifecycle Label",
+            "type": "string"
+          },
+          "lifecycle_observed_at": {
+            "default": "",
+            "title": "Lifecycle Observed At",
+            "type": "string"
+          },
+          "lifecycle_source": {
+            "default": "",
+            "title": "Lifecycle Source",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "default": "",
+            "title": "Lifecycle State",
             "type": "string"
           },
           "name": {
@@ -6074,7 +6154,7 @@
     },
     "/api/cloudosd/cache/{entry_id}/download/{file_name}": {
       "get": {
-        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__get",
+        "operationId": "get_cloudosd_cache_entry_download",
         "parameters": [
           {
             "in": "path",
@@ -6141,7 +6221,7 @@
         ]
       },
       "head": {
-        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__get",
+        "operationId": "head_cloudosd_cache_entry_download",
         "parameters": [
           {
             "in": "path",
@@ -9959,7 +10039,7 @@
     },
     "/api/osdeploy/v1/cache/{entry_id}/download/{file_name}": {
       "get": {
-        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__get",
+        "operationId": "get_osdeploy_cache_entry_download",
         "parameters": [
           {
             "in": "path",
@@ -10006,7 +10086,7 @@
         ]
       },
       "head": {
-        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__get",
+        "operationId": "head_osdeploy_cache_entry_download",
         "parameters": [
           {
             "in": "path",

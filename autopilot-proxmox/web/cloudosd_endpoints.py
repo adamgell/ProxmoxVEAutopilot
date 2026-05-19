@@ -2180,7 +2180,14 @@ def _download_token_payload(run_id: str, token: str) -> dict:
     return payload
 
 
-@router.api_route("/cache/{entry_id}/download/{file_name:path}", methods=["GET", "HEAD"])
+@router.head(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="head_cloudosd_cache_entry_download",
+)
+@router.get(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="get_cloudosd_cache_entry_download",
+)
 def download_cache_entry(entry_id: str, file_name: str, request: Request, run_id: str = "", token: str = ""):
     _download_token_payload(run_id, token)
     with _conn() as conn:

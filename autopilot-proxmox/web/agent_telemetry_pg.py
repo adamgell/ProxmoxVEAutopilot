@@ -13,7 +13,7 @@ from uuid import uuid4
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
-from web import db_pg
+from web import db_pg, machine_lifecycle_pg
 
 
 SCHEMA = """
@@ -649,6 +649,11 @@ def record_heartbeat(conn: Connection, *, agent_id: str, payload: dict[str, Any]
           AND agent_token IS NOT NULL
         """,
         (now, agent_id),
+    )
+    machine_lifecycle_pg.observe_from_agent_heartbeat(
+        conn,
+        agent_id=agent_id,
+        heartbeat={**_row_dict(row), **payload, "received_at": now},
     )
     _commit(conn)
     return _row_dict(row)

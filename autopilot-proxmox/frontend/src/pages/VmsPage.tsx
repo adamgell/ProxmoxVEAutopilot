@@ -14,6 +14,7 @@ import type {
 } from "../contracts";
 import { connectFleetLive } from "../liveSocket";
 import {
+  agentLifecycleLabels,
   agentIsStale,
   deviceDisplayName,
   fallbackText,
@@ -535,11 +536,7 @@ function AgentLane({
               <div><dt>Heartbeat</dt><dd>{formatShortDateTime(agent.last_heartbeat_at)}</dd></div>
               <div><dt>Version</dt><dd>{fallbackText(agent.agent_version)}</dd></div>
             </dl>
-            <Chips labels={[
-              ...(agent.domain_joined ? ["domain"] : []),
-              ...(agent.entra_joined ? ["Entra ID"] : []),
-              ...(agent.hash_capture_supported ? ["hash"] : [])
-            ]} />
+            <Chips labels={agentLifecycleLabels(agent)} />
             <div className="fleet-actions">
               {agent.approval_status === "pending" && agent.approval_id ? (
                 <ActionButton label="Approve" onClick={() => { onApprove(agent); }} />

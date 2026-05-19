@@ -78,6 +78,18 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
         "last_heartbeat_at": "2026-05-19T00:00:00Z",
         "hash_capture_supported": True,
     }])
+    monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_vmids", lambda _vmids: {
+        108: {
+            "state": "workgroup_unenrolled",
+            "label": "unenrolled",
+            "source": "agent_heartbeat",
+            "last_observed_at": "2026-05-19T00:00:00Z",
+            "domain_joined": False,
+            "entra_joined": False,
+            "intune_enrolled": False,
+            "autopilot_registered": True,
+        }
+    })
     monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
 
     response = web_client.get("/api/vms/fleet")
@@ -98,6 +110,9 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     assert body["vms"][0]["vmid"] == 108
     assert body["vms"][0]["in_autopilot"] is True
     assert body["vms"][0]["has_hash"] is True
+    assert body["vms"][0]["lifecycle_state"] == "workgroup_unenrolled"
+    assert body["vms"][0]["lifecycle_label"] == "unenrolled"
+    assert body["vms"][0]["lifecycle_autopilot_registered"] is True
     assert body["agents"][0]["agent_id"] == "agent-wrkgrp-525570b6"
     assert body["autopilot_devices"][0]["display_name"] == "WRKGRP-525570B6"
 

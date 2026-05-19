@@ -1626,7 +1626,14 @@ def delete_cache_entry(entry_id: str):
     return _queue_cache_job("osdeploy_cache_delete", "delete", {"entry_id": entry_id})
 
 
-@router.api_route("/cache/{entry_id}/download/{file_name:path}", methods=["GET", "HEAD"])
+@router.head(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="head_osdeploy_cache_entry_download",
+)
+@router.get(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="get_osdeploy_cache_entry_download",
+)
 def download_cache_entry(entry_id: str, file_name: str, request: Request):
     with _conn() as conn:
         entry = osdeploy_cache.get_entry(conn, entry_id)
