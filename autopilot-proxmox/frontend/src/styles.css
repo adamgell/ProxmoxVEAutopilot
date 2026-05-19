@@ -84,6 +84,26 @@ h2 {
   min-height: 100vh;
 }
 
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 20;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  transform: translateY(-160%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 .workspace__rail {
   position: sticky;
   top: 0;
@@ -232,6 +252,10 @@ h2 {
   width: min(1180px, calc(100vw - 296px));
   margin: 0 auto;
   padding: 24px 24px 42px;
+}
+
+.workspace__content:focus {
+  outline: none;
 }
 
 .page-head {
@@ -562,6 +586,13 @@ h2 {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .load-strip__track span {
+    animation: none;
+    transform: none;
+  }
+}
+
 .fleet-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -636,10 +667,31 @@ h2 {
 .filter {
   display: grid;
   gap: 8px;
-  margin-bottom: 18px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.filter-row {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.filter-row__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: end;
+}
+
+.result-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .filter input {
@@ -652,6 +704,33 @@ h2 {
   background: var(--surface);
   font: inherit;
   font-weight: 500;
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.segmented button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted-2);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.segmented button:hover,
+.segmented button.is-active {
+  border-color: var(--active);
+  color: var(--text);
+  background: var(--surface-2);
 }
 
 .table-wrap {
@@ -740,6 +819,14 @@ h2 {
 
   .workspace__content {
     padding: 20px 16px 34px;
+  }
+
+  .filter-row__top {
+    grid-template-columns: 1fr;
+  }
+
+  .result-count {
+    text-align: left;
   }
 
   .row-list li {

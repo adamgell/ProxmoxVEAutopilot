@@ -24,6 +24,7 @@ export function OperatorShell({
 
   return (
     <div className="workspace">
+      <a className="skip-link" href="#react-content">Skip to content</a>
       <aside className="workspace__rail">
         <a className="workspace__brand" href="/react/dashboard" aria-label="Proxmox VE Autopilot dashboard">
           <span>Autopilot</span>
@@ -65,7 +66,7 @@ export function OperatorShell({
             {bootstrap.buildTime ? <time dateTime={bootstrap.buildTime}>{bootstrap.buildTime}</time> : null}
           </div>
         </header>
-        <main className="workspace__content">{children}</main>
+        <main id="react-content" className="workspace__content" tabIndex={-1}>{children}</main>
       </div>
     </div>
   );

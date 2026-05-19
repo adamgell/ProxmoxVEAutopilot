@@ -8,6 +8,7 @@ import { usePolling } from "../hooks/usePolling";
 import {
   buildSignalMetrics,
   fallbackText,
+  formatShortDateTime,
   rankedSignalPaths,
   statusLabel
 } from "../viewModels";
@@ -127,7 +128,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                 <MetricTerm label="Runtime" value={hub.source_health.runtime_available ? "up" : "down"} />
                 <MetricTerm label="Setup" value={fallbackText(hub.source_health.setup_health)} />
                 <MetricTerm label="Keytab" value={fallbackText(hub.source_health.keytab_status)} />
-                <MetricTerm label="Generated" value={fallbackText(hub.generated_at)} />
+                <MetricTerm label="Generated" value={formatShortDateTime(hub.generated_at)} />
               </dl>
               {selectedSignal ? (
                 <div className="detail-callout">

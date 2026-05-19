@@ -5,7 +5,10 @@ import {
   buildSignalMetrics,
   fallbackText,
   formatPercent,
+  formatShortDateTime,
+  jobMatchesStatus,
   jobTarget,
+  jobStatusFilters,
   monitoringStrip,
   rankedSignalPaths,
   statusLabel,
@@ -20,6 +23,8 @@ describe("operator view models", () => {
     expect(fallbackText(" controller ")).toBe(" controller ");
     expect(formatPercent(72)).toBe("72%");
     expect(formatPercent(undefined)).toBe("-");
+    expect(formatShortDateTime("2026-05-19T00:05:00Z")).toBe("May 19 00:05Z");
+    expect(formatShortDateTime("not-a-date")).toBe("not-a-date");
   });
 
   test("maps job states to stable status labels and tones", () => {
@@ -61,6 +66,20 @@ describe("operator view models", () => {
       complete: 1,
       paused: 1
     });
+  });
+
+  test("filters jobs by operator status buckets", () => {
+    const running: JobTableRow = { id: "running", status: "running" };
+    const pending: JobTableRow = { id: "pending", status: "pending" };
+    const orphaned: JobTableRow = { id: "orphaned", status: "orphaned" };
+    const paused: JobTableRow = { id: "paused", status: "running", paused: true };
+
+    expect(jobStatusFilters).toEqual(["all", "failed", "running", "queued", "complete", "paused"]);
+    expect(jobMatchesStatus(running, "running")).toBe(true);
+    expect(jobMatchesStatus(pending, "queued")).toBe(true);
+    expect(jobMatchesStatus(orphaned, "failed")).toBe(true);
+    expect(jobMatchesStatus(paused, "paused")).toBe(true);
+    expect(jobMatchesStatus(paused, "running")).toBe(false);
   });
 
   test("builds monitoring strip values without inventing missing data", () => {

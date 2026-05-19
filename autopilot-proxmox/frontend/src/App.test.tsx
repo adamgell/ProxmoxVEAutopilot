@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
@@ -181,6 +181,7 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
     expect(screen.getByRole("link", { name: "Signals Hub" })).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getByRole("link", { name: "OSDCloud Desktop" })).toHaveAttribute("href", "/cloudosd");
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
@@ -233,7 +234,12 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
     expect(await screen.findByText("PC-001")).toBeInTheDocument();
     expect(screen.getByText("SN-001")).toBeInTheDocument();
+    expect(screen.getByText("2 jobs")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "job-running" })).toHaveAttribute("href", "/jobs/job-running");
+    fireEvent.click(screen.getByRole("button", { name: "failed" }));
+    expect(screen.getByText("1 of 2 jobs")).toBeInTheDocument();
+    expect(screen.queryByText("PC-001")).not.toBeInTheDocument();
+    expect(screen.getByText("SN-001")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Filter jobs")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
   });
@@ -256,6 +262,7 @@ describe("App", () => {
       "href",
       "/monitoring/settings"
     );
+    expect(screen.getByText("May 19 00:00Z")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sweep/i })).not.toBeInTheDocument();
   });
 });

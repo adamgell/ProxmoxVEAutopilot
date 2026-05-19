@@ -17,6 +17,12 @@ export interface MetricItem {
   readonly tone?: StatusTone;
 }
 
+export const jobStatusFilters = ["all", "failed", "running", "queued", "complete", "paused"] as const;
+
+export type JobStatusFilter = (typeof jobStatusFilters)[number];
+
+const shortMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
 export function fallbackText(value: unknown): string {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -31,6 +37,21 @@ export function fallbackText(value: unknown): string {
     default:
       return "-";
   }
+}
+
+export function formatShortDateTime(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallbackText(value);
+  }
+  const month = shortMonths[date.getUTCMonth()] ?? "";
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${month} ${day} ${hour}:${minute}Z`;
 }
 
 export function formatPercent(value: unknown): string {
@@ -100,6 +121,26 @@ export function summarizeJobs(jobs: readonly JobTableRow[]): JobsSummary {
     },
     { total: 0, running: 0, queued: 0, failed: 0, complete: 0, paused: 0 }
   );
+}
+
+export function jobMatchesStatus(job: JobTableRow, filter: JobStatusFilter): boolean {
+  if (filter === "all") {
+    return true;
+  }
+  if (filter === "paused") {
+    return job.paused === true;
+  }
+  const status = (job.status || "").toLowerCase();
+  if (filter === "failed") {
+    return status === "failed" || status === "orphaned";
+  }
+  if (filter === "queued") {
+    return status === "pending" || status === "queued";
+  }
+  if (filter === "complete") {
+    return status === "complete" || status === "completed";
+  }
+  return status === filter && job.paused !== true;
 }
 
 export function monitoringStrip(overview: MonitoringOverview): readonly MetricItem[] {
