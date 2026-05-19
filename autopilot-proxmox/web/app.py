@@ -4691,6 +4691,11 @@ async def react_vms_shell(request: Request):
     return _render_react_shell(request)
 
 
+@app.get("/react/vms/{vmid}", response_class=HTMLResponse, include_in_schema=False)
+async def react_vm_detail_shell(request: Request, vmid: int):
+    return _render_react_shell(request)
+
+
 @app.get("/install-tracking", response_class=HTMLResponse)
 async def install_tracking_page(request: Request, run_id: str | None = None):
     return templates.TemplateResponse("install_tracking.html", {

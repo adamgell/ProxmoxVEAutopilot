@@ -5,7 +5,13 @@ import {
   buildFleetMachineRows,
   buildSignalMetrics,
   fallbackText,
+  fleetAgentLabel,
+  fleetManagedByLabel,
+  fleetOsName,
+  fleetOsVersion,
+  fleetRuntimeLabel,
   formatPercent,
+  formatRelativeAge,
   formatShortDateTime,
   jobMatchesStatus,
   jobTarget,
@@ -28,6 +34,9 @@ describe("operator view models", () => {
     expect(formatPercent(undefined)).toBe("-");
     expect(formatShortDateTime("2026-05-19T00:05:00Z")).toBe("May 19 00:05Z");
     expect(formatShortDateTime("not-a-date")).toBe("not-a-date");
+    expect(formatRelativeAge("2026-05-19T00:00:30Z", Date.parse("2026-05-19T00:01:00Z"))).toBe("last 30s");
+    expect(formatRelativeAge("2026-05-19T00:00:00Z", Date.parse("2026-05-19T00:09:00Z"))).toBe("last 9m");
+    expect(formatRelativeAge("not-a-date", Date.parse("2026-05-19T00:09:00Z"))).toBe("not-a-date");
   });
 
   test("maps job states to stable status labels and tones", () => {
@@ -217,6 +226,8 @@ describe("operator view models", () => {
           serial: "WrkGrp-525570B6",
           status: "running",
           ip_address: "192.168.2.49",
+          os_caption: "Microsoft Windows 11 Pro",
+          os_build: "10.0.26200.8246",
           lifecycle_state: "workgroup_unenrolled",
           lifecycle_label: "unenrolled"
         }
@@ -252,7 +263,11 @@ describe("operator view models", () => {
     });
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    const row = rows[0];
+    if (!row) {
+      throw new Error("expected merged fleet row");
+    }
+    expect(row).toMatchObject({
       id: "vm-108",
       name: "WrkGrp-525570B6",
       vmid: 108,
@@ -262,7 +277,12 @@ describe("operator view models", () => {
       method: "agent + monitor",
       version: "0.1.2"
     });
-    expect(rows[0]?.lifecycleLabels).toEqual(["unenrolled", "Intune", "Autopilot ID", "hash"]);
+    expect(row.lifecycleLabels).toEqual(["unenrolled", "Intune", "Autopilot ID", "hash"]);
+    expect(fleetManagedByLabel(row)).toBe("Intune");
+    expect(fleetOsName(row)).toBe("Windows");
+    expect(fleetOsVersion(row)).toBe("10.0.26200.8246");
+    expect(fleetRuntimeLabel(row)).toBe("running");
+    expect(fleetAgentLabel(row)).toBe("Stale");
   });
 
   test("drops unmatched agents from machine rows", () => {

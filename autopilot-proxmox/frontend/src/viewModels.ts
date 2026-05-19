@@ -64,6 +64,29 @@ export function formatShortDateTime(value: unknown): string {
   return `${month} ${day} ${hour}:${minute}Z`;
 }
 
+export function formatRelativeAge(value: unknown, now = Date.now()): string {
+  if (typeof value !== "string" || !value.trim()) {
+    return "-";
+  }
+  const at = new Date(value).getTime();
+  if (Number.isNaN(at)) {
+    return fallbackText(value);
+  }
+  const elapsedSeconds = Math.max(0, Math.round((now - at) / 1000));
+  if (elapsedSeconds < 60) {
+    return `last ${String(elapsedSeconds)}s`;
+  }
+  const elapsedMinutes = Math.round(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `last ${String(elapsedMinutes)}m`;
+  }
+  const elapsedHours = Math.round(elapsedMinutes / 60);
+  if (elapsedHours < 48) {
+    return `last ${String(elapsedHours)}h`;
+  }
+  return `last ${String(Math.round(elapsedHours / 24))}d`;
+}
+
 export function formatPercent(value: unknown): string {
   return typeof value === "number" ? `${String(value)}%` : "-";
 }
@@ -492,6 +515,57 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     }
     return left.name.localeCompare(right.name);
   });
+}
+
+export function fleetManagedByLabel(row: FleetMachineRow): string {
+  if (
+    row.autopilotDevice
+    || row.vm?.in_intune === true
+    || row.agent?.lifecycle_intune_enrolled === true
+    || row.lifecycleLabels.includes("Intune")
+  ) {
+    return "Intune";
+  }
+  return "None";
+}
+
+export function fleetOsName(row: FleetMachineRow): string {
+  const raw = fallbackText(row.vm?.os_caption ?? row.agent?.os_name ?? row.os);
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("windows")) {
+    return "Windows";
+  }
+  if (normalized.includes("ubuntu")) {
+    return "Ubuntu";
+  }
+  if (normalized.includes("linux")) {
+    return "Linux";
+  }
+  return raw;
+}
+
+export function fleetOsVersion(row: FleetMachineRow): string {
+  return fallbackText(row.vm?.os_build ?? row.agent?.os_build);
+}
+
+export function fleetRuntimeLabel(row: FleetMachineRow): string {
+  return statusLabel(row.status);
+}
+
+export function fleetAgentLabel(row: FleetMachineRow): string {
+  if (!row.agent) {
+    return "None";
+  }
+  if (row.stale) {
+    return "Stale";
+  }
+  if (row.agent.approval_status === "pending") {
+    return "Pending";
+  }
+  if (row.version) {
+    return `v${row.version}`;
+  }
+  return "Active";
 }
 
 export function vmMatchesFilter(vm: VmFleetRow, filter: string): boolean {

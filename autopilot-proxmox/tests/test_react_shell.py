@@ -16,13 +16,14 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/jobs")
     assert not auth.is_exempt_path("/react/monitoring")
     assert not auth.is_exempt_path("/react/vms")
+    assert not auth.is_exempt_path("/react/vms/108")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/app")
     assert not auth.is_exempt_path("/app/jobs")
     assert not auth.is_exempt_path("/openapi.json")
 
 
-@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring", "/react/vms"])
+@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring", "/react/vms", "/react/vms/108"])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     response = web_client.get(path)
 

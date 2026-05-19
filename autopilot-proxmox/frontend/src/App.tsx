@@ -20,7 +20,7 @@ export function App({ bootstrap }: AppProps) {
   if (path === "/react/monitoring") {
     return <MonitoringPage bootstrap={bootstrap} />;
   }
-  if (path === "/react/vms") {
+  if (path === "/react/vms" || /^\/react\/vms\/\d+$/.test(path)) {
     return <VmsPage bootstrap={bootstrap} />;
   }
   return <ShellIndexPage bootstrap={bootstrap} />;

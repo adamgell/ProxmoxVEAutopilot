@@ -334,7 +334,7 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: /winpe/i })).not.toBeInTheDocument();
   });
 
-  test("renders the VMs fleet workspace with full-control affordances", async () => {
+  test("renders the VMs fleet workspace as a reduced inventory", async () => {
     mockFetch(dashboardResponses);
 
     renderRoute("/react/vms");
@@ -345,28 +345,30 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getAllByText("WrkGrp-525570B6").length).toBeGreaterThan(0);
     });
-    expect(screen.getByText("agent-wrkgrp-525570b6")).toBeInTheDocument();
-    expect(screen.getAllByText("WRKGRP-525570B6").length).toBeGreaterThan(0);
     expect(screen.getByRole("table", { name: "Fleet machines" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Device Name" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Heartbeat" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Managed By" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Agent" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Join / MDM" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "WrkGrp-525570B6" })).toHaveAttribute("href", "/react/vms/108");
     expect(screen.queryByRole("heading", { name: "AutopilotAgent" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Screenshot VM 108" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete VM 108" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Console VM 108" })).toBeInTheDocument();
-    expect(screen.getByText("cloudosd")).toBeInTheDocument();
-    expect(screen.getByText(/method agent \+ monitor/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Screenshot VM 108" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete VM 108" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Console VM 108" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Console VM 108" })).not.toBeInTheDocument();
   });
 
-  test("opens VM console and screenshot actions inside the Fleet workspace", async () => {
+  test("opens VM console and screenshot actions inside a VM detail page", async () => {
     mockFetch(dashboardResponses);
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms/108");
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Console VM 108" })).toBeInTheDocument();
     });
+    expect(screen.getAllByRole("heading", { name: "WrkGrp-525570B6" }).length).toBeGreaterThan(0);
+    expect(screen.getByText("Agent ID")).toBeInTheDocument();
+    expect(screen.getByText("agent-wrkgrp-525570b6")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Console VM 108" }));
     expect(screen.getByRole("region", { name: "VM action workspace" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "VM 108 action" })).toBeInTheDocument();

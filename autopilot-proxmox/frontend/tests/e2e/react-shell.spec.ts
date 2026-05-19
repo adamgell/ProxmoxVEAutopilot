@@ -370,11 +370,15 @@ for (const viewport of [
     await page.goto("/react/vms");
 
     await expect(page.getByRole("heading", { name: "VMs", exact: true })).toBeVisible();
-    await expect(page.getByText("WrkGrp-525570B6").first()).toBeVisible();
-    await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();
+    await expect(page.getByRole("link", { name: "WrkGrp-525570B6" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Managed By" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toHaveCount(0);
+    await page.getByRole("link", { name: "WrkGrp-525570B6" }).click();
+    await expect(page).toHaveURL(/\/react\/vms\/108$/);
     await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Console VM 108" })).toBeVisible();
+    await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();
     await expect(page.getByRole("link", { name: "Console VM 108" })).toHaveCount(0);
     await page.getByRole("button", { name: "Console VM 108" }).click();
     await expect(page.getByRole("region", { name: "VM action workspace" })).toBeVisible();
@@ -396,13 +400,13 @@ for (const viewport of [
     await page.getByRole("button", { name: "Minimize action" }).click();
     await expect(page.getByRole("button", { name: "Restore action" })).toBeVisible();
 
-    const metrics = await page.locator(".metric-strip--fleet").boundingBox();
-    const filter = await page.locator(".filter").boundingBox();
-    expect(metrics).not.toBeNull();
-    expect(filter).not.toBeNull();
-    if (!metrics || !filter) {
-      throw new Error("VMs layout regions were not measurable.");
+    const hero = await page.locator(".vm-detail-hero").boundingBox();
+    const toolbar = await page.locator(".vm-detail-toolbar").boundingBox();
+    expect(hero).not.toBeNull();
+    expect(toolbar).not.toBeNull();
+    if (!hero || !toolbar) {
+      throw new Error("VM detail layout regions were not measurable.");
     }
-    expect(metrics.y + metrics.height).toBeLessThanOrEqual(filter.y + 1);
+    expect(hero.y + hero.height).toBeLessThanOrEqual(toolbar.y + 1);
   });
 }

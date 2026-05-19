@@ -34,12 +34,16 @@ import { connectFleetLive } from "../liveSocket";
 import {
   buildFleetMachineRows,
   deviceDisplayName,
+  fleetAgentLabel,
+  fleetManagedByLabel,
+  fleetOsName,
+  fleetOsVersion,
+  fleetRuntimeLabel,
   type FleetMachineRow,
   fallbackText,
+  formatRelativeAge,
   formatShortDateTime,
   machineMatchesFilter,
-  statusClass,
-  statusLabel,
   summarizeFleet,
   vmDisplayName
 } from "../viewModels";
@@ -56,6 +60,15 @@ const emptyFleet: VmsFleetResponse = {
 
 type SendLiveMessage = (message: Readonly<Record<string, unknown>>) => boolean;
 type ActionIcon = LucideIcon;
+
+function detailVmidFromPath(path: string): number | null {
+  const match = /^\/react\/vms\/(\d+)$/.exec(path);
+  if (!match?.[1]) {
+    return null;
+  }
+  const vmid = Number.parseInt(match[1], 10);
+  return Number.isFinite(vmid) ? vmid : null;
+}
 
 function mergeRows(existing: readonly VmFleetRow[], patchRows: readonly VmFleetRow[]): readonly VmFleetRow[] {
   const byVmid = new Map(existing.map((row) => [row.vmid, row]));
@@ -114,22 +127,8 @@ function screenshotErrorMatches(current: ScreenshotWorkspaceState, message: Live
   return typeof message.vmid !== "number" || current.vmid === message.vmid;
 }
 
-function Chips({ labels }: { readonly labels: readonly string[] }) {
-  if (!labels.length) {
-    return <span className="muted">-</span>;
-  }
-  return (
-    <span className="chip-row">
-      {labels.map((label) => (
-        <span key={label} className={label === "unenrolled" ? "status status--bad" : "status status--good"}>
-          {label}
-        </span>
-      ))}
-    </span>
-  );
-}
-
 export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
+  const detailVmid = detailVmidFromPath(window.location.pathname);
   const [fleet, setFleet] = useState<VmsFleetResponse>(emptyFleet);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
@@ -235,6 +234,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
   const counts = useMemo(() => summarizeFleet(fleet), [fleet]);
   const machineRows = useMemo(() => buildFleetMachineRows(fleet), [fleet]);
+  const detailRow = useMemo(
+    () => detailVmid === null ? undefined : machineRows.find((row) => row.vmid === detailVmid),
+    [detailVmid, machineRows]
+  );
   const filteredMachines = useMemo(() => machineRows.filter((row) => machineMatchesFilter(row, filter)), [filter, machineRows]);
   const stale = typeof fleet.cache_age_seconds === "number" && fleet.cache_age_seconds > 60;
 
@@ -381,6 +384,53 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     void runAction(`Approve ${agent.agent_id}`, () => postJson(`/api/agent-approvals/${encodeURIComponent(approvalId)}/approve`));
   }, [runAction]);
 
+  if (detailVmid !== null) {
+    return (
+      <PageFrame
+        bootstrap={bootstrap}
+        title={detailRow?.name ?? `VM ${String(detailVmid)}`}
+        section="Fleet"
+        path="/react/vms"
+        socketState={socketState}
+        action={<a className="action-link" href="/react/vms">VMs</a>}
+      >
+        {loading ? <div className="progress" aria-label="Loading VM"><span /></div> : null}
+        {error ? <p className="notice" role="status">{error}</p> : null}
+        {actionStatus ? <p className="notice" role="status">{actionStatus}</p> : null}
+        {detailRow?.vm ? (
+          <VmDetailWorkspace
+            row={detailRow}
+            activeAction={activeAction}
+            screenshot={screenshot}
+            socketState={socketState}
+            onPower={power}
+            onRename={rename}
+            onTypeText={typeText}
+            onSendKey={sendKey}
+            onCapture={captureHash}
+            onCheckEnrollment={checkEnrollment}
+            onConsole={selectConsole}
+            onScreenshot={screenshotVm}
+            onQgaProbe={qgaProbe}
+            onUpdateAgent={updateAgent}
+            onApproveAgent={approveAgent}
+            onDeleteAgent={deleteAgent}
+            onModeChange={selectActionMode}
+            onRequestScreenshot={screenshotVm}
+            onCloseAction={() => {
+              setActiveAction(null);
+              setScreenshot({ status: "idle" });
+            }}
+          />
+        ) : loading ? null : (
+          <Panel title="VM not found">
+            <p className="empty">No current VM {String(detailVmid)} in Fleet.</p>
+          </Panel>
+        )}
+      </PageFrame>
+    );
+  }
+
   return (
     <PageFrame
       bootstrap={bootstrap}
@@ -427,33 +477,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <div className="fleet-primary-stack">
           <FleetMachineTable
             rows={filteredMachines}
-            onPower={power}
-            onRename={rename}
-            onTypeText={typeText}
-            onSendKey={sendKey}
-            onCapture={captureHash}
-            onCheckEnrollment={checkEnrollment}
-            onConsole={selectConsole}
-            onScreenshot={screenshotVm}
-            onQgaProbe={qgaProbe}
             onCreateAgent={createAgent}
-            onUpdateAgent={updateAgent}
-            onApproveAgent={approveAgent}
-            onDeleteAgent={deleteAgent}
           />
         </div>
         <div className="fleet-side-stack">
-          <VmActionWorkspace
-            selection={activeAction}
-            screenshot={screenshot}
-            socketState={socketState}
-            onModeChange={selectActionMode}
-            onRequestScreenshot={screenshotVm}
-            onClose={() => {
-              setActiveAction(null);
-              setScreenshot({ status: "idle" });
-            }}
-          />
           <IntuneLane devices={fleet.autopilot_devices} onDelete={deleteAutopilotDevice} onSync={() => { void runAction("Sync Autopilot", () => postJson("/api/autopilot/sync")); }} />
         </div>
       </section>
@@ -463,34 +490,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
 function FleetMachineTable({
   rows,
-  onPower,
-  onRename,
-  onTypeText,
-  onSendKey,
-  onCapture,
-  onCheckEnrollment,
-  onConsole,
-  onScreenshot,
-  onQgaProbe,
-  onCreateAgent,
-  onUpdateAgent,
-  onApproveAgent,
-  onDeleteAgent
+  onCreateAgent
 }: {
   readonly rows: readonly FleetMachineRow[];
-  readonly onPower: (vm: VmFleetRow, action: "start" | "shutdown" | "stop" | "reset" | "delete") => void;
-  readonly onRename: (vm: VmFleetRow) => void;
-  readonly onTypeText: (vm: VmFleetRow) => void;
-  readonly onSendKey: (vm: VmFleetRow, key: "ctrl-alt-delete" | "ret") => void;
-  readonly onCapture: (vm: VmFleetRow) => void;
-  readonly onCheckEnrollment: (vm: VmFleetRow) => void;
-  readonly onConsole: (vm: VmFleetRow) => void;
-  readonly onScreenshot: (vm: VmFleetRow) => void;
-  readonly onQgaProbe: (vm: VmFleetRow) => void;
   readonly onCreateAgent: () => void;
-  readonly onUpdateAgent: (agent: AgentFleetRow) => void;
-  readonly onApproveAgent: (agent: AgentFleetRow) => void;
-  readonly onDeleteAgent: (agent: AgentFleetRow) => void;
 }) {
   return (
     <Panel title="Fleet machines">
@@ -505,13 +508,15 @@ function FleetMachineTable({
           <table className="fleet-machine-table" aria-label="Fleet machines">
             <thead>
               <tr>
-                <th scope="col">Machine</th>
+                <th scope="col">Device Name</th>
+                <th scope="col">Heartbeat</th>
+                <th scope="col">Managed By</th>
+                <th scope="col">OS</th>
+                <th scope="col">OS Version</th>
+                <th scope="col">VMID</th>
+                <th scope="col">IP Address</th>
                 <th scope="col">Runtime</th>
                 <th scope="col">Agent</th>
-                <th scope="col">Lifecycle</th>
-                <th scope="col">Join / MDM</th>
-                <th scope="col">Freshness</th>
-                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -519,18 +524,6 @@ function FleetMachineTable({
                 <MachineRow
                   key={row.id}
                   row={row}
-                  onPower={onPower}
-                  onRename={onRename}
-                  onTypeText={onTypeText}
-                  onSendKey={onSendKey}
-                  onCapture={onCapture}
-                  onCheckEnrollment={onCheckEnrollment}
-                  onConsole={onConsole}
-                  onScreenshot={onScreenshot}
-                  onQgaProbe={onQgaProbe}
-                  onUpdateAgent={onUpdateAgent}
-                  onApproveAgent={onApproveAgent}
-                  onDeleteAgent={onDeleteAgent}
                 />
               ))}
             </tbody>
@@ -542,7 +535,62 @@ function FleetMachineTable({
 }
 
 function MachineRow({
+  row
+}: {
+  readonly row: FleetMachineRow;
+}) {
+  const runtimeLabel = fleetRuntimeLabel(row);
+  const agentLabel = fleetAgentLabel(row);
+  return (
+    <tr>
+      <th scope="row">
+        {row.vmid !== undefined ? (
+          <a className="machine-name machine-name--link" href={`/react/vms/${String(row.vmid)}`}>{row.name}</a>
+        ) : (
+          <span className="machine-name">{row.name}</span>
+        )}
+      </th>
+      <td>
+        <span className="machine-primary-value" title={formatShortDateTime(row.heartbeat)}>
+          {formatRelativeAge(row.heartbeat)}
+        </span>
+      </td>
+      <td>
+        <span className={fleetManagedByLabel(row) === "Intune" ? "status status--good" : "status"}>
+          {fleetManagedByLabel(row)}
+        </span>
+      </td>
+      <td>
+        <span className="machine-primary-value">{fleetOsName(row)}</span>
+      </td>
+      <td>
+        <span className="machine-primary-value">{fleetOsVersion(row)}</span>
+      </td>
+      <td>
+        {row.vmid !== undefined ? <a className="machine-vmid-link" href={`/devices/${String(row.vmid)}`}>{row.vmid}</a> : <span className="machine-primary-value">-</span>}
+      </td>
+      <td>
+        <span className="machine-primary-value">{fallbackText(row.ipAddress)}</span>
+      </td>
+      <td>
+        <span className={runtimeLabel === "running" ? "status status--active" : "status"}>
+          {runtimeLabel}
+        </span>
+      </td>
+      <td>
+        <span className={agentLabel === "Stale" || agentLabel === "None" ? "status status--bad" : "status status--good"}>
+          {agentLabel}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+function VmDetailWorkspace({
   row,
+  activeAction,
+  screenshot,
+  socketState,
   onPower,
   onRename,
   onTypeText,
@@ -554,9 +602,15 @@ function MachineRow({
   onQgaProbe,
   onUpdateAgent,
   onApproveAgent,
-  onDeleteAgent
+  onDeleteAgent,
+  onModeChange,
+  onRequestScreenshot,
+  onCloseAction
 }: {
   readonly row: FleetMachineRow;
+  readonly activeAction: VmActionSelection | null;
+  readonly screenshot: ScreenshotWorkspaceState;
+  readonly socketState: string;
   readonly onPower: (vm: VmFleetRow, action: "start" | "shutdown" | "stop" | "reset" | "delete") => void;
   readonly onRename: (vm: VmFleetRow) => void;
   readonly onTypeText: (vm: VmFleetRow) => void;
@@ -569,78 +623,132 @@ function MachineRow({
   readonly onUpdateAgent: (agent: AgentFleetRow) => void;
   readonly onApproveAgent: (agent: AgentFleetRow) => void;
   readonly onDeleteAgent: (agent: AgentFleetRow) => void;
+  readonly onModeChange: (mode: VmActionMode) => void;
+  readonly onRequestScreenshot: (vm: VmFleetRow) => void;
+  readonly onCloseAction: () => void;
 }) {
   const vm = row.vm;
+  if (!vm) {
+    return null;
+  }
   const agent = row.agent;
-  const isRunning = (vm?.status || "").toLowerCase() === "running";
+  const isRunning = (vm.status || "").toLowerCase() === "running";
   return (
-    <tr>
-      <th scope="row">
-        <span className="machine-name">{row.name}</span>
-        <span className="machine-subline">
-          {row.vmid !== undefined ? <a href={`/devices/${String(row.vmid)}`}>VM {row.vmid}</a> : "No VM"}
-          <span>{fallbackText(row.serial)}</span>
-          <span>{fallbackText(row.ipAddress)}</span>
-        </span>
-      </th>
-      <td>
-        <span className={statusClass(row.status)}>{statusLabel(row.status)}</span>
-        <span className="machine-meta">{fallbackText(row.os)}</span>
-        <span className="machine-meta">QGA {fallbackText(row.qga)}</span>
-      </td>
-      <td>
-        <span className={row.stale ? "status status--bad" : "status status--good"}>{agent?.approval_status || (agent ? "active" : "missing")}</span>
-        <span className="machine-meta">{fallbackText(row.agentId)}</span>
-        <span className="machine-meta">{fallbackText(row.phase)}</span>
-        <span className="machine-meta">v{fallbackText(row.version)}</span>
-      </td>
-      <td>
-        <Chips labels={row.lifecycleLabels} />
-      </td>
-      <td>
-        <span className="machine-meta">method {row.method}</span>
-        <span className="machine-meta">MDM {fallbackText(row.mdmEnrollment)}</span>
-        <span className="machine-meta">hash {row.lifecycleLabels.includes("hash") ? "ready" : "-"}</span>
-      </td>
-      <td>
-        <span className="machine-meta">heartbeat {formatShortDateTime(row.heartbeat)}</span>
-        <span className="machine-meta">source {fallbackText(vm?.lifecycle_source ?? agent?.lifecycle_source)}</span>
-      </td>
-      <td>
-        <div className="fleet-actions fleet-actions--table" aria-label={`${row.name} actions`}>
-          {vm ? (
-            isRunning ? (
-              <>
-                <ActionButton label="Shutdown" icon={Power} onClick={() => { onPower(vm, "shutdown"); }} />
-                <ActionButton label="Stop" icon={CircleStop} tone="danger" onClick={() => { onPower(vm, "stop"); }} />
-                <ActionButton label="Reset" icon={RotateCcw} onClick={() => { onPower(vm, "reset"); }} />
-                <ActionButton label="Hash" icon={Hash} onClick={() => { onCapture(vm); }} />
-                <ActionButton label="Rename" icon={Pencil} onClick={() => { onRename(vm); }} />
-                <ActionButton label="Console" ariaLabel={`Console VM ${String(vm.vmid)}`} icon={Monitor} onClick={() => { onConsole(vm); }} />
-                <ActionButton label="Type" icon={Keyboard} onClick={() => { onTypeText(vm); }} />
-                <ActionButton label="CAD" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ctrl-alt-delete"); }} />
-                <ActionButton label="Enter" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ret"); }} />
-                <ActionButton label="Screenshot" ariaLabel={`Screenshot VM ${String(vm.vmid)}`} icon={Camera} onClick={() => { onScreenshot(vm); }} />
-                <ActionButton label="QGA" icon={RefreshCw} onClick={() => { onQgaProbe(vm); }} />
-                {vm.target_os === "ubuntu" ? <ActionButton label="Enroll" icon={BadgeCheck} onClick={() => { onCheckEnrollment(vm); }} /> : null}
-              </>
-            ) : (
-              <ActionButton label="Start" icon={Play} onClick={() => { onPower(vm, "start"); }} />
-            )
-          ) : null}
-          {agent?.approval_status === "pending" && agent.approval_id ? (
-            <ActionButton label="Approve" icon={BadgeCheck} onClick={() => { onApproveAgent(agent); }} />
-          ) : null}
-          {agent ? (
-            <>
-              <ActionButton label="Update agent" icon={Save} onClick={() => { onUpdateAgent(agent); }} />
-              <ActionButton label="Delete agent" icon={Trash2} tone="danger" onClick={() => { onDeleteAgent(agent); }} />
-            </>
-          ) : null}
-          {vm ? <ActionButton label="Delete VM" ariaLabel={`Delete VM ${String(vm.vmid)}`} icon={Trash2} tone="danger" onClick={() => { onPower(vm, "delete"); }} /> : null}
+    <div className="vm-detail-layout">
+      <section className="vm-detail-hero">
+        <nav className="breadcrumb" aria-label="Breadcrumb">
+          <a href="/react/vms">VMs</a>
+          <span>/</span>
+          <span>{vmDisplayName(vm)}</span>
+        </nav>
+        <div className="vm-detail-hero__main">
+          <div>
+            <h2>{vmDisplayName(vm)}</h2>
+            <p>{fleetOsName(row)} {fleetOsVersion(row)} / VMID {String(vm.vmid)} / {fallbackText(row.ipAddress)}</p>
+          </div>
+          <div className="vm-detail-badges">
+            <span className={fleetRuntimeLabel(row) === "running" ? "status status--active" : "status"}>{fleetRuntimeLabel(row)}</span>
+            <span className={fleetManagedByLabel(row) === "Intune" ? "status status--good" : "status"}>{fleetManagedByLabel(row)}</span>
+            <span className={fleetAgentLabel(row) === "Stale" || fleetAgentLabel(row) === "None" ? "status status--bad" : "status status--good"}>{fleetAgentLabel(row)}</span>
+          </div>
         </div>
-      </td>
-    </tr>
+      </section>
+
+      <section className="vm-detail-toolbar" aria-label={`VM ${String(vm.vmid)} actions`}>
+        {isRunning ? (
+          <>
+            <ActionButton label="Console" ariaLabel={`Console VM ${String(vm.vmid)}`} icon={Monitor} onClick={() => { onConsole(vm); }} />
+            <ActionButton label="Screenshot" ariaLabel={`Screenshot VM ${String(vm.vmid)}`} icon={Camera} onClick={() => { onScreenshot(vm); }} />
+            <ActionButton label="Shutdown" icon={Power} onClick={() => { onPower(vm, "shutdown"); }} />
+            <ActionButton label="Stop" icon={CircleStop} tone="danger" onClick={() => { onPower(vm, "stop"); }} />
+            <ActionButton label="Reset" icon={RotateCcw} onClick={() => { onPower(vm, "reset"); }} />
+            <ActionButton label="Hash" icon={Hash} onClick={() => { onCapture(vm); }} />
+            <ActionButton label="Rename" icon={Pencil} onClick={() => { onRename(vm); }} />
+            <ActionButton label="Type" icon={Keyboard} onClick={() => { onTypeText(vm); }} />
+            <ActionButton label="CAD" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ctrl-alt-delete"); }} />
+            <ActionButton label="Enter" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ret"); }} />
+            <ActionButton label="QGA" icon={RefreshCw} onClick={() => { onQgaProbe(vm); }} />
+            {vm.target_os === "ubuntu" ? <ActionButton label="Enroll" icon={BadgeCheck} onClick={() => { onCheckEnrollment(vm); }} /> : null}
+          </>
+        ) : (
+          <ActionButton label="Start" icon={Play} onClick={() => { onPower(vm, "start"); }} />
+        )}
+        {agent?.approval_status === "pending" && agent.approval_id ? (
+          <ActionButton label="Approve agent" icon={BadgeCheck} onClick={() => { onApproveAgent(agent); }} />
+        ) : null}
+        {agent ? (
+          <>
+            <ActionButton label="Update agent" icon={Save} onClick={() => { onUpdateAgent(agent); }} />
+            <ActionButton label="Delete agent" icon={Trash2} tone="danger" onClick={() => { onDeleteAgent(agent); }} />
+          </>
+        ) : null}
+        <ActionButton label="Delete VM" ariaLabel={`Delete VM ${String(vm.vmid)}`} icon={Trash2} tone="danger" onClick={() => { onPower(vm, "delete"); }} />
+      </section>
+
+      <section className="vm-detail-grid" aria-label="VM details">
+        <DetailPanel title="Essentials" rows={[
+          ["Device name", row.name],
+          ["Heartbeat", formatRelativeAge(row.heartbeat)],
+          ["Managed by", fleetManagedByLabel(row)],
+          ["OS", fleetOsName(row)],
+          ["OS version", fleetOsVersion(row)],
+          ["VMID", String(vm.vmid)],
+          ["IP address", fallbackText(row.ipAddress)],
+          ["Runtime", fleetRuntimeLabel(row)],
+          ["Agent", fleetAgentLabel(row)]
+        ]} />
+        <DetailPanel title="PVE" rows={[
+          ["Name", vmDisplayName(vm)],
+          ["Status", fallbackText(vm.status)],
+          ["Serial", fallbackText(vm.serial)],
+          ["QGA", fallbackText(vm.qga)],
+          ["Target OS", fallbackText(vm.target_os)],
+          ["Sequence", fallbackText(vm.sequence_name)]
+        ]} />
+        <DetailPanel title="Agent" rows={[
+          ["Agent ID", fallbackText(row.agentId)],
+          ["Computer", fallbackText(row.agent?.computer_name)],
+          ["Version", fallbackText(row.version)],
+          ["Phase", fallbackText(row.phase)],
+          ["QGA", fallbackText(row.agent?.qga_state)],
+          ["Last seen", formatShortDateTime(row.agent?.last_seen_at)]
+        ]} />
+        <DetailPanel title="Intune" rows={[
+          ["Device", fallbackText(row.autopilotDevice?.display_name)],
+          ["Serial", fallbackText(row.autopilotDevice?.serial)],
+          ["Enrollment", fallbackText(row.autopilotDevice?.enrollment_state)],
+          ["Profile", fallbackText(row.autopilotDevice?.profile_status)],
+          ["Group tag", fallbackText(row.autopilotDevice?.group_tag)],
+          ["Last contact", formatShortDateTime(row.autopilotDevice?.last_contact)]
+        ]} />
+      </section>
+
+      <section className="vm-detail-action-zone">
+        <VmActionWorkspace
+          selection={activeAction}
+          screenshot={screenshot}
+          socketState={socketState}
+          onModeChange={onModeChange}
+          onRequestScreenshot={onRequestScreenshot}
+          onClose={onCloseAction}
+        />
+      </section>
+    </div>
+  );
+}
+
+function DetailPanel({ title, rows }: { readonly title: string; readonly rows: readonly (readonly [string, string])[] }) {
+  return (
+    <Panel title={title}>
+      <dl className="vm-detail-list">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </Panel>
   );
 }
 
