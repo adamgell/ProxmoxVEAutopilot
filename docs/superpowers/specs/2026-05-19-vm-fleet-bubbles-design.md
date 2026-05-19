@@ -54,7 +54,7 @@ Add a PostgreSQL-backed `lab_bubbles` model with fields for:
 - Stable id, name, slug, description, lifecycle state, and timestamps.
 - Domain name and intended NetBIOS name.
 - CIDR, gateway IP, planned bridge or VLAN, and isolation status.
-- Default DHCP mode, DHCP pool, and DHCP owner asset.
+- DHCP scope, DHCP pool, and domain-controller owner asset.
 - DC readiness, DNS readiness, DHCP readiness, and workload readiness state.
 - Policy flags for early workgroup launches, domain-join requirements, and
   multi-domain safety.
@@ -72,6 +72,16 @@ Bubble membership is the source of truth for the UI and lifecycle APIs. Evidence
 from deployment runs, Proxmox snapshots, monitoring probes, cloud records, and
 agent heartbeats can confirm or challenge that membership but should not silently
 move an asset between bubbles.
+
+Add `lab_bubble_audit_events` for operator-visible lifecycle changes:
+
+- Bubble creation and edits.
+- Asset adoption, repair, move, and removal.
+- Launch gate overrides if a later admin-only override path is added.
+- Evidence mismatch acknowledgement.
+
+Audit rows should include actor, action, bubble id, affected asset membership id,
+old values, new values, reason, and timestamp.
 
 ## Connected Services
 
@@ -95,6 +105,17 @@ bubble.
 DHCP is sourced from the bubble domain controller. The DC AutopilotAgent reports
 DHCP scope configuration, lease evidence, DNS readiness, AD DS readiness, domain
 health, and service health back to the controller.
+
+Add `lab_bubble_services` for service records:
+
+- `bubble_id`
+- `service_kind`
+- `service_name`
+- `scope`: `bubble_local`, `shared`, or `external`
+- Provider asset membership id when the service is provided by a VM in the
+  bubble.
+- Consumer asset membership ids or fleet references.
+- Readiness state, last evidence timestamp, and evidence summary.
 
 ## VM Page Layout
 
@@ -139,8 +160,9 @@ inventory remains available on `/cloud` and device detail pages.
 
 ## Lifecycle Rules
 
-New workload launches should include `bubble_id` once this feature is wired into
-CloudOSD and OSDeploy.
+New workload launches may accept optional `bubble_id` during migration. Once
+CloudOSD and OSDeploy lifecycle wiring is active, new fleet and infrastructure
+launches should require `bubble_id`.
 
 Launch behavior:
 
@@ -173,6 +195,13 @@ Add a bubble API layer:
 - `POST /api/bubbles/{bubble_id}/assets`
 - `PATCH /api/bubbles/{bubble_id}/assets/{asset_id}`
 - `POST /api/bubbles/{bubble_id}/assets/{asset_id}/move`
+- `GET /api/bubbles/{bubble_id}/services`
+- `POST /api/bubbles/{bubble_id}/services`
+- `PATCH /api/bubbles/{bubble_id}/services/{service_id}`
+- `GET /api/bubbles/{bubble_id}/audit-events`
+
+In these routes, `asset_id` refers to the bubble asset membership row, not the
+external VMID, run id, or agent id.
 
 Add bubble-aware launch fields to CloudOSD and OSDeploy payloads:
 
@@ -187,6 +216,7 @@ Expose a VM page payload with these top-level sections:
 - `connected_services`
 - `unassigned_assets`
 - `warnings`
+- `gate_states`
 
 ## Evidence And Signals
 
@@ -214,6 +244,8 @@ Add focused tests for:
 - Creating and listing bubbles.
 - Adding, adopting, moving, and repairing assets.
 - Bubble readiness aggregation from asset and service evidence.
+- Service record creation, update, provider links, and consumer links.
+- Audit events for adoption, move, repair, and mismatch acknowledgement.
 - VM page rendering without `Autopilot Devices (Intune)`.
 - VM page rendering with `VM Workstation Fleets`, `Critical Infrastructure`,
   and `Connected Services`.
@@ -251,9 +283,10 @@ Phase 3: isolation enforcement.
 - Incomplete-marker scan: no incomplete requirement markers remain.
 - Internal consistency: DHCP is consistently owned by the bubble domain
   controller, and gateway/firewall enforcement is deferred.
-- Scope check: the first implementation is limited to the model, API contract,
-  `/vms` refactor, and readiness/lifecycle gates. Proxmox network enforcement is
-  explicitly deferred.
+- Scope check: the work is phased. Phase 1 is limited to the model, API
+  contract, and `/vms` refactor. Phase 2 adds CloudOSD/OSDeploy lifecycle
+  wiring and readiness gates. Proxmox network enforcement is explicitly
+  deferred.
 - Ambiguity check: launch gates define when early workgroup launches are allowed
   and when domain, ConfigMgr, multi-bubble, and multi-domain launches are
   blocked.
