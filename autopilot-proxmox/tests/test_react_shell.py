@@ -117,6 +117,60 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     assert body["autopilot_devices"][0]["display_name"] == "WRKGRP-525570B6"
 
 
+def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatch):
+    from web import app as web_app
+
+    deleted: list[str] = []
+
+    async def fake_vms_payload():
+        return ({
+            "data": [{
+                "vmid": 108,
+                "name": "WrkGrp-525570B6",
+                "hostname": "WRKGRP-525570B6",
+                "serial": "WrkGrp-525570B6",
+                "status": "running",
+                "ip_address": "192.168.2.49",
+            }],
+            "devices": ([], ""),
+            "hash_serials": set(),
+            "fetched_at": 1.0,
+            "refreshing": False,
+        }, 0.0)
+
+    monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
+    monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
+    monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_vmids", lambda _vmids: {})
+    monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
+    monkeypatch.setattr(web_app, "_agent_inventory_rows", lambda: [
+        {
+            "agent_id": "agent-attached",
+            "approval_status": "active",
+            "vmid": 108,
+            "computer_name": "WRKGRP-525570B6",
+        },
+        {
+            "agent_id": "agent-no-vm",
+            "approval_status": "active",
+            "computer_name": "AGENT-ONLY",
+        },
+        {
+            "agent_id": "agent-deleted-vm",
+            "approval_status": "active",
+            "vmid": 999,
+            "computer_name": "OLD-VM",
+        },
+    ])
+
+    response = web_client.get("/api/vms/fleet")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [agent["agent_id"] for agent in body["agents"]] == ["agent-attached"]
+    assert deleted == ["agent-no-vm", "agent-deleted-vm"]
+
+
 def test_vm_power_endpoint_returns_json_for_react_callers(web_client, monkeypatch):
     from web import app as web_app
 

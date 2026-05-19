@@ -6066,6 +6066,69 @@ def _agent_inventory_rows() -> list[dict]:
     ]
 
 
+def _agent_row_vmid(agent: dict) -> int | None:
+    try:
+        vmid = agent.get("vmid")
+        if vmid is None or vmid == "":
+            return None
+        return int(vmid)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hard_delete_agent_by_id(agent_id: str) -> bool:
+    from web import agent_telemetry_pg, db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        return agent_telemetry_pg.hard_delete_agent(conn, agent_id)
+
+
+def _filter_and_purge_agents_without_current_vm(
+    agents: list[dict],
+    vms: list[dict],
+) -> list[dict]:
+    current_vmids: set[int] = set()
+    for vm in vms:
+        try:
+            vmid = vm.get("vmid")
+            if vmid is not None and vmid != "":
+                current_vmids.add(int(vmid))
+        except (TypeError, ValueError):
+            continue
+
+    kept: list[dict] = []
+    purge_agent_ids: list[str] = []
+    for agent in agents:
+        agent_id = agent.get("agent_id") or ""
+        agent_vmid = _agent_row_vmid(agent)
+        if agent_vmid is not None and agent_vmid in current_vmids:
+            kept.append(agent)
+            continue
+        if agent_id:
+            purge_agent_ids.append(agent_id)
+
+    if purge_agent_ids:
+        import logging as _logging
+        log = _logging.getLogger("web.vms")
+        for agent_id in purge_agent_ids:
+            try:
+                _hard_delete_agent_by_id(agent_id)
+            except Exception:
+                log.exception(
+                    "failed to purge agent without current VM",
+                    extra={"agent_id": agent_id},
+                )
+    return kept
+
+
+def _agent_inventory_rows_for_current_vms() -> list[dict]:
+    pve_vms = list(_VMS_CACHE.get("data") or [])
+    if not pve_vms:
+        pve_vms = _vms_from_monitor_snapshot()
+    return _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), pve_vms)
+
+
 def _fetch_vms_payload_live():
     """Synchronous fetcher — calls every upstream the /vms page needs.
     Returns a dict ready to stash in _VMS_CACHE."""
@@ -6475,7 +6538,7 @@ async def _live_snapshot_provider(topics: set[str], vmids: set[int]) -> list[dic
             "type": "snapshot",
             "topic": "agents",
             "data": {
-                "agents": await asyncio.to_thread(_agent_inventory_rows),
+                "agents": await asyncio.to_thread(_agent_inventory_rows_for_current_vms),
                 "generated_at": utc_now_iso(),
             },
         })
@@ -6547,7 +6610,7 @@ async def _live_patch_provider(
         messages.append({
             "type": "patch",
             "topic": "agents",
-            "agents": await asyncio.to_thread(_agent_inventory_rows),
+            "agents": await asyncio.to_thread(_agent_inventory_rows_for_current_vms),
             "generated_at": utc_now_iso(),
         })
     return messages
@@ -6948,11 +7011,12 @@ async def _vms_fleet_payload() -> dict:
         vm for vm in vms
         if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
     ]
+    agents = _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), vms)
 
     return {
         "vms": vms,
         "missing_vms": missing_vms,
-        "agents": _agent_inventory_rows(),
+        "agents": agents,
         "autopilot_devices": matched_devices,
         "ap_error": ap_error or "",
         "cache_age_seconds": None if cache_age == float("inf") else int(cache_age),

@@ -444,7 +444,6 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
   const agentsByVmid = new Map<number, AgentFleetRow>();
   const agentsByIdentity = new Map<string, AgentFleetRow>();
   const devicesByIdentity = new Map<string, AutopilotDeviceFleetRow>();
-  const usedAgents = new Set<string>();
 
   for (const agent of fleet.agents) {
     addAgentIndexes(agent, agentsByVmid, agentsByIdentity);
@@ -455,9 +454,6 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
 
   const rows: FleetMachineRow[] = fleet.vms.map((vm) => {
     const agent = findAgentForVm(vm, agentsByVmid, agentsByIdentity);
-    if (agent) {
-      usedAgents.add(agent.agent_id);
-    }
     const device = findDeviceForMachine(
       [vm.serial, vm.hostname, vm.name, agent?.serial_number, agent?.computer_name],
       devicesByIdentity
@@ -483,32 +479,6 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
       stale: agent ? agentIsStale(agent) : false
     };
   });
-
-  for (const agent of fleet.agents) {
-    if (usedAgents.has(agent.agent_id)) {
-      continue;
-    }
-    const device = findDeviceForMachine([agent.serial_number, agent.computer_name], devicesByIdentity);
-    rows.push({
-      id: `agent-${agent.agent_id}`,
-      name: agent.computer_name || agent.serial_number || agent.agent_id,
-      agent,
-      ...(device ? { autopilotDevice: device } : {}),
-      agentId: agent.agent_id,
-      status: undefined,
-      serial: agent.serial_number,
-      ipAddress: agent.primary_ipv4,
-      os: agent.os_name ?? agent.os_build,
-      qga: agent.qga_state,
-      phase: agent.current_phase,
-      heartbeat: agent.last_heartbeat_at ?? agent.last_seen_at,
-      version: agent.agent_version,
-      method: "agent",
-      mdmEnrollment: device?.enrollment_state ?? "-",
-      lifecycleLabels: machineLabels(undefined, agent, device),
-      stale: agentIsStale(agent)
-    });
-  }
 
   return rows.toSorted((left, right) => {
     if (left.vmid !== undefined && right.vmid !== undefined) {

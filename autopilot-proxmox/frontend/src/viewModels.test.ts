@@ -265,7 +265,7 @@ describe("operator view models", () => {
     expect(rows[0]?.lifecycleLabels).toEqual(["unenrolled", "Intune", "Autopilot ID", "hash"]);
   });
 
-  test("keeps unmatched agents as machine rows", () => {
+  test("drops unmatched agents from machine rows", () => {
     const rows = buildFleetMachineRows({
       vms: [],
       missing_vms: [],
@@ -286,14 +286,6 @@ describe("operator view models", () => {
       generated_at: "2026-05-19T00:00:00Z"
     });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      id: "agent-agent-only",
-      name: "AGENT-ONLY",
-      agentId: "agent-only",
-      method: "agent",
-      lifecycleLabels: ["Entra ID"]
-    });
-    expect(rows[0]).not.toHaveProperty("vmid");
+    expect(rows).toEqual([]);
   });
 });
