@@ -313,18 +313,20 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       </section>
 
       <section className="fleet-lanes" aria-label="Fleet lanes">
-        <VmLane
-          vms={filteredVms}
-          onPower={power}
-          onRename={rename}
-          onTypeText={typeText}
-          onSendKey={sendKey}
-          onCapture={captureHash}
-          onCheckEnrollment={checkEnrollment}
-          onScreenshot={screenshotVm}
-          onQgaProbe={qgaProbe}
-        />
-        <AgentLane agents={fleet.agents} onCreate={createAgent} onUpdate={updateAgent} onApprove={approveAgent} onDelete={deleteAgent} />
+        <div className="fleet-primary-stack">
+          <VmLane
+            vms={filteredVms}
+            onPower={power}
+            onRename={rename}
+            onTypeText={typeText}
+            onSendKey={sendKey}
+            onCapture={captureHash}
+            onCheckEnrollment={checkEnrollment}
+            onScreenshot={screenshotVm}
+            onQgaProbe={qgaProbe}
+          />
+          <AgentLane agents={fleet.agents} onCreate={createAgent} onUpdate={updateAgent} onApprove={approveAgent} onDelete={deleteAgent} />
+        </div>
         <IntuneLane devices={fleet.autopilot_devices} onDelete={deleteAutopilotDevice} onSync={() => { void runAction("Sync Autopilot", () => postJson("/api/autopilot/sync")); }} />
       </section>
 
