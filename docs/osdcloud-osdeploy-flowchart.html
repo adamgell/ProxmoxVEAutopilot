@@ -6,26 +6,43 @@
   <title>ProxmoxVEAutopilot Windows Deployment Lifecycle</title>
   <style>
     :root {
-      color-scheme: light;
-      --ink: #18212f;
-      --muted: #627086;
-      --line: #d9e0ea;
-      --cloud: #e9f7f1;
-      --cloud-border: #2c8f62;
-      --server: #eef3ff;
-      --server-border: #3c64b1;
-      --gate: #fff4db;
-      --gate-border: #c98216;
-      --fail: #ffe9e8;
-      --fail-border: #c23b32;
-      --task: #f2ecff;
-      --task-border: #7a55c7;
-      --auto: #eaf8ff;
-      --auto-border: #237aa2;
-      --shared: #f4f7fb;
-      --shared-border: #77859a;
-      --bg: #f6f8fb;
-      --panel: #ffffff;
+      color-scheme: dark;
+      --bg: #141613;
+      --bg-soft: #191c18;
+      --panel: #20241f;
+      --panel-strong: #272c26;
+      --ink: #f1eadc;
+      --muted: #bbb4a8;
+      --quiet: #918a7d;
+      --line: #3b4038;
+      --line-strong: #59604f;
+      --gold: #d8b36a;
+      --gold-soft: #382f1f;
+      --green: #8fbc83;
+      --green-soft: #243425;
+      --blue: #8fb6c9;
+      --blue-soft: #202f35;
+      --rust: #d28a62;
+      --rust-soft: #3a261f;
+      --violet: #b9a3db;
+      --violet-soft: #2d2836;
+      --red: #e08a7e;
+      --red-soft: #3a2320;
+      --shadow: rgba(0, 0, 0, 0.28);
+      --cloud: var(--green-soft);
+      --cloud-border: var(--green);
+      --server: var(--blue-soft);
+      --server-border: var(--blue);
+      --gate: var(--gold-soft);
+      --gate-border: var(--gold);
+      --fail: var(--red-soft);
+      --fail-border: var(--red);
+      --task: var(--violet-soft);
+      --task-border: var(--violet);
+      --auto: #1f3538;
+      --auto-border: #7fc7c6;
+      --shared: var(--panel-strong);
+      --shared-border: var(--line-strong);
     }
 
     * {
@@ -34,16 +51,20 @@
 
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
-      background: var(--bg);
-      line-height: 1.45;
+      background:
+        radial-gradient(circle at 14% 0%, rgba(216, 179, 106, 0.12), transparent 28rem),
+        radial-gradient(circle at 88% 8%, rgba(143, 188, 131, 0.10), transparent 32rem),
+        linear-gradient(180deg, #171a16 0%, var(--bg) 38%, #10120f 100%);
+      line-height: 1.5;
     }
 
     header {
-      padding: 26px 34px 18px;
+      padding: 32px 34px 20px;
       border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      background: rgba(20, 22, 19, 0.92);
+      backdrop-filter: blur(14px);
       position: sticky;
       top: 0;
       z-index: 5;
@@ -51,7 +72,8 @@
 
     h1 {
       margin: 0 0 8px;
-      font-size: 26px;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1;
       letter-spacing: 0;
     }
 
@@ -62,6 +84,31 @@
       font-size: 15px;
     }
 
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 18px;
+    }
+
+    .top-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .top-links a:hover {
+      border-color: var(--gold);
+      background: rgba(216, 179, 106, 0.10);
+    }
+
     main {
       max-width: 1920px;
       margin: 0 auto;
@@ -69,11 +116,15 @@
     }
 
     section {
-      background: var(--panel);
+      background: rgba(32, 36, 31, 0.88);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 20px;
-      box-shadow: 0 1px 2px rgba(24, 33, 47, 0.04);
+      box-shadow: 0 18px 48px var(--shadow);
+    }
+
+    section + section {
+      margin-top: 24px;
     }
 
     h2 {
@@ -86,6 +137,14 @@
       color: var(--muted);
       margin: 0 0 18px;
       font-size: 14px;
+    }
+
+    code {
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .legend {
@@ -102,7 +161,7 @@
       padding: 6px 10px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: rgba(255, 255, 255, 0.03);
       color: var(--muted);
       font-size: 13px;
     }
@@ -126,9 +185,9 @@
     .diagram {
       overflow: auto;
       padding: 18px;
-      border: 1px solid #edf1f6;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fcfdff;
+      background: rgba(16, 18, 15, 0.72);
     }
 
     .diagram.compact svg {
@@ -149,7 +208,7 @@
 
     .note {
       border-left: 4px solid var(--shared-border);
-      background: #f8faff;
+      background: rgba(255, 255, 255, 0.035);
       color: var(--muted);
       padding: 10px 12px;
       font-size: 14px;
@@ -165,7 +224,7 @@
     .plain-step {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
       padding: 12px;
       min-height: 116px;
     }
@@ -193,7 +252,7 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
-      background: #fff;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
     }
 
     .summary-card h3 {
@@ -232,6 +291,10 @@
     <p class="subtitle">
       One merged map for OSDCloud desktop, OSDeploy server, Task Sequence v2, domain join, Autopilot hash/upload, and server-role branches. Read from top to bottom; colored side branches show optional paths at the point where they occur.
     </p>
+    <nav class="top-links" aria-label="Flowchart navigation">
+      <a href="index.html#flowcharts">Customer Guide</a>
+      <a href="initial-stack-setup-flowchart.html">Initial Setup Flow</a>
+    </nav>
   </header>
 
   <main>
@@ -276,12 +339,12 @@ flowchart TD
   O -->|"server base"| R2["Server base complete<br/>agent online, QGA status, base_ready"]:::server
   O -->|"server role"| R3["Server role complete<br/>file server, isolated DC, MECM prereq, or Lab in a Box evidence"]:::server
 
-  classDef shared fill:#f4f7fb,stroke:#77859a,stroke-width:1.5px,color:#18212f;
-  classDef cloud fill:#e9f7f1,stroke:#2c8f62,stroke-width:1.5px,color:#18212f;
-  classDef server fill:#eef3ff,stroke:#3c64b1,stroke-width:1.5px,color:#18212f;
-  classDef gate fill:#fff4db,stroke:#c98216,stroke-width:1.5px,color:#18212f;
-  classDef task fill:#f2ecff,stroke:#7a55c7,stroke-width:1.5px,color:#18212f;
-  classDef auto fill:#eaf8ff,stroke:#237aa2,stroke-width:1.5px,color:#18212f;
+  classDef shared fill:#272c26,stroke:#59604f,stroke-width:1.5px,color:#f1eadc;
+  classDef cloud fill:#243425,stroke:#8fbc83,stroke-width:1.5px,color:#f1eadc;
+  classDef server fill:#202f35,stroke:#8fb6c9,stroke-width:1.5px,color:#f1eadc;
+  classDef gate fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef task fill:#2d2836,stroke:#b9a3db,stroke-width:1.5px,color:#f1eadc;
+  classDef auto fill:#1f3538,stroke:#7fc7c6,stroke-width:1.5px,color:#f1eadc;
         </pre>
       </div>
 
@@ -462,20 +525,20 @@ flowchart TD
     BlockOsdLaunch --> Failed
   end
 
-  classDef shared fill:#f4f7fb,stroke:#77859a,stroke-width:1.5px,color:#18212f;
-  classDef cloud fill:#e9f7f1,stroke:#2c8f62,stroke-width:1.5px,color:#18212f;
-  classDef server fill:#eef3ff,stroke:#3c64b1,stroke-width:1.5px,color:#18212f;
-  classDef gate fill:#fff4db,stroke:#c98216,stroke-width:1.5px,color:#18212f;
-  classDef fail fill:#ffe9e8,stroke:#c23b32,stroke-width:1.5px,color:#18212f;
-  classDef task fill:#f2ecff,stroke:#7a55c7,stroke-width:1.5px,color:#18212f;
-  classDef auto fill:#eaf8ff,stroke:#237aa2,stroke-width:1.5px,color:#18212f;
+  classDef shared fill:#272c26,stroke:#59604f,stroke-width:1.5px,color:#f1eadc;
+  classDef cloud fill:#243425,stroke:#8fbc83,stroke-width:1.5px,color:#f1eadc;
+  classDef server fill:#202f35,stroke:#8fb6c9,stroke-width:1.5px,color:#f1eadc;
+  classDef gate fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef fail fill:#3a2320,stroke:#e08a7e,stroke-width:1.5px,color:#f1eadc;
+  classDef task fill:#2d2836,stroke:#b9a3db,stroke-width:1.5px,color:#f1eadc;
+  classDef auto fill:#1f3538,stroke:#7fc7c6,stroke-width:1.5px,color:#f1eadc;
         </pre>
       </div>
 
       <div class="notes">
         <div class="note"><strong>CloudOSD:</strong> desktop client flow. OSDCloud applies Windows, then CloudOSD stages AutopilotAgent, optional domain join unattend, optional hash capture/upload, and readiness evidence.</div>
         <div class="note"><strong>OSDeploy:</strong> server flow. OSDeploy applies the Server image, then Task Sequence v2 handles base readiness and optional full-OS role automation.</div>
-        <div class="note"><strong>Task Sequence v2:</strong> the controller creates the plan at run creation; AutopilotAgent claims work in full Windows and reports logs/results back to `/osd/v2`.</div>
+        <div class="note"><strong>Task Sequence v2:</strong> the controller creates the plan at run creation; AutopilotAgent claims work in full Windows and reports logs/results back to <code>/osd/v2</code>.</div>
       </div>
     </section>
   </main>
@@ -495,10 +558,12 @@ flowchart TD
       theme: "base",
       themeVariables: {
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
-        primaryTextColor: "#18212f",
-        lineColor: "#77859a",
-        clusterBkg: "#ffffff",
-        clusterBorder: "#d9e0ea"
+        primaryTextColor: "#f1eadc",
+        lineColor: "#59604f",
+        clusterBkg: "#20241f",
+        clusterBorder: "#3b4038",
+        edgeLabelBackground: "#20241f",
+        tertiaryColor: "#272c26"
       }
     });
   </script>

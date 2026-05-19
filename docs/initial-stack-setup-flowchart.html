@@ -6,46 +6,67 @@
   <title>ProxmoxVEAutopilot Initial Stack Setup Flow</title>
   <style>
     :root {
-      color-scheme: light;
-      --ink: #18212f;
-      --muted: #627086;
-      --line: #d9e0ea;
-      --operator: #fff7e8;
-      --operator-border: #b87918;
-      --pve: #eef3ff;
-      --pve-border: #3c64b1;
-      --controller: #e9f7f1;
-      --controller-border: #2c8f62;
-      --build: #f2ecff;
-      --build-border: #7a55c7;
-      --artifact: #eaf8ff;
-      --artifact-border: #237aa2;
-      --script: #11253f;
-      --script-border: #11253f;
-      --gate: #fff4db;
-      --gate-border: #c98216;
-      --fail: #ffe9e8;
-      --fail-border: #c23b32;
-      --shared: #f4f7fb;
-      --shared-border: #77859a;
-      --bg: #f6f8fb;
-      --panel: #ffffff;
+      color-scheme: dark;
+      --bg: #141613;
+      --bg-soft: #191c18;
+      --panel: #20241f;
+      --panel-strong: #272c26;
+      --ink: #f1eadc;
+      --muted: #bbb4a8;
+      --quiet: #918a7d;
+      --line: #3b4038;
+      --line-strong: #59604f;
+      --gold: #d8b36a;
+      --gold-soft: #382f1f;
+      --green: #8fbc83;
+      --green-soft: #243425;
+      --blue: #8fb6c9;
+      --blue-soft: #202f35;
+      --rust: #d28a62;
+      --rust-soft: #3a261f;
+      --violet: #b9a3db;
+      --violet-soft: #2d2836;
+      --red: #e08a7e;
+      --red-soft: #3a2320;
+      --shadow: rgba(0, 0, 0, 0.28);
+      --operator: var(--gold-soft);
+      --operator-border: var(--gold);
+      --pve: var(--blue-soft);
+      --pve-border: var(--blue);
+      --controller: var(--green-soft);
+      --controller-border: var(--green);
+      --build: var(--violet-soft);
+      --build-border: var(--violet);
+      --artifact: #1f3538;
+      --artifact-border: #7fc7c6;
+      --script: var(--panel-strong);
+      --script-border: var(--gold);
+      --gate: var(--gold-soft);
+      --gate-border: var(--gold);
+      --fail: var(--red-soft);
+      --fail-border: var(--red);
+      --shared: var(--panel-strong);
+      --shared-border: var(--line-strong);
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
-      background: var(--bg);
-      line-height: 1.45;
+      background:
+        radial-gradient(circle at 14% 0%, rgba(216, 179, 106, 0.12), transparent 28rem),
+        radial-gradient(circle at 88% 8%, rgba(143, 188, 131, 0.10), transparent 32rem),
+        linear-gradient(180deg, #171a16 0%, var(--bg) 38%, #10120f 100%);
+      line-height: 1.5;
     }
 
     header {
-      padding: 26px 34px 18px;
+      padding: 32px 34px 20px;
       border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      background: rgba(20, 22, 19, 0.92);
+      backdrop-filter: blur(14px);
       position: sticky;
       top: 0;
       z-index: 5;
@@ -53,7 +74,8 @@
 
     h1 {
       margin: 0 0 8px;
-      font-size: 26px;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1;
       letter-spacing: 0;
     }
 
@@ -64,6 +86,31 @@
       font-size: 15px;
     }
 
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 18px;
+    }
+
+    .top-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .top-links a:hover {
+      border-color: var(--gold);
+      background: rgba(216, 179, 106, 0.10);
+    }
+
     main {
       max-width: 1920px;
       margin: 0 auto;
@@ -71,12 +118,12 @@
     }
 
     section {
-      background: var(--panel);
+      background: rgba(32, 36, 31, 0.88);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 24px;
-      box-shadow: 0 1px 2px rgba(24, 33, 47, 0.04);
+      box-shadow: 0 18px 48px var(--shadow);
     }
 
     h2 {
@@ -89,6 +136,14 @@
       color: var(--muted);
       margin: 0 0 18px;
       font-size: 14px;
+    }
+
+    code {
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .legend {
@@ -105,7 +160,7 @@
       padding: 6px 10px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: rgba(255, 255, 255, 0.03);
       color: var(--muted);
       font-size: 13px;
     }
@@ -138,7 +193,7 @@
     .plain-step {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
       padding: 12px;
       min-height: 116px;
     }
@@ -158,9 +213,9 @@
     .diagram {
       overflow: auto;
       padding: 18px;
-      border: 1px solid #edf1f6;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fcfdff;
+      background: rgba(16, 18, 15, 0.72);
     }
 
     .diagram svg {
@@ -183,7 +238,7 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
-      background: #fff;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
       min-height: 132px;
       position: relative;
     }
@@ -224,7 +279,7 @@
 
     .note {
       border-left: 4px solid var(--shared-border);
-      background: #f8faff;
+      background: rgba(255, 255, 255, 0.035);
       color: var(--muted);
       padding: 10px 12px;
       font-size: 14px;
@@ -232,10 +287,10 @@
 
     .script-callout {
       margin: 18px 0;
-      border: 1px solid #c8d3e1;
+      border: 1px solid rgba(216, 179, 106, 0.48);
       border-left: 6px solid var(--script-border);
       border-radius: 8px;
-      background: #f8fbff;
+      background: rgba(216, 179, 106, 0.10);
       padding: 14px 16px;
       color: var(--muted);
       font-size: 14px;
@@ -258,6 +313,10 @@
     <p class="subtitle">
       This shows how a clean Proxmox VE node becomes a complete ProxmoxVEAutopilot stack: PVE host setup, Ubuntu controller VM, Docker runtime, Windows build host, source-built artifacts, promoted ISOs, and operational readiness.
     </p>
+    <nav class="top-links" aria-label="Flowchart navigation">
+      <a href="index.html#flowcharts">Customer Guide</a>
+      <a href="osdcloud-osdeploy-flowchart.html">Windows Deployment Flow</a>
+    </nav>
   </header>
 
   <main>
@@ -268,12 +327,12 @@
       </p>
 
       <div class="plain-flow" aria-label="Six high-level setup phases">
-        <div class="plain-step"><strong>1. Run the installer</strong><span>`install-proxmox-ve.sh` is the main setup driver. It calls the lower-level phases for you.</span></div>
+        <div class="plain-step"><strong>1. Run the installer</strong><span>The Proxmox console installer is the main setup driver. It calls the lower-level phases for you.</span></div>
         <div class="plain-step"><strong>2. Foundation</strong><span>The script repairs PVE API access, storage, secrets, and creates or discovers the Ubuntu controller VM.</span></div>
         <div class="plain-step"><strong>3. Controller runtime</strong><span>The script syncs source to the controller and starts Docker Compose for web, MCP, Postgres, monitor, and builder.</span></div>
-        <div class="plain-step"><strong>4. Bootstrap media</strong><span>The script finds or downloads Windows and VirtIO media and publishes readiness to `/setup`.</span></div>
+        <div class="plain-step"><strong>4. Bootstrap media</strong><span>The script finds or downloads Windows and VirtIO media and publishes readiness to <code>/setup</code>.</span></div>
         <div class="plain-step"><strong>5. Build host</strong><span>The controller, triggered by setup, creates or repairs a Windows build-host VM and queues source-build workloads.</span></div>
-        <div class="plain-step"><strong>6. Operational</strong><span>The script promotes artifacts to PVE ISO storage and `/setup` becomes ready for real Windows provisioning.</span></div>
+        <div class="plain-step"><strong>6. Operational</strong><span>The script promotes artifacts to PVE ISO storage and <code>/setup</code> becomes ready for real Windows provisioning.</span></div>
       </div>
 
       <div class="script-callout">
@@ -283,7 +342,7 @@
       <div class="phase-strip" aria-label="Foundation bootstrap operational flow">
         <div class="phase-card">
           <strong>Foundation</strong>
-          <span>Make PVE usable for Autopilot: repair apt enough for shell tools, create API token/role/ACLs, detect storage/bridge/node/IP, generate secrets, create or find the Ubuntu controller VM, sync source, start controller runtime, verify `/healthz`.</span>
+          <span>Make PVE usable for Autopilot: repair apt enough for shell tools, create API token/role/ACLs, detect storage/bridge/node/IP, generate secrets, create or find the Ubuntu controller VM, sync source, start controller runtime, verify <code>/healthz</code>.</span>
         </div>
         <div class="phase-card">
           <strong>Bootstrap</strong>
@@ -291,7 +350,7 @@
         </div>
         <div class="phase-card">
           <strong>Operational</strong>
-          <span>Make the stack usable: verify controller health, promote source-built setup artifacts, pull large ISOs into PVE storage when needed, republish setup state, and mark `/setup` ready for real Windows provisioning.</span>
+          <span>Make the stack usable: verify controller health, promote source-built setup artifacts, pull large ISOs into PVE storage when needed, republish setup state, and mark <code>/setup</code> ready for real Windows provisioning.</span>
         </div>
       </div>
 
@@ -305,12 +364,12 @@ flowchart TD
   E --> F["Operational phase<br/>promote artifacts, republish setup state, verify readiness"]:::artifact
   F --> G["/setup operational<br/>ready to deploy real Windows VMs"]:::controller
 
-  classDef operator fill:#fff7e8,stroke:#b87918,stroke-width:1.5px,color:#18212f;
-  classDef script fill:#11253f,stroke:#11253f,stroke-width:1.5px,color:#ffffff;
-  classDef pve fill:#eef3ff,stroke:#3c64b1,stroke-width:1.5px,color:#18212f;
-  classDef controller fill:#e9f7f1,stroke:#2c8f62,stroke-width:1.5px,color:#18212f;
-  classDef build fill:#f2ecff,stroke:#7a55c7,stroke-width:1.5px,color:#18212f;
-  classDef artifact fill:#eaf8ff,stroke:#237aa2,stroke-width:1.5px,color:#18212f;
+  classDef operator fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef script fill:#272c26,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef pve fill:#202f35,stroke:#8fb6c9,stroke-width:1.5px,color:#f1eadc;
+  classDef controller fill:#243425,stroke:#8fbc83,stroke-width:1.5px,color:#f1eadc;
+  classDef build fill:#2d2836,stroke:#b9a3db,stroke-width:1.5px,color:#f1eadc;
+  classDef artifact fill:#1f3538,stroke:#7fc7c6,stroke-width:1.5px,color:#f1eadc;
         </pre>
       </div>
     </section>
@@ -424,15 +483,15 @@ flowchart TD
     Ready --> Deploy["Proceed to real Windows provisioning<br/>OSDCloud workstation or OSDeploy server"]:::shared
   end
 
-  classDef operator fill:#fff7e8,stroke:#b87918,stroke-width:1.5px,color:#18212f;
-  classDef script fill:#11253f,stroke:#11253f,stroke-width:1.5px,color:#ffffff;
-  classDef pve fill:#eef3ff,stroke:#3c64b1,stroke-width:1.5px,color:#18212f;
-  classDef controller fill:#e9f7f1,stroke:#2c8f62,stroke-width:1.5px,color:#18212f;
-  classDef build fill:#f2ecff,stroke:#7a55c7,stroke-width:1.5px,color:#18212f;
-  classDef artifact fill:#eaf8ff,stroke:#237aa2,stroke-width:1.5px,color:#18212f;
-  classDef gate fill:#fff4db,stroke:#c98216,stroke-width:1.5px,color:#18212f;
-  classDef fail fill:#ffe9e8,stroke:#c23b32,stroke-width:1.5px,color:#18212f;
-  classDef shared fill:#f4f7fb,stroke:#77859a,stroke-width:1.5px,color:#18212f;
+  classDef operator fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef script fill:#272c26,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef pve fill:#202f35,stroke:#8fb6c9,stroke-width:1.5px,color:#f1eadc;
+  classDef controller fill:#243425,stroke:#8fbc83,stroke-width:1.5px,color:#f1eadc;
+  classDef build fill:#2d2836,stroke:#b9a3db,stroke-width:1.5px,color:#f1eadc;
+  classDef artifact fill:#1f3538,stroke:#7fc7c6,stroke-width:1.5px,color:#f1eadc;
+  classDef gate fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef fail fill:#3a2320,stroke:#e08a7e,stroke-width:1.5px,color:#f1eadc;
+  classDef shared fill:#272c26,stroke:#59604f,stroke-width:1.5px,color:#f1eadc;
         </pre>
       </div>
 
@@ -459,10 +518,12 @@ flowchart TD
       theme: "base",
       themeVariables: {
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
-        primaryTextColor: "#18212f",
-        lineColor: "#77859a",
-        clusterBkg: "#ffffff",
-        clusterBorder: "#d9e0ea"
+        primaryTextColor: "#f1eadc",
+        lineColor: "#59604f",
+        clusterBkg: "#20241f",
+        clusterBorder: "#3b4038",
+        edgeLabelBackground: "#20241f",
+        tertiaryColor: "#272c26"
       }
     });
   </script>
