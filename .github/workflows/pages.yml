@@ -28,21 +28,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          submodules: false
-          sparse-checkout: |
-            docs
-          sparse-checkout-cone-mode: true
+      - name: Download docs snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
+            -o repo.tar.gz
+          repo_root="$(tar -tzf repo.tar.gz | head -n 1 | cut -d/ -f1)"
+          mkdir -p site
+          tar -xzf repo.tar.gz --strip-components=2 -C site "${repo_root}/docs/"
 
       - name: Validate static docs site
         run: |
-          test -f docs/index.html
-          test -f docs/.nojekyll
-          test -f docs/customer/index.html
-          if find docs -type l | grep -q .; then
+          test -f site/index.html
+          test -f site/.nojekyll
+          test -f site/customer/index.html
+          if find site -type l | grep -q .; then
             echo "GitHub Pages artifacts must not contain symbolic links." >&2
             exit 1
           fi
@@ -53,7 +57,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: docs
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
