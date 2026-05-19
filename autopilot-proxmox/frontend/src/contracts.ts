@@ -145,6 +145,13 @@ export interface RuntimeServicesResponse {
   readonly containers: readonly RuntimeContainer[];
 }
 
+export interface ServiceLogsResponse {
+  readonly container: string;
+  readonly service: string;
+  readonly tail: number;
+  readonly lines: readonly string[];
+}
+
 export interface DeploymentSummary {
   readonly total: number;
   readonly active?: number;
@@ -178,11 +185,14 @@ export type SignalTone = "good" | "active" | "bad" | "neutral";
 
 export type SignalFamily =
   | "runtime"
+  | "service_health"
   | "jobs"
   | "build_host"
   | "artifacts"
   | "deploy_readiness"
+  | "deployment_speed"
   | "agent"
+  | "lifecycle"
   | "identity"
   | "fleet_evidence";
 
@@ -228,6 +238,61 @@ export interface OperatorPath {
   readonly source?: string;
 }
 
+export interface LifecycleLane {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly detail?: string;
+  readonly status: string;
+  readonly tone: SignalTone;
+}
+
+export interface DeploymentRunDigest {
+  readonly deployment_key?: string;
+  readonly deployment_type?: string;
+  readonly current_phase?: string;
+  readonly elapsed_seconds?: number | null;
+  readonly duration_seconds?: number | null;
+  readonly slowest_phase?: string;
+  readonly slowest_phase_seconds?: number | null;
+  readonly health?: string;
+  readonly state?: string;
+  readonly next_expected_evidence?: string;
+  readonly evidence?: Readonly<Record<string, unknown>>;
+}
+
+export interface DeploymentBottleneck {
+  readonly deployment_type?: string;
+  readonly phase_key?: string;
+  readonly phase_label?: string;
+  readonly count?: number;
+  readonly health?: string;
+  readonly p95_seconds?: number | null;
+}
+
+export interface DeploymentHealthDigest {
+  readonly summary: DeploymentSummary;
+  readonly active: readonly DeploymentRunDigest[];
+  readonly recent_completions: readonly DeploymentRunDigest[];
+  readonly bottlenecks: readonly DeploymentBottleneck[];
+}
+
+export interface FleetSignalRow {
+  readonly vmid: number;
+  readonly vm_name: string;
+  readonly node?: string;
+  readonly lifecycle: string;
+  readonly tone: SignalTone;
+  readonly pve_status?: string;
+  readonly windows?: string;
+  readonly serial?: string;
+  readonly ad?: string;
+  readonly entra?: string;
+  readonly intune?: string;
+  readonly last_checked?: string;
+  readonly href: string;
+}
+
 export interface SignalsHubResponse {
   readonly generated_at: string;
   readonly build: SignalBuildInfo;
@@ -235,4 +300,9 @@ export interface SignalsHubResponse {
   readonly metrics: readonly SignalMetric[];
   readonly signals: readonly OperatorSignal[];
   readonly operator_paths: readonly OperatorPath[];
+  readonly lifecycle_lanes: readonly LifecycleLane[];
+  readonly deployment_health: DeploymentHealthDigest;
+  readonly services: readonly ServiceHealth[];
+  readonly runtime: RuntimeServicesResponse;
+  readonly fleet_attention: readonly FleetSignalRow[];
 }

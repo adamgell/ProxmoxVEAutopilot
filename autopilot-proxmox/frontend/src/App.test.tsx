@@ -133,7 +133,99 @@ const dashboardResponses: Record<string, unknown> = {
         action_label: "Open server deploy",
         href: "/osdeploy"
       }
+    ],
+    lifecycle_lanes: [
+      {
+        id: "provisioned",
+        label: "Provisioned",
+        value: "2/3",
+        detail: "Running in Proxmox and visible to the monitor.",
+        status: "attention",
+        tone: "active"
+      }
+    ],
+    deployment_health: {
+      summary: {
+        total: 4,
+        active: 1,
+        running: 1,
+        completed: 2,
+        succeeded: 2,
+        failed: 1,
+        stuck: 0,
+        regressed: 1,
+        slow: 0,
+        median_completion_seconds: 300,
+        p95_completion_seconds: 900,
+        recent_failure_rate: 0.25
+      },
+      active: [
+        {
+          deployment_key: "osdeploy/run-1",
+          deployment_type: "osdeploy",
+          current_phase: "windows_setup",
+          elapsed_seconds: 120,
+          health: "running",
+          state: "running",
+          next_expected_evidence: "agent heartbeat"
+        }
+      ],
+      recent_completions: [],
+      bottlenecks: [
+        {
+          deployment_type: "osdeploy",
+          phase_key: "windows_setup",
+          phase_label: "Windows setup",
+          count: 1,
+          health: "regressed",
+          p95_seconds: 900
+        }
+      ]
+    },
+    services: [
+      {
+        service_id: "autopilot-monitor",
+        status: "ok",
+        age_seconds: 12,
+        detail: "sweep idle"
+      }
+    ],
+    runtime: {
+      available: true,
+      error: "",
+      containers: [
+        {
+          name: "autopilot",
+          service: "autopilot",
+          image: "proxmox-autopilot:latest",
+          status: "running",
+          health: "healthy"
+        }
+      ]
+    },
+    fleet_attention: [
+      {
+        vmid: 101,
+        vm_name: "WIN-SRV-01",
+        node: "pve1",
+        lifecycle: "Needs check",
+        tone: "bad",
+        pve_status: "running",
+        windows: "WIN-SRV-01",
+        serial: "SER-101",
+        ad: "ok",
+        entra: "missing",
+        intune: "missing",
+        last_checked: "2026-05-19T00:00:00Z",
+        href: "/devices/101"
+      }
     ]
+  },
+  "/api/monitoring/service-logs?tail=180&container=autopilot": {
+    container: "autopilot",
+    service: "autopilot",
+    tail: 180,
+    lines: ["2026-05-19T00:00:00Z autopilot ready"]
   },
   "/api/version": {
     sha_short: "abc1234",
@@ -263,6 +355,17 @@ describe("App", () => {
       "/monitoring/settings"
     );
     expect(screen.getByText("May 19 00:00Z")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Deployment speed" })).toBeInTheDocument();
+    expect(screen.getByText("Windows setup")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Lifecycle lanes" })).toBeInTheDocument();
+    expect(screen.getByText("Provisioned")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Service health" })).toBeInTheDocument();
+    expect(screen.getByText("autopilot-monitor")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Runtime containers" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tail" }));
+    expect(await screen.findByText("2026-05-19T00:00:00Z autopilot ready")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Fleet attention" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/devices/101");
     expect(screen.queryByRole("button", { name: /sweep/i })).not.toBeInTheDocument();
   });
 });

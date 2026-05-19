@@ -4427,6 +4427,38 @@ class OperatorPathResponse(ApiExtraModel):
     source: str = ""
 
 
+class LifecycleLaneResponse(BaseModel):
+    id: str
+    label: str
+    value: str
+    detail: str = ""
+    status: str = "unknown"
+    tone: str = "neutral"
+
+
+class DeploymentHealthDigestResponse(BaseModel):
+    summary: DeploymentSummaryResponse = Field(default_factory=DeploymentSummaryResponse)
+    active: list[dict[str, Any]] = Field(default_factory=list)
+    recent_completions: list[dict[str, Any]] = Field(default_factory=list)
+    bottlenecks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FleetSignalRowResponse(ApiExtraModel):
+    vmid: int
+    vm_name: str = ""
+    node: str = ""
+    lifecycle: str = ""
+    tone: str = "neutral"
+    pve_status: str = ""
+    windows: str = ""
+    serial: str = ""
+    ad: str = ""
+    entra: str = ""
+    intune: str = ""
+    last_checked: str = ""
+    href: str = ""
+
+
 class SignalsHubResponse(BaseModel):
     generated_at: str
     build: dict[str, Any] = Field(default_factory=dict)
@@ -4434,6 +4466,11 @@ class SignalsHubResponse(BaseModel):
     metrics: list[SignalMetricResponse] = Field(default_factory=list)
     signals: list[OperatorSignalResponse] = Field(default_factory=list)
     operator_paths: list[OperatorPathResponse] = Field(default_factory=list)
+    lifecycle_lanes: list[LifecycleLaneResponse] = Field(default_factory=list)
+    deployment_health: DeploymentHealthDigestResponse = Field(default_factory=DeploymentHealthDigestResponse)
+    services: list[dict[str, Any]] = Field(default_factory=list)
+    runtime: RuntimeServicesResponse = Field(default_factory=RuntimeServicesResponse)
+    fleet_attention: list[FleetSignalRowResponse] = Field(default_factory=list)
 
 
 class FleetSummaryResponse(ApiExtraModel):
@@ -13493,6 +13530,88 @@ def _signals_metric(label: str, value: str | int, tone: str = "neutral") -> dict
     return {"label": label, "value": str(value), "tone": tone}
 
 
+def _monitoring_lane_payload() -> tuple[list[dict], list[dict], dict]:
+    from web import monitoring_view
+
+    try:
+        latest = device_history_db.latest_per_vmid()
+        rows = monitoring_view.build_dashboard_rows(
+            latest,
+            ad_first_seen=_ad_first_seen_map(),
+            now_iso=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+    except Exception:
+        return [], [], {
+            "total": 0,
+            "running": 0,
+            "guest_identity": 0,
+            "ad_ok": 0,
+            "entra_ok": 0,
+            "entra_pending": 0,
+            "intune_ok": 0,
+            "attention": 0,
+        }
+
+    total = len(rows)
+    counts = {
+        "total": total,
+        "running": sum(1 for row in rows if row.pve_status == "running"),
+        "guest_identity": sum(1 for row in rows if row.win_name or row.serial),
+        "ad_ok": sum(1 for row in rows if row.ad_badge == "ok"),
+        "entra_ok": sum(1 for row in rows if row.entra_badge == "ok"),
+        "entra_pending": sum(1 for row in rows if row.entra_badge == "pending"),
+        "intune_ok": sum(1 for row in rows if row.intune_badge == "ok"),
+        "attention": 0,
+    }
+
+    def _lane(label: str, value: int, detail: str, lane_id: str) -> dict:
+        ready = total > 0 and value == total
+        return {
+            "id": lane_id,
+            "label": label,
+            "value": f"{value}/{total}",
+            "detail": detail,
+            "status": "ready" if ready else "attention",
+            "tone": "good" if ready else "active",
+        }
+
+    lanes = [
+        _lane("Provisioned", counts["running"], "Running in Proxmox and visible to the monitor.", "provisioned"),
+        _lane("Guest identity", counts["guest_identity"], "Windows name or serial captured from the guest.", "guest-identity"),
+        _lane("AD joined", counts["ad_ok"], "Single active computer object found in scope.", "ad-joined"),
+        _lane("Entra synced", counts["entra_ok"], f"{counts['entra_pending']} pending inside the expected sync window.", "entra-synced"),
+        _lane("Intune compliant", counts["intune_ok"], "Endpoint record exists and reports compliant.", "intune-compliant"),
+    ]
+
+    attention_rows = []
+    for row in rows:
+        ready = row.ad_badge == "ok" and row.entra_badge == "ok" and row.intune_badge == "ok"
+        row_attention = (
+            row.ad_badge in {"warn", "missing", "error"}
+            or row.entra_badge in {"warn", "missing", "error"}
+            or row.intune_badge in {"warn", "missing", "error"}
+        )
+        if not row_attention and ready:
+            continue
+        counts["attention"] += 1
+        attention_rows.append({
+            "vmid": row.vmid,
+            "vm_name": row.vm_name or "(unnamed)",
+            "node": row.node or "",
+            "lifecycle": "Needs check" if row_attention else "In progress",
+            "tone": "bad" if row_attention else "active",
+            "pve_status": row.pve_status or "unknown",
+            "windows": row.win_name or "unknown",
+            "serial": row.serial or "unknown",
+            "ad": row.ad_badge,
+            "entra": row.entra_badge,
+            "intune": row.intune_badge,
+            "last_checked": row.last_checked or "",
+            "href": f"/devices/{row.vmid}",
+        })
+    return lanes, attention_rows[:8], counts
+
+
 def _signals_hub_payload() -> dict:
     runtime = _runtime_container_status()
     runtime_containers = runtime.get("containers") or []
@@ -13530,7 +13649,13 @@ def _signals_hub_payload() -> dict:
         keytab = device_history_db.get_keytab_health() or {}
     except Exception:
         keytab = {}
-    keytab_status = str(keytab.get("status") or "unknown")
+    keytab_status = str(keytab.get("status") or keytab.get("last_probe_status") or "unknown")
+    keytab_detail = str(
+        keytab.get("detail")
+        or keytab.get("message")
+        or keytab.get("last_probe_message")
+        or "keytab health not reported"
+    )
 
     try:
         fleet = device_history_db.fleet_summary()
@@ -13538,12 +13663,26 @@ def _signals_hub_payload() -> dict:
         fleet = {"total": 0}
 
     try:
+        from web import service_health_pg as service_health
+        service_rows = service_health.list_services()
+    except Exception:
+        service_rows = []
+
+    lifecycle_lanes, fleet_attention, lane_counts = _monitoring_lane_payload()
+
+    try:
         from web import db_pg, deployment_health
 
         with db_pg.connection(_database_url()) as conn:
-            deployments = deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+            deployment_payload = deployment_health.build_deployments_payload(conn, limit=25)
     except Exception:
-        deployments = {"total": 0, "active": 0, "completed": 0, "failed": 0}
+        deployment_payload = {
+            "summary": {"total": 0, "active": 0, "completed": 0, "failed": 0},
+            "active": [],
+            "recent_completions": [],
+            "bottlenecks": [],
+        }
+    deployments = deployment_payload.get("summary") or {}
     deployments = _deployment_summary_for_react(deployments)
 
     osdeploy_ready = int(artifacts.get("osdeploy_ready_count") or 0)
@@ -13561,6 +13700,12 @@ def _signals_hub_payload() -> dict:
     else:
         build_host_status = build_host_state
 
+    unhealthy_services = [
+        row for row in service_rows
+        if str(row.get("status") or "").casefold() not in {"ok", "healthy", "ready"}
+    ]
+    deployment_attention = int(deployments.get("failed") or 0) + int(deployments.get("stuck") or 0) + int(deployments.get("regressed") or 0)
+
     signals = [
         {
             "id": "runtime",
@@ -13576,6 +13721,17 @@ def _signals_hub_payload() -> dict:
             "count": len(runtime_containers),
             "source": "/api/monitoring/runtime-services",
             "href": "/react/monitoring#runtime",
+        },
+        {
+            "id": "services",
+            "family": "service_health",
+            "label": "Service health",
+            "status": "degraded" if unhealthy_services else "healthy",
+            "tone": "bad" if unhealthy_services else "good",
+            "summary": f"{len(service_rows)} services reporting; {len(unhealthy_services)} degraded or dead",
+            "count": len(service_rows),
+            "source": "service health table",
+            "href": "/react/monitoring#services",
         },
         {
             "id": "jobs",
@@ -13625,6 +13781,20 @@ def _signals_hub_payload() -> dict:
             "href": "/setup",
         },
         {
+            "id": "deployment-speed",
+            "family": "deployment_speed",
+            "label": "Deployment speed",
+            "status": "attention" if deployment_attention else ("running" if deployments.get("active") else "ready"),
+            "tone": "bad" if deployment_attention else ("active" if deployments.get("active") else "good"),
+            "summary": (
+                f"{deployments.get('active', 0)} active, {deployments.get('stuck', 0)} stuck, "
+                f"{deployments.get('failed', 0)} failed, p95 {deployments.get('p95_completion_seconds') or '-'}s"
+            ),
+            "count": deployments.get("total", 0),
+            "source": "/api/monitoring/deployments/runs",
+            "href": "/react/monitoring#deployment-speed",
+        },
+        {
             "id": "agent",
             "family": "agent",
             "label": "AutopilotAgent triage",
@@ -13639,12 +13809,26 @@ def _signals_hub_payload() -> dict:
             "href": "/vms",
         },
         {
+            "id": "lifecycle",
+            "family": "lifecycle",
+            "label": "Lifecycle lanes",
+            "status": "attention" if lane_counts["attention"] else "ready",
+            "tone": "bad" if lane_counts["attention"] else "good",
+            "summary": (
+                f"{lane_counts['running']}/{lane_counts['total']} running; "
+                f"{lane_counts['ad_ok']} AD, {lane_counts['entra_ok']} Entra, {lane_counts['intune_ok']} Intune ready"
+            ),
+            "count": lane_counts["attention"],
+            "source": "/monitoring",
+            "href": "/react/monitoring#lifecycle",
+        },
+        {
             "id": "identity",
             "family": "identity",
             "label": "AD, auth, and keytab",
             "status": keytab_status,
             "tone": _signal_tone(keytab_status),
-            "summary": str(keytab.get("detail") or keytab.get("message") or "keytab health not reported"),
+            "summary": keytab_detail,
             "count": keytab_status,
             "source": "/api/monitoring/keytab/health",
             "href": "/monitoring/settings",
@@ -13655,7 +13839,7 @@ def _signals_hub_payload() -> dict:
             "label": "Fleet evidence",
             "status": "ready" if int(fleet.get("total") or 0) else "empty",
             "tone": "good" if int(fleet.get("total") or 0) else "neutral",
-            "summary": f"{int(fleet.get('total') or 0)} devices in latest fleet summary; {deployments.get('succeeded', 0)} deployments complete",
+            "summary": f"{lane_counts['total'] or int(fleet.get('total') or 0)} devices in latest sweep; {len(fleet_attention)} need review",
             "count": int(fleet.get("total") or 0),
             "source": "/api/fleet/summary",
             "href": "/devices",
@@ -13686,6 +13870,30 @@ def _signals_hub_payload() -> dict:
             "action_label": "Open jobs",
             "href": "/react/jobs",
             "source": "/api/jobs",
+        })
+    if deployment_attention:
+        operator_paths.append({
+            "id": "review-deployment-speed",
+            "priority": 18,
+            "label": "Review deployment timing regressions",
+            "status": "attention",
+            "tone": "bad",
+            "summary": f"{deployment_attention} deployment timing signals are failed, stuck, or regressed.",
+            "action_label": "Open legacy monitoring",
+            "href": "/monitoring",
+            "source": "/api/monitoring/deployments/runs",
+        })
+    if fleet_attention:
+        operator_paths.append({
+            "id": "review-fleet-lifecycle",
+            "priority": 22,
+            "label": "Review fleet lifecycle drift",
+            "status": "attention",
+            "tone": "bad",
+            "summary": f"{len(fleet_attention)} devices need AD, Entra, Intune, or guest identity review.",
+            "action_label": "Open devices",
+            "href": "/devices",
+            "source": "/monitoring",
         })
     if build_host_status in {"stale", "missing", "mismatch"}:
         operator_paths.append({
@@ -13778,10 +13986,20 @@ def _signals_hub_payload() -> dict:
             _signals_metric("Needs operator", action_count, "bad" if action_count else "good"),
             _signals_metric("Ready", ready_count, "good" if ready_count else "neutral"),
             _signals_metric("Runtime", "up" if runtime.get("available") else "down", "good" if runtime.get("available") else "bad"),
-            _signals_metric("Artifacts", cloudosd_ready + osdeploy_ready, "good" if artifacts_ready else "bad"),
+            _signals_metric("Fleet attention", len(fleet_attention), "bad" if fleet_attention else "good"),
         ],
         "signals": signals,
         "operator_paths": operator_paths,
+        "lifecycle_lanes": lifecycle_lanes,
+        "deployment_health": {
+            "summary": deployments,
+            "active": (deployment_payload.get("active") or [])[:6],
+            "recent_completions": (deployment_payload.get("recent_completions") or [])[:6],
+            "bottlenecks": (deployment_payload.get("bottlenecks") or [])[:6],
+        },
+        "services": service_rows,
+        "runtime": runtime,
+        "fleet_attention": fleet_attention,
     }
 
 

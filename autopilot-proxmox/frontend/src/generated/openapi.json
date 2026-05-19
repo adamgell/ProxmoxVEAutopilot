@@ -1016,6 +1016,39 @@
         "title": "ContentVersionCreateBody",
         "type": "object"
       },
+      "DeploymentHealthDigestResponse": {
+        "properties": {
+          "active": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Active",
+            "type": "array"
+          },
+          "bottlenecks": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Bottlenecks",
+            "type": "array"
+          },
+          "recent_completions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recent Completions",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/DeploymentSummaryResponse"
+          }
+        },
+        "title": "DeploymentHealthDigestResponse",
+        "type": "object"
+      },
       "DeploymentSummaryResponse": {
         "additionalProperties": true,
         "properties": {
@@ -1093,6 +1126,80 @@
           }
         },
         "title": "DeploymentSummaryResponse",
+        "type": "object"
+      },
+      "FleetSignalRowResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "ad": {
+            "default": "",
+            "title": "Ad",
+            "type": "string"
+          },
+          "entra": {
+            "default": "",
+            "title": "Entra",
+            "type": "string"
+          },
+          "href": {
+            "default": "",
+            "title": "Href",
+            "type": "string"
+          },
+          "intune": {
+            "default": "",
+            "title": "Intune",
+            "type": "string"
+          },
+          "last_checked": {
+            "default": "",
+            "title": "Last Checked",
+            "type": "string"
+          },
+          "lifecycle": {
+            "default": "",
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "node": {
+            "default": "",
+            "title": "Node",
+            "type": "string"
+          },
+          "pve_status": {
+            "default": "",
+            "title": "Pve Status",
+            "type": "string"
+          },
+          "serial": {
+            "default": "",
+            "title": "Serial",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "title": "Tone",
+            "type": "string"
+          },
+          "vm_name": {
+            "default": "",
+            "title": "Vm Name",
+            "type": "string"
+          },
+          "vmid": {
+            "title": "Vmid",
+            "type": "integer"
+          },
+          "windows": {
+            "default": "",
+            "title": "Windows",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vmid"
+        ],
+        "title": "FleetSignalRowResponse",
         "type": "object"
       },
       "FleetSummaryResponse": {
@@ -1523,6 +1630,44 @@
           "id"
         ],
         "title": "JobTableRowResponse",
+        "type": "object"
+      },
+      "LifecycleLaneResponse": {
+        "properties": {
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "default": "unknown",
+            "title": "Status",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "title": "Tone",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "value"
+        ],
+        "title": "LifecycleLaneResponse",
         "type": "object"
       },
       "MonitoringSummaryResponse": {
@@ -2358,9 +2503,26 @@
             "title": "Build",
             "type": "object"
           },
+          "deployment_health": {
+            "$ref": "#/components/schemas/DeploymentHealthDigestResponse"
+          },
+          "fleet_attention": {
+            "items": {
+              "$ref": "#/components/schemas/FleetSignalRowResponse"
+            },
+            "title": "Fleet Attention",
+            "type": "array"
+          },
           "generated_at": {
             "title": "Generated At",
             "type": "string"
+          },
+          "lifecycle_lanes": {
+            "items": {
+              "$ref": "#/components/schemas/LifecycleLaneResponse"
+            },
+            "title": "Lifecycle Lanes",
+            "type": "array"
           },
           "metrics": {
             "items": {
@@ -2374,6 +2536,17 @@
               "$ref": "#/components/schemas/OperatorPathResponse"
             },
             "title": "Operator Paths",
+            "type": "array"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/RuntimeServicesResponse"
+          },
+          "services": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Services",
             "type": "array"
           },
           "signals": {

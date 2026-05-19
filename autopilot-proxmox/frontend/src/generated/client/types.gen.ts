@@ -699,6 +699,31 @@ export type ContentVersionCreateBody = {
 };
 
 /**
+ * DeploymentHealthDigestResponse
+ */
+export type DeploymentHealthDigestResponse = {
+    /**
+     * Active
+     */
+    active?: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * Bottlenecks
+     */
+    bottlenecks?: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * Recent Completions
+     */
+    recent_completions?: Array<{
+        [key: string]: unknown;
+    }>;
+    summary?: DeploymentSummaryResponse;
+};
+
+/**
  * DeploymentSummaryResponse
  */
 export type DeploymentSummaryResponse = {
@@ -750,6 +775,65 @@ export type DeploymentSummaryResponse = {
      * Total
      */
     total?: number;
+    [key: string]: unknown;
+};
+
+/**
+ * FleetSignalRowResponse
+ */
+export type FleetSignalRowResponse = {
+    /**
+     * Ad
+     */
+    ad?: string;
+    /**
+     * Entra
+     */
+    entra?: string;
+    /**
+     * Href
+     */
+    href?: string;
+    /**
+     * Intune
+     */
+    intune?: string;
+    /**
+     * Last Checked
+     */
+    last_checked?: string;
+    /**
+     * Lifecycle
+     */
+    lifecycle?: string;
+    /**
+     * Node
+     */
+    node?: string;
+    /**
+     * Pve Status
+     */
+    pve_status?: string;
+    /**
+     * Serial
+     */
+    serial?: string;
+    /**
+     * Tone
+     */
+    tone?: string;
+    /**
+     * Vm Name
+     */
+    vm_name?: string;
+    /**
+     * Vmid
+     */
+    vmid: number;
+    /**
+     * Windows
+     */
+    windows?: string;
     [key: string]: unknown;
 };
 
@@ -963,6 +1047,36 @@ export type JobTableRowResponse = {
      */
     status?: string | null;
     [key: string]: unknown;
+};
+
+/**
+ * LifecycleLaneResponse
+ */
+export type LifecycleLaneResponse = {
+    /**
+     * Detail
+     */
+    detail?: string;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Status
+     */
+    status?: string;
+    /**
+     * Tone
+     */
+    tone?: string;
+    /**
+     * Value
+     */
+    value: string;
 };
 
 /**
@@ -1558,10 +1672,19 @@ export type SignalsHubResponse = {
     build?: {
         [key: string]: unknown;
     };
+    deployment_health?: DeploymentHealthDigestResponse;
+    /**
+     * Fleet Attention
+     */
+    fleet_attention?: Array<FleetSignalRowResponse>;
     /**
      * Generated At
      */
     generated_at: string;
+    /**
+     * Lifecycle Lanes
+     */
+    lifecycle_lanes?: Array<LifecycleLaneResponse>;
     /**
      * Metrics
      */
@@ -1570,6 +1693,13 @@ export type SignalsHubResponse = {
      * Operator Paths
      */
     operator_paths?: Array<OperatorPathResponse>;
+    runtime?: RuntimeServicesResponse;
+    /**
+     * Services
+     */
+    services?: Array<{
+        [key: string]: unknown;
+    }>;
     /**
      * Signals
      */

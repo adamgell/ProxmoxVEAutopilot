@@ -107,7 +107,17 @@ describe("operator view models", () => {
         ],
         operator_paths: [],
         generated_at: "2026-05-19T00:00:00Z",
-        build: { sha_short: "75ea47a", build_time: "2026-05-19T00:10:41Z" }
+        build: { sha_short: "75ea47a", build_time: "2026-05-19T00:10:41Z" },
+        lifecycle_lanes: [],
+        deployment_health: {
+          summary: { total: 0, failed: 0 },
+          active: [],
+          recent_completions: [],
+          bottlenecks: []
+        },
+        services: [],
+        runtime: { available: true, error: "", containers: [] },
+        fleet_attention: []
       })
     ).toEqual([
       { label: "Critical", value: "1", tone: "bad" },

@@ -94,17 +94,36 @@ def test_observe_monitoring_api_response_shapes(web_client):
     signals = web_client.get("/api/monitoring/signals")
     assert signals.status_code == 200
     signals_body = signals.json()
-    assert set(signals_body) >= {"generated_at", "build", "metrics", "signals", "operator_paths"}
+    assert set(signals_body) >= {
+        "generated_at",
+        "build",
+        "metrics",
+        "signals",
+        "operator_paths",
+        "lifecycle_lanes",
+        "deployment_health",
+        "services",
+        "runtime",
+        "fleet_attention",
+    }
     assert isinstance(signals_body["metrics"], list)
     assert isinstance(signals_body["signals"], list)
     assert isinstance(signals_body["operator_paths"], list)
+    assert isinstance(signals_body["lifecycle_lanes"], list)
+    assert set(signals_body["deployment_health"]) >= {"summary", "active", "recent_completions", "bottlenecks"}
+    assert isinstance(signals_body["services"], list)
+    assert set(signals_body["runtime"]) >= {"available", "error", "containers"}
+    assert isinstance(signals_body["fleet_attention"], list)
     assert {
         "runtime",
+        "service_health",
         "jobs",
         "build_host",
         "artifacts",
         "deploy_readiness",
+        "deployment_speed",
         "agent",
+        "lifecycle",
         "identity",
         "fleet_evidence",
     }.issubset({item["family"] for item in signals_body["signals"]})

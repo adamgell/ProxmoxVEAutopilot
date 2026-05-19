@@ -120,7 +120,103 @@ async function mockReadApis(page: Page) {
             action_label: "Open server deploy",
             href: "/osdeploy"
           }
+        ],
+        lifecycle_lanes: [
+          {
+            id: "provisioned",
+            label: "Provisioned",
+            value: "2/3",
+            detail: "Running in Proxmox and visible to the monitor.",
+            status: "attention",
+            tone: "active"
+          }
+        ],
+        deployment_health: {
+          summary: {
+            total: 4,
+            active: 1,
+            running: 1,
+            completed: 2,
+            succeeded: 2,
+            failed: 1,
+            stuck: 0,
+            regressed: 1,
+            slow: 0,
+            median_completion_seconds: 300,
+            p95_completion_seconds: 900,
+            recent_failure_rate: 0.25
+          },
+          active: [
+            {
+              deployment_key: "osdeploy/run-1",
+              deployment_type: "osdeploy",
+              current_phase: "windows_setup",
+              elapsed_seconds: 120,
+              health: "running",
+              state: "running",
+              next_expected_evidence: "agent heartbeat"
+            }
+          ],
+          recent_completions: [],
+          bottlenecks: [
+            {
+              deployment_type: "osdeploy",
+              phase_key: "windows_setup",
+              phase_label: "Windows setup",
+              count: 1,
+              health: "regressed",
+              p95_seconds: 900
+            }
+          ]
+        },
+        services: [
+          {
+            service_id: "autopilot-monitor",
+            status: "ok",
+            age_seconds: 12,
+            detail: "sweep idle"
+          }
+        ],
+        runtime: {
+          available: true,
+          error: "",
+          containers: [
+            {
+              name: "autopilot",
+              service: "autopilot",
+              image: "proxmox-autopilot:latest",
+              status: "running",
+              health: "healthy"
+            }
+          ]
+        },
+        fleet_attention: [
+          {
+            vmid: 101,
+            vm_name: "WIN-SRV-01",
+            node: "pve1",
+            lifecycle: "Needs check",
+            tone: "bad",
+            pve_status: "running",
+            windows: "WIN-SRV-01",
+            serial: "SER-101",
+            ad: "ok",
+            entra: "missing",
+            intune: "missing",
+            last_checked: "2026-05-19T00:00:00Z",
+            href: "/devices/101"
+          }
         ]
+      }
+    });
+  });
+  await page.route("**/api/monitoring/service-logs?tail=180&container=autopilot", async (route) => {
+    await route.fulfill({
+      json: {
+        container: "autopilot",
+        service: "autopilot",
+        tail: 180,
+        lines: ["2026-05-19T00:00:00Z autopilot ready"]
       }
     });
   });
@@ -197,6 +293,13 @@ for (const viewport of [
     await expect(page.getByText("Build host agent")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open server deploy" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Monitoring settings", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Deployment speed" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Lifecycle lanes" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Service health" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Runtime containers" })).toBeVisible();
+    await page.getByRole("button", { name: "Tail" }).click();
+    await expect(page.getByText("2026-05-19T00:00:00Z autopilot ready")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Fleet attention" })).toBeVisible();
 
     const header = await page.locator(".page-head").boundingBox();
     const metrics = await page.locator(".metric-strip").first().boundingBox();

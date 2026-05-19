@@ -78,6 +78,14 @@ h2 {
   line-height: 1.2;
 }
 
+h3 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -407,8 +415,31 @@ h2 {
   margin-bottom: 18px;
 }
 
+.signals-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.signals-detail-grid .panel:first-child,
+.signals-detail-grid .panel:last-child {
+  grid-column: 1 / -1;
+}
+
+.monitoring-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 14px;
+}
+
 .signal-list,
-.path-list {
+.path-list,
+.compact-list,
+.lane-list,
+.fleet-attention-list {
   display: grid;
   gap: 8px;
   padding: 0;
@@ -417,7 +448,10 @@ h2 {
 }
 
 .signal-list li,
-.path-list li {
+.path-list li,
+.compact-list li,
+.lane-list li,
+.fleet-attention-list li {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) auto;
   gap: 10px;
@@ -429,6 +463,9 @@ h2 {
 
 .signal-list strong,
 .path-list strong,
+.compact-list strong,
+.lane-list strong,
+.fleet-attention-list strong,
 .detail-callout strong {
   display: block;
   margin-bottom: 3px;
@@ -439,6 +476,9 @@ h2 {
 
 .signal-list p,
 .path-list p,
+.compact-list p,
+.lane-list p,
+.fleet-attention-list p,
 .detail-callout p {
   margin: 0;
   color: var(--muted-2);
@@ -448,7 +488,8 @@ h2 {
 }
 
 .signal-list small,
-.path-list small {
+.path-list small,
+.fleet-attention-list small {
   display: block;
   margin-top: 4px;
   color: var(--muted);
@@ -471,6 +512,74 @@ h2 {
   text-align: right;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.lane-list b {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.fleet-attention-list a {
+  color: var(--active);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.table-action {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.table-action:hover {
+  border-color: var(--active);
+  background: var(--surface-2);
+}
+
+.log-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.log-panel__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.log-output {
+  min-height: 180px;
+  max-height: 320px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: #070b11;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.log-output.is-muted {
+  color: var(--muted);
 }
 
 .signal-detail {
@@ -606,6 +715,10 @@ h2 {
 
 .fleet-grid--four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.fleet-grid--six {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .fleet-grid div {
@@ -811,8 +924,11 @@ h2 {
   .section-grid,
   .section-grid--wide,
   .signals-layout,
+  .signals-detail-grid,
+  .monitoring-columns,
   .fleet-grid,
   .fleet-grid--four,
+  .fleet-grid--six,
   .link-grid {
     grid-template-columns: 1fr;
   }
@@ -835,6 +951,9 @@ h2 {
 
   .signal-list li,
   .path-list li,
+  .compact-list li,
+  .lane-list li,
+  .fleet-attention-list li,
   .detail-callout {
     grid-template-columns: 1fr;
   }
