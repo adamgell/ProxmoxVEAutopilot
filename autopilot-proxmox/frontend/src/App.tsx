@@ -1,8 +1,8 @@
-import { ShellIndex } from "./components/Shell";
 import type { AppBootstrap } from "./contracts";
 import { DashboardPage } from "./pages/DashboardPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
+import { ShellIndexPage } from "./pages/ShellIndexPage";
 
 interface AppProps {
   readonly bootstrap: AppBootstrap;
@@ -19,5 +19,5 @@ export function App({ bootstrap }: AppProps) {
   if (path === "/react/monitoring") {
     return <MonitoringPage bootstrap={bootstrap} />;
   }
-  return <ShellIndex bootstrap={bootstrap} />;
+  return <ShellIndexPage bootstrap={bootstrap} />;
 }

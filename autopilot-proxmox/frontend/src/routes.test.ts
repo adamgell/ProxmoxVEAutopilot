@@ -1,13 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import { migratedRoutes, operatorNavGroups, reactRouteForPath } from "./routes";
+import { migratedRoutes, operatorFlows, operatorNavGroups, reactRouteForPath } from "./routes";
 
 describe("operator route registry", () => {
   test("registers only active React routes as migrated routes", () => {
     expect(migratedRoutes).toEqual([
       {
         path: "/react-shell",
-        label: "Shell",
+        label: "Workspace",
         group: "Observe",
         phase: "foundation"
       },
@@ -48,5 +48,27 @@ describe("operator route registry", () => {
   test("finds active React routes and ignores legacy deep links", () => {
     expect(reactRouteForPath("/react/jobs")?.label).toBe("Jobs");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
+  });
+
+  test("maps refined operator flows to React starts and legacy deep links", () => {
+    expect(operatorFlows.map((flow) => flow.label)).toEqual([
+      "Observe",
+      "Deploy",
+      "Build",
+      "Fleet",
+      "Settings"
+    ]);
+    expect(operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "React"))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
+        expect.objectContaining({ label: "Jobs", href: "/react/jobs" })
+      ])
+    );
+    expect(operatorFlows.find((flow) => flow.id === "deploy")?.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "OSDeploy Server", href: "/osdeploy", state: "Jinja" }),
+        expect.objectContaining({ label: "OSDCloud Desktop", href: "/cloudosd", state: "Jinja" })
+      ])
+    );
   });
 });

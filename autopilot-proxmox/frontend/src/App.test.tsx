@@ -274,8 +274,11 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
-    expect(screen.getByRole("link", { name: "Signals Hub" })).toHaveAttribute("href", "/react/monitoring");
-    expect(screen.getByRole("link", { name: "OSDCloud Desktop" })).toHaveAttribute("href", "/cloudosd");
+    expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
+    expect(screen.getAllByRole("link", { name: "OSDCloud Desktop legacy page" })[0]).toHaveAttribute("href", "/cloudosd");
+    expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
+    expect(screen.getByText("Start with readiness, then open the existing execution flow.")).toBeInTheDocument();
+    expect(screen.getAllByText("Jinja").length).toBeGreaterThan(0);
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^clone$/i })).not.toBeInTheDocument();

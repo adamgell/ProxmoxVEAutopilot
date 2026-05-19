@@ -26,6 +26,21 @@ export interface OperatorNavGroup {
   readonly items: readonly OperatorRoute[];
 }
 
+export interface OperatorFlowStep {
+  readonly label: string;
+  readonly href: string;
+  readonly group: OperatorGroupLabel;
+  readonly state: "React" | "Jinja";
+}
+
+export interface OperatorFlow {
+  readonly id: string;
+  readonly label: string;
+  readonly group: OperatorGroupLabel;
+  readonly summary: string;
+  readonly steps: readonly OperatorFlowStep[];
+}
+
 export interface LiveSocketMessage {
   readonly topic?: string;
   readonly type?: string;

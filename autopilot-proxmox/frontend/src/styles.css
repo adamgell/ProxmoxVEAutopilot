@@ -345,6 +345,10 @@ h3 {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.metric-strip--workspace {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .metric-strip > div,
 .metric-strip > a {
   min-width: 0;
@@ -391,6 +395,78 @@ h3 {
 
 .section-grid--wide {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.flow-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.flow-card {
+  display: grid;
+  gap: 12px;
+}
+
+.flow-card p {
+  min-height: 54px;
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1.38;
+}
+
+.flow-card ol {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.flow-step {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.flow-step:hover {
+  border-color: var(--active);
+  background: var(--surface-2);
+}
+
+.flow-step span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.flow-step small {
+  color: var(--active);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.flow-step--legacy {
+  color: var(--muted-2);
+}
+
+.flow-step--legacy small {
+  color: var(--muted);
 }
 
 .panel {
@@ -921,8 +997,10 @@ h3 {
   .workspace__nav,
   .metric-strip,
   .metric-strip--signals,
+  .metric-strip--workspace,
   .section-grid,
   .section-grid--wide,
+  .flow-board,
   .signals-layout,
   .signals-detail-grid,
   .monitoring-columns,

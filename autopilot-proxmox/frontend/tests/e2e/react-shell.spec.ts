@@ -228,7 +228,7 @@ test("renders the React shell without layout overlap", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Operator workspace" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "OSDCloud Desktop Jinja", exact: true })).toBeVisible();
 
   const hero = await page.locator(".workspace__topbar").boundingBox();
   const panel = await page.locator(".workspace__content").boundingBox();

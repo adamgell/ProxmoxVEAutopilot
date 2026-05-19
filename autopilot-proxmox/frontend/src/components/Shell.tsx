@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { AppBootstrap } from "../contracts";
-import { migratedRoutes, operatorNavGroups, reactRouteForPath } from "../routes";
-import { Panel } from "./ui";
+import { operatorNavGroups, reactRouteForPath } from "../routes";
 
 function currentPageLabel(path: string): string {
   return reactRouteForPath(path)?.label ?? "Shell";
@@ -69,49 +68,6 @@ export function OperatorShell({
         <main id="react-content" className="workspace__content" tabIndex={-1}>{children}</main>
       </div>
     </div>
-  );
-}
-
-export function ShellIndex({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
-  return (
-    <OperatorShell bootstrap={bootstrap} path="/react-shell">
-      <section className="page-head" aria-labelledby="shell-title">
-        <div>
-          <p>Observe</p>
-          <h1 id="shell-title">Proxmox VE Autopilot</h1>
-        </div>
-        <a className="action-link" href="/">Jinja console</a>
-      </section>
-
-      <section className="metric-strip" aria-label="Migrated routes">
-        {migratedRoutes.map((route) => (
-          <a key={route.path} href={route.path} aria-label={`Open ${route.label}`}>
-            <span>{route.group}</span>
-            <strong>{route.label}</strong>
-          </a>
-        ))}
-      </section>
-
-      <section className="section-grid">
-        {operatorNavGroups.map((group) => (
-          <Panel key={group.label} title={group.label}>
-            <div className="link-stack">
-              {group.items.map((item) => (
-                <a
-                  key={item.path}
-                  href={item.path}
-                  className={item.legacy ? "legacy-link" : undefined}
-                  aria-label={item.legacy ? item.label : `${item.label} route`}
-                >
-                  <span>{item.label}</span>
-                  {item.legacy ? <small>existing page</small> : <small>{item.phase}</small>}
-                </a>
-              ))}
-            </div>
-          </Panel>
-        ))}
-      </section>
-    </OperatorShell>
   );
 }
 
