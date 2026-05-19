@@ -3,63 +3,147 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proxmox VE Autopilot Docs</title>
+  <title>Proxmox VE Autopilot Customer Guide</title>
   <style>
     :root {
-      color-scheme: light;
-      --ink: #172033;
-      --muted: #657188;
-      --line: #dce3ee;
-      --panel: #ffffff;
-      --bg: #f6f8fb;
-      --accent: #11253f;
-      --foundation: #eef3ff;
-      --bootstrap: #e9f7f1;
-      --operational: #eaf8ff;
-      --warning: #fff4db;
+      color-scheme: dark;
+      --bg: #141613;
+      --bg-soft: #191c18;
+      --panel: #20241f;
+      --panel-strong: #272c26;
+      --ink: #f1eadc;
+      --muted: #bbb4a8;
+      --quiet: #918a7d;
+      --line: #3b4038;
+      --line-strong: #59604f;
+      --gold: #d8b36a;
+      --gold-soft: #382f1f;
+      --green: #8fbc83;
+      --green-soft: #243425;
+      --blue: #8fb6c9;
+      --blue-soft: #202f35;
+      --rust: #d28a62;
+      --rust-soft: #3a261f;
+      --shadow: rgba(0, 0, 0, 0.28);
     }
 
     * {
       box-sizing: border-box;
     }
 
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
-      background: var(--bg);
-      line-height: 1.45;
+      background:
+        radial-gradient(circle at 14% 0%, rgba(216, 179, 106, 0.12), transparent 28rem),
+        radial-gradient(circle at 88% 8%, rgba(143, 188, 131, 0.10), transparent 32rem),
+        linear-gradient(180deg, #171a16 0%, var(--bg) 38%, #10120f 100%);
+      line-height: 1.5;
     }
 
-    header {
-      background: var(--panel);
-      border-bottom: 1px solid var(--line);
-      padding: 34px 36px 24px;
-    }
-
-    main {
-      padding: 28px 36px 56px;
+    a {
+      color: inherit;
     }
 
     .wrap {
-      max-width: 1180px;
+      width: min(1180px, calc(100vw - 40px));
       margin: 0 auto;
     }
 
+    header {
+      padding: 42px 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(20, 22, 19, 0.84);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--gold);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
     h1 {
-      margin: 0 0 10px;
-      font-size: 32px;
+      max-width: 880px;
+      margin: 0;
+      font-size: clamp(34px, 6vw, 72px);
+      line-height: 0.96;
       letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 860px;
+      margin: 20px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 26px;
+    }
+
+    nav a,
+    .button,
+    .links a,
+    .flow-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    nav a:hover,
+    .button:hover,
+    .links a:hover,
+    .flow-link:hover {
+      border-color: var(--gold);
+      background: rgba(216, 179, 106, 0.10);
+    }
+
+    .button.primary {
+      border-color: var(--gold);
+      background: var(--gold);
+      color: #18150f;
+      font-weight: 700;
+    }
+
+    main {
+      padding: 30px 0 64px;
+    }
+
+    section {
+      margin-bottom: 18px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(32, 36, 31, 0.88);
+      box-shadow: 0 18px 48px var(--shadow);
     }
 
     h2 {
       margin: 0 0 8px;
-      font-size: 21px;
+      font-size: 24px;
       letter-spacing: 0;
     }
 
     h3 {
-      margin: 0 0 7px;
+      margin: 0 0 8px;
       font-size: 17px;
       letter-spacing: 0;
     }
@@ -69,61 +153,144 @@
       color: var(--muted);
     }
 
-    .lead {
-      max-width: 900px;
-      font-size: 16px;
-    }
-
-    .primary-actions,
-    .links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 20px;
-    }
-
-    a.button,
-    .links a {
-      display: inline-flex;
-      align-items: center;
-      min-height: 36px;
-      padding: 7px 12px;
-      border-radius: 8px;
-      border: 1px solid var(--line);
+    code {
+      padding: 1px 6px;
+      border-radius: 5px;
       color: var(--ink);
-      background: #fff;
-      text-decoration: none;
-      font-size: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
-    a.primary {
-      color: #fff;
-      background: var(--accent);
-      border-color: var(--accent);
+    ul {
+      margin: 9px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
     }
 
-    section {
-      margin-bottom: 24px;
-      padding: 22px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: 0 1px 2px rgba(23, 32, 51, 0.04);
+    li + li {
+      margin-top: 5px;
     }
 
-    .phase-grid,
-    .card-grid {
+    .hero-grid,
+    .two-col,
+    .three-col,
+    .four-col,
+    .flow-preview-grid {
       display: grid;
       gap: 14px;
       margin-top: 18px;
     }
 
-    .phase-grid {
+    .hero-grid {
+      grid-template-columns: 1.15fr 0.85fr;
+      align-items: stretch;
+    }
+
+    .two-col {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .three-col {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
-    .card-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .four-col {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card,
+    .phase,
+    .mini-flow,
+    .flow-preview {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+      padding: 16px;
+    }
+
+    .card strong,
+    .phase strong,
+    .mini-step strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+    }
+
+    .callout {
+      margin-top: 18px;
+      padding: 16px;
+      border: 1px solid rgba(216, 179, 106, 0.48);
+      border-left: 6px solid var(--gold);
+      border-radius: 8px;
+      background: rgba(216, 179, 106, 0.10);
+      color: var(--muted);
+    }
+
+    .callout strong {
+      color: var(--ink);
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-height: 100px;
+    }
+
+    .stat span {
+      color: var(--quiet);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .stat b {
+      color: var(--ink);
+      font-size: 22px;
+      line-height: 1.05;
+    }
+
+    .phase {
+      position: relative;
+      min-height: 148px;
+    }
+
+    .phase::after,
+    .mini-flow-row .mini-step:not(:last-child)::after {
+      content: "->";
+      position: absolute;
+      right: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--gold);
+      font-weight: 800;
+      z-index: 3;
+    }
+
+    .phase:last-child::after {
+      content: "";
+    }
+
+    .foundation {
+      background: linear-gradient(180deg, rgba(143, 182, 201, 0.16), rgba(143, 182, 201, 0.06));
+      border-color: rgba(143, 182, 201, 0.45);
+    }
+
+    .bootstrap,
+    .workstation {
+      background: linear-gradient(180deg, rgba(143, 188, 131, 0.16), rgba(143, 188, 131, 0.06));
+      border-color: rgba(143, 188, 131, 0.45);
+    }
+
+    .operational {
+      background: linear-gradient(180deg, rgba(216, 179, 106, 0.17), rgba(216, 179, 106, 0.06));
+      border-color: rgba(216, 179, 106, 0.50);
+    }
+
+    .server {
+      background: linear-gradient(180deg, rgba(210, 138, 98, 0.16), rgba(210, 138, 98, 0.06));
+      border-color: rgba(210, 138, 98, 0.42);
     }
 
     .mini-flow-grid {
@@ -133,64 +300,9 @@
       margin-top: 18px;
     }
 
-    .card,
-    .phase {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      padding: 15px;
-      min-height: 128px;
-    }
-
-    .phase {
-      position: relative;
-    }
-
-    .phase::after {
-      content: "->";
-      position: absolute;
-      right: -14px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-      font-weight: 700;
-    }
-
-    .phase:last-child::after {
-      content: "";
-    }
-
-    .foundation {
-      background: var(--foundation);
-      border-color: #3c64b1;
-    }
-
-    .bootstrap {
-      background: var(--bootstrap);
-      border-color: #2c8f62;
-    }
-
-    .operational {
-      background: var(--operational);
-      border-color: #237aa2;
-    }
-
-    .flow-frame {
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-    }
-
-    .mini-flow {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      padding: 15px;
-    }
-
     .mini-flow-row,
-    .mini-branch-row {
+    .mini-branch-row,
+    .flow {
       display: grid;
       gap: 8px;
       margin-top: 12px;
@@ -204,92 +316,94 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .mini-step {
+    .flow {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .mini-step,
+    .flow div {
       position: relative;
-      min-height: 74px;
-      padding: 10px;
+      min-height: 76px;
+      padding: 11px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fff;
+      background: rgba(12, 14, 12, 0.34);
       color: var(--muted);
       font-size: 13px;
-    }
-
-    .mini-step strong {
-      display: block;
-      margin-bottom: 4px;
-      color: var(--ink);
-      font-size: 13px;
-    }
-
-    .mini-flow-row .mini-step:not(:last-child)::after {
-      content: "->";
-      position: absolute;
-      right: -13px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-      font-weight: 700;
-      z-index: 2;
     }
 
     .script {
-      background: #f8fbff;
-      border-color: var(--accent);
+      border-color: rgba(216, 179, 106, 0.50);
+      background: rgba(216, 179, 106, 0.10);
     }
 
-    .warning {
-      background: var(--warning);
-      border-color: #c98216;
+    .accent {
+      border-color: rgba(210, 138, 98, 0.48);
+      background: rgba(210, 138, 98, 0.10);
     }
 
-    .flow-frame-head {
+    .links {
       display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
     }
 
-    .flow-frame-head p {
-      margin-top: 4px;
+    .flow-preview-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .flow-preview {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 160px;
+    }
+
+    .flow-preview p {
       font-size: 14px;
     }
 
-    .flow-frame iframe {
-      display: block;
-      width: 100%;
-      height: 520px;
-      border: 0;
-      background: #fff;
+    .flow-link {
+      align-self: flex-start;
+      margin-top: 16px;
     }
 
-    code {
-      color: var(--ink);
-      background: #f0f3f8;
-      border-radius: 5px;
-      padding: 1px 5px;
+    .redirect-note {
+      max-width: 700px;
+      margin: 16vh auto;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
     }
 
     @media (max-width: 980px) {
-      header,
-      main {
-        padding-left: 16px;
-        padding-right: 16px;
+      .wrap {
+        width: min(100vw - 28px, 1180px);
       }
 
-      .phase-grid,
-      .card-grid,
+      header {
+        padding-top: 30px;
+      }
+
+      section {
+        padding: 18px;
+      }
+
+      .hero-grid,
+      .two-col,
+      .three-col,
+      .four-col,
       .mini-flow-grid,
       .mini-flow-row,
-      .mini-branch-row {
+      .mini-branch-row,
+      .flow,
+      .flow-preview-grid {
         grid-template-columns: 1fr;
       }
 
-      .phase::after {
-        content: "";
-      }
-
+      .phase::after,
       .mini-flow-row .mini-step:not(:last-child)::after {
         content: "";
       }
@@ -299,110 +413,244 @@
 <body>
   <header>
     <div class="wrap">
-      <h1>Proxmox VE Autopilot Docs</h1>
+      <p class="eyebrow">Customer Guide</p>
+      <h1>Proxmox VE Autopilot</h1>
       <p class="lead">
-        Customer-facing setup, deployment, and readiness documentation for the Proxmox VE Autopilot stack. This page is the GitHub Pages entry point for the repository docs folder.
+        A single customer-facing guide for the full lifecycle: initial stack creation, workstation and server deployment paths, Task Sequence v2, Autopilot hash capture, domain or role work, and readiness evidence.
       </p>
-      <div class="primary-actions">
-        <a class="button primary" href="customer/index.html">Open Customer Guide</a>
-        <a class="button" href="initial-stack-setup-flowchart.html">Setup Flowchart</a>
-        <a class="button" href="osdcloud-osdeploy-flowchart.html">Deployment Flowchart</a>
-      </div>
+      <nav aria-label="Guide sections">
+        <a href="#overview">Overview</a>
+        <a href="#setup">Initial Setup</a>
+        <a href="#deployments">Deployments</a>
+        <a href="#readiness">Readiness</a>
+        <a href="#flowcharts">Flowcharts</a>
+        <a href="#runbooks">Runbooks</a>
+      </nav>
     </div>
   </header>
 
   <main>
     <div class="wrap">
-      <section>
-        <h2>Setup Lifecycle</h2>
+      <section id="overview">
+        <h2>What This Platform Does</h2>
         <p>
-          The console installer does most of the stack creation and moves the environment through three customer-visible phases.
+          Proxmox VE Autopilot turns a clean Proxmox VE node into a browser-managed Windows deployment platform. The Proxmox host stays focused on virtualization while the Ubuntu controller VM owns the web UI, API, Postgres, monitor, builder, MCP service, and setup state.
         </p>
-        <div class="phase-grid">
+        <div class="hero-grid">
+          <div class="callout">
+            <strong>Main customer takeaway:</strong> most setup starts with one console installer on the Proxmox VE host. The script prepares Proxmox access, creates the controller, starts the stack, handles media gates, coordinates the Windows build host, promotes artifacts, and publishes readiness into the web UI.
+          </div>
+          <div class="card stat">
+            <span>Primary output</span>
+            <b>Operational Windows deployment factory</b>
+            <p>Operators choose a deployable OS path instead of caring about low-level artifacts.</p>
+          </div>
+        </div>
+        <div class="four-col">
+          <div class="card">
+            <h3>Proxmox VE Host</h3>
+            <p>Runs the installer, provides VM/storage/networking, hosts ISO media, and boots deployment targets.</p>
+          </div>
+          <div class="card">
+            <h3>Ubuntu Controller</h3>
+            <p>Runs the application stack, setup state, APIs, Postgres, monitor, builder orchestration, and evidence collection.</p>
+          </div>
+          <div class="card">
+            <h3>Windows Build Host</h3>
+            <p>Builds Windows-only outputs: AutopilotAgent MSI, WinPE, OSDCloud media, and OSDeploy media.</p>
+          </div>
+          <div class="card">
+            <h3>Operator Browser</h3>
+            <p>Drives setup, artifact promotion, deployment runs, readiness review, and recovery workflows.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="setup">
+        <h2>Initial Setup: Foundation -> Bootstrap -> Operational</h2>
+        <p>
+          The console installer performs the stack creation and moves the environment through three customer-visible phases.
+        </p>
+        <div class="three-col">
           <div class="phase foundation">
             <h3>Foundation</h3>
-            <p>Prepare Proxmox access, storage, networking, and the Ubuntu controller VM.</p>
+            <p>Prepares Proxmox and creates or discovers the controller.</p>
+            <ul>
+              <li>API token, role, and ACLs</li>
+              <li>Storage, bridge, node, and IP detection</li>
+              <li>Ubuntu controller VM</li>
+              <li>Controller runtime health</li>
+            </ul>
           </div>
           <div class="phase bootstrap">
             <h3>Bootstrap</h3>
-            <p>Start the controller stack, satisfy media requirements, and publish setup state.</p>
+            <p>Prepares deployment inputs and setup state.</p>
+            <ul>
+              <li>Windows installation media</li>
+              <li>VirtIO driver media</li>
+              <li>Setup state publishing</li>
+              <li>Blank deployment templates</li>
+            </ul>
           </div>
           <div class="phase operational">
             <h3>Operational</h3>
-            <p>Build and promote artifacts, verify services, and make <code>/setup</code> ready.</p>
+            <p>Makes the stack usable for operators.</p>
+            <ul>
+              <li>Controller health verified</li>
+              <li>Build artifacts promoted</li>
+              <li>ISO storage updated</li>
+              <li><code>/setup</code> reports ready</li>
+            </ul>
           </div>
+        </div>
+        <div class="flow" aria-label="Initial setup flow">
+          <div><strong>1. Run installer</strong><code>install-proxmox-ve.sh</code></div>
+          <div><strong>2. Foundation</strong>Proxmox access and controller VM</div>
+          <div><strong>3. Runtime</strong>Web UI, API, MCP, Postgres, monitor</div>
+          <div><strong>4. Bootstrap</strong>Windows and VirtIO media</div>
+          <div><strong>5. Build host</strong>Source-built MSI, WinPE, OSDCloud</div>
+          <div><strong>6. Ready</strong><code>/setup</code> operational</div>
         </div>
       </section>
 
-      <section>
-        <h2>Customer Guide</h2>
+      <section id="deployments">
+        <h2>Windows Deployment Workflows</h2>
         <p>
-          Start here when explaining the stack to a customer or internal operator. The guide separates high-level behavior from detailed runbooks.
+          After setup is ready, users choose a path based on whether they are deploying workstations or servers. Both paths are tracked as Task Sequence v2 runs and finish with readiness evidence.
         </p>
-        <div class="card-grid">
+        <div class="two-col">
+          <div class="card workstation">
+            <h3>Workstations</h3>
+            <p>Client Windows deployments use OSDCloud.</p>
+            <ul>
+              <li>Client Windows image deployment</li>
+              <li>AutopilotAgent first-boot setup</li>
+              <li>Hardware hash capture</li>
+              <li>Optional Intune or Autopilot upload</li>
+              <li>Optional domain verification</li>
+            </ul>
+          </div>
+          <div class="card server">
+            <h3>Servers</h3>
+            <p>Windows Server deployments use OSDeploy.</p>
+            <ul>
+              <li>Server image deployment</li>
+              <li>Base readiness verification</li>
+              <li>Optional domain join</li>
+              <li>File server role</li>
+              <li>Isolated domain controller, MECM prereq, or Lab in a Box</li>
+            </ul>
+          </div>
+        </div>
+        <div class="flow" aria-label="Deployment flow">
+          <div><strong>1. Choose path</strong>Workstation or server</div>
+          <div><strong>2. Preflight</strong>Artifact, storage, media, role checks</div>
+          <div><strong>3. Create run</strong>Task Sequence v2 plan created</div>
+          <div><strong>4. Boot WinPE</strong>VM registers with controller</div>
+          <div><strong>5. Install Windows</strong>Drivers, setup, OSD client, agent</div>
+          <div><strong>6. Finish</strong>Heartbeat, optional hash/domain/role work</div>
+        </div>
+      </section>
+
+      <section id="readiness">
+        <h2>Operational Readiness</h2>
+        <p>
+          The platform reports ready only when there is enough evidence that setup or deployment succeeded. This keeps the customer conversation grounded in observable state instead of assumptions.
+        </p>
+        <div class="four-col">
           <div class="card">
-            <h3>Initial Setup</h3>
-            <p>What the installer creates, what the controller owns, and what readiness means.</p>
-            <div class="links">
-              <a href="customer/INITIAL_STACK_SETUP.md">Read setup doc</a>
-            </div>
+            <h3>Stack Ready</h3>
+            <p>Controller healthy, services running, media ready, build host fresh, artifacts promoted.</p>
           </div>
           <div class="card">
-            <h3>Deployment Workflows</h3>
-            <p>How workstation OSDCloud and server OSDeploy paths fit into Task Sequence v2.</p>
-            <div class="links">
-              <a href="customer/WINDOWS_DEPLOYMENT_WORKFLOWS.md">Read workflow doc</a>
-            </div>
+            <h3>Workstation Ready</h3>
+            <p>OSDCloud completed, Windows booted, AutopilotAgent heartbeated, optional hash/domain evidence present.</p>
+          </div>
+          <div class="card">
+            <h3>Server Ready</h3>
+            <p>Server image applied, Windows booted, AutopilotAgent online, QGA known, role status ready.</p>
+          </div>
+          <div class="card">
+            <h3>Artifact Ready</h3>
+            <p>Built from source, uploaded with metadata, hashed, and promoted to Proxmox ISO storage.</p>
           </div>
         </div>
       </section>
 
-      <section>
+      <section id="flowcharts">
         <h2>Visual Flowcharts</h2>
         <p>
-          The embedded preview below keeps the setup flow visible on the Pages landing page. The customer guide includes both setup and deployment chart previews.
+          These compact flows show the full lifecycle at a readable scale. The detailed flowchart pages remain available when someone needs the expanded view.
         </p>
         <div class="mini-flow-grid" aria-label="Compact visual flowcharts">
           <div class="mini-flow">
-            <h3>Setup</h3>
+            <h3>Setup Flow</h3>
             <div class="mini-flow-row">
-              <div class="mini-step foundation"><strong>Foundation</strong>PVE host and controller VM</div>
-              <div class="mini-step script"><strong>Bootstrap</strong>Runtime, media, setup state</div>
-              <div class="mini-step operational"><strong>Operational</strong>Artifacts and readiness</div>
+              <div class="mini-step foundation">
+                <strong>Foundation</strong>
+                PVE access, storage, network, controller VM
+              </div>
+              <div class="mini-step script">
+                <strong>Bootstrap</strong>
+                Installer starts the controller stack and media gates
+              </div>
+              <div class="mini-step operational">
+                <strong>Operational</strong>
+                Artifacts promoted, services healthy, <code>/setup</code> ready
+              </div>
             </div>
           </div>
           <div class="mini-flow">
-            <h3>Deployment</h3>
+            <h3>Deployment Flow</h3>
             <div class="mini-branch-row">
-              <div class="mini-step bootstrap"><strong>Workstation</strong>OSDCloud and Autopilot</div>
-              <div class="mini-step foundation"><strong>Server</strong>OSDeploy and roles</div>
+              <div class="mini-step workstation">
+                <strong>Workstation</strong>
+                OSDCloud client Windows, Autopilot hash, optional Intune
+              </div>
+              <div class="mini-step server">
+                <strong>Server</strong>
+                OSDeploy Windows Server, optional domain or server role
+              </div>
             </div>
             <div class="mini-flow-row">
-              <div class="mini-step"><strong>Task Sequence v2</strong>Plan and preflight</div>
-              <div class="mini-step warning"><strong>WinPE</strong>Apply OS and agent</div>
-              <div class="mini-step operational"><strong>Evidence</strong>Heartbeat and readiness</div>
+              <div class="mini-step">
+                <strong>Task Sequence v2</strong>
+                Plan, preflight, run tracking
+              </div>
+              <div class="mini-step accent">
+                <strong>WinPE Install</strong>
+                Apply OS, drivers, agent bootstrap
+              </div>
+              <div class="mini-step operational">
+                <strong>Evidence</strong>
+                Heartbeat, readiness, hash, domain, or role state
+              </div>
             </div>
           </div>
         </div>
-        <div class="flow-frame">
-          <div class="flow-frame-head">
-            <div>
-              <h3>Initial Stack Setup</h3>
-              <p>Foundation -> Bootstrap -> Operational, driven by the Proxmox console installer.</p>
-            </div>
-            <a class="button" href="initial-stack-setup-flowchart.html">Open full</a>
-          </div>
-          <iframe src="initial-stack-setup-flowchart.html" title="Initial stack setup flowchart"></iframe>
+        <div class="flow-preview-grid">
+          <article class="flow-preview">
+            <h3>Initial Stack Setup</h3>
+            <p>Expanded Foundation, Bootstrap, and Operational readiness map for the Proxmox console installer.</p>
+            <a class="flow-link" href="initial-stack-setup-flowchart.html">Open full setup chart</a>
+          </article>
+          <article class="flow-preview">
+            <h3>Windows Deployment Lifecycle</h3>
+            <p>Expanded OSDCloud, OSDeploy, Task Sequence v2, domain join, Autopilot, and server-role map.</p>
+            <a class="flow-link" href="osdcloud-osdeploy-flowchart.html">Open full deployment chart</a>
+          </article>
         </div>
       </section>
 
-      <section>
-        <h2>Runbooks</h2>
+      <section id="runbooks">
+        <h2>Detailed Runbooks</h2>
         <p>
-          These are deeper operator references that support the customer-facing guide.
+          This page is the customer-facing HTML guide. Use the supporting documents when an operator needs field-level detail, troubleshooting, or the deeper implementation runbooks.
         </p>
         <div class="links">
           <a href="customer/README.md">Customer Markdown Guide</a>
+          <a href="customer/INITIAL_STACK_SETUP.md">Initial Stack Setup</a>
+          <a href="customer/WINDOWS_DEPLOYMENT_WORKFLOWS.md">Windows Deployment Workflows</a>
           <a href="customer/OPERATIONAL_READINESS.md">Operational Readiness</a>
           <a href="FIRST_RUN_E2E.md">First Run E2E</a>
           <a href="PVE_INIT.md">PVE Init</a>
