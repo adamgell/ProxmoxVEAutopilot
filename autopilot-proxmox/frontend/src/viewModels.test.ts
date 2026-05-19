@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import type { JobTableRow, MonitoringOverview } from "./contracts";
 import {
+  buildFleetMachineRows,
   buildSignalMetrics,
   fallbackText,
   formatPercent,
@@ -204,5 +205,95 @@ describe("operator view models", () => {
       running: 2,
       attention: 1
     });
+  });
+
+  test("merges VM, agent, and Autopilot device evidence into one machine row", () => {
+    const rows = buildFleetMachineRows({
+      vms: [
+        {
+          vmid: 108,
+          name: "WrkGrp-525570B6",
+          hostname: "WRKGRP-525570B6",
+          serial: "WrkGrp-525570B6",
+          status: "running",
+          ip_address: "192.168.2.49",
+          lifecycle_state: "workgroup_unenrolled",
+          lifecycle_label: "unenrolled"
+        }
+      ],
+      missing_vms: [],
+      agents: [
+        {
+          agent_id: "agent-wrkgrp-525570b6",
+          vmid: 108,
+          computer_name: "WRKGRP-525570B6",
+          serial_number: "WrkGrp-525570B6",
+          primary_ipv4: "192.168.2.49",
+          domain_joined: false,
+          entra_joined: false,
+          current_phase: "cloudosd",
+          last_heartbeat_at: "2026-05-19T00:00:00Z",
+          agent_version: "0.1.2"
+        }
+      ],
+      autopilot_devices: [
+        {
+          id: "device-1",
+          serial: "WrkGrp-525570B6",
+          display_name: "WRKGRP-525570B6",
+          profile_status: "assigned",
+          enrollment_state: "enrolled",
+          has_local_hash: true
+        }
+      ],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-05-19T00:00:00Z"
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "vm-108",
+      name: "WrkGrp-525570B6",
+      vmid: 108,
+      agentId: "agent-wrkgrp-525570b6",
+      phase: "cloudosd",
+      mdmEnrollment: "enrolled",
+      method: "agent + monitor",
+      version: "0.1.2"
+    });
+    expect(rows[0]?.lifecycleLabels).toEqual(["unenrolled", "Intune", "Autopilot ID", "hash"]);
+  });
+
+  test("keeps unmatched agents as machine rows", () => {
+    const rows = buildFleetMachineRows({
+      vms: [],
+      missing_vms: [],
+      agents: [
+        {
+          agent_id: "agent-only",
+          computer_name: "AGENT-ONLY",
+          serial_number: "SERIAL-ONLY",
+          approval_status: "pending",
+          lifecycle_state: "entra_joined",
+          lifecycle_label: "Entra ID",
+          lifecycle_entra_joined: true
+        }
+      ],
+      autopilot_devices: [],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-05-19T00:00:00Z"
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "agent-agent-only",
+      name: "AGENT-ONLY",
+      agentId: "agent-only",
+      method: "agent",
+      lifecycleLabels: ["Entra ID"]
+    });
+    expect(rows[0]).not.toHaveProperty("vmid");
   });
 });

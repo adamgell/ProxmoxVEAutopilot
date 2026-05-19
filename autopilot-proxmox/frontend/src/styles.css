@@ -832,6 +832,97 @@ h3 {
   gap: 12px;
 }
 
+.fleet-machine-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fleet-machine-table {
+  width: 100%;
+  min-width: 1220px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.fleet-machine-table th,
+.fleet-machine-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  vertical-align: top;
+}
+
+.fleet-machine-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.fleet-machine-table tbody tr:hover {
+  background: color-mix(in srgb, var(--active) 7%, transparent);
+}
+
+.fleet-machine-table tbody tr:last-child th,
+.fleet-machine-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.fleet-machine-table th:nth-child(1) {
+  width: 18%;
+}
+
+.fleet-machine-table th:nth-child(2),
+.fleet-machine-table th:nth-child(3),
+.fleet-machine-table th:nth-child(5),
+.fleet-machine-table th:nth-child(6) {
+  width: 12%;
+}
+
+.fleet-machine-table th:nth-child(4) {
+  width: 11%;
+}
+
+.fleet-machine-table th:nth-child(7) {
+  width: 23%;
+}
+
+.machine-name {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.machine-subline,
+.machine-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.machine-subline a {
+  color: var(--active);
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .fleet-card-list--compact {
   gap: 10px;
 }
@@ -934,10 +1025,15 @@ h3 {
   min-width: 0;
 }
 
+.fleet-actions--table {
+  gap: 5px;
+}
+
 .fleet-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   min-height: 30px;
   max-width: 100%;
   padding: 0 9px;
@@ -955,6 +1051,14 @@ h3 {
   cursor: pointer;
 }
 
+.fleet-action svg {
+  flex: 0 0 auto;
+}
+
+.fleet-action span {
+  min-width: 0;
+}
+
 .fleet-action:hover {
   border-color: var(--active);
   background: var(--surface);
@@ -963,6 +1067,10 @@ h3 {
 .fleet-action--danger {
   border-color: color-mix(in srgb, var(--bad) 54%, var(--line));
   color: var(--bad);
+}
+
+.fleet-action--command {
+  background: var(--surface);
 }
 
 .fleet-lane-command {

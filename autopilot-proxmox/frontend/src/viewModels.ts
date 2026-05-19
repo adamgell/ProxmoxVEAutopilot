@@ -212,6 +212,28 @@ export interface FleetCounts {
   readonly missingAutopilot: number;
 }
 
+export interface FleetMachineRow {
+  readonly id: string;
+  readonly name: string;
+  readonly vmid?: number;
+  readonly vm?: VmFleetRow;
+  readonly agent?: AgentFleetRow;
+  readonly autopilotDevice?: AutopilotDeviceFleetRow;
+  readonly agentId?: string;
+  readonly status: string | undefined;
+  readonly serial: string | undefined;
+  readonly ipAddress: string | undefined;
+  readonly os: string | undefined;
+  readonly qga: string | undefined;
+  readonly phase: string | undefined;
+  readonly heartbeat: string | undefined;
+  readonly version: string | undefined;
+  readonly method: string;
+  readonly mdmEnrollment: string;
+  readonly lifecycleLabels: readonly string[];
+  readonly stale: boolean;
+}
+
 export function vmDisplayName(vm: VmFleetRow): string {
   return vm.name || vm.hostname || `VM ${String(vm.vmid)}`;
 }
@@ -325,6 +347,183 @@ export function summarizeFleet(fleet: VmsFleetResponse): FleetCounts {
   };
 }
 
+function normalizedIdentity(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "";
+}
+
+function addAgentIndexes(
+  agent: AgentFleetRow,
+  byVmid: Map<number, AgentFleetRow>,
+  byIdentity: Map<string, AgentFleetRow>
+): void {
+  if (typeof agent.vmid === "number") {
+    byVmid.set(agent.vmid, agent);
+  }
+  for (const value of [agent.serial_number, agent.computer_name, agent.primary_ipv4]) {
+    const key = normalizedIdentity(value);
+    if (key && !byIdentity.has(key)) {
+      byIdentity.set(key, agent);
+    }
+  }
+}
+
+function addDeviceIndexes(
+  device: AutopilotDeviceFleetRow,
+  byIdentity: Map<string, AutopilotDeviceFleetRow>
+): void {
+  for (const value of [device.serial, device.display_name]) {
+    const key = normalizedIdentity(value);
+    if (key && !byIdentity.has(key)) {
+      byIdentity.set(key, device);
+    }
+  }
+}
+
+function findAgentForVm(
+  vm: VmFleetRow,
+  byVmid: Map<number, AgentFleetRow>,
+  byIdentity: Map<string, AgentFleetRow>
+): AgentFleetRow | undefined {
+  return byVmid.get(vm.vmid)
+    ?? byIdentity.get(normalizedIdentity(vm.serial))
+    ?? byIdentity.get(normalizedIdentity(vm.hostname))
+    ?? byIdentity.get(normalizedIdentity(vm.name))
+    ?? byIdentity.get(normalizedIdentity(vm.ip_address));
+}
+
+function findDeviceForMachine(
+  values: readonly unknown[],
+  byIdentity: Map<string, AutopilotDeviceFleetRow>
+): AutopilotDeviceFleetRow | undefined {
+  for (const value of values) {
+    const key = normalizedIdentity(value);
+    if (!key) {
+      continue;
+    }
+    const found = byIdentity.get(key);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function uniqueLabels(labels: readonly string[]): readonly string[] {
+  return Array.from(new Set(labels));
+}
+
+function machineMethod(vm: VmFleetRow | undefined, agent: AgentFleetRow | undefined): string {
+  if (vm && agent) {
+    return "agent + monitor";
+  }
+  if (agent) {
+    return "agent";
+  }
+  return "monitor";
+}
+
+function machineLabels(
+  vm: VmFleetRow | undefined,
+  agent: AgentFleetRow | undefined,
+  device: AutopilotDeviceFleetRow | undefined
+): readonly string[] {
+  const labels = vm ? [...vmJoinLabels(vm)] : [...(agent ? agentLifecycleLabels(agent) : [])];
+  if (device?.enrollment_state && !labels.includes("Intune") && device.enrollment_state.toLowerCase() === "enrolled") {
+    labels.push("Intune");
+  }
+  if (device && !labels.includes("Autopilot ID")) {
+    labels.push("Autopilot ID");
+  }
+  if (device?.has_local_hash && !labels.includes("hash")) {
+    labels.push("hash");
+  }
+  return uniqueLabels(labels);
+}
+
+export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMachineRow[] {
+  const agentsByVmid = new Map<number, AgentFleetRow>();
+  const agentsByIdentity = new Map<string, AgentFleetRow>();
+  const devicesByIdentity = new Map<string, AutopilotDeviceFleetRow>();
+  const usedAgents = new Set<string>();
+
+  for (const agent of fleet.agents) {
+    addAgentIndexes(agent, agentsByVmid, agentsByIdentity);
+  }
+  for (const device of fleet.autopilot_devices) {
+    addDeviceIndexes(device, devicesByIdentity);
+  }
+
+  const rows: FleetMachineRow[] = fleet.vms.map((vm) => {
+    const agent = findAgentForVm(vm, agentsByVmid, agentsByIdentity);
+    if (agent) {
+      usedAgents.add(agent.agent_id);
+    }
+    const device = findDeviceForMachine(
+      [vm.serial, vm.hostname, vm.name, agent?.serial_number, agent?.computer_name],
+      devicesByIdentity
+    );
+    return {
+      id: `vm-${String(vm.vmid)}`,
+      name: vmDisplayName(vm),
+      vmid: vm.vmid,
+      vm,
+      ...(agent ? { agent, agentId: agent.agent_id } : {}),
+      ...(device ? { autopilotDevice: device } : {}),
+      status: vm.status,
+      serial: vm.serial ?? agent?.serial_number,
+      ipAddress: vm.ip_address ?? agent?.primary_ipv4,
+      os: vm.os_caption ?? vm.os_build ?? agent?.os_name ?? agent?.os_build,
+      qga: vm.qga ?? agent?.qga_state,
+      phase: agent?.current_phase ?? (vm.sequence_name || undefined),
+      heartbeat: agent?.last_heartbeat_at ?? agent?.last_seen_at ?? vm.monitor_checked_at ?? vm.monitor_probed_at,
+      version: agent?.agent_version,
+      method: machineMethod(vm, agent),
+      mdmEnrollment: device?.enrollment_state ?? (vm.in_intune ? "Intune" : "-"),
+      lifecycleLabels: machineLabels(vm, agent, device),
+      stale: agent ? agentIsStale(agent) : false
+    };
+  });
+
+  for (const agent of fleet.agents) {
+    if (usedAgents.has(agent.agent_id)) {
+      continue;
+    }
+    const device = findDeviceForMachine([agent.serial_number, agent.computer_name], devicesByIdentity);
+    rows.push({
+      id: `agent-${agent.agent_id}`,
+      name: agent.computer_name || agent.serial_number || agent.agent_id,
+      agent,
+      ...(device ? { autopilotDevice: device } : {}),
+      agentId: agent.agent_id,
+      status: undefined,
+      serial: agent.serial_number,
+      ipAddress: agent.primary_ipv4,
+      os: agent.os_name ?? agent.os_build,
+      qga: agent.qga_state,
+      phase: agent.current_phase,
+      heartbeat: agent.last_heartbeat_at ?? agent.last_seen_at,
+      version: agent.agent_version,
+      method: "agent",
+      mdmEnrollment: device?.enrollment_state ?? "-",
+      lifecycleLabels: machineLabels(undefined, agent, device),
+      stale: agentIsStale(agent)
+    });
+  }
+
+  return rows.toSorted((left, right) => {
+    if (left.vmid !== undefined && right.vmid !== undefined) {
+      return left.vmid - right.vmid;
+    }
+    if (left.vmid !== undefined) {
+      return -1;
+    }
+    if (right.vmid !== undefined) {
+      return 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
 export function vmMatchesFilter(vm: VmFleetRow, filter: string): boolean {
   const query = filter.trim().toLowerCase();
   if (!query) {
@@ -339,6 +538,27 @@ export function vmMatchesFilter(vm: VmFleetRow, filter: string): boolean {
     vm.ip_address,
     vm.sequence_name,
     ...vmJoinLabels(vm)
+  ].some((value) => fallbackText(value).toLowerCase().includes(query));
+}
+
+export function machineMatchesFilter(row: FleetMachineRow, filter: string): boolean {
+  const query = filter.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+  return [
+    row.name,
+    row.vmid === undefined ? "" : String(row.vmid),
+    row.agentId,
+    row.status,
+    row.serial,
+    row.ipAddress,
+    row.os,
+    row.qga,
+    row.phase,
+    row.method,
+    row.mdmEnrollment,
+    ...row.lifecycleLabels
   ].some((value) => fallbackText(value).toLowerCase().includes(query));
 }
 

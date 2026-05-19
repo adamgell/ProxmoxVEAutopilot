@@ -347,9 +347,15 @@ describe("App", () => {
     });
     expect(screen.getByText("agent-wrkgrp-525570b6")).toBeInTheDocument();
     expect(screen.getAllByText("WRKGRP-525570B6").length).toBeGreaterThan(0);
+    expect(screen.getByRole("table", { name: "Fleet machines" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Join / MDM" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "AutopilotAgent" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Screenshot VM 108" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete VM 108" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Console VM 108" })).toBeInTheDocument();
+    expect(screen.getByText("cloudosd")).toBeInTheDocument();
+    expect(screen.getByText(/method agent \+ monitor/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Console VM 108" })).not.toBeInTheDocument();
   });
 
