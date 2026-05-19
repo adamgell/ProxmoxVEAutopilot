@@ -14,13 +14,14 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react-shell")
     assert not auth.is_exempt_path("/react/dashboard")
     assert not auth.is_exempt_path("/react/jobs")
+    assert not auth.is_exempt_path("/react/monitoring")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/app")
     assert not auth.is_exempt_path("/app/jobs")
     assert not auth.is_exempt_path("/openapi.json")
 
 
-@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs"])
+@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring"])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     response = web_client.get(path)
 
@@ -77,6 +78,18 @@ def test_live_jobs_payload_contract(web_client):
     assert set(payload["running"]) >= {"running", "running_count", "queued_count"}
     assert "jobs" in payload["recent"]
     assert "jobs" in payload["table"]
+
+
+def test_observe_monitoring_api_response_shapes(web_client):
+    runtime = web_client.get("/api/monitoring/runtime-services")
+    assert runtime.status_code == 200
+    runtime_body = runtime.json()
+    assert set(runtime_body) >= {"available", "error", "containers"}
+    assert isinstance(runtime_body["containers"], list)
+
+    deployments = web_client.get("/api/monitoring/deployments/summary")
+    assert deployments.status_code == 200
+    assert set(deployments.json()) >= {"total", "running", "succeeded", "failed"}
 
 
 def test_openapi_export_script_uses_local_app_import(tmp_path):

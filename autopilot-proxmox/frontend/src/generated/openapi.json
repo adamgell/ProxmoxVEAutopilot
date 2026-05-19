@@ -1016,6 +1016,85 @@
         "title": "ContentVersionCreateBody",
         "type": "object"
       },
+      "DeploymentSummaryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "active": {
+            "default": 0,
+            "title": "Active",
+            "type": "integer"
+          },
+          "completed": {
+            "default": 0,
+            "title": "Completed",
+            "type": "integer"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "median_completion_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Completion Seconds"
+          },
+          "p95_completion_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Completion Seconds"
+          },
+          "recent_failure_rate": {
+            "default": 0,
+            "title": "Recent Failure Rate",
+            "type": "number"
+          },
+          "regressed": {
+            "default": 0,
+            "title": "Regressed",
+            "type": "integer"
+          },
+          "running": {
+            "default": 0,
+            "title": "Running",
+            "type": "integer"
+          },
+          "slow": {
+            "default": 0,
+            "title": "Slow",
+            "type": "integer"
+          },
+          "stuck": {
+            "default": 0,
+            "title": "Stuck",
+            "type": "integer"
+          },
+          "succeeded": {
+            "default": 0,
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "DeploymentSummaryResponse",
+        "type": "object"
+      },
       "FleetSummaryResponse": {
         "additionalProperties": true,
         "properties": {
@@ -1843,6 +1922,86 @@
           }
         },
         "title": "RunningJobsResponse",
+        "type": "object"
+      },
+      "RuntimeContainerResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "finished_at": {
+            "default": "",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "health": {
+            "default": "",
+            "title": "Health",
+            "type": "string"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "image": {
+            "default": "",
+            "title": "Image",
+            "type": "string"
+          },
+          "log_url": {
+            "default": "",
+            "title": "Log Url",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "restart_count": {
+            "default": 0,
+            "title": "Restart Count",
+            "type": "integer"
+          },
+          "service": {
+            "default": "",
+            "title": "Service",
+            "type": "string"
+          },
+          "started_at": {
+            "default": "",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "default": "",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "RuntimeContainerResponse",
+        "type": "object"
+      },
+      "RuntimeServicesResponse": {
+        "properties": {
+          "available": {
+            "default": true,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "containers": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeContainerResponse"
+            },
+            "title": "Containers",
+            "type": "array"
+          },
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "title": "RuntimeServicesResponse",
         "type": "object"
       },
       "SequenceCompileBody": {
@@ -7859,7 +8018,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -7908,7 +8069,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeServicesResponse"
+                }
               }
             },
             "description": "Successful Response"

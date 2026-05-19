@@ -699,6 +699,61 @@ export type ContentVersionCreateBody = {
 };
 
 /**
+ * DeploymentSummaryResponse
+ */
+export type DeploymentSummaryResponse = {
+    /**
+     * Active
+     */
+    active?: number;
+    /**
+     * Completed
+     */
+    completed?: number;
+    /**
+     * Failed
+     */
+    failed?: number;
+    /**
+     * Median Completion Seconds
+     */
+    median_completion_seconds?: number | null;
+    /**
+     * P95 Completion Seconds
+     */
+    p95_completion_seconds?: number | null;
+    /**
+     * Recent Failure Rate
+     */
+    recent_failure_rate?: number;
+    /**
+     * Regressed
+     */
+    regressed?: number;
+    /**
+     * Running
+     */
+    running?: number;
+    /**
+     * Slow
+     */
+    slow?: number;
+    /**
+     * Stuck
+     */
+    stuck?: number;
+    /**
+     * Succeeded
+     */
+    succeeded?: number;
+    /**
+     * Total
+     */
+    total?: number;
+    [key: string]: unknown;
+};
+
+/**
  * FleetSummaryResponse
  */
 export type FleetSummaryResponse = {
@@ -1162,6 +1217,71 @@ export type RunningJobsResponse = {
      * Running Count
      */
     running_count?: number;
+};
+
+/**
+ * RuntimeContainerResponse
+ */
+export type RuntimeContainerResponse = {
+    /**
+     * Finished At
+     */
+    finished_at?: string;
+    /**
+     * Health
+     */
+    health?: string;
+    /**
+     * Id
+     */
+    id?: string;
+    /**
+     * Image
+     */
+    image?: string;
+    /**
+     * Log Url
+     */
+    log_url?: string;
+    /**
+     * Name
+     */
+    name?: string;
+    /**
+     * Restart Count
+     */
+    restart_count?: number;
+    /**
+     * Service
+     */
+    service?: string;
+    /**
+     * Started At
+     */
+    started_at?: string;
+    /**
+     * Status
+     */
+    status?: string;
+    [key: string]: unknown;
+};
+
+/**
+ * RuntimeServicesResponse
+ */
+export type RuntimeServicesResponse = {
+    /**
+     * Available
+     */
+    available?: boolean;
+    /**
+     * Containers
+     */
+    containers?: Array<RuntimeContainerResponse>;
+    /**
+     * Error
+     */
+    error?: string;
 };
 
 /**
@@ -5040,8 +5160,10 @@ export type ApiMonitoringDeploymentsSummaryApiMonitoringDeploymentsSummaryGetRes
     /**
      * Successful Response
      */
-    200: unknown;
+    200: DeploymentSummaryResponse;
 };
+
+export type ApiMonitoringDeploymentsSummaryApiMonitoringDeploymentsSummaryGetResponse = ApiMonitoringDeploymentsSummaryApiMonitoringDeploymentsSummaryGetResponses[keyof ApiMonitoringDeploymentsSummaryApiMonitoringDeploymentsSummaryGetResponses];
 
 export type ApiMonitoringKeytabHealthApiMonitoringKeytabHealthGetData = {
     body?: never;
@@ -5082,8 +5204,10 @@ export type ApiMonitoringRuntimeServicesApiMonitoringRuntimeServicesGetResponses
     /**
      * Successful Response
      */
-    200: unknown;
+    200: RuntimeServicesResponse;
 };
+
+export type ApiMonitoringRuntimeServicesApiMonitoringRuntimeServicesGetResponse = ApiMonitoringRuntimeServicesApiMonitoringRuntimeServicesGetResponses[keyof ApiMonitoringRuntimeServicesApiMonitoringRuntimeServicesGetResponses];
 
 export type ApiMonitoringSearchOusListApiMonitoringSearchOusGetData = {
     body?: never;

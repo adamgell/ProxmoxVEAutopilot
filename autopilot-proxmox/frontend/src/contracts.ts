@@ -6,7 +6,24 @@ export interface AppBootstrap {
 export interface MigratedRoute {
   readonly path: string;
   readonly label: string;
+  readonly group: OperatorGroupLabel;
   readonly phase: "foundation" | "read-only" | "operational";
+}
+
+export type OperatorGroupLabel = "Observe" | "Deploy" | "Build" | "Fleet" | "Settings";
+
+export interface OperatorRoute {
+  readonly path: string;
+  readonly label: string;
+  readonly group: OperatorGroupLabel;
+  readonly phase: MigratedRoute["phase"] | "legacy";
+  readonly active: boolean;
+  readonly legacy?: boolean;
+}
+
+export interface OperatorNavGroup {
+  readonly label: OperatorGroupLabel;
+  readonly items: readonly OperatorRoute[];
 }
 
 export interface LiveSocketMessage {
@@ -107,4 +124,52 @@ export interface JobsLivePayload {
   readonly recent?: RecentJobsResponse;
   readonly table?: JobsTableResponse;
   readonly generated_at?: string;
+}
+
+export interface RuntimeContainer {
+  readonly id?: string;
+  readonly name: string;
+  readonly service: string;
+  readonly image?: string;
+  readonly status: string;
+  readonly health?: string;
+  readonly started_at?: string;
+  readonly finished_at?: string;
+  readonly restart_count?: number;
+  readonly log_url?: string;
+}
+
+export interface RuntimeServicesResponse {
+  readonly available: boolean;
+  readonly error: string;
+  readonly containers: readonly RuntimeContainer[];
+}
+
+export interface DeploymentSummary {
+  readonly total: number;
+  readonly active?: number;
+  readonly running?: number;
+  readonly completed?: number;
+  readonly succeeded?: number;
+  readonly failed: number;
+  readonly stuck?: number;
+  readonly regressed?: number;
+  readonly slow?: number;
+  readonly median_completion_seconds?: number | null;
+  readonly p95_completion_seconds?: number | null;
+  readonly recent_failure_rate?: number;
+}
+
+export interface KeytabHealth {
+  readonly status?: string;
+  readonly detail?: string;
+  readonly message?: string;
+  readonly checked_at?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface MonitoringOverview {
+  readonly runtime: RuntimeServicesResponse;
+  readonly deployments: DeploymentSummary;
+  readonly keytab: KeytabHealth;
 }

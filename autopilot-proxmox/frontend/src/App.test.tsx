@@ -49,6 +49,32 @@ const dashboardResponses: Record<string, unknown> = {
     autopilot_pct: 50,
     intune_pct: 25
   },
+  "/api/monitoring/runtime-services": {
+    available: true,
+    error: "",
+    containers: [
+      {
+        id: "abc123",
+        name: "autopilot",
+        service: "autopilot",
+        image: "proxmox-autopilot:latest",
+        status: "running",
+        health: "healthy",
+        restart_count: 0,
+        log_url: "/api/monitoring/service-logs?container=autopilot"
+      }
+    ]
+  },
+  "/api/monitoring/deployments/summary": {
+    total: 2,
+    running: 1,
+    succeeded: 1,
+    failed: 0
+  },
+  "/api/monitoring/keytab/health": {
+    status: "ok",
+    detail: "keytab valid"
+  },
   "/api/version": {
     sha_short: "abc1234",
     build_time: "2026-05-18T12:00:00Z"
@@ -94,9 +120,13 @@ describe("App", () => {
     renderRoute("/react-shell");
 
     expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
-    expect(screen.getByText("React shell foundation")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute("href", "/react/monitoring");
+    expect(screen.getByRole("link", { name: "OSDCloud Desktop" })).toHaveAttribute("href", "/cloudosd");
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^clone$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /winpe/i })).not.toBeInTheDocument();
   });
 
   test("renders the dashboard read-only slice from API data", async () => {
@@ -146,5 +176,20 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "job-running" })).toHaveAttribute("href", "/jobs/job-running");
     await waitFor(() => expect(screen.getByLabelText("Filter jobs")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
+  });
+
+  test("renders the monitoring read-only slice from API data", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/monitoring");
+
+    expect(await screen.findByRole("heading", { name: "Monitoring" })).toBeInTheDocument();
+    expect(await screen.findByText("autopilot")).toBeInTheDocument();
+    expect(screen.getByText("keytab valid")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Monitoring settings" })).toHaveAttribute(
+      "href",
+      "/monitoring/settings"
+    );
+    expect(screen.queryByRole("button", { name: /sweep/i })).not.toBeInTheDocument();
   });
 });

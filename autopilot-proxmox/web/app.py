@@ -4357,6 +4357,40 @@ class ServicesResponse(BaseModel):
     error: str = ""
 
 
+class RuntimeContainerResponse(ApiExtraModel):
+    id: str = ""
+    name: str = ""
+    service: str = ""
+    image: str = ""
+    status: str = ""
+    health: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    restart_count: int = 0
+    log_url: str = ""
+
+
+class RuntimeServicesResponse(BaseModel):
+    available: bool = True
+    error: str = ""
+    containers: list[RuntimeContainerResponse] = Field(default_factory=list)
+
+
+class DeploymentSummaryResponse(ApiExtraModel):
+    total: int = 0
+    active: int = 0
+    running: int = 0
+    completed: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    stuck: int = 0
+    regressed: int = 0
+    slow: int = 0
+    median_completion_seconds: int | None = None
+    p95_completion_seconds: int | None = None
+    recent_failure_rate: float = 0
+
+
 class FleetSummaryResponse(ApiExtraModel):
     total: int = 0
 
@@ -4475,6 +4509,11 @@ async def react_dashboard_shell(request: Request):
 
 @app.get("/react/jobs", response_class=HTMLResponse, include_in_schema=False)
 async def react_jobs_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/monitoring", response_class=HTMLResponse, include_in_schema=False)
+async def react_monitoring_shell(request: Request):
     return _render_react_shell(request)
 
 
@@ -9361,7 +9400,7 @@ def _redact_log_line(line: str) -> str:
     return _LOG_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[redacted]", line)
 
 
-@app.get("/api/monitoring/runtime-services")
+@app.get("/api/monitoring/runtime-services", response_model=RuntimeServicesResponse)
 async def api_monitoring_runtime_services():
     return _runtime_container_status()
 
@@ -13386,12 +13425,21 @@ def api_monitoring_keytab_health():
     return device_history_db.get_keytab_health() or {}
 
 
-@app.get("/api/monitoring/deployments/summary")
+def _deployment_summary_for_react(summary: dict) -> dict:
+    return {
+        **summary,
+        "running": int(summary.get("active") or 0),
+        "succeeded": int(summary.get("completed") or 0),
+    }
+
+
+@app.get("/api/monitoring/deployments/summary", response_model=DeploymentSummaryResponse)
 def api_monitoring_deployments_summary():
     from web import db_pg, deployment_health
 
     with db_pg.connection(_database_url()) as conn:
-        return deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+        summary = deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+    return _deployment_summary_for_react(summary)
 
 
 @app.get("/api/monitoring/deployments/runs")

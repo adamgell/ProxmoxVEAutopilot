@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { fetchJson } from "./apiClient";
@@ -6,14 +7,27 @@ import type {
   FleetSummary,
   JobTableRow,
   JobsLivePayload,
+  KeytabHealth,
+  MonitoringOverview,
   RecentJob,
   RecentJobsResponse,
   RunningJobsResponse,
-  ServiceHealth,
-  ServicesResponse
+  RuntimeServicesResponse,
+  ServicesResponse,
+  DeploymentSummary
 } from "./contracts";
 import { connectJobsLive } from "./liveSocket";
-import { migratedRoutes } from "./routes";
+import { migratedRoutes, operatorNavGroups, reactRouteForPath } from "./routes";
+import {
+  fallbackText,
+  formatPercent,
+  jobTarget,
+  monitoringStrip,
+  serviceName,
+  statusClass,
+  statusLabel,
+  summarizeJobs
+} from "./viewModels";
 
 interface AppProps {
   readonly bootstrap: AppBootstrap;
@@ -35,127 +49,148 @@ const emptyFleet: FleetSummary = {
   total: 0
 };
 
-function fallback(value: unknown): string {
-  if (value === null || value === undefined || value === "") {
-    return "-";
-  }
-  switch (typeof value) {
-    case "string":
-      return value;
-    case "number":
-    case "boolean":
-    case "bigint":
-      return value.toString();
-    default:
-      return "-";
-  }
+const emptyMonitoring: MonitoringOverview = {
+  runtime: { available: true, error: "", containers: [] },
+  deployments: { total: 0, active: 0, running: 0, completed: 0, succeeded: 0, failed: 0 },
+  keytab: {}
+};
+
+function currentPageLabel(path: string): string {
+  return reactRouteForPath(path)?.label ?? "Shell";
 }
 
-function percent(value: unknown): string {
-  return typeof value === "number" ? `${String(value)}%` : "-";
-}
+function OperatorShell({
+  bootstrap,
+  path,
+  socketState,
+  children
+}: {
+  readonly bootstrap: AppBootstrap;
+  readonly path: string;
+  readonly socketState?: string | undefined;
+  readonly children: ReactNode;
+}) {
+  const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
+  const pageLabel = currentPageLabel(path);
 
-function statusClass(status: string | null | undefined): string {
-  const normalized = (status || "unknown").toLowerCase();
-  if (["complete", "healthy", "ok", "ready"].includes(normalized)) {
-    return "status status--good";
-  }
-  if (["running", "pending", "queued"].includes(normalized)) {
-    return "status status--active";
-  }
-  if (["failed", "error", "stale", "orphaned"].includes(normalized)) {
-    return "status status--bad";
-  }
-  return "status";
-}
+  return (
+    <div className="workspace">
+      <aside className="workspace__rail">
+        <a className="workspace__brand" href="/react/dashboard" aria-label="Proxmox VE Autopilot dashboard">
+          <span>Autopilot</span>
+          <small>Operator</small>
+        </a>
+        <nav className="workspace__nav" aria-label="Operator workspace">
+          {operatorNavGroups.map((group) => (
+            <section key={group.label} aria-labelledby={`nav-${group.label.toLowerCase()}`}>
+              <h2 id={`nav-${group.label.toLowerCase()}`}>{group.label}</h2>
+              {group.items.map((item) => (
+                <a
+                  key={item.path}
+                  className={[
+                    item.path === path ? "is-current" : "",
+                    item.legacy ? "is-legacy" : ""
+                  ].filter(Boolean).join(" ")}
+                  href={item.path}
+                  aria-label={item.legacy ? `${item.label} legacy page` : item.label}
+                  aria-current={item.path === path ? "page" : undefined}
+                >
+                  <span>{item.label}</span>
+                  {item.legacy ? <small>Jinja</small> : null}
+                </a>
+              ))}
+            </section>
+          ))}
+        </nav>
+      </aside>
 
-function statusLabel(status: string | null | undefined, paused = false): string {
-  if (paused) {
-    return "paused";
-  }
-  return fallback(status).toLowerCase();
-}
-
-function serviceName(service: ServiceHealth): string {
-  return service.service || service.service_id || service.service_type || "service";
-}
-
-function jobTarget(job: JobTableRow): string {
-  const args = job.args ?? {};
-  const candidates = [
-    args.hostname_pattern,
-    args.vm_name,
-    args.template_name,
-    args.serial,
-    args.sequence_name
-  ];
-  const found = candidates.find((candidate) => typeof candidate === "string" && candidate.trim());
-  return typeof found === "string" ? found : "-";
+      <div className="workspace__main">
+        <header className="workspace__topbar">
+          <div>
+            <span className="workspace__kicker">React operator console</span>
+            <strong>{pageLabel}</strong>
+          </div>
+          <div className="workspace__status" aria-label="Runtime status">
+            {socketState ? <span className={`socket-state socket-state--${socketState}`}>Live {socketState}</span> : null}
+            <span>{buildLabel}</span>
+            {bootstrap.buildTime ? <time dateTime={bootstrap.buildTime}>{bootstrap.buildTime}</time> : null}
+          </div>
+        </header>
+        <main className="workspace__content">{children}</main>
+      </div>
+    </div>
+  );
 }
 
 function ShellIndex({ bootstrap }: AppProps) {
-  const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
-
   return (
-    <main className="shell">
-      <section className="shell__hero" aria-labelledby="shell-title">
+    <OperatorShell bootstrap={bootstrap} path="/react-shell">
+      <section className="page-head" aria-labelledby="shell-title">
         <div>
-          <p className="shell__eyebrow">React shell foundation</p>
+          <p>Observe</p>
           <h1 id="shell-title">Proxmox VE Autopilot</h1>
-          <p className="shell__copy">
-            The authenticated React runtime is mounted. Operational pages remain on the existing
-            Jinja console until each route passes parity checks.
-          </p>
         </div>
-        <div className="shell__status" aria-label="Build status">
-          <span>{buildLabel}</span>
-          {bootstrap.buildTime ? <time dateTime={bootstrap.buildTime}>{bootstrap.buildTime}</time> : null}
-        </div>
+        <a className="action-link" href="/">Jinja console</a>
       </section>
 
-      <section className="shell__panel" aria-labelledby="routes-title">
-        <h2 id="routes-title">Migrated routes</h2>
-        <ul>
-          {migratedRoutes.map((route) => (
-            <li key={route.path}>
-              <a href={route.path}>{route.label}</a>
-              <span>{route.phase}</span>
-            </li>
-          ))}
-        </ul>
+      <section className="metric-strip" aria-label="Migrated routes">
+        {migratedRoutes.map((route) => (
+          <a key={route.path} href={route.path} aria-label={`Open ${route.label}`}>
+            <span>{route.group}</span>
+            <strong>{route.label}</strong>
+          </a>
+        ))}
       </section>
-    </main>
+
+      <section className="section-grid">
+        {operatorNavGroups.map((group) => (
+          <Panel key={group.label} title={group.label}>
+            <div className="link-stack">
+              {group.items.map((item) => (
+                <a
+                  key={item.path}
+                  href={item.path}
+                  className={item.legacy ? "legacy-link" : undefined}
+                  aria-label={item.legacy ? item.label : `${item.label} route`}
+                >
+                  <span>{item.label}</span>
+                  {item.legacy ? <small>existing page</small> : <small>{item.phase}</small>}
+                </a>
+              ))}
+            </div>
+          </Panel>
+        ))}
+      </section>
+    </OperatorShell>
   );
 }
 
 interface PageFrameProps {
+  readonly bootstrap: AppBootstrap;
   readonly title: string;
-  readonly eyebrow: string;
-  readonly children: React.ReactNode;
+  readonly section: string;
+  readonly path: string;
+  readonly children: ReactNode;
   readonly socketState?: string;
+  readonly action?: ReactNode;
 }
 
-function PageFrame({ title, eyebrow, children, socketState }: PageFrameProps) {
+function PageFrame({ bootstrap, title, section, path, children, socketState, action }: PageFrameProps) {
   return (
-    <main className="console">
-      <nav className="console__nav" aria-label="React routes">
-        <a href="/react/dashboard">Dashboard</a>
-        <a href="/react/jobs">Jobs</a>
-        <a href="/">Jinja console</a>
-      </nav>
-      <header className="console__header">
+    <OperatorShell bootstrap={bootstrap} path={path} socketState={socketState}>
+      <header className="page-head">
         <div>
-          <p className="console__eyebrow">{eyebrow}</p>
+          <p>{section}</p>
           <h1>{title}</h1>
         </div>
-        {socketState ? <span className="socket-state">Live {socketState}</span> : null}
+        {action}
       </header>
       {children}
-    </main>
+    </OperatorShell>
   );
 }
 
-function DashboardPage() {
+function DashboardPage({ bootstrap }: AppProps) {
   const [services, setServices] = useState<ServicesResponse>(emptyServices);
   const [running, setRunning] = useState<RunningJobsResponse>(emptyRunning);
   const [recent, setRecent] = useState<readonly RecentJob[]>([]);
@@ -181,18 +216,7 @@ function DashboardPage() {
     }
   }, []);
 
-  useEffect(() => {
-    const initialTimer = window.setTimeout(() => {
-      void load();
-    }, 0);
-    const timer = window.setInterval(() => {
-      void load();
-    }, 15000);
-    return () => {
-      window.clearTimeout(initialTimer);
-      window.clearInterval(timer);
-    };
-  }, [load]);
+  usePolling(load);
 
   useEffect(() => {
     return connectJobsLive({
@@ -209,25 +233,24 @@ function DashboardPage() {
   }, []);
 
   return (
-    <PageFrame title="Dashboard" eyebrow="Read-only React slice" socketState={socketState}>
+    <PageFrame
+      bootstrap={bootstrap}
+      title="Dashboard"
+      section="Observe"
+      path="/react/dashboard"
+      socketState={socketState}
+      action={<a className="action-link" href="/monitoring">Legacy monitoring</a>}
+    >
       {error ? <p className="notice" role="status">{error}</p> : null}
 
       <section className="metric-strip" aria-label="Job status">
-        <div>
-          <span>Running</span>
-          <strong>{running.running_count}</strong>
-        </div>
-        <div>
-          <span>Queued</span>
-          <strong>{running.queued_count}</strong>
-        </div>
-        <div>
-          <span>Fleet</span>
-          <strong>{fleet.total}</strong>
-        </div>
+        <Metric label="Running" value={String(running.running_count)} tone={running.running_count > 0 ? "active" : "neutral"} />
+        <Metric label="Queued" value={String(running.queued_count)} tone={running.queued_count > 0 ? "active" : "neutral"} />
+        <Metric label="Fleet" value={String(fleet.total)} tone={fleet.total > 0 ? "good" : "neutral"} />
+        <Metric label="Readiness" value={formatPercent(fleet.ad_joined_pct)} tone="good" />
       </section>
 
-      <section className="dashboard-grid">
+      <section className="section-grid section-grid--wide">
         <Panel title="Service health">
           {services.services.length ? (
             <ul className="row-list">
@@ -235,12 +258,12 @@ function DashboardPage() {
                 <li key={`${service.service_type || "svc"}-${serviceName(service)}`}>
                   <span className={statusClass(service.status)}>{statusLabel(service.status)}</span>
                   <strong>{serviceName(service)}</strong>
-                  <span>{fallback(service.detail || service.message)}</span>
+                  <span>{fallbackText(service.detail || service.message)}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="empty">{services.available ? "No service heartbeat rows yet." : "Service health unavailable."}</p>
+            <p className="empty">{services.available ? "No service heartbeats." : "Service health unavailable."}</p>
           )}
         </Panel>
 
@@ -252,8 +275,8 @@ function DashboardPage() {
                   <span className={statusClass(job.paused ? "paused" : "running")}>
                     {statusLabel("running", job.paused)}
                   </span>
-                  <strong>{fallback(job.target)}</strong>
-                  <span>{fallback(job.playbook)}</span>
+                  <strong>{fallbackText(job.target)}</strong>
+                  <span>{fallbackText(job.playbook)}</span>
                 </li>
               ))}
             </ul>
@@ -264,26 +287,11 @@ function DashboardPage() {
 
         <Panel title="Fleet summary">
           <dl className="fleet-grid">
-            <div>
-              <dt>Total</dt>
-              <dd>{fleet.total}</dd>
-            </div>
-            <div>
-              <dt>AD joined</dt>
-              <dd>{percent(fleet.ad_joined_pct)}</dd>
-            </div>
-            <div>
-              <dt>Autopilot</dt>
-              <dd>{percent(fleet.autopilot_pct)}</dd>
-            </div>
-            <div>
-              <dt>Intune</dt>
-              <dd>{percent(fleet.intune_pct)}</dd>
-            </div>
-            <div>
-              <dt>MDE</dt>
-              <dd>{percent(fleet.mde_pct)}</dd>
-            </div>
+            <MetricTerm label="Total" value={String(fleet.total)} />
+            <MetricTerm label="AD joined" value={formatPercent(fleet.ad_joined_pct)} />
+            <MetricTerm label="Autopilot" value={formatPercent(fleet.autopilot_pct)} />
+            <MetricTerm label="Intune" value={formatPercent(fleet.intune_pct)} />
+            <MetricTerm label="MDE" value={formatPercent(fleet.mde_pct)} />
           </dl>
         </Panel>
 
@@ -316,7 +324,7 @@ function recentToTableRow(job: RecentJob): JobTableRow {
   };
 }
 
-function JobsPage() {
+function JobsPage({ bootstrap }: AppProps) {
   const [jobs, setJobs] = useState<readonly JobTableRow[]>([]);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
@@ -331,18 +339,7 @@ function JobsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    const initialTimer = window.setTimeout(() => {
-      void load();
-    }, 0);
-    const timer = window.setInterval(() => {
-      void load();
-    }, 15000);
-    return () => {
-      window.clearTimeout(initialTimer);
-      window.clearInterval(timer);
-    };
-  }, [load]);
+  usePolling(load);
 
   useEffect(() => {
     return connectJobsLive({
@@ -367,36 +364,16 @@ function JobsPage() {
     );
   }, [filter, jobs]);
 
-  const counts = useMemo(
-    () => ({
-      total: jobs.length,
-      running: jobs.filter((job) => job.status === "running").length,
-      queued: jobs.filter((job) => job.status === "pending").length,
-      failed: jobs.filter((job) => job.status === "failed").length
-    }),
-    [jobs]
-  );
+  const counts = useMemo(() => summarizeJobs(jobs), [jobs]);
 
   return (
-    <PageFrame title="Jobs" eyebrow="Read-only React slice" socketState={socketState}>
+    <PageFrame bootstrap={bootstrap} title="Jobs" section="Observe" path="/react/jobs" socketState={socketState}>
       {error ? <p className="notice" role="status">{error}</p> : null}
       <section className="metric-strip" aria-label="Jobs metrics">
-        <div>
-          <span>Total</span>
-          <strong>{counts.total}</strong>
-        </div>
-        <div>
-          <span>Running</span>
-          <strong>{counts.running}</strong>
-        </div>
-        <div>
-          <span>Queued</span>
-          <strong>{counts.queued}</strong>
-        </div>
-        <div>
-          <span>Failed</span>
-          <strong>{counts.failed}</strong>
-        </div>
+        <Metric label="Total" value={String(counts.total)} />
+        <Metric label="Running" value={String(counts.running)} tone={counts.running > 0 ? "active" : "neutral"} />
+        <Metric label="Queued" value={String(counts.queued)} tone={counts.queued > 0 ? "active" : "neutral"} />
+        <Metric label="Failed" value={String(counts.failed)} tone={counts.failed > 0 ? "bad" : "good"} />
       </section>
       <label className="filter">
         <span>Filter jobs</span>
@@ -416,9 +393,127 @@ function JobsPage() {
   );
 }
 
+function MonitoringPage({ bootstrap }: AppProps) {
+  const [overview, setOverview] = useState<MonitoringOverview>(emptyMonitoring);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const [runtime, deployments, keytab] = await Promise.all([
+        fetchJson<RuntimeServicesResponse>("/api/monitoring/runtime-services"),
+        fetchJson<DeploymentSummary>("/api/monitoring/deployments/summary"),
+        fetchJson<KeytabHealth>("/api/monitoring/keytab/health")
+      ]);
+      setOverview({ runtime, deployments, keytab });
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load monitoring");
+    }
+  }, []);
+
+  usePolling(load);
+
+  return (
+    <PageFrame
+      bootstrap={bootstrap}
+      title="Monitoring"
+      section="Observe"
+      path="/react/monitoring"
+      action={<a className="action-link" href="/monitoring/settings">Monitoring settings</a>}
+    >
+      {error ? <p className="notice" role="status">{error}</p> : null}
+      <section className="metric-strip" aria-label="Monitoring metrics">
+        {monitoringStrip(overview).map((item) => (
+          <Metric key={item.label} label={item.label} value={item.value} tone={item.tone} />
+        ))}
+      </section>
+
+      <section className="section-grid section-grid--wide">
+        <Panel title="Runtime services">
+          {overview.runtime.containers.length ? (
+            <ul className="row-list">
+              {overview.runtime.containers.map((container) => (
+                <li key={container.name}>
+                  <span className={statusClass(container.health || container.status)}>
+                    {statusLabel(container.health || container.status)}
+                  </span>
+                  <strong>{container.service || container.name}</strong>
+                  <span>{fallbackText(container.image)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="empty">{overview.runtime.available ? "No runtime services." : overview.runtime.error}</p>
+          )}
+        </Panel>
+
+        <Panel title="Deployment speed">
+          <dl className="fleet-grid fleet-grid--four">
+            <MetricTerm label="Total" value={String(overview.deployments.total)} />
+            <MetricTerm label="Active" value={String(overview.deployments.running ?? overview.deployments.active ?? 0)} />
+            <MetricTerm label="Complete" value={String(overview.deployments.succeeded ?? overview.deployments.completed ?? 0)} />
+            <MetricTerm label="Failed" value={String(overview.deployments.failed)} />
+          </dl>
+        </Panel>
+
+        <Panel title="Keytab">
+          <ul className="row-list">
+            <li>
+              <span className={statusClass(overview.keytab.status)}>{statusLabel(overview.keytab.status)}</span>
+              <strong>{fallbackText(overview.keytab.status)}</strong>
+              <span>{fallbackText(overview.keytab.detail || overview.keytab.message)}</span>
+            </li>
+          </ul>
+        </Panel>
+      </section>
+    </PageFrame>
+  );
+}
+
+function usePolling(load: () => Promise<void>) {
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    const timer = window.setInterval(() => {
+      void load();
+    }, 15000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [load]);
+}
+
+function Metric({
+  label,
+  value,
+  tone = "neutral"
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly tone?: string | undefined;
+}) {
+  return (
+    <div className={`metric metric--${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function MetricTerm({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
 interface PanelProps {
   readonly title: string;
-  readonly children: React.ReactNode;
+  readonly children: ReactNode;
 }
 
 function Panel({ title, children }: PanelProps) {
@@ -462,9 +557,9 @@ function JobsTable({ jobs, compact = false }: JobsTableProps) {
                   {statusLabel(job.status, job.paused)}
                 </span>
               </td>
-              <td>{fallback(job.playbook)}</td>
-              <td>{job.args?.target ? fallback(job.args.target) : jobTarget(job)}</td>
-              <td>{fallback(job.duration)}</td>
+              <td>{fallbackText(job.playbook)}</td>
+              <td>{job.args?.target ? fallbackText(job.args.target) : jobTarget(job)}</td>
+              <td>{fallbackText(job.duration)}</td>
             </tr>
           ))}
         </tbody>
@@ -476,10 +571,13 @@ function JobsTable({ jobs, compact = false }: JobsTableProps) {
 export function App({ bootstrap }: AppProps) {
   const path = window.location.pathname;
   if (path === "/react/dashboard") {
-    return <DashboardPage />;
+    return <DashboardPage bootstrap={bootstrap} />;
   }
   if (path === "/react/jobs") {
-    return <JobsPage />;
+    return <JobsPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/monitoring") {
+    return <MonitoringPage bootstrap={bootstrap} />;
   }
   return <ShellIndex bootstrap={bootstrap} />;
 }
