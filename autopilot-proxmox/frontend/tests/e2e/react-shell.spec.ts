@@ -374,7 +374,11 @@ for (const viewport of [
     await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();
     await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Console VM 108" })).toHaveAttribute("href", "/api/vms/108/console");
+    await expect(page.getByRole("button", { name: "Console VM 108" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Console VM 108" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Console VM 108" }).click();
+    await expect(page.getByRole("region", { name: "VM action workspace" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open legacy console" })).toHaveAttribute("href", "/vms/108/console");
 
     const metrics = await page.locator(".metric-strip--fleet").boundingBox();
     const filter = await page.locator(".filter").boundingBox();

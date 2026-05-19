@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
+import { VmActionWorkspace, type ScreenshotWorkspaceState, type VmActionMode, type VmActionSelection } from "../components/VmActionWorkspace";
 import type {
   AgentFleetRow,
   AppBootstrap,
@@ -61,6 +62,29 @@ function ActionButton({
   );
 }
 
+function screenshotMatches(current: ScreenshotWorkspaceState, message: LiveSocketMessage): boolean {
+  if (current.status === "idle") {
+    return false;
+  }
+  if (current.correlationId && message.correlation_id) {
+    return current.correlationId === message.correlation_id;
+  }
+  return typeof message.vmid === "number" && current.vmid === message.vmid;
+}
+
+function screenshotErrorMatches(current: ScreenshotWorkspaceState, message: LiveSocketMessage): boolean {
+  if (current.status === "idle") {
+    return false;
+  }
+  if (message.error && message.error !== "screenshot_failed") {
+    return false;
+  }
+  if (current.correlationId && message.correlation_id) {
+    return current.correlationId === message.correlation_id;
+  }
+  return typeof message.vmid !== "number" || current.vmid === message.vmid;
+}
+
 function Chips({ labels }: { readonly labels: readonly string[] }) {
   if (!labels.length) {
     return <span className="muted">-</span>;
@@ -84,7 +108,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [actionStatus, setActionStatus] = useState("");
   const [socketState, setSocketState] = useState("closed");
   const [sendLive, setSendLive] = useState<SendLiveMessage | null>(null);
-  const [screenshot, setScreenshot] = useState<{ readonly vmid: number; readonly imageUrl: string } | null>(null);
+  const [activeAction, setActiveAction] = useState<VmActionSelection | null>(null);
+  const [screenshot, setScreenshot] = useState<ScreenshotWorkspaceState>({ status: "idle" });
 
   const load = useCallback(async () => {
     try {
@@ -121,11 +146,39 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       },
       onEvent: (message: LiveSocketMessage) => {
         if (message.type === "screenshot.result" && message.image_url && typeof message.vmid === "number") {
-          setScreenshot({ vmid: message.vmid, imageUrl: message.image_url });
-          setActionStatus(`Screenshot captured for VM ${String(message.vmid)}`);
+          const imageUrl = message.image_url;
+          const resultVmid = message.vmid;
+          const correlationId = message.correlation_id;
+          setScreenshot((current) => {
+            if (!screenshotMatches(current, message)) {
+              return current;
+            }
+            return {
+              status: "ready",
+              vmid: resultVmid,
+              imageUrl,
+              message: `Screenshot captured for VM ${String(resultVmid)}`,
+              ...(correlationId ? { correlationId } : {})
+            };
+          });
+          setActionStatus(`Screenshot captured for VM ${String(resultVmid)}`);
           return;
         }
         if (message.type === "error") {
+          setScreenshot((current) => {
+            if (!screenshotErrorMatches(current, message)) {
+              return current;
+            }
+            const currentVmid = current.status === "idle" ? undefined : current.vmid;
+            const vmid = typeof message.vmid === "number" ? message.vmid : currentVmid;
+            return {
+              status: "failed",
+              message: message.detail || message.error || "Live action failed",
+              ...(typeof vmid === "number" ? { vmid } : {}),
+              ...(message.correlation_id ? { correlationId: message.correlation_id } : {}),
+              ...((current.status === "ready" || current.status === "failed") && current.imageUrl ? { imageUrl: current.imageUrl } : {})
+            };
+          });
           setActionStatus(message.detail || message.error || "Live action failed");
         }
         if (message.event === "sweep_started") {
@@ -139,7 +192,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           setActionStatus(`QGA ${fallbackText((message.result as { qga?: string } | undefined)?.qga)}`);
         }
       },
-      onSendReady: setSendLive,
+      onSendReady: (send) => {
+        setSendLive(() => send);
+      },
       onState: (state) => {
         setSocketState(state);
         if (state === "closed") {
@@ -208,8 +263,34 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     void runAction(`Check enrollment VM ${String(vm.vmid)}`, () => postJson(`/api/ubuntu/check-enrollment/${String(vm.vmid)}`));
   }, [runAction]);
 
+  const selectConsole = useCallback((vm: VmFleetRow) => {
+    setActiveAction({ mode: "console", vm });
+    setActionStatus(`Console selected for VM ${String(vm.vmid)}`);
+  }, []);
+
+  const selectActionMode = useCallback((mode: VmActionMode) => {
+    setActiveAction((current) => current ? { ...current, mode } : current);
+  }, []);
+
   const screenshotVm = useCallback((vm: VmFleetRow) => {
-    const sent = sendLive?.({ type: "screenshot.request", correlation_id: `vm-${String(vm.vmid)}-${String(Date.now())}`, vmid: vm.vmid, format: "png" });
+    const correlationId = `vm-${String(vm.vmid)}-${String(Date.now())}`;
+    setActiveAction({ mode: "screenshot", vm });
+    const sent = sendLive?.({ type: "screenshot.request", correlation_id: correlationId, vmid: vm.vmid, format: "png" });
+    if (sent) {
+      setScreenshot({
+        status: "requesting",
+        vmid: vm.vmid,
+        correlationId,
+        message: `Screenshot requested for VM ${String(vm.vmid)}`
+      });
+    } else {
+      setScreenshot({
+        status: "failed",
+        vmid: vm.vmid,
+        correlationId,
+        message: "Live WebSocket is not connected"
+      });
+    }
     setActionStatus(sent ? `Screenshot requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected");
   }, [sendLive]);
 
@@ -322,26 +403,27 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             onSendKey={sendKey}
             onCapture={captureHash}
             onCheckEnrollment={checkEnrollment}
+            onConsole={selectConsole}
             onScreenshot={screenshotVm}
             onQgaProbe={qgaProbe}
           />
           <AgentLane agents={fleet.agents} onCreate={createAgent} onUpdate={updateAgent} onApprove={approveAgent} onDelete={deleteAgent} />
         </div>
-        <IntuneLane devices={fleet.autopilot_devices} onDelete={deleteAutopilotDevice} onSync={() => { void runAction("Sync Autopilot", () => postJson("/api/autopilot/sync")); }} />
-      </section>
-
-      {screenshot ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`VM ${String(screenshot.vmid)} screenshot`}>
-          <div className="screenshot-modal">
-            <div>
-              <strong>VM {screenshot.vmid} screenshot</strong>
-              <button type="button" onClick={() => { setScreenshot(null); }}>Close</button>
-            </div>
-            <img src={screenshot.imageUrl} alt={`VM ${String(screenshot.vmid)} screenshot`} />
-            <a className="action-link" href={screenshot.imageUrl} download={`vm-${String(screenshot.vmid)}-screenshot.png`}>Download</a>
-          </div>
+        <div className="fleet-side-stack">
+          <VmActionWorkspace
+            selection={activeAction}
+            screenshot={screenshot}
+            socketState={socketState}
+            onModeChange={selectActionMode}
+            onRequestScreenshot={screenshotVm}
+            onClose={() => {
+              setActiveAction(null);
+              setScreenshot({ status: "idle" });
+            }}
+          />
+          <IntuneLane devices={fleet.autopilot_devices} onDelete={deleteAutopilotDevice} onSync={() => { void runAction("Sync Autopilot", () => postJson("/api/autopilot/sync")); }} />
         </div>
-      ) : null}
+      </section>
     </PageFrame>
   );
 }
@@ -354,6 +436,7 @@ function VmLane({
   onSendKey,
   onCapture,
   onCheckEnrollment,
+  onConsole,
   onScreenshot,
   onQgaProbe
 }: {
@@ -364,6 +447,7 @@ function VmLane({
   readonly onSendKey: (vm: VmFleetRow, key: "ctrl-alt-delete" | "ret") => void;
   readonly onCapture: (vm: VmFleetRow) => void;
   readonly onCheckEnrollment: (vm: VmFleetRow) => void;
+  readonly onConsole: (vm: VmFleetRow) => void;
   readonly onScreenshot: (vm: VmFleetRow) => void;
   readonly onQgaProbe: (vm: VmFleetRow) => void;
 }) {
@@ -395,7 +479,7 @@ function VmLane({
                   <ActionButton label="Reset" onClick={() => { onPower(vm, "reset"); }} />
                   <ActionButton label="Hash" onClick={() => { onCapture(vm); }} />
                   <ActionButton label="Rename" onClick={() => { onRename(vm); }} />
-                  <a className="fleet-action" href={`/api/vms/${String(vm.vmid)}/console`} target="_blank" rel="noreferrer" aria-label={`Console VM ${String(vm.vmid)}`}>Console</a>
+                  <ActionButton label={`Console VM ${String(vm.vmid)}`} onClick={() => { onConsole(vm); }} />
                   <ActionButton label="Type" onClick={() => { onTypeText(vm); }} />
                   <ActionButton label="CAD" onClick={() => { onSendKey(vm, "ctrl-alt-delete"); }} />
                   <ActionButton label="Enter" onClick={() => { onSendKey(vm, "ret"); }} />

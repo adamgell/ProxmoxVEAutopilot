@@ -349,7 +349,26 @@ describe("App", () => {
     expect(screen.getAllByText("WRKGRP-525570B6").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Screenshot VM 108" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete VM 108" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Console VM 108" })).toHaveAttribute("href", "/api/vms/108/console");
+    expect(screen.getByRole("button", { name: "Console VM 108" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Console VM 108" })).not.toBeInTheDocument();
+  });
+
+  test("opens VM console and screenshot actions inside the Fleet workspace", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/vms");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Console VM 108" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Console VM 108" }));
+    expect(screen.getByRole("region", { name: "VM action workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "VM 108 action" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open legacy console" })).toHaveAttribute("href", "/vms/108/console");
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshot VM 108" }));
+    expect(screen.getByRole("heading", { name: "Screenshot" })).toBeInTheDocument();
+    expect(screen.getAllByText("Live WebSocket is not connected").length).toBeGreaterThan(0);
   });
 
   test("renders the dashboard read-only slice from API data", async () => {
