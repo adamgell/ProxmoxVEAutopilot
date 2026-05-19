@@ -39,3 +39,13 @@ export async function fetchJson<T>(path: string, init: RequestInit = {}): Promis
 
   return (await response.json()) as T;
 }
+
+export async function postJson<T>(path: string, body: Readonly<Record<string, unknown>> = {}): Promise<T> {
+  return fetchJson<T>(path, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}

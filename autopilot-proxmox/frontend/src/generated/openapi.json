@@ -1,6 +1,123 @@
 {
   "components": {
     "schemas": {
+      "AgentFleetRowResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "agent_id": {
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_version": {
+            "default": "",
+            "title": "Agent Version",
+            "type": "string"
+          },
+          "approval_id": {
+            "default": "",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "approval_status": {
+            "default": "",
+            "title": "Approval Status",
+            "type": "string"
+          },
+          "computer_name": {
+            "default": "",
+            "title": "Computer Name",
+            "type": "string"
+          },
+          "current_phase": {
+            "default": "",
+            "title": "Current Phase",
+            "type": "string"
+          },
+          "current_run_id": {
+            "default": "",
+            "title": "Current Run Id",
+            "type": "string"
+          },
+          "domain_joined": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Joined"
+          },
+          "entra_joined": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entra Joined"
+          },
+          "hash_capture_supported": {
+            "default": false,
+            "title": "Hash Capture Supported",
+            "type": "boolean"
+          },
+          "last_heartbeat_at": {
+            "default": "",
+            "title": "Last Heartbeat At",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "default": "",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "os_build": {
+            "default": "",
+            "title": "Os Build",
+            "type": "string"
+          },
+          "os_name": {
+            "default": "",
+            "title": "Os Name",
+            "type": "string"
+          },
+          "primary_ipv4": {
+            "default": "",
+            "title": "Primary Ipv4",
+            "type": "string"
+          },
+          "qga_state": {
+            "default": "",
+            "title": "Qga State",
+            "type": "string"
+          },
+          "serial_number": {
+            "default": "",
+            "title": "Serial Number",
+            "type": "string"
+          },
+          "vmid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vmid"
+          }
+        },
+        "required": [
+          "agent_id"
+        ],
+        "title": "AgentFleetRowResponse",
+        "type": "object"
+      },
       "AgentNextBody": {
         "properties": {
           "agent_id": {
@@ -116,6 +233,68 @@
         "title": "ArtifactPublishBody",
         "type": "object"
       },
+      "AutopilotDeviceFleetRowResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "display_name": {
+            "default": "",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "enrollment_state": {
+            "default": "",
+            "title": "Enrollment State",
+            "type": "string"
+          },
+          "group_tag": {
+            "default": "",
+            "title": "Group Tag",
+            "type": "string"
+          },
+          "has_local_hash": {
+            "default": false,
+            "title": "Has Local Hash",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_contact": {
+            "default": "",
+            "title": "Last Contact",
+            "type": "string"
+          },
+          "manufacturer": {
+            "default": "",
+            "title": "Manufacturer",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "profile_ok": {
+            "default": false,
+            "title": "Profile Ok",
+            "type": "boolean"
+          },
+          "profile_status": {
+            "default": "",
+            "title": "Profile Status",
+            "type": "string"
+          },
+          "serial": {
+            "default": "",
+            "title": "Serial",
+            "type": "string"
+          }
+        },
+        "title": "AutopilotDeviceFleetRowResponse",
+        "type": "object"
+      },
       "Body_cloud_delete_api_cloud_delete_post": {
         "properties": {
           "pve_serials": {
@@ -138,57 +317,6 @@
         "title": "Body_cloud_delete_api_cloud_delete_post",
         "type": "object"
       },
-      "Body_create_agent_record_api_agents_post": {
-        "properties": {
-          "agent_id": {
-            "title": "Agent Id",
-            "type": "string"
-          },
-          "agent_version": {
-            "default": "",
-            "title": "Agent Version",
-            "type": "string"
-          },
-          "computer_name": {
-            "default": "",
-            "title": "Computer Name",
-            "type": "string"
-          },
-          "created_from_run_id": {
-            "default": "",
-            "title": "Created From Run Id",
-            "type": "string"
-          },
-          "serial_number": {
-            "default": "",
-            "title": "Serial Number",
-            "type": "string"
-          },
-          "vmid": {
-            "default": "",
-            "title": "Vmid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "agent_id"
-        ],
-        "title": "Body_create_agent_record_api_agents_post",
-        "type": "object"
-      },
-      "Body_delete_autopilot_device_api_autopilot_delete_post": {
-        "properties": {
-          "device_id": {
-            "title": "Device Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "device_id"
-        ],
-        "title": "Body_delete_autopilot_device_api_autopilot_delete_post",
-        "type": "object"
-      },
       "Body_delete_hashes_api_hashes_delete_post": {
         "properties": {
           "files": {
@@ -203,71 +331,6 @@
           "files"
         ],
         "title": "Body_delete_hashes_api_hashes_delete_post",
-        "type": "object"
-      },
-      "Body_start_bulk_capture_api_jobs_bulk_capture_post": {
-        "properties": {
-          "group_tag": {
-            "default": "",
-            "title": "Group Tag",
-            "type": "string"
-          },
-          "vmids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Vmids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "vmids"
-        ],
-        "title": "Body_start_bulk_capture_api_jobs_bulk_capture_post",
-        "type": "object"
-      },
-      "Body_start_capture_and_upload_api_jobs_capture_and_upload_post": {
-        "properties": {
-          "group_tag": {
-            "default": "",
-            "title": "Group Tag",
-            "type": "string"
-          },
-          "missing_vmids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Missing Vmids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "missing_vmids"
-        ],
-        "title": "Body_start_capture_and_upload_api_jobs_capture_and_upload_post",
-        "type": "object"
-      },
-      "Body_start_capture_api_jobs_capture_post": {
-        "properties": {
-          "group_tag": {
-            "default": "",
-            "title": "Group Tag",
-            "type": "string"
-          },
-          "vm_name": {
-            "default": "",
-            "title": "Vm Name",
-            "type": "string"
-          },
-          "vmid": {
-            "title": "Vmid",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "vmid"
-        ],
-        "title": "Body_start_capture_api_jobs_capture_post",
         "type": "object"
       },
       "Body_start_provision_api_jobs_provision_post": {
@@ -539,37 +602,6 @@
         "title": "Body_start_upload_api_jobs_upload_post",
         "type": "object"
       },
-      "Body_update_agent_record_api_agents__agent_id__update_post": {
-        "properties": {
-          "agent_version": {
-            "default": "",
-            "title": "Agent Version",
-            "type": "string"
-          },
-          "computer_name": {
-            "default": "",
-            "title": "Computer Name",
-            "type": "string"
-          },
-          "created_from_run_id": {
-            "default": "",
-            "title": "Created From Run Id",
-            "type": "string"
-          },
-          "serial_number": {
-            "default": "",
-            "title": "Serial Number",
-            "type": "string"
-          },
-          "vmid": {
-            "default": "",
-            "title": "Vmid",
-            "type": "string"
-          }
-        },
-        "title": "Body_update_agent_record_api_agents__agent_id__update_post",
-        "type": "object"
-      },
       "Body_upload_artifact_api_agent_v1_artifacts_post": {
         "properties": {
           "artifact_kind": {
@@ -633,30 +665,6 @@
         "title": "Body_upload_hash_files_api_hashes_upload_post",
         "type": "object"
       },
-      "Body_vm_key_json_api_vms__vmid__key_post": {
-        "properties": {
-          "key": {
-            "title": "Key",
-            "type": "string"
-          }
-        },
-        "required": [
-          "key"
-        ],
-        "title": "Body_vm_key_json_api_vms__vmid__key_post",
-        "type": "object"
-      },
-      "Body_vm_rename_api_vms__vmid__rename_post": {
-        "properties": {
-          "new_name": {
-            "default": "",
-            "title": "New Name",
-            "type": "string"
-          }
-        },
-        "title": "Body_vm_rename_api_vms__vmid__rename_post",
-        "type": "object"
-      },
       "Body_vm_sendkey_api_vms__vmid__sendkey_post": {
         "properties": {
           "key": {
@@ -668,22 +676,6 @@
           "key"
         ],
         "title": "Body_vm_sendkey_api_vms__vmid__sendkey_post",
-        "type": "object"
-      },
-      "Body_vm_type_json_api_vms__vmid__type_post": {
-        "properties": {
-          "press_enter": {
-            "default": "",
-            "title": "Press Enter",
-            "type": "string"
-          },
-          "text": {
-            "default": "",
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "title": "Body_vm_type_json_api_vms__vmid__type_post",
         "type": "object"
       },
       "Body_vm_typetext_api_vms__vmid__typetext_post": {
@@ -2626,6 +2618,185 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VmFleetRowResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "aad_joined": {
+            "default": false,
+            "title": "Aad Joined",
+            "type": "boolean"
+          },
+          "entra_id_joined": {
+            "default": false,
+            "title": "Entra Id Joined",
+            "type": "boolean"
+          },
+          "has_hash": {
+            "default": false,
+            "title": "Has Hash",
+            "type": "boolean"
+          },
+          "hostname": {
+            "default": "",
+            "title": "Hostname",
+            "type": "string"
+          },
+          "hybrid_joined": {
+            "default": false,
+            "title": "Hybrid Joined",
+            "type": "boolean"
+          },
+          "in_autopilot": {
+            "default": false,
+            "title": "In Autopilot",
+            "type": "boolean"
+          },
+          "in_intune": {
+            "default": false,
+            "title": "In Intune",
+            "type": "boolean"
+          },
+          "ip_address": {
+            "default": "",
+            "title": "Ip Address",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "os_build": {
+            "default": "",
+            "title": "Os Build",
+            "type": "string"
+          },
+          "os_caption": {
+            "default": "",
+            "title": "Os Caption",
+            "type": "string"
+          },
+          "part_of_domain": {
+            "default": false,
+            "title": "Part Of Domain",
+            "type": "boolean"
+          },
+          "sequence_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence Name"
+          },
+          "serial": {
+            "default": "",
+            "title": "Serial",
+            "type": "string"
+          },
+          "status": {
+            "default": "unknown",
+            "title": "Status",
+            "type": "string"
+          },
+          "target_os": {
+            "default": "windows",
+            "title": "Target Os",
+            "type": "string"
+          },
+          "vmid": {
+            "title": "Vmid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "vmid"
+        ],
+        "title": "VmFleetRowResponse",
+        "type": "object"
+      },
+      "VmsFleetResponse": {
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentFleetRowResponse"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "ap_error": {
+            "default": "",
+            "title": "Ap Error",
+            "type": "string"
+          },
+          "autopilot_devices": {
+            "items": {
+              "$ref": "#/components/schemas/AutopilotDeviceFleetRowResponse"
+            },
+            "title": "Autopilot Devices",
+            "type": "array"
+          },
+          "cache_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Age Seconds"
+          },
+          "cache_fetched_at_iso": {
+            "default": "",
+            "title": "Cache Fetched At Iso",
+            "type": "string"
+          },
+          "cache_refreshing": {
+            "default": false,
+            "title": "Cache Refreshing",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "missing_vms": {
+            "items": {
+              "$ref": "#/components/schemas/VmFleetRowResponse"
+            },
+            "title": "Missing Vms",
+            "type": "array"
+          },
+          "monitor_sweep": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monitor Sweep"
+          },
+          "vms": {
+            "items": {
+              "$ref": "#/components/schemas/VmFleetRowResponse"
+            },
+            "title": "Vms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generated_at"
+        ],
+        "title": "VmsFleetResponse",
         "type": "object"
       },
       "WorkCompleteBody": {
@@ -5272,16 +5443,6 @@
     "/api/agents": {
       "post": {
         "operationId": "create_agent_record_api_agents_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_create_agent_record_api_agents_post"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -5290,16 +5451,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Create Agent Record"
@@ -5356,15 +5507,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_update_agent_record_api_agents__agent_id__update_post"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "content": {
@@ -5440,16 +5582,6 @@
     "/api/autopilot/delete": {
       "post": {
         "operationId": "delete_autopilot_device_api_autopilot_delete_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_delete_autopilot_device_api_autopilot_delete_post"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -5458,16 +5590,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Delete Autopilot Device"
@@ -5952,7 +6074,7 @@
     },
     "/api/cloudosd/cache/{entry_id}/download/{file_name}": {
       "get": {
-        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__head",
+        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__get",
         "parameters": [
           {
             "in": "path",
@@ -6019,7 +6141,7 @@
         ]
       },
       "head": {
-        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__head",
+        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__get",
         "parameters": [
           {
             "in": "path",
@@ -7873,16 +7995,6 @@
       "post": {
         "description": "Capture hashes for multiple VMs in parallel (one job per VM).",
         "operationId": "start_bulk_capture_api_jobs_bulk_capture_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_start_bulk_capture_api_jobs_bulk_capture_post"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -7891,16 +8003,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Start Bulk Capture"
@@ -7909,16 +8011,6 @@
     "/api/jobs/capture": {
       "post": {
         "operationId": "start_capture_api_jobs_capture_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_start_capture_api_jobs_capture_post"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -7927,16 +8019,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Start Capture"
@@ -7946,16 +8028,6 @@
       "post": {
         "description": "Capture hashes for selected VMs in parallel, then upload all to Intune.",
         "operationId": "start_capture_and_upload_api_jobs_capture_and_upload_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_start_capture_and_upload_api_jobs_capture_and_upload_post"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -7964,16 +8036,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Start Capture And Upload"
@@ -9897,7 +9959,7 @@
     },
     "/api/osdeploy/v1/cache/{entry_id}/download/{file_name}": {
       "get": {
-        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__head",
+        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__get",
         "parameters": [
           {
             "in": "path",
@@ -9944,7 +10006,7 @@
         ]
       },
       "head": {
-        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__head",
+        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__get",
         "parameters": [
           {
             "in": "path",
@@ -12415,6 +12477,24 @@
         "summary": "Record Vm Provisioning Route"
       }
     },
+    "/api/vms/fleet": {
+      "get": {
+        "operationId": "api_vms_fleet_api_vms_fleet_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmsFleetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Vms Fleet"
+      }
+    },
     "/api/vms/refresh": {
       "post": {
         "description": "Manual refresh trigger. Always blocks until the new payload\nis in the cache so the caller's subsequent GET /vms sees fresh\ndata.",
@@ -12569,16 +12649,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_vm_key_json_api_vms__vmid__key_post"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -12617,15 +12687,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_vm_rename_api_vms__vmid__rename_post"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "content": {
@@ -12936,15 +12997,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_vm_type_json_api_vms__vmid__type_post"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "content": {

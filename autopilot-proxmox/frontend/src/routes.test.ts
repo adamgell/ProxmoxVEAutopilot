@@ -28,6 +28,12 @@ describe("operator route registry", () => {
         label: "Signals Hub",
         group: "Observe",
         phase: "read-only"
+      },
+      {
+        path: "/react/vms",
+        label: "VMs",
+        group: "Fleet",
+        phase: "operational"
       }
     ]);
   });
@@ -47,6 +53,7 @@ describe("operator route registry", () => {
 
   test("finds active React routes and ignores legacy deep links", () => {
     expect(reactRouteForPath("/react/jobs")?.label).toBe("Jobs");
+    expect(reactRouteForPath("/react/vms")?.label).toBe("VMs");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
   });
 
@@ -62,7 +69,8 @@ describe("operator route registry", () => {
     expect(reactSteps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
-        expect.objectContaining({ label: "Jobs", href: "/react/jobs" })
+        expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
+        expect.objectContaining({ label: "VMs", href: "/react/vms" })
       ])
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);

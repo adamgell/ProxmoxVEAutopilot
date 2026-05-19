@@ -15,13 +15,14 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/dashboard")
     assert not auth.is_exempt_path("/react/jobs")
     assert not auth.is_exempt_path("/react/monitoring")
+    assert not auth.is_exempt_path("/react/vms")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/app")
     assert not auth.is_exempt_path("/app/jobs")
     assert not auth.is_exempt_path("/openapi.json")
 
 
-@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring"])
+@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring", "/react/vms"])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     response = web_client.get(path)
 
@@ -29,6 +30,90 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     assert 'id="react-root"' in response.text
     assert 'data-react-shell="protected"' in response.text
     assert "Proxmox VE Autopilot" in response.text
+
+
+def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
+    from web import app as web_app
+
+    async def fake_vms_payload():
+        return ({
+            "data": [{
+                "vmid": 108,
+                "name": "WrkGrp-525570B6",
+                "hostname": "WRKGRP-525570B6",
+                "serial": "WrkGrp-525570B6",
+                "status": "running",
+                "ip_address": "192.168.2.49",
+                "in_intune": False,
+                "in_autopilot": False,
+                "aad_joined": True,
+                "part_of_domain": False,
+            }],
+            "devices": ([{
+                "id": "device-1",
+                "serial": "WrkGrp-525570B6",
+                "display_name": "",
+                "group_tag": "Lab",
+                "profile_status": "assigned",
+                "profile_ok": True,
+                "enrollment_state": "enrolled",
+                "manufacturer": "Proxmox",
+                "model": "QEMU",
+                "last_contact": "2026-05-19T00:00:00Z",
+            }], ""),
+            "hash_serials": {"WrkGrp-525570B6"},
+            "fetched_at": 1.0,
+            "refreshing": False,
+        }, 12.4)
+
+    monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
+    monkeypatch.setattr(web_app, "_agent_inventory_rows", lambda: [{
+        "agent_id": "agent-wrkgrp-525570b6",
+        "approval_status": "active",
+        "vmid": 108,
+        "computer_name": "WRKGRP-525570B6",
+        "primary_ipv4": "192.168.2.49",
+        "qga_state": "Running",
+        "last_heartbeat_at": "2026-05-19T00:00:00Z",
+        "hash_capture_supported": True,
+    }])
+    monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
+
+    response = web_client.get("/api/vms/fleet")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) >= {
+        "vms",
+        "missing_vms",
+        "agents",
+        "autopilot_devices",
+        "ap_error",
+        "cache_age_seconds",
+        "cache_refreshing",
+        "monitor_sweep",
+        "generated_at",
+    }
+    assert body["vms"][0]["vmid"] == 108
+    assert body["vms"][0]["in_autopilot"] is True
+    assert body["vms"][0]["has_hash"] is True
+    assert body["agents"][0]["agent_id"] == "agent-wrkgrp-525570b6"
+    assert body["autopilot_devices"][0]["display_name"] == "WRKGRP-525570B6"
+
+
+def test_vm_power_endpoint_returns_json_for_react_callers(web_client, monkeypatch):
+    from web import app as web_app
+
+    posted = []
+    monkeypatch.setattr(web_app, "_resolve_vm_node", lambda vmid: "pve2")
+    monkeypatch.setattr(web_app, "_proxmox_api_post", lambda path, data=None: posted.append((path, data)))
+
+    response = web_client.post("/api/vms/108/start", headers={"Accept": "application/json"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "vmid": 108, "action": "start"}
+    assert posted == [("/nodes/pve2/qemu/108/status/start", None)]
 
 
 def test_react_read_api_response_shapes(web_client):

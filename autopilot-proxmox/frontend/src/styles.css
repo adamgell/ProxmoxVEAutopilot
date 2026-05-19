@@ -778,6 +778,236 @@ h3 {
   }
 }
 
+.progress {
+  position: relative;
+  height: 7px;
+  margin: 0 0 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.progress span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: inherit;
+  background: var(--active);
+  animation: signal-load 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress span {
+    animation: none;
+    transform: none;
+  }
+}
+
+.metric-strip--fleet {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.fleet-lanes {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(280px, 0.86fr) minmax(280px, 0.86fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.fleet-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.fleet-card-list--compact {
+  gap: 10px;
+}
+
+.fleet-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fleet-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.fleet-card header > div {
+  min-width: 0;
+}
+
+.fleet-card h3 {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.fleet-card header a,
+.fleet-card header strong {
+  flex: 0 0 auto;
+  color: var(--active);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.fleet-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.fleet-detail-grid div {
+  min-width: 0;
+  padding: 9px;
+  background: var(--surface-2);
+}
+
+.fleet-detail-grid dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.fleet-detail-grid dd {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.fleet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.fleet-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.fleet-action:hover {
+  border-color: var(--active);
+  background: var(--surface);
+}
+
+.fleet-action--danger {
+  border-color: color-mix(in srgb, var(--bad) 54%, var(--line));
+  color: var(--bad);
+}
+
+.fleet-lane-command {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgb(0 0 0 / 68%);
+}
+
+.screenshot-modal {
+  display: grid;
+  gap: 12px;
+  width: min(920px, 100%);
+  max-height: 90vh;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 38%);
+}
+
+.screenshot-modal > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.screenshot-modal button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.screenshot-modal img {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #05070b;
+}
+
 .fleet-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -998,12 +1228,15 @@ h3 {
   .metric-strip,
   .metric-strip--signals,
   .metric-strip--workspace,
+  .metric-strip--fleet,
   .section-grid,
   .section-grid--wide,
   .flow-board,
   .signals-layout,
   .signals-detail-grid,
   .monitoring-columns,
+  .fleet-lanes,
+  .fleet-detail-grid,
   .fleet-grid,
   .fleet-grid--four,
   .fleet-grid--six,

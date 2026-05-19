@@ -44,6 +44,15 @@ export interface OperatorFlow {
 export interface LiveSocketMessage {
   readonly topic?: string;
   readonly type?: string;
+  readonly event?: string;
+  readonly rows?: unknown;
+  readonly agents?: unknown;
+  readonly result?: unknown;
+  readonly image_url?: string;
+  readonly vmid?: number;
+  readonly correlation_id?: string;
+  readonly error?: string;
+  readonly detail?: string;
   readonly data?: unknown;
   readonly payload?: unknown;
 }
@@ -320,4 +329,89 @@ export interface SignalsHubResponse {
   readonly services: readonly ServiceHealth[];
   readonly runtime: RuntimeServicesResponse;
   readonly fleet_attention: readonly FleetSignalRow[];
+}
+
+export interface VmFleetRow {
+  readonly vmid: number;
+  readonly name: string;
+  readonly hostname?: string;
+  readonly serial?: string;
+  readonly status?: string;
+  readonly ip_address?: string;
+  readonly os_caption?: string;
+  readonly os_build?: string;
+  readonly in_autopilot?: boolean;
+  readonly in_intune?: boolean;
+  readonly aad_joined?: boolean;
+  readonly part_of_domain?: boolean;
+  readonly hybrid_joined?: boolean;
+  readonly entra_id_joined?: boolean;
+  readonly has_hash?: boolean;
+  readonly target_os?: string;
+  readonly sequence_name?: string | null;
+  readonly monitor_checked_at?: string;
+  readonly monitor_probed_at?: string;
+  readonly hostname_join_label?: string;
+  readonly hostname_join_title?: string;
+  readonly qga?: string;
+  readonly qga_error?: string;
+  readonly qga_retry_in_seconds?: number;
+  readonly [key: string]: unknown;
+}
+
+export interface AgentFleetRow {
+  readonly agent_id: string;
+  readonly approval_id?: string;
+  readonly approval_status?: string;
+  readonly vmid?: number | null;
+  readonly computer_name?: string;
+  readonly serial_number?: string;
+  readonly primary_ipv4?: string;
+  readonly os_name?: string;
+  readonly os_build?: string;
+  readonly qga_state?: string;
+  readonly domain_joined?: boolean | null;
+  readonly entra_joined?: boolean | null;
+  readonly current_phase?: string;
+  readonly current_run_id?: string;
+  readonly agent_version?: string;
+  readonly hash_capture_supported?: boolean;
+  readonly last_heartbeat_at?: string;
+  readonly last_seen_at?: string;
+}
+
+export interface AutopilotDeviceFleetRow {
+  readonly id: string;
+  readonly serial: string;
+  readonly display_name?: string;
+  readonly group_tag?: string;
+  readonly profile_status?: string;
+  readonly profile_ok?: boolean;
+  readonly enrollment_state?: string;
+  readonly manufacturer?: string;
+  readonly model?: string;
+  readonly last_contact?: string;
+  readonly has_local_hash?: boolean;
+}
+
+export interface VmsFleetResponse {
+  readonly vms: readonly VmFleetRow[];
+  readonly missing_vms: readonly VmFleetRow[];
+  readonly agents: readonly AgentFleetRow[];
+  readonly autopilot_devices: readonly AutopilotDeviceFleetRow[];
+  readonly ap_error: string;
+  readonly cache_age_seconds?: number | null;
+  readonly cache_fetched_at_iso?: string;
+  readonly cache_refreshing: boolean;
+  readonly monitor_sweep?: Readonly<Record<string, unknown>> | null;
+  readonly generated_at: string;
+}
+
+export interface FleetLivePayload {
+  readonly rows?: readonly VmFleetRow[];
+  readonly agents?: readonly AgentFleetRow[];
+  readonly monitor_sweep?: Readonly<Record<string, unknown>>;
+  readonly cache_age_seconds?: number | null;
+  readonly refreshing?: boolean;
+  readonly generated_at?: string;
 }

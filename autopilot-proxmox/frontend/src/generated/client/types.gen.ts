@@ -5,6 +5,85 @@ export type ClientOptions = {
 };
 
 /**
+ * AgentFleetRowResponse
+ */
+export type AgentFleetRowResponse = {
+    /**
+     * Agent Id
+     */
+    agent_id: string;
+    /**
+     * Agent Version
+     */
+    agent_version?: string;
+    /**
+     * Approval Id
+     */
+    approval_id?: string;
+    /**
+     * Approval Status
+     */
+    approval_status?: string;
+    /**
+     * Computer Name
+     */
+    computer_name?: string;
+    /**
+     * Current Phase
+     */
+    current_phase?: string;
+    /**
+     * Current Run Id
+     */
+    current_run_id?: string;
+    /**
+     * Domain Joined
+     */
+    domain_joined?: boolean | null;
+    /**
+     * Entra Joined
+     */
+    entra_joined?: boolean | null;
+    /**
+     * Hash Capture Supported
+     */
+    hash_capture_supported?: boolean;
+    /**
+     * Last Heartbeat At
+     */
+    last_heartbeat_at?: string;
+    /**
+     * Last Seen At
+     */
+    last_seen_at?: string;
+    /**
+     * Os Build
+     */
+    os_build?: string;
+    /**
+     * Os Name
+     */
+    os_name?: string;
+    /**
+     * Primary Ipv4
+     */
+    primary_ipv4?: string;
+    /**
+     * Qga State
+     */
+    qga_state?: string;
+    /**
+     * Serial Number
+     */
+    serial_number?: string;
+    /**
+     * Vmid
+     */
+    vmid?: number | null;
+    [key: string]: unknown;
+};
+
+/**
  * AgentNextBody
  */
 export type AgentNextBody = {
@@ -75,6 +154,57 @@ export type ArtifactPublishBody = {
 };
 
 /**
+ * AutopilotDeviceFleetRowResponse
+ */
+export type AutopilotDeviceFleetRowResponse = {
+    /**
+     * Display Name
+     */
+    display_name?: string;
+    /**
+     * Enrollment State
+     */
+    enrollment_state?: string;
+    /**
+     * Group Tag
+     */
+    group_tag?: string;
+    /**
+     * Has Local Hash
+     */
+    has_local_hash?: boolean;
+    /**
+     * Id
+     */
+    id?: string;
+    /**
+     * Last Contact
+     */
+    last_contact?: string;
+    /**
+     * Manufacturer
+     */
+    manufacturer?: string;
+    /**
+     * Model
+     */
+    model?: string;
+    /**
+     * Profile Ok
+     */
+    profile_ok?: boolean;
+    /**
+     * Profile Status
+     */
+    profile_status?: string;
+    /**
+     * Serial
+     */
+    serial?: string;
+    [key: string]: unknown;
+};
+
+/**
  * Body_cloud_delete_api_cloud_delete_post
  */
 export type BodyCloudDeleteApiCloudDeletePost = {
@@ -89,46 +219,6 @@ export type BodyCloudDeleteApiCloudDeletePost = {
 };
 
 /**
- * Body_create_agent_record_api_agents_post
- */
-export type BodyCreateAgentRecordApiAgentsPost = {
-    /**
-     * Agent Id
-     */
-    agent_id: string;
-    /**
-     * Agent Version
-     */
-    agent_version?: string;
-    /**
-     * Computer Name
-     */
-    computer_name?: string;
-    /**
-     * Created From Run Id
-     */
-    created_from_run_id?: string;
-    /**
-     * Serial Number
-     */
-    serial_number?: string;
-    /**
-     * Vmid
-     */
-    vmid?: string;
-};
-
-/**
- * Body_delete_autopilot_device_api_autopilot_delete_post
- */
-export type BodyDeleteAutopilotDeviceApiAutopilotDeletePost = {
-    /**
-     * Device Id
-     */
-    device_id: string;
-};
-
-/**
  * Body_delete_hashes_api_hashes_delete_post
  */
 export type BodyDeleteHashesApiHashesDeletePost = {
@@ -136,52 +226,6 @@ export type BodyDeleteHashesApiHashesDeletePost = {
      * Files
      */
     files: Array<string>;
-};
-
-/**
- * Body_start_bulk_capture_api_jobs_bulk_capture_post
- */
-export type BodyStartBulkCaptureApiJobsBulkCapturePost = {
-    /**
-     * Group Tag
-     */
-    group_tag?: string;
-    /**
-     * Vmids
-     */
-    vmids: Array<string>;
-};
-
-/**
- * Body_start_capture_and_upload_api_jobs_capture_and_upload_post
- */
-export type BodyStartCaptureAndUploadApiJobsCaptureAndUploadPost = {
-    /**
-     * Group Tag
-     */
-    group_tag?: string;
-    /**
-     * Missing Vmids
-     */
-    missing_vmids: Array<string>;
-};
-
-/**
- * Body_start_capture_api_jobs_capture_post
- */
-export type BodyStartCaptureApiJobsCapturePost = {
-    /**
-     * Group Tag
-     */
-    group_tag?: string;
-    /**
-     * Vm Name
-     */
-    vm_name?: string;
-    /**
-     * Vmid
-     */
-    vmid: number;
 };
 
 /**
@@ -391,32 +435,6 @@ export type BodyStartUploadApiJobsUploadPost = {
 };
 
 /**
- * Body_update_agent_record_api_agents__agent_id__update_post
- */
-export type BodyUpdateAgentRecordApiAgentsAgentIdUpdatePost = {
-    /**
-     * Agent Version
-     */
-    agent_version?: string;
-    /**
-     * Computer Name
-     */
-    computer_name?: string;
-    /**
-     * Created From Run Id
-     */
-    created_from_run_id?: string;
-    /**
-     * Serial Number
-     */
-    serial_number?: string;
-    /**
-     * Vmid
-     */
-    vmid?: string;
-};
-
-/**
  * Body_upload_artifact_api_agent_v1_artifacts_post
  */
 export type BodyUploadArtifactApiAgentV1ArtifactsPost = {
@@ -459,26 +477,6 @@ export type BodyUploadHashFilesApiHashesUploadPost = {
 };
 
 /**
- * Body_vm_key_json_api_vms__vmid__key_post
- */
-export type BodyVmKeyJsonApiVmsVmidKeyPost = {
-    /**
-     * Key
-     */
-    key: string;
-};
-
-/**
- * Body_vm_rename_api_vms__vmid__rename_post
- */
-export type BodyVmRenameApiVmsVmidRenamePost = {
-    /**
-     * New Name
-     */
-    new_name?: string;
-};
-
-/**
  * Body_vm_sendkey_api_vms__vmid__sendkey_post
  */
 export type BodyVmSendkeyApiVmsVmidSendkeyPost = {
@@ -486,20 +484,6 @@ export type BodyVmSendkeyApiVmsVmidSendkeyPost = {
      * Key
      */
     key: string;
-};
-
-/**
- * Body_vm_type_json_api_vms__vmid__type_post
- */
-export type BodyVmTypeJsonApiVmsVmidTypePost = {
-    /**
-     * Press Enter
-     */
-    press_enter?: string;
-    /**
-     * Text
-     */
-    text?: string;
 };
 
 /**
@@ -1745,6 +1729,129 @@ export type ValidationError = {
      * Error Type
      */
     type: string;
+};
+
+/**
+ * VmFleetRowResponse
+ */
+export type VmFleetRowResponse = {
+    /**
+     * Aad Joined
+     */
+    aad_joined?: boolean;
+    /**
+     * Entra Id Joined
+     */
+    entra_id_joined?: boolean;
+    /**
+     * Has Hash
+     */
+    has_hash?: boolean;
+    /**
+     * Hostname
+     */
+    hostname?: string;
+    /**
+     * Hybrid Joined
+     */
+    hybrid_joined?: boolean;
+    /**
+     * In Autopilot
+     */
+    in_autopilot?: boolean;
+    /**
+     * In Intune
+     */
+    in_intune?: boolean;
+    /**
+     * Ip Address
+     */
+    ip_address?: string;
+    /**
+     * Name
+     */
+    name?: string;
+    /**
+     * Os Build
+     */
+    os_build?: string;
+    /**
+     * Os Caption
+     */
+    os_caption?: string;
+    /**
+     * Part Of Domain
+     */
+    part_of_domain?: boolean;
+    /**
+     * Sequence Name
+     */
+    sequence_name?: string | null;
+    /**
+     * Serial
+     */
+    serial?: string;
+    /**
+     * Status
+     */
+    status?: string;
+    /**
+     * Target Os
+     */
+    target_os?: string;
+    /**
+     * Vmid
+     */
+    vmid: number;
+    [key: string]: unknown;
+};
+
+/**
+ * VmsFleetResponse
+ */
+export type VmsFleetResponse = {
+    /**
+     * Agents
+     */
+    agents?: Array<AgentFleetRowResponse>;
+    /**
+     * Ap Error
+     */
+    ap_error?: string;
+    /**
+     * Autopilot Devices
+     */
+    autopilot_devices?: Array<AutopilotDeviceFleetRowResponse>;
+    /**
+     * Cache Age Seconds
+     */
+    cache_age_seconds?: number | null;
+    /**
+     * Cache Fetched At Iso
+     */
+    cache_fetched_at_iso?: string;
+    /**
+     * Cache Refreshing
+     */
+    cache_refreshing?: boolean;
+    /**
+     * Generated At
+     */
+    generated_at: string;
+    /**
+     * Missing Vms
+     */
+    missing_vms?: Array<VmFleetRowResponse>;
+    /**
+     * Monitor Sweep
+     */
+    monitor_sweep?: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Vms
+     */
+    vms?: Array<VmFleetRowResponse>;
 };
 
 /**
@@ -3322,20 +3429,11 @@ export type FailWorkApiAgentV1WorkWorkItemIdFailPostResponses = {
 };
 
 export type CreateAgentRecordApiAgentsPostData = {
-    body: BodyCreateAgentRecordApiAgentsPost;
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/agents';
 };
-
-export type CreateAgentRecordApiAgentsPostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type CreateAgentRecordApiAgentsPostError = CreateAgentRecordApiAgentsPostErrors[keyof CreateAgentRecordApiAgentsPostErrors];
 
 export type CreateAgentRecordApiAgentsPostResponses = {
     /**
@@ -3373,7 +3471,7 @@ export type DeleteAgentRecordApiAgentsAgentIdDeletePostResponses = {
 };
 
 export type UpdateAgentRecordApiAgentsAgentIdUpdatePostData = {
-    body?: BodyUpdateAgentRecordApiAgentsAgentIdUpdatePost;
+    body?: never;
     path: {
         /**
          * Agent Id
@@ -3443,20 +3541,11 @@ export type ApiAnswerIsosPruneApiAnswerIsosPrunePostResponses = {
 };
 
 export type DeleteAutopilotDeviceApiAutopilotDeletePostData = {
-    body: BodyDeleteAutopilotDeviceApiAutopilotDeletePost;
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/autopilot/delete';
 };
-
-export type DeleteAutopilotDeviceApiAutopilotDeletePostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type DeleteAutopilotDeviceApiAutopilotDeletePostError = DeleteAutopilotDeviceApiAutopilotDeletePostErrors[keyof DeleteAutopilotDeviceApiAutopilotDeletePostErrors];
 
 export type DeleteAutopilotDeviceApiAutopilotDeletePostResponses = {
     /**
@@ -3791,7 +3880,7 @@ export type DeleteCacheEntryApiCloudosdCacheEntryIdDeletePostResponses = {
     202: unknown;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadData = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetData = {
     body?: never;
     path: {
         /**
@@ -3816,23 +3905,23 @@ export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadData = 
     url: '/api/cloudosd/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadErrors = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadError = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadErrors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadErrors];
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetError = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors];
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadResponses = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetResponses = {
     /**
      * Successful Response
      */
     200: unknown;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Data = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Data = {
     body?: never;
     path: {
         /**
@@ -3857,16 +3946,16 @@ export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Data =
     url: '/api/cloudosd/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Errors = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Error = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Errors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Errors];
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Error = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors];
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Responses = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Responses = {
     /**
      * Successful Response
      */
@@ -5065,20 +5154,11 @@ export type ApiListJobsApiJobsGetResponses = {
 export type ApiListJobsApiJobsGetResponse = ApiListJobsApiJobsGetResponses[keyof ApiListJobsApiJobsGetResponses];
 
 export type StartBulkCaptureApiJobsBulkCapturePostData = {
-    body: BodyStartBulkCaptureApiJobsBulkCapturePost;
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/jobs/bulk-capture';
 };
-
-export type StartBulkCaptureApiJobsBulkCapturePostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type StartBulkCaptureApiJobsBulkCapturePostError = StartBulkCaptureApiJobsBulkCapturePostErrors[keyof StartBulkCaptureApiJobsBulkCapturePostErrors];
 
 export type StartBulkCaptureApiJobsBulkCapturePostResponses = {
     /**
@@ -5088,20 +5168,11 @@ export type StartBulkCaptureApiJobsBulkCapturePostResponses = {
 };
 
 export type StartCaptureApiJobsCapturePostData = {
-    body: BodyStartCaptureApiJobsCapturePost;
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/jobs/capture';
 };
-
-export type StartCaptureApiJobsCapturePostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type StartCaptureApiJobsCapturePostError = StartCaptureApiJobsCapturePostErrors[keyof StartCaptureApiJobsCapturePostErrors];
 
 export type StartCaptureApiJobsCapturePostResponses = {
     /**
@@ -5111,20 +5182,11 @@ export type StartCaptureApiJobsCapturePostResponses = {
 };
 
 export type StartCaptureAndUploadApiJobsCaptureAndUploadPostData = {
-    body: BodyStartCaptureAndUploadApiJobsCaptureAndUploadPost;
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/jobs/capture-and-upload';
 };
-
-export type StartCaptureAndUploadApiJobsCaptureAndUploadPostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type StartCaptureAndUploadApiJobsCaptureAndUploadPostError = StartCaptureAndUploadApiJobsCaptureAndUploadPostErrors[keyof StartCaptureAndUploadApiJobsCaptureAndUploadPostErrors];
 
 export type StartCaptureAndUploadApiJobsCaptureAndUploadPostResponses = {
     /**
@@ -6433,7 +6495,7 @@ export type DeleteCacheEntryApiOsdeployV1CacheEntryIdDeletePostResponses = {
     202: unknown;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadData = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetData = {
     body?: never;
     path: {
         /**
@@ -6449,23 +6511,23 @@ export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadData 
     url: '/api/osdeploy/v1/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadErrors = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadError = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadErrors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadErrors];
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetError = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors];
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadResponses = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetResponses = {
     /**
      * Successful Response
      */
     200: unknown;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Data = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Data = {
     body?: never;
     path: {
         /**
@@ -6481,16 +6543,16 @@ export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Data
     url: '/api/osdeploy/v1/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Errors = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Error = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Errors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Errors];
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Error = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors];
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Responses = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Responses = {
     /**
      * Successful Response
      */
@@ -8184,6 +8246,22 @@ export type RecordVmProvisioningRouteApiVmProvisioningPostResponses = {
     200: unknown;
 };
 
+export type ApiVmsFleetApiVmsFleetGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/vms/fleet';
+};
+
+export type ApiVmsFleetApiVmsFleetGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: VmsFleetResponse;
+};
+
+export type ApiVmsFleetApiVmsFleetGetResponse = ApiVmsFleetApiVmsFleetGetResponses[keyof ApiVmsFleetApiVmsFleetGetResponses];
+
 export type ApiVmsRefreshApiVmsRefreshPostData = {
     body?: never;
     path?: never;
@@ -8287,7 +8365,7 @@ export type VmDeleteApiVmsVmidDeletePostResponses = {
 };
 
 export type VmKeyJsonApiVmsVmidKeyPostData = {
-    body: BodyVmKeyJsonApiVmsVmidKeyPost;
+    body?: never;
     path: {
         /**
          * Vmid
@@ -8315,7 +8393,7 @@ export type VmKeyJsonApiVmsVmidKeyPostResponses = {
 };
 
 export type VmRenameApiVmsVmidRenamePostData = {
-    body?: BodyVmRenameApiVmsVmidRenamePost;
+    body?: never;
     path: {
         /**
          * Vmid
@@ -8539,7 +8617,7 @@ export type VmStopApiVmsVmidStopPostResponses = {
 };
 
 export type VmTypeJsonApiVmsVmidTypePostData = {
-    body?: BodyVmTypeJsonApiVmsVmidTypePost;
+    body?: never;
     path: {
         /**
          * Vmid

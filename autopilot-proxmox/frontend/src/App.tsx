@@ -3,6 +3,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
+import { VmsPage } from "./pages/VmsPage";
 
 interface AppProps {
   readonly bootstrap: AppBootstrap;
@@ -18,6 +19,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/monitoring") {
     return <MonitoringPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/vms") {
+    return <VmsPage bootstrap={bootstrap} />;
   }
   return <ShellIndexPage bootstrap={bootstrap} />;
 }

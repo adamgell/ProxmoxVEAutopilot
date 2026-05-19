@@ -4493,6 +4493,74 @@ class CockpitSummaryResponse(BaseModel):
     monitoring: MonitoringSummaryResponse
 
 
+class VmFleetRowResponse(ApiExtraModel):
+    vmid: int
+    name: str = ""
+    hostname: str = ""
+    serial: str = ""
+    status: str = "unknown"
+    ip_address: str = ""
+    os_caption: str = ""
+    os_build: str = ""
+    in_autopilot: bool = False
+    in_intune: bool = False
+    aad_joined: bool = False
+    part_of_domain: bool = False
+    hybrid_joined: bool = False
+    entra_id_joined: bool = False
+    has_hash: bool = False
+    target_os: str = "windows"
+    sequence_name: str | None = None
+
+
+class AgentFleetRowResponse(ApiExtraModel):
+    agent_id: str
+    approval_id: str = ""
+    approval_status: str = ""
+    vmid: int | None = None
+    computer_name: str = ""
+    serial_number: str = ""
+    primary_ipv4: str = ""
+    os_name: str = ""
+    os_build: str = ""
+    qga_state: str = ""
+    domain_joined: bool | None = None
+    entra_joined: bool | None = None
+    current_phase: str = ""
+    current_run_id: str = ""
+    agent_version: str = ""
+    hash_capture_supported: bool = False
+    last_heartbeat_at: str = ""
+    last_seen_at: str = ""
+
+
+class AutopilotDeviceFleetRowResponse(ApiExtraModel):
+    id: str = ""
+    serial: str = ""
+    display_name: str = ""
+    group_tag: str = ""
+    profile_status: str = ""
+    profile_ok: bool = False
+    enrollment_state: str = ""
+    manufacturer: str = ""
+    model: str = ""
+    last_contact: str = ""
+    has_local_hash: bool = False
+
+
+class VmsFleetResponse(BaseModel):
+    vms: list[VmFleetRowResponse] = Field(default_factory=list)
+    missing_vms: list[VmFleetRowResponse] = Field(default_factory=list)
+    agents: list[AgentFleetRowResponse] = Field(default_factory=list)
+    autopilot_devices: list[AutopilotDeviceFleetRowResponse] = Field(default_factory=list)
+    ap_error: str = ""
+    cache_age_seconds: int | None = None
+    cache_fetched_at_iso: str = ""
+    cache_refreshing: bool = False
+    monitor_sweep: dict[str, Any] | None = None
+    generated_at: str
+
+
 class InstallTrackingUpdate(BaseModel):
     status: str = Field(..., min_length=1, max_length=32)
     detail: str = Field("", max_length=2000)
@@ -4596,6 +4664,11 @@ async def react_jobs_shell(request: Request):
 
 @app.get("/react/monitoring", response_class=HTMLResponse, include_in_schema=False)
 async def react_monitoring_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/vms", response_class=HTMLResponse, include_in_schema=False)
+async def react_vms_shell(request: Request):
     return _render_react_shell(request)
 
 
@@ -6056,6 +6129,78 @@ async def api_vms_refresh():
     return {"ok": True, "fetched_at": _VMS_CACHE["fetched_at"]}
 
 
+def _request_wants_json(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    content_type = request.headers.get("content-type", "")
+    return "application/json" in accept or content_type.startswith("application/json")
+
+
+def _action_response(
+    request: Request,
+    *,
+    payload: dict,
+    redirect: str = "/vms",
+    status_code: int = 200,
+):
+    if _request_wants_json(request):
+        return JSONResponse(payload, status_code=status_code)
+    return RedirectResponse(redirect, status_code=303)
+
+
+def _action_error_response(
+    request: Request,
+    *,
+    message: str,
+    redirect: str = "/vms",
+    status_code: int = 500,
+):
+    if _request_wants_json(request):
+        return JSONResponse({"ok": False, "error": message}, status_code=status_code)
+    return _redirect_with_error(redirect, message)
+
+
+async def _request_values(request: Request) -> dict:
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        try:
+            body = await request.json()
+        except Exception:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    form = await request.form()
+    values: dict = {}
+    for key, value in form.multi_items():
+        text = str(value)
+        if key in values:
+            current = values[key]
+            if isinstance(current, list):
+                current.append(text)
+            else:
+                values[key] = [current, text]
+        else:
+            values[key] = text
+    return values
+
+
+def _request_text(values: dict, key: str, default: str = "") -> str:
+    value = values.get(key, default)
+    if isinstance(value, list):
+        value = value[0] if value else default
+    if value is None:
+        return default
+    return str(value)
+
+
+def _request_list(values: dict, key: str) -> list[str]:
+    value = values.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
 _SCREENSHOT_CACHE: dict[str, dict] = {}
 _SCREENSHOT_TTL_SECONDS = 120
 _LIVE_HUB: LiveHub | None = None
@@ -6574,21 +6719,17 @@ def _agent_metadata_form(
 
 @app.post("/api/agents")
 async def create_agent_record(
-    agent_id: str = Form(...),
-    vmid: str = Form(""),
-    computer_name: str = Form(""),
-    serial_number: str = Form(""),
-    agent_version: str = Form(""),
-    created_from_run_id: str = Form(""),
+    request: Request,
 ):
     try:
+        payload = await _request_values(request)
         values = _agent_metadata_form(
-            agent_id=agent_id,
-            vmid=vmid,
-            computer_name=computer_name,
-            serial_number=serial_number,
-            agent_version=agent_version,
-            created_from_run_id=created_from_run_id,
+            agent_id=_request_text(payload, "agent_id"),
+            vmid=_request_text(payload, "vmid"),
+            computer_name=_request_text(payload, "computer_name"),
+            serial_number=_request_text(payload, "serial_number"),
+            agent_version=_request_text(payload, "agent_version"),
+            created_from_run_id=_request_text(payload, "created_from_run_id"),
         )
         from web import db_pg
 
@@ -6596,27 +6737,27 @@ async def create_agent_record(
             agent_telemetry_pg.init(conn)
             agent_telemetry_pg.upsert_manual_agent(conn, **values)
     except Exception as exc:
-        return _redirect_with_error("/vms", f"Create agent failed: {exc}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Create agent failed: {exc}")
+    return _action_response(
+        request,
+        payload={"ok": True, "agent_id": values["agent_id"], "action": "create"},
+    )
 
 
 @app.post("/api/agents/{agent_id}/update")
 async def update_agent_record(
     agent_id: str,
-    vmid: str = Form(""),
-    computer_name: str = Form(""),
-    serial_number: str = Form(""),
-    agent_version: str = Form(""),
-    created_from_run_id: str = Form(""),
+    request: Request,
 ):
     try:
+        payload = await _request_values(request)
         values = _agent_metadata_form(
             agent_id=agent_id,
-            vmid=vmid,
-            computer_name=computer_name,
-            serial_number=serial_number,
-            agent_version=agent_version,
-            created_from_run_id=created_from_run_id,
+            vmid=_request_text(payload, "vmid"),
+            computer_name=_request_text(payload, "computer_name"),
+            serial_number=_request_text(payload, "serial_number"),
+            agent_version=_request_text(payload, "agent_version"),
+            created_from_run_id=_request_text(payload, "created_from_run_id"),
         )
         from web import db_pg
 
@@ -6624,14 +6765,17 @@ async def update_agent_record(
             agent_telemetry_pg.init(conn)
             updated = agent_telemetry_pg.update_agent_metadata(conn, **values)
         if updated is None:
-            return _redirect_with_error("/vms", f"Agent not found: {values['agent_id']}")
+            return _action_error_response(request, message=f"Agent not found: {values['agent_id']}", status_code=404)
     except Exception as exc:
-        return _redirect_with_error("/vms", f"Update agent failed: {exc}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Update agent failed: {exc}")
+    return _action_response(
+        request,
+        payload={"ok": True, "agent_id": values["agent_id"], "action": "update"},
+    )
 
 
 @app.post("/api/agents/{agent_id}/delete")
-async def delete_agent_record(agent_id: str):
+async def delete_agent_record(agent_id: str, request: Request):
     try:
         agent_id = _sanitize_input(_optional_text(agent_id))
         if not agent_id:
@@ -6642,10 +6786,13 @@ async def delete_agent_record(agent_id: str):
             agent_telemetry_pg.init(conn)
             deleted = agent_telemetry_pg.hard_delete_agent(conn, agent_id)
         if not deleted:
-            return _redirect_with_error("/vms", f"Agent not found: {agent_id}")
+            return _action_error_response(request, message=f"Agent not found: {agent_id}", status_code=404)
     except Exception as exc:
-        return _redirect_with_error("/vms", f"Delete agent failed: {exc}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Delete agent failed: {exc}")
+    return _action_response(
+        request,
+        payload={"ok": True, "agent_id": agent_id, "action": "delete"},
+    )
 
 
 @app.post("/api/agent-approvals/{approval_id}/approve")
@@ -6680,6 +6827,67 @@ async def approve_agent_bootstrap(approval_id: str, request: Request):
     }
 
 
+def _cache_fetched_at_iso(cache_age: float | None) -> str:
+    if cache_age is None or cache_age == float("inf"):
+        return ""
+    return datetime.fromtimestamp(
+        time.time() - cache_age, tz=timezone.utc
+    ).isoformat(timespec="seconds")
+
+
+async def _vms_fleet_payload() -> dict:
+    cache, cache_age = await _get_vms_payload()
+    vms = [dict(vm) for vm in list(cache["data"] or [])]
+    vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
+    devices, ap_error = cache["devices"] or ([], "")
+    devices = [dict(device) for device in devices]
+    hash_serials = cache["hash_serials"] or set()
+    ap_serials = {d["serial"] for d in devices}
+    serial_to_vm = {vm["serial"]: vm for vm in vms if vm.get("serial")}
+
+    matched_devices = [d for d in devices if d["serial"] in vm_serials]
+    for device in matched_devices:
+        device["has_local_hash"] = device["serial"] in hash_serials
+        if not device.get("display_name"):
+            vm = serial_to_vm.get(device["serial"])
+            if vm and vm.get("hostname"):
+                device["display_name"] = vm["hostname"]
+
+    for vm in vms:
+        vm["in_autopilot"] = vm.get("serial", "") in ap_serials
+        vm["in_intune"] = bool(vm.get("in_intune"))
+        vm["has_hash"] = vm.get("serial", "") in hash_serials
+        prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
+        seq = None
+        if prov and prov.get("sequence_id"):
+            seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
+        vm["target_os"] = (seq or {}).get("target_os") or "windows"
+        vm["sequence_name"] = (seq or {}).get("name")
+
+    missing_vms = [
+        vm for vm in vms
+        if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
+    ]
+
+    return {
+        "vms": vms,
+        "missing_vms": missing_vms,
+        "agents": _agent_inventory_rows(),
+        "autopilot_devices": matched_devices,
+        "ap_error": ap_error or "",
+        "cache_age_seconds": None if cache_age == float("inf") else int(cache_age),
+        "cache_fetched_at_iso": _cache_fetched_at_iso(cache_age),
+        "cache_refreshing": bool(_VMS_CACHE["refreshing"]),
+        "monitor_sweep": _latest_monitor_sweep_status(),
+        "generated_at": utc_now_iso(),
+    }
+
+
+@app.get("/api/vms/fleet", response_model=VmsFleetResponse)
+async def api_vms_fleet():
+    return await _vms_fleet_payload()
+
+
 @app.get("/vms", response_class=HTMLResponse)
 async def vms_page(request: Request, error: str = ""):
     current_vars = _load_vars()
@@ -6699,66 +6907,21 @@ async def vms_page(request: Request, error: str = ""):
             "library_path": str(utm_cli.utm_library_path()),
         })
 
-    cache, cache_age = await _get_vms_payload()
-    vms = list(cache["data"] or [])
-    vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
-    devices, ap_error = cache["devices"] or ([], "")
-    hash_serials = cache["hash_serials"] or set()
-    ap_serials = {d["serial"] for d in devices}
-
-    # Only show Autopilot devices that match a Proxmox VM serial
-    serial_to_vm = {vm["serial"]: vm for vm in vms if vm.get("serial")}
-    matched_devices = [d for d in devices if d["serial"] in vm_serials]
-    for d in matched_devices:
-        d["has_local_hash"] = d["serial"] in hash_serials
-        # Use guest agent hostname as fallback for empty Intune display name
-        if not d["display_name"]:
-            vm = serial_to_vm.get(d["serial"])
-            if vm and vm.get("hostname"):
-                d["display_name"] = vm["hostname"]
-
-    # Tag VMs with their Autopilot status, plus the target_os + sequence
-    # name of the sequence that provisioned them (if any). The UI uses
-    # target_os to conditionally show the Check Enrollment action for
-    # Ubuntu VMs and disable Capture Hash for them (no Autopilot hash on
-    # Linux).
-    for vm in vms:
-        vm["in_autopilot"] = vm.get("serial", "") in ap_serials
-        vm["in_intune"] = bool(vm.get("in_intune"))
-        vm["has_hash"] = vm.get("serial", "") in hash_serials
-        prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
-        seq = None
-        if prov and prov.get("sequence_id"):
-            seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
-        vm["target_os"] = (seq or {}).get("target_os") or "windows"
-        vm["sequence_name"] = (seq or {}).get("name")
-
-    # VMs needing a registration action. A device that is already
-    # Intune MDM-enrolled via hybrid/domain-join GPO is not missing,
-    # even if it has no Windows Autopilot hardware-hash identity.
-    missing_vms = [
-        vm for vm in vms
-        if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
-    ]
+    fleet = await _vms_fleet_payload()
 
     return templates.TemplateResponse("vms.html", {
         "request": request,
-        "vms": vms,
-        "devices": matched_devices,
-        "missing_vms": missing_vms,
-        "agent_devices": _agent_inventory_rows(),
-        "ap_error": ap_error,
+        "vms": fleet["vms"],
+        "devices": fleet["autopilot_devices"],
+        "missing_vms": fleet["missing_vms"],
+        "agent_devices": fleet["agents"],
+        "ap_error": fleet["ap_error"],
         "error": error,
         # Surface to the footer so the operator can tell whether
-        "cache_age_seconds": int(cache_age),
-        "cache_fetched_at_iso": (
-            datetime.fromtimestamp(
-                time.time() - cache_age, tz=timezone.utc
-            ).isoformat(timespec="seconds")
-            if cache_age is not None else ""
-        ),
-        "cache_refreshing": _VMS_CACHE["refreshing"],
-        "monitor_sweep": _latest_monitor_sweep_status(),
+        "cache_age_seconds": fleet["cache_age_seconds"],
+        "cache_fetched_at_iso": fleet["cache_fetched_at_iso"],
+        "cache_refreshing": fleet["cache_refreshing"],
+        "monitor_sweep": fleet["monitor_sweep"],
     })
 
 
@@ -8813,47 +8976,47 @@ async def vm_vnc_websocket(websocket: WebSocket, vmid: int):
 
 
 @app.post("/api/vms/{vmid}/start")
-async def vm_start(vmid: int):
+async def vm_start(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Start failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Start failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "start"})
 
 
 @app.post("/api/vms/{vmid}/shutdown")
-async def vm_shutdown(vmid: int):
+async def vm_shutdown(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/shutdown")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Shutdown failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Shutdown failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "shutdown"})
 
 
 @app.post("/api/vms/{vmid}/stop")
-async def vm_stop(vmid: int):
+async def vm_stop(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Force stop failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Force stop failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "stop"})
 
 
 @app.post("/api/vms/{vmid}/reset")
-async def vm_reset(vmid: int):
+async def vm_reset(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/reset")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Reset failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Reset failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "reset"})
 
 
 @app.post("/api/vms/{vmid}/delete")
-async def vm_delete(vmid: int):
+async def vm_delete(vmid: int, request: Request):
     import time
     try:
         node = _resolve_vm_node(vmid)
@@ -8865,8 +9028,8 @@ async def vm_delete(vmid: int):
             pass  # Already stopped or doesn't matter
         _proxmox_api_delete(f"/nodes/{node}/qemu/{vmid}")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Delete failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Delete failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "delete"})
 
 
 # Scancode mapping for typing text via QMP sendkey
@@ -8970,9 +9133,12 @@ async def vm_action_json(vmid: int, action: str):
 
 
 @app.post("/api/vms/{vmid}/type")
-async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form("")):
+async def vm_type_json(vmid: int, request: Request):
     """Type text via QMP sendkey. Returns JSON."""
     import time
+    payload = await _request_values(request)
+    text = _request_text(payload, "text")
+    press_enter = _request_text(payload, "press_enter")
     skipped = []
     keys = []
     for ch in text:
@@ -8999,8 +9165,12 @@ async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form(
 
 
 @app.post("/api/vms/{vmid}/key")
-async def vm_key_json(vmid: int, key: str = Form(...)):
+async def vm_key_json(vmid: int, request: Request):
     """Single QEMU keyname (e.g. 'ctrl-alt-delete'). Returns JSON."""
+    payload = await _request_values(request)
+    key = _request_text(payload, "key")
+    if not key:
+        return JSONResponse({"ok": False, "error": "key is required"}, status_code=400)
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
@@ -9064,7 +9234,7 @@ async def vm_rename_suggest(vmid: int):
 
 
 @app.post("/api/vms/{vmid}/rename")
-async def vm_rename(vmid: int, new_name: str = Form("")):
+async def vm_rename(vmid: int, request: Request):
     """Rename the Windows computer inside the VM.
 
     ``new_name`` is the operator's final choice (maybe with a prefix,
@@ -9073,18 +9243,20 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
     Updates the Proxmox VM name to match so /vms, /devices, and
     monitoring stay in sync.
     """
+    payload = await _request_values(request)
     try:
         node = _resolve_vm_node(vmid)
-        target = (new_name or "").strip()
+        target = _request_text(payload, "new_name").strip()
         if not target:
             target = _suggested_rename_for_vm(vmid, node)
         hostname = _sanitize_windows_hostname(target)
         if not hostname:
-            return _redirect_with_error(
-                "/vms",
-                f"Rename target '{target}' produced an empty hostname "
+            return _action_error_response(
+                request,
+                message=f"Rename target '{target}' produced an empty hostname "
                 "after sanitisation (Windows allows A-Z, 0-9, '-' only, "
                 "max 15 chars).",
+                status_code=400,
             )
         # Update Proxmox VM name (uses same sanitised form).
         _proxmox_api_put(
@@ -9102,6 +9274,18 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
             # PVE rename succeeded, guest-side didn't. User sees the
             # VM-name change; Windows-side rename requires manual
             # action or agent recovery.
+            warning = (
+                f"Renamed VM {vmid} to {hostname} (PVE only; guest "
+                "agent unreachable)"
+            )
+            if _request_wants_json(request):
+                return JSONResponse({
+                    "ok": True,
+                    "vmid": vmid,
+                    "action": "rename",
+                    "hostname": hostname,
+                    "warning": warning,
+                })
             return _redirect_with_error(
                 "/vms",
                 f"Renamed VM {vmid} to {hostname} (PVE only — guest "
@@ -9109,11 +9293,17 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
                 "Windows or reboot to pick up the new name).",
             )
     except Exception as e:
-        return _redirect_with_error("/vms", f"Rename failed: {e}")
-    return _redirect_with_error(
-        "/vms",
-        f"Renamed VM {vmid} to {hostname} — restart required to apply",
-    )
+        return _action_error_response(request, message=f"Rename failed: {e}")
+    message = f"Renamed VM {vmid} to {hostname}; restart required"
+    if _request_wants_json(request):
+        return JSONResponse({
+            "ok": True,
+            "vmid": vmid,
+            "action": "rename",
+            "hostname": hostname,
+            "message": message,
+        })
+    return _redirect_with_error("/vms", f"Renamed VM {vmid} to {hostname} — restart required to apply")
 
 
 def _latest_capture_agent(vmid: int) -> dict:
@@ -9200,10 +9390,14 @@ def _start_agent_hash_capture_job(
 
 @app.post("/api/jobs/capture-and-upload")
 async def start_capture_and_upload(
-    missing_vmids: list[str] = Form(...),
-    group_tag: str = Form(""),
+    request: Request,
 ):
     """Capture hashes for selected VMs in parallel, then upload all to Intune."""
+    payload = await _request_values(request)
+    missing_vmids = _request_list(payload, "missing_vmids")
+    if not missing_vmids:
+        missing_vmids = _request_list(payload, "vmids")
+    group_tag = _request_text(payload, "group_tag")
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
@@ -9224,7 +9418,7 @@ async def start_capture_and_upload(
             for vm in vm_list
         ]
     except ValueError as exc:
-        return _redirect_with_error("/vms", str(exc))
+        return _action_error_response(request, message=str(exc), status_code=400)
 
     import tempfile
     work_ids = [job["args"]["work_item_id"] for job in capture_jobs]
@@ -9258,43 +9452,68 @@ async def start_capture_and_upload(
     script_path.write_text("\n".join(script_lines))
     script_path.chmod(0o755)
 
-    job_manager.start("upload_after_capture", ["bash", str(script_path)],
-                      args={"vms": [v["name"] for v in vm_list], "work_item_ids": work_ids, "group_tag": group_tag, "upload": True})
+    upload_job = job_manager.start(
+        "upload_after_capture",
+        ["bash", str(script_path)],
+        args={"vms": [v["name"] for v in vm_list], "work_item_ids": work_ids, "group_tag": group_tag, "upload": True},
+    )
 
-    return RedirectResponse("/jobs", status_code=303)
+    return _action_response(
+        request,
+        payload={
+            "ok": True,
+            "action": "capture-and-upload",
+            "capture_job_ids": [job["id"] for job in capture_jobs],
+            "upload_job_id": upload_job["id"],
+        },
+        redirect="/jobs",
+    )
 
 
 @app.post("/api/jobs/bulk-capture")
 async def start_bulk_capture(
-    vmids: list[str] = Form(...),
-    group_tag: str = Form(""),
+    request: Request,
 ):
     """Capture hashes for multiple VMs in parallel (one job per VM)."""
+    payload = await _request_values(request)
+    vmids = _request_list(payload, "vmids")
+    group_tag = _request_text(payload, "group_tag")
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
     try:
+        jobs = []
         for entry in vmids:
             vmid, name = entry.split(":", 1)
             _sanitize_input(vmid)
             _sanitize_input(name)
-            _start_agent_hash_capture_job(
+            jobs.append(_start_agent_hash_capture_job(
                 vmid=int(vmid),
                 vm_name=name,
                 group_tag=group_tag,
-            )
+            ))
     except ValueError as exc:
-        return _redirect_with_error("/vms", str(exc))
+        return _action_error_response(request, message=str(exc), status_code=400)
 
-    return RedirectResponse("/jobs", status_code=303)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "bulk-capture", "job_ids": [job["id"] for job in jobs]},
+        redirect="/jobs",
+    )
 
 
 @app.post("/api/jobs/capture")
 async def start_capture(
-    vmid: int = Form(...),
-    vm_name: str = Form(""),
-    group_tag: str = Form(""),
+    request: Request,
 ):
+    payload = await _request_values(request)
+    vmid_raw = _request_text(payload, "vmid")
+    try:
+        vmid = int(vmid_raw)
+    except (TypeError, ValueError):
+        return _action_error_response(request, message="vmid is required", status_code=400)
+    vm_name = _request_text(payload, "vm_name")
+    group_tag = _request_text(payload, "group_tag")
     name = _sanitize_input(vm_name) if vm_name else f"autopilot-{vmid}"
     if group_tag:
         group_tag = _sanitize_input(group_tag)
@@ -9305,8 +9524,12 @@ async def start_capture(
             group_tag=group_tag,
         )
     except ValueError as exc:
-        return _redirect_with_error("/vms", str(exc))
-    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+        return _action_error_response(request, message=str(exc), status_code=400)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "capture", "job_id": job["id"], "redirect": f"/jobs/{job['id']}"},
+        redirect=f"/jobs/{job['id']}",
+    )
 
 
 @app.post("/api/jobs/upload")
@@ -9600,21 +9823,33 @@ async def api_get_job(job_id: str):
 
 
 @app.post("/api/autopilot/delete")
-async def delete_autopilot_device(device_id: str = Form(...)):
+async def delete_autopilot_device(request: Request):
+    payload = await _request_values(request)
+    device_id = _request_text(payload, "device_id")
+    if not device_id:
+        return _action_error_response(request, message="device_id is required", status_code=400)
     try:
         _graph_api(f"/deviceManagement/windowsAutopilotDeviceIdentities/{device_id}", method="DELETE")
-    except Exception:
-        pass
-    return RedirectResponse("/vms", status_code=303)
+    except Exception as exc:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "delete-autopilot", "device_id": device_id},
+    )
 
 
 @app.post("/api/autopilot/sync")
-async def sync_autopilot():
+async def sync_autopilot(request: Request):
     try:
         _graph_api("/deviceManagement/windowsAutopilotSettings/sync", method="POST")
-    except Exception:
-        pass
-    return RedirectResponse("/vms", status_code=303)
+    except Exception as exc:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "sync-autopilot"},
+    )
 
 
 @app.post("/api/hashes/delete")

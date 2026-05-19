@@ -1,4 +1,14 @@
-import type { JobTableRow, MonitoringOverview, OperatorPath, SignalMetric, SignalsHubResponse } from "./contracts";
+import type {
+  AgentFleetRow,
+  AutopilotDeviceFleetRow,
+  JobTableRow,
+  MonitoringOverview,
+  OperatorPath,
+  SignalMetric,
+  SignalsHubResponse,
+  VmFleetRow,
+  VmsFleetResponse
+} from "./contracts";
 
 export type StatusTone = "good" | "active" | "bad" | "neutral";
 
@@ -190,4 +200,87 @@ export function buildSignalMetrics(hub: SignalsHubResponse): readonly SignalMetr
 
 export function rankedSignalPaths(paths: readonly OperatorPath[]): readonly OperatorPath[] {
   return paths.toSorted((left, right) => left.priority - right.priority || left.label.localeCompare(right.label));
+}
+
+export interface FleetCounts {
+  readonly total: number;
+  readonly running: number;
+  readonly attention: number;
+  readonly agents: number;
+  readonly staleAgents: number;
+  readonly autopilotDevices: number;
+  readonly missingAutopilot: number;
+}
+
+export function vmDisplayName(vm: VmFleetRow): string {
+  return vm.name || vm.hostname || `VM ${String(vm.vmid)}`;
+}
+
+export function vmJoinLabels(vm: VmFleetRow): readonly string[] {
+  const labels: string[] = [];
+  if (vm.part_of_domain || vm.hybrid_joined) {
+    labels.push("domain");
+  }
+  if (vm.aad_joined || vm.entra_id_joined) {
+    labels.push("Entra ID");
+  }
+  if (vm.in_intune) {
+    labels.push("Intune");
+  }
+  if (vm.in_autopilot) {
+    labels.push("Autopilot ID");
+  }
+  if (vm.has_hash) {
+    labels.push("hash");
+  }
+  if (!labels.length && (vm.status || "").toLowerCase() === "running") {
+    labels.push("unenrolled");
+  }
+  return labels;
+}
+
+export function agentIsStale(agent: AgentFleetRow, now = Date.now()): boolean {
+  if (!agent.last_heartbeat_at) {
+    return agent.approval_status !== "pending";
+  }
+  const at = new Date(agent.last_heartbeat_at).getTime();
+  if (Number.isNaN(at)) {
+    return false;
+  }
+  return now - at > 15 * 60 * 1000;
+}
+
+export function summarizeFleet(fleet: VmsFleetResponse): FleetCounts {
+  const running = fleet.vms.filter((vm) => (vm.status || "").toLowerCase() === "running").length;
+  const attention = fleet.vms.filter((vm) => vmJoinLabels(vm).includes("unenrolled")).length + fleet.missing_vms.length;
+  return {
+    total: fleet.vms.length,
+    running,
+    attention,
+    agents: fleet.agents.length,
+    staleAgents: fleet.agents.filter((agent) => agentIsStale(agent)).length,
+    autopilotDevices: fleet.autopilot_devices.length,
+    missingAutopilot: fleet.missing_vms.length
+  };
+}
+
+export function vmMatchesFilter(vm: VmFleetRow, filter: string): boolean {
+  const query = filter.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+  return [
+    String(vm.vmid),
+    vm.name,
+    vm.hostname,
+    vm.serial,
+    vm.status,
+    vm.ip_address,
+    vm.sequence_name,
+    ...vmJoinLabels(vm)
+  ].some((value) => fallbackText(value).toLowerCase().includes(query));
+}
+
+export function deviceDisplayName(device: AutopilotDeviceFleetRow): string {
+  return device.display_name || device.serial || device.id || "-";
 }

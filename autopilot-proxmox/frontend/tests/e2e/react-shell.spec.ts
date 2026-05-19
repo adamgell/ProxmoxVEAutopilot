@@ -220,6 +220,59 @@ async function mockReadApis(page: Page) {
       }
     });
   });
+  await page.route("**/api/vms/fleet", async (route) => {
+    await route.fulfill({
+      json: {
+        generated_at: "2026-05-19T00:00:00Z",
+        cache_age_seconds: 14,
+        cache_refreshing: false,
+        monitor_sweep: { running: false, vm_count: 1 },
+        ap_error: "",
+        vms: [
+          {
+            vmid: 108,
+            name: "WrkGrp-525570B6",
+            hostname: "WRKGRP-525570B6",
+            serial: "WrkGrp-525570B6",
+            status: "running",
+            ip_address: "192.168.2.49",
+            in_autopilot: true,
+            in_intune: false,
+            aad_joined: true,
+            part_of_domain: false,
+            has_hash: true,
+            target_os: "windows"
+          }
+        ],
+        missing_vms: [],
+        agents: [
+          {
+            agent_id: "agent-wrkgrp-525570b6",
+            approval_status: "active",
+            vmid: 108,
+            computer_name: "WRKGRP-525570B6",
+            primary_ipv4: "192.168.2.49",
+            qga_state: "Running",
+            current_phase: "cloudosd",
+            last_heartbeat_at: "2026-05-19T00:00:00Z",
+            hash_capture_supported: true
+          }
+        ],
+        autopilot_devices: [
+          {
+            id: "device-1",
+            serial: "WrkGrp-525570B6",
+            display_name: "WRKGRP-525570B6",
+            group_tag: "Lab",
+            profile_status: "assigned",
+            profile_ok: true,
+            enrollment_state: "enrolled",
+            has_local_hash: true
+          }
+        ]
+      }
+    });
+  });
 }
 
 test("renders the React shell without layout overlap", async ({ page }) => {
@@ -309,5 +362,27 @@ for (const viewport of [
       throw new Error("Signals Hub layout regions were not measurable.");
     }
     expect(header.y + header.height).toBeLessThanOrEqual(metrics.y + 1);
+  });
+
+  test(`renders VMs Fleet route without overlap on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockReadApis(page);
+    await page.goto("/react/vms");
+
+    await expect(page.getByRole("heading", { name: "VMs", exact: true })).toBeVisible();
+    await expect(page.getByText("WrkGrp-525570B6").first()).toBeVisible();
+    await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Console VM 108" })).toHaveAttribute("href", "/api/vms/108/console");
+
+    const metrics = await page.locator(".metric-strip--fleet").boundingBox();
+    const filter = await page.locator(".filter").boundingBox();
+    expect(metrics).not.toBeNull();
+    expect(filter).not.toBeNull();
+    if (!metrics || !filter) {
+      throw new Error("VMs layout regions were not measurable.");
+    }
+    expect(metrics.y + metrics.height).toBeLessThanOrEqual(filter.y + 1);
   });
 }

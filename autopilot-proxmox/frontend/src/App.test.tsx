@@ -230,6 +230,55 @@ const dashboardResponses: Record<string, unknown> = {
   "/api/version": {
     sha_short: "abc1234",
     build_time: "2026-05-18T12:00:00Z"
+  },
+  "/api/vms/fleet": {
+    generated_at: "2026-05-19T00:00:00Z",
+    cache_age_seconds: 12,
+    cache_refreshing: false,
+    monitor_sweep: { running: false, vm_count: 1 },
+    ap_error: "",
+    vms: [
+      {
+        vmid: 108,
+        name: "WrkGrp-525570B6",
+        hostname: "WRKGRP-525570B6",
+        serial: "WrkGrp-525570B6",
+        status: "running",
+        ip_address: "192.168.2.49",
+        in_autopilot: true,
+        in_intune: false,
+        aad_joined: true,
+        part_of_domain: false,
+        has_hash: true,
+        target_os: "windows"
+      }
+    ],
+    missing_vms: [],
+    agents: [
+      {
+        agent_id: "agent-wrkgrp-525570b6",
+        approval_status: "active",
+        vmid: 108,
+        computer_name: "WRKGRP-525570B6",
+        primary_ipv4: "192.168.2.49",
+        qga_state: "Running",
+        current_phase: "cloudosd",
+        last_heartbeat_at: "2026-05-19T00:00:00Z",
+        hash_capture_supported: true
+      }
+    ],
+    autopilot_devices: [
+      {
+        id: "device-1",
+        serial: "WrkGrp-525570B6",
+        display_name: "WRKGRP-525570B6",
+        group_tag: "Lab",
+        profile_status: "assigned",
+        profile_ok: true,
+        enrollment_state: "enrolled",
+        has_local_hash: true
+      }
+    ]
   }
 };
 
@@ -283,6 +332,24 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^clone$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /winpe/i })).not.toBeInTheDocument();
+  });
+
+  test("renders the VMs fleet workspace with full-control affordances", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/vms");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /^VMs$/ })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText("WrkGrp-525570B6").length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText("agent-wrkgrp-525570b6")).toBeInTheDocument();
+    expect(screen.getAllByText("WRKGRP-525570B6").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Screenshot VM 108" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete VM 108" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Console VM 108" })).toHaveAttribute("href", "/api/vms/108/console");
   });
 
   test("renders the dashboard read-only slice from API data", async () => {

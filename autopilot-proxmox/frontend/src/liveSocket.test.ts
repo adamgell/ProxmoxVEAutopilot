@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  fleetSubscribeMessage,
+  isAgentsLiveMessage,
+  isFleetLiveMessage,
   isJobsLiveMessage,
   jobsSubscribeMessage,
   liveSocketUrl,
@@ -18,6 +21,21 @@ describe("liveSocketUrl", () => {
     expect(liveSocketUrl("https://autopilot.example")).toBe(
       "wss://autopilot.example/api/live/ws"
     );
+  });
+});
+
+describe("fleet live socket messages", () => {
+  test("builds a fleet and agents topic subscription payload", () => {
+    expect(fleetSubscribeMessage()).toBe(JSON.stringify({ type: "subscribe", topics: ["fleet", "agents"] }));
+  });
+
+  test("detects fleet and agents snapshots and patches", () => {
+    expect(isFleetLiveMessage({ topic: "fleet", type: "snapshot", data: { rows: [] } })).toBe(true);
+    expect(isFleetLiveMessage({ topic: "fleet", type: "patch", rows: [] })).toBe(true);
+    expect(isFleetLiveMessage({ topic: "jobs", type: "snapshot", data: {} })).toBe(false);
+    expect(isAgentsLiveMessage({ topic: "agents", type: "snapshot", data: { agents: [] } })).toBe(true);
+    expect(isAgentsLiveMessage({ topic: "agents", type: "patch", agents: [] })).toBe(true);
+    expect(isAgentsLiveMessage({ topic: "fleet", type: "snapshot", data: {} })).toBe(false);
   });
 });
 
