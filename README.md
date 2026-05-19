@@ -114,6 +114,8 @@ heartbeat, hash capture/upload state, and CloudOSD/WinPE readiness evidence.
 
 Full runbook:
 
+- [docs/index.html](docs/index.html) — GitHub Pages entry point for the
+  customer-facing guide and visual flowcharts
 - [docs/customer/README.md](docs/customer/README.md) — customer-facing overview
   and workflow explanations
 - [docs/FIRST_RUN_E2E.md](docs/FIRST_RUN_E2E.md)

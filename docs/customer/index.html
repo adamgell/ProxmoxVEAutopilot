@@ -149,6 +149,20 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
+    .flow-preview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .mini-flow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
     .card {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -235,6 +249,67 @@
       font-size: 13px;
     }
 
+    .mini-flow {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 15px;
+    }
+
+    .mini-flow-row,
+    .mini-branch-row {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .mini-flow-row {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .mini-branch-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .mini-step {
+      position: relative;
+      min-height: 74px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mini-step strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .mini-flow-row .mini-step:not(:last-child)::after {
+      content: "->";
+      position: absolute;
+      right: -13px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+      z-index: 2;
+    }
+
+    .mini-step.script {
+      background: #f8fbff;
+      border-color: var(--script);
+    }
+
+    .mini-step.accent {
+      background: var(--accent);
+      border-color: var(--accent-border);
+    }
+
     .links {
       display: flex;
       flex-wrap: wrap;
@@ -255,6 +330,50 @@
       font-size: 14px;
     }
 
+    .flow-preview {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .flow-preview-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .flow-preview-head p {
+      margin-top: 4px;
+      font-size: 14px;
+    }
+
+    .flow-preview-head a {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 13px;
+      background: #fff;
+    }
+
+    .flow-preview iframe {
+      display: block;
+      width: 100%;
+      height: 560px;
+      border: 0;
+      background: #fff;
+    }
+
     code {
       color: var(--ink);
       background: #f0f3f8;
@@ -272,11 +391,19 @@
       .phase-grid,
       .two-col,
       .ready-grid,
+      .mini-flow-grid,
+      .mini-flow-row,
+      .mini-branch-row,
+      .flow-preview-grid,
       .flow {
         grid-template-columns: 1fr;
       }
 
       .phase::after {
+        content: "";
+      }
+
+      .mini-flow-row .mini-step:not(:last-child)::after {
         content: "";
       }
     }
@@ -293,6 +420,7 @@
         <a href="#setup">Initial Setup</a>
         <a href="#deployments">Deployments</a>
         <a href="#readiness">Readiness</a>
+        <a href="#flowcharts">Flowcharts</a>
         <a href="#docs">Docs</a>
       </nav>
     </div>
@@ -417,6 +545,85 @@
             <h3>Artifact Ready</h3>
             <p>Built from source, uploaded with metadata, hashed, and promoted to Proxmox ISO storage.</p>
           </div>
+        </div>
+      </section>
+
+      <section id="flowcharts">
+        <h2>Visual Flowcharts</h2>
+        <p>
+          These previews show the two major customer-facing flows directly in the guide. Open the full-page view when you need to zoom into the detailed Mermaid chart.
+        </p>
+
+        <div class="mini-flow-grid" aria-label="Compact visual flowcharts">
+          <div class="mini-flow">
+            <h3>Setup Flow</h3>
+            <div class="mini-flow-row">
+              <div class="mini-step foundation">
+                <strong>Foundation</strong>
+                PVE access, storage, network, controller VM
+              </div>
+              <div class="mini-step script">
+                <strong>Bootstrap</strong>
+                Installer starts the controller stack and media gates
+              </div>
+              <div class="mini-step operational">
+                <strong>Operational</strong>
+                Artifacts promoted, services healthy, <code>/setup</code> ready
+              </div>
+            </div>
+          </div>
+
+          <div class="mini-flow">
+            <h3>Deployment Flow</h3>
+            <div class="mini-branch-row">
+              <div class="mini-step workstation">
+                <strong>Workstation</strong>
+                OSDCloud client Windows, Autopilot hash, optional Intune
+              </div>
+              <div class="mini-step server">
+                <strong>Server</strong>
+                OSDeploy Windows Server, optional domain or server role
+              </div>
+            </div>
+            <div class="mini-flow-row">
+              <div class="mini-step">
+                <strong>Task Sequence v2</strong>
+                Plan, preflight, run tracking
+              </div>
+              <div class="mini-step accent">
+                <strong>WinPE Install</strong>
+                Apply OS, drivers, agent bootstrap
+              </div>
+              <div class="mini-step operational">
+                <strong>Evidence</strong>
+                Heartbeat, readiness, hash, domain, or role state
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flow-preview-grid">
+          <article class="flow-preview">
+            <div class="flow-preview-head">
+              <div>
+                <h3>Initial Stack Setup</h3>
+                <p>Foundation, Bootstrap, and Operational readiness from the Proxmox console installer.</p>
+              </div>
+              <a href="../initial-stack-setup-flowchart.html">Open full</a>
+            </div>
+            <iframe src="../initial-stack-setup-flowchart.html" title="Initial stack setup flowchart"></iframe>
+          </article>
+
+          <article class="flow-preview">
+            <div class="flow-preview-head">
+              <div>
+                <h3>Windows Deployment Lifecycle</h3>
+                <p>Workstation and server deployment paths with Task Sequence v2, domain join, Autopilot, and role work.</p>
+              </div>
+              <a href="../osdcloud-osdeploy-flowchart.html">Open full</a>
+            </div>
+            <iframe src="../osdcloud-osdeploy-flowchart.html" title="OSDCloud and OSDeploy lifecycle flowchart"></iframe>
+          </article>
         </div>
       </section>
 

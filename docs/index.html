@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proxmox VE Autopilot Docs</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #657188;
+      --line: #dce3ee;
+      --panel: #ffffff;
+      --bg: #f6f8fb;
+      --accent: #11253f;
+      --foundation: #eef3ff;
+      --bootstrap: #e9f7f1;
+      --operational: #eaf8ff;
+      --warning: #fff4db;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 34px 36px 24px;
+    }
+
+    main {
+      padding: 28px 36px 56px;
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 7px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .lead {
+      max-width: 900px;
+      font-size: 16px;
+    }
+
+    .primary-actions,
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    a.button,
+    .links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: #fff;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    a.primary {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    section {
+      margin-bottom: 24px;
+      padding: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(23, 32, 51, 0.04);
+    }
+
+    .phase-grid,
+    .card-grid {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .phase-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .mini-flow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .card,
+    .phase {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 15px;
+      min-height: 128px;
+    }
+
+    .phase {
+      position: relative;
+    }
+
+    .phase::after {
+      content: "->";
+      position: absolute;
+      right: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .phase:last-child::after {
+      content: "";
+    }
+
+    .foundation {
+      background: var(--foundation);
+      border-color: #3c64b1;
+    }
+
+    .bootstrap {
+      background: var(--bootstrap);
+      border-color: #2c8f62;
+    }
+
+    .operational {
+      background: var(--operational);
+      border-color: #237aa2;
+    }
+
+    .flow-frame {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .mini-flow {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 15px;
+    }
+
+    .mini-flow-row,
+    .mini-branch-row {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .mini-flow-row {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .mini-branch-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .mini-step {
+      position: relative;
+      min-height: 74px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mini-step strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .mini-flow-row .mini-step:not(:last-child)::after {
+      content: "->";
+      position: absolute;
+      right: -13px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+      z-index: 2;
+    }
+
+    .script {
+      background: #f8fbff;
+      border-color: var(--accent);
+    }
+
+    .warning {
+      background: var(--warning);
+      border-color: #c98216;
+    }
+
+    .flow-frame-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .flow-frame-head p {
+      margin-top: 4px;
+      font-size: 14px;
+    }
+
+    .flow-frame iframe {
+      display: block;
+      width: 100%;
+      height: 520px;
+      border: 0;
+      background: #fff;
+    }
+
+    code {
+      color: var(--ink);
+      background: #f0f3f8;
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+
+    @media (max-width: 980px) {
+      header,
+      main {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .phase-grid,
+      .card-grid,
+      .mini-flow-grid,
+      .mini-flow-row,
+      .mini-branch-row {
+        grid-template-columns: 1fr;
+      }
+
+      .phase::after {
+        content: "";
+      }
+
+      .mini-flow-row .mini-step:not(:last-child)::after {
+        content: "";
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Proxmox VE Autopilot Docs</h1>
+      <p class="lead">
+        Customer-facing setup, deployment, and readiness documentation for the Proxmox VE Autopilot stack. This page is the GitHub Pages entry point for the repository docs folder.
+      </p>
+      <div class="primary-actions">
+        <a class="button primary" href="customer/index.html">Open Customer Guide</a>
+        <a class="button" href="initial-stack-setup-flowchart.html">Setup Flowchart</a>
+        <a class="button" href="osdcloud-osdeploy-flowchart.html">Deployment Flowchart</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section>
+        <h2>Setup Lifecycle</h2>
+        <p>
+          The console installer does most of the stack creation and moves the environment through three customer-visible phases.
+        </p>
+        <div class="phase-grid">
+          <div class="phase foundation">
+            <h3>Foundation</h3>
+            <p>Prepare Proxmox access, storage, networking, and the Ubuntu controller VM.</p>
+          </div>
+          <div class="phase bootstrap">
+            <h3>Bootstrap</h3>
+            <p>Start the controller stack, satisfy media requirements, and publish setup state.</p>
+          </div>
+          <div class="phase operational">
+            <h3>Operational</h3>
+            <p>Build and promote artifacts, verify services, and make <code>/setup</code> ready.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Customer Guide</h2>
+        <p>
+          Start here when explaining the stack to a customer or internal operator. The guide separates high-level behavior from detailed runbooks.
+        </p>
+        <div class="card-grid">
+          <div class="card">
+            <h3>Initial Setup</h3>
+            <p>What the installer creates, what the controller owns, and what readiness means.</p>
+            <div class="links">
+              <a href="customer/INITIAL_STACK_SETUP.md">Read setup doc</a>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Deployment Workflows</h3>
+            <p>How workstation OSDCloud and server OSDeploy paths fit into Task Sequence v2.</p>
+            <div class="links">
+              <a href="customer/WINDOWS_DEPLOYMENT_WORKFLOWS.md">Read workflow doc</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Visual Flowcharts</h2>
+        <p>
+          The embedded preview below keeps the setup flow visible on the Pages landing page. The customer guide includes both setup and deployment chart previews.
+        </p>
+        <div class="mini-flow-grid" aria-label="Compact visual flowcharts">
+          <div class="mini-flow">
+            <h3>Setup</h3>
+            <div class="mini-flow-row">
+              <div class="mini-step foundation"><strong>Foundation</strong>PVE host and controller VM</div>
+              <div class="mini-step script"><strong>Bootstrap</strong>Runtime, media, setup state</div>
+              <div class="mini-step operational"><strong>Operational</strong>Artifacts and readiness</div>
+            </div>
+          </div>
+          <div class="mini-flow">
+            <h3>Deployment</h3>
+            <div class="mini-branch-row">
+              <div class="mini-step bootstrap"><strong>Workstation</strong>OSDCloud and Autopilot</div>
+              <div class="mini-step foundation"><strong>Server</strong>OSDeploy and roles</div>
+            </div>
+            <div class="mini-flow-row">
+              <div class="mini-step"><strong>Task Sequence v2</strong>Plan and preflight</div>
+              <div class="mini-step warning"><strong>WinPE</strong>Apply OS and agent</div>
+              <div class="mini-step operational"><strong>Evidence</strong>Heartbeat and readiness</div>
+            </div>
+          </div>
+        </div>
+        <div class="flow-frame">
+          <div class="flow-frame-head">
+            <div>
+              <h3>Initial Stack Setup</h3>
+              <p>Foundation -> Bootstrap -> Operational, driven by the Proxmox console installer.</p>
+            </div>
+            <a class="button" href="initial-stack-setup-flowchart.html">Open full</a>
+          </div>
+          <iframe src="initial-stack-setup-flowchart.html" title="Initial stack setup flowchart"></iframe>
+        </div>
+      </section>
+
+      <section>
+        <h2>Runbooks</h2>
+        <p>
+          These are deeper operator references that support the customer-facing guide.
+        </p>
+        <div class="links">
+          <a href="customer/README.md">Customer Markdown Guide</a>
+          <a href="customer/OPERATIONAL_READINESS.md">Operational Readiness</a>
+          <a href="FIRST_RUN_E2E.md">First Run E2E</a>
+          <a href="PVE_INIT.md">PVE Init</a>
+          <a href="WINDOWS_BUILD_BOX.md">Windows Build Box</a>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
