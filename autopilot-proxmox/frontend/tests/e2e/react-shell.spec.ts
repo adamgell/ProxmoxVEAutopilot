@@ -381,6 +381,18 @@ for (const viewport of [
     await expect(page.getByRole("link", { name: "Open legacy console" })).toHaveAttribute("href", "/vms/108/console");
     await page.getByRole("button", { name: "Expand console" }).click();
     await expect(page.locator(".vm-action-workspace--expanded")).toBeVisible();
+    const expandedTarget = await page.locator(".vm-action-workspace--expanded .vm-action-workspace__target").boundingBox();
+    const expandedTabs = await page.locator(".vm-action-workspace--expanded .vm-action-tabs").boundingBox();
+    const expandedConsole = await page.locator(".vm-action-workspace--expanded .vm-console-screen").boundingBox();
+    expect(expandedTarget).not.toBeNull();
+    expect(expandedTabs).not.toBeNull();
+    expect(expandedConsole).not.toBeNull();
+    if (!expandedTarget || !expandedTabs || !expandedConsole) {
+      throw new Error("Expanded VM action workspace regions were not measurable.");
+    }
+    expect(expandedTarget.height).toBeLessThanOrEqual(90);
+    expect(expandedTabs.height).toBeLessThanOrEqual(44);
+    expect(expandedConsole.height).toBeGreaterThan(expandedTarget.height + expandedTabs.height);
     await page.getByRole("button", { name: "Minimize action" }).click();
     await expect(page.getByRole("button", { name: "Restore action" })).toBeVisible();
 
