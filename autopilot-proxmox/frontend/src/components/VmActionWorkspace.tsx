@@ -11,6 +11,13 @@ export interface VmActionSelection {
   readonly vm: VmFleetRow;
 }
 
+type WorkspaceLayout = "rail" | "expanded" | "minimized";
+
+interface WorkspaceLayoutState {
+  readonly layout: WorkspaceLayout;
+  readonly vmid?: number;
+}
+
 export type ScreenshotWorkspaceState =
   | { readonly status: "idle" }
   | { readonly status: "requesting"; readonly vmid: number; readonly correlationId: string; readonly message: string }
@@ -54,19 +61,52 @@ export function VmActionWorkspace({
 }) {
   const vm = selection?.vm ?? null;
   const mode = selection?.mode ?? "console";
+  const [layoutState, setLayoutState] = useState<WorkspaceLayoutState>({ layout: "rail" });
+  const selectedVmid = vm?.vmid;
+  const layout = layoutState.vmid === selectedVmid ? layoutState.layout : "rail";
+
+  const setWorkspaceLayout = useCallback((nextLayout: WorkspaceLayout) => {
+    setLayoutState(selectedVmid === undefined ? { layout: nextLayout } : { layout: nextLayout, vmid: selectedVmid });
+  }, [selectedVmid]);
+
+  const expanded = layout === "expanded";
+  const minimized = layout === "minimized";
+  const workspaceClass = [
+    "vm-action-workspace",
+    expanded ? "vm-action-workspace--expanded" : "",
+    minimized ? "vm-action-workspace--minimized" : ""
+  ].filter(Boolean).join(" ");
 
   return (
-    <aside className="vm-action-workspace" role="region" aria-label="VM action workspace">
+    <aside className={workspaceClass} role="region" aria-label="VM action workspace">
       <header className="vm-action-workspace__head">
         <div>
           <span className="eyebrow">Action</span>
           <h2>{vm ? `VM ${String(vm.vmid)} action` : "VM action"}</h2>
         </div>
-        {vm ? <button type="button" className="fleet-action" onClick={onClose}>Clear</button> : null}
+        {vm ? (
+          <div className="vm-action-window-controls" aria-label="Action workspace controls">
+            {minimized ? (
+              <button type="button" className="fleet-action" onClick={() => { setWorkspaceLayout("rail"); }}>Restore action</button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="fleet-action"
+                  onClick={() => { setWorkspaceLayout(expanded ? "rail" : "expanded"); }}
+                >
+                  {expanded ? "Dock console" : "Expand console"}
+                </button>
+                <button type="button" className="fleet-action" onClick={() => { setWorkspaceLayout("minimized"); }}>Minimize action</button>
+              </>
+            )}
+            <button type="button" className="fleet-action" onClick={onClose}>Clear</button>
+          </div>
+        ) : null}
       </header>
 
       {vm ? (
-        <>
+        <div className="vm-action-workspace__body" aria-hidden={minimized}>
           <div className="vm-action-workspace__target">
             <span className={statusClass(vm.status)}>{statusLabel(vm.status)}</span>
             <strong>{vmDisplayName(vm)}</strong>
@@ -106,7 +146,7 @@ export function VmActionWorkspace({
               onRequestScreenshot={onRequestScreenshot}
             />
           ) : null}
-        </>
+        </div>
       ) : (
         <div className="vm-action-empty">
           <h3>Choose a VM action</h3>

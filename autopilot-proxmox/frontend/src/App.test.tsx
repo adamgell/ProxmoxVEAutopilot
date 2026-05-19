@@ -365,6 +365,13 @@ describe("App", () => {
     expect(screen.getByRole("region", { name: "VM action workspace" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "VM 108 action" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open legacy console" })).toHaveAttribute("href", "/vms/108/console");
+    fireEvent.click(screen.getByRole("button", { name: "Expand console" }));
+    expect(screen.getByRole("region", { name: "VM action workspace" })).toHaveClass("vm-action-workspace--expanded");
+    fireEvent.click(screen.getByRole("button", { name: "Minimize action" }));
+    expect(screen.getByRole("region", { name: "VM action workspace" })).toHaveClass("vm-action-workspace--minimized");
+    expect(screen.getByRole("button", { name: "Restore action" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore action" }));
+    expect(screen.getByRole("region", { name: "VM action workspace" })).not.toHaveClass("vm-action-workspace--minimized");
 
     fireEvent.click(screen.getByRole("button", { name: "Screenshot VM 108" }));
     expect(screen.getByRole("heading", { name: "Screenshot" })).toBeInTheDocument();

@@ -379,6 +379,10 @@ for (const viewport of [
     await page.getByRole("button", { name: "Console VM 108" }).click();
     await expect(page.getByRole("region", { name: "VM action workspace" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Open legacy console" })).toHaveAttribute("href", "/vms/108/console");
+    await page.getByRole("button", { name: "Expand console" }).click();
+    await expect(page.locator(".vm-action-workspace--expanded")).toBeVisible();
+    await page.getByRole("button", { name: "Minimize action" }).click();
+    await expect(page.getByRole("button", { name: "Restore action" })).toBeVisible();
 
     const metrics = await page.locator(".metric-strip--fleet").boundingBox();
     const filter = await page.locator(".filter").boundingBox();

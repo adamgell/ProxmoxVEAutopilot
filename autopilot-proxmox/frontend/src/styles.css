@@ -981,6 +981,23 @@ h3 {
   background: var(--surface);
 }
 
+.vm-action-workspace--expanded {
+  position: fixed;
+  z-index: 45;
+  top: 88px;
+  right: 24px;
+  bottom: 24px;
+  left: clamp(280px, 17vw, 340px);
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 16px;
+  box-shadow: 0 22px 70px rgb(0 0 0 / 46%);
+}
+
+.vm-action-workspace--minimized {
+  padding: 10px 12px;
+  gap: 0;
+}
+
 .vm-action-workspace__head {
   display: flex;
   justify-content: space-between;
@@ -995,6 +1012,25 @@ h3 {
   font-size: 20px;
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.vm-action-window-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+
+.vm-action-workspace__body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.vm-action-workspace--minimized .vm-action-workspace__body {
+  display: none;
 }
 
 .vm-action-workspace__target {
@@ -1044,6 +1080,8 @@ h3 {
 .vm-screenshot-panel {
   display: grid;
   gap: 10px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
   min-width: 0;
 }
 
@@ -1100,6 +1138,11 @@ h3 {
   background: #05070b;
 }
 
+.vm-action-workspace--expanded .vm-console-screen {
+  height: min(72vh, 860px);
+  max-height: none;
+}
+
 .vm-console-screen canvas {
   max-width: 100%;
   height: auto;
@@ -1113,6 +1156,10 @@ h3 {
   border: 1px solid var(--line-soft);
   border-radius: 6px;
   background: #05070b;
+}
+
+.vm-action-workspace--expanded .vm-screenshot-image {
+  max-height: 72vh;
 }
 
 .vm-action-empty {
@@ -1151,8 +1198,27 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .vm-action-workspace--expanded {
+    inset: 76px 14px 14px;
+  }
+
   .fleet-primary-stack .fleet-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .vm-action-workspace--expanded {
+    inset: 68px 10px 10px;
+    padding: 12px;
+  }
+
+  .vm-action-workspace--expanded .vm-console-screen {
+    height: 62vh;
+  }
+
+  .vm-action-window-controls {
+    justify-content: flex-start;
   }
 }
 
