@@ -566,6 +566,7 @@ describe("App", () => {
 
     expect(screen.getByRole("progressbar", { name: "Signals loading" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Signals Hub" })).toBeInTheDocument();
+    expect(screen.queryByText("2026-05-18T12:00:00Z")).not.toBeInTheDocument();
     expect((await screen.findAllByText("Runtime containers")).length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(screen.queryByRole("progressbar", { name: "Signals loading" })).not.toBeInTheDocument();
@@ -577,7 +578,7 @@ describe("App", () => {
       "href",
       "/monitoring/settings"
     );
-    expect(screen.getByText("May 19 00:00Z")).toBeInTheDocument();
+    expect(screen.queryByText(/May 19 00:00Z/u)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Deployment speed" })).toBeInTheDocument();
     expect(screen.getByText("Windows setup")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Lifecycle lanes" })).toBeInTheDocument();

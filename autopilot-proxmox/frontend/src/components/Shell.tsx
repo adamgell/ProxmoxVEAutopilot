@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import type { AppBootstrap } from "../contracts";
 import { operatorNavGroups, reactRouteForPath } from "../routes";
+import { formatShortDateTime } from "../viewModels";
 
 function currentPageLabel(path: string): string {
   return reactRouteForPath(path)?.label ?? "Shell";
@@ -62,7 +63,9 @@ export function OperatorShell({
           <div className="workspace__status" aria-label="Runtime status">
             {socketState ? <span className={`socket-state socket-state--${socketState}`}>Live {socketState}</span> : null}
             <span>{buildLabel}</span>
-            {bootstrap.buildTime ? <time dateTime={bootstrap.buildTime}>{bootstrap.buildTime}</time> : null}
+            {bootstrap.buildTime ? (
+              <time dateTime={bootstrap.buildTime}>{formatShortDateTime(bootstrap.buildTime)}</time>
+            ) : null}
           </div>
         </header>
         <main id="react-content" className="workspace__content" tabIndex={-1}>{children}</main>

@@ -31,8 +31,6 @@ export const jobStatusFilters = ["all", "failed", "running", "queued", "complete
 
 export type JobStatusFilter = (typeof jobStatusFilters)[number];
 
-const shortMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
-
 export function fallbackText(value: unknown): string {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -49,7 +47,7 @@ export function fallbackText(value: unknown): string {
   }
 }
 
-export function formatShortDateTime(value: unknown): string {
+export function formatShortDateTime(value: unknown, timeZone?: string): string {
   if (typeof value !== "string" || !value.trim()) {
     return "-";
   }
@@ -57,11 +55,28 @@ export function formatShortDateTime(value: unknown): string {
   if (Number.isNaN(date.getTime())) {
     return fallbackText(value);
   }
-  const month = shortMonths[date.getUTCMonth()] ?? "";
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const hour = String(date.getUTCHours()).padStart(2, "0");
-  const minute = String(date.getUTCMinutes()).padStart(2, "0");
-  return `${month} ${day} ${hour}:${minute}Z`;
+  const options: Intl.DateTimeFormatOptions = {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    timeZoneName: "short"
+  };
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+  const parts = new Intl.DateTimeFormat("en-US", options).formatToParts(date);
+  const partValue = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const month = partValue("month");
+  const day = partValue("day");
+  const hour = partValue("hour");
+  const minute = partValue("minute");
+  const dayPeriod = partValue("dayPeriod");
+  const zoneName = partValue("timeZoneName");
+  return [month && day ? `${month} ${day},` : "", `${hour}:${minute}`, dayPeriod, zoneName]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function formatRelativeAge(value: unknown, now = Date.now()): string {

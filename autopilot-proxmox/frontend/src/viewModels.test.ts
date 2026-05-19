@@ -32,7 +32,9 @@ describe("operator view models", () => {
     expect(fallbackText(" controller ")).toBe(" controller ");
     expect(formatPercent(72)).toBe("72%");
     expect(formatPercent(undefined)).toBe("-");
-    expect(formatShortDateTime("2026-05-19T00:05:00Z")).toBe("May 19 00:05Z");
+    expect(formatShortDateTime("2026-05-19T00:05:00Z", "America/New_York")).toBe("May 18, 8:05 PM EDT");
+    expect(formatShortDateTime("2026-05-19T00:05:00Z", "UTC")).toBe("May 19, 12:05 AM UTC");
+    expect(formatShortDateTime("2026-05-19T00:05:00Z", "America/New_York")).not.toContain("Z");
     expect(formatShortDateTime("not-a-date")).toBe("not-a-date");
     expect(formatRelativeAge("2026-05-19T00:00:30Z", Date.parse("2026-05-19T00:01:00Z"))).toBe("last 30s");
     expect(formatRelativeAge("2026-05-19T00:00:00Z", Date.parse("2026-05-19T00:09:00Z"))).toBe("last 9m");
