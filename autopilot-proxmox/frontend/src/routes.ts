@@ -63,9 +63,8 @@ export const operatorFlows: readonly OperatorFlow[] = [
     id: "deploy",
     label: "Deploy",
     group: "Deploy",
-    summary: "Start with readiness, then open the existing execution flow.",
+    summary: "Choose the deployment path, then open the guarded execution page.",
     steps: [
-      { label: "Signals Hub", href: "/react/monitoring", group: "Observe", state: "React" },
       { label: "OSDeploy Server", href: "/osdeploy", group: "Deploy", state: "Jinja" },
       { label: "OSDCloud Desktop", href: "/cloudosd", group: "Deploy", state: "Jinja" },
       { label: "Provision", href: "/provision", group: "Deploy", state: "Jinja" }
@@ -75,9 +74,8 @@ export const operatorFlows: readonly OperatorFlow[] = [
     id: "build",
     label: "Build",
     group: "Build",
-    summary: "Watch build host signals before opening legacy build pages.",
+    summary: "Open build orchestration, templates, and generated media.",
     steps: [
-      { label: "Signals Hub", href: "/react/monitoring", group: "Observe", state: "React" },
       { label: "Task Engine", href: "/task-engine", group: "Build", state: "Jinja" },
       { label: "Template", href: "/template", group: "Build", state: "Jinja" },
       { label: "Answer ISOs", href: "/answer-isos", group: "Build", state: "Jinja" }
@@ -89,7 +87,6 @@ export const operatorFlows: readonly OperatorFlow[] = [
     group: "Fleet",
     summary: "Triage VM, device, hash, and artifact evidence.",
     steps: [
-      { label: "Signals Hub", href: "/react/monitoring", group: "Observe", state: "React" },
       { label: "VMs", href: "/vms", group: "Fleet", state: "Jinja" },
       { label: "Devices", href: "/devices", group: "Fleet", state: "Jinja" },
       { label: "Hashes", href: "/hashes", group: "Fleet", state: "Jinja" }

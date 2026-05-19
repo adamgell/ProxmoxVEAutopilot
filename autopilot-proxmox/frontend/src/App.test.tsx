@@ -277,7 +277,7 @@ describe("App", () => {
     expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getAllByRole("link", { name: "OSDCloud Desktop legacy page" })[0]).toHaveAttribute("href", "/cloudosd");
     expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
-    expect(screen.getByText("Start with readiness, then open the existing execution flow.")).toBeInTheDocument();
+    expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
     expect(screen.getAllByText("Jinja").length).toBeGreaterThan(0);
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();

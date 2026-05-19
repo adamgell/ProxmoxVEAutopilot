@@ -58,12 +58,14 @@ describe("operator route registry", () => {
       "Fleet",
       "Settings"
     ]);
-    expect(operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "React"))).toEqual(
+    const reactSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "React"));
+    expect(reactSteps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" })
       ])
     );
+    expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
     expect(operatorFlows.find((flow) => flow.id === "deploy")?.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "OSDeploy Server", href: "/osdeploy", state: "Jinja" }),
