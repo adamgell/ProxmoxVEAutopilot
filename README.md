@@ -2,7 +2,7 @@
 
 Proxmox VE Autopilot turns a clean Proxmox VE node into a browser-managed Windows deployment platform. It creates Proxmox VMs, assigns OEM-like identity, builds and promotes deployment artifacts, tracks readiness evidence, and captures Autopilot hardware hashes without requiring direct network access to the guest OS.
 
-![Operator dashboard](docs/screenshots/home.png)
+![Operator dashboard](docs/screenshots/home.png?v=1093f7d)
 
 ## Current Model
 
@@ -70,23 +70,23 @@ The browser-friendly docs entry point is [docs/index.html](docs/index.html).
 
 | Setup | OSDCloud Desktop |
 | --- | --- |
-| ![Setup console](docs/screenshots/setup.png) | ![OSDCloud Desktop cockpit](docs/screenshots/osdcloud.png) |
+| ![Setup console](docs/screenshots/setup.png?v=1093f7d) | ![OSDCloud Desktop cockpit](docs/screenshots/osdcloud.png?v=1093f7d) |
 
 | OSDeploy Server | Provision VMs |
 | --- | --- |
-| ![OSDeploy Server cockpit](docs/screenshots/osdeploy.png) | ![Provision VMs](docs/screenshots/provision.png) |
+| ![OSDeploy Server cockpit](docs/screenshots/osdeploy.png?v=1093f7d) | ![Provision VMs](docs/screenshots/provision.png?v=1093f7d) |
 
 | Task Engine v2 | Monitoring |
 | --- | --- |
-| ![Task Engine v2](docs/screenshots/task-engine.png) | ![Monitoring](docs/screenshots/monitoring.png) |
+| ![Task Engine v2](docs/screenshots/task-engine.png?v=1093f7d) | ![Monitoring](docs/screenshots/monitoring.png?v=1093f7d) |
 
 | VM Fleet | Jobs |
 | --- | --- |
-| ![VM Fleet](docs/screenshots/devices.png) | ![Jobs](docs/screenshots/jobs.png) |
+| ![VM Fleet](docs/screenshots/devices.png?v=1093f7d) | ![Jobs](docs/screenshots/jobs.png?v=1093f7d) |
 
 | Hashes | Settings |
 | --- | --- |
-| ![Hashes](docs/screenshots/hashes.png) | ![Settings](docs/screenshots/settings.png) |
+| ![Hashes](docs/screenshots/hashes.png?v=1093f7d) | ![Settings](docs/screenshots/settings.png?v=1093f7d) |
 
 ## Operator Workflow
 
