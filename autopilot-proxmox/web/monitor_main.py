@@ -28,6 +28,9 @@ _REAPER_INTERVAL = 30               # poll for orphans twice a minute
 _HEARTBEAT_INTERVAL = 10            # service_health cadence
 _KEYTAB_CHECK_INTERVAL = 3600       # keytab health checked hourly
 _READINESS_INTERVAL_DEFAULT = 60    # CloudOSD Autopilot readiness watcher
+_SCREENSHOT_INTERVAL_DEFAULT = float(
+    os.environ.get("AUTOPILOT_VM_SCREENSHOT_INTERVAL_SECONDS", "60") or "60"
+)
 
 
 def _acquire_singleton_lock(path: Path) -> int | None:
@@ -85,7 +88,8 @@ def _run_loops(*, stop_event: threading.Event,
                reaper_interval_seconds: float = _REAPER_INTERVAL,
                heartbeat_interval_seconds: float = _HEARTBEAT_INTERVAL,
                keytab_interval_seconds: float = _KEYTAB_CHECK_INTERVAL,
-               readiness_interval_seconds: float = _READINESS_INTERVAL_DEFAULT) -> None:
+               readiness_interval_seconds: float = _READINESS_INTERVAL_DEFAULT,
+               screenshot_interval_seconds: float | None = _SCREENSHOT_INTERVAL_DEFAULT) -> None:
     """The heart of the monitor. Four tickers, one process.
 
     Cadences (all independently overridable for tests):
@@ -94,6 +98,7 @@ def _run_loops(*, stop_event: threading.Event,
       - sweep:     every ``sweep_interval_seconds``     (default 900s)
       - keytab:    every ``keytab_interval_seconds``    (default 3600s)
       - readiness: every ``readiness_interval_seconds`` (default 60s)
+      - screenshots: every ``screenshot_interval_seconds`` (default 60s)
 
     Each tick is wrapped in ``try/except`` so a transient failure in
     one (e.g., Proxmox API hiccup) never stops the others from firing.
@@ -106,12 +111,13 @@ def _run_loops(*, stop_event: threading.Event,
     last_hb = 0.0
     last_keytab = 0.0
     last_readiness = 0.0
+    last_screenshot = 0.0
 
     _log.info(
-        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss)",
+        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss, screenshots=%ss)",
         sweep_interval_seconds, reaper_interval_seconds,
         keytab_interval_seconds, heartbeat_interval_seconds,
-        readiness_interval_seconds,
+        readiness_interval_seconds, screenshot_interval_seconds,
     )
 
     while not stop_event.is_set():
@@ -160,6 +166,15 @@ def _run_loops(*, stop_event: threading.Event,
             except Exception:
                 _log.exception("cloudosd readiness tick failed")
             last_readiness = now
+
+        if screenshot_interval_seconds and now - last_screenshot >= screenshot_interval_seconds:
+            try:
+                result = _do_screenshot_capture_tick()
+                if result.get("captured") or result.get("failed"):
+                    _log.info("screenshot collector result: %s", result)
+            except Exception:
+                _log.exception("screenshot collector failed")
+            last_screenshot = now
 
         # Short wake interval so cadence rounding stays tight (a 0.1s
         # reaper_interval_seconds in tests needs sub-second wake-ups;
@@ -224,6 +239,11 @@ def _do_keytab_tick() -> None:
         web_app._run_keytab_checks()
     except Exception:
         _log.exception("keytab probe/refresh failed")
+
+
+def _do_screenshot_capture_tick() -> dict:
+    from web import app as web_app
+    return web_app._capture_running_vm_screenshots_once()
 
 
 def _do_cloudosd_readiness_tick(limit: int = 100) -> dict:

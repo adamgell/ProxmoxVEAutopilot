@@ -472,7 +472,13 @@ def test_vms_agent_heartbeat_uses_local_timezone_markup(web_client: TestClient, 
 
     async def fake_vms_payload():
         return {
-            "data": [],
+            "data": [{
+                "vmid": 106,
+                "name": "GELL-E9C0C757",
+                "status": "running",
+                "serial": "",
+                "hostname": "GELL-E9C0C757",
+            }],
             "devices": ([], ""),
             "hash_serials": set(),
         }, 0

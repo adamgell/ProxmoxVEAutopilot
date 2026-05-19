@@ -1764,6 +1764,71 @@ export type ValidationError = {
 };
 
 /**
+ * VmDetailEvidenceResponse
+ */
+export type VmDetailEvidenceResponse = {
+    /**
+     * Ad Matches
+     */
+    ad_matches?: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * Entra Matches
+     */
+    entra_matches?: Array<{
+        [key: string]: unknown;
+    }>;
+    fleet_vm?: VmFleetRowResponse | null;
+    /**
+     * History
+     */
+    history?: {
+        [key: string]: unknown;
+    };
+    identity_sync?: VmIdentitySyncResponse;
+    /**
+     * Intune Matches
+     */
+    intune_matches?: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * Known Credentials
+     */
+    known_credentials?: Array<VmKnownCredentialResponse>;
+    latest_screenshot?: VmScreenshotResponse | null;
+    /**
+     * Linkage
+     */
+    linkage?: Array<VmLinkageCheckResponse>;
+    /**
+     * Probe
+     */
+    probe?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Pve
+     */
+    pve?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Screenshot History
+     */
+    screenshot_history?: Array<VmScreenshotResponse>;
+    /**
+     * Timeline
+     */
+    timeline?: Array<VmTimelineEventResponse>;
+    /**
+     * Vmid
+     */
+    vmid: number;
+};
+
+/**
  * VmFleetRowResponse
  */
 export type VmFleetRowResponse = {
@@ -1867,6 +1932,166 @@ export type VmFleetRowResponse = {
      * Vmid
      */
     vmid: number;
+    [key: string]: unknown;
+};
+
+/**
+ * VmIdentitySyncResponse
+ */
+export type VmIdentitySyncResponse = {
+    /**
+     * Ad Count
+     */
+    ad_count?: number;
+    /**
+     * Entra Count
+     */
+    entra_count?: number;
+    /**
+     * Intune Count
+     */
+    intune_count?: number;
+    /**
+     * Last Checked At
+     */
+    last_checked_at?: string;
+    /**
+     * Source
+     */
+    source?: string;
+};
+
+/**
+ * VmKnownCredentialResponse
+ */
+export type VmKnownCredentialResponse = {
+    /**
+     * Label
+     */
+    label?: string;
+    /**
+     * Note
+     */
+    note?: string;
+    /**
+     * Password Available
+     */
+    password_available?: boolean;
+    /**
+     * Password Mask
+     */
+    password_mask?: string;
+    /**
+     * Run Id
+     */
+    run_id?: string;
+    /**
+     * Run Url
+     */
+    run_url?: string;
+    /**
+     * Source
+     */
+    source?: string;
+    /**
+     * Updated At
+     */
+    updated_at?: string | null;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Vm Name
+     */
+    vm_name?: string;
+    [key: string]: unknown;
+};
+
+/**
+ * VmLinkageCheckResponse
+ */
+export type VmLinkageCheckResponse = {
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Ok
+     */
+    ok?: boolean | null;
+    /**
+     * Value
+     */
+    value?: string;
+    [key: string]: unknown;
+};
+
+/**
+ * VmScreenshotResponse
+ */
+export type VmScreenshotResponse = {
+    /**
+     * Bytes
+     */
+    bytes?: number;
+    /**
+     * Captured At
+     */
+    captured_at: string;
+    /**
+     * Content Type
+     */
+    content_type?: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Image Url
+     */
+    image_url: string;
+    /**
+     * Source
+     */
+    source?: string;
+    /**
+     * Vmid
+     */
+    vmid: number;
+    [key: string]: unknown;
+};
+
+/**
+ * VmTimelineEventResponse
+ */
+export type VmTimelineEventResponse = {
+    /**
+     * At
+     */
+    at?: string;
+    /**
+     * Details
+     */
+    details?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Severity
+     */
+    severity?: string;
+    /**
+     * Source
+     */
+    source?: string;
+    /**
+     * Summary
+     */
+    summary?: string;
+    /**
+     * Type
+     */
+    type?: string;
     [key: string]: unknown;
 };
 
@@ -8428,6 +8653,36 @@ export type VmDeleteApiVmsVmidDeletePostResponses = {
     200: unknown;
 };
 
+export type ApiVmDetailEvidenceApiVmsVmidDetailGetData = {
+    body?: never;
+    path: {
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/vms/{vmid}/detail';
+};
+
+export type ApiVmDetailEvidenceApiVmsVmidDetailGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiVmDetailEvidenceApiVmsVmidDetailGetError = ApiVmDetailEvidenceApiVmsVmidDetailGetErrors[keyof ApiVmDetailEvidenceApiVmsVmidDetailGetErrors];
+
+export type ApiVmDetailEvidenceApiVmsVmidDetailGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: VmDetailEvidenceResponse;
+};
+
+export type ApiVmDetailEvidenceApiVmsVmidDetailGetResponse = ApiVmDetailEvidenceApiVmsVmidDetailGetResponses[keyof ApiVmDetailEvidenceApiVmsVmidDetailGetResponses];
+
 export type VmKeyJsonApiVmsVmidKeyPostData = {
     body?: never;
     path: {
@@ -8534,6 +8789,68 @@ export type VmResetApiVmsVmidResetPostErrors = {
 export type VmResetApiVmsVmidResetPostError = VmResetApiVmsVmidResetPostErrors[keyof VmResetApiVmsVmidResetPostErrors];
 
 export type VmResetApiVmsVmidResetPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetData = {
+    body?: never;
+    path: {
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/vms/{vmid}/screenshots/latest';
+};
+
+export type ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetError = ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetErrors[keyof ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetErrors];
+
+export type ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: VmScreenshotResponse;
+};
+
+export type ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetResponse = ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetResponses[keyof ApiVmLatestScreenshotApiVmsVmidScreenshotsLatestGetResponses];
+
+export type ApiVmScreenshotImageApiVmsVmidScreenshotsScreenshotIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Screenshot Id
+         */
+        screenshot_id: string;
+    };
+    query?: never;
+    url: '/api/vms/{vmid}/screenshots/{screenshot_id}';
+};
+
+export type ApiVmScreenshotImageApiVmsVmidScreenshotsScreenshotIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiVmScreenshotImageApiVmsVmidScreenshotsScreenshotIdGetError = ApiVmScreenshotImageApiVmsVmidScreenshotsScreenshotIdGetErrors[keyof ApiVmScreenshotImageApiVmsVmidScreenshotsScreenshotIdGetErrors];
+
+export type ApiVmScreenshotImageApiVmsVmidScreenshotsScreenshotIdGetResponses = {
     /**
      * Successful Response
      */

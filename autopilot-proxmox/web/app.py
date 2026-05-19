@@ -9,7 +9,7 @@ import secrets
 import subprocess
 import time
 import urllib3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -192,6 +192,9 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 REACT_DIST_DIR = Path(__file__).resolve().parent / "static" / "react"
 REACT_MANIFEST_PATH = REACT_DIST_DIR / ".vite" / "manifest.json"
 HASH_DIR = BASE_DIR / "output" / "hashes"
+SCREENSHOT_STORE_DIR = Path(
+    os.environ.get("AUTOPILOT_VM_SCREENSHOT_DIR", str(BASE_DIR / "output" / "vm-screenshots"))
+)
 FILE_SHELF_DIR = Path(
     os.environ.get("AUTOPILOT_FILE_SHELF_DIR", str(BASE_DIR / "output" / "files"))
 )
@@ -4580,6 +4583,69 @@ class VmsFleetResponse(BaseModel):
     generated_at: str
 
 
+class VmScreenshotResponse(ApiExtraModel):
+    vmid: int
+    image_url: str
+    content_type: str = "image/png"
+    captured_at: str
+    expires_at: str
+    source: str = "manual"
+    bytes: int = 0
+
+
+class VmLinkageCheckResponse(ApiExtraModel):
+    label: str
+    ok: bool | None = None
+    value: str = ""
+
+
+class VmKnownCredentialResponse(ApiExtraModel):
+    source: str = ""
+    label: str = ""
+    username: str = ""
+    password_available: bool = False
+    password_mask: str = ""
+    vm_name: str = ""
+    run_id: str = ""
+    run_url: str = ""
+    updated_at: str | None = None
+    note: str = ""
+
+
+class VmTimelineEventResponse(ApiExtraModel):
+    at: str = ""
+    source: str = ""
+    type: str = ""
+    severity: str = "event"
+    summary: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class VmIdentitySyncResponse(BaseModel):
+    source: str = "monitoring_sweep"
+    last_checked_at: str = ""
+    ad_count: int = 0
+    entra_count: int = 0
+    intune_count: int = 0
+
+
+class VmDetailEvidenceResponse(BaseModel):
+    vmid: int
+    fleet_vm: VmFleetRowResponse | None = None
+    pve: dict[str, Any] = Field(default_factory=dict)
+    probe: dict[str, Any] = Field(default_factory=dict)
+    ad_matches: list[dict[str, Any]] = Field(default_factory=list)
+    entra_matches: list[dict[str, Any]] = Field(default_factory=list)
+    intune_matches: list[dict[str, Any]] = Field(default_factory=list)
+    linkage: list[VmLinkageCheckResponse] = Field(default_factory=list)
+    known_credentials: list[VmKnownCredentialResponse] = Field(default_factory=list)
+    latest_screenshot: VmScreenshotResponse | None = None
+    screenshot_history: list[VmScreenshotResponse] = Field(default_factory=list)
+    timeline: list[VmTimelineEventResponse] = Field(default_factory=list)
+    history: dict[str, Any] = Field(default_factory=dict)
+    identity_sync: VmIdentitySyncResponse = Field(default_factory=VmIdentitySyncResponse)
+
+
 class InstallTrackingUpdate(BaseModel):
     status: str = Field(..., min_length=1, max_length=32)
     detail: str = Field("", max_length=2000)
@@ -6321,6 +6387,18 @@ def _request_list(values: dict, key: str) -> list[str]:
 
 _SCREENSHOT_CACHE: dict[str, dict] = {}
 _SCREENSHOT_TTL_SECONDS = 120
+_VM_SCREENSHOT_HISTORY_LIMIT = max(
+    1,
+    int(os.environ.get("AUTOPILOT_VM_SCREENSHOT_HISTORY_LIMIT", "5") or "5"),
+)
+_VM_SCREENSHOT_STORE_TTL_SECONDS = max(
+    60,
+    int(os.environ.get("AUTOPILOT_VM_SCREENSHOT_TTL_SECONDS", "900") or "900"),
+)
+_VM_SCREENSHOT_MAX_BYTES = max(
+    1024,
+    int(os.environ.get("AUTOPILOT_VM_SCREENSHOT_MAX_BYTES", str(8 * 1024 * 1024)) or str(8 * 1024 * 1024)),
+)
 _LIVE_HUB: LiveHub | None = None
 _LIVE_QGA_FAILURE_BACKOFF_SECONDS = 60.0
 _LIVE_QGA_FAILURES: dict[int, dict] = {}
@@ -6416,6 +6494,14 @@ def _store_screenshot(*, vmid: int, png_bytes: bytes) -> dict:
         "captured_at": captured_at,
         "expires_at_monotonic": time.monotonic() + _SCREENSHOT_TTL_SECONDS,
     }
+    try:
+        _store_vm_screenshot_record(
+            vmid=vmid,
+            png_bytes=png_bytes,
+            source="manual",
+        )
+    except Exception:
+        pass
     return {
         "vmid": vmid,
         "image_url": f"/api/live/screenshots/{screenshot_id}",
@@ -6424,6 +6510,192 @@ def _store_screenshot(*, vmid: int, png_bytes: bytes) -> dict:
         "expires_at": datetime.fromtimestamp(
             time.time() + _SCREENSHOT_TTL_SECONDS, timezone.utc,
         ).isoformat(),
+    }
+
+
+def _vm_screenshot_dir(vmid: int) -> Path:
+    return SCREENSHOT_STORE_DIR / str(int(vmid))
+
+
+def _vm_screenshot_metadata_path(vmid: int) -> Path:
+    return _vm_screenshot_dir(vmid) / "metadata.json"
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _public_vm_screenshot(item: dict) -> dict:
+    return {
+        "vmid": int(item.get("vmid") or 0),
+        "image_url": str(item.get("image_url") or ""),
+        "content_type": str(item.get("content_type") or "image/png"),
+        "captured_at": str(item.get("captured_at") or ""),
+        "expires_at": str(item.get("expires_at") or ""),
+        "source": str(item.get("source") or "manual"),
+        "bytes": int(item.get("bytes") or 0),
+    }
+
+
+def _read_vm_screenshot_metadata(vmid: int, *, prune: bool = True) -> dict:
+    path = _vm_screenshot_metadata_path(vmid)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"vmid": int(vmid), "items": []}
+    if not isinstance(raw, dict):
+        return {"vmid": int(vmid), "items": []}
+    items = [item for item in raw.get("items") or [] if isinstance(item, dict)]
+    if not prune:
+        return {"vmid": int(vmid), "items": items}
+
+    now = datetime.now(timezone.utc)
+    keep: list[dict] = []
+    delete: list[dict] = []
+    for item in items:
+        expires_at = _parse_iso_datetime(item.get("expires_at"))
+        filename = str(item.get("filename") or "")
+        if not filename or (expires_at is not None and expires_at <= now):
+            delete.append(item)
+            continue
+        if not (_vm_screenshot_dir(vmid) / filename).is_file():
+            continue
+        keep.append(item)
+    keep = sorted(keep, key=lambda item: str(item.get("captured_at") or ""), reverse=True)[
+        :_VM_SCREENSHOT_HISTORY_LIMIT
+    ]
+    keep_ids = {str(item.get("id") or "") for item in keep}
+    delete.extend(item for item in items if str(item.get("id") or "") not in keep_ids)
+    if len(keep) != len(items):
+        _write_vm_screenshot_metadata(vmid, keep)
+        for item in delete:
+            filename = str(item.get("filename") or "")
+            if filename:
+                try:
+                    (_vm_screenshot_dir(vmid) / filename).unlink()
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
+    return {"vmid": int(vmid), "items": keep}
+
+
+def _write_vm_screenshot_metadata(vmid: int, items: list[dict]) -> None:
+    vm_dir = _vm_screenshot_dir(vmid)
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    path = _vm_screenshot_metadata_path(vmid)
+    payload = {
+        "vmid": int(vmid),
+        "latest_id": str(items[0].get("id") or "") if items else "",
+        "items": items,
+        "updated_at": utc_now_iso(),
+    }
+    tmp_path = path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _store_vm_screenshot_record(*, vmid: int, png_bytes: bytes, source: str = "manual") -> dict:
+    if len(png_bytes) > _VM_SCREENSHOT_MAX_BYTES:
+        raise ValueError("screenshot exceeds configured size limit")
+    _read_vm_screenshot_metadata(vmid, prune=True)
+    screenshot_id = uuid4().hex
+    captured_at_dt = datetime.now(timezone.utc)
+    captured_at = captured_at_dt.isoformat()
+    expires_at = (captured_at_dt + timedelta(seconds=_VM_SCREENSHOT_STORE_TTL_SECONDS)).isoformat()
+    filename = f"{screenshot_id}.png"
+    vm_dir = _vm_screenshot_dir(vmid)
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    image_path = vm_dir / filename
+    image_path.write_bytes(png_bytes)
+    item = {
+        "id": screenshot_id,
+        "vmid": int(vmid),
+        "filename": filename,
+        "image_url": f"/api/vms/{int(vmid)}/screenshots/{screenshot_id}",
+        "content_type": "image/png",
+        "captured_at": captured_at,
+        "expires_at": expires_at,
+        "source": source or "manual",
+        "bytes": len(png_bytes),
+    }
+    existing = _read_vm_screenshot_metadata(vmid, prune=False).get("items") or []
+    items = [item, *[old for old in existing if old.get("id") != screenshot_id]]
+    items = sorted(items, key=lambda old: str(old.get("captured_at") or ""), reverse=True)[
+        :_VM_SCREENSHOT_HISTORY_LIMIT
+    ]
+    keep_files = {str(old.get("filename") or "") for old in items}
+    _write_vm_screenshot_metadata(vmid, items)
+    for old in existing:
+        filename_old = str(old.get("filename") or "")
+        if filename_old and filename_old not in keep_files:
+            try:
+                (vm_dir / filename_old).unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+    return _public_vm_screenshot(item)
+
+
+def _vm_screenshot_history(vmid: int) -> list[dict]:
+    metadata = _read_vm_screenshot_metadata(vmid, prune=True)
+    return [_public_vm_screenshot(item) for item in metadata.get("items") or []]
+
+
+def _latest_vm_screenshot(vmid: int) -> dict | None:
+    history = _vm_screenshot_history(vmid)
+    return history[0] if history else None
+
+
+def _running_vmids_for_screenshot_capture() -> list[int]:
+    rows = _vms_from_monitor_snapshot()
+    if not rows:
+        rows = list(_VMS_CACHE.get("data") or [])
+    vmids: list[int] = []
+    for row in rows:
+        if str(row.get("status") or "").lower() != "running":
+            continue
+        try:
+            vmid = int(row.get("vmid"))
+        except Exception:
+            continue
+        if vmid > 0:
+            vmids.append(vmid)
+    return sorted(set(vmids))
+
+
+def _capture_running_vm_screenshots_once() -> dict:
+    enabled = str(os.environ.get("AUTOPILOT_VM_SCREENSHOT_COLLECTOR", "1")).lower() not in {"0", "false", "no", "off"}
+    if not enabled:
+        return {"enabled": False, "running": 0, "captured": 0, "failed": 0}
+    vmids = _running_vmids_for_screenshot_capture()
+    captured = 0
+    failed = 0
+    for vmid in vmids:
+        try:
+            png = _capture_vm_screenshot_png(vmid)
+            _store_vm_screenshot_record(
+                vmid=vmid,
+                png_bytes=png,
+                source="collector",
+            )
+            captured += 1
+        except Exception:
+            failed += 1
+    return {
+        "enabled": True,
+        "running": len(vmids),
+        "captured": captured,
+        "failed": failed,
     }
 
 
@@ -6792,6 +7064,43 @@ async def live_screenshot(screenshot_id: str):
             "Cache-Control": "private, max-age=120",
             "X-VMID": str(item["vmid"]),
             "X-Captured-At": item["captured_at"],
+        },
+    )
+
+
+@app.get("/api/vms/{vmid}/screenshots/latest", response_model=VmScreenshotResponse)
+async def api_vm_latest_screenshot(vmid: int):
+    latest = _latest_vm_screenshot(vmid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="no screenshot available")
+    return latest
+
+
+@app.get("/api/vms/{vmid}/screenshots/{screenshot_id}")
+async def api_vm_screenshot_image(vmid: int, screenshot_id: str):
+    metadata = _read_vm_screenshot_metadata(vmid, prune=True)
+    item = next(
+        (
+            candidate for candidate in metadata.get("items") or []
+            if str(candidate.get("id") or "") == screenshot_id
+        ),
+        None,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    filename = str(item.get("filename") or "")
+    if not filename or not re.fullmatch(r"[a-f0-9]{32}\.png", filename):
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    path = _vm_screenshot_dir(vmid) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "X-VMID": str(int(vmid)),
+            "X-Captured-At": str(item.get("captured_at") or ""),
         },
     )
 
@@ -13807,6 +14116,194 @@ def _known_credentials_for_vmid(vmid: int) -> list[dict]:
     except Exception:
         return []
     return credentials
+
+
+def _masked_known_credentials_for_vmid(vmid: int) -> list[dict]:
+    masked: list[dict] = []
+    for item in _known_credentials_for_vmid(vmid):
+        password = str(item.get("password") or "")
+        masked.append({
+            "source": str(item.get("source") or ""),
+            "label": str(item.get("label") or ""),
+            "username": str(item.get("username") or ""),
+            "password_available": bool(password),
+            "password_mask": "********" if password else "",
+            "vm_name": str(item.get("vm_name") or ""),
+            "run_id": str(item.get("run_id") or ""),
+            "run_url": str(item.get("run_url") or ""),
+            "updated_at": item.get("updated_at"),
+            "note": str(item.get("note") or ""),
+        })
+    return masked
+
+
+def _event_to_dict(event: object) -> dict:
+    if isinstance(event, dict):
+        return {
+            "at": str(event.get("at") or ""),
+            "source": str(event.get("source") or ""),
+            "type": str(event.get("type") or ""),
+            "severity": str(event.get("severity") or "event"),
+            "summary": str(event.get("summary") or ""),
+            "details": event.get("details") if isinstance(event.get("details"), dict) else {},
+        }
+    return {
+        "at": str(getattr(event, "at", "") or ""),
+        "source": str(getattr(event, "source", "") or ""),
+        "type": str(getattr(event, "type", "") or ""),
+        "severity": str(getattr(event, "severity", "event") or "event"),
+        "summary": str(getattr(event, "summary", "") or ""),
+        "details": getattr(event, "details", {}) if isinstance(getattr(event, "details", {}), dict) else {},
+    }
+
+
+def _screenshot_timeline_events(vmid: int) -> list[dict]:
+    events: list[dict] = []
+    for item in _vm_screenshot_history(vmid):
+        events.append({
+            "at": item["captured_at"],
+            "source": "screenshot",
+            "type": "screenshot-captured",
+            "severity": "event",
+            "summary": f"Screenshot captured by {item['source']}",
+            "details": {
+                "image_url": item["image_url"],
+                "bytes": item["bytes"],
+                "expires_at": item["expires_at"],
+            },
+        })
+    return events
+
+
+def _credential_timeline_events(credentials: list[dict]) -> list[dict]:
+    events: list[dict] = []
+    for credential in credentials:
+        updated_at = credential.get("updated_at")
+        if not updated_at:
+            continue
+        events.append({
+            "at": str(updated_at),
+            "source": str(credential.get("source") or "credentials"),
+            "type": "credential-discovered",
+            "severity": "event",
+            "summary": (
+                f"{credential.get('label') or 'Credential'} available for "
+                f"{credential.get('username') or 'account'}"
+            ),
+            "details": {
+                "username": credential.get("username") or "",
+                "vm_name": credential.get("vm_name") or "",
+                "run_url": credential.get("run_url") or "",
+            },
+        })
+    return events
+
+
+def _identity_sync_payload(probe: dict | None, pve: dict | None) -> dict:
+    probe = probe or {}
+    pve = pve or {}
+    return {
+        "source": "monitoring_sweep",
+        "last_checked_at": probe.get("checked_at") or pve.get("checked_at") or "",
+        "ad_count": int(probe.get("ad_match_count") or len(_json_obj(probe.get("ad_matches_json"), []))),
+        "entra_count": int(probe.get("entra_match_count") or len(_json_obj(probe.get("entra_matches_json"), []))),
+        "intune_count": int(probe.get("intune_match_count") or len(_json_obj(probe.get("intune_matches_json"), []))),
+    }
+
+
+def _identity_sync_timeline_event(sync: dict) -> dict | None:
+    checked_at = sync.get("last_checked_at")
+    if not checked_at:
+        return None
+    return {
+        "at": str(checked_at),
+        "source": "monitoring",
+        "type": "identity-sync",
+        "severity": "event",
+        "summary": (
+            f"Evidence sync: AD {sync.get('ad_count', 0)}, "
+            f"Entra {sync.get('entra_count', 0)}, Intune {sync.get('intune_count', 0)}"
+        ),
+        "details": dict(sync),
+    }
+
+
+async def _vm_detail_evidence_payload(vmid: int) -> dict:
+    from web import device_regression
+
+    latest_pair = device_history_db.latest_completed_pair_for_vmid(vmid)
+    pve_dict = (latest_pair or {}).get("pve") or {}
+    probe_dict = (latest_pair or {}).get("probe") or {}
+
+    fleet_vm = None
+    if not pve_dict:
+        try:
+            fleet = await _vms_fleet_payload()
+            fleet_vm = next((vm for vm in fleet.get("vms") or [] if int(vm.get("vmid") or 0) == vmid), None)
+            if fleet_vm:
+                pve_dict = {
+                    "vmid": vmid,
+                    "name": fleet_vm.get("name") or "",
+                    "status": fleet_vm.get("status") or "",
+                    "checked_at": fleet_vm.get("monitor_checked_at") or "",
+                }
+        except Exception:
+            fleet_vm = None
+    else:
+        try:
+            fleet = await _vms_fleet_payload()
+            fleet_vm = next((vm for vm in fleet.get("vms") or [] if int(vm.get("vmid") or 0) == vmid), None)
+        except Exception:
+            fleet_vm = None
+
+    if not pve_dict and not probe_dict and not fleet_vm:
+        raise HTTPException(404, f"no VM evidence for vmid {vmid}")
+
+    history = device_history_db.history_for_vmid(
+        vmid,
+        limit=50,
+        completed_only=True,
+    )
+    timeline = [
+        _event_to_dict(event)
+        for event in device_regression.build_timeline(
+            list(reversed(history["pve_snapshots"])),
+            list(reversed(history["device_probes"])),
+        )
+    ]
+    known_credentials = _masked_known_credentials_for_vmid(vmid)
+    identity_sync = _identity_sync_payload(probe_dict, pve_dict)
+    timeline.extend(_screenshot_timeline_events(vmid))
+    timeline.extend(_credential_timeline_events(known_credentials))
+    sync_event = _identity_sync_timeline_event(identity_sync)
+    if sync_event:
+        timeline.append(sync_event)
+    timeline.sort(key=lambda event: str(event.get("at") or ""), reverse=True)
+
+    ad_matches = _json_obj(probe_dict.get("ad_matches_json"), [])
+    entra_matches = _json_obj(probe_dict.get("entra_matches_json"), [])
+    intune_matches = _json_obj(probe_dict.get("intune_matches_json"), [])
+    return {
+        "vmid": int(vmid),
+        "fleet_vm": fleet_vm,
+        "pve": pve_dict,
+        "probe": probe_dict,
+        "ad_matches": ad_matches,
+        "entra_matches": entra_matches,
+        "intune_matches": intune_matches,
+        "linkage": _linkage_health(pve_dict, probe_dict),
+        "known_credentials": known_credentials,
+        "latest_screenshot": _latest_vm_screenshot(vmid),
+        "screenshot_history": _vm_screenshot_history(vmid),
+        "timeline": timeline,
+        "history": history,
+        "identity_sync": identity_sync,
+    }
+
+
+@app.get("/api/vms/{vmid}/detail", response_model=VmDetailEvidenceResponse)
+async def api_vm_detail_evidence(vmid: int):
+    return await _vm_detail_evidence_payload(vmid)
 
 
 @app.get("/devices/{vmid}", response_class=HTMLResponse)

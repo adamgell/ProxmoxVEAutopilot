@@ -2660,6 +2660,109 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VmDetailEvidenceResponse": {
+        "properties": {
+          "ad_matches": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Ad Matches",
+            "type": "array"
+          },
+          "entra_matches": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entra Matches",
+            "type": "array"
+          },
+          "fleet_vm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VmFleetRowResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history": {
+            "additionalProperties": true,
+            "title": "History",
+            "type": "object"
+          },
+          "identity_sync": {
+            "$ref": "#/components/schemas/VmIdentitySyncResponse"
+          },
+          "intune_matches": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Intune Matches",
+            "type": "array"
+          },
+          "known_credentials": {
+            "items": {
+              "$ref": "#/components/schemas/VmKnownCredentialResponse"
+            },
+            "title": "Known Credentials",
+            "type": "array"
+          },
+          "latest_screenshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VmScreenshotResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "linkage": {
+            "items": {
+              "$ref": "#/components/schemas/VmLinkageCheckResponse"
+            },
+            "title": "Linkage",
+            "type": "array"
+          },
+          "probe": {
+            "additionalProperties": true,
+            "title": "Probe",
+            "type": "object"
+          },
+          "pve": {
+            "additionalProperties": true,
+            "title": "Pve",
+            "type": "object"
+          },
+          "screenshot_history": {
+            "items": {
+              "$ref": "#/components/schemas/VmScreenshotResponse"
+            },
+            "title": "Screenshot History",
+            "type": "array"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/VmTimelineEventResponse"
+            },
+            "title": "Timeline",
+            "type": "array"
+          },
+          "vmid": {
+            "title": "Vmid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "vmid"
+        ],
+        "title": "VmDetailEvidenceResponse",
+        "type": "object"
+      },
       "VmFleetRowResponse": {
         "additionalProperties": true,
         "properties": {
@@ -2798,6 +2901,211 @@
           "vmid"
         ],
         "title": "VmFleetRowResponse",
+        "type": "object"
+      },
+      "VmIdentitySyncResponse": {
+        "properties": {
+          "ad_count": {
+            "default": 0,
+            "title": "Ad Count",
+            "type": "integer"
+          },
+          "entra_count": {
+            "default": 0,
+            "title": "Entra Count",
+            "type": "integer"
+          },
+          "intune_count": {
+            "default": 0,
+            "title": "Intune Count",
+            "type": "integer"
+          },
+          "last_checked_at": {
+            "default": "",
+            "title": "Last Checked At",
+            "type": "string"
+          },
+          "source": {
+            "default": "monitoring_sweep",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "title": "VmIdentitySyncResponse",
+        "type": "object"
+      },
+      "VmKnownCredentialResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "password_available": {
+            "default": false,
+            "title": "Password Available",
+            "type": "boolean"
+          },
+          "password_mask": {
+            "default": "",
+            "title": "Password Mask",
+            "type": "string"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_url": {
+            "default": "",
+            "title": "Run Url",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "username": {
+            "default": "",
+            "title": "Username",
+            "type": "string"
+          },
+          "vm_name": {
+            "default": "",
+            "title": "Vm Name",
+            "type": "string"
+          }
+        },
+        "title": "VmKnownCredentialResponse",
+        "type": "object"
+      },
+      "VmLinkageCheckResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok"
+          },
+          "value": {
+            "default": "",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "VmLinkageCheckResponse",
+        "type": "object"
+      },
+      "VmScreenshotResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "bytes": {
+            "default": 0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "content_type": {
+            "default": "image/png",
+            "title": "Content Type",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "image_url": {
+            "title": "Image Url",
+            "type": "string"
+          },
+          "source": {
+            "default": "manual",
+            "title": "Source",
+            "type": "string"
+          },
+          "vmid": {
+            "title": "Vmid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "vmid",
+          "image_url",
+          "captured_at",
+          "expires_at"
+        ],
+        "title": "VmScreenshotResponse",
+        "type": "object"
+      },
+      "VmTimelineEventResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "at": {
+            "default": "",
+            "title": "At",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "severity": {
+            "default": "event",
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "type": {
+            "default": "",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "VmTimelineEventResponse",
         "type": "object"
       },
       "VmsFleetResponse": {
@@ -12714,6 +13022,45 @@
         "summary": "Vm Delete"
       }
     },
+    "/api/vms/{vmid}/detail": {
+      "get": {
+        "operationId": "api_vm_detail_evidence_api_vms__vmid__detail_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmDetailEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Vm Detail Evidence"
+      }
+    },
     "/api/vms/{vmid}/key": {
       "post": {
         "description": "Single QEMU keyname (e.g. 'ctrl-alt-delete'). Returns JSON.",
@@ -12863,6 +13210,91 @@
           }
         },
         "summary": "Vm Reset"
+      }
+    },
+    "/api/vms/{vmid}/screenshots/latest": {
+      "get": {
+        "operationId": "api_vm_latest_screenshot_api_vms__vmid__screenshots_latest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmScreenshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Vm Latest Screenshot"
+      }
+    },
+    "/api/vms/{vmid}/screenshots/{screenshot_id}": {
+      "get": {
+        "operationId": "api_vm_screenshot_image_api_vms__vmid__screenshots__screenshot_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "screenshot_id",
+            "required": true,
+            "schema": {
+              "title": "Screenshot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Vm Screenshot Image"
       }
     },
     "/api/vms/{vmid}/sendkey": {

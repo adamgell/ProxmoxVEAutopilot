@@ -279,6 +279,106 @@ const dashboardResponses: Record<string, unknown> = {
         has_local_hash: true
       }
     ]
+  },
+  "/api/vms/108/detail": {
+    vmid: 108,
+    pve: {
+      vmid: 108,
+      name: "WrkGrp-525570B6",
+      status: "running",
+      node: "pve2",
+      checked_at: "2026-05-19T00:00:00Z"
+    },
+    probe: {
+      vmid: 108,
+      win_name: "WRKGRP-525570B6",
+      serial: "WrkGrp-525570B6",
+      os_build: "10.0.26200.8246",
+      checked_at: "2026-05-19T00:01:00Z"
+    },
+    ad_matches: [
+      {
+        cn: "WRKGRP-525570B6",
+        objectSid: "S-1-5-21-1"
+      }
+    ],
+    entra_matches: [
+      {
+        displayName: "WRKGRP-525570B6",
+        trustType: "AzureAD",
+        deviceId: "entra-1"
+      }
+    ],
+    intune_matches: [
+      {
+        deviceName: "WRKGRP-525570B6",
+        serialNumber: "WrkGrp-525570B6",
+        complianceState: "compliant",
+        azureADDeviceId: "entra-1"
+      }
+    ],
+    linkage: [
+      {
+        label: "SMBIOS.serial -> Intune.serialNumber",
+        ok: true,
+        value: "WrkGrp-525570B6"
+      },
+      {
+        label: "Windows.Name -> AD.cn",
+        ok: true,
+        value: "WRKGRP-525570B6"
+      }
+    ],
+    known_credentials: [
+      {
+        source: "CloudOSD",
+        label: "Local admin",
+        username: "localadmin",
+        password_available: true,
+        password_mask: "********",
+        vm_name: "WrkGrp-525570B6",
+        run_id: "run-1",
+        run_url: "/cloudosd/runs/run-1",
+        updated_at: "2026-05-18T17:10:00Z",
+        note: "Visible workgroup credential from the deployment run."
+      }
+    ],
+    latest_screenshot: {
+      vmid: 108,
+      image_url: "/api/vms/108/screenshots/latest-image",
+      content_type: "image/png",
+      captured_at: "2026-05-19T00:02:00Z",
+      expires_at: "2026-05-19T00:17:00Z",
+      source: "collector",
+      bytes: 1200
+    },
+    timeline: [
+      {
+        at: "2026-05-19T00:00:00Z",
+        source: "pve",
+        type: "first-observed",
+        severity: "event",
+        summary: "VM 108 first observed on pve2: status=running"
+      },
+      {
+        at: "2026-05-19T00:02:00Z",
+        source: "screenshot",
+        type: "screenshot-captured",
+        severity: "event",
+        summary: "Screenshot captured by collector"
+      }
+    ],
+    history: {
+      pve_snapshots: [],
+      device_probes: []
+    },
+    identity_sync: {
+      source: "monitoring_sweep",
+      last_checked_at: "2026-05-19T00:01:00Z",
+      ad_count: 1,
+      entra_count: 1,
+      intune_count: 1
+    }
   }
 };
 
@@ -384,6 +484,25 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Screenshot VM 108" }));
     expect(screen.getByRole("heading", { name: "Screenshot" })).toBeInTheDocument();
     expect(screen.getAllByText("Live WebSocket is not connected").length).toBeGreaterThan(0);
+  });
+
+  test("renders VM evidence hub panels from detail API without revealing passwords", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/vms/108");
+
+    expect(await screen.findByRole("heading", { name: "Identity linkage" })).toBeInTheDocument();
+    expect(screen.getByText("SMBIOS.serial -> Intune.serialNumber")).toBeInTheDocument();
+    expect(screen.getByText("Windows.Name -> AD.cn")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Known credentials" })).toBeInTheDocument();
+    expect(screen.getByText("localadmin")).toBeInTheDocument();
+    expect(screen.getByText("********")).toBeInTheDocument();
+    expect(screen.queryByText("Mep7!Qav2")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Latest screenshot" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Latest VM 108 screenshot" })).toHaveAttribute("src", "/api/vms/108/screenshots/latest-image");
+    expect(screen.getByRole("link", { name: "Open screenshot" })).toHaveAttribute("href", "/api/vms/108/screenshots/latest-image");
+    expect(screen.getByRole("heading", { name: "Timeline" })).toBeInTheDocument();
+    expect(screen.getByText("Screenshot captured by collector")).toBeInTheDocument();
   });
 
   test("renders the dashboard read-only slice from API data", async () => {

@@ -423,6 +423,69 @@ export interface VmsFleetResponse {
   readonly generated_at: string;
 }
 
+export interface VmScreenshot {
+  readonly vmid: number;
+  readonly image_url: string;
+  readonly content_type: string;
+  readonly captured_at: string;
+  readonly expires_at: string;
+  readonly source: string;
+  readonly bytes: number;
+}
+
+export interface VmLinkageCheck {
+  readonly label: string;
+  readonly ok?: boolean | null;
+  readonly value: string;
+}
+
+export interface VmKnownCredential {
+  readonly source: string;
+  readonly label: string;
+  readonly username: string;
+  readonly password_available: boolean;
+  readonly password_mask: string;
+  readonly vm_name: string;
+  readonly run_id: string;
+  readonly run_url: string;
+  readonly updated_at?: string | null;
+  readonly note: string;
+}
+
+export interface VmTimelineEvent {
+  readonly at: string;
+  readonly source: string;
+  readonly type: string;
+  readonly severity: string;
+  readonly summary: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+}
+
+export interface VmIdentitySync {
+  readonly source: string;
+  readonly last_checked_at: string;
+  readonly ad_count: number;
+  readonly entra_count: number;
+  readonly intune_count: number;
+}
+
+export interface VmDetailEvidenceResponse {
+  readonly vmid: number;
+  readonly fleet_vm?: VmFleetRow | null;
+  readonly pve: Readonly<Record<string, unknown>>;
+  readonly probe: Readonly<Record<string, unknown>>;
+  readonly ad_matches: readonly Readonly<Record<string, unknown>>[];
+  readonly entra_matches: readonly Readonly<Record<string, unknown>>[];
+  readonly intune_matches: readonly Readonly<Record<string, unknown>>[];
+  readonly linkage: readonly VmLinkageCheck[];
+  readonly known_credentials: readonly VmKnownCredential[];
+  readonly latest_screenshot?: VmScreenshot | null;
+  readonly screenshot_history: readonly VmScreenshot[];
+  readonly timeline: readonly VmTimelineEvent[];
+  readonly history: Readonly<Record<string, unknown>>;
+  readonly identity_sync: VmIdentitySync;
+}
+
 export interface FleetLivePayload {
   readonly rows?: readonly VmFleetRow[];
   readonly agents?: readonly AgentFleetRow[];

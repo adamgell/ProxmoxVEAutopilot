@@ -21,12 +21,14 @@ import type { LucideIcon } from "lucide-react";
 import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
+import { VmEvidencePanels } from "../components/VmEvidencePanels";
 import { VmActionWorkspace, type ScreenshotWorkspaceState, type VmActionMode, type VmActionSelection } from "../components/VmActionWorkspace";
 import type {
   AgentFleetRow,
   AppBootstrap,
   AutopilotDeviceFleetRow,
   LiveSocketMessage,
+  VmDetailEvidenceResponse,
   VmFleetRow,
   VmsFleetResponse
 } from "../contracts";
@@ -138,6 +140,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [sendLive, setSendLive] = useState<SendLiveMessage | null>(null);
   const [activeAction, setActiveAction] = useState<VmActionSelection | null>(null);
   const [screenshot, setScreenshot] = useState<ScreenshotWorkspaceState>({ status: "idle" });
+  const [detailEvidence, setDetailEvidence] = useState<VmDetailEvidenceResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -159,6 +164,32 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       window.clearTimeout(timer);
     };
   }, [load]);
+
+  const loadDetail = useCallback(async (vmid: number) => {
+    setDetailLoading(true);
+    try {
+      const evidence = await fetchJson<VmDetailEvidenceResponse>(`/api/vms/${String(vmid)}/detail`);
+      setDetailEvidence(evidence);
+      setDetailError("");
+    } catch (err) {
+      setDetailEvidence(null);
+      setDetailError(err instanceof Error ? err.message : "Failed to load VM evidence");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (detailVmid === null) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadDetail(detailVmid);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [detailVmid, loadDetail]);
 
   useEffect(() => {
     return connectFleetLive({
@@ -190,6 +221,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             };
           });
           setActionStatus(`Screenshot captured for VM ${String(resultVmid)}`);
+          if (detailVmid === resultVmid) {
+            void loadDetail(resultVmid);
+          }
           return;
         }
         if (message.type === "error") {
@@ -230,7 +264,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         }
       }
     });
-  }, [load]);
+  }, [detailVmid, load, loadDetail]);
 
   const counts = useMemo(() => summarizeFleet(fleet), [fleet]);
   const machineRows = useMemo(() => buildFleetMachineRows(fleet), [fleet]);
@@ -395,11 +429,14 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         action={<a className="action-link" href="/react/vms">VMs</a>}
       >
         {loading ? <div className="progress" aria-label="Loading VM"><span /></div> : null}
+        {detailLoading ? <div className="progress" aria-label="Loading VM evidence"><span /></div> : null}
         {error ? <p className="notice" role="status">{error}</p> : null}
+        {detailError ? <p className="notice" role="status">{detailError}</p> : null}
         {actionStatus ? <p className="notice" role="status">{actionStatus}</p> : null}
         {detailRow?.vm ? (
           <VmDetailWorkspace
             row={detailRow}
+            evidence={detailEvidence}
             activeAction={activeAction}
             screenshot={screenshot}
             socketState={socketState}
@@ -588,6 +625,7 @@ function MachineRow({
 
 function VmDetailWorkspace({
   row,
+  evidence,
   activeAction,
   screenshot,
   socketState,
@@ -608,6 +646,7 @@ function VmDetailWorkspace({
   onCloseAction
 }: {
   readonly row: FleetMachineRow;
+  readonly evidence: VmDetailEvidenceResponse | null;
   readonly activeAction: VmActionSelection | null;
   readonly screenshot: ScreenshotWorkspaceState;
   readonly socketState: string;
@@ -722,6 +761,12 @@ function VmDetailWorkspace({
           ["Last contact", formatShortDateTime(row.autopilotDevice?.last_contact)]
         ]} />
       </section>
+
+      <VmEvidencePanels
+        vmid={vm.vmid}
+        evidence={evidence}
+        onRefreshScreenshot={() => { onScreenshot(vm); }}
+      />
 
       <section className="vm-detail-action-zone">
         <VmActionWorkspace

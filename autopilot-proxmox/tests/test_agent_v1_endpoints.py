@@ -586,7 +586,7 @@ def test_agent_admin_delete_missing_returns_operator_error(agent_client):
     assert response.headers["location"].startswith("/vms?error=")
 
 
-def test_vms_agent_inventory_renders_hard_delete_crud_controls(agent_client, pg_conn):
+def test_vms_agent_inventory_renders_hard_delete_crud_controls(agent_client, pg_conn, monkeypatch):
     from web import agent_telemetry_pg
     from web import app as app_module
 
@@ -600,12 +600,19 @@ def test_vms_agent_inventory_renders_hard_delete_crud_controls(agent_client, pg_
         agent_version="0.1.1",
     )
     app_module._VMS_CACHE.update({
-        "data": [],
+        "data": [{
+            "vmid": 124,
+            "name": "GELL-UI-CRUD",
+            "status": "running",
+            "serial": "GELL-UI-CRUD",
+            "hostname": "GELL-UI-CRUD",
+        }],
         "devices": ([], ""),
         "hash_serials": set(),
         "fetched_at": app_module.time.monotonic(),
         "refreshing": False,
     })
+    monkeypatch.setattr(app_module.sequences_db, "get_vm_provisioning", lambda db, vmid: None)
 
     response = agent_client.get("/vms")
 
