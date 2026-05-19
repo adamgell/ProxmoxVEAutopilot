@@ -33,6 +33,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+          sparse-checkout: |
+            docs
+          sparse-checkout-cone-mode: true
 
       - name: Validate static docs site
         run: |
