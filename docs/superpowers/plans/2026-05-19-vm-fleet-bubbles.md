@@ -12,13 +12,13 @@
 
 ## Scope And Boundaries
 
-This plan implements the approved design in two executable slices.
+This plan implements the approved design in two executable slices, with explicit subagent ownership so multiple workers can help without touching the same files at the same time.
 
 Phase 1 produces working software on its own: bubble tables, repository functions, API routes, audit/service support, and a `/vms` page reframe that removes the duplicate Autopilot device table.
 
-Phase 2 wires bubble IDs into CloudOSD and OSDeploy launch flows, creates asset memberships from launches, and exposes lifecycle gates. It does not create Proxmox bridges, VLANs, firewall rules, NAT, or router VMs.
+Phase 2 wires bubble IDs into CloudOSD and OSDeploy launch flows, creates asset memberships from launches, and exposes lifecycle gates. It does not create Proxmox bridges, VLANs, firewall rules, NAT, router VMs, or DHCP servers outside the AD/DC agent path.
 
-The current worktree has unrelated dirty docs/screenshot files. Do not stage, modify, or revert those while executing this plan.
+Before execution, each worker must run `git status --short --branch --untracked-files=all`. At plan review time, `main` was clean but `ahead 4, behind 2` relative to `origin/main`; do not pull, merge, reset, or rebase unless the operator explicitly approves that coordination step.
 
 ## File Structure
 
@@ -33,6 +33,166 @@ The current worktree has unrelated dirty docs/screenshot files. Do not stage, mo
 - Modify `autopilot-proxmox/tests/test_cloudosd_endpoints.py`: CloudOSD launch membership tests.
 - Modify `autopilot-proxmox/web/agent_v1_endpoints.py`: accept DC readiness evidence from the domain-controller agent and feed bubble readiness.
 - Modify `autopilot-proxmox/tests/test_agent_v1_endpoints.py`: DC readiness heartbeat tests.
+
+## Subagent Coordination Contract
+
+Use `superpowers:subagent-driven-development` when executing this plan with workers. Dispatch fresh workers with the smallest file ownership possible, and tell every worker they are not alone in the codebase: they must not revert edits made by others and must adapt to already-landed changes.
+
+The coordinating agent owns task sequencing, review, final integration, and commits that cross ownership boundaries. A worker should finish with a concise handoff containing changed files, tests run, expected failures if any, and any assumptions that still need integration review.
+
+### Dependency Order
+
+1. Run **Foundation Worker** first for Task 1 and Task 2. No other worker should edit `autopilot-proxmox/web/lab_bubbles_pg.py` until this worker has landed or handed off a patch.
+2. Run **API Worker** for Task 3 after Foundation Worker passes repository tests.
+3. Run **VM Page Worker** for Task 4 and Task 5 after API Worker exposes the bubble payload.
+4. Run **CloudOSD Worker** and **OSDeploy Worker** after Foundation Worker. These can run in parallel with each other because they own different endpoint/test files, but the coordinator must resolve any shared import or helper naming assumptions before committing both.
+5. Run **Agent Readiness Worker** after Foundation Worker. This can run in parallel with VM Page, CloudOSD, or OSDeploy work if it avoids changing repository helpers already owned by Foundation Worker.
+6. Run **Verification Worker** only after the coordinator has integrated all previous workers.
+
+### Worker Ownership Map
+
+| Worker | Tasks | Owns | Must Not Edit | Required Handoff |
+| --- | --- | --- | --- | --- |
+| Foundation Worker | 1, 2 | `autopilot-proxmox/web/lab_bubbles_pg.py`, `autopilot-proxmox/tests/test_lab_bubbles_pg.py` | Endpoint modules, templates, CloudOSD/OSDeploy tests, agent endpoint | Repository API names, schema columns, gate semantics, tests run |
+| API Worker | 3 | `autopilot-proxmox/web/app.py`, API portions of `autopilot-proxmox/tests/test_cockpit_ui.py` | `lab_bubbles_pg.py` except imports/calls, `vms.html` | API routes added, response shapes, startup init behavior, tests run |
+| VM Page Worker | 4, 5 | VM page aggregation in `autopilot-proxmox/web/app.py`, `autopilot-proxmox/web/templates/vms.html`, page-render tests | CloudOSD/OSDeploy/agent endpoint modules | Template sections, payload keys, removed Autopilot Devices area, screenshot/browser notes if run |
+| CloudOSD Worker | 6 | `autopilot-proxmox/web/cloudosd_endpoints.py`, `autopilot-proxmox/tests/test_cloudosd_endpoints.py` | OSDeploy files, VM template, agent endpoint | Bubble fields accepted, membership creation point, tests run |
+| OSDeploy Worker | 7 | `autopilot-proxmox/web/osdeploy_endpoints.py`, `autopilot-proxmox/tests/test_osdeploy_endpoints.py` | CloudOSD files, VM template, agent endpoint | Gate integration, workgroup early-launch behavior, membership creation point, tests run |
+| Agent Readiness Worker | 8 | `autopilot-proxmox/web/agent_v1_endpoints.py`, `autopilot-proxmox/tests/test_agent_v1_endpoints.py` | CloudOSD/OSDeploy files, VM template | Heartbeat payload shape, DC-only readiness rule, DHCP evidence fields, tests run |
+| Verification Worker | 9 | No source ownership unless fixing coordinator-approved integration defects | Any unrelated file | Full command output summary, failing test names, targeted fix recommendation |
+
+### Dispatch Prompts
+
+Use these prompts as the starting point for worker dispatch. Add the current commit hash and any already-landed worker handoffs before sending.
+
+**Foundation Worker Prompt**
+
+```text
+You are implementing Tasks 1 and 2 from docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Edit only autopilot-proxmox/web/lab_bubbles_pg.py and autopilot-proxmox/tests/test_lab_bubbles_pg.py.
+- Do not modify endpoint modules, templates, CloudOSD/OSDeploy tests, or agent endpoint files.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Create the bubble repository schema, CRUD, assets, services, audit, readiness, gate functions, patch/move helpers, and repository tests exactly as planned unless the current code requires a tighter local pattern.
+- Run the task-specific pytest commands from Tasks 1 and 2.
+- End with changed files, tests run, and any API names later workers must use.
+```
+
+**API Worker Prompt**
+
+```text
+You are implementing Task 3 from docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Edit only autopilot-proxmox/web/app.py and API-related tests in autopilot-proxmox/tests/test_cockpit_ui.py.
+- Use the already-landed lab_bubbles_pg repository API. Do not redesign its schema or helper names.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Initialize bubble storage where existing app startup/init code expects repository setup.
+- Add the /api/bubbles routes, asset patch/move routes, service patch route, readiness route, and audit route.
+- Run the Task 3 pytest command.
+- End with route list, response shape notes, changed files, and tests run.
+```
+
+**VM Page Worker Prompt**
+
+```text
+You are implementing Tasks 4 and 5 from docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Edit VM page aggregation code in autopilot-proxmox/web/app.py, autopilot-proxmox/web/templates/vms.html, and page-render tests in autopilot-proxmox/tests/test_cockpit_ui.py.
+- Do not edit CloudOSD, OSDeploy, or agent endpoint modules.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Remove the Autopilot Devices area from /vms.
+- Add VM Workstation Fleets, Critical Infrastructure, Connected Services, and Unassigned Assets sections driven by the planned payload keys.
+- Preserve the existing VM page timezone regression behavior.
+- Run the Task 4, Task 5, and timezone regression pytest commands.
+- End with payload keys consumed, template sections changed, changed files, and tests run.
+```
+
+**CloudOSD Worker Prompt**
+
+```text
+You are implementing Task 6 from docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Edit only autopilot-proxmox/web/cloudosd_endpoints.py and autopilot-proxmox/tests/test_cloudosd_endpoints.py.
+- Do not edit OSDeploy files, VM templates, or agent endpoint files.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Add bubble_id and asset_role launch fields.
+- Create lab_bubble_assets membership rows after CloudOSD run creation.
+- Keep existing CloudOSD catalog and artifact behavior unchanged.
+- Run the Task 6 pytest command.
+- End with changed files, membership creation location, and tests run.
+```
+
+**OSDeploy Worker Prompt**
+
+```text
+You are implementing Task 7 from docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Edit only autopilot-proxmox/web/osdeploy_endpoints.py and autopilot-proxmox/tests/test_osdeploy_endpoints.py.
+- Do not edit CloudOSD files, VM templates, or agent endpoint files.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Add bubble_id and asset_role launch fields.
+- Create lab_bubble_assets membership rows after OSDeploy run or bundle creation.
+- Enforce launch gates in /api/osdeploy/v1/preflight using early workgroup allowance only for single-bubble, no-domain/no-ConfigMgr cases.
+- Run the Task 7 pytest commands.
+- End with changed files, gate behavior summary, and tests run.
+```
+
+**Agent Readiness Worker Prompt**
+
+```text
+You are implementing Task 8 from docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Edit only autopilot-proxmox/web/agent_v1_endpoints.py plus the agent readiness test in autopilot-proxmox/tests/test_agent_v1_endpoints.py.
+- Only edit autopilot-proxmox/web/lab_bubbles_pg.py if asset_for_agent is still missing after Foundation Worker lands; otherwise use the existing helper.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Accept bubble_id and dc_readiness on heartbeat.
+- Update bubble AD DS, DNS, DHCP readiness only when the authenticated agent is an active/provisioning domain_controller asset in that bubble.
+- Persist DHCP scope, DHCP pool start, and DHCP pool end through update_readiness_from_dc_evidence.
+- Run the Task 8 pytest commands.
+- End with changed files, heartbeat payload fields, and tests run.
+```
+
+**Verification Worker Prompt**
+
+```text
+You are verifying the integrated branch for docs/superpowers/plans/2026-05-19-vm-fleet-bubbles.md in /Users/Adam.Gell/repo/ProxmoxVEAutopilot.
+
+Ownership:
+- Do not make source edits unless the coordinator explicitly asks for a targeted fix after a failing command.
+- You are not alone in the codebase; do not revert edits made by others.
+
+Deliver:
+- Run all commands in Task 9.
+- Report exact failing test names, first relevant assertion/error, and likely owning worker if anything fails.
+- If everything passes, report command list and a final changed-file summary.
+```
+
+### Integration Checkpoints
+
+- After Foundation Worker: run `/Users/Adam.Gell/repo/ProxmoxVEAutopilot/autopilot-proxmox/.venv/bin/python -m pytest autopilot-proxmox/tests/test_lab_bubbles_pg.py -q` before dispatching API, launch, or agent workers.
+- After API Worker: run `/Users/Adam.Gell/repo/ProxmoxVEAutopilot/autopilot-proxmox/.venv/bin/python -m pytest autopilot-proxmox/tests/test_cockpit_ui.py::test_bubble_api_create_assets_services_and_audit -q` and confirm `/api/bubbles/{bubble_id}/assets/{asset_id}/move` and `/api/bubbles/{bubble_id}/services/{service_id}` exist before UI or lifecycle agents depend on them.
+- After VM Page Worker: run `/Users/Adam.Gell/repo/ProxmoxVEAutopilot/autopilot-proxmox/.venv/bin/python -m pytest autopilot-proxmox/tests/test_cockpit_ui.py::test_vms_page_uses_fleet_bubble_sections autopilot-proxmox/tests/test_cockpit_ui.py::test_vms_agent_heartbeat_uses_local_timezone_markup -q`.
+- After CloudOSD and OSDeploy workers: run `/Users/Adam.Gell/repo/ProxmoxVEAutopilot/autopilot-proxmox/.venv/bin/python -m pytest autopilot-proxmox/tests/test_cloudosd_endpoints.py::test_cloudosd_run_records_bubble_membership autopilot-proxmox/tests/test_osdeploy_endpoints.py::test_osdeploy_run_records_bubble_membership autopilot-proxmox/tests/test_osdeploy_endpoints.py::test_osdeploy_preflight_blocks_domain_join_before_bubble_readiness -q` so shared repository assumptions fail together.
+- After Agent Readiness Worker: run `/Users/Adam.Gell/repo/ProxmoxVEAutopilot/autopilot-proxmox/.venv/bin/python -m pytest autopilot-proxmox/tests/test_agent_v1_endpoints.py::test_agent_heartbeat_updates_bubble_dc_dns_dhcp_readiness autopilot-proxmox/tests/test_lab_bubbles_pg.py::test_assets_services_audit_and_readiness -q` to verify heartbeat wiring and DHCP evidence persistence together.
+- Before final commit: run Task 9 exactly, then `git status --short --branch --untracked-files=all`.
 
 ## Task 1: Bubble Repository Schema And CRUD
 
@@ -2045,7 +2205,7 @@ git status --short
 git diff --stat
 ```
 
-Expected: only files from this plan are modified or committed. Existing unrelated dirty files may still be present; do not stage or revert them.
+Expected: only files from this plan are modified or committed. If unrelated files are present, do not stage or revert them.
 
 ## Self-Review
 
@@ -2054,4 +2214,5 @@ Expected: only files from this plan are modified or committed. Existing unrelate
 - Incomplete-marker scan: no incomplete markers remain.
 - Lifecycle API coverage: Patch/move endpoints are planned for assets, patch endpoints are planned for services, and audit assertions pin both asset add and move events.
 - DC evidence coverage: DC agent heartbeat evidence persists AD DS, DNS, DHCP readiness, DHCP scope, and DHCP pool bounds.
+- Subagent readiness: Worker prompts define ownership, non-owned files, dependency order, handoff expectations, and integration checkpoints before final verification.
 - Type consistency: `bubble_id`, `asset_id`, `service_id`, `asset_role`, `readiness_state`, `workstation_fleets`, `critical_infrastructure`, `connected_services`, `unassigned_assets`, `warnings`, and `gate_states` are used consistently across tasks.
