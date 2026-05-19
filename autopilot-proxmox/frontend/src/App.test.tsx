@@ -243,8 +243,12 @@ describe("App", () => {
 
     renderRoute("/react/monitoring");
 
+    expect(screen.getByRole("progressbar", { name: "Signals loading" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Signals Hub" })).toBeInTheDocument();
     expect((await screen.findAllByText("Runtime containers")).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.queryByRole("progressbar", { name: "Signals loading" })).not.toBeInTheDocument();
+    });
     expect(screen.getByText("Build host agent")).toBeInTheDocument();
     expect(screen.getAllByText("Stage Windows ISO and VirtIO media").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/osdeploy");

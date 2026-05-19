@@ -403,6 +403,7 @@ function signalToneClass(tone: string | undefined): string {
 function MonitoringPage({ bootstrap }: AppProps) {
   const [hub, setHub] = useState<SignalsHubResponse>(emptySignalsHub);
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -411,6 +412,8 @@ function MonitoringPage({ bootstrap }: AppProps) {
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load signals");
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -435,82 +438,94 @@ function MonitoringPage({ bootstrap }: AppProps) {
       }
     >
       {error ? <p className="notice" role="status">{error}</p> : null}
-      <section className="metric-strip metric-strip--signals" aria-label="Signals Hub metrics">
-        {metrics.map((item) => (
-          <Metric key={item.label} label={item.label} value={item.value} tone={item.tone} />
-        ))}
-      </section>
-
-      <section className="signals-layout">
-        <Panel title="Signal families">
-          {hub.signals.length ? (
-            <ul className="signal-list">
-              {hub.signals.map((signal: OperatorSignal) => (
-                <li key={signal.id}>
-                  <span className={signalToneClass(signal.tone)}>{statusLabel(signal.status)}</span>
-                  <div>
-                    <strong>{signal.label}</strong>
-                    <p>{signal.summary}</p>
-                    <small>{signal.source || signal.family}</small>
-                  </div>
-                  <span>{fallbackText(signal.count)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="empty">No signals collected.</p>
-          )}
-        </Panel>
-
-        <Panel title="Ranked operator paths">
-          {rankedPaths.length ? (
-            <ul className="path-list">
-              {rankedPaths.map((path: OperatorPath) => (
-                <li key={path.id}>
-                  <span className={signalToneClass(path.tone)}>{statusLabel(path.status)}</span>
-                  <div>
-                    <strong>{path.label}</strong>
-                    <p>{path.summary}</p>
-                    <small>{path.source || "Signals Hub"}</small>
-                  </div>
-                  <a href={path.href}>{path.action_label}</a>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="empty">No operator paths ranked.</p>
-          )}
-        </Panel>
-
-        <Panel title="Selected signal">
-          <div className="signal-detail">
-            <dl className="fleet-grid fleet-grid--four">
-              <MetricTerm label="Runtime" value={hub.source_health.runtime_available ? "up" : "down"} />
-              <MetricTerm label="Setup" value={fallbackText(hub.source_health.setup_health)} />
-              <MetricTerm label="Keytab" value={fallbackText(hub.source_health.keytab_status)} />
-              <MetricTerm label="Generated" value={fallbackText(hub.generated_at)} />
-            </dl>
-            {selectedSignal ? (
-              <div className="detail-callout">
-                <span className={signalToneClass(selectedSignal.tone)}>{statusLabel(selectedSignal.status)}</span>
-                <div>
-                  <strong>{selectedSignal.label}</strong>
-                  <p>{selectedSignal.summary}</p>
-                </div>
-              </div>
-            ) : null}
-            {selectedPath ? (
-              <div className="detail-callout">
-                <span className={signalToneClass(selectedPath.tone)}>{String(selectedPath.priority)}</span>
-                <div>
-                  <strong>{selectedPath.label}</strong>
-                  <p>{selectedPath.summary}</p>
-                </div>
-              </div>
-            ) : null}
+      {isLoading ? (
+        <div className="load-strip" role="status" aria-live="polite">
+          <span>Loading signals</span>
+          <div className="load-strip__track" role="progressbar" aria-label="Signals loading">
+            <span />
           </div>
-        </Panel>
-      </section>
+        </div>
+      ) : null}
+      {!isLoading ? (
+        <section className="metric-strip metric-strip--signals" aria-label="Signals Hub metrics">
+          {metrics.map((item) => (
+            <Metric key={item.label} label={item.label} value={item.value} tone={item.tone} />
+          ))}
+        </section>
+      ) : null}
+
+      {!isLoading ? (
+        <section className="signals-layout">
+          <Panel title="Signal families">
+            {hub.signals.length ? (
+              <ul className="signal-list">
+                {hub.signals.map((signal: OperatorSignal) => (
+                  <li key={signal.id}>
+                    <span className={signalToneClass(signal.tone)}>{statusLabel(signal.status)}</span>
+                    <div>
+                      <strong>{signal.label}</strong>
+                      <p>{signal.summary}</p>
+                      <small>{signal.source || signal.family}</small>
+                    </div>
+                    <span>{fallbackText(signal.count)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty">No signals collected.</p>
+            )}
+          </Panel>
+
+          <Panel title="Ranked operator paths">
+            {rankedPaths.length ? (
+              <ul className="path-list">
+                {rankedPaths.map((path: OperatorPath) => (
+                  <li key={path.id}>
+                    <span className={signalToneClass(path.tone)}>{statusLabel(path.status)}</span>
+                    <div>
+                      <strong>{path.label}</strong>
+                      <p>{path.summary}</p>
+                      <small>{path.source || "Signals Hub"}</small>
+                    </div>
+                    <a href={path.href}>{path.action_label}</a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty">No operator paths ranked.</p>
+            )}
+          </Panel>
+
+          <Panel title="Selected signal">
+            <div className="signal-detail">
+              <dl className="fleet-grid fleet-grid--four">
+                <MetricTerm label="Runtime" value={hub.source_health.runtime_available ? "up" : "down"} />
+                <MetricTerm label="Setup" value={fallbackText(hub.source_health.setup_health)} />
+                <MetricTerm label="Keytab" value={fallbackText(hub.source_health.keytab_status)} />
+                <MetricTerm label="Generated" value={fallbackText(hub.generated_at)} />
+              </dl>
+              {selectedSignal ? (
+                <div className="detail-callout">
+                  <span className={signalToneClass(selectedSignal.tone)}>{statusLabel(selectedSignal.status)}</span>
+                  <div>
+                    <strong>{selectedSignal.label}</strong>
+                    <p>{selectedSignal.summary}</p>
+                  </div>
+                </div>
+              ) : null}
+              {selectedPath ? (
+                <div className="detail-callout">
+                  <span className={signalToneClass(selectedPath.tone)}>{String(selectedPath.priority)}</span>
+                  <div>
+                    <strong>{selectedPath.label}</strong>
+                    <p>{selectedPath.summary}</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </Panel>
+        </section>
+      ) : null}
     </PageFrame>
   );
 }
