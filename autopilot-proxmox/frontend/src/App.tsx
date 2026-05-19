@@ -7,14 +7,13 @@ import type {
   FleetSummary,
   JobTableRow,
   JobsLivePayload,
-  KeytabHealth,
-  MonitoringOverview,
+  OperatorPath,
+  OperatorSignal,
   RecentJob,
   RecentJobsResponse,
   RunningJobsResponse,
-  RuntimeServicesResponse,
   ServicesResponse,
-  DeploymentSummary
+  SignalsHubResponse
 } from "./contracts";
 import { connectJobsLive } from "./liveSocket";
 import { migratedRoutes, operatorNavGroups, reactRouteForPath } from "./routes";
@@ -22,7 +21,8 @@ import {
   fallbackText,
   formatPercent,
   jobTarget,
-  monitoringStrip,
+  buildSignalMetrics,
+  rankedSignalPaths,
   serviceName,
   statusClass,
   statusLabel,
@@ -49,10 +49,13 @@ const emptyFleet: FleetSummary = {
   total: 0
 };
 
-const emptyMonitoring: MonitoringOverview = {
-  runtime: { available: true, error: "", containers: [] },
-  deployments: { total: 0, active: 0, running: 0, completed: 0, succeeded: 0, failed: 0 },
-  keytab: {}
+const emptySignalsHub: SignalsHubResponse = {
+  generated_at: "",
+  build: {},
+  source_health: { runtime_available: true },
+  metrics: [],
+  signals: [],
+  operator_paths: []
 };
 
 function currentPageLabel(path: string): string {
@@ -393,77 +396,119 @@ function JobsPage({ bootstrap }: AppProps) {
   );
 }
 
+function signalToneClass(tone: string | undefined): string {
+  return tone && tone !== "neutral" ? `status status--${tone}` : "status";
+}
+
 function MonitoringPage({ bootstrap }: AppProps) {
-  const [overview, setOverview] = useState<MonitoringOverview>(emptyMonitoring);
+  const [hub, setHub] = useState<SignalsHubResponse>(emptySignalsHub);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [runtime, deployments, keytab] = await Promise.all([
-        fetchJson<RuntimeServicesResponse>("/api/monitoring/runtime-services"),
-        fetchJson<DeploymentSummary>("/api/monitoring/deployments/summary"),
-        fetchJson<KeytabHealth>("/api/monitoring/keytab/health")
-      ]);
-      setOverview({ runtime, deployments, keytab });
+      const signals = await fetchJson<SignalsHubResponse>("/api/monitoring/signals");
+      setHub(signals);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load monitoring");
+      setError(err instanceof Error ? err.message : "Failed to load signals");
     }
   }, []);
 
   usePolling(load);
 
+  const metrics = hub.metrics.length ? hub.metrics : buildSignalMetrics(hub);
+  const rankedPaths = rankedSignalPaths(hub.operator_paths);
+  const selectedSignal = hub.signals[0];
+  const selectedPath = rankedPaths[0];
+
   return (
     <PageFrame
       bootstrap={bootstrap}
-      title="Monitoring"
+      title="Signals Hub"
       section="Observe"
       path="/react/monitoring"
-      action={<a className="action-link" href="/monitoring/settings">Monitoring settings</a>}
+      action={
+        <span className="action-cluster">
+          <a className="action-link" href="/react/jobs">Jobs</a>
+          <a className="action-link" href="/monitoring/settings">Monitoring settings</a>
+        </span>
+      }
     >
       {error ? <p className="notice" role="status">{error}</p> : null}
-      <section className="metric-strip" aria-label="Monitoring metrics">
-        {monitoringStrip(overview).map((item) => (
+      <section className="metric-strip metric-strip--signals" aria-label="Signals Hub metrics">
+        {metrics.map((item) => (
           <Metric key={item.label} label={item.label} value={item.value} tone={item.tone} />
         ))}
       </section>
 
-      <section className="section-grid section-grid--wide">
-        <Panel title="Runtime services">
-          {overview.runtime.containers.length ? (
-            <ul className="row-list">
-              {overview.runtime.containers.map((container) => (
-                <li key={container.name}>
-                  <span className={statusClass(container.health || container.status)}>
-                    {statusLabel(container.health || container.status)}
-                  </span>
-                  <strong>{container.service || container.name}</strong>
-                  <span>{fallbackText(container.image)}</span>
+      <section className="signals-layout">
+        <Panel title="Signal families">
+          {hub.signals.length ? (
+            <ul className="signal-list">
+              {hub.signals.map((signal: OperatorSignal) => (
+                <li key={signal.id}>
+                  <span className={signalToneClass(signal.tone)}>{statusLabel(signal.status)}</span>
+                  <div>
+                    <strong>{signal.label}</strong>
+                    <p>{signal.summary}</p>
+                    <small>{signal.source || signal.family}</small>
+                  </div>
+                  <span>{fallbackText(signal.count)}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="empty">{overview.runtime.available ? "No runtime services." : overview.runtime.error}</p>
+            <p className="empty">No signals collected.</p>
           )}
         </Panel>
 
-        <Panel title="Deployment speed">
-          <dl className="fleet-grid fleet-grid--four">
-            <MetricTerm label="Total" value={String(overview.deployments.total)} />
-            <MetricTerm label="Active" value={String(overview.deployments.running ?? overview.deployments.active ?? 0)} />
-            <MetricTerm label="Complete" value={String(overview.deployments.succeeded ?? overview.deployments.completed ?? 0)} />
-            <MetricTerm label="Failed" value={String(overview.deployments.failed)} />
-          </dl>
+        <Panel title="Ranked operator paths">
+          {rankedPaths.length ? (
+            <ul className="path-list">
+              {rankedPaths.map((path: OperatorPath) => (
+                <li key={path.id}>
+                  <span className={signalToneClass(path.tone)}>{statusLabel(path.status)}</span>
+                  <div>
+                    <strong>{path.label}</strong>
+                    <p>{path.summary}</p>
+                    <small>{path.source || "Signals Hub"}</small>
+                  </div>
+                  <a href={path.href}>{path.action_label}</a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="empty">No operator paths ranked.</p>
+          )}
         </Panel>
 
-        <Panel title="Keytab">
-          <ul className="row-list">
-            <li>
-              <span className={statusClass(overview.keytab.status)}>{statusLabel(overview.keytab.status)}</span>
-              <strong>{fallbackText(overview.keytab.status)}</strong>
-              <span>{fallbackText(overview.keytab.detail || overview.keytab.message)}</span>
-            </li>
-          </ul>
+        <Panel title="Selected signal">
+          <div className="signal-detail">
+            <dl className="fleet-grid fleet-grid--four">
+              <MetricTerm label="Runtime" value={hub.source_health.runtime_available ? "up" : "down"} />
+              <MetricTerm label="Setup" value={fallbackText(hub.source_health.setup_health)} />
+              <MetricTerm label="Keytab" value={fallbackText(hub.source_health.keytab_status)} />
+              <MetricTerm label="Generated" value={fallbackText(hub.generated_at)} />
+            </dl>
+            {selectedSignal ? (
+              <div className="detail-callout">
+                <span className={signalToneClass(selectedSignal.tone)}>{statusLabel(selectedSignal.status)}</span>
+                <div>
+                  <strong>{selectedSignal.label}</strong>
+                  <p>{selectedSignal.summary}</p>
+                </div>
+              </div>
+            ) : null}
+            {selectedPath ? (
+              <div className="detail-callout">
+                <span className={signalToneClass(selectedPath.tone)}>{String(selectedPath.priority)}</span>
+                <div>
+                  <strong>{selectedPath.label}</strong>
+                  <p>{selectedPath.summary}</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </Panel>
       </section>
     </PageFrame>

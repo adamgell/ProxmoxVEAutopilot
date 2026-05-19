@@ -84,6 +84,46 @@ async function mockReadApis(page: Page) {
   await page.route("**/api/monitoring/keytab/health", async (route) => {
     await route.fulfill({ json: { status: "ok", detail: "keytab valid" } });
   });
+  await page.route("**/api/monitoring/signals", async (route) => {
+    await route.fulfill({
+      json: {
+        generated_at: "2026-05-19T00:00:00Z",
+        build: { sha_short: "abc1234", build_time: "2026-05-18T12:00:00Z" },
+        source_health: { runtime_available: true, setup_health: "ready" },
+        metrics: [],
+        signals: [
+          {
+            id: "runtime",
+            family: "runtime",
+            label: "Runtime containers",
+            status: "healthy",
+            tone: "good",
+            summary: "autopilot is healthy"
+          },
+          {
+            id: "build-host",
+            family: "build_host",
+            label: "Build host agent",
+            status: "ready",
+            tone: "good",
+            summary: "buildhost-100 heartbeat fresh"
+          }
+        ],
+        operator_paths: [
+          {
+            id: "server-deploy",
+            priority: 20,
+            label: "Windows Server OSDeploy artifact is available",
+            status: "ready",
+            tone: "good",
+            summary: "Open the existing OSDeploy execution flow.",
+            action_label: "Open server deploy",
+            href: "/osdeploy"
+          }
+        ]
+      }
+    });
+  });
 }
 
 test("renders the React shell without layout overlap", async ({ page }) => {
@@ -91,7 +131,7 @@ test("renders the React shell without layout overlap", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Operator workspace" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Monitoring", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
 
   const hero = await page.locator(".workspace__topbar").boundingBox();
@@ -147,14 +187,15 @@ for (const viewport of [
     expect(metrics.y + metrics.height).toBeLessThanOrEqual(filter.y + 1);
   });
 
-  test(`renders monitoring read-only route without overlap on ${viewport.name}`, async ({ page }) => {
+  test(`renders Signals Hub read-only route without overlap on ${viewport.name}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await mockReadApis(page);
     await page.goto("/react/monitoring");
 
-    await expect(page.getByRole("heading", { name: "Monitoring", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Runtime services" })).toBeVisible();
-    await expect(page.locator(".row-list strong", { hasText: "autopilot" }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Signals Hub", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Signal families" })).toBeVisible();
+    await expect(page.getByText("Build host agent")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open server deploy" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Monitoring settings", exact: true })).toBeVisible();
 
     const header = await page.locator(".page-head").boundingBox();
@@ -162,7 +203,7 @@ for (const viewport of [
     expect(header).not.toBeNull();
     expect(metrics).not.toBeNull();
     if (!header || !metrics) {
-      throw new Error("Monitoring layout regions were not measurable.");
+      throw new Error("Signals Hub layout regions were not measurable.");
     }
     expect(header.y + header.height).toBeLessThanOrEqual(metrics.y + 1);
   });

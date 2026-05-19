@@ -4391,6 +4391,51 @@ class DeploymentSummaryResponse(ApiExtraModel):
     recent_failure_rate: float = 0
 
 
+class SignalMetricResponse(BaseModel):
+    label: str
+    value: str
+    tone: str = "neutral"
+
+
+class SignalSourceHealthResponse(BaseModel):
+    runtime_available: bool = True
+    setup_health: str = "unknown"
+    keytab_status: str = ""
+
+
+class OperatorSignalResponse(ApiExtraModel):
+    id: str
+    family: str
+    label: str
+    status: str
+    tone: str = "neutral"
+    summary: str
+    count: str | int | None = None
+    source: str = ""
+    href: str = ""
+
+
+class OperatorPathResponse(ApiExtraModel):
+    id: str
+    priority: int
+    label: str
+    status: str
+    tone: str = "neutral"
+    summary: str
+    action_label: str
+    href: str
+    source: str = ""
+
+
+class SignalsHubResponse(BaseModel):
+    generated_at: str
+    build: dict[str, Any] = Field(default_factory=dict)
+    source_health: SignalSourceHealthResponse
+    metrics: list[SignalMetricResponse] = Field(default_factory=list)
+    signals: list[OperatorSignalResponse] = Field(default_factory=list)
+    operator_paths: list[OperatorPathResponse] = Field(default_factory=list)
+
+
 class FleetSummaryResponse(ApiExtraModel):
     total: int = 0
 
@@ -13433,6 +13478,313 @@ def _deployment_summary_for_react(summary: dict) -> dict:
     }
 
 
+def _signal_tone(status: str) -> str:
+    normalized = (status or "").casefold()
+    if normalized in {"ok", "healthy", "ready", "complete", "completed"}:
+        return "good"
+    if normalized in {"running", "busy", "active", "pending", "queued"}:
+        return "active"
+    if normalized in {"failed", "error", "blocked", "missing", "stale", "mismatch", "unavailable", "degraded"}:
+        return "bad"
+    return "neutral"
+
+
+def _signals_metric(label: str, value: str | int, tone: str = "neutral") -> dict:
+    return {"label": label, "value": str(value), "tone": tone}
+
+
+def _signals_hub_payload() -> dict:
+    runtime = _runtime_container_status()
+    runtime_containers = runtime.get("containers") or []
+    unhealthy_runtime = [
+        row for row in runtime_containers
+        if (row.get("health") and row.get("health") != "healthy")
+        or row.get("status") not in {"running", "healthy"}
+    ]
+
+    table_jobs = _job_table_rows()
+    running_payload = _running_jobs_payload()
+    failed_jobs = [
+        row for row in table_jobs
+        if str(row.get("status") or "").casefold() in {"failed", "orphaned", "stuck", "regressed"}
+    ]
+
+    try:
+        readiness = _setup_readiness()
+    except Exception as exc:
+        readiness = {
+            "phase": "unknown",
+            "health": "unavailable",
+            "blocking_count": 0,
+            "build_host": {},
+            "artifacts": {},
+            "media": {},
+            "error": str(exc),
+        }
+    build_host = readiness.get("build_host") if isinstance(readiness.get("build_host"), dict) else {}
+    artifacts = readiness.get("artifacts") if isinstance(readiness.get("artifacts"), dict) else {}
+    media = readiness.get("media") if isinstance(readiness.get("media"), dict) else {}
+    blocking_count = int(readiness.get("blocking_count") or 0)
+
+    try:
+        keytab = device_history_db.get_keytab_health() or {}
+    except Exception:
+        keytab = {}
+    keytab_status = str(keytab.get("status") or "unknown")
+
+    try:
+        fleet = device_history_db.fleet_summary()
+    except Exception:
+        fleet = {"total": 0}
+
+    try:
+        from web import db_pg, deployment_health
+
+        with db_pg.connection(_database_url()) as conn:
+            deployments = deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+    except Exception:
+        deployments = {"total": 0, "active": 0, "completed": 0, "failed": 0}
+    deployments = _deployment_summary_for_react(deployments)
+
+    osdeploy_ready = int(artifacts.get("osdeploy_ready_count") or 0)
+    cloudosd_ready = int(artifacts.get("cloudosd_ready_count") or 0)
+    artifacts_ready = bool(artifacts.get("ready"))
+    windows_ready = bool(media.get("windows_iso_ready"))
+    virtio_ready = bool(media.get("virtio_iso_ready"))
+
+    build_host_state = str(build_host.get("agent_state") or ("ready" if build_host.get("agent_ready") else "missing"))
+    active_work = build_host.get("active_work") if isinstance(build_host.get("active_work"), dict) else None
+    if active_work and active_work.get("within_timeout"):
+        build_host_status = "busy"
+    elif build_host.get("agent_ready"):
+        build_host_status = "ready"
+    else:
+        build_host_status = build_host_state
+
+    signals = [
+        {
+            "id": "runtime",
+            "family": "runtime",
+            "label": "Runtime containers",
+            "status": "degraded" if unhealthy_runtime or not runtime.get("available") else "healthy",
+            "tone": "bad" if unhealthy_runtime or not runtime.get("available") else "good",
+            "summary": (
+                runtime.get("error")
+                if not runtime.get("available")
+                else f"{len(runtime_containers)} runtime services visible; {len(unhealthy_runtime)} need attention"
+            ),
+            "count": len(runtime_containers),
+            "source": "/api/monitoring/runtime-services",
+            "href": "/react/monitoring#runtime",
+        },
+        {
+            "id": "jobs",
+            "family": "jobs",
+            "label": "Jobs and live work",
+            "status": "failed" if failed_jobs else ("running" if running_payload.get("running_count") else "ready"),
+            "tone": "bad" if failed_jobs else ("active" if running_payload.get("running_count") else "good"),
+            "summary": f"{running_payload.get('running_count', 0)} running, {running_payload.get('queued_count', 0)} queued, {len(failed_jobs)} failed or orphaned",
+            "count": len(table_jobs),
+            "source": "/api/jobs and /api/live/ws",
+            "href": "/react/jobs",
+        },
+        {
+            "id": "build-host",
+            "family": "build_host",
+            "label": "Build host",
+            "status": build_host_status,
+            "tone": _signal_tone(build_host_status),
+            "summary": (
+                f"{build_host.get('name') or 'build host'} on {build_host.get('node') or '-'}; "
+                f"agent {build_host.get('expected_agent_id') or '-'}; heartbeat age {build_host.get('last_heartbeat_age_seconds') if build_host.get('last_heartbeat_age_seconds') is not None else '-'}s"
+            ),
+            "count": 1 if build_host.get("expected_agent_id") else 0,
+            "source": "/api/setup/v1/readiness",
+            "href": "/setup",
+        },
+        {
+            "id": "artifacts",
+            "family": "artifacts",
+            "label": "Operational artifacts",
+            "status": "ready" if artifacts_ready else "missing",
+            "tone": "good" if artifacts_ready else "bad",
+            "summary": f"{cloudosd_ready} CloudOSD and {osdeploy_ready} OSDeploy artifacts ready",
+            "count": cloudosd_ready + osdeploy_ready,
+            "source": "/api/setup/v1/readiness",
+            "href": "/osdeploy" if osdeploy_ready else "/setup",
+        },
+        {
+            "id": "deploy-readiness",
+            "family": "deploy_readiness",
+            "label": "Deploy readiness",
+            "status": "blocked" if blocking_count else str(readiness.get("health") or "unknown"),
+            "tone": "bad" if blocking_count else _signal_tone(str(readiness.get("health") or "")),
+            "summary": f"phase {readiness.get('phase') or 'unknown'}; {blocking_count} blocked checks",
+            "count": blocking_count,
+            "source": "/api/setup/v1/readiness",
+            "href": "/setup",
+        },
+        {
+            "id": "agent",
+            "family": "agent",
+            "label": "AutopilotAgent triage",
+            "status": build_host_status,
+            "tone": _signal_tone(build_host_status),
+            "summary": (
+                f"{build_host.get('computer_name') or build_host.get('expected_computer_name') or 'agent'} "
+                f"version {build_host.get('agent_version') or '-'} at {build_host.get('primary_ipv4') or '-'}"
+            ),
+            "count": 1 if build_host.get("expected_agent_id") else 0,
+            "source": "setup readiness and agent telemetry",
+            "href": "/vms",
+        },
+        {
+            "id": "identity",
+            "family": "identity",
+            "label": "AD, auth, and keytab",
+            "status": keytab_status,
+            "tone": _signal_tone(keytab_status),
+            "summary": str(keytab.get("detail") or keytab.get("message") or "keytab health not reported"),
+            "count": keytab_status,
+            "source": "/api/monitoring/keytab/health",
+            "href": "/monitoring/settings",
+        },
+        {
+            "id": "fleet-evidence",
+            "family": "fleet_evidence",
+            "label": "Fleet evidence",
+            "status": "ready" if int(fleet.get("total") or 0) else "empty",
+            "tone": "good" if int(fleet.get("total") or 0) else "neutral",
+            "summary": f"{int(fleet.get('total') or 0)} devices in latest fleet summary; {deployments.get('succeeded', 0)} deployments complete",
+            "count": int(fleet.get("total") or 0),
+            "source": "/api/fleet/summary",
+            "href": "/devices",
+        },
+    ]
+
+    operator_paths = []
+    if not (windows_ready and virtio_ready):
+        operator_paths.append({
+            "id": "stage-bootstrap-media",
+            "priority": 10,
+            "label": "Stage Windows ISO and VirtIO media",
+            "status": "blocked",
+            "tone": "bad",
+            "summary": "Bootstrap recovery media is not staged; fix this before rebuilding the build host.",
+            "action_label": "Open setup",
+            "href": "/setup",
+            "source": "/api/setup/v1/media",
+        })
+    if failed_jobs:
+        operator_paths.append({
+            "id": "review-failed-jobs",
+            "priority": 15,
+            "label": "Review failed or orphaned jobs",
+            "status": "failed",
+            "tone": "bad",
+            "summary": f"{len(failed_jobs)} jobs need operator review before more work is started.",
+            "action_label": "Open jobs",
+            "href": "/react/jobs",
+            "source": "/api/jobs",
+        })
+    if build_host_status in {"stale", "missing", "mismatch"}:
+        operator_paths.append({
+            "id": "repair-build-host-agent",
+            "priority": 20,
+            "label": "Repair build host agent",
+            "status": build_host_status,
+            "tone": "bad",
+            "summary": "The build-host agent is not fresh; repair only after checking active work.",
+            "action_label": "Open setup",
+            "href": "/setup",
+            "source": "/api/setup/v1/readiness",
+        })
+    elif build_host_status == "busy":
+        operator_paths.append({
+            "id": "watch-build-host",
+            "priority": 25,
+            "label": "Build host is busy",
+            "status": "running",
+            "tone": "active",
+            "summary": "Active work is within timeout; watch the job instead of repairing the agent.",
+            "action_label": "Watch jobs",
+            "href": "/react/jobs",
+            "source": "/api/setup/v1/readiness",
+        })
+    elif build_host_status == "ready":
+        operator_paths.append({
+            "id": "queue-build-host-work",
+            "priority": 35,
+            "label": "Build host agent is fresh and idle",
+            "status": "ready",
+            "tone": "good",
+            "summary": "The build host can accept build workloads when new artifacts are needed.",
+            "action_label": "Open setup",
+            "href": "/setup",
+            "source": "/api/setup/v1/readiness",
+        })
+    if osdeploy_ready:
+        operator_paths.append({
+            "id": "server-deploy-ready",
+            "priority": 40,
+            "label": "Windows Server OSDeploy artifact is available",
+            "status": "ready",
+            "tone": "good",
+            "summary": "Open the existing OSDeploy execution flow with the promoted artifact ready.",
+            "action_label": "Open server deploy",
+            "href": "/osdeploy",
+            "source": "/api/setup/v1/readiness",
+        })
+    if cloudosd_ready:
+        operator_paths.append({
+            "id": "desktop-deploy-ready",
+            "priority": 45,
+            "label": "CloudOSD desktop artifacts are available",
+            "status": "ready",
+            "tone": "good",
+            "summary": "Desktop deployment can start from the existing CloudOSD flow.",
+            "action_label": "Open desktop deploy",
+            "href": "/cloudosd",
+            "source": "/api/setup/v1/readiness",
+        })
+    if int(deployments.get("succeeded") or 0):
+        operator_paths.append({
+            "id": "review-fleet-evidence",
+            "priority": 60,
+            "label": "Review fleet evidence",
+            "status": "ready",
+            "tone": "good",
+            "summary": "Confirm VM, device, hash, and artifact records after completed deployments.",
+            "action_label": "Open devices",
+            "href": "/devices",
+            "source": "/api/fleet/summary",
+        })
+    operator_paths.sort(key=lambda item: (int(item.get("priority") or 100), str(item.get("label") or "")))
+
+    bad_count = sum(1 for signal in signals if signal["tone"] == "bad")
+    action_count = sum(1 for signal in signals if signal["tone"] in {"bad", "active"})
+    ready_count = sum(1 for signal in signals if signal["tone"] == "good")
+
+    return {
+        "generated_at": utc_now_iso(),
+        "build": _APP_VERSION,
+        "source_health": {
+            "runtime_available": bool(runtime.get("available")),
+            "setup_health": str(readiness.get("health") or "unknown"),
+            "keytab_status": keytab_status,
+        },
+        "metrics": [
+            _signals_metric("Critical", bad_count, "bad" if bad_count else "good"),
+            _signals_metric("Needs operator", action_count, "bad" if action_count else "good"),
+            _signals_metric("Ready", ready_count, "good" if ready_count else "neutral"),
+            _signals_metric("Runtime", "up" if runtime.get("available") else "down", "good" if runtime.get("available") else "bad"),
+            _signals_metric("Artifacts", cloudosd_ready + osdeploy_ready, "good" if artifacts_ready else "bad"),
+        ],
+        "signals": signals,
+        "operator_paths": operator_paths,
+    }
+
+
 @app.get("/api/monitoring/deployments/summary", response_model=DeploymentSummaryResponse)
 def api_monitoring_deployments_summary():
     from web import db_pg, deployment_health
@@ -13440,6 +13792,11 @@ def api_monitoring_deployments_summary():
     with db_pg.connection(_database_url()) as conn:
         summary = deployment_health.build_deployments_payload(conn, limit=1)["summary"]
     return _deployment_summary_for_react(summary)
+
+
+@app.get("/api/monitoring/signals", response_model=SignalsHubResponse)
+def api_monitoring_signals():
+    return _signals_hub_payload()
 
 
 @app.get("/api/monitoring/deployments/runs")

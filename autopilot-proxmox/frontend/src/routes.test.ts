@@ -25,7 +25,7 @@ describe("operator route registry", () => {
       },
       {
         path: "/react/monitoring",
-        label: "Monitoring",
+        label: "Signals Hub",
         group: "Observe",
         phase: "read-only"
       }

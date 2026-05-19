@@ -988,6 +988,92 @@ export type MonitoringSummaryResponse = {
 };
 
 /**
+ * OperatorPathResponse
+ */
+export type OperatorPathResponse = {
+    /**
+     * Action Label
+     */
+    action_label: string;
+    /**
+     * Href
+     */
+    href: string;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Priority
+     */
+    priority: number;
+    /**
+     * Source
+     */
+    source?: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Tone
+     */
+    tone?: string;
+    [key: string]: unknown;
+};
+
+/**
+ * OperatorSignalResponse
+ */
+export type OperatorSignalResponse = {
+    /**
+     * Count
+     */
+    count?: string | number | null;
+    /**
+     * Family
+     */
+    family: string;
+    /**
+     * Href
+     */
+    href?: string;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Source
+     */
+    source?: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Tone
+     */
+    tone?: string;
+    [key: string]: unknown;
+};
+
+/**
  * OsdRegisterBody
  */
 export type OsdRegisterBody = {
@@ -1424,6 +1510,71 @@ export type ServicesResponse = {
     services?: Array<{
         [key: string]: unknown;
     }>;
+};
+
+/**
+ * SignalMetricResponse
+ */
+export type SignalMetricResponse = {
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Tone
+     */
+    tone?: string;
+    /**
+     * Value
+     */
+    value: string;
+};
+
+/**
+ * SignalSourceHealthResponse
+ */
+export type SignalSourceHealthResponse = {
+    /**
+     * Keytab Status
+     */
+    keytab_status?: string;
+    /**
+     * Runtime Available
+     */
+    runtime_available?: boolean;
+    /**
+     * Setup Health
+     */
+    setup_health?: string;
+};
+
+/**
+ * SignalsHubResponse
+ */
+export type SignalsHubResponse = {
+    /**
+     * Build
+     */
+    build?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Generated At
+     */
+    generated_at: string;
+    /**
+     * Metrics
+     */
+    metrics?: Array<SignalMetricResponse>;
+    /**
+     * Operator Paths
+     */
+    operator_paths?: Array<OperatorPathResponse>;
+    /**
+     * Signals
+     */
+    signals?: Array<OperatorSignalResponse>;
+    source_health: SignalSourceHealthResponse;
 };
 
 /**
@@ -3510,7 +3661,7 @@ export type DeleteCacheEntryApiCloudosdCacheEntryIdDeletePostResponses = {
     202: unknown;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetData = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadData = {
     body?: never;
     path: {
         /**
@@ -3535,23 +3686,23 @@ export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetData = {
     url: '/api/cloudosd/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetError = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetErrors];
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadError = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadErrors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadErrors];
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGetResponses = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHeadResponses = {
     /**
      * Successful Response
      */
     200: unknown;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Data = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Data = {
     body?: never;
     path: {
         /**
@@ -3576,16 +3727,16 @@ export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Data = 
     url: '/api/cloudosd/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Errors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Error = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Errors];
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Error = DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Errors[keyof DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Errors];
 
-export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameGet2Responses = {
+export type DownloadCacheEntryApiCloudosdCacheEntryIdDownloadFileNameHead2Responses = {
     /**
      * Successful Response
      */
@@ -5353,6 +5504,22 @@ export type ApiMonitoringSettingsUpdateApiMonitoringSettingsPutResponses = {
     200: unknown;
 };
 
+export type ApiMonitoringSignalsApiMonitoringSignalsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/monitoring/signals';
+};
+
+export type ApiMonitoringSignalsApiMonitoringSignalsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: SignalsHubResponse;
+};
+
+export type ApiMonitoringSignalsApiMonitoringSignalsGetResponse = ApiMonitoringSignalsApiMonitoringSignalsGetResponses[keyof ApiMonitoringSignalsApiMonitoringSignalsGetResponses];
+
 export type ApiMonitoringSweepNowApiMonitoringSweepNowPostData = {
     body?: never;
     path?: never;
@@ -6136,7 +6303,7 @@ export type DeleteCacheEntryApiOsdeployV1CacheEntryIdDeletePostResponses = {
     202: unknown;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetData = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadData = {
     body?: never;
     path: {
         /**
@@ -6152,23 +6319,23 @@ export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetData =
     url: '/api/osdeploy/v1/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetError = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetErrors];
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadError = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadErrors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadErrors];
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGetResponses = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHeadResponses = {
     /**
      * Successful Response
      */
     200: unknown;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Data = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Data = {
     body?: never;
     path: {
         /**
@@ -6184,16 +6351,16 @@ export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Data 
     url: '/api/osdeploy/v1/cache/{entry_id}/download/{file_name}';
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Errors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Error = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Errors];
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Error = DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Errors[keyof DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Errors];
 
-export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameGet2Responses = {
+export type DownloadCacheEntryApiOsdeployV1CacheEntryIdDownloadFileNameHead2Responses = {
     /**
      * Successful Response
      */

@@ -91,6 +91,25 @@ def test_observe_monitoring_api_response_shapes(web_client):
     assert deployments.status_code == 200
     assert set(deployments.json()) >= {"total", "running", "succeeded", "failed"}
 
+    signals = web_client.get("/api/monitoring/signals")
+    assert signals.status_code == 200
+    signals_body = signals.json()
+    assert set(signals_body) >= {"generated_at", "build", "metrics", "signals", "operator_paths"}
+    assert isinstance(signals_body["metrics"], list)
+    assert isinstance(signals_body["signals"], list)
+    assert isinstance(signals_body["operator_paths"], list)
+    assert {
+        "runtime",
+        "jobs",
+        "build_host",
+        "artifacts",
+        "deploy_readiness",
+        "agent",
+        "identity",
+        "fleet_evidence",
+    }.issubset({item["family"] for item in signals_body["signals"]})
+    assert any(path["href"].startswith(("/react/", "/cloudosd", "/osdeploy", "/setup", "/vms", "/devices", "/hashes")) for path in signals_body["operator_paths"])
+
 
 def test_openapi_export_script_uses_local_app_import(tmp_path):
     output = tmp_path / "openapi.json"

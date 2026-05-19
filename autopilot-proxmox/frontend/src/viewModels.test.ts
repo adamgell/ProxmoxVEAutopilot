@@ -2,10 +2,12 @@ import { describe, expect, test } from "vitest";
 
 import type { JobTableRow, MonitoringOverview } from "./contracts";
 import {
+  buildSignalMetrics,
   fallbackText,
   formatPercent,
   jobTarget,
   monitoringStrip,
+  rankedSignalPaths,
   statusLabel,
   statusTone,
   summarizeJobs
@@ -73,5 +75,37 @@ describe("operator view models", () => {
       { label: "Failed", value: "0", tone: "good" },
       { label: "Keytab", value: "-", tone: "neutral" }
     ]);
+  });
+
+  test("builds signal metrics from collected hub values", () => {
+    expect(
+      buildSignalMetrics({
+        metrics: [],
+        source_health: { runtime_available: true, setup_health: "ready" },
+        signals: [
+          { id: "runtime", family: "runtime", label: "Runtime", status: "healthy", tone: "good", summary: "5 up" },
+          { id: "media", family: "deploy_readiness", label: "Media", status: "blocked", tone: "bad", summary: "missing" }
+        ],
+        operator_paths: [],
+        generated_at: "2026-05-19T00:00:00Z",
+        build: { sha_short: "75ea47a", build_time: "2026-05-19T00:10:41Z" }
+      })
+    ).toEqual([
+      { label: "Critical", value: "1", tone: "bad" },
+      { label: "Needs operator", value: "1", tone: "bad" },
+      { label: "Ready", value: "1", tone: "good" },
+      { label: "Runtime", value: "up", tone: "good" },
+      { label: "Setup", value: "ready", tone: "good" }
+    ]);
+  });
+
+  test("ranks signal paths by priority without mutating input", () => {
+    const paths = [
+      { id: "watch", priority: 30, label: "Watch build", status: "ready", tone: "good", summary: "safe", action_label: "Watch", href: "/react/jobs" },
+      { id: "media", priority: 5, label: "Stage media", status: "blocked", tone: "bad", summary: "missing", action_label: "Open", href: "/setup" }
+    ] as const;
+
+    expect(rankedSignalPaths(paths).map((path) => path.id)).toEqual(["media", "watch"]);
+    expect(paths.map((path) => path.id)).toEqual(["watch", "media"]);
   });
 });

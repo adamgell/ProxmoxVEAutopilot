@@ -173,3 +173,66 @@ export interface MonitoringOverview {
   readonly deployments: DeploymentSummary;
   readonly keytab: KeytabHealth;
 }
+
+export type SignalTone = "good" | "active" | "bad" | "neutral";
+
+export type SignalFamily =
+  | "runtime"
+  | "jobs"
+  | "build_host"
+  | "artifacts"
+  | "deploy_readiness"
+  | "agent"
+  | "identity"
+  | "fleet_evidence";
+
+export interface SignalBuildInfo {
+  readonly sha?: string;
+  readonly sha_short?: string;
+  readonly build_time?: string;
+}
+
+export interface SignalSourceHealth {
+  readonly runtime_available: boolean;
+  readonly setup_health?: string;
+  readonly keytab_status?: string;
+}
+
+export interface OperatorSignal {
+  readonly id: string;
+  readonly family: SignalFamily;
+  readonly label: string;
+  readonly status: string;
+  readonly tone: SignalTone;
+  readonly summary: string;
+  readonly count?: string | number;
+  readonly source?: string;
+  readonly href?: string;
+}
+
+export interface SignalMetric {
+  readonly label: string;
+  readonly value: string;
+  readonly tone?: SignalTone;
+}
+
+export interface OperatorPath {
+  readonly id: string;
+  readonly priority: number;
+  readonly label: string;
+  readonly status: string;
+  readonly tone: SignalTone;
+  readonly summary: string;
+  readonly action_label: string;
+  readonly href: string;
+  readonly source?: string;
+}
+
+export interface SignalsHubResponse {
+  readonly generated_at: string;
+  readonly build: SignalBuildInfo;
+  readonly source_health: SignalSourceHealth;
+  readonly metrics: readonly SignalMetric[];
+  readonly signals: readonly OperatorSignal[];
+  readonly operator_paths: readonly OperatorPath[];
+}

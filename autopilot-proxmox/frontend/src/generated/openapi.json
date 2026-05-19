@@ -1551,6 +1551,123 @@
         "title": "MonitoringSummaryResponse",
         "type": "object"
       },
+      "OperatorPathResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "action_label": {
+            "title": "Action Label",
+            "type": "string"
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "priority",
+          "label",
+          "status",
+          "summary",
+          "action_label",
+          "href"
+        ],
+        "title": "OperatorPathResponse",
+        "type": "object"
+      },
+      "OperatorSignalResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "count": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "href": {
+            "default": "",
+            "title": "Href",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "family",
+          "label",
+          "status",
+          "summary"
+        ],
+        "title": "OperatorSignalResponse",
+        "type": "object"
+      },
       "OsdRegisterBody": {
         "properties": {
           "computer_name": {
@@ -2188,6 +2305,93 @@
           }
         },
         "title": "ServicesResponse",
+        "type": "object"
+      },
+      "SignalMetricResponse": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "tone": {
+            "default": "neutral",
+            "title": "Tone",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "SignalMetricResponse",
+        "type": "object"
+      },
+      "SignalSourceHealthResponse": {
+        "properties": {
+          "keytab_status": {
+            "default": "",
+            "title": "Keytab Status",
+            "type": "string"
+          },
+          "runtime_available": {
+            "default": true,
+            "title": "Runtime Available",
+            "type": "boolean"
+          },
+          "setup_health": {
+            "default": "unknown",
+            "title": "Setup Health",
+            "type": "string"
+          }
+        },
+        "title": "SignalSourceHealthResponse",
+        "type": "object"
+      },
+      "SignalsHubResponse": {
+        "properties": {
+          "build": {
+            "additionalProperties": true,
+            "title": "Build",
+            "type": "object"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/SignalMetricResponse"
+            },
+            "title": "Metrics",
+            "type": "array"
+          },
+          "operator_paths": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorPathResponse"
+            },
+            "title": "Operator Paths",
+            "type": "array"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorSignalResponse"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "source_health": {
+            "$ref": "#/components/schemas/SignalSourceHealthResponse"
+          }
+        },
+        "required": [
+          "generated_at",
+          "source_health"
+        ],
+        "title": "SignalsHubResponse",
         "type": "object"
       },
       "StepLogBody": {
@@ -5575,7 +5779,7 @@
     },
     "/api/cloudosd/cache/{entry_id}/download/{file_name}": {
       "get": {
-        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__get",
+        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__head",
         "parameters": [
           {
             "in": "path",
@@ -5642,7 +5846,7 @@
         ]
       },
       "head": {
-        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__get",
+        "operationId": "download_cache_entry_api_cloudosd_cache__entry_id__download__file_name__head",
         "parameters": [
           {
             "in": "path",
@@ -8278,6 +8482,24 @@
         "summary": "Api Monitoring Settings Update"
       }
     },
+    "/api/monitoring/signals": {
+      "get": {
+        "operationId": "api_monitoring_signals_api_monitoring_signals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalsHubResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Monitoring Signals"
+      }
+    },
     "/api/monitoring/sweep-now": {
       "post": {
         "description": "Queue one monitor sweep using the same helper as the monitor container.",
@@ -9502,7 +9724,7 @@
     },
     "/api/osdeploy/v1/cache/{entry_id}/download/{file_name}": {
       "get": {
-        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__get",
+        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__head",
         "parameters": [
           {
             "in": "path",
@@ -9549,7 +9771,7 @@
         ]
       },
       "head": {
-        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__get",
+        "operationId": "download_cache_entry_api_osdeploy_v1_cache__entry_id__download__file_name__head",
         "parameters": [
           {
             "in": "path",

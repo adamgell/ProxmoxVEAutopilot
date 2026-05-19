@@ -1,4 +1,4 @@
-import type { JobTableRow, MonitoringOverview } from "./contracts";
+import type { JobTableRow, MonitoringOverview, OperatorPath, SignalMetric, SignalsHubResponse } from "./contracts";
 
 export type StatusTone = "good" | "active" | "bad" | "neutral";
 
@@ -129,4 +129,24 @@ export function monitoringStrip(overview: MonitoringOverview): readonly MetricIt
       tone: statusTone(keytabStatus)
     }
   ];
+}
+
+export function buildSignalMetrics(hub: SignalsHubResponse): readonly SignalMetric[] {
+  const critical = hub.signals.filter((signal) => signal.tone === "bad").length;
+  const needsOperator = hub.signals.filter((signal) => signal.tone === "bad" || signal.tone === "active").length;
+  const ready = hub.signals.filter((signal) => signal.tone === "good").length;
+  const runtimeAvailable = hub.source_health.runtime_available;
+  const setupHealth = hub.source_health.setup_health || "unknown";
+
+  return [
+    { label: "Critical", value: String(critical), tone: critical > 0 ? "bad" : "good" },
+    { label: "Needs operator", value: String(needsOperator), tone: needsOperator > 0 ? "bad" : "good" },
+    { label: "Ready", value: String(ready), tone: ready > 0 ? "good" : "neutral" },
+    { label: "Runtime", value: runtimeAvailable ? "up" : "down", tone: runtimeAvailable ? "good" : "bad" },
+    { label: "Setup", value: setupHealth, tone: statusTone(setupHealth) }
+  ];
+}
+
+export function rankedSignalPaths(paths: readonly OperatorPath[]): readonly OperatorPath[] {
+  return paths.toSorted((left, right) => left.priority - right.priority || left.label.localeCompare(right.label));
 }

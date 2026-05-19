@@ -75,6 +75,66 @@ const dashboardResponses: Record<string, unknown> = {
     status: "ok",
     detail: "keytab valid"
   },
+  "/api/monitoring/signals": {
+    generated_at: "2026-05-19T00:00:00Z",
+    build: {
+      sha_short: "abc1234",
+      build_time: "2026-05-18T12:00:00Z"
+    },
+    source_health: {
+      runtime_available: true,
+      setup_health: "ready"
+    },
+    metrics: [],
+    signals: [
+      {
+        id: "runtime",
+        family: "runtime",
+        label: "Runtime containers",
+        status: "healthy",
+        tone: "good",
+        summary: "autopilot is healthy"
+      },
+      {
+        id: "build-host",
+        family: "build_host",
+        label: "Build host agent",
+        status: "ready",
+        tone: "good",
+        summary: "buildhost-100 heartbeat fresh"
+      },
+      {
+        id: "artifacts",
+        family: "artifacts",
+        label: "Operational artifacts",
+        status: "ready",
+        tone: "good",
+        summary: "1 OSDeploy artifact ready"
+      }
+    ],
+    operator_paths: [
+      {
+        id: "stage-media",
+        priority: 10,
+        label: "Stage Windows ISO and VirtIO media",
+        status: "blocked",
+        tone: "bad",
+        summary: "Bootstrap media is not staged.",
+        action_label: "Open setup",
+        href: "/setup"
+      },
+      {
+        id: "server-deploy",
+        priority: 30,
+        label: "Windows Server OSDeploy artifact is available",
+        status: "ready",
+        tone: "good",
+        summary: "Open the existing OSDeploy execution flow.",
+        action_label: "Open server deploy",
+        href: "/osdeploy"
+      }
+    ]
+  },
   "/api/version": {
     sha_short: "abc1234",
     build_time: "2026-05-18T12:00:00Z"
@@ -121,7 +181,7 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute("href", "/react/monitoring");
+    expect(screen.getByRole("link", { name: "Signals Hub" })).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getByRole("link", { name: "OSDCloud Desktop" })).toHaveAttribute("href", "/cloudosd");
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
@@ -178,14 +238,16 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
   });
 
-  test("renders the monitoring read-only slice from API data", async () => {
+  test("renders the Signals Hub read-only slice from API data", async () => {
     mockFetch(dashboardResponses);
 
     renderRoute("/react/monitoring");
 
-    expect(await screen.findByRole("heading", { name: "Monitoring" })).toBeInTheDocument();
-    expect(await screen.findByText("autopilot")).toBeInTheDocument();
-    expect(screen.getByText("keytab valid")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Signals Hub" })).toBeInTheDocument();
+    expect((await screen.findAllByText("Runtime containers")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Build host agent")).toBeInTheDocument();
+    expect(screen.getAllByText("Stage Windows ISO and VirtIO media").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/osdeploy");
     expect(screen.getByRole("link", { name: "Monitoring settings" })).toHaveAttribute(
       "href",
       "/monitoring/settings"

@@ -267,6 +267,13 @@ h2 {
   white-space: nowrap;
 }
 
+.action-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .socket-state {
   display: inline-flex;
   align-items: center;
@@ -300,6 +307,10 @@ h2 {
   border-radius: 8px;
   background: var(--line);
   overflow: hidden;
+}
+
+.metric-strip--signals {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .metric-strip > div,
@@ -362,6 +373,94 @@ h2 {
   padding: 0;
   margin: 0;
   list-style: none;
+}
+
+.signals-layout {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.signal-list,
+.path-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.signal-list li,
+.path-list li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.signal-list strong,
+.path-list strong,
+.detail-callout strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.signal-list p,
+.path-list p,
+.detail-callout p {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.signal-list small,
+.path-list small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.signal-list li > span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.path-list a {
+  color: var(--active);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.signal-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-callout {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .row-list li {
@@ -591,8 +690,10 @@ h2 {
 
   .workspace__nav,
   .metric-strip,
+  .metric-strip--signals,
   .section-grid,
   .section-grid--wide,
+  .signals-layout,
   .fleet-grid,
   .fleet-grid--four,
   .link-grid {
@@ -605,6 +706,17 @@ h2 {
 
   .row-list li {
     grid-template-columns: 1fr;
+  }
+
+  .signal-list li,
+  .path-list li,
+  .detail-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .path-list a,
+  .signal-list li > span:last-child {
+    text-align: left;
   }
 
   .jobs-table {

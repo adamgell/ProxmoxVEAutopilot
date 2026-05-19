@@ -7,7 +7,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
       { path: "/react-shell", label: "Shell", group: "Observe", phase: "foundation", active: true },
       { path: "/react/dashboard", label: "Dashboard", group: "Observe", phase: "read-only", active: true },
       { path: "/react/jobs", label: "Jobs", group: "Observe", phase: "read-only", active: true },
-      { path: "/react/monitoring", label: "Monitoring", group: "Observe", phase: "read-only", active: true },
+      { path: "/react/monitoring", label: "Signals Hub", group: "Observe", phase: "read-only", active: true },
       { path: "/runs", label: "Runs", group: "Observe", phase: "legacy", active: false, legacy: true }
     ]
   },
