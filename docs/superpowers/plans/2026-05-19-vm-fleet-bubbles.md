@@ -354,6 +354,18 @@ def test_assets_services_audit_and_readiness(pg_conn):
         readiness_state="ready",
         evidence_summary={"scope": "10.42.12.0", "leases": 3},
     )
+    updated_asset = lab_bubbles_pg.update_asset(
+        pg_conn,
+        dc_asset["id"],
+        evidence_state="confirmed",
+        notes="DC agent evidence confirmed",
+    )
+    updated_service = lab_bubbles_pg.update_service(
+        pg_conn,
+        service["id"],
+        readiness_state="degraded",
+        evidence_summary={"scope": "10.42.12.0", "leases": 4, "warning": "short lease window"},
+    )
     patched = lab_bubbles_pg.update_readiness_from_dc_evidence(
         pg_conn,
         bubble["id"],
@@ -363,14 +375,21 @@ def test_assets_services_audit_and_readiness(pg_conn):
             "dns_ready": True,
             "dhcp_ready": True,
             "dhcp_scope": "10.42.12.0",
+            "dhcp_pool_start": "10.42.12.100",
+            "dhcp_pool_end": "10.42.12.199",
         },
     )
 
     assert service["service_kind"] == "dhcp"
+    assert updated_asset["evidence_state"] == "confirmed"
+    assert updated_service["readiness_state"] == "degraded"
+    assert updated_service["evidence_summary"]["leases"] == 4
     assert patched["dc_ready"] is True
     assert patched["dns_ready"] is True
     assert patched["dhcp_ready"] is True
     assert patched["workload_ready"] is True
+    assert patched["dhcp_pool_start"] == "10.42.12.100"
+    assert patched["dhcp_pool_end"] == "10.42.12.199"
 
     moved = lab_bubbles_pg.move_asset(
         pg_conn,
@@ -630,6 +649,34 @@ def list_assets(conn: Connection, bubble_id: str | None = None) -> list[dict]:
     return [_asset_row(row) for row in rows]
 
 
+def update_asset(conn: Connection, asset_id: str, **fields: Any) -> dict:
+    allowed = {"asset_role", "vmid", "vm_uuid", "run_id", "agent_id", "service_id", "membership_state", "evidence_state", "notes"}
+    updates = {key: value for key, value in fields.items() if key in allowed}
+    if not updates:
+        row = conn.execute("SELECT * FROM lab_bubble_assets WHERE id = %s", (asset_id,)).fetchone()
+        if row is None:
+            raise ValueError("asset not found")
+        return _asset_row(row)
+    updates["updated_at"] = _now()
+    set_sql = ", ".join(f"{key} = %s" for key in updates)
+    row = conn.execute(
+        f"UPDATE lab_bubble_assets SET {set_sql} WHERE id = %s RETURNING *",
+        list(updates.values()) + [asset_id],
+    ).fetchone()
+    if row is None:
+        raise ValueError("asset not found")
+    asset = _asset_row(row)
+    record_audit_event(
+        conn,
+        bubble_id=asset["bubble_id"],
+        asset_id=asset_id,
+        action="asset_updated",
+        new_values=asset,
+    )
+    conn.commit()
+    return asset
+
+
 def move_asset(
     conn: Connection,
     asset_id: str,
@@ -716,6 +763,32 @@ def list_services(conn: Connection, bubble_id: str) -> list[dict]:
     return [_service_row(row) for row in rows]
 
 
+def update_service(conn: Connection, service_id: str, **fields: Any) -> dict:
+    allowed = {"service_kind", "service_name", "scope", "provider_asset_id", "consumer_refs", "readiness_state", "evidence_summary"}
+    updates = {key: value for key, value in fields.items() if key in allowed}
+    if "consumer_refs" in updates:
+        updates["consumer_refs_json"] = Jsonb(updates.pop("consumer_refs") or [])
+    if "evidence_summary" in updates:
+        updates["evidence_summary_json"] = Jsonb(updates.pop("evidence_summary") or {})
+    if "readiness_state" in updates:
+        updates["last_evidence_at"] = _now()
+    if not updates:
+        row = conn.execute("SELECT * FROM lab_bubble_services WHERE id = %s", (service_id,)).fetchone()
+        if row is None:
+            raise ValueError("service not found")
+        return _service_row(row)
+    updates["updated_at"] = _now()
+    set_sql = ", ".join(f"{key} = %s" for key in updates)
+    row = conn.execute(
+        f"UPDATE lab_bubble_services SET {set_sql} WHERE id = %s RETURNING *",
+        list(updates.values()) + [service_id],
+    ).fetchone()
+    if row is None:
+        raise ValueError("service not found")
+    conn.commit()
+    return _service_row(row)
+
+
 def list_audit_events(conn: Connection, bubble_id: str) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM lab_bubble_audit_events WHERE bubble_id = %s ORDER BY id",
@@ -744,6 +817,8 @@ def update_readiness_from_dc_evidence(
         dhcp_ready=dhcp_ready,
         workload_ready=workload_ready,
         dhcp_scope=str(evidence.get("dhcp_scope") or ""),
+        dhcp_pool_start=str(evidence.get("dhcp_pool_start") or ""),
+        dhcp_pool_end=str(evidence.get("dhcp_pool_end") or ""),
     )
     record_audit_event(
         conn,
@@ -859,6 +934,27 @@ def test_bubble_api_create_assets_services_and_audit(web_client: TestClient, pg_
         },
     )
     assert service.status_code == 201
+    service_id = service.json()["id"]
+
+    patched_service = web_client.patch(
+        f"/api/bubbles/{bubble_id}/services/{service_id}",
+        json={"readiness_state": "ready", "evidence_summary": {"leases": 3}},
+    )
+    assert patched_service.status_code == 200
+    assert patched_service.json()["readiness_state"] == "ready"
+
+    patched_asset = web_client.patch(
+        f"/api/bubbles/{bubble_id}/assets/{asset_id}",
+        json={"evidence_state": "confirmed", "notes": "agent matched"},
+    )
+    assert patched_asset.status_code == 200
+    assert patched_asset.json()["evidence_state"] == "confirmed"
+
+    moved = web_client.post(
+        f"/api/bubbles/{bubble_id}/assets/{asset_id}/move",
+        json={"target_bubble_id": bubble_id, "reason": "self move audit check"},
+    )
+    assert moved.status_code == 200
 
     readiness = web_client.get(f"/api/bubbles/{bubble_id}/readiness")
     assert readiness.status_code == 200
@@ -867,6 +963,7 @@ def test_bubble_api_create_assets_services_and_audit(web_client: TestClient, pg_
     audit = web_client.get(f"/api/bubbles/{bubble_id}/audit-events")
     assert audit.status_code == 200
     assert any(row["action"] == "asset_added" for row in audit.json()["events"])
+    assert any(row["action"] == "asset_moved" for row in audit.json()["events"])
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -957,6 +1054,33 @@ class _BubbleServiceCreate(BaseModel):
     consumer_refs: list = Field(default_factory=list)
     readiness_state: str = "unknown"
     evidence_summary: dict = Field(default_factory=dict)
+
+
+class _BubbleAssetPatch(BaseModel):
+    asset_role: Optional[str] = None
+    vmid: Optional[int] = None
+    vm_uuid: Optional[str] = None
+    run_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    service_id: Optional[str] = None
+    membership_state: Optional[str] = None
+    evidence_state: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class _BubbleAssetMove(BaseModel):
+    target_bubble_id: str
+    reason: str = ""
+
+
+class _BubbleServicePatch(BaseModel):
+    service_kind: Optional[str] = None
+    service_name: Optional[str] = None
+    scope: Optional[str] = None
+    provider_asset_id: Optional[str] = None
+    consumer_refs: Optional[list] = None
+    readiness_state: Optional[str] = None
+    evidence_summary: Optional[dict] = None
 ```
 
 Add routes:
@@ -1035,6 +1159,38 @@ def api_bubbles_assets_create(bubble_id: str, body: _BubbleAssetCreate):
         return lab_bubbles_pg.add_asset(conn, bubble_id, **body.model_dump(), actor="operator")
 
 
+@app.patch("/api/bubbles/{bubble_id}/assets/{asset_id}")
+def api_bubbles_assets_patch(bubble_id: str, asset_id: str, body: _BubbleAssetPatch):
+    from web import db_pg, lab_bubbles_pg
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.update_asset(
+                conn,
+                asset_id,
+                **{k: v for k, v in body.model_dump().items() if v is not None},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/bubbles/{bubble_id}/assets/{asset_id}/move")
+def api_bubbles_assets_move(bubble_id: str, asset_id: str, body: _BubbleAssetMove):
+    from web import db_pg, lab_bubbles_pg
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.move_asset(
+                conn,
+                asset_id,
+                body.target_bubble_id,
+                reason=body.reason,
+                actor="operator",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+
 @app.get("/api/bubbles/{bubble_id}/services")
 def api_bubbles_services_list(bubble_id: str):
     from web import db_pg, lab_bubbles_pg
@@ -1049,6 +1205,21 @@ def api_bubbles_services_create(bubble_id: str, body: _BubbleServiceCreate):
     with db_pg.connection(_database_url()) as conn:
         lab_bubbles_pg.init(conn)
         return lab_bubbles_pg.add_service(conn, bubble_id, **body.model_dump())
+
+
+@app.patch("/api/bubbles/{bubble_id}/services/{service_id}")
+def api_bubbles_services_patch(bubble_id: str, service_id: str, body: _BubbleServicePatch):
+    from web import db_pg, lab_bubbles_pg
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.update_service(
+                conn,
+                service_id,
+                **{k: v for k, v in body.model_dump().items() if v is not None},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/api/bubbles/{bubble_id}/audit-events")
@@ -1526,7 +1697,7 @@ def test_osdeploy_run_records_bubble_membership(osdeploy_client, pg_conn):
     artifact = _create_osdeploy_artifact(pg_conn)
 
     res = osdeploy_client.post(
-        "/api/osdeploy/runs",
+        "/api/osdeploy/v1/runs",
         json={
             "artifact_id": artifact["id"],
             "vm_name": "ACME-DC01",
@@ -1563,7 +1734,7 @@ def test_osdeploy_preflight_blocks_domain_join_before_bubble_readiness(osdeploy_
         "bubble_id": bubble["id"],
         "asset_role": "file_server",
     }
-    res = osdeploy_client.post("/api/osdeploy/preflight", json=body)
+    res = osdeploy_client.post("/api/osdeploy/v1/preflight", json=body)
     assert res.status_code == 200
     checks = res.json()["blocking_checks"]
     assert any(check["id"] == "bubble_not_ready" for check in checks)
@@ -1612,9 +1783,9 @@ if body.bubble_id:
             is_multi_domain_context=False,
         )
     if not gate["allowed"]:
-        blocking.append(_check("bubble_not_ready", "Bubble readiness", "; ".join(gate["reasons"])))
+        blocking.append(_blocking_check("bubble_not_ready", "; ".join(gate["reasons"])))
     elif gate["state"] == "warning":
-        warnings.append(_check("bubble_warning", "Bubble readiness", "; ".join(gate["reasons"])))
+        warnings.append(_warning_check("bubble_warning", "; ".join(gate["reasons"])))
 ```
 
 - [ ] **Step 6: Create membership after run creation**
@@ -1881,4 +2052,6 @@ Expected: only files from this plan are modified or committed. Existing unrelate
 - Spec coverage: Tasks cover bubble schema, assets, services, audit, readiness gates, VM page sections, Autopilot device removal from `/vms`, CloudOSD membership, OSDeploy membership, OSDeploy launch gates, and DC agent AD/DNS/DHCP readiness evidence.
 - Deferred scope: Proxmox bridge, VLAN, firewall, NAT, and router automation remain out of scope.
 - Incomplete-marker scan: no incomplete markers remain.
+- Lifecycle API coverage: Patch/move endpoints are planned for assets, patch endpoints are planned for services, and audit assertions pin both asset add and move events.
+- DC evidence coverage: DC agent heartbeat evidence persists AD DS, DNS, DHCP readiness, DHCP scope, and DHCP pool bounds.
 - Type consistency: `bubble_id`, `asset_id`, `service_id`, `asset_role`, `readiness_state`, `workstation_fleets`, `critical_infrastructure`, `connected_services`, `unassigned_assets`, `warnings`, and `gate_states` are used consistently across tasks.
