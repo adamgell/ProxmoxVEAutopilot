@@ -114,6 +114,8 @@ heartbeat, hash capture/upload state, and CloudOSD/WinPE readiness evidence.
 
 Full runbook:
 
+- [docs/customer/README.md](docs/customer/README.md) — customer-facing overview
+  and workflow explanations
 - [docs/FIRST_RUN_E2E.md](docs/FIRST_RUN_E2E.md)
 - [docs/PVE_INIT.md](docs/PVE_INIT.md)
 - [docs/WINDOWS_BUILD_BOX.md](docs/WINDOWS_BUILD_BOX.md)

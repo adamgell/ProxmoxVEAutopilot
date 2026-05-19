@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProxmoxVEAutopilot Windows Deployment Lifecycle</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #627086;
+      --line: #d9e0ea;
+      --cloud: #e9f7f1;
+      --cloud-border: #2c8f62;
+      --server: #eef3ff;
+      --server-border: #3c64b1;
+      --gate: #fff4db;
+      --gate-border: #c98216;
+      --fail: #ffe9e8;
+      --fail-border: #c23b32;
+      --task: #f2ecff;
+      --task-border: #7a55c7;
+      --auto: #eaf8ff;
+      --auto-border: #237aa2;
+      --shared: #f4f7fb;
+      --shared-border: #77859a;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+
+    header {
+      padding: 26px 34px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1180px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    main {
+      max-width: 1920px;
+      margin: 0 auto;
+      padding: 24px 34px 44px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 2px rgba(24, 33, 47, 0.04);
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+
+    .section-note {
+      color: var(--muted);
+      margin: 0 0 18px;
+      font-size: 14px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 14px 0 20px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .swatch {
+      width: 13px;
+      height: 13px;
+      border-radius: 4px;
+      display: inline-block;
+      border: 1px solid transparent;
+    }
+
+    .shared { background: var(--shared); border-color: var(--shared-border); }
+    .cloud { background: var(--cloud); border-color: var(--cloud-border); }
+    .server { background: var(--server); border-color: var(--server-border); }
+    .gate { background: var(--gate); border-color: var(--gate-border); }
+    .fail { background: var(--fail); border-color: var(--fail-border); }
+    .task { background: var(--task); border-color: var(--task-border); }
+    .auto { background: var(--auto); border-color: var(--auto-border); }
+
+    .diagram {
+      overflow: auto;
+      padding: 18px;
+      border: 1px solid #edf1f6;
+      border-radius: 8px;
+      background: #fcfdff;
+    }
+
+    .diagram.compact svg {
+      min-width: 960px;
+    }
+
+    .diagram svg {
+      min-width: 1850px;
+      max-width: none;
+    }
+
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .note {
+      border-left: 4px solid var(--shared-border);
+      background: #f8faff;
+      color: var(--muted);
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+
+    .plain-flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .plain-step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      min-height: 116px;
+    }
+
+    .plain-step strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .plain-step span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .split-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .summary-card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .summary-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 980px) {
+      header,
+      main {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .notes {
+        grid-template-columns: 1fr;
+      }
+
+      .plain-flow,
+      .split-summary {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ProxmoxVEAutopilot Windows Deployment Lifecycle</h1>
+    <p class="subtitle">
+      One merged map for OSDCloud desktop, OSDeploy server, Task Sequence v2, domain join, Autopilot hash/upload, and server-role branches. Read from top to bottom; colored side branches show optional paths at the point where they occur.
+    </p>
+  </header>
+
+  <main>
+    <section id="high-level">
+      <h2>High-Level Mental Model</h2>
+      <p class="section-note">
+        Think of the software as a Windows deployment factory. The controller prepares media, Proxmox boots a blank VM into that media, WinPE lays down Windows, then the installed OS phones home so the controller can finish identity, Autopilot, domain, and role work.
+      </p>
+
+      <div class="plain-flow" aria-label="Six high-level phases">
+        <div class="plain-step"><strong>1. Pick a path</strong><span>Desktop client uses OSDCloud. Windows Server uses OSDeploy.</span></div>
+        <div class="plain-step"><strong>2. Prepare media</strong><span>Build or reuse a bootable ISO, publish it to Proxmox, and verify hashes.</span></div>
+        <div class="plain-step"><strong>3. Create a run</strong><span>Preflight checks pass, then the controller creates the run and task sequence.</span></div>
+        <div class="plain-step"><strong>4. Boot WinPE</strong><span>Proxmox clones a blank VM, attaches the ISO, and WinPE calls back to the controller.</span></div>
+        <div class="plain-step"><strong>5. Lay down Windows</strong><span>WinPE installs Windows, stages drivers, SetupComplete, OSD client, and AutopilotAgent.</span></div>
+        <div class="plain-step"><strong>6. Finish in full OS</strong><span>The installed OS heartbeats, then optional hash, domain, and server role steps run.</span></div>
+      </div>
+
+      <div class="diagram compact">
+        <pre class="mermaid">
+flowchart TD
+  A["Operator chooses Windows deployment"]:::shared --> B{"Workstations or Server?"}:::gate
+
+  B -->|"Workstations"| W1["Workstation branch<br/>OSDCloud desktop/client Windows"]:::cloud
+  W1 --> W2["Prepare OSDCloud PE media<br/>publish ISO to Proxmox"]:::cloud
+  W2 --> W3["Preflight workstation run<br/>client OS catalog, cache, assets, Proxmox target"]:::gate
+  W3 --> W4["Clone blank VM<br/>boot CloudOSD WinPE"]:::cloud
+  W4 --> W5["Deploy Windows with OSDCloud<br/>stage drivers, SetupComplete, OSD client, AutopilotAgent"]:::cloud
+  W5 --> W6["Workstation full-OS finish<br/>heartbeat, optional Autopilot hash/upload, optional domain verification"]:::auto
+
+  B -->|"Server"| S1["Server branch<br/>OSDeploy Windows Server"]:::server
+  S1 --> S2["Prepare OSDeploy Server media<br/>build host, source media, publish ISO to Proxmox"]:::server
+  S2 --> S3["Preflight server run<br/>Server image, role options, sizing, VirtIO, storage"]:::gate
+  S3 --> S4["Clone blank VM<br/>boot OSDeploy WinPE"]:::server
+  S4 --> S5["Apply Server image with OSDeploy<br/>stage drivers, unattend, OSD client, AutopilotAgent"]:::server
+  S5 --> S6["Server full-OS finish<br/>heartbeat, optional domain join, optional role automation"]:::auto
+
+  W6 --> T["Task Sequence v2 / AutopilotAgent<br/>installed Windows claims remaining work"]:::task
+  S6 --> T
+  T --> O{"Final readiness"}:::gate
+  O -->|"workstation"| R1["Workstation complete<br/>OSDCloud evidence, heartbeat, hash/upload/domain evidence when configured"]:::cloud
+  O -->|"server base"| R2["Server base complete<br/>agent online, QGA status, base_ready"]:::server
+  O -->|"server role"| R3["Server role complete<br/>file server, isolated DC, MECM prereq, or Lab in a Box evidence"]:::server
+
+  classDef shared fill:#f4f7fb,stroke:#77859a,stroke-width:1.5px,color:#18212f;
+  classDef cloud fill:#e9f7f1,stroke:#2c8f62,stroke-width:1.5px,color:#18212f;
+  classDef server fill:#eef3ff,stroke:#3c64b1,stroke-width:1.5px,color:#18212f;
+  classDef gate fill:#fff4db,stroke:#c98216,stroke-width:1.5px,color:#18212f;
+  classDef task fill:#f2ecff,stroke:#7a55c7,stroke-width:1.5px,color:#18212f;
+  classDef auto fill:#eaf8ff,stroke:#237aa2,stroke-width:1.5px,color:#18212f;
+        </pre>
+      </div>
+
+      <div class="split-summary">
+        <div class="summary-card">
+          <h3>OSDCloud Desktop</h3>
+          <p>Use this for client Windows. OSDCloud handles the Windows deployment. ProxmoxVEAutopilot wraps it with VM creation, cached download support, first-boot staging, AutopilotAgent, optional Autopilot hash upload, optional AD domain verification, and readiness evidence.</p>
+        </div>
+        <div class="summary-card">
+          <h3>OSDeploy Server</h3>
+          <p>Use this for Windows Server. OSDeploy builds and applies a Server image. After the base OS is up, Task Sequence v2 can continue into domain join, file server, isolated domain controller, MECM prereq, or Lab in a Box role work.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Merged Flow</h2>
+      <p class="section-note">
+        The gray nodes are shared concepts, green is OSDCloud desktop, blue is OSDeploy server, purple is Task Sequence v2, cyan is Autopilot/cloud evidence, yellow is a gate, and red is a stop/failure state.
+      </p>
+      <div class="legend">
+        <span><i class="swatch shared"></i> Shared controller / Proxmox lifecycle</span>
+        <span><i class="swatch cloud"></i> OSDCloud desktop path</span>
+        <span><i class="swatch server"></i> OSDeploy server path</span>
+        <span><i class="swatch task"></i> Task Sequence v2 / agent work</span>
+        <span><i class="swatch auto"></i> Autopilot, heartbeat, Graph, readiness</span>
+        <span><i class="swatch gate"></i> Gate / decision</span>
+        <span><i class="swatch fail"></i> Blocked / failed</span>
+      </div>
+
+      <div class="diagram">
+        <pre class="mermaid">
+flowchart TD
+  Start["Operator chooses Windows deployment"]:::shared
+  Start --> PathGate{"Deployment family"}:::gate
+
+  subgraph Build["1. Artifact, cache, and launch gates"]
+    PathGate --> CloudBuild["CloudOSD artifact build<br/>build-cloudosd.ps1<br/>pins OSDCloud, injects CloudOSD bridge, emits ISO/WIM/manifest"]:::cloud
+    CloudBuild --> CloudPublish["Publish CloudOSD ISO to Proxmox storage<br/>record proxmox_volid + hashes"]:::cloud
+    CloudPublish --> CloudArtifactGate{"CloudOSD artifact ready?"}:::gate
+    CloudArtifactGate -->|"no"| BlockCloudArtifact["Blocked: missing volid or ISO/WIM hash"]:::fail
+    CloudArtifactGate -->|"yes"| CloudCache["Optional CloudOSD cache<br/>feature image + quality updates<br/>direct download allowed on cache miss"]:::cloud
+    CloudCache --> CloudPreflight["CloudOSD launch preflight<br/>artifact, OS catalog, required assets, node, storage, bridge, VMID/name collision"]:::gate
+
+    PathGate --> OsdBuildPreflight["OSDeploy artifact build preflight<br/>SSH key, build host, build-host agent, ADK, source media, VirtIO"]:::gate
+    OsdBuildPreflight --> OsdHostGate{"Build host ready?"}:::gate
+    OsdHostGate -->|"no"| BlockOsdBuild["Blocked: repair build host or prerequisites"]:::fail
+    OsdHostGate -->|"yes"| OsdBuild["OSDeploy artifact build<br/>build-osdeploy.ps1<br/>OSDeploy, OSD, OSDBuilder, ADK, source Server media"]:::server
+    OsdBuild --> OsdPublish["Publish OSDeploy ISO to Proxmox storage<br/>record manifest, hashes, image metadata, proxmox_volid"]:::server
+    OsdPublish --> OsdArtifactGate{"OSDeploy artifact ready?"}:::gate
+    OsdArtifactGate -->|"no"| BlockOsdArtifact["Blocked: missing published ISO or hash metadata"]:::fail
+    OsdArtifactGate -->|"yes"| OsdCache["Optional OSDeploy cache<br/>Server catalog refresh, warm, verify, serve, delete"]:::server
+    OsdCache --> OsdPreflight["OSDeploy launch preflight<br/>artifact OS match, role options, memory/disk, storage, VirtIO ISO"]:::gate
+  end
+
+  CloudPreflight --> CloudLaunchGate{"CloudOSD launch allowed?"}:::gate
+  CloudLaunchGate -->|"no"| BlockCloudLaunch["Blocked: fix CloudOSD preflight checks"]:::fail
+  CloudLaunchGate -->|"yes"| CloudRun["Create CloudOSD run<br/>POST /api/cloudosd/runs"]:::cloud
+
+  OsdPreflight --> OsdLaunchGate{"OSDeploy launch allowed?"}:::gate
+  OsdLaunchGate -->|"no"| BlockOsdLaunch["Blocked: fix OSDeploy preflight checks"]:::fail
+  OsdLaunchGate -->|"yes"| OsdRunChoice{"Single server or Lab in a Box?"}:::gate
+  OsdRunChoice -->|"single"| OsdRun["Create OSDeploy run<br/>POST /api/osdeploy/v1/runs"]:::server
+  OsdRunChoice -->|"lab bundle"| LabBundle["Create Lab in a Box bundle<br/>POST /api/osdeploy/v1/bundles"]:::server
+
+  subgraph Sequence["2. Task Sequence v2 is generated when the run is created"]
+    CloudRun --> CloudSeq["Generated CloudOSD sequence"]:::task
+    CloudSeq --> CloudPeSteps["CloudOSD PE steps<br/>cloudosd_preflight<br/>cloudosd_deploy_os<br/>stage_ad_domain_join_unattend if enabled<br/>cloudosd_validate_offline_os<br/>stage_osd_client<br/>stage_autopilot_agent"]:::task
+    CloudPeSteps --> CloudFullSteps["CloudOSD full-OS steps<br/>capture_autopilot_hash<br/>wait_agent_heartbeat<br/>verify_ad_domain_join if enabled"]:::task
+
+    OsdRun --> OsdSeq["Generated OSDeploy sequence"]:::task
+    OsdSeq --> OsdPeSteps["OSDeploy PE steps<br/>osdeploy_preflight<br/>apply_wim<br/>apply_driver_package<br/>prepare_windows_setup<br/>bake_boot_entry<br/>stage_osd_client<br/>stage_autopilot_agent"]:::task
+    OsdPeSteps --> OsdFullBase["OSDeploy full-OS base steps<br/>install_autopilot_agent<br/>wait_agent_heartbeat"]:::task
+    OsdFullBase --> RoleGate{"Selected server_role"}:::gate
+
+    LabBundle --> LabChildren["Bundle creates child runs in order<br/>1 isolated domain controller<br/>2 file server<br/>3 MECM prereq"]:::server
+    LabChildren --> OsdSeq
+  end
+
+  subgraph Provision["3. Proxmox VM provisioning and identity"]
+    CloudFullSteps --> CloudProvision["Provision CloudOSD run<br/>clone blank template<br/>attach CloudOSD ISO + VirtIO ISO<br/>boot ISO first"]:::cloud
+    OsdFullBase --> OsdProvision["Provision OSDeploy run<br/>clone blank template<br/>attach OSDeploy ISO + VirtIO ISO<br/>boot ISO first"]:::server
+
+    CloudProvision --> CloudIdentity["Record VMID, SMBIOS UUID, MAC<br/>POST /api/cloudosd/runs/{run_id}/identity"]:::cloud
+    OsdProvision --> OsdIdentity["Record VMID, SMBIOS UUID, MAC<br/>POST /api/osdeploy/v1/runs/{run_id}/identity"]:::server
+    CloudIdentity --> CloudStart["Start VM into CloudOSD WinPE"]:::cloud
+    OsdIdentity --> OsdStart["Start VM into OSDeploy WinPE"]:::server
+  end
+
+  subgraph PE["4. WinPE bridge phase"]
+    CloudStart --> CloudRegister["CloudOSD PE registers by UUID + MAC<br/>POST /api/cloudosd/pe/register"]:::cloud
+    CloudRegister --> CloudPackage["CloudOSD PE downloads run package<br/>GET /api/cloudosd/pe/package/{run_id}"]:::cloud
+    CloudPackage --> CloudDeploy["Import OSDCloud module<br/>patch cache source if ready<br/>generate workflow JSON<br/>run Deploy-OSDCloud -CLI"]:::cloud
+    CloudDeploy --> CloudOffline["Offline Windows staging<br/>boot files, quality updates, VirtIO drivers, OSD client, AutopilotAgent, SetupComplete, specialize unattend"]:::cloud
+    CloudOffline --> CloudDomainGate{"CloudOSD domain join enabled?"}:::gate
+    CloudDomainGate -->|"yes"| CloudDomainStage["Stage Microsoft-Windows-UnattendedJoin<br/>domain, OU, credential, acceptable names"]:::cloud
+    CloudDomainGate -->|"no"| CloudOfflineValidation["Validate offline Windows"]:::cloud
+    CloudDomainStage --> CloudOfflineValidation
+    CloudOfflineValidation --> CloudValidationGate{"Offline validation ok?"}:::gate
+    CloudValidationGate -->|"no"| CloudFailed["CloudOSD failed<br/>offline_validation_failed or cloudosd_failed event"]:::fail
+    CloudValidationGate -->|"yes"| CloudPeComplete["cloudosd_pe_complete<br/>WinPE shuts down"]:::cloud
+
+    OsdStart --> OsdRegister["OSDeploy PE registers by run or UUID + MAC<br/>POST /api/osdeploy/v1/pe/register"]:::server
+    OsdRegister --> OsdPackage["OSDeploy PE downloads run package<br/>GET /api/osdeploy/v1/pe/package/{run_id}"]:::server
+    OsdPackage --> OsdGuard["Guard existing Windows install"]:::server
+    OsdGuard --> OsdApply["Partition disk<br/>locate install image<br/>apply WIM/ESD"]:::server
+    OsdApply --> OsdOffline["Inject VirtIO drivers<br/>stage OSD client + SetupComplete<br/>stage offline unattend<br/>run bcdboot"]:::server
+    OsdOffline --> OsdPeComplete["OSDeploy PE complete<br/>WinPE shuts down"]:::server
+  end
+
+  subgraph Handoff["5. Controller disk-boot handoff"]
+    CloudPeComplete --> CloudDiskBoot["Controller detaches ISOs<br/>sets disk-first boot<br/>starts installed Windows"]:::shared
+    OsdPeComplete --> OsdDiskBoot["Controller detaches ISOs<br/>sets disk-first boot<br/>starts installed Windows"]:::shared
+  end
+
+  subgraph FullOS["6. Full OS agent, Task Sequence v2 claims, and optional branches"]
+    CloudDiskBoot --> CloudFirstBoot["SetupComplete starts CloudOSD first-boot task<br/>installs persistent AutopilotAgent"]:::cloud
+    OsdDiskBoot --> OsdFirstBoot["Full OS OSD client starts<br/>installs or starts persistent AutopilotAgent"]:::server
+
+    CloudFirstBoot --> AgentRegister["AutopilotAgent registers<br/>POST /osd/v2/agent/register"]:::auto
+    OsdFirstBoot --> AgentRegister
+    AgentRegister --> AgentNext["Agent claims next supported step<br/>POST /osd/v2/agent/next"]:::auto
+    AgentNext --> AgentActionGate{"Action returned?"}:::gate
+    AgentActionGate -->|"no"| AgentWait["No eligible work yet<br/>agent polls again"]:::task
+    AgentWait --> AgentNext
+    AgentActionGate -->|"yes"| StepRun["Agent runs step<br/>built-in hash/heartbeat check or role PowerShell"]:::task
+    StepRun --> StepLogs["Post logs and result<br/>/osd/v2/agent/step/{step_id}/logs<br/>/osd/v2/agent/step/{step_id}/result"]:::task
+    StepLogs --> RebootGate{"Step requires reboot?"}:::gate
+    RebootGate -->|"yes"| Reboot["Mark awaiting_reboot<br/>Windows restarts<br/>agent re-registers"]:::task
+    Reboot --> AgentRegister
+    RebootGate -->|"no"| MoreSteps{"More full-OS work?"}:::gate
+    MoreSteps -->|"yes"| AgentNext
+
+    StepRun --> HashGate{"capture_autopilot_hash step?"}:::gate
+    HashGate -->|"yes"| HashCapture["Capture serial, product id, hardware hash<br/>POST /osd/v2/agent/hash<br/>persist local CSV"]:::auto
+    HashCapture --> UploadGate{"CloudOSD run with upload possible?"}:::gate
+    UploadGate -->|"yes"| UploadJob["Queue upload_hash job<br/>Graph import/upload evidence"]:::auto
+    UploadGate -->|"credentials missing"| UploadBlocked["Expected blocker: Entra credentials not configured"]:::gate
+    UploadGate -->|"not CloudOSD"| HashOnly["Hash saved only<br/>OSDeploy base readiness does not require upload"]:::server
+    UploadJob --> GraphSync["Readiness watcher syncs Autopilot, Intune, and Entra caches<br/>backs off if Graph throttles"]:::auto
+
+    StepRun --> VerifyDomainGate{"verify_ad_domain_join step?"}:::gate
+    VerifyDomainGate -->|"yes"| DomainTelemetry["Compare heartbeat domain_joined + domain_name<br/>against acceptable domain names"]:::auto
+    DomainTelemetry --> DomainResultGate{"Domain matched?"}:::gate
+    DomainResultGate -->|"yes"| DomainDone["domain_join_verified event<br/>step done"]:::task
+    DomainResultGate -->|"no"| DomainRetry["Retry or fail based on sequence retry policy"]:::gate
+
+    RoleGate -->|"base"| BaseReadyPath["No role automation<br/>heartbeat can complete OSDeploy base"]:::server
+    RoleGate -->|"file_server"| FileRole["Optional join_domain_role + verify_ad_domain_join<br/>then configure_file_server_role<br/>FS-FileServer, path, ACLs, SMB share"]:::server
+    RoleGate -->|"isolated_domain_controller"| DcRole["configure_isolated_domain_controller_role<br/>promote AD DS + DNS forest<br/>reboot<br/>verify domain, SYSVOL, NETLOGON"]:::server
+    RoleGate -->|"mecm_prereq"| MecmRole["Optional domain join<br/>then configure_mecm_prereq_role<br/>site_server_foundation IIS/BITS/RDC and content root"]:::server
+    RoleGate -->|"lab_in_a_box"| LabRolePath["Run child roles in order<br/>isolated DC then joined file server then joined MECM prereq"]:::server
+    FileRole --> AgentNext
+    DcRole --> AgentNext
+    MecmRole --> AgentNext
+    LabRolePath --> AgentNext
+    BaseReadyPath --> AgentNext
+  end
+
+  subgraph Complete["7. Readiness and final states"]
+    MoreSteps -->|"no"| ReadinessGate{"Which run is being evaluated?"}:::gate
+    ReadinessGate -->|"CloudOSD"| CloudReadiness["CloudOSD readiness<br/>PE registration, OSDCloud start/end, offline validation, heartbeat, hash/upload when configured, domain verification when enabled, QGA when available"]:::cloud
+    GraphSync --> CloudReadiness
+    DomainDone --> CloudReadiness
+    ReadinessGate -->|"OSDeploy base"| OsdBaseReady["OSDeploy base readiness<br/>agent online, QGA status, server_role_status=base_ready"]:::server
+    ReadinessGate -->|"OSDeploy role"| OsdRoleReady["OSDeploy role readiness<br/>role_pending until final role step posts success<br/>then server_role_status matches selected role"]:::server
+    OsdBaseReady --> Done["Complete"]:::shared
+    OsdRoleReady --> Done
+    CloudReadiness --> Done
+    UploadBlocked --> CloudReadiness
+    HashOnly --> OsdBaseReady
+    DomainRetry --> Failed["Failed or still waiting with event evidence"]:::fail
+    CloudFailed --> Failed
+    BlockCloudArtifact --> Failed
+    BlockOsdBuild --> Failed
+    BlockOsdArtifact --> Failed
+    BlockCloudLaunch --> Failed
+    BlockOsdLaunch --> Failed
+  end
+
+  classDef shared fill:#f4f7fb,stroke:#77859a,stroke-width:1.5px,color:#18212f;
+  classDef cloud fill:#e9f7f1,stroke:#2c8f62,stroke-width:1.5px,color:#18212f;
+  classDef server fill:#eef3ff,stroke:#3c64b1,stroke-width:1.5px,color:#18212f;
+  classDef gate fill:#fff4db,stroke:#c98216,stroke-width:1.5px,color:#18212f;
+  classDef fail fill:#ffe9e8,stroke:#c23b32,stroke-width:1.5px,color:#18212f;
+  classDef task fill:#f2ecff,stroke:#7a55c7,stroke-width:1.5px,color:#18212f;
+  classDef auto fill:#eaf8ff,stroke:#237aa2,stroke-width:1.5px,color:#18212f;
+        </pre>
+      </div>
+
+      <div class="notes">
+        <div class="note"><strong>CloudOSD:</strong> desktop client flow. OSDCloud applies Windows, then CloudOSD stages AutopilotAgent, optional domain join unattend, optional hash capture/upload, and readiness evidence.</div>
+        <div class="note"><strong>OSDeploy:</strong> server flow. OSDeploy applies the Server image, then Task Sequence v2 handles base readiness and optional full-OS role automation.</div>
+        <div class="note"><strong>Task Sequence v2:</strong> the controller creates the plan at run creation; AutopilotAgent claims work in full Windows and reports logs/results back to `/osd/v2`.</div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      flowchart: {
+        htmlLabels: true,
+        curve: "basis",
+        nodeSpacing: 44,
+        rankSpacing: 64
+      },
+      theme: "base",
+      themeVariables: {
+        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+        primaryTextColor: "#18212f",
+        lineColor: "#77859a",
+        clusterBkg: "#ffffff",
+        clusterBorder: "#d9e0ea"
+      }
+    });
+  </script>
+</body>
+</html>
