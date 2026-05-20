@@ -247,6 +247,10 @@ const dashboardResponses: Record<string, unknown> = {
       updated_at: "2026-05-18T18:10:00Z"
     }
   ],
+  "/api/react/agent-download/bootstrap-token": {
+    bootstrap_token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    token_kind: "sha256_proof"
+  },
   "/api/vms/fleet": {
     generated_at: "2026-05-19T00:00:00Z",
     cache_age_seconds: 12,
@@ -599,6 +603,8 @@ describe("App", () => {
     expect(screen.getByLabelText("Controller URL")).toHaveValue("http://10.42.12.10:5000");
     expect(screen.getByText("http://10.42.12.10:5000/api/cloudosd/assets/autopilotagent.msi")).toBeInTheDocument();
     expect(screen.getByText(/Invoke-WebRequest -UseBasicParsing -Uri "http:\/\/10\.42\.12\.10:5000\/api\/cloudosd\/assets\/autopilotagent\.msi"/)).toBeInTheDocument();
+    expect(screen.queryByText(/<bootstrap-token>/)).not.toBeInTheDocument();
+    expect(screen.getByText(/-BootstrapToken "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"/)).toBeInTheDocument();
     expect(screen.getByText(/-ServerUrl "http:\/\/10\.42\.12\.10:5000"/)).toBeInTheDocument();
     expect(screen.getByText(/-Vmid 130/)).toBeInTheDocument();
     expect(screen.getByText("dc01-agent")).toBeInTheDocument();

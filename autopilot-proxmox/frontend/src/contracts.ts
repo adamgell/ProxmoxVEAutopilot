@@ -513,6 +513,12 @@ export interface VmsFleetResponse {
   readonly generated_at: string;
 }
 
+export interface AgentDownloadBootstrapTokenResponse {
+  readonly schema_version?: number;
+  readonly bootstrap_token: string;
+  readonly token_kind?: string;
+}
+
 export interface CredentialSummary {
   readonly id: number;
   readonly name: string;

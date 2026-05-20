@@ -18,6 +18,7 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/vms")
     assert not auth.is_exempt_path("/react/vms/108")
     assert not auth.is_exempt_path("/react/agent-download")
+    assert not auth.is_exempt_path("/api/react/agent-download/bootstrap-token")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/legacy/dashboard")
     assert not auth.is_exempt_path("/legacy/jobs")
@@ -80,6 +81,23 @@ def test_legacy_operator_pages_link_back_to_react(web_client, path, target):
     assert 'id="uiModeSwitch"' in response.text
     assert f'href="{target}"' in response.text
     assert "React UI" in response.text
+
+
+def test_react_agent_download_bootstrap_token_returns_configured_proof(web_client, monkeypatch, tmp_path):
+    from web import app as web_app
+
+    secret_dir = tmp_path / "secrets"
+    secret_dir.mkdir(exist_ok=True)
+    (secret_dir / "fleet-bootstrap-token").write_text("fleet-token-123", encoding="utf-8")
+    monkeypatch.setattr(web_app, "SECRETS_DIR", secret_dir)
+
+    response = web_client.get("/api/react/agent-download/bootstrap-token")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_kind"] == "sha256_proof"
+    assert body["bootstrap_token"] == "d20bc64cba4139ea51d02624d775cc28c27c937021a92464c3171438ac7ce6b0"
+    assert body["bootstrap_token"] != "fleet-token-123"
 
 
 def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):

@@ -4249,6 +4249,29 @@
         "title": "_PromoteSetupArtifactsBody",
         "type": "object"
       },
+      "_ReactAgentDownloadBootstrapToken": {
+        "properties": {
+          "bootstrap_token": {
+            "title": "Bootstrap Token",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "token_kind": {
+            "default": "sha256_proof",
+            "title": "Token Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bootstrap_token"
+        ],
+        "title": "_ReactAgentDownloadBootstrapToken",
+        "type": "object"
+      },
       "_RunFailBody": {
         "properties": {
           "reason": {
@@ -12575,6 +12598,24 @@
           }
         },
         "summary": "Qga Recovery Script"
+      }
+    },
+    "/api/react/agent-download/bootstrap-token": {
+      "get": {
+        "operationId": "react_agent_download_bootstrap_token_api_react_agent_download_bootstrap_token_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ReactAgentDownloadBootstrapToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "React Agent Download Bootstrap Token"
       }
     },
     "/api/runs/{run_id}": {

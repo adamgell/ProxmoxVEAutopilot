@@ -973,6 +973,12 @@ class _PromoteSetupArtifactsBody(BaseModel):
     already_copied: bool = False
 
 
+class _ReactAgentDownloadBootstrapToken(BaseModel):
+    schema_version: int = 1
+    bootstrap_token: str
+    token_kind: str = "sha256_proof"
+
+
 def _setup_promote_api_upload_max_bytes() -> int:
     raw = os.environ.get("AUTOPILOT_SETUP_PROMOTE_API_MAX_BYTES", "").strip()
     if not raw:
@@ -1169,6 +1175,14 @@ def _read_build_host_bootstrap_token() -> str:
         token = _create_build_host_bootstrap_token(token_path)
     _ensure_build_host_bootstrap_hash(token)
     return token
+
+
+@app.get("/api/react/agent-download/bootstrap-token", response_model=_ReactAgentDownloadBootstrapToken)
+async def react_agent_download_bootstrap_token():
+    token = _read_build_host_bootstrap_token()
+    return _ReactAgentDownloadBootstrapToken(
+        bootstrap_token=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+    )
 
 
 def _build_host_env_file_candidates() -> list[Path]:

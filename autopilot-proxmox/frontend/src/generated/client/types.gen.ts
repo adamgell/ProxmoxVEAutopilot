@@ -2706,6 +2706,24 @@ export type PromoteSetupArtifactsBody = {
 };
 
 /**
+ * _ReactAgentDownloadBootstrapToken
+ */
+export type ReactAgentDownloadBootstrapToken = {
+    /**
+     * Bootstrap Token
+     */
+    bootstrap_token: string;
+    /**
+     * Schema Version
+     */
+    schema_version?: number;
+    /**
+     * Token Kind
+     */
+    token_kind?: string;
+};
+
+/**
  * _RunFailBody
  */
 export type RunFailBody = {
@@ -8150,6 +8168,22 @@ export type QgaRecoveryScriptApiQgaRecoveryScriptPs1GetResponses = {
      */
     200: unknown;
 };
+
+export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/react/agent-download/bootstrap-token';
+};
+
+export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ReactAgentDownloadBootstrapToken;
+};
+
+export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponse = ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses[keyof ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses];
 
 export type GetRunApiRunsRunIdGetData = {
     body?: never;

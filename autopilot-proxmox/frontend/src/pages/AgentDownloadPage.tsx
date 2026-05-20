@@ -4,7 +4,12 @@ import { Copy, Download } from "lucide-react";
 import { fetchJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Panel } from "../components/ui";
-import type { AppBootstrap, LabBubbleInfrastructureNode, VmsFleetResponse } from "../contracts";
+import type {
+  AgentDownloadBootstrapTokenResponse,
+  AppBootstrap,
+  LabBubbleInfrastructureNode,
+  VmsFleetResponse
+} from "../contracts";
 import { fallbackText, vmDisplayName } from "../viewModels";
 
 interface AgentDownloadPageProps {
@@ -87,11 +92,13 @@ function buildInstallCommand(
   node: LabBubbleInfrastructureNode | undefined,
   controllerUrl: string,
   msiUrl: string,
-  postinstallUrl: string
+  postinstallUrl: string,
+  bootstrapToken: string
 ): string {
   const vmid = node?.asset.vmid ?? node?.vm?.vmid;
   const agentId = node?.asset.agent_id || node?.agent?.agent_id || (typeof vmid === "number" ? `agent-vm-${String(vmid)}` : "agent-critical-infra");
   const vmidArgument = typeof vmid === "number" ? ` -Vmid ${String(vmid)}` : "";
+  const token = bootstrapToken || "<bootstrap-token-unavailable>";
   return [
     `$ControllerUrl = "${psDoubleQuoted(controllerUrl)}"`,
     '$MsiPath = Join-Path $env:TEMP "AutopilotAgent.msi"',
@@ -99,7 +106,7 @@ function buildInstallCommand(
     `Invoke-WebRequest -UseBasicParsing -Uri "${psDoubleQuoted(msiUrl)}" -OutFile $MsiPath`,
     `Invoke-WebRequest -UseBasicParsing -Uri "${psDoubleQuoted(postinstallUrl)}" -OutFile $PostInstall`,
     'Start-Process msiexec.exe -Wait -ArgumentList "/i `"$MsiPath`" /qn /norestart"',
-    `& $PostInstall -ServerUrl "${psDoubleQuoted(controllerUrl)}" -BootstrapToken "<bootstrap-token>" -AgentId "${psDoubleQuoted(agentId)}"${vmidArgument} -Phase "critical_infra"`
+    `& $PostInstall -ServerUrl "${psDoubleQuoted(controllerUrl)}" -BootstrapToken "${psDoubleQuoted(token)}" -AgentId "${psDoubleQuoted(agentId)}"${vmidArgument} -Phase "critical_infra"`
   ].join("\n");
 }
 
@@ -132,13 +139,18 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [controllerUrl, setControllerUrl] = useState(window.location.origin);
+  const [bootstrapToken, setBootstrapToken] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    fetchJson<VmsFleetResponse>("/api/vms/fleet")
-      .then((payload) => {
+    Promise.all([
+      fetchJson<VmsFleetResponse>("/api/vms/fleet"),
+      fetchJson<AgentDownloadBootstrapTokenResponse>("/api/react/agent-download/bootstrap-token")
+    ])
+      .then(([payload, tokenPayload]) => {
         if (!cancelled) {
           setFleet(payload);
+          setBootstrapToken(tokenPayload.bootstrap_token);
           const first = controllerCandidates(payload).at(0);
           if (first !== undefined) {
             setSelectedId(first.id);
@@ -168,7 +180,7 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
   const msiUrl = `${normalizedControllerUrl}/api/cloudosd/assets/autopilotagent.msi`;
   const postinstallUrl = `${normalizedControllerUrl}/api/cloudosd/assets/autopilotagent-postinstall.ps1`;
   const seedExeUrl = `${normalizedControllerUrl}/api/setup/v1/agent-seed/win-x64/AutopilotAgent.exe`;
-  const installCommand = buildInstallCommand(selected?.node, normalizedControllerUrl, msiUrl, postinstallUrl);
+  const installCommand = buildInstallCommand(selected?.node, normalizedControllerUrl, msiUrl, postinstallUrl, bootstrapToken);
 
   return (
     <PageFrame
@@ -217,6 +229,7 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
                 <div><dt>Role</dt><dd>{selected.node.role.replaceAll("_", " ")}</dd></div>
                 <div><dt>VM</dt><dd>{selected.node.vm ? vmDisplayName(selected.node.vm) : fallbackText(selected.node.asset.vmid)}</dd></div>
                 <div><dt>Agent</dt><dd>{fallbackText(selected.node.asset.agent_id || selected.node.agent?.agent_id)}</dd></div>
+                <div><dt>Bootstrap</dt><dd>{bootstrapToken ? "sha256 proof ready" : "loading"}</dd></div>
               </dl>
             ) : <p className="empty">Attach a domain controller or other controller VM in Critical Infrastructure first.</p>}
           </div>
