@@ -135,6 +135,67 @@ def list_artifacts(*, kind: str | None = None) -> list[dict]:
     return sorted(rows, key=lambda row: row.get("created_at") or "", reverse=True)
 
 
+def _agent_release_rid(row: dict) -> str:
+    metadata = row.get("metadata") or {}
+    value = str(metadata.get("rid") or metadata.get("runtime_identifier") or "").strip()
+    if value:
+        return value
+    filename = str(row.get("filename") or "").lower()
+    if "arm64" in filename:
+        return "win-arm64"
+    return "win-x64"
+
+
+def _agent_release_version(row: dict) -> str:
+    metadata = row.get("metadata") or {}
+    value = str(metadata.get("version") or metadata.get("agent_version") or "").strip()
+    if value:
+        return value
+    filename = str(row.get("filename") or "")
+    prefix = "AutopilotAgent-"
+    if filename.startswith(prefix):
+        remainder = filename[len(prefix):]
+        for suffix in ("-win-x64.msi", "-win-arm64.msi", ".msi"):
+            if remainder.endswith(suffix):
+                return remainder[: -len(suffix)]
+    return ""
+
+
+def _looks_like_msi(path: Path, size_bytes: int) -> bool:
+    if size_bytes < 1024:
+        return False
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(8)
+    except OSError:
+        return False
+    return header.startswith(b"MZ") or header == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def latest_agent_release(*, runtime_identifier: str = "win-x64") -> dict | None:
+    candidates: list[dict] = []
+    for row in list_artifacts(kind="agent-msi"):
+        path = Path(row.get("path") or "")
+        if not path.is_file():
+            continue
+        size_bytes = int(row.get("size_bytes") or path.stat().st_size)
+        if not _looks_like_msi(path, size_bytes):
+            continue
+        rid = _agent_release_rid(row)
+        if rid != runtime_identifier:
+            continue
+        release = dict(row)
+        release["path"] = str(path)
+        release["runtime_identifier"] = rid
+        release["version"] = _agent_release_version(row)
+        release["size_bytes"] = size_bytes
+        release["sha256"] = row.get("sha256") or _sha256(path)
+        candidates.append(release)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item.get("created_at") or "")
+
+
 def mark_promoted(artifact_id: str, *, proxmox_volid: str) -> dict | None:
     with _LOCK:
         data = _read_registry()

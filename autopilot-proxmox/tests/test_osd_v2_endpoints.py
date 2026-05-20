@@ -36,13 +36,18 @@ CONFIGMGR_WINPE_STEPS = [
 ]
 
 
+def _write_fake_msi(path, *, size: int = 4096):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"MZ" + (b"\0" * (size - 2)))
+    return path
+
+
 def test_osdeploy_agent_msi_resolves_from_host_repo_mount(tmp_path, monkeypatch):
     from web import osdeploy_endpoints
 
     host_repo = tmp_path / "host-repo"
     msi_path = host_repo / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
-    msi_path.parent.mkdir(parents=True)
-    msi_path.write_bytes(b"fake-msi")
+    _write_fake_msi(msi_path)
     monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
     monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
     monkeypatch.setattr(osdeploy_endpoints, "_APP_ROOT", tmp_path / "app")
@@ -55,11 +60,9 @@ def test_osdeploy_agent_msi_prefers_setup_registry_over_legacy_output(tmp_path, 
     from web import osdeploy_endpoints, setup_artifacts
 
     legacy_msi = tmp_path / "app" / "output" / "cloudosd" / "AutopilotAgent.msi"
-    legacy_msi.parent.mkdir(parents=True)
-    legacy_msi.write_bytes(b"legacy-msi")
+    _write_fake_msi(legacy_msi)
     setup_msi = tmp_path / "setup-artifacts" / "agent-msi" / "AutopilotAgent-0.1.2-win-x64.msi"
-    setup_msi.parent.mkdir(parents=True)
-    setup_msi.write_bytes(b"current-msi")
+    _write_fake_msi(setup_msi)
 
     monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
     monkeypatch.setattr(osdeploy_endpoints, "_APP_ROOT", tmp_path / "app")
@@ -75,6 +78,26 @@ def test_osdeploy_agent_msi_prefers_setup_registry_over_legacy_output(tmp_path, 
     )
 
     assert osdeploy_endpoints._asset_path("autopilotagent.msi") == setup_msi
+
+
+def test_osdeploy_agent_msi_refuses_placeholder_from_host_repo(tmp_path, monkeypatch):
+    from web import osdeploy_endpoints
+
+    host_repo = tmp_path / "repo"
+    msi_path = host_repo / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
+    msi_path.parent.mkdir(parents=True, exist_ok=True)
+    msi_path.write_text("placeholder", encoding="utf-8")
+    monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
+    monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
+    monkeypatch.setattr(osdeploy_endpoints, "_APP_ROOT", tmp_path / "app")
+    monkeypatch.setattr(osdeploy_endpoints, "_REPO_ROOT", tmp_path / "repo-root")
+
+    try:
+        osdeploy_endpoints._asset_path("autopilotagent.msi")
+    except Exception as exc:
+        assert "valid AutopilotAgent MSI" in str(exc)
+    else:
+        raise AssertionError("placeholder MSI was accepted")
 
 
 @pytest.fixture(scope="module")

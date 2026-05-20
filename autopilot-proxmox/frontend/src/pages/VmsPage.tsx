@@ -1200,6 +1200,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <Metric label="Attention" value={String(counts.attention)} tone={counts.attention ? "bad" : "good"} />
         <Metric label="Agents" value={String(counts.agents)} tone={counts.agents ? "good" : "neutral"} />
         <Metric label="Stale agents" value={String(counts.staleAgents)} tone={counts.staleAgents ? "bad" : "good"} />
+        <Metric label="Agents needing upgrade" value={String(counts.upgradeAgents)} tone={counts.upgradeAgents ? "bad" : "good"} />
+        <Metric label="Approvals" value={String(counts.pendingApprovals)} tone={counts.pendingApprovals ? "bad" : "good"} />
+        <Metric label="Pairing" value={String(counts.pairingAgents)} tone={counts.pairingAgents ? "bad" : "good"} />
         <Metric label="Intune" value={String(counts.autopilotDevices)} tone={counts.autopilotDevices ? "good" : "neutral"} />
         <Metric label="Missing" value={String(counts.missingAutopilot)} tone={counts.missingAutopilot ? "bad" : "good"} />
       </section>
@@ -1258,6 +1261,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         onRequestRetireInfra={requestRetireInfra}
         onConfirmRetireInfra={confirmRetireInfra}
         onCancelRetireInfra={cancelRetireInfra}
+        onApproveAgent={approveAgent}
         serviceDraftMode={serviceDraftMode}
         serviceDraftId={serviceDraftId}
         serviceDraft={serviceDraft}
@@ -1641,6 +1645,9 @@ function VmDetailWorkspace({
           ["Agent ID", fallbackText(row.agentId)],
           ["Computer", fallbackText(row.agent?.computer_name)],
           ["Version", fallbackText(row.version)],
+          ["Published", fallbackText(row.agent?.published_agent_version)],
+          ["Update", fallbackText(row.agent?.update_status)],
+          ["Pairing", fallbackText(row.agent?.pairing_status)],
           ["Phase", fallbackText(row.phase)],
           ["QGA", fallbackText(row.agent?.qga_state)],
           ["Last seen", formatShortDateTime(row.agent?.last_seen_at)]
@@ -1815,6 +1822,7 @@ function BubbleTopologyOverview({
   onRequestRetireInfra,
   onConfirmRetireInfra,
   onCancelRetireInfra,
+  onApproveAgent,
   serviceDraftMode,
   serviceDraftId,
   serviceDraft,
@@ -1864,6 +1872,7 @@ function BubbleTopologyOverview({
   readonly onRequestRetireInfra: (node: LabBubbleInfrastructureNode) => void;
   readonly onConfirmRetireInfra: (node: LabBubbleInfrastructureNode) => void;
   readonly onCancelRetireInfra: () => void;
+  readonly onApproveAgent: (agent: AgentFleetRow) => void;
   readonly serviceDraftMode: ServiceDraftMode | null;
   readonly serviceDraftId: string | null;
   readonly serviceDraft: ServiceDraft;
@@ -2023,7 +2032,18 @@ function BubbleTopologyOverview({
                       <div><dt>Agent</dt><dd>{fallbackText(node.agent?.agent_id ?? node.asset.agent_id)}</dd></div>
                       <div><dt>Runtime</dt><dd>{fallbackText(node.vm?.status)}</dd></div>
                     </dl>
+                    {node.agent ? (
+                      <div className="chip-row">
+                        {node.agent.upgrade_available ? <span className="status status--bad">Upgrade available</span> : null}
+                        {node.agent.needs_pairing ? <span className="status status--active">Approved</span> : null}
+                      </div>
+                    ) : null}
                     <div className="bubble-card-actions bubble-card-actions--left">
+                      {node.agent?.approval_status === "pending" && node.agent.approval_id ? (
+                        <button type="button" className="fleet-action" aria-label={`Approve agent ${node.agent.agent_id}`} onClick={() => { onApproveAgent(node.agent!); }}>
+                          Approve agent
+                        </button>
+                      ) : null}
                       <button type="button" className="fleet-action" aria-label={`Edit infra ${actionLabel}`} onClick={() => { onEditInfra(node); }}>
                         Edit
                       </button>

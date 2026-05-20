@@ -410,6 +410,18 @@ const dashboardResponses: Record<string, unknown> = {
         current_phase: "cloudosd",
         last_heartbeat_at: "2026-05-19T00:00:00Z",
         hash_capture_supported: true
+      },
+      {
+        agent_id: "agent-vm-110",
+        approval_status: "approved",
+        pairing_status: "waiting_for_claim",
+        needs_pairing: true,
+        vmid: 110,
+        computer_name: "DC3",
+        agent_version: "0.1.2",
+        published_agent_version: "0.1.3",
+        update_status: "upgrade_available",
+        upgrade_available: true
       }
     ],
     autopilot_devices: [
@@ -473,7 +485,19 @@ const dashboardResponses: Record<string, unknown> = {
             agent_id: "dc01-agent"
           },
           vm: { vmid: 130, name: "ACME-DC01", status: "running", ip_address: "10.42.12.10" },
-          agent: { agent_id: "dc01-agent", approval_status: "active", primary_ipv4: "10.42.12.10" }
+          agent: {
+            agent_id: "dc01-agent",
+            approval_status: "active",
+            pairing_status: "waiting_for_claim",
+            needs_pairing: true,
+            vmid: 130,
+            computer_name: "DC3",
+            primary_ipv4: "10.42.12.10",
+            agent_version: "0.1.2",
+            published_agent_version: "0.1.3",
+            update_status: "upgrade_available",
+            upgrade_available: true
+          }
         }
       ],
       connected_services: [
@@ -640,7 +664,16 @@ function mockFetch(responses: Record<string, unknown>) {
 
 function renderRoute(path: string) {
   window.history.pushState({}, "", path);
-  return render(<App bootstrap={{ buildSha: "abc1234", buildTime: "2026-05-18T12:00:00Z" }} />);
+  return render(
+    <App
+      bootstrap={{
+        buildSha: "abc1234",
+        buildTime: "2026-05-18T12:00:00Z",
+        userName: "Local Operator",
+        userEmail: "operator@example.test"
+      }}
+    />
+  );
 }
 
 describe("App", () => {
@@ -655,6 +688,11 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("banner", { name: "Global console status" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Proxmox VE Autopilot dashboard" })[0]).toHaveAttribute("href", "/react/dashboard");
+    expect(screen.getByRole("combobox", { name: "Search console" })).toBeInTheDocument();
+    expect(screen.getByText("Local Operator")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Log out Local Operator" })).toHaveAttribute("href", "/auth/logout");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
     expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getAllByRole("link", { name: "OSDCloud Desktop legacy page" })[0]).toHaveAttribute("href", "/cloudosd");
@@ -744,6 +782,11 @@ describe("App", () => {
     expect(screen.getByRole("table", { name: "Fleet machines" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "VM Workstation Fleets" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Critical Infrastructure" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText("Upgrade available").length).toBeGreaterThan(0);
+    });
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+    expect(screen.getByText("Agents needing upgrade")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connected Services" })).toBeInTheDocument();
     expect(screen.getAllByText("ACME Lab").length).toBeGreaterThan(0);
     expect(screen.getByText("domain controller")).toBeInTheDocument();

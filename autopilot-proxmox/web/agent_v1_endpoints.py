@@ -77,6 +77,12 @@ class EventBody(BaseModel):
     data: dict = Field(default_factory=dict)
 
 
+class UpdateCheckBody(BaseModel):
+    agent_id: str = Field(min_length=1)
+    installed_version: Optional[str] = None
+    runtime_identifier: str = "win-x64"
+
+
 class WorkNextBody(BaseModel):
     agent_id: str = Field(min_length=1)
     supported_kinds: list[str] = Field(default_factory=list)
@@ -237,6 +243,24 @@ def _public_work_item(row: dict) -> dict:
             else row.get("completed_at")
         ),
     }
+
+
+def _version_parts(value: str | None) -> tuple[int, ...]:
+    parts: list[int] = []
+    for raw in (value or "").replace("-", ".").split("."):
+        if raw.isdigit():
+            parts.append(int(raw))
+        else:
+            break
+    return tuple(parts)
+
+
+def _newer_version(published: str | None, installed: str | None) -> bool:
+    published_parts = _version_parts(published)
+    installed_parts = _version_parts(installed)
+    if published_parts and installed_parts:
+        return published_parts > installed_parts
+    return bool(published and installed and published != installed)
 
 
 def _persist_autopilot_hash(
@@ -401,6 +425,41 @@ def claim_bootstrap_approval(
         "agent_token": approval["agent_token"],
         "heartbeat_interval_seconds": _HEARTBEAT_INTERVAL_SECONDS,
         "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/update-check")
+def update_check(body: UpdateCheckBody, device: dict = Depends(_require_agent)):
+    if body.agent_id != device["agent_id"]:
+        raise HTTPException(status_code=403, detail="token/agent mismatch")
+    release = setup_artifacts.latest_agent_release(
+        runtime_identifier=body.runtime_identifier,
+    )
+    installed = body.installed_version or device.get("agent_version")
+    if not release:
+        return {
+            "schema_version": 1,
+            "status": "blocked",
+            "reason": "no_valid_agent_msi_published",
+            "installed_version": installed,
+            "published_version": None,
+            "runtime_identifier": body.runtime_identifier,
+            "download_url": None,
+            "sha256": None,
+            "size_bytes": None,
+        }
+    published = release.get("version") or ""
+    available = _newer_version(published, installed)
+    return {
+        "schema_version": 1,
+        "status": "upgrade_available" if available else "current",
+        "reason": "" if available else "installed_version_matches_published",
+        "installed_version": installed,
+        "published_version": published,
+        "runtime_identifier": body.runtime_identifier,
+        "download_url": "/api/cloudosd/assets/autopilotagent.msi" if available else None,
+        "sha256": release.get("sha256") if available else None,
+        "size_bytes": release.get("size_bytes") if available else None,
     }
 
 

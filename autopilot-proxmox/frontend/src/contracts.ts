@@ -1,6 +1,8 @@
 export interface AppBootstrap {
   readonly buildSha?: string;
   readonly buildTime?: string;
+  readonly userName?: string;
+  readonly userEmail?: string;
 }
 
 export interface MigratedRoute {
@@ -371,6 +373,14 @@ export interface AgentFleetRow {
   readonly agent_id: string;
   readonly approval_id?: string;
   readonly approval_status?: string;
+  readonly pairing_status?: "waiting_for_approval" | "waiting_for_claim" | "waiting_for_heartbeat" | "paired" | "unknown";
+  readonly needs_pairing?: boolean;
+  readonly update_status?: "current" | "upgrade_available" | "blocked" | "unknown";
+  readonly upgrade_available?: boolean;
+  readonly published_agent_version?: string;
+  readonly update_reason?: string;
+  readonly agent_msi_sha256?: string;
+  readonly agent_msi_size_bytes?: number | null;
   readonly vmid?: number | null;
   readonly computer_name?: string;
   readonly serial_number?: string;

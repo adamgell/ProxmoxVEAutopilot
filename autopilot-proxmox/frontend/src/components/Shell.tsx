@@ -1,21 +1,9 @@
-import type { ReactNode } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { LogOut, Search } from "lucide-react";
 
 import type { AppBootstrap } from "../contracts";
-import { operatorNavGroups, reactRouteForPath } from "../routes";
+import { operatorNavGroups } from "../routes";
 import { formatShortDateTime } from "../viewModels";
-
-function currentPageLabel(path: string): string {
-  if (path === "/react/credentials/new") {
-    return "New Credential";
-  }
-  if (/^\/react\/credentials\/\d+\/edit$/u.test(path)) {
-    return "Edit Credential";
-  }
-  if (/^\/react\/vms\/\d+$/u.test(path)) {
-    return "VM Detail";
-  }
-  return reactRouteForPath(path)?.label ?? "Shell";
-}
 
 function legacyPathForReactPath(path: string): string {
   if (path === "/react/jobs") {
@@ -76,12 +64,79 @@ export function OperatorShell({
   readonly children: ReactNode;
 }) {
   const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
-  const pageLabel = currentPageLabel(path);
   const legacyPath = legacyPathForReactPath(path);
+  const commandId = useId();
+  const [commandQuery, setCommandQuery] = useState("");
+  const routes = operatorNavGroups.flatMap((group) => group.items);
+  const userLabel = bootstrap.userName || bootstrap.userEmail || "Signed in";
+
+  function submitCommandSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = commandQuery.trim();
+    if (!query) {
+      return;
+    }
+    const normalized = query.toLowerCase();
+    const route = routes.find((item) => item.label.toLowerCase() === normalized)
+      ?? routes.find((item) => item.label.toLowerCase().includes(normalized));
+    if (route) {
+      window.location.assign(route.path);
+      return;
+    }
+    if (/^\d+$/u.test(query)) {
+      window.location.assign(`/react/vms/${query}`);
+      return;
+    }
+    window.location.assign(`/react/vms?search=${encodeURIComponent(query)}`);
+  }
 
   return (
     <div className="workspace">
       <a className="skip-link" href="#react-content">Skip to content</a>
+      <header className="workspace__globalbar" aria-label="Global console status">
+        <a className="workspace__global-brand" href="/react/dashboard" aria-label="Proxmox VE Autopilot dashboard">
+          <span className="workspace__brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" focusable="false">
+              <rect x="0" y="0" width="64" height="64" rx="12" ry="12" />
+              <g>
+                <polyline className="workspace__brand-mark-red" points="14,22 32,10 50,22" />
+                <polyline className="workspace__brand-mark-green" points="14,38 32,26 50,38" />
+                <polyline className="workspace__brand-mark-blue" points="14,54 32,42 50,54" />
+              </g>
+            </svg>
+          </span>
+          <span>
+            <strong>Proxmox VE Autopilot</strong>
+            <small>Operator console</small>
+          </span>
+        </a>
+        <form className="workspace__command" role="search" onSubmit={submitCommandSearch}>
+          <label className="sr-only" htmlFor={commandId}>Search console</label>
+          <Search aria-hidden="true" focusable="false" size={16} strokeWidth={2.4} />
+          <input
+            id={commandId}
+            type="search"
+            list={`${commandId}-routes`}
+            value={commandQuery}
+            onChange={(event) => setCommandQuery(event.currentTarget.value)}
+            placeholder="Search routes, VMs, jobs"
+            aria-label="Search console"
+          />
+          <datalist id={`${commandId}-routes`}>
+            {routes.map((route) => <option key={route.path} value={route.label} />)}
+          </datalist>
+        </form>
+        <div className="workspace__operator">
+          <span className="workspace__user" title={bootstrap.userEmail || userLabel}>
+            <span aria-hidden="true">{userLabel.slice(0, 1).toUpperCase()}</span>
+            <strong>{userLabel}</strong>
+          </span>
+          <a className="workspace__logout" href="/auth/logout" aria-label={`Log out ${userLabel}`}>
+            <LogOut aria-hidden="true" focusable="false" size={16} strokeWidth={2.4} />
+            <span>Log out</span>
+          </a>
+        </div>
+      </header>
       <aside className="workspace__rail">
         <a className="workspace__brand" href="/react/dashboard" aria-label="Proxmox VE Autopilot dashboard">
           <span>Autopilot</span>
@@ -112,22 +167,16 @@ export function OperatorShell({
       </aside>
 
       <div className="workspace__main">
-        <header className="workspace__topbar">
-          <div>
-            <span className="workspace__kicker">React operator console</span>
-            <strong>{pageLabel}</strong>
-          </div>
-          <div className="workspace__status" aria-label="Runtime status">
-            <a className="ui-mode-switch" href={legacyPath} aria-label="Switch to Legacy UI">Legacy UI</a>
-            {socketState ? <span className={`socket-state socket-state--${socketState}`}>Live {socketState}</span> : null}
-            <span>{buildLabel}</span>
-            {bootstrap.buildTime ? (
-              <time dateTime={bootstrap.buildTime}>{formatShortDateTime(bootstrap.buildTime)}</time>
-            ) : null}
-          </div>
-        </header>
         <main id="react-content" className="workspace__content" tabIndex={-1}>{children}</main>
       </div>
+      <aside className="workspace__system-tray" aria-label="Runtime status">
+        <a className="ui-mode-switch" href={legacyPath} aria-label="Switch to Legacy UI">Legacy UI</a>
+        {socketState ? <span className={`socket-state socket-state--${socketState}`}>Live {socketState}</span> : null}
+        <span>{buildLabel}</span>
+        {bootstrap.buildTime ? (
+          <time dateTime={bootstrap.buildTime}>{formatShortDateTime(bootstrap.buildTime)}</time>
+        ) : null}
+      </aside>
     </div>
   );
 }

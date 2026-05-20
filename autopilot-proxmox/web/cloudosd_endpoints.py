@@ -1388,47 +1388,68 @@ def _asset_path(name: str) -> Path:
     if name == "autopilotagent-postinstall.ps1":
         return _APP_ROOT / "files" / "ninja" / "autopilotagent-postinstall.ps1"
     if name == "autopilotagent.msi":
-        configured = os.environ.get("AUTOPILOT_AGENT_MSI_PATH", "").strip()
-        if configured:
-            return Path(configured)
-        try:
-            from web import setup_artifacts
-
-            registered = [
-                Path(row.get("path") or "")
-                for row in setup_artifacts.list_artifacts(kind="agent-msi")
-                if "arm64" not in str(row.get("filename") or "").lower()
-            ]
-            registered = [path for path in registered if path.is_file()]
-            if registered:
-                return max(registered, key=lambda path: path.stat().st_mtime)
-        except Exception:
-            pass
-        setup_msi_dir = _APP_ROOT / "output" / "setup" / "artifacts" / "agent-msi"
-        setup_msi_candidates = [
-            *setup_msi_dir.glob("*win-x64*.msi"),
-            *setup_msi_dir.glob("*.msi"),
-        ]
-        setup_msi_candidates = [
-            path for path in setup_msi_candidates
-            if path.is_file() and "arm64" not in path.name.lower()
-        ]
-        if setup_msi_candidates:
-            return max(setup_msi_candidates, key=lambda path: path.stat().st_mtime)
-        app_output = _APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi"
-        if app_output.exists():
-            return app_output
-        for repo_root in [
-            Path(os.environ.get("HOST_REPO_MOUNT", "/host/repo")),
-            Path(os.environ.get("HOST_REPO_PATH", "")) if os.environ.get("HOST_REPO_PATH", "").strip() else None,
-        ]:
-            if not repo_root:
-                continue
-            host_repo_msi = repo_root / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
-            if host_repo_msi.exists():
-                return host_repo_msi
-        return _REPO_ROOT / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
+        return _agent_msi_asset_path()
     raise HTTPException(status_code=404, detail="CloudOSD asset not found")
+
+
+def _valid_agent_msi(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.stat().st_size < 1024:
+        return False
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(8)
+    except OSError:
+        return False
+    return header.startswith(b"MZ") or header == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _agent_msi_asset_path() -> Path:
+    try:
+        from web import setup_artifacts
+
+        release = setup_artifacts.latest_agent_release(runtime_identifier="win-x64")
+        if release:
+            return Path(release["path"])
+    except Exception:
+        pass
+
+    candidates: list[Path] = []
+    configured = os.environ.get("AUTOPILOT_AGENT_MSI_PATH", "").strip()
+    if configured:
+        candidates.append(Path(configured))
+
+    setup_msi_dir = _APP_ROOT / "output" / "setup" / "artifacts" / "agent-msi"
+    setup_msi_candidates = [
+        *setup_msi_dir.glob("*win-x64*.msi"),
+        *setup_msi_dir.glob("*.msi"),
+    ]
+    candidates.extend(
+        sorted(
+            (
+                path
+                for path in setup_msi_candidates
+                if "arm64" not in path.name.lower()
+            ),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
+        )
+    )
+    candidates.append(_APP_ROOT / "output" / "cloudosd" / "AutopilotAgent.msi")
+    for repo_root in [
+        Path(os.environ.get("HOST_REPO_MOUNT", "/host/repo")),
+        Path(os.environ.get("HOST_REPO_PATH", "")) if os.environ.get("HOST_REPO_PATH", "").strip() else None,
+    ]:
+        if not repo_root:
+            continue
+        candidates.append(repo_root / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi")
+    candidates.append(_REPO_ROOT / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi")
+
+    for candidate in candidates:
+        if _valid_agent_msi(candidate):
+            return candidate
+    raise HTTPException(status_code=404, detail="No valid AutopilotAgent MSI is published.")
 
 
 def _sha256_file(path: Path) -> str:
@@ -1440,7 +1461,12 @@ def _sha256_file(path: Path) -> str:
 
 
 def _asset_metadata(name: str, *, required: bool = True) -> dict:
-    path = _asset_path(name)
+    try:
+        path = _asset_path(name)
+    except HTTPException:
+        if required:
+            raise
+        return {"available": False, "sha256": None}
     if not path.exists():
         if required:
             raise HTTPException(
@@ -1456,7 +1482,18 @@ def _asset_metadata(name: str, *, required: bool = True) -> dict:
 
 
 def _asset_metadata_status(name: str) -> dict:
-    path = _asset_path(name)
+    try:
+        path = _asset_path(name)
+    except HTTPException as exc:
+        return {
+            "name": name,
+            "available": False,
+            "required": True,
+            "path": None,
+            "sha256": None,
+            "size_bytes": None,
+            "error": str(exc.detail),
+        }
     if not path.exists():
         return {
             "name": name,

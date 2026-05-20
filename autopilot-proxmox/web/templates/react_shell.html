@@ -9,12 +9,29 @@
     {% for href in asset_styles %}
     <link rel="stylesheet" href="{{ href }}" />
     {% endfor %}
+    <style>
+      @media (min-width: 961px) {
+        .workspace__globalbar {
+          grid-template-columns: 248px minmax(260px, 640px) max-content !important;
+          gap: 0 !important;
+          padding: 8px 18px 8px 0 !important;
+        }
+        .workspace__global-brand {
+          padding-left: 18px !important;
+        }
+        .workspace__command {
+          grid-column: 2 !important;
+        }
+      }
+    </style>
   </head>
   <body>
     <div
       id="react-root"
       data-build-sha="{{ build_sha }}"
       data-build-time="{{ build_time }}"
+      data-user-name="{{ user_name }}"
+      data-user-email="{{ user_email }}"
     >
       <noscript>Proxmox VE Autopilot requires JavaScript for the React console.</noscript>
     </div>

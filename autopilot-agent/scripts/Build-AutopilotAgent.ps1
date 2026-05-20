@@ -68,4 +68,5 @@ foreach ($rid in $RuntimeIdentifiers) {
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet build failed for $rid installer with exit code $LASTEXITCODE"
     }
+    Write-Host "Built AutopilotAgent MSI for $rid at $msiDir. Validate service table before publishing."
 }
