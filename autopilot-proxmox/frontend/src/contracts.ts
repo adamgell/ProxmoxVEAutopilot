@@ -500,6 +500,7 @@ export interface LabBubbleTopology {
 
 export interface VmsFleetResponse {
   readonly vms: readonly VmFleetRow[];
+  readonly proxmox_vms?: readonly VmFleetRow[];
   readonly missing_vms: readonly VmFleetRow[];
   readonly agents: readonly AgentFleetRow[];
   readonly autopilot_devices: readonly AutopilotDeviceFleetRow[];

@@ -3194,6 +3194,13 @@
             ],
             "title": "Monitor Sweep"
           },
+          "proxmox_vms": {
+            "items": {
+              "$ref": "#/components/schemas/VmFleetRowResponse"
+            },
+            "title": "Proxmox Vms",
+            "type": "array"
+          },
           "vms": {
             "items": {
               "$ref": "#/components/schemas/VmFleetRowResponse"

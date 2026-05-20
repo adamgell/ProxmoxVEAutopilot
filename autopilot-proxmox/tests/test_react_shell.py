@@ -116,6 +116,11 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
         }, 12.4)
 
     monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_proxmox_api", lambda path: [
+        {"type": "qemu", "vmid": 108, "name": "WrkGrp-525570B6", "status": "running", "node": "pve2"},
+        {"type": "qemu", "vmid": 400, "name": "Dev1", "status": "stopped", "node": "pve1"},
+        {"type": "lxc", "vmid": 500, "name": "autopilot-docker", "status": "running", "node": "pve2"},
+    ] if path == "/cluster/resources?type=vm" else [])
     monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
     monkeypatch.setattr(web_app, "_agent_inventory_rows", lambda: [{
         "agent_id": "agent-wrkgrp-525570b6",
@@ -200,6 +205,8 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     assert body["vms"][0]["lifecycle_state"] == "workgroup_unenrolled"
     assert body["vms"][0]["lifecycle_label"] == "unenrolled"
     assert body["vms"][0]["lifecycle_autopilot_registered"] is True
+    assert [vm["vmid"] for vm in body["proxmox_vms"]] == [108, 400]
+    assert body["proxmox_vms"][1]["node"] == "pve1"
     assert body["agents"][0]["agent_id"] == "agent-wrkgrp-525570b6"
     assert body["autopilot_devices"][0]["display_name"] == "WRKGRP-525570B6"
     assert body["bubble_topology"]["workstation_fleets"][0]["bubble"]["name"] == "ACME Lab"

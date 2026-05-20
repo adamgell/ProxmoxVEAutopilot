@@ -56,6 +56,7 @@ import {
 
 const emptyFleet: VmsFleetResponse = {
   vms: [],
+  proxmox_vms: [],
   missing_vms: [],
   agents: [],
   autopilot_devices: [],
@@ -547,8 +548,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const assignmentsByVmid = useMemo(() => topologyAssignmentsByVmid(bubbleTopology), [bubbleTopology]);
   const bubbleAssets = useMemo(() => topologyAssets(bubbleTopology), [bubbleTopology]);
   const infraVmCandidates = useMemo(
-    () => fleet.vms.length ? fleet.vms : bubbleTopology.unassigned_assets,
-    [bubbleTopology.unassigned_assets, fleet.vms]
+    () => fleet.proxmox_vms?.length ? fleet.proxmox_vms : (fleet.vms.length ? fleet.vms : bubbleTopology.unassigned_assets),
+    [bubbleTopology.unassigned_assets, fleet.proxmox_vms, fleet.vms]
   );
   const detailRow = useMemo(
     () => detailVmid === null ? undefined : machineRows.find((row) => row.vmid === detailVmid),

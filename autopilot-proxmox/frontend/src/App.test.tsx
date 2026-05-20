@@ -279,6 +279,29 @@ const dashboardResponses: Record<string, unknown> = {
         target_os: "windows"
       }
     ],
+    proxmox_vms: [
+      {
+        vmid: 108,
+        name: "WrkGrp-525570B6",
+        status: "running",
+        node: "pve2",
+        target_os: "windows"
+      },
+      {
+        vmid: 400,
+        name: "Dev1",
+        status: "stopped",
+        node: "pve1",
+        target_os: "windows"
+      },
+      {
+        vmid: 9109,
+        name: "ACME-FS01",
+        status: "running",
+        node: "pve2",
+        target_os: "windows"
+      }
+    ],
     missing_vms: [],
     agents: [
       {
@@ -623,6 +646,7 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add infra VM" }));
     expect(await screen.findByLabelText("Critical infrastructure VM")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "WrkGrp-525570B6 / VM 108 / running" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Dev1 / VM 400 / stopped" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Critical infrastructure VM"), { target: { value: "9109" } });
     fireEvent.change(screen.getByLabelText("Critical infrastructure role"), { target: { value: "file_server" } });
     fireEvent.change(screen.getByLabelText("Critical infrastructure notes"), { target: { value: "Bubble file share" } });

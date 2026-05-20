@@ -2154,6 +2154,10 @@ export type VmsFleetResponse = {
         [key: string]: unknown;
     } | null;
     /**
+     * Proxmox Vms
+     */
+    proxmox_vms?: Array<VmFleetRowResponse>;
+    /**
      * Vms
      */
     vms?: Array<VmFleetRowResponse>;

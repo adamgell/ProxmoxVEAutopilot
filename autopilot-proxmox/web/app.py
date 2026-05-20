@@ -4323,6 +4323,30 @@ def get_autopilot_vms():
     return sorted(result, key=lambda v: v["vmid"])
 
 
+def _proxmox_cluster_vm_rows() -> list[dict]:
+    try:
+        rows = _proxmox_api("/cluster/resources?type=vm") or []
+    except Exception:
+        return []
+    out: list[dict] = []
+    for row in rows:
+        if row.get("type") != "qemu":
+            continue
+        try:
+            vmid = int(row.get("vmid"))
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "vmid": vmid,
+            "name": row.get("name") or "",
+            "hostname": row.get("name") or "",
+            "status": row.get("status") or "unknown",
+            "node": row.get("node") or "",
+            "target_os": "windows",
+        })
+    return sorted(out, key=lambda vm: vm["vmid"])
+
+
 def _graph_token():
     cfg = _load_proxmox_config()
     tenant = cfg.get("vault_entra_tenant_id", "")
@@ -4902,6 +4926,7 @@ class AutopilotDeviceFleetRowResponse(ApiExtraModel):
 
 class VmsFleetResponse(BaseModel):
     vms: list[VmFleetRowResponse] = Field(default_factory=list)
+    proxmox_vms: list[VmFleetRowResponse] = Field(default_factory=list)
     missing_vms: list[VmFleetRowResponse] = Field(default_factory=list)
     agents: list[AgentFleetRowResponse] = Field(default_factory=list)
     autopilot_devices: list[AutopilotDeviceFleetRowResponse] = Field(default_factory=list)
@@ -7618,6 +7643,7 @@ def _cache_fetched_at_iso(cache_age: float | None) -> str:
 async def _vms_fleet_payload() -> dict:
     cache, cache_age = await _get_vms_payload()
     vms = [dict(vm) for vm in list(cache["data"] or [])]
+    proxmox_vms = _proxmox_cluster_vm_rows() or vms
     vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
     devices, ap_error = cache["devices"] or ([], "")
     devices = [dict(device) for device in devices]
@@ -7705,6 +7731,7 @@ async def _vms_fleet_payload() -> dict:
 
     return {
         "vms": vms,
+        "proxmox_vms": proxmox_vms,
         "missing_vms": missing_vms,
         "agents": agents,
         "autopilot_devices": matched_devices,
