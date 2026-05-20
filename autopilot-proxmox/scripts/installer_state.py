@@ -8,6 +8,7 @@ import dataclasses
 import datetime as dt
 import json
 import re
+import shlex
 import sys
 import tarfile
 from pathlib import Path
@@ -100,6 +101,10 @@ def base_command(phase: str) -> str:
     return f"bash scripts/init-proxmox-ve.sh --phase {phase} --resume"
 
 
+def shell_arg(value: str) -> str:
+    return shlex.quote(value)
+
+
 def clean_detection() -> Detection:
     return Detection(
         schema=1,
@@ -162,7 +167,7 @@ def bootstrap_detection(
         failed_check = "Windows ISO media is missing"
         blocked.append("windows_iso_ready=false")
         if windows_iso_url:
-            command += f" --windows-iso-url {windows_iso_url}"
+            command += f" --windows-iso-url {shell_arg(windows_iso_url)}"
         elif allow_windows_download:
             command += " --download-windows"
         else:
@@ -280,6 +285,26 @@ def conflict_detection(conflicts: list[str]) -> Detection:
     )
 
 
+def unreadable_state_detection(reason: str) -> Detection:
+    return Detection(
+        schema=1,
+        classification=CLASS_CONFLICTED,
+        confidence="low",
+        recommended_action="manual",
+        recommended_phases=[],
+        safe_to_auto_run=False,
+        current_step_id="foundation.state",
+        current_step="Setup state",
+        failed_check_id="foundation.state.unreadable",
+        failed_check="Setup state file is unreadable",
+        blocked_reasons=[reason],
+        dirty_reasons=[],
+        conflicts=[reason],
+        safe_repairs=[],
+        planned_commands=[],
+    )
+
+
 def classify_state(
     state: dict[str, Any],
     probes: dict[str, Any],
@@ -288,6 +313,10 @@ def classify_state(
     allow_virtio_download: bool,
     windows_iso_url: str = "",
 ) -> Detection:
+    if state.get("_load_error"):
+        return unreadable_state_detection(str(state["_load_error"]))
+    if probes.get("_load_error"):
+        return unreadable_state_detection(str(probes["_load_error"]))
     merged = {**state, **{k: v for k, v in probes.items() if v not in (None, "")}}
     conflicts = detect_conflicts(state, probes)
     if conflicts:

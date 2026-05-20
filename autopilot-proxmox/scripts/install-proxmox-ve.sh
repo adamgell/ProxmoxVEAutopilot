@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-INIT_SCRIPT="${SCRIPT_DIR}/init-proxmox-ve.sh"
+INIT_SCRIPT="${INSTALLER_INIT_SCRIPT:-${SCRIPT_DIR}/init-proxmox-ve.sh}"
 STATE_HELPER="${SCRIPT_DIR}/installer_state.py"
 STATE_FILE="${INSTALLER_STATE_FILE:-${APP_DIR}/output/setup/foundation_state.json}"
 DETECT_FILE="${INSTALLER_DETECT_FILE:-${APP_DIR}/output/setup/installer_detect.json}"
@@ -416,12 +416,16 @@ show_state() {
     echo "State file: ${STATE_FILE}"
     return 0
   fi
-  python3 - "${STATE_FILE}" <<'PY'
+python3 - "${STATE_FILE}" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
-data = json.load(open(path, encoding="utf-8"))
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception as exc:
+    print(f"State file is unreadable: {path} ({exc})")
+    raise SystemExit(0)
 keys = [
     "phase",
     "pve_node",

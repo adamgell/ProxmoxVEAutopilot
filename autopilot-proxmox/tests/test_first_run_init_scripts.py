@@ -199,7 +199,7 @@ def test_shell_installer_wraps_pve_init_with_console_actions():
     text = INSTALLER.read_text(encoding="utf-8")
 
     assert "ProxmoxVEAutopilot First-Run Installer" in text
-    assert 'INIT_SCRIPT="${SCRIPT_DIR}/init-proxmox-ve.sh"' in text
+    assert 'INIT_SCRIPT="${INSTALLER_INIT_SCRIPT:-${SCRIPT_DIR}/init-proxmox-ve.sh}"' in text
     assert "--action menu|detect|recommended|guided|foundation|bootstrap|operational|runtime-config|status|support|reset-dev-lab" in text
     assert "Continue recommended repair" in text
     assert "Guided install / repair" in text
