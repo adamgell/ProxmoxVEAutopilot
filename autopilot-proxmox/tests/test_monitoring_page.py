@@ -18,17 +18,15 @@ def client(pg_conn):
 
 def test_monitoring_page_empty_state(client):
     c = client
-    r = c.get("/monitoring")
+    r = c.get("/monitoring", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/react/monitoring"
+
+    r = c.get("/api/monitoring/page")
     assert r.status_code == 200
-    assert "Device monitoring" in r.text
-    assert "No devices probed yet" in r.text
-    # Badge for enabled monitor renders.
-    assert "enabled" in r.text
-    # Nav link visible — the operator-cockpit redesign wrapped nav links
-    # with class attributes, so match the href + label substrings
-    # separately instead of the bare anchor tag.
-    assert 'href="/monitoring"' in r.text
-    assert "Monitoring" in r.text
+    body = r.json()
+    assert body["rows"] == []
+    assert body["settings"]["enabled"] is True
 
 
 def test_monitoring_page_renders_a_row_with_badges(client):
@@ -57,23 +55,21 @@ def test_monitoring_page_renders_a_row_with_badges(client):
     })
     device_history_pg.finish_sweep(sweep_id, vm_count=1)
 
-    r = c.get("/monitoring")
+    r = c.get("/api/monitoring/page")
     assert r.status_code == 200
-    assert "Gell-EC41E7EB" in r.text
-    assert "GELL-EC41E7EB" in r.text
-    assert "ServerAd" in r.text        # trust-type pill visible
-    assert "compliant" in r.text       # Intune status pill visible
-    assert 'href="/devices/116"' in r.text  # links through
-    # All three columns got OK badges.
-    assert r.text.count('class="badge ok"') >= 3
+    row = r.json()["rows"][0]
+    assert row["vm_name"] == "Gell-EC41E7EB"
+    assert row["win_name"] == "GELL-EC41E7EB"
+    assert row["entra_trust_type"] == "ServerAd"
+    assert row["intune_compliance"] == "compliant"
 
 
 def test_monitoring_page_interval_warning_below_15min(client, monkeypatch):
     from web import device_history_pg
     c = client
     device_history_pg.update_settings(interval_seconds=300)
-    r = c.get("/monitoring")
-    assert "aggressive" in r.text
+    r = c.get("/api/monitoring/page")
+    assert r.json()["settings"]["interval_seconds"] == 300
 
 
 def test_monitoring_page_shows_service_health(client):
@@ -87,11 +83,11 @@ def test_monitoring_page_shows_service_health(client):
         service_id="builder-xyz", service_type="builder",
         version_sha="abc1234", detail="running",
     )
-    r = c.get("/monitoring")
+    r = c.get("/api/monitoring/page")
     assert r.status_code == 200
-    assert "web" in r.text
-    assert "builder-xyz" in r.text
-    assert "abc1234" in r.text
+    services = {row["service_id"]: row for row in r.json()["service_health"]}
+    assert services["web"]["version_sha"] == "abc1234"
+    assert services["builder-xyz"]["detail"] == "running"
 
 
 def test_monitoring_page_shows_runtime_logs_surface(client, monkeypatch):
@@ -116,13 +112,13 @@ def test_monitoring_page_shows_runtime_logs_surface(client, monkeypatch):
         ],
     })
 
-    r = client.get("/monitoring")
+    r = client.get("/api/monitoring/page")
 
     assert r.status_code == 200
-    assert "Runtime logs" in r.text
-    assert "autopilot-mcp" in r.text
-    assert "MCP deployed" in r.text
-    assert 'data-log-container="autopilot-mcp"' in r.text
+    runtime = r.json()["runtime_services"]
+    assert runtime["available"] is True
+    assert runtime["containers"][0]["name"] == "autopilot-mcp"
+    assert runtime["containers"][0]["log_url"].endswith("container=autopilot-mcp")
 
 
 def test_monitoring_service_logs_endpoint_redacts_secrets(client, monkeypatch):
@@ -176,9 +172,8 @@ def test_monitoring_page_shows_deployment_speed_section(client, pg_conn):
     jobs_pg.claim_next_job(worker_id="builder-monitoring")
     jobs_pg.finalize_job("job-monitoring", exit_code=0)
 
-    r = client.get("/monitoring")
+    r = client.get("/api/monitoring/page")
 
     assert r.status_code == 200
-    assert "Deployment speed" in r.text
-    assert "job-monitoring" in r.text
-    assert "cloudosd_build_iso" in r.text
+    runs = r.json()["deployment_health"]["runs"]
+    assert any(run["deployment_key"] == "job:job-monitoring" for run in runs)

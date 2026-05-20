@@ -43,42 +43,57 @@ def test_home_page_renders(client):
     assert response.status_code == 302
     assert response.headers["location"] == "/react/dashboard"
 
-    response = client.get("/legacy/dashboard")
-    assert response.status_code == 200
-    assert "Proxmox VE Autopilot" in response.text
+    response = client.get("/legacy/dashboard", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/dashboard"
 
 
 def test_provision_page_renders(client):
-    response = client.get("/provision")
+    response = client.get("/provision", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/provision"
+
+    response = client.get("/api/provision/page")
     assert response.status_code == 200
-    assert "OEM Profile" in response.text
-    assert "lenovo-t14" in response.text
+    body = response.json()
+    assert set(body) >= {"defaults", "sequences", "cloudosd_catalog", "osdeploy_catalog"}
+    assert body["defaults"]["oem_profile"] == "generic-desktop"
 
 
 def test_provision_form_includes_hostname_pattern(client):
-    response = client.get("/provision")
+    response = client.get("/api/provision/page")
     assert response.status_code == 200
-    assert 'name="hostname_pattern"' in response.text
-    # Default pattern should be pre-filled
-    assert "autopilot-{serial}" in response.text
+    assert response.json()["defaults"]["hostname_pattern"] == "autopilot-{serial}"
 
 
 def test_template_page_renders(client):
-    response = client.get("/template")
+    response = client.get("/template", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/template"
+
+    response = client.get("/api/template/page")
     assert response.status_code == 200
-    assert "Build Template" in response.text
+    assert set(response.json()) >= {"profiles", "ubuntu_sequences", "hypervisor_type", "utm_iso_dir"}
 
 
 def test_hashes_page_empty(client):
-    response = client.get("/legacy/hashes")
+    response = client.get("/legacy/hashes", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/hashes"
+
+    response = client.get("/api/hashes")
     assert response.status_code == 200
-    assert "No hash files" in response.text
+    assert response.json()["hash_files"] == []
 
 
 def test_jobs_page_empty(client):
-    response = client.get("/legacy/jobs")
+    response = client.get("/legacy/jobs", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/jobs"
+
+    response = client.get("/api/jobs")
     assert response.status_code == 200
-    assert "No jobs yet" in response.text
+    assert response.json() == []
 
 
 def test_api_version_treats_short_running_sha_as_current(client, monkeypatch):
@@ -166,29 +181,21 @@ def test_update_sidecar_rebuilds_image_with_version_args():
 
 
 def test_cockpit_pages_use_shared_full_width_shell(client):
-    response = client.get("/legacy/jobs")
-    runs_response = client.get("/runs")
+    response = client.get("/legacy/jobs", follow_redirects=False)
+    runs_response = client.get("/runs", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert runs_response.status_code == 200
-    assert 'body class="cockpit-shell "' in response.text
-    assert 'body class="cockpit-shell "' in runs_response.text
-    assert "jobs-wide" not in response.text
-    assert ".cockpit-shell .header-inner" in response.text
-    assert "max-width: none;" in response.text
-    assert ".cockpit-frame" in response.text
-    assert "width: 100%;" in response.text
-    assert ".cockpit-shell.jobs-wide .cockpit-frame" not in response.text
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/jobs"
+    assert runs_response.status_code == 302
+    assert runs_response.headers["location"] == "/react/runs"
 
 
 def test_base_shell_exposes_global_cache_and_live_reload_controls(client):
-    response = client.get("/legacy/jobs")
+    response = client.get("/react/jobs")
 
     assert response.status_code == 200
-    assert 'id="reloadLiveDataBtn"' in response.text
-    assert 'id="clearUiCachesBtn"' in response.text
-    assert "/api/ui/reload-live-data" in response.text
-    assert "/api/ui/clear-caches" in response.text
+    assert 'id="react-root"' in response.text
+    assert 'data-react-shell="protected"' in response.text
 
 
 def test_ui_clear_caches_invalidates_runtime_ui_caches(client):
@@ -275,8 +282,13 @@ def test_ui_reload_live_data_refreshes_fleet_and_cloudosd(client, monkeypatch):
 def test_job_detail_not_found(client):
     from web.app import job_manager
     job_manager.get_job.return_value = None
-    response = client.get("/jobs/fake-id")
-    assert response.status_code == 404
+    response = client.get("/jobs/fake-id", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/jobs/fake-id"
+
+    response = client.get("/api/jobs/fake-id/page")
+    assert response.status_code == 200
+    assert response.json()["job"] is None
 
 
 def test_job_detail_uses_live_jobs_websocket(client):
@@ -293,13 +305,18 @@ def test_job_detail_uses_live_jobs_websocket(client):
     }
     job_manager.get_log.return_value = "TASK [still building]\nok\n"
 
-    response = client.get("/jobs/JLIVE")
+    response = client.get("/jobs/JLIVE", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/jobs/JLIVE"
+
+    response = client.get("/api/jobs/JLIVE/page")
 
     assert response.status_code == 200
-    assert "/api/live/ws" in response.text
-    assert "applyJobDetailLive" in response.text
-    assert 'topics: [\'jobs\']' in response.text
-    assert "window.location.reload()" not in response.text
+    body = response.json()
+    assert body["job"]["id"] == "JLIVE"
+    assert body["stream_url"] == "/api/jobs/JLIVE/stream"
+    assert "TASK [still building]" in body["log"]
 
 
 def test_jobs_page_uses_live_jobs_websocket(client):
@@ -315,12 +332,11 @@ def test_jobs_page_uses_live_jobs_websocket(client):
         "args": {},
     }]
 
-    response = client.get("/legacy/jobs")
+    response = client.get("/api/jobs")
 
     assert response.status_code == 200
-    assert "/api/live/ws" in response.text
-    assert "applyLiveJobsTable" in response.text
-    assert 'topics: [\'jobs\']' in response.text
+    body = response.json()
+    assert body[0]["id"] == "JOBS1"
 
 
 def test_hash_upload_job_targets_selected_file_and_group_tag(client, tmp_dirs):
@@ -493,21 +509,9 @@ def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
     with patch("web.app.get_autopilot_vms", return_value=fake_vms):
         with patch("web.app.get_autopilot_devices", return_value=([], None)):
             with patch("web.app.get_hash_files", return_value=[]):
-                resp = client.get("/legacy/vms")
-    assert resp.status_code == 200
-    body = resp.text
-    # Ubuntu VM: Check Enrollment button wired via data-* attributes
-    # (delegated handler routes data-vm-action="check-enroll" to
-    # checkEnroll(vmid, btn)).
-    assert 'data-vm-action="check-enroll"' in body
-    assert 'data-vmid="107"' in body
-    # Ubuntu VM: enrollment chips rendered from persisted tags
-    assert "chip-enroll-intune-healthy" in body
-    assert "chip-enroll-mde-missing" in body
-    # Windows VM keeps its normal Capture Hash action (same data-*
-    # pattern, action=capture).
-    assert 'data-vm-action="capture"' in body
-    assert 'data-vmid="108"' in body
+                resp = client.get("/legacy/vms", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/react/legacy-vms"
 
 
 def test_template_form_post_without_pause_leaves_args_unannotated(client):
@@ -637,12 +641,11 @@ def test_jobs_page_marks_paused_jobs(client):
     job_manager.get_log.return_value = (
         "TASK [PAUSE — install software in VMID 9001]\nok: [localhost]\n"
     )
-    r = client.get("/legacy/jobs")
+    r = client.get("/api/jobs")
     assert r.status_code == 200
-    body = r.text
-    assert "PAUSED" in body
-    assert "paused-1" in body
-    assert "running-1" in body
+    jobs = {job["id"]: job for job in r.json()}
+    assert jobs["paused-1"]["paused"] is True
+    assert jobs["running-1"]["paused"] is False
 
 
 def test_redirect_with_error_encodes_special_chars():
@@ -678,6 +681,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
         deployment_health_pg,
         jobs_pg,
         lab_bubbles_pg,
+        machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
         sequences_pg,
@@ -720,6 +724,9 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     def fake_devices_init(conn):
         calls.append(("devices_init", conn.__class__.__name__))
 
+    def fake_machine_lifecycle_init(conn):
+        calls.append(("machine_lifecycle_init", conn.__class__.__name__))
+
     def fake_agent_telemetry_init(conn):
         calls.append(("agent_telemetry_init", conn.__class__.__name__))
 
@@ -755,6 +762,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
     monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
     monkeypatch.setattr(devices_pg, "init", fake_devices_init)
+    monkeypatch.setattr(machine_lifecycle_pg, "init", fake_machine_lifecycle_init)
     monkeypatch.setattr(agent_telemetry_pg, "init", fake_agent_telemetry_init)
     monkeypatch.setattr(cloudosd_pg, "init", fake_cloudosd_init)
     monkeypatch.setattr(cloudosd_cache, "init", fake_cloudosd_cache_init)
@@ -776,6 +784,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     assert ("ts_init", "FakeConn") in calls
     assert ("device_history_init", "FakeConn") in calls
     assert ("devices_init", "FakeConn") in calls
+    assert ("machine_lifecycle_init", "FakeConn") in calls
     assert ("agent_telemetry_init", "FakeConn") in calls
     assert ("cloudosd_init", "FakeConn") in calls
     assert ("cloudosd_cache_init", "FakeConn") in calls
@@ -863,12 +872,9 @@ def test_vms_page_escapes_vm_name_in_data_attributes(client):
     with patch("web.app.get_autopilot_vms", return_value=fake_vms), \
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]):
-        r = client.get("/legacy/vms")
+        r = client.get("/api/vms/fleet")
     assert r.status_code == 200
-    body = r.text
-    assert 'data-vm-name="evil&#39;); alert(1)//"' in body \
-           or 'data-vm-name="evil\'); alert(1)//"' in body
-    assert "vm_name:'evil" not in body
+    assert r.json()["vms"][0]["name"] == "evil'); alert(1)//"
 
 
 def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path, pg_conn):
@@ -915,13 +921,12 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path, pg_conn):
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/legacy/vms")
+        r = client.get("/api/vms/fleet")
 
     assert r.status_code == 200
-    assert "Gell-EC41E7EB" in r.text
-    assert 'data-vmid="116"' in r.text
-    assert "Intune" in r.text
-    assert "Not in Autopilot" not in r.text
+    rows = {row["vmid"]: row for row in r.json()["vms"]}
+    assert rows[116]["name"] == "Gell-EC41E7EB"
+    assert rows[116]["in_intune"] is True
     live_vms.assert_not_called()
 
 
@@ -960,14 +965,14 @@ def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path, pg_conn):
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/legacy/vms")
+        r = client.get("/api/vms/fleet")
 
     assert r.status_code == 200
-    assert "Last monitor sweep" in r.text
-    assert "Last checked" in r.text
-    assert "Last probed" in r.text
-    assert 'data-utc="2026-04-20T23:55:00+00:00"' in r.text
-    assert 'data-utc="2026-04-20T23:56:30+00:00"' in r.text
+    body = r.json()
+    rows = {row["vmid"]: row for row in body["vms"]}
+    assert body["monitor_sweep"] is not None
+    assert rows[117]["monitor_checked_at"] == "2026-04-20T23:55:00+00:00"
+    assert rows[117]["monitor_probed_at"] == "2026-04-20T23:56:30+00:00"
 
 
 def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeypatch, pg_conn):
@@ -1022,10 +1027,11 @@ def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeyp
     r = client.post("/api/monitoring/sweep-now")
     assert r.status_code == 202
 
-    r = client.get("/legacy/vms")
+    r = client.get("/api/vms/fleet")
     assert r.status_code == 200
-    assert "fresh-vm" in r.text
-    assert "stale-vm" not in r.text
+    names = {row["name"] for row in r.json()["vms"]}
+    assert "fresh-vm" in names
+    assert "stale-vm" not in names
 
 
 def test_vms_refresh_preserves_monitor_join_evidence_over_live_fallback(
@@ -1095,10 +1101,11 @@ def test_vms_refresh_preserves_monitor_join_evidence_over_live_fallback(
     r = client.post("/api/vms/refresh")
     assert r.status_code == 200
 
-    r = client.get("/legacy/vms")
+    r = client.get("/api/vms/fleet")
     assert r.status_code == 200
-    assert ">Entra ID<" in r.text
-    assert ">workgroup<" not in r.text
+    rows = {row["vmid"]: row for row in r.json()["vms"]}
+    assert rows[108]["entra_id_joined"] is True
+    assert rows[108]["lifecycle_label"] != "workgroup"
 
 
 def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path, pg_conn):
@@ -1137,12 +1144,13 @@ def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path, pg_con
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/legacy/vms")
+        r = client.get("/api/vms/fleet")
 
     assert r.status_code == 200
-    assert "Hybrid Entra join" in r.text
-    assert ">domain<" in r.text
-    assert ">workgroup<" not in r.text
+    rows = {row["vmid"]: row for row in r.json()["vms"]}
+    assert rows[106]["hybrid_joined"] is True
+    assert rows[106]["lifecycle_domain_joined"] is True
+    assert rows[106]["lifecycle_label"] != "workgroup"
 
 
 def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path, pg_conn):
@@ -1181,12 +1189,13 @@ def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path, p
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/legacy/vms")
+        r = client.get("/api/vms/fleet")
 
     assert r.status_code == 200
-    assert "Entra ID joined" in r.text
-    assert ">Entra ID<" in r.text
-    assert ">workgroup<" not in r.text
+    rows = {row["vmid"]: row for row in r.json()["vms"]}
+    assert rows[118]["entra_id_joined"] is True
+    assert rows[118]["lifecycle_entra_joined"] is True
+    assert rows[118]["lifecycle_label"] != "workgroup"
 
 
 def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path, pg_conn):
@@ -1236,12 +1245,12 @@ def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path, pg_co
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/legacy/vms")
+        r = client.get("/api/vms/fleet")
 
     assert r.status_code == 200
-    assert ">Entra ID<" in r.text
-    assert "Intune azureADDeviceId -&gt; Entra deviceId" in r.text
-    assert ">workgroup<" not in r.text
+    rows = {row["vmid"]: row for row in r.json()["vms"]}
+    assert rows[108]["entra_id_joined"] is True
+    assert rows[108]["lifecycle_label"] != "workgroup"
 
 
 def test_healthz_503_before_full_init():
@@ -1755,16 +1764,9 @@ def test_vms_page_includes_live_socket_and_screenshot_action(client):
         }, 0.0)
 
     with patch("web.app._get_vms_payload", fake_payload):
-        response = client.get("/legacy/vms")
+        response = client.get("/api/vms/fleet")
 
     assert response.status_code == 200
-    assert "/api/live/ws" in response.text
-    assert "data-vm-action=\"screenshot\"" in response.text
-    assert "/api/qga/recovery-command.txt" in response.text
-    assert "Download QGA recovery command" in response.text
-    assert "data-live-vmid=\"114\"" in response.text
-    assert '<table id="vm-fleet-table" data-disable-row-pulse="true">' in response.text
-    assert '<table id="vm-fleet-table" class="cockpit-scanline">' not in response.text
-    assert "download=\"vm-' + _htmlEsc(String(vmid)) + '-screenshot.png\"" in response.text
-    assert "width:max-content" in response.text
-    assert "qga.title = row.qga_error || ''" in response.text
+    rows = {row["vmid"]: row for row in response.json()["vms"]}
+    assert rows[114]["name"] == "LAB-E3DF41BD"
+    assert rows[114]["status"] == "running"

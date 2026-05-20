@@ -20,7 +20,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def osdeploy_client(pg_conn, monkeypatch):
+def osdeploy_client(pg_conn, monkeypatch, tmp_path):
     from web import (
         agent_telemetry_pg,
         jobs_pg,
@@ -46,6 +46,10 @@ def osdeploy_client(pg_conn, monkeypatch):
     lab_bubbles_pg.reset_for_tests(pg_conn)
     lab_bubbles_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
+    agent_msi = tmp_path / "artifacts" / "AutopilotAgent.msi"
+    agent_msi.parent.mkdir(parents=True, exist_ok=True)
+    agent_msi.write_bytes(b"MZ" + (b"\0" * 4094))
+    monkeypatch.setenv("AUTOPILOT_AGENT_MSI_PATH", str(agent_msi))
 
     from web import app as web_app
 
@@ -306,20 +310,20 @@ def test_osdeploy_artifact_list_includes_build_and_publish_job_links(osdeploy_cl
 def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_conn):
     artifact = _create_osdeploy_artifact(pg_conn)
 
-    response = osdeploy_client.get("/osdeploy/builder")
+    response = osdeploy_client.get("/osdeploy/builder", follow_redirects=False)
 
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == "/react/osdeploy?view=builder"
+
+    response = osdeploy_client.get("/api/osdeploy/page?view=builder")
     assert response.status_code == 200, response.text
-    body = response.text
-    assert 'id="osdeployRunForm"' in body
-    assert artifact["id"] in body
-    assert "/api/osdeploy/v1/preflight" in body
-    assert "/api/osdeploy/v1/runs" in body
-    assert "Launch OSDeploy VM" in body
-    assert '<option value="pve" selected>pve</option>' in body
-    assert '<option value="local" selected>local</option>' in body
-    assert '<option value="local-lvm" selected>local-lvm</option>' in body
-    assert '<option value="vmbr0" selected>vmbr0</option>' in body
-    assert "&#34;" not in body
+    body = response.json()
+    assert body["osdeploy_view"] == "builder"
+    assert any(row["id"] == artifact["id"] for row in body["artifacts"])
+    assert body["proxmox_options"]["nodes"][0] == "pve"
+    assert body["proxmox_options"]["storages"]["iso"][0] == "local"
+    assert body["proxmox_options"]["storages"]["disk"][0] == "local-lvm"
+    assert body["proxmox_options"]["bridges"][0] == "vmbr0"
 
 
 def test_osdeploy_v2_catalog_owns_osdeploy_step_kind():

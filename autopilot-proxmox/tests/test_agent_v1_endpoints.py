@@ -741,14 +741,16 @@ def test_vms_agent_inventory_renders_hard_delete_crud_controls(agent_client, pg_
     })
     monkeypatch.setattr(app_module.sequences_db, "get_vm_provisioning", lambda db, vmid: None)
 
-    response = agent_client.get("/legacy/vms")
+    response = agent_client.get("/legacy/vms", follow_redirects=False)
 
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/legacy-vms"
+
+    response = agent_client.get("/api/vms/fleet")
     assert response.status_code == 200
-    assert 'action="/api/agents"' in response.text
-    assert 'name="agent_id"' in response.text
-    assert 'action="/api/agents/agent-ui-crud/update"' in response.text
-    assert 'action="/api/agents/agent-ui-crud/delete"' in response.text
-    assert "confirm(" not in response.text.partition('action="/api/agents/agent-ui-crud/delete"')[2].split("</form>", 1)[0]
+    agents = {agent["agent_id"]: agent for agent in response.json()["agents"]}
+    assert agents["agent-ui-crud"]["vmid"] == 124
+    assert agents["agent-ui-crud"]["computer_name"] == "GELL-UI-CRUD"
 
 
 def test_agent_heartbeat_updates_latest_telemetry(agent_client, pg_conn):

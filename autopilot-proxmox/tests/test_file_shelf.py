@@ -11,13 +11,18 @@ def test_files_page_lists_uploaded_msi_files(tmp_path: Path, monkeypatch):
     (tmp_path / "notes.txt").write_text("ignore me", encoding="utf-8")
 
     client = TestClient(app_module.app)
-    response = client.get("/legacy/files")
+    response = client.get("/legacy/files", follow_redirects=False)
 
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/files"
+
+    response = client.get("/api/files")
     assert response.status_code == 200
-    assert "MSI Files" in response.text
-    assert "agent-tools.msi" in response.text
-    assert "/files/agent-tools.msi" in response.text
-    assert "notes.txt" not in response.text
+    files = response.json()["files"]
+    assert len(files) == 1
+    assert files[0]["name"] == "agent-tools.msi"
+    assert files[0]["size_bytes"] == 7
+    assert files[0]["url"] == "/files/agent-tools.msi"
 
 
 def test_upload_files_accepts_only_msi_and_sanitizes_names(tmp_path: Path, monkeypatch):

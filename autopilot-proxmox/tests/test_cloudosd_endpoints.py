@@ -2493,10 +2493,12 @@ def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(
     assert after["step_count"] == 7
     assert after["state"] == "full_os_waiting_v2"
 
-    task_engine = cloudosd_client.get("/task-engine")
+    task_engine = cloudosd_client.get("/api/task-engine/page")
     assert task_engine.status_code == 200
-    assert "6/7 done" in task_engine.text
-    assert "full_os_waiting_v2" in task_engine.text
+    runs = {row["id"]: row for row in task_engine.json()["runs"]}
+    assert runs[run["run_id"]]["done_count"] == 6
+    assert runs[run["run_id"]]["step_count"] == 7
+    assert runs[run["run_id"]]["state"] == "full_os_waiting_v2"
 
 
 def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
@@ -2525,22 +2527,22 @@ def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
         message="Starting OSDCloud deploy",
     )
 
-    response = cloudosd_client.get(f"/cloudosd/runs/{run['run_id']}")
+    response = cloudosd_client.get(f"/cloudosd/runs/{run['run_id']}", follow_redirects=False)
+
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == f"/react/cloudosd/runs/{run['run_id']}"
+
+    response = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}/page")
 
     assert response.status_code == 200, response.text
-    assert 'id="cloudosdRunDetail"' in response.text
-    assert 'data-cloudosd-field="pe_registered_at"' in response.text
-    assert 'data-cloudosd-field="domain_join_target"' in response.text
-    assert 'data-cloudosd-field="domain_join_verification"' in response.text
-    assert 'data-cloudosd-field="local_admin_username"' in response.text
-    assert 'data-cloudosd-field="local_admin_password"' in response.text
-    assert "localadmin" in response.text
-    assert run["local_admin"]["password"] in response.text
-    assert "Domain join" in response.text
-    assert f"/api/cloudosd/runs/${{encodeURIComponent(runId)}}" in response.text
-    assert "window.setTimeout(refresh, 5000)" in response.text
-    assert "CloudOSD PE bridge registered" in response.text
-    assert "Starting OSDCloud deploy" in response.text
+    body = response.json()
+    assert body["run"]["run_id"] == run["run_id"]
+    assert body["run"]["local_admin"]["username"] == "localadmin"
+    assert body["run"]["local_admin"]["password"] == run["local_admin"]["password"]
+    assert [event["message"] for event in body["events"]][-2:] == [
+        "CloudOSD PE bridge registered",
+        "Starting OSDCloud deploy",
+    ]
 
 
 def test_cloudosd_proxmox_options_fallback_to_configured_defaults(
@@ -2622,42 +2624,20 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
 ):
     artifact = _create_artifact(pg_conn)
 
-    response = cloudosd_client.get("/provision")
+    response = cloudosd_client.get("/provision", follow_redirects=False)
 
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == "/react/provision"
+
+    response = cloudosd_client.get("/api/provision/page")
     assert response.status_code == 200, response.text
-    body = response.text
-    assert body.index('name="boot_mode"') < body.index('name="sequence_id"')
-    assert (
-        '<option value="cloudosd" selected>OSDCloud (Windows desktop clients)</option>'
-        in body
-    )
-    assert 'value="" selected data-cloudosd-default="1"' in body
-    assert "OSDCloud base deployment (no legacy sequence)" in body
-    assert body.index('<option value="cloudosd" selected>') < body.index(
-        '<option value="winpe">'
-    )
-    assert 'data-boot-section="cloudosd"' in body
-    assert "OSDCloud blank uses a plain generated serial" in body
-    assert f'value="{artifact["id"]}"' in body
-    for required in (
-        'name="artifact_id"',
-        'name="count"',
-        'name="cores"',
-        'name="memory_mb"',
-        'name="disk_size_gb"',
-        'name="group_tag"',
-        'name="profile"',
-        'name="chassis_type_override"',
-        'name="node"',
-        'name="iso_storage"',
-        'name="storage"',
-        'name="network_bridge"',
-        'name="os_version"',
-        'name="os_edition"',
-        'name="os_activation"',
-        'name="os_language"',
-    ):
-        assert required in body
+    body = response.json()
+    assert body["defaults"]["count"] == 1
+    assert body["defaults"]["cores"] >= 1
+    assert any(row["id"] == artifact["id"] for row in body["cloudosd_ready_artifacts"])
+    assert set(body["cloudosd_options"]) >= {"nodes", "storages", "bridges"}
+    assert body["cloudosd_options"]["storages"]["iso"]
+    assert body["cloudosd_options"]["storages"]["disk"]
 
 
 def test_provision_page_filters_legacy_sequences_by_boot_mode(
@@ -2705,19 +2685,17 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
         steps=[],
     )
 
-    response = cloudosd_client.get("/provision")
+    response = cloudosd_client.get("/api/provision/page")
 
     assert response.status_code == 200, response.text
-    body = response.text
-    assert "not OSDCloud-compatible yet" not in body
-    assert "Ubuntu Plain Legacy UI" not in body
-    assert f'value="{cloudosd_seq}"' in body
-    assert f'value="{windows_seq}"' in body
-    assert f'value="{winpe_seq}"' in body
-    assert 'data-boot-modes="cloudosd"' in body
-    assert 'data-boot-modes="clone winpe"' in body
-    assert 'data-boot-modes="winpe"' in body
-    assert "syncSequenceOptions" in body
+    rows = {row["id"]: row for row in response.json()["sequences"]}
+    assert cloudosd_seq in rows
+    assert windows_seq in rows
+    assert winpe_seq in rows
+    assert all(row["target_os"] == "windows" for row in rows.values())
+    assert rows[cloudosd_seq]["boot_modes"] == ["cloudosd"]
+    assert rows[windows_seq]["boot_modes"] == ["clone", "winpe"]
+    assert rows[winpe_seq]["boot_modes"] == ["winpe"]
 
 
 def test_provision_rejects_sequence_for_wrong_boot_mode(
@@ -3063,22 +3041,17 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     assert row["intune_evidence"]["assignment"]["status"] == "assignedInSync"
     assert row["intune_evidence"]["enrollment"]["status"] == "enrolled"
 
-    page = cloudosd_client.get("/provision")
+    page = cloudosd_client.get("/api/provision/page")
     assert page.status_code == 200, page.text
-    body = page.text
-    assert "OSDCloud Batch Progress" in body
-    assert "VM created" in body
-    assert "PE registered" in body
-    assert "OSDCloud done" in body
-    assert "Agent heartbeat" in body
-    assert "v2 steps done" in body
-    assert "Autopilot readiness" in body
-    assert 'data-cloudosd-summary="deployed"' in body
-    assert 'data-cloudosd-summary="uploaded"' in body
-    assert 'data-cloudosd-summary="assigned"' in body
-    assert 'data-cloudosd-summary="contacted_enrolled"' in body
-    assert "Gell-251-OSD1" in body
-    assert "/api/cloudosd/provision/progress" in body
+    rows = page.json()["cloudosd_batch_progress"]["runs"]
+    row = next(item for item in rows if item["run_id"] == run["run_id"])
+    assert row["vm_name"] == "Gell-251-OSD1"
+    assert row["milestones"]["vm_created"]["state"] == "done"
+    assert row["milestones"]["pe_registered"]["state"] == "done"
+    assert row["milestones"]["osdcloud_done"]["state"] == "done"
+    assert row["milestones"]["agent_heartbeat"]["state"] == "done"
+    assert row["milestones"]["v2_steps_done"]["state"] == "done"
+    assert row["autopilot_readiness"]["state"] == "enrolled"
 
 
 def test_cloudosd_archive_hides_run_from_default_history_but_preserves_detail(
@@ -3564,48 +3537,25 @@ def test_cloudosd_provision_endpoint_enqueues_dedicated_playbook(
 def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
 
-    response = cloudosd_client.get("/osdcloud")
-    builder_response = cloudosd_client.get("/osdcloud/builder")
-    artifacts_response = cloudosd_client.get("/osdcloud/artifacts")
+    response = cloudosd_client.get("/osdcloud", follow_redirects=False)
+    builder_response = cloudosd_client.get("/osdcloud/builder", follow_redirects=False)
+    artifacts_response = cloudosd_client.get("/osdcloud/artifacts", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert builder_response.status_code == 200
-    assert artifacts_response.status_code == 200
-    assert "OSDCloud" in response.text
-    assert "Operator Flow" in response.text
-    assert 'aria-label="OSDCloud pages"' in response.text
-    assert ">Builder</a>" in response.text
-    assert ">Cache</a>" in response.text
-    assert ">Artifacts</a>" in response.text
-    assert "https://www.osdcloud.com/" in response.text
-    assert "/osdcloud/builder" in response.text
-    assert "/osdcloud/cache" in response.text
-    assert "/osdcloud/artifacts" in response.text
-    assert artifact["iso_sha256"] in artifacts_response.text
-    assert "6144" in builder_response.text
-    assert '<dt>Analytics</dt><dd id="reviewAnalytics">blocked</dd>' in builder_response.text
-    assert "/api/cloudosd/artifacts/build" in artifacts_response.text
-    assert "Windows 11 24H2" in builder_response.text
-    assert "Windows 11 21H2" in builder_response.text
-    assert "Windows 10 22H2" in builder_response.text
-    assert "Home N" in builder_response.text
-    assert "Enterprise N" in builder_response.text
-    assert "Education" in builder_response.text
-    assert "de-de" in builder_response.text
-    assert "Single-VM Deployment" in builder_response.text
-    assert "Review &amp; Launch" in builder_response.text
-    assert "Blocking Checks" in builder_response.text
-    assert "OSDCloud Run History" in response.text
-    assert "Active Runs" in response.text
-    assert "Stale Failed Runs" in response.text
-    assert "Stale failures can be hidden without deleting evidence" in response.text
-    assert "Build a desktop run" in builder_response.text
-    assert "Manage PE artifacts" in builder_response.text
-    assert "cloudosd-toggle-line" in builder_response.text
-    assert "Single-VM Deployment" not in response.text
-    assert "<h2>Artifacts</h2>" not in response.text
-    assert builder_response.text.index("Single-VM Deployment") < builder_response.text.index("Review &amp; Launch")
-    assert builder_response.text.index("Build a desktop run") < builder_response.text.index("Single-VM Deployment")
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/cloudosd"
+    assert builder_response.status_code == 302
+    assert builder_response.headers["location"] == "/react/cloudosd?view=builder"
+    assert artifacts_response.status_code == 302
+    assert artifacts_response.headers["location"] == "/react/cloudosd?view=artifacts"
+
+    overview = cloudosd_client.get("/api/cloudosd/page").json()
+    builder = cloudosd_client.get("/api/cloudosd/page?view=builder").json()
+    artifacts = cloudosd_client.get("/api/cloudosd/page?view=artifacts").json()
+    assert overview["cloudosd_view"] == "overview"
+    assert builder["cloudosd_view"] == "builder"
+    assert artifacts["cloudosd_view"] == "artifacts"
+    assert any(row["iso_sha256"] == artifact["iso_sha256"] for row in artifacts["artifacts"])
+    assert builder["catalog"]["os_versions"]
 
 
 def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(
@@ -3631,13 +3581,16 @@ def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(
         },
     ).status_code == 200
 
-    response = cloudosd_client.get(f"/osdcloud/runs/{run['run_id']}")
+    response = cloudosd_client.get(f"/osdcloud/runs/{run['run_id']}", follow_redirects=False)
 
+    assert response.status_code == 302
+    assert response.headers["location"] == f"/react/cloudosd/runs/{run['run_id']}"
+
+    response = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}/page")
     assert response.status_code == 200
-    body = response.text
-    assert "OSDCloud Run" in body
-    assert "Cloud OSD Lab 001" in body
-    assert "CloudOSDLab001" in body
-    assert "Heartbeat gate" in body
-    assert "AutopilotAgent" in body
-    assert "offline validation" in body.lower()
+    body = response.json()
+    assert body["run"]["run_id"] == run["run_id"]
+    assert body["run"]["requested_vm_name"] == "Cloud OSD Lab 001"
+    assert body["run"]["pve_vm_name"] == "Cloud OSD Lab 001"
+    assert body["run"]["expected_computer_name"] == "CloudOSDLab001"
+    assert body["latest_heartbeat"] is None

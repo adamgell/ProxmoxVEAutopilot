@@ -66,17 +66,14 @@ def test_cockpit_shell_renders_on_dashboard(web_client: TestClient, monkeypatch)
 
     monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
 
-    res = web_client.get("/legacy/dashboard")
+    res = web_client.get("/legacy/dashboard", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/dashboard"
+
+    res = web_client.get("/react/dashboard")
     assert res.status_code == 200
-    body = res.text
-    assert 'class="cockpit-shell ' in body
-    assert 'id="cockpitCommand"' in body
-    assert 'class="cockpit-rail"' in body
-    assert 'href="/react/monitoring/settings"' in body
-    assert 'id="liveSocketIndicator"' in body
-    assert "WebSocket: Connecting" in body
-    assert "new WebSocket" in body
-    assert "/api/live/ws" in body
+    assert 'id="react-root"' in res.text
+    assert 'data-react-shell="protected"' in res.text
 
 
 def test_cloudosd_run_detail_renders_v2_plan_live_section():
@@ -386,14 +383,10 @@ def test_cockpit_shell_has_light_mode_tokens(web_client: TestClient, monkeypatch
 
     monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
 
-    res = web_client.get("/legacy/dashboard")
+    res = web_client.get("/react/dashboard")
     assert res.status_code == 200
-    body = res.text
-    assert 'html:not([data-theme="dark"]) .cockpit-shell' in body
-    assert "color-scheme: light;" in body
-    assert "--cockpit-bg: #f5f7fb;" in body
-    assert "--cockpit-panel: rgba(255, 255, 255, 0.92);" in body
-    assert "--cockpit-ink: #162033;" in body
+    assert 'id="react-root"' in res.text
+    assert 'data-react-shell="protected"' in res.text
 
 
 def test_cloud_retire_flow_requires_typed_confirmation(web_client: TestClient, monkeypatch):
@@ -419,10 +412,13 @@ def test_cloud_retire_flow_requires_typed_confirmation(web_client: TestClient, m
     )
     monkeypatch.setattr(devices_db, "list_deletions", lambda *a, **kw: [])
 
-    res = web_client.get("/legacy/cloud")
+    res = web_client.get("/legacy/cloud", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/devices"
+
+    res = web_client.get("/api/cloud/devices")
     assert res.status_code == 200
-    assert "function nukeSelected" in res.text
-    assert "Type RETIRE" in res.text
+    assert set(res.json()) >= {"groups", "unmatched", "meta", "deletions"}
 
 
 def test_login_keeps_microsoft_start_link(monkeypatch):
@@ -443,28 +439,17 @@ def test_login_keeps_microsoft_start_link(monkeypatch):
     client = TestClient(web_app.app)
     res = client.get("/auth/login?next=/monitoring/settings")
     assert res.status_code == 200
-    assert "Sign in with Microsoft" in res.text
-    assert "/auth/login/start?next=%2Fmonitoring%2Fsettings" in res.text
+    assert 'id="react-root"' in res.text
+    assert 'data-react-shell="public"' in res.text
 
 
 def test_console_page_preserves_existing_api_contracts(web_client: TestClient, monkeypatch):
     from web import app as web_app
 
     monkeypatch.setattr(web_app, "_proxmox_api", lambda path: {"name": "SERIAL-001"})
-    res = web_client.get("/vms/101/console")
-    assert res.status_code == 200
-    body = res.text
-    assert "'/api/vms/' + VMID + '/vnc-init'" in body
-    assert "'/api/vms/' + VMID + '/vnc-ws'" in body
-    assert "/api/vms/${VMID}/status-json" in body
-    assert "/api/vms/${VMID}/action/${action}" in body
-    assert "/api/vms/${VMID}/type" in body
-    assert "/api/vms/${VMID}/key" in body
-    assert "/api/live/ws" in body
-    assert "screenshot.request" in body
-    assert "requestScreenshot" in body
-    assert 'download="vm-${VMID}-screenshot.png"' in body
-    assert "width:max-content" in body
+    res = web_client.get("/vms/101/console", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/vms/101?action=console"
 
 
 def test_vms_agent_heartbeat_uses_local_timezone_markup(web_client: TestClient, monkeypatch):
@@ -509,19 +494,11 @@ def test_vms_agent_heartbeat_uses_local_timezone_markup(web_client: TestClient, 
         ],
     )
 
-    res = web_client.get("/legacy/vms")
+    res = web_client.get("/api/vms/fleet")
 
     assert res.status_code == 200
-    body = res.text
-    assert "agent-timezone-test" in body
-    assert "data-agent-heartbeat-time" in body
-    assert 'title="UTC: 2026-05-09T00:45:38+00:00"' in body
-    assert "data-agent-heartbeat-zone" in body
-    assert "function renderAgentHeartbeat" in body
-    assert "Intl.DateTimeFormat().resolvedOptions().timeZone" in body
-    assert "function reconcileAgentInventory" in body
-    assert "function updateAgentInventoryEmptyState" in body
-    assert "Approval record no longer exists. Removed the stale row." in body
+    agents = {agent["agent_id"]: agent for agent in res.json()["agents"]}
+    assert agents["agent-timezone-test"]["last_heartbeat_at"] == "2026-05-09T00:45:38+00:00"
 
 
 def test_console_resolves_actual_vm_node_for_serial(web_client: TestClient, monkeypatch):
@@ -537,10 +514,10 @@ def test_console_resolves_actual_vm_node_for_serial(web_client: TestClient, monk
 
     monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
 
-    res = web_client.get("/vms/100/console")
+    res = web_client.get("/vms/100/console", follow_redirects=False)
 
-    assert res.status_code == 200
-    assert "SERIAL-100" in res.text
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/vms/100?action=console"
 
 
 def test_vnc_init_uses_actual_vm_node(web_client: TestClient, monkeypatch):
@@ -570,12 +547,10 @@ def test_home_page_uses_live_jobs_websocket(web_client: TestClient, monkeypatch)
 
     monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
 
-    res = web_client.get("/legacy/dashboard")
+    res = web_client.get("/react/dashboard")
     assert res.status_code == 200
-    body = res.text
-    assert "/api/live/ws" in body
-    assert 'topics: ["jobs"]' in body
-    assert "applyLiveJobs" in body
+    assert 'id="react-root"' in res.text
+    assert 'data-react-shell="protected"' in res.text
 
 
 def test_runs_page_lists_winpe_runs_with_sequence_and_status(
@@ -600,15 +575,17 @@ def test_runs_page_lists_winpe_runs_with_sequence_and_status(
         vm_uuid="ABCDEF12-3456-7890-ABCD-EF1234567890",
     )
 
-    res = web_client.get("/runs")
+    res = web_client.get("/runs", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/runs"
+
+    res = web_client.get("/api/runs/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "WinPE Runs" in body
-    assert "WinPE OSD Demo" in body
-    assert "awaiting_winpe" in body
-    assert "119" in body
-    assert f"/runs/{run_id}" in body
+    runs = {row["id"]: row for row in res.json()["runs"]}
+    assert runs[run_id]["sequence_name"] == "WinPE OSD Demo"
+    assert runs[run_id]["state"] == "awaiting_winpe"
+    assert runs[run_id]["vmid"] == 119
 
 
 def test_run_detail_previews_all_winpe_tasks_before_agent_registers(
@@ -627,17 +604,24 @@ def test_run_detail_previews_all_winpe_tasks_before_agent_registers(
         test_db, sequence_id=seq_id, provision_path="winpe",
     )
 
-    res = web_client.get(f"/runs/{run_id}")
+    res = web_client.get(f"/runs/{run_id}", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == f"/react/runs/{run_id}"
+
+    res = web_client.get(f"/api/runs/{run_id}/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "Hash in WinPE" in body
-    assert "WinPE Task Plan" in body
-    assert "capture_hash" in body
-    assert "partition_disk" in body
-    assert "apply_wim" in body
-    assert "handoff_to_windows_setup" in body
-    assert "planned" in body
+    body = res.json()
+    assert body["run"]["sequence_name"] == "Hash in WinPE"
+    assert {
+        step.get("name") or step.get("step_type") or step.get("kind")
+        for step in body["steps"]
+    } >= {
+        "capture_hash",
+        "partition_disk",
+        "apply_wim",
+        "handoff_to_windows_setup",
+    }
 
 
 def test_sequences_page_shows_winpe_plan_and_hash_phase(
@@ -653,16 +637,16 @@ def test_sequences_page_shows_winpe_plan_and_hash_phase(
         hash_capture_phase="winpe",
     )
 
-    res = web_client.get("/sequences")
+    res = web_client.get("/sequences", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/sequences"
+
+    res = web_client.get("/api/sequences/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "WinPE capable sequence" in body
-    assert "Hash phase" in body
-    assert "winpe" in body
-    assert "WinPE task plan" in body
-    assert "capture_hash" in body
-    assert "apply_wim" in body
+    rows = {row["name"]: row for row in res.json()["sequences"]}
+    assert rows["WinPE capable sequence"]["produces_autopilot_hash"] is True
+    assert rows["WinPE capable sequence"]["hash_capture_phase"] == "winpe"
 
 
 def test_task_engine_page_shows_v2_sequences_runs_and_content(
@@ -709,22 +693,21 @@ def test_task_engine_page_shows_v2_sequences_runs_and_content(
         resolve_content=True,
     )
 
-    res = web_client.get("/task-engine")
+    res = web_client.get("/task-engine", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/task-engine"
+
+    res = web_client.get("/api/task-engine/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "Task Sequence Engine v2" in body
-    assert "Install Apps v2" in body
-    assert "Install Notepad++" in body
-    assert "install_package" in body
-    assert "full_os" in body
-    assert run_id in body
-    assert "queued" in body
-    assert "notepad-plus-plus" in body
-    assert "Content Manifest" in body
-    assert "Smart V2 Builder" in body
-    assert 'href="/task-engine/sequences/new"' in body
-    assert "Edit builder" in body
+    body = res.json()
+    sequences = {row["id"]: row for row in body["sequences"]}
+    runs = {row["id"]: row for row in body["runs"]}
+    assert sequences[sequence_id]["name"] == "Install Apps v2"
+    assert sequences[sequence_id]["steps"][0]["name"] == "Install Notepad++"
+    assert sequences[sequence_id]["steps"][0]["kind"] == "install_package"
+    assert runs[run_id]["state"] == "queued"
+    assert body["content_items"][0]["name"] == "notepad-plus-plus"
 
 
 def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
@@ -767,20 +750,18 @@ def test_task_engine_page_shows_cloudosd_v2_osd_run_plan(
         },
     )
 
-    res = web_client.get("/task-engine")
+    res = web_client.get("/api/task-engine/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "OSDCloud V2 OSD Task Plans" in body
-    assert 'class="cloudosd-v2-task-plan"' in body
-    assert run_id in body
-    assert "VMID 119" in body
-    assert "GELL-119-AD" in body
-    assert "Stage OSD client" in body
-    assert "stage_osd_client" in body
-    assert "Capture Autopilot hardware hash" in body
-    assert "capture_autopilot_hash" in body
-    assert "Verify AD domain membership" in body
+    body = res.json()
+    runs = {row["id"]: row for row in body["cloudosd_runs"]}
+    assert run_id in runs
+    sequence = next(row for row in body["sequences"] if row["id"] == sequence_id)
+    assert {step["kind"] for step in sequence["steps"]} >= {
+        "stage_osd_client",
+        "capture_autopilot_hash",
+        "verify_ad_domain_join",
+    }
 
 
 def test_task_engine_builder_renders_smart_lanes_and_palette(
@@ -806,33 +787,20 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
         retry_count=2,
     )
 
-    res = web_client.get(f"/task-engine/sequences/{sequence_id}/edit")
+    res = web_client.get(f"/task-engine/sequences/{sequence_id}/edit", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == f"/react/task-engine/sequences/{sequence_id}/edit"
+
+    res = web_client.get(f"/api/task-engine/sequences/{sequence_id}/edit/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "Smart builder for OSDCloud desktop deployment" in body
-    assert "Legacy Import" not in body
-    assert "Start from v1 sequence" not in body
-    assert "No legacy v1 sequences" not in body
-    assert "draftFromLegacy" not in body
-    assert "createFromLegacy" not in body
-    assert "data-v2-builder" in body
-    assert "v2-builder-scroll" in body
-    assert "min-width:1440px" in body
-    assert "Phase Timeline" in body
-    assert "Step Palette" in body
-    assert body.index("Phase Timeline") < body.index("Step Palette")
-    left_sidebar = body.split('<main class="v2-stack">', 1)[0]
-    assert "Step Palette" not in left_sidebar
-    assert "Search full catalog" in body
-    assert "Pinned OSDCloud Desktop" in body
-    assert "PINNED_CLOUDOSD_DESKTOP" in body
-    assert "v2-owner-chip" in body
-    assert "v2-palette-count" in body
-    assert "v2-palette-section-steps" in body
-    assert "repeat(auto-fit, minmax(220px, 1fr))" in body
-    assert "Add recommended baseline" in body
-    assert "capture_autopilot_hash" in body
+    body = res.json()
+    assert body["sequence"]["name"] == "OSDCloud desktop baseline"
+    assert body["nodes"][0]["kind"] == "capture_autopilot_hash"
+    assert body["step_templates"]
+    assert body["flow_templates"]
+    template_kinds = {template["kind"] for template in body["step_templates"]}
+    assert "capture_autopilot_hash" in template_kinds
     for kind in [
         "capture_hash",
         "partition_disk",
@@ -859,27 +827,7 @@ def test_task_engine_builder_renders_smart_lanes_and_palette(
         "install_app",
         "wait_agent_heartbeat",
     ]:
-        assert kind in body
-    assert "addRecommendedBaseline" in body
-    assert 'const STEP_TEMPLATES = [{"kind":' in body
-    assert "&#34;kind&#34;" not in body
-    assert 'draggable="true"' in body
-    assert "dragTemplate(event" in body
-    assert "dragStep(event" in body
-    assert "startPointerDrag(event" in body
-    assert "pointerMoveDrag" in body
-    assert "paletteClick(event" in body
-    assert "paletteButton(t, pinned)" in body
-    assert "data-pinned=\"${pinned ? \"true\" : \"false\"}\"" in body
-    assert "dropOnPhase(event" in body
-    assert "sourceElement: event.currentTarget" in body
-    assert 'drag.sourceElement.dataset.dragging = "false"' in body
-    assert "data-enabled=\"${s.enabled !== false}\"" in body
-    assert "v2-step-state" in body
-    assert "v2-step-card-status" in body
-    assert "<br><code>${esc(s.kind)}</code>" not in body
-    assert "Drag steps here, or reorder inside this phase." in body
-    assert "forEach(kind => addStepFromTemplate(kind));" in body
+        assert kind in template_kinds
 
 
 def test_task_engine_sequence_list_shows_editable_sequences_and_readonly_templates(
@@ -904,23 +852,21 @@ def test_task_engine_sequence_list_shows_editable_sequences_and_readonly_templat
         position=0,
     )
 
-    res = web_client.get("/task-engine/sequences/list")
+    res = web_client.get("/task-engine/sequences/list", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/react/task-engine/sequences/list"
+
+    res = web_client.get("/api/task-engine/sequences/list/page")
 
     assert res.status_code == 200
-    body = res.text
-    assert "V2 Sequence Library" in body
-    assert "Operator OSDCloud Desktop" in body
-    assert f"/task-engine/sequences/{sequence_id}/edit" in body
-    assert "Read-only Flow Templates" in body
-    assert "OSDCloud Desktop Client" in body
-    assert "OSDCloud Desktop Client + AD Domain Join" in body
-    assert "WinPE Desktop WIM Deployment" in body
-    assert "WinPE Windows Server WIM Deployment" in body
-    assert "Proxmox Clone Desktop from Template" in body
-    assert "/task-engine/sequences/templates/cloudosd-desktop" in body
-    assert "/task-engine/sequences/new?template_id=cloudosd-desktop" in body
-    assert "Clone into builder" in body
-    assert "read-only" in body
+    body = res.json()
+    assert any(row["name"] == "Operator OSDCloud Desktop" for row in body["sequences"])
+    template_names = {template["name"] for template in body["flow_templates"]}
+    assert "OSDCloud Desktop Client" in template_names
+    assert "OSDCloud Desktop Client + AD Domain Join" in template_names
+    assert "WinPE Desktop WIM Deployment" in template_names
+    assert "WinPE Windows Server WIM Deployment" in template_names
+    assert "Proxmox Clone Desktop from Template" in template_names
 
 
 def test_task_engine_readonly_template_detail_and_clone_into_builder(
@@ -932,35 +878,44 @@ def test_task_engine_readonly_template_detail_and_clone_into_builder(
     ts_engine_pg.init(pg_conn)
 
     detail = web_client.get(
-        "/task-engine/sequences/templates/cloudosd-desktop-domain-join"
+        "/task-engine/sequences/templates/cloudosd-desktop-domain-join",
+        follow_redirects=False,
     )
 
-    assert detail.status_code == 200
-    detail_body = detail.text
-    assert "OSDCloud Desktop Client + AD Domain Join" in detail_body
-    assert "read-only template" in detail_body
-    assert "Read-only Step Plan" in detail_body
-    assert "stage_ad_domain_join_unattend" in detail_body
-    assert "verify_ad_domain_join" in detail_body
-    assert (
-        "/task-engine/sequences/new?template_id=cloudosd-desktop-domain-join"
-        in detail_body
+    assert detail.status_code == 302
+    assert detail.headers["location"] == "/react/task-engine/sequences/templates/cloudosd-desktop-domain-join"
+
+    detail = web_client.get(
+        "/api/task-engine/sequences/templates/cloudosd-desktop-domain-join/page"
     )
+    assert detail.status_code == 200
+    template = detail.json()["template"]
+    assert template["name"] == "OSDCloud Desktop Client + AD Domain Join"
+    assert {node["kind"] for node in template["nodes"]} >= {
+        "stage_ad_domain_join_unattend",
+        "verify_ad_domain_join",
+    }
 
     clone = web_client.get(
-        "/task-engine/sequences/new?template_id=cloudosd-desktop-domain-join"
+        "/task-engine/sequences/new?template_id=cloudosd-desktop-domain-join",
+        follow_redirects=False,
     )
 
+    assert clone.status_code == 302
+    assert clone.headers["location"] == "/react/task-engine/sequences/new?template_id=cloudosd-desktop-domain-join"
+
+    clone = web_client.get(
+        "/api/task-engine/sequences/new/page?template_id=cloudosd-desktop-domain-join"
+    )
     assert clone.status_code == 200
-    clone_body = clone.text
-    assert "New v2 task sequence" in clone_body
-    assert "Template source" in clone_body
-    assert "read-only template cloned" in clone_body
-    assert "OSDCloud Desktop Client + AD Domain Join copy" in clone_body
-    assert "stage_ad_domain_join_unattend" in clone_body
-    assert "verify_ad_domain_join" in clone_body
-    assert "wait_agent_heartbeat" in clone_body
-    assert "data-v2-builder" in clone_body
+    clone_body = clone.json()
+    assert clone_body["template_source"]["name"] == "OSDCloud Desktop Client + AD Domain Join"
+    assert clone_body["sequence"]["name"] == "OSDCloud Desktop Client + AD Domain Join copy"
+    assert {node["kind"] for node in clone_body["nodes"]} >= {
+        "stage_ad_domain_join_unattend",
+        "verify_ad_domain_join",
+        "wait_agent_heartbeat",
+    }
 
 
 def test_task_engine_imports_legacy_sequence_into_v2(

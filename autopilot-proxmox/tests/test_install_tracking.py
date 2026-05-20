@@ -193,16 +193,14 @@ def test_install_tracking_update_records_event_and_redacts_secrets(pg_conn, pg_d
 def test_install_tracking_page_renders_nav_and_table(pg_conn, pg_dsn, monkeypatch):
     client = _client(pg_conn, pg_dsn, monkeypatch)
 
-    response = client.get("/install-tracking")
+    response = client.get("/install-tracking", follow_redirects=False)
 
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/install-tracking"
+
+    response = client.get("/api/install-tracking/page")
     assert response.status_code == 200
-    assert "Deployment Readiness" in response.text
-    assert "Deploy surfaces covered" in response.text
-    assert "OSDCloud catalog and deploy options ready" in response.text
-    assert "OSDeploy source media and cache ready" in response.text
-    assert "pvetest-clean-install" in response.text
-    assert "Clean OSDeploy run completes" in response.text
-    assert 'href="/install-tracking"' in response.text
-    assert "Create Install Run" not in response.text
-    assert "data-install-update" not in response.text
-    assert "Refresh Evidence" not in response.text
+    tracking = response.json()["tracking"]
+    assert tracking["items"]
+    assert any(item["item_id"] == "pve-foundation" for item in tracking["items"])
+    assert tracking["run"]["run_id"] == "pvetest-clean-install"
