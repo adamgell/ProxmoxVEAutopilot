@@ -9,6 +9,7 @@ public sealed class Worker(
     LogCollectionService logCollectionService,
     OsdV2WorkService osdV2WorkService,
     BuildHostWorkService buildHostWorkService,
+    AgentUpdateService agentUpdateService,
     AgentFileLog log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -59,6 +60,20 @@ public sealed class Worker(
                         supportedKinds,
                         stoppingToken);
                     log.Info("Heartbeat sent.");
+                    try
+                    {
+                        await agentUpdateService.CheckAndApplyOnceAsync(
+                            config,
+                            stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Error(ex, "Agent update check failed.");
+                    }
                     await osdV2WorkService.ProcessOnceAsync(
                         config,
                         telemetry,

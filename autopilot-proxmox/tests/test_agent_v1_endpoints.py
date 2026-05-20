@@ -559,7 +559,11 @@ def test_vms_agent_inventory_shows_pending_approved_and_active_states(agent_clie
     assert rows["agent-ui-pending"]["approval_id"] == pending["approval_id"]
     assert rows["agent-ui-approved"]["approval_status"] == "approved"
     assert rows["agent-ui-approved"]["approval_id"] == approved["approval_id"]
+    assert rows["agent-ui-approved"]["pairing_status"] == "waiting_for_claim"
+    assert rows["agent-ui-approved"]["needs_pairing"] is True
     assert rows["agent-ui-active"]["approval_status"] == "active"
+    assert rows["agent-ui-active"]["pairing_status"] == "paired"
+    assert rows["agent-ui-active"]["needs_pairing"] is False
     assert rows["agent-ui-active"]["last_heartbeat_at"]
 
 

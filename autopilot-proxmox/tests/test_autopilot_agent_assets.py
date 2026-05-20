@@ -98,6 +98,16 @@ def test_wix_installer_creates_delayed_auto_localsystem_service():
     assert "MajorUpgrade" in wxs
 
 
+def test_autopilot_agent_wix_installs_windows_service():
+    wxs = _read("autopilot-agent/installer/AutopilotAgent.wxs")
+
+    assert 'Name="AutopilotAgent"' in wxs
+    assert "<ServiceInstall" in wxs
+    assert "<ServiceControl" in wxs
+    assert 'Start="auto"' in wxs
+    assert 'Account="LocalSystem"' in wxs
+
+
 def test_signing_scripts_use_artifact_signing_without_storing_credentials():
     build_script = _read("autopilot-agent/scripts/Build-AutopilotAgent.ps1")
     env_script = _read("autopilot-agent/scripts/AutopilotAgent.Signing.env.ps1")

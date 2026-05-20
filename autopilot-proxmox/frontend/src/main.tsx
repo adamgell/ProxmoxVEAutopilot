@@ -7,7 +7,9 @@ import "./styles.css";
 function bootstrapFromRoot(root: HTMLElement): AppBootstrap {
   return {
     ...(root.dataset.buildSha ? { buildSha: root.dataset.buildSha } : {}),
-    ...(root.dataset.buildTime ? { buildTime: root.dataset.buildTime } : {})
+    ...(root.dataset.buildTime ? { buildTime: root.dataset.buildTime } : {}),
+    ...(root.dataset.userName ? { userName: root.dataset.userName } : {}),
+    ...(root.dataset.userEmail ? { userEmail: root.dataset.userEmail } : {})
   };
 }
 

@@ -246,6 +246,9 @@ export interface FleetCounts {
   readonly attention: number;
   readonly agents: number;
   readonly staleAgents: number;
+  readonly upgradeAgents: number;
+  readonly pendingApprovals: number;
+  readonly pairingAgents: number;
   readonly autopilotDevices: number;
   readonly missingAutopilot: number;
 }
@@ -361,6 +364,9 @@ export function agentLifecycleLabels(agent: AgentFleetRow): readonly string[] {
 }
 
 export function agentIsStale(agent: AgentFleetRow, now = Date.now()): boolean {
+  if (agent.needs_pairing) {
+    return false;
+  }
   if (!agent.last_heartbeat_at) {
     return agent.approval_status !== "pending";
   }
@@ -381,6 +387,9 @@ export function summarizeFleet(fleet: VmsFleetResponse): FleetCounts {
     attention,
     agents: fleet.agents.length,
     staleAgents: fleet.agents.filter((agent) => agentIsStale(agent)).length,
+    upgradeAgents: fleet.agents.filter((agent) => agent.upgrade_available === true).length,
+    pendingApprovals: fleet.agents.filter((agent) => agent.approval_status === "pending").length,
+    pairingAgents: fleet.agents.filter((agent) => agent.needs_pairing === true).length,
     autopilotDevices: fleet.autopilot_devices.length,
     missingAutopilot: fleet.missing_vms.length
   };
@@ -519,6 +528,31 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     };
   });
 
+  const matchedAgentIds = new Set(rows.map((row) => row.agent?.agent_id).filter(Boolean));
+  for (const agent of fleet.agents) {
+    if (matchedAgentIds.has(agent.agent_id)) {
+      continue;
+    }
+    rows.push({
+      id: `agent-${agent.agent_id}`,
+      name: fallbackText(agent.computer_name || agent.agent_id),
+      agent,
+      agentId: agent.agent_id,
+      status: undefined,
+      serial: agent.serial_number,
+      ipAddress: agent.primary_ipv4,
+      os: agent.os_name ?? agent.os_build,
+      qga: agent.qga_state,
+      phase: agent.current_phase,
+      heartbeat: agent.last_heartbeat_at ?? agent.last_seen_at,
+      version: agent.agent_version,
+      method: machineMethod(undefined, agent),
+      mdmEnrollment: "-",
+      lifecycleLabels: machineLabels(undefined, agent, undefined),
+      stale: agentIsStale(agent)
+    });
+  }
+
   return rows.toSorted((left, right) => {
     if (left.vmid !== undefined && right.vmid !== undefined) {
       return left.vmid - right.vmid;
@@ -572,11 +606,17 @@ export function fleetAgentLabel(row: FleetMachineRow): string {
   if (!row.agent) {
     return "None";
   }
-  if (row.stale) {
-    return "Stale";
+  if (row.agent.upgrade_available) {
+    return "Upgrade available";
   }
   if (row.agent.approval_status === "pending") {
     return "Pending";
+  }
+  if (row.agent.approval_status === "approved" || row.agent.needs_pairing) {
+    return "Approved";
+  }
+  if (row.stale) {
+    return "Stale";
   }
   if (row.version) {
     return `v${row.version}`;

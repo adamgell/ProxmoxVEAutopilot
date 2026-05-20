@@ -309,7 +309,7 @@ describe("operator view models", () => {
     expect(fleetAgentLabel(row)).toBe("Stale");
   });
 
-  test("drops unmatched agents from machine rows", () => {
+  test("includes unmatched agents as machine rows", () => {
     const rows = buildFleetMachineRows({
       vms: [],
       missing_vms: [],
@@ -330,6 +330,63 @@ describe("operator view models", () => {
       generated_at: "2026-05-19T00:00:00Z"
     });
 
-    expect(rows).toEqual([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "agent-agent-only",
+      name: "AGENT-ONLY",
+      agentId: "agent-only",
+      method: "agent"
+    });
+    expect(fleetAgentLabel(rows[0]!)).toBe("Pending");
+  });
+
+  test("fleetAgentLabel surfaces approved agents waiting for pairing", () => {
+    const row = buildFleetMachineRows({
+      vms: [],
+      missing_vms: [],
+      autopilot_devices: [],
+      agents: [{
+        agent_id: "agent-dc3",
+        approval_status: "approved",
+        pairing_status: "waiting_for_claim",
+        needs_pairing: true,
+        computer_name: "DC3"
+      }],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-05-20T00:00:00Z"
+    })[0];
+
+    expect(row).toBeDefined();
+    expect(fleetAgentLabel(row!)).toBe("Approved");
+  });
+
+  test("fleetAgentLabel surfaces upgrade availability before plain version", () => {
+    const row = buildFleetMachineRows({
+      vms: [{
+        vmid: 110,
+        name: "DC3",
+        status: "running"
+      }],
+      missing_vms: [],
+      autopilot_devices: [],
+      agents: [{
+        agent_id: "agent-vm-110",
+        approval_status: "active",
+        pairing_status: "paired",
+        vmid: 110,
+        agent_version: "0.1.2",
+        published_agent_version: "0.1.3",
+        update_status: "upgrade_available",
+        upgrade_available: true,
+        last_heartbeat_at: new Date().toISOString()
+      }],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-05-20T00:00:00Z"
+    })[0];
+
+    expect(row).toBeDefined();
+    expect(fleetAgentLabel(row!)).toBe("Upgrade available");
   });
 });

@@ -38,7 +38,7 @@ _sleep = time.sleep
 import re
 import shlex
 import socket
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote, quote_plus, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -166,7 +166,7 @@ def _safe_path(base_dir, filename):
     return resolved
 
 
-def _react_asset_tags() -> dict[str, list[str]]:
+def _react_asset_tags(version: str = "") -> dict[str, list[str]]:
     """Return Vite-built React asset URLs for the protected shell.
 
     Tests and source checkouts may not have a built frontend yet, so the
@@ -181,10 +181,11 @@ def _react_asset_tags() -> dict[str, list[str]]:
     entry = manifest.get("src/main.tsx") or manifest.get("index.html") or {}
     scripts: list[str] = []
     styles: list[str] = []
+    suffix = f"?v={quote(version, safe='')}" if version else ""
     if entry.get("file"):
-        scripts.append(f"/static/react/{entry['file']}")
+        scripts.append(f"/static/react/{entry['file']}{suffix}")
     for css_file in entry.get("css") or []:
-        styles.append(f"/static/react/{css_file}")
+        styles.append(f"/static/react/{css_file}{suffix}")
     return {"scripts": scripts, "styles": styles}
 
 
@@ -5091,14 +5092,26 @@ async def legacy_dashboard(request: Request):
 
 
 def _render_react_shell(request: Request):
-    assets = _react_asset_tags()
-    return templates.TemplateResponse("react_shell.html", {
+    build_sha = (_APP_VERSION.get("sha_short") or "unknown")
+    build_time = _APP_VERSION.get("build_time", "")
+    assets = _react_asset_tags(f"{build_sha}-{build_time}")
+    user = request.session.get("user") if request and request.session else {}
+    user_name = ""
+    user_email = ""
+    if isinstance(user, dict):
+        user_name = str(user.get("name") or user.get("email") or user.get("upn") or "")
+        user_email = str(user.get("email") or user.get("upn") or "")
+    response = templates.TemplateResponse("react_shell.html", {
         "request": request,
         "asset_scripts": assets["scripts"],
         "asset_styles": assets["styles"],
-        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
-        "build_time": _APP_VERSION.get("build_time", ""),
+        "build_sha": build_sha,
+        "build_time": build_time,
+        "user_name": user_name,
+        "user_email": user_email,
     })
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/react-shell", response_class=HTMLResponse, include_in_schema=False)
@@ -6420,8 +6433,75 @@ def _apply_lifecycle(row: dict, lifecycle: dict | None) -> dict:
     return row
 
 
+def _agent_pairing_status(
+    *,
+    approval_status: str,
+    last_heartbeat_at: str,
+    claimed_at: str = "",
+) -> str:
+    if last_heartbeat_at:
+        return "paired"
+    if approval_status == "pending":
+        return "waiting_for_approval"
+    if approval_status == "approved":
+        return "waiting_for_claim" if not claimed_at else "waiting_for_heartbeat"
+    if approval_status == "claimed":
+        return "waiting_for_heartbeat"
+    return "unknown"
+
+
+def _agent_version_parts(value: str | None) -> tuple[int, ...]:
+    parts: list[int] = []
+    for raw in (value or "").replace("-", ".").split("."):
+        if raw.isdigit():
+            parts.append(int(raw))
+        else:
+            break
+    return tuple(parts)
+
+
+def _agent_newer_version(published: str | None, installed: str | None) -> bool:
+    published_parts = _agent_version_parts(published)
+    installed_parts = _agent_version_parts(installed)
+    if published_parts and installed_parts:
+        return published_parts > installed_parts
+    return bool(published and installed and published != installed)
+
+
+def _latest_agent_release_for_inventory() -> dict | None:
+    try:
+        from web import setup_artifacts
+
+        return setup_artifacts.latest_agent_release(runtime_identifier="win-x64")
+    except Exception:
+        return None
+
+
+def _agent_update_fields(agent_version: str, release: dict | None) -> dict:
+    if not release:
+        return {
+            "update_status": "blocked",
+            "upgrade_available": False,
+            "published_agent_version": "",
+            "update_reason": "no_valid_agent_msi_published",
+            "agent_msi_sha256": "",
+            "agent_msi_size_bytes": None,
+        }
+    published = str(release.get("version") or "")
+    upgrade_available = _agent_newer_version(published, agent_version)
+    return {
+        "update_status": "upgrade_available" if upgrade_available else "current",
+        "upgrade_available": upgrade_available,
+        "published_agent_version": published,
+        "update_reason": "" if upgrade_available else "installed_version_matches_published",
+        "agent_msi_sha256": release.get("sha256") or "",
+        "agent_msi_size_bytes": release.get("size_bytes"),
+    }
+
+
 def _agent_inventory_rows() -> list[dict]:
     pve_vms = list(_VMS_CACHE.get("data") or [])
+    latest_release = _latest_agent_release_for_inventory()
     try:
         rows = agent_telemetry_pg.latest_agents()
     except Exception:
@@ -6435,10 +6515,18 @@ def _agent_inventory_rows() -> list[dict]:
             or row.get("device_agent_version")
             or ""
         )
+        last_heartbeat_at = _iso_or_blank(row.get("received_at"))
+        approval_status = "active"
+        pairing_status = _agent_pairing_status(
+            approval_status=approval_status,
+            last_heartbeat_at=last_heartbeat_at,
+        )
         out.append(_enrich_agent_vmid_from_pve({
             "agent_id": row.get("agent_id") or "",
             "approval_id": "",
-            "approval_status": "active",
+            "approval_status": approval_status,
+            "pairing_status": pairing_status,
+            "needs_pairing": pairing_status != "paired",
             "vmid": row.get("vmid") or row.get("device_vmid"),
             "computer_name": (
                 row.get("computer_name")
@@ -6461,8 +6549,9 @@ def _agent_inventory_rows() -> list[dict]:
             "current_phase": row.get("current_phase") or "",
             "current_run_id": row.get("current_run_id") or "",
             "agent_version": agent_version,
+            **_agent_update_fields(agent_version, latest_release),
             "hash_capture_supported": _agent_supports_work_queue(agent_version),
-            "last_heartbeat_at": _iso_or_blank(row.get("received_at")),
+            "last_heartbeat_at": last_heartbeat_at,
             "last_seen_at": _iso_or_blank(row.get("last_seen_at")),
         }, pve_vms))
     try:
@@ -6476,13 +6565,30 @@ def _agent_inventory_rows() -> list[dict]:
                 if existing["agent_id"] == agent_id:
                     existing["approval_id"] = row.get("approval_id") or ""
                     if not existing.get("last_heartbeat_at"):
-                        existing["approval_status"] = row.get("status") or ""
+                        approval_status = row.get("status") or ""
+                        pairing_status = _agent_pairing_status(
+                            approval_status=approval_status,
+                            last_heartbeat_at="",
+                            claimed_at=_iso_or_blank(row.get("claimed_at")),
+                        )
+                        existing["approval_status"] = approval_status
+                        existing["pairing_status"] = pairing_status
+                        existing["needs_pairing"] = pairing_status != "paired"
                     break
             continue
+        approval_status = row.get("status") or "pending"
+        pairing_status = _agent_pairing_status(
+            approval_status=approval_status,
+            last_heartbeat_at="",
+            claimed_at=_iso_or_blank(row.get("claimed_at")),
+        )
+        agent_version = row.get("agent_version") or ""
         out.append(_enrich_agent_vmid_from_pve({
             "agent_id": agent_id,
             "approval_id": row.get("approval_id") or "",
-            "approval_status": row.get("status") or "pending",
+            "approval_status": approval_status,
+            "pairing_status": pairing_status,
+            "needs_pairing": pairing_status != "paired",
             "vmid": row.get("vmid"),
             "computer_name": row.get("computer_name") or "",
             "serial_number": row.get("serial_number") or "",
@@ -6496,9 +6602,10 @@ def _agent_inventory_rows() -> list[dict]:
             "entra_joined": None,
             "current_phase": row.get("phase") or "",
             "current_run_id": row.get("created_from_run_id") or "",
-            "agent_version": row.get("agent_version") or "",
+            "agent_version": agent_version,
+            **_agent_update_fields(agent_version, latest_release),
             "hash_capture_supported": _agent_supports_work_queue(
-                row.get("agent_version") or ""
+                agent_version
             ),
             "last_heartbeat_at": "",
             "last_seen_at": _iso_or_blank(row.get("requested_at")),

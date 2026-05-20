@@ -16,6 +16,10 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddSingleton<OsDeployRoleWorkService>();
         services.AddSingleton<OsdV2WorkService>();
         services.AddSingleton<BuildHostWorkService>();
+        services.AddHttpClient<AgentUpdateService>(client =>
+        {
+            client.Timeout = TimeSpan.FromHours(12);
+        });
         services.AddHttpClient<AgentApiClient>(client =>
         {
             client.Timeout = TimeSpan.FromHours(12);

@@ -4,6 +4,7 @@ using AutopilotAgent;
 
 await AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent();
 await AgentApiClientTreatsPendingBootstrapAsTokenless();
+VerifyAgentUpdateCheckResponseContract();
 await AgentApiClientPostsClaimableCapabilitiesOnHeartbeat();
 VerifyDomainJoinMatcher();
 VerifyOsDeployRoleAutomationContracts();
@@ -105,6 +106,27 @@ static async Task AgentApiClientTreatsPendingBootstrapAsTokenless()
     Assert(pending.AgentToken is null, "pending bootstrap must not produce an agent token");
     Assert(pending.ApprovalStatus == "pending", "pending approval status did not deserialize");
     Assert(pending.RetryAfterSeconds == 5, "pending retry delay did not deserialize");
+}
+
+static void VerifyAgentUpdateCheckResponseContract()
+{
+    var updateJson = """
+    {
+      "schema_version": 1,
+      "status": "upgrade_available",
+      "published_version": "0.1.3",
+      "runtime_identifier": "win-x64",
+      "download_url": "/api/cloudosd/assets/autopilotagent.msi",
+      "sha256": "abc123",
+      "size_bytes": 4096
+    }
+    """;
+    var update = JsonSerializer.Deserialize<AgentUpdateCheckResponse>(
+        updateJson,
+        AgentConfig.JsonOptions());
+    Assert(update is not null, "update check response deserializes");
+    Assert(update.Status == "upgrade_available", "update status preserved");
+    Assert(update.DownloadUrl == "/api/cloudosd/assets/autopilotagent.msi", "download url preserved");
 }
 
 static void VerifyDomainJoinMatcher()

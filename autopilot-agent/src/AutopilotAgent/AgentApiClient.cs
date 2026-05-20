@@ -103,6 +103,42 @@ public sealed class AgentApiClient(HttpClient httpClient)
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<AgentUpdateCheckResponse> CheckForUpdateAsync(
+        AgentConfig config,
+        string runtimeIdentifier,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentToken))
+        {
+            throw new InvalidOperationException("AgentToken is not configured.");
+        }
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{config.ServerUrl.TrimEnd('/')}/api/agent/v1/update-check")
+        {
+            Content = JsonContent.Create(new
+            {
+                agent_id = config.AgentId,
+                installed_version = ThisAssembly.Version,
+                runtime_identifier = runtimeIdentifier,
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            config.AgentToken);
+
+        var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AgentUpdateCheckResponse>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("Update check response was empty.");
+    }
+
     public async Task<AgentWorkItem?> GetNextWorkAsync(
         AgentConfig config,
         IReadOnlyCollection<string> supportedKinds,
@@ -565,6 +601,14 @@ public sealed record BootstrapResponse(
 
 public sealed record AgentWorkNextResponse(
     [property: JsonPropertyName("work_item")] AgentWorkItem? WorkItem);
+
+public sealed record AgentUpdateCheckResponse(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("published_version")] string? PublishedVersion,
+    [property: JsonPropertyName("runtime_identifier")] string RuntimeIdentifier,
+    [property: JsonPropertyName("download_url")] string? DownloadUrl,
+    [property: JsonPropertyName("sha256")] string? Sha256,
+    [property: JsonPropertyName("size_bytes")] long? SizeBytes);
 
 public sealed record AgentWorkItem(
     [property: JsonPropertyName("id")] string Id,
