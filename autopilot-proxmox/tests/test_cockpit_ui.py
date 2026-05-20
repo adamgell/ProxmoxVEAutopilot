@@ -1043,10 +1043,11 @@ def test_bubble_api_create_assets_services_and_audit(web_client: TestClient, pg_
 
     patched_service = web_client.patch(
         f"/api/bubbles/{bubble_id}/services/{service_id}",
-        json={"readiness_state": "ready", "evidence_summary": {"leases": 3}},
+        json={"readiness_state": "ready", "evidence_summary": {"leases": 3, "credential_ids": [7]}},
     )
     assert patched_service.status_code == 200
     assert patched_service.json()["readiness_state"] == "ready"
+    assert patched_service.json()["evidence_summary"]["credential_ids"] == [7]
 
     patched_asset = web_client.patch(
         f"/api/bubbles/{bubble_id}/assets/{asset_id}",
@@ -1069,6 +1070,12 @@ def test_bubble_api_create_assets_services_and_audit(web_client: TestClient, pg_
     assert audit.status_code == 200
     assert any(row["action"] == "asset_added" for row in audit.json()["events"])
     assert any(row["action"] == "asset_moved" for row in audit.json()["events"])
+
+    deleted_service = web_client.delete(f"/api/bubbles/{bubble_id}/services/{service_id}")
+    assert deleted_service.status_code == 204
+    assert web_client.get(f"/api/bubbles/{bubble_id}/services").json()["services"] == []
+    audit_after_delete = web_client.get(f"/api/bubbles/{bubble_id}/audit-events")
+    assert any(row["action"] == "service_deleted" for row in audit_after_delete.json()["events"])
 
 
 def test_bubble_api_rejects_cross_bubble_asset_and_service_mutation(
@@ -1123,6 +1130,12 @@ def test_bubble_api_rejects_cross_bubble_asset_and_service_mutation(
     )
     assert wrong_service_patch.status_code == 404
     assert lab_bubbles_pg.list_services(pg_conn, source["id"])[0]["readiness_state"] == "unknown"
+
+    wrong_service_delete = web_client.delete(
+        f"/api/bubbles/{target['id']}/services/{source_service['id']}",
+    )
+    assert wrong_service_delete.status_code == 404
+    assert len(lab_bubbles_pg.list_services(pg_conn, source["id"])) == 1
 
     wrong_provider = web_client.post(
         f"/api/bubbles/{target['id']}/services",

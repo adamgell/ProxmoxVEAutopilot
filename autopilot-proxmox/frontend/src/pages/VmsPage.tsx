@@ -26,8 +26,11 @@ import { VmActionWorkspace, type ScreenshotWorkspaceState, type VmActionMode, ty
 import type {
   AgentFleetRow,
   AppBootstrap,
+  CredentialSummary,
   LabBubble,
   LabBubbleAsset,
+  LabBubbleConnectedService,
+  LabBubbleInfrastructureNode,
   LabBubbleTopology,
   LiveSocketMessage,
   VmDetailEvidenceResponse,
@@ -120,6 +123,47 @@ function topologyAssignmentsByVmid(topology: LabBubbleTopology): ReadonlyMap<num
   return byVmid;
 }
 
+function topologyAssets(topology: LabBubbleTopology): readonly {
+  readonly bubble: LabBubble;
+  readonly asset: LabBubbleAsset;
+  readonly vm: VmFleetRow | null | undefined;
+  readonly agent: AgentFleetRow | null | undefined;
+}[] {
+  const items: {
+    readonly bubble: LabBubble;
+    readonly asset: LabBubbleAsset;
+    readonly vm: VmFleetRow | null | undefined;
+    readonly agent: AgentFleetRow | null | undefined;
+  }[] = [];
+  for (const fleet of topology.workstation_fleets) {
+    const vmById = new Map((fleet.vms ?? []).map((vm) => [vm.vmid, vm]));
+    for (const asset of fleet.assets ?? []) {
+      const vm = typeof asset.vmid === "number" ? vmById.get(asset.vmid) : undefined;
+      items.push({ bubble: fleet.bubble, asset, vm, agent: undefined });
+    }
+  }
+  for (const node of topology.critical_infrastructure) {
+    items.push({ bubble: node.bubble, asset: node.asset, vm: node.vm, agent: node.agent });
+  }
+  return items;
+}
+
+function credentialIdsFromService(service: LabBubbleConnectedService): readonly string[] {
+  const rawIds = service.evidence_summary?.credential_ids;
+  return Array.isArray(rawIds) ? rawIds.map((id) => String(id)) : [];
+}
+
+function vmAssetLabel(asset: LabBubbleAsset, vm?: VmFleetRow | null): string {
+  const vmid = typeof asset.vmid === "number" ? asset.vmid : vm?.vmid;
+  if (vm?.name && typeof vmid === "number") {
+    return `${vm.name} (VM ${String(vmid)})`;
+  }
+  if (typeof vmid === "number") {
+    return `VM ${String(vmid)}`;
+  }
+  return fallbackText(asset.agent_id ?? asset.id);
+}
+
 type BubbleDraftMode = "create" | "edit";
 
 type BubbleFormValues = {
@@ -184,6 +228,78 @@ type MachineTagDraft = {
   readonly rowId: string;
   readonly bubbleId: string;
   readonly assetRole: string;
+};
+
+type InfraDraft = {
+  readonly vmid: string;
+  readonly bubbleId: string;
+  readonly role: string;
+  readonly notes: string;
+};
+
+type InfraEditDraft = {
+  readonly assetId: string;
+  readonly role: string;
+  readonly notes: string;
+};
+
+type InfraMoveDraft = {
+  readonly assetId: string;
+  readonly bubbleId: string;
+};
+
+type ServiceDraftMode = "create" | "edit";
+
+type ServiceDraft = {
+  readonly bubbleId: string;
+  readonly serviceKind: string;
+  readonly serviceName: string;
+  readonly scope: string;
+  readonly providerAssetId: string;
+  readonly readinessState: string;
+  readonly credentialIds: readonly string[];
+};
+
+const infraRoleOptions = [
+  "domain_controller",
+  "dhcp_server",
+  "dns_server",
+  "configmgr",
+  "file_server",
+  "firewall_router",
+  "management_server",
+  "other"
+] as const;
+
+const serviceKindOptions = [
+  "ad_ds",
+  "dns",
+  "dhcp",
+  "entra",
+  "configmgr",
+  "file_service",
+  "identity",
+  "other"
+] as const;
+
+const serviceScopeOptions = ["bubble_local", "external", "shared"] as const;
+const serviceReadinessOptions = ["unknown", "planned", "provisioning", "ready", "degraded"] as const;
+
+const blankInfraDraft: InfraDraft = {
+  vmid: "",
+  bubbleId: "",
+  role: "domain_controller",
+  notes: ""
+};
+
+const blankServiceDraft: ServiceDraft = {
+  bubbleId: "",
+  serviceKind: "ad_ds",
+  serviceName: "",
+  scope: "bubble_local",
+  providerAssetId: "",
+  readinessState: "unknown",
+  credentialIds: []
 };
 
 async function deleteJson(path: string): Promise<void> {
@@ -277,17 +393,36 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [detailEvidence, setDetailEvidence] = useState<VmDetailEvidenceResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [credentialSummaries, setCredentialSummaries] = useState<readonly CredentialSummary[]>([]);
+  const [credentialsError, setCredentialsError] = useState("");
   const [bubbleDraftMode, setBubbleDraftMode] = useState<BubbleDraftMode | null>(null);
   const [bubbleDraftId, setBubbleDraftId] = useState<string | null>(null);
   const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
   const [deleteBubbleId, setDeleteBubbleId] = useState<string | null>(null);
   const [machineTagDraft, setMachineTagDraft] = useState<MachineTagDraft | null>(null);
+  const [infraDraftOpen, setInfraDraftOpen] = useState(false);
+  const [infraDraft, setInfraDraft] = useState<InfraDraft>(blankInfraDraft);
+  const [infraEditDraft, setInfraEditDraft] = useState<InfraEditDraft | null>(null);
+  const [infraMoveDraft, setInfraMoveDraft] = useState<InfraMoveDraft | null>(null);
+  const [retireInfraId, setRetireInfraId] = useState<string | null>(null);
+  const [serviceDraftMode, setServiceDraftMode] = useState<ServiceDraftMode | null>(null);
+  const [serviceDraftId, setServiceDraftId] = useState<string | null>(null);
+  const [serviceDraft, setServiceDraft] = useState<ServiceDraft>(blankServiceDraft);
+  const [deleteServiceId, setDeleteServiceId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const data = await fetchJson<VmsFleetResponse>("/api/vms/fleet");
       setFleet(data);
       setError("");
+      try {
+        const credentials = await fetchJson<CredentialSummary[]>("/api/credentials");
+        setCredentialSummaries(credentials);
+        setCredentialsError("");
+      } catch (err) {
+        setCredentialSummaries([]);
+        setCredentialsError(err instanceof Error ? err.message : "Failed to load credentials");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load fleet");
     } finally {
@@ -410,6 +545,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const bubbleTopology = fleet.bubble_topology ?? emptyBubbleTopology;
   const bubbleOptions = useMemo(() => topologyBubbles(bubbleTopology), [bubbleTopology]);
   const assignmentsByVmid = useMemo(() => topologyAssignmentsByVmid(bubbleTopology), [bubbleTopology]);
+  const bubbleAssets = useMemo(() => topologyAssets(bubbleTopology), [bubbleTopology]);
   const detailRow = useMemo(
     () => detailVmid === null ? undefined : machineRows.find((row) => row.vmid === detailVmid),
     [detailVmid, machineRows]
@@ -653,6 +789,245 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     });
   }, [assignmentsByVmid, bubbleOptions, machineTagDraft, runAction]);
 
+  const startInfraDraft = useCallback(() => {
+    if (!bubbleOptions.length) {
+      setActionStatus("Create a bubble before tagging infrastructure.");
+      return;
+    }
+    const runningCandidate = bubbleTopology.unassigned_assets.find((vm) => vm.status === "running") ?? bubbleTopology.unassigned_assets[0];
+    setInfraDraft({
+      ...blankInfraDraft,
+      bubbleId: bubbleOptions[0]?.id ?? "",
+      vmid: runningCandidate ? String(runningCandidate.vmid) : ""
+    });
+    setInfraDraftOpen(true);
+  }, [bubbleOptions, bubbleTopology.unassigned_assets]);
+
+  const updateInfraDraft = useCallback((field: keyof InfraDraft, value: string) => {
+    setInfraDraft((current) => ({ ...current, [field]: value }));
+  }, []);
+
+  const cancelInfraDraft = useCallback(() => {
+    setInfraDraftOpen(false);
+    setInfraDraft(blankInfraDraft);
+  }, []);
+
+  const saveInfraDraft = useCallback(() => {
+    const targetBubble = bubbleOptions.find((bubble) => bubble.id === infraDraft.bubbleId);
+    const vmid = Number.parseInt(infraDraft.vmid, 10);
+    const role = infraDraft.role.trim();
+    if (!targetBubble || !Number.isFinite(vmid) || !role) {
+      return;
+    }
+    void runAction(`Add infra VM ${String(vmid)}`, () => postJson(`/api/bubbles/${targetBubble.id}/assets`, {
+      asset_type: "vm",
+      asset_role: role,
+      vmid,
+      membership_state: "active",
+      evidence_state: "operator_tagged",
+      notes: infraDraft.notes.trim() || `Tagged from React VMs as ${roleLabel(role)}`
+    })).then((ok) => {
+      if (ok) {
+        cancelInfraDraft();
+      }
+    });
+  }, [bubbleOptions, cancelInfraDraft, infraDraft, runAction]);
+
+  const editInfra = useCallback((node: LabBubbleInfrastructureNode) => {
+    setInfraMoveDraft(null);
+    setRetireInfraId(null);
+    setInfraEditDraft({
+      assetId: node.asset.id,
+      role: node.asset.asset_role,
+      notes: node.asset.notes ?? ""
+    });
+  }, []);
+
+  const updateInfraEditDraft = useCallback((field: "role" | "notes", value: string) => {
+    setInfraEditDraft((current) => current ? { ...current, [field]: value } : current);
+  }, []);
+
+  const cancelInfraEdit = useCallback(() => {
+    setInfraEditDraft(null);
+  }, []);
+
+  const saveInfraEdit = useCallback((node: LabBubbleInfrastructureNode) => {
+    if (!infraEditDraft || infraEditDraft.assetId !== node.asset.id) {
+      return;
+    }
+    const role = infraEditDraft.role.trim();
+    if (!role) {
+      return;
+    }
+    void runAction(`Edit infra ${vmAssetLabel(node.asset, node.vm)}`, () => fetchJson(`/api/bubbles/${node.bubble.id}/assets/${node.asset.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        asset_role: role,
+        notes: infraEditDraft.notes.trim()
+      })
+    })).then((ok) => {
+      if (ok) {
+        setInfraEditDraft(null);
+      }
+    });
+  }, [infraEditDraft, runAction]);
+
+  const startInfraMove = useCallback((node: LabBubbleInfrastructureNode) => {
+    setInfraEditDraft(null);
+    setRetireInfraId(null);
+    setInfraMoveDraft({
+      assetId: node.asset.id,
+      bubbleId: node.bubble.id
+    });
+  }, []);
+
+  const updateInfraMoveDraft = useCallback((bubbleId: string) => {
+    setInfraMoveDraft((current) => current ? { ...current, bubbleId } : current);
+  }, []);
+
+  const cancelInfraMove = useCallback(() => {
+    setInfraMoveDraft(null);
+  }, []);
+
+  const confirmInfraMove = useCallback((node: LabBubbleInfrastructureNode) => {
+    if (!infraMoveDraft || infraMoveDraft.assetId !== node.asset.id) {
+      return;
+    }
+    void runAction(`Move infra ${vmAssetLabel(node.asset, node.vm)}`, () => postJson(`/api/bubbles/${node.bubble.id}/assets/${node.asset.id}/move`, {
+      target_bubble_id: infraMoveDraft.bubbleId,
+      reason: "React VMs infra move"
+    })).then((ok) => {
+      if (ok) {
+        setInfraMoveDraft(null);
+      }
+    });
+  }, [infraMoveDraft, runAction]);
+
+  const requestRetireInfra = useCallback((node: LabBubbleInfrastructureNode) => {
+    setInfraEditDraft(null);
+    setInfraMoveDraft(null);
+    setRetireInfraId(node.asset.id);
+  }, []);
+
+  const cancelRetireInfra = useCallback(() => {
+    setRetireInfraId(null);
+  }, []);
+
+  const confirmRetireInfra = useCallback((node: LabBubbleInfrastructureNode) => {
+    void runAction(`Retire infra ${vmAssetLabel(node.asset, node.vm)}`, () => fetchJson(`/api/bubbles/${node.bubble.id}/assets/${node.asset.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        membership_state: "retired"
+      })
+    })).then((ok) => {
+      if (ok) {
+        setRetireInfraId(null);
+      }
+    });
+  }, [runAction]);
+
+  const startServiceDraft = useCallback(() => {
+    if (!bubbleOptions.length) {
+      setActionStatus("Create a bubble before adding connected services.");
+      return;
+    }
+    setDeleteServiceId(null);
+    setServiceDraftMode("create");
+    setServiceDraftId(null);
+    setServiceDraft({
+      ...blankServiceDraft,
+      bubbleId: bubbleOptions[0]?.id ?? "",
+      providerAssetId: bubbleAssets.find((item) => item.bubble.id === bubbleOptions[0]?.id)?.asset.id ?? ""
+    });
+  }, [bubbleAssets, bubbleOptions]);
+
+  const editService = useCallback((service: LabBubbleConnectedService) => {
+    setDeleteServiceId(null);
+    setServiceDraftMode("edit");
+    setServiceDraftId(service.id);
+    setServiceDraft({
+      bubbleId: service.bubble_id,
+      serviceKind: service.service_kind,
+      serviceName: service.service_name,
+      scope: service.scope ?? "bubble_local",
+      providerAssetId: service.provider_asset_id ?? "",
+      readinessState: service.readiness_state ?? "unknown",
+      credentialIds: credentialIdsFromService(service)
+    });
+  }, []);
+
+  const updateServiceDraft = useCallback((field: keyof ServiceDraft, value: string | readonly string[]) => {
+    setServiceDraft((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "bubbleId") {
+        const providerInBubble = bubbleAssets.some((item) => item.bubble.id === value && item.asset.id === current.providerAssetId);
+        return {
+          ...next,
+          providerAssetId: providerInBubble ? current.providerAssetId : bubbleAssets.find((item) => item.bubble.id === value)?.asset.id ?? ""
+        };
+      }
+      return next;
+    });
+  }, [bubbleAssets]);
+
+  const cancelServiceDraft = useCallback(() => {
+    setServiceDraftMode(null);
+    setServiceDraftId(null);
+    setServiceDraft(blankServiceDraft);
+  }, []);
+
+  const saveServiceDraft = useCallback(() => {
+    const bubbleId = serviceDraft.bubbleId;
+    const serviceName = serviceDraft.serviceName.trim();
+    if (!bubbleId || !serviceName || !serviceDraftMode) {
+      return;
+    }
+    const payload = {
+      service_kind: serviceDraft.serviceKind.trim(),
+      service_name: serviceName,
+      scope: serviceDraft.scope.trim() || "bubble_local",
+      provider_asset_id: serviceDraft.providerAssetId || null,
+      readiness_state: serviceDraft.readinessState.trim() || "unknown",
+      evidence_summary: {
+        credential_ids: serviceDraft.credentialIds.map((id) => Number.parseInt(id, 10)).filter(Number.isFinite)
+      }
+    };
+    const label = serviceDraftMode === "create" ? `Create service ${serviceName}` : `Edit service ${serviceName}`;
+    const request = serviceDraftMode === "create"
+      ? () => postJson(`/api/bubbles/${bubbleId}/services`, payload)
+      : () => fetchJson(`/api/bubbles/${bubbleId}/services/${String(serviceDraftId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    void runAction(label, request).then((ok) => {
+      if (ok) {
+        cancelServiceDraft();
+      }
+    });
+  }, [cancelServiceDraft, runAction, serviceDraft, serviceDraftId, serviceDraftMode]);
+
+  const requestDeleteService = useCallback((service: LabBubbleConnectedService) => {
+    setServiceDraftMode(null);
+    setServiceDraftId(null);
+    setServiceDraft(blankServiceDraft);
+    setDeleteServiceId(service.id);
+  }, []);
+
+  const cancelDeleteService = useCallback(() => {
+    setDeleteServiceId(null);
+  }, []);
+
+  const deleteService = useCallback((service: LabBubbleConnectedService) => {
+    void runAction(`Delete service ${service.service_name}`, () => deleteJson(`/api/bubbles/${service.bubble_id}/services/${service.id}`)).then((ok) => {
+      if (ok) {
+        setDeleteServiceId(null);
+      }
+    });
+  }, [runAction]);
+
   const deleteAgent = useCallback((agent: AgentFleetRow) => {
     const typed = window.prompt(`Type ${agent.agent_id} to delete agent`);
     if (typed !== agent.agent_id) {
@@ -791,6 +1166,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
       <BubbleTopologyOverview
         topology={bubbleTopology}
+        credentials={credentialSummaries}
+        credentialsError={credentialsError}
         onCreateBubble={createBubble}
         onEditBubble={editBubble}
         onRequestDeleteBubble={requestDeleteBubble}
@@ -803,6 +1180,38 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         onSaveBubbleDraft={saveBubbleDraft}
         onCancelBubbleDraft={cancelBubbleDraft}
         deleteBubbleId={deleteBubbleId}
+        infraDraftOpen={infraDraftOpen}
+        infraDraft={infraDraft}
+        infraEditDraft={infraEditDraft}
+        infraMoveDraft={infraMoveDraft}
+        retireInfraId={retireInfraId}
+        onStartInfraDraft={startInfraDraft}
+        onInfraDraftChange={updateInfraDraft}
+        onSaveInfraDraft={saveInfraDraft}
+        onCancelInfraDraft={cancelInfraDraft}
+        onEditInfra={editInfra}
+        onInfraEditDraftChange={updateInfraEditDraft}
+        onSaveInfraEdit={saveInfraEdit}
+        onCancelInfraEdit={cancelInfraEdit}
+        onStartInfraMove={startInfraMove}
+        onInfraMoveDraftChange={updateInfraMoveDraft}
+        onConfirmInfraMove={confirmInfraMove}
+        onCancelInfraMove={cancelInfraMove}
+        onRequestRetireInfra={requestRetireInfra}
+        onConfirmRetireInfra={confirmRetireInfra}
+        onCancelRetireInfra={cancelRetireInfra}
+        serviceDraftMode={serviceDraftMode}
+        serviceDraftId={serviceDraftId}
+        serviceDraft={serviceDraft}
+        deleteServiceId={deleteServiceId}
+        onStartServiceDraft={startServiceDraft}
+        onEditService={editService}
+        onServiceDraftChange={updateServiceDraft}
+        onSaveServiceDraft={saveServiceDraft}
+        onCancelServiceDraft={cancelServiceDraft}
+        onRequestDeleteService={requestDeleteService}
+        onConfirmDeleteService={deleteService}
+        onCancelDeleteService={cancelDeleteService}
       />
 
       <section className="fleet-lanes" aria-label="Fleet lanes">
@@ -1310,6 +1719,8 @@ function BubbleTextField({
 
 function BubbleTopologyOverview({
   topology,
+  credentials,
+  credentialsError,
   onCreateBubble,
   onEditBubble,
   onRequestDeleteBubble,
@@ -1321,9 +1732,43 @@ function BubbleTopologyOverview({
   onBubbleDraftChange,
   onSaveBubbleDraft,
   onCancelBubbleDraft,
-  deleteBubbleId
+  deleteBubbleId,
+  infraDraftOpen,
+  infraDraft,
+  infraEditDraft,
+  infraMoveDraft,
+  retireInfraId,
+  onStartInfraDraft,
+  onInfraDraftChange,
+  onSaveInfraDraft,
+  onCancelInfraDraft,
+  onEditInfra,
+  onInfraEditDraftChange,
+  onSaveInfraEdit,
+  onCancelInfraEdit,
+  onStartInfraMove,
+  onInfraMoveDraftChange,
+  onConfirmInfraMove,
+  onCancelInfraMove,
+  onRequestRetireInfra,
+  onConfirmRetireInfra,
+  onCancelRetireInfra,
+  serviceDraftMode,
+  serviceDraftId,
+  serviceDraft,
+  deleteServiceId,
+  onStartServiceDraft,
+  onEditService,
+  onServiceDraftChange,
+  onSaveServiceDraft,
+  onCancelServiceDraft,
+  onRequestDeleteService,
+  onConfirmDeleteService,
+  onCancelDeleteService
 }: {
   readonly topology: LabBubbleTopology;
+  readonly credentials: readonly CredentialSummary[];
+  readonly credentialsError: string;
   readonly onCreateBubble: () => void;
   readonly onEditBubble: (bubble: LabBubble) => void;
   readonly onRequestDeleteBubble: (bubble: LabBubble) => void;
@@ -1336,10 +1781,48 @@ function BubbleTopologyOverview({
   readonly onSaveBubbleDraft: () => void;
   readonly onCancelBubbleDraft: () => void;
   readonly deleteBubbleId: string | null;
+  readonly infraDraftOpen: boolean;
+  readonly infraDraft: InfraDraft;
+  readonly infraEditDraft: InfraEditDraft | null;
+  readonly infraMoveDraft: InfraMoveDraft | null;
+  readonly retireInfraId: string | null;
+  readonly onStartInfraDraft: () => void;
+  readonly onInfraDraftChange: (field: keyof InfraDraft, value: string) => void;
+  readonly onSaveInfraDraft: () => void;
+  readonly onCancelInfraDraft: () => void;
+  readonly onEditInfra: (node: LabBubbleInfrastructureNode) => void;
+  readonly onInfraEditDraftChange: (field: "role" | "notes", value: string) => void;
+  readonly onSaveInfraEdit: (node: LabBubbleInfrastructureNode) => void;
+  readonly onCancelInfraEdit: () => void;
+  readonly onStartInfraMove: (node: LabBubbleInfrastructureNode) => void;
+  readonly onInfraMoveDraftChange: (bubbleId: string) => void;
+  readonly onConfirmInfraMove: (node: LabBubbleInfrastructureNode) => void;
+  readonly onCancelInfraMove: () => void;
+  readonly onRequestRetireInfra: (node: LabBubbleInfrastructureNode) => void;
+  readonly onConfirmRetireInfra: (node: LabBubbleInfrastructureNode) => void;
+  readonly onCancelRetireInfra: () => void;
+  readonly serviceDraftMode: ServiceDraftMode | null;
+  readonly serviceDraftId: string | null;
+  readonly serviceDraft: ServiceDraft;
+  readonly deleteServiceId: string | null;
+  readonly onStartServiceDraft: () => void;
+  readonly onEditService: (service: LabBubbleConnectedService) => void;
+  readonly onServiceDraftChange: (field: keyof ServiceDraft, value: string | readonly string[]) => void;
+  readonly onSaveServiceDraft: () => void;
+  readonly onCancelServiceDraft: () => void;
+  readonly onRequestDeleteService: (service: LabBubbleConnectedService) => void;
+  readonly onConfirmDeleteService: (service: LabBubbleConnectedService) => void;
+  readonly onCancelDeleteService: () => void;
 }) {
   const fleets = topology.workstation_fleets;
   const infra = topology.critical_infrastructure;
   const services = topology.connected_services;
+  const bubbleOptions = topologyBubbles(topology);
+  const assetOptions = topologyAssets(topology);
+  const providerById = new Map(assetOptions.map((item) => [item.asset.id, item]));
+  const credentialById = new Map(credentials.map((credential) => [credential.id, credential]));
+  const infraCandidates = topology.unassigned_assets.filter((vm) => vm.status === "running");
+  const candidateVms = infraCandidates.length ? infraCandidates : topology.unassigned_assets;
   const gateByBubble = new Map(topology.gate_states.map((gate) => [gate.bubble_id, gate]));
   return (
     <section className="bubble-layout" aria-label="Tenant bubbles">
@@ -1441,53 +1924,445 @@ function BubbleTopologyOverview({
         </Panel>
       </div>
       <div className="bubble-side-stack">
-        <Panel title="Critical Infrastructure">
+        <Panel
+          title="Critical Infrastructure"
+          action={(
+            <button type="button" className="fleet-action fleet-action--command" onClick={onStartInfraDraft}>
+              <span>Add infra VM</span>
+            </button>
+          )}
+        >
+          {infraDraftOpen ? (
+            <InfraDraftEditor
+              values={infraDraft}
+              bubbleOptions={bubbleOptions}
+              candidateVms={candidateVms}
+              onChange={onInfraDraftChange}
+              onSave={onSaveInfraDraft}
+              onCancel={onCancelInfraDraft}
+            />
+          ) : null}
           {infra.length ? (
             <div className="fleet-card-list fleet-card-list--compact">
-              {infra.map((node) => (
-                <article key={node.asset.id} className="fleet-card">
-                  <header>
-                    <div>
-                      <span className="status">{node.bubble.name}</span>
-                      <h3>{roleLabel(node.role)}</h3>
+              {infra.map((node) => {
+                const assetLabel = vmAssetLabel(node.asset, node.vm);
+                const actionLabel = node.vm?.name ?? assetLabel;
+                return (
+                  <article key={node.asset.id} className="fleet-card">
+                    <header>
+                      <div>
+                        <span className="status">{node.bubble.name}</span>
+                        <h3>{roleLabel(node.role)}</h3>
+                      </div>
+                      <strong>{assetLabel}</strong>
+                    </header>
+                    <dl className="fleet-detail-grid">
+                      <div><dt>State</dt><dd>{fallbackText(node.asset.membership_state)}</dd></div>
+                      <div><dt>Evidence</dt><dd>{fallbackText(node.asset.evidence_state)}</dd></div>
+                      <div><dt>Agent</dt><dd>{fallbackText(node.agent?.agent_id ?? node.asset.agent_id)}</dd></div>
+                      <div><dt>Runtime</dt><dd>{fallbackText(node.vm?.status)}</dd></div>
+                    </dl>
+                    <div className="bubble-card-actions bubble-card-actions--left">
+                      <button type="button" className="fleet-action" aria-label={`Edit infra ${actionLabel}`} onClick={() => { onEditInfra(node); }}>
+                        Edit
+                      </button>
+                      <button type="button" className="fleet-action" aria-label={`Move infra ${actionLabel}`} onClick={() => { onStartInfraMove(node); }}>
+                        Move
+                      </button>
+                      <button type="button" className="fleet-action fleet-action--danger" aria-label={`Retire infra ${actionLabel}`} onClick={() => { onRequestRetireInfra(node); }}>
+                        Retire
+                      </button>
                     </div>
-                    <strong>{node.asset.vmid ? `VM ${String(node.asset.vmid)}` : fallbackText(node.asset.agent_id)}</strong>
-                  </header>
-                  <dl className="fleet-detail-grid">
-                    <div><dt>State</dt><dd>{fallbackText(node.asset.membership_state)}</dd></div>
-                    <div><dt>Evidence</dt><dd>{fallbackText(node.asset.evidence_state)}</dd></div>
-                    <div><dt>Agent</dt><dd>{fallbackText(node.agent?.agent_id ?? node.asset.agent_id)}</dd></div>
-                    <div><dt>Runtime</dt><dd>{fallbackText(node.vm?.status)}</dd></div>
-                  </dl>
-                </article>
-              ))}
+                    {infraEditDraft?.assetId === node.asset.id ? (
+                      <InfraEditEditor
+                        assetLabel={actionLabel}
+                        values={infraEditDraft}
+                        onChange={onInfraEditDraftChange}
+                        onSave={() => { onSaveInfraEdit(node); }}
+                        onCancel={onCancelInfraEdit}
+                      />
+                    ) : null}
+                    {infraMoveDraft?.assetId === node.asset.id ? (
+                      <InfraMoveEditor
+                        assetLabel={actionLabel}
+                        values={infraMoveDraft}
+                        bubbleOptions={bubbleOptions}
+                        onChange={onInfraMoveDraftChange}
+                        onConfirm={() => { onConfirmInfraMove(node); }}
+                        onCancel={onCancelInfraMove}
+                      />
+                    ) : null}
+                    {retireInfraId === node.asset.id ? (
+                      <div className="bubble-delete-confirm" role="group" aria-label={`Retire ${actionLabel}`}>
+                        <strong>Retire {actionLabel}?</strong>
+                        <button type="button" className="fleet-action fleet-action--danger" aria-label={`Confirm retire infra ${actionLabel}`} onClick={() => { onConfirmRetireInfra(node); }}>
+                          Confirm
+                        </button>
+                        <button type="button" className="fleet-action" onClick={onCancelRetireInfra}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           ) : <p className="empty">No infrastructure assets tagged yet.</p>}
         </Panel>
-        <Panel title="Connected Services">
+        <Panel
+          title="Connected Services"
+          action={(
+            <button type="button" className="fleet-action fleet-action--command" onClick={onStartServiceDraft}>
+              <span>Add service</span>
+            </button>
+          )}
+        >
+          {serviceDraftMode === "create" ? (
+            <ServiceEditor
+              mode="create"
+              values={serviceDraft}
+              bubbleOptions={bubbleOptions}
+              assetOptions={assetOptions}
+              credentials={credentials}
+              onChange={onServiceDraftChange}
+              onSave={onSaveServiceDraft}
+              onCancel={onCancelServiceDraft}
+            />
+          ) : null}
           {services.length ? (
             <div className="fleet-card-list fleet-card-list--compact">
-              {services.map((service) => (
-                <article key={service.id} className="fleet-card">
-                  <header>
-                    <div>
-                      <span className={service.readiness_state === "ready" ? "status status--good" : "status"}>{fallbackText(service.readiness_state)}</span>
-                      <h3>{service.service_name}</h3>
+              {services.map((service) => {
+                const provider = service.provider_asset_id ? providerById.get(service.provider_asset_id) : undefined;
+                const serviceCredentials = credentialIdsFromService(service)
+                  .map((id) => credentialById.get(Number.parseInt(id, 10)))
+                  .filter((credential): credential is CredentialSummary => Boolean(credential));
+                return (
+                  <article key={service.id} className="fleet-card">
+                    <header>
+                      <div>
+                        <span className={service.readiness_state === "ready" ? "status status--good" : "status"}>{fallbackText(service.readiness_state)}</span>
+                        <h3>{service.service_name}</h3>
+                      </div>
+                      <strong>{service.bubble.name}</strong>
+                    </header>
+                    <dl className="fleet-detail-grid">
+                      <div><dt>Kind</dt><dd>{roleLabel(service.service_kind)}</dd></div>
+                      <div><dt>Scope</dt><dd>{fallbackText(service.scope)}</dd></div>
+                      <div><dt>Provider</dt><dd>{provider ? vmAssetLabel(provider.asset, provider.vm) : fallbackText(service.provider_asset_id)}</dd></div>
+                      <div><dt>Credentials</dt><dd>{serviceCredentials.length ? serviceCredentials.map((credential) => credential.name).join(", ") : "-"}</dd></div>
+                    </dl>
+                    <div className="bubble-card-actions bubble-card-actions--left">
+                      <button type="button" className="fleet-action" aria-label={`Edit service ${service.service_name}`} onClick={() => { onEditService(service); }}>
+                        Edit
+                      </button>
+                      <button type="button" className="fleet-action fleet-action--danger" aria-label={`Delete service ${service.service_name}`} onClick={() => { onRequestDeleteService(service); }}>
+                        Delete
+                      </button>
                     </div>
-                    <strong>{service.bubble.name}</strong>
-                  </header>
-                  <dl className="fleet-detail-grid">
-                    <div><dt>Kind</dt><dd>{roleLabel(service.service_kind)}</dd></div>
-                    <div><dt>Scope</dt><dd>{fallbackText(service.scope)}</dd></div>
-                    <div><dt>Provider</dt><dd>{fallbackText(service.provider_asset_id)}</dd></div>
-                    <div><dt>Consumers</dt><dd>{String(service.consumer_refs?.length ?? 0)}</dd></div>
-                  </dl>
-                </article>
-              ))}
+                    {serviceDraftMode === "edit" && serviceDraftId === service.id ? (
+                      <ServiceEditor
+                        mode="edit"
+                        values={serviceDraft}
+                        bubbleOptions={bubbleOptions}
+                        assetOptions={assetOptions}
+                        credentials={credentials}
+                        onChange={onServiceDraftChange}
+                        onSave={onSaveServiceDraft}
+                        onCancel={onCancelServiceDraft}
+                      />
+                    ) : null}
+                    {deleteServiceId === service.id ? (
+                      <div className="bubble-delete-confirm" role="group" aria-label={`Delete ${service.service_name}`}>
+                        <strong>Delete {service.service_name}?</strong>
+                        <button type="button" className="fleet-action fleet-action--danger" aria-label={`Confirm delete service ${service.service_name}`} onClick={() => { onConfirmDeleteService(service); }}>
+                          Confirm
+                        </button>
+                        <button type="button" className="fleet-action" onClick={onCancelDeleteService}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           ) : <p className="empty">No connected services linked yet.</p>}
+          <CredentialInventory credentials={credentials} error={credentialsError} />
         </Panel>
       </div>
+    </section>
+  );
+}
+
+function InfraDraftEditor({
+  values,
+  bubbleOptions,
+  candidateVms,
+  onChange,
+  onSave,
+  onCancel
+}: {
+  readonly values: InfraDraft;
+  readonly bubbleOptions: readonly LabBubble[];
+  readonly candidateVms: readonly VmFleetRow[];
+  readonly onChange: (field: keyof InfraDraft, value: string) => void;
+  readonly onSave: () => void;
+  readonly onCancel: () => void;
+}) {
+  return (
+    <form
+      className="bubble-form"
+      aria-label="Add critical infrastructure"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <div className="bubble-form-grid">
+        <label className="bubble-form-field">
+          <span>Bubble</span>
+          <select aria-label="Critical infrastructure bubble" value={values.bubbleId} onChange={(event) => { onChange("bubbleId", event.target.value); }}>
+            {bubbleOptions.map((bubble) => (
+              <option key={bubble.id} value={bubble.id}>{bubble.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>VM</span>
+          <select aria-label="Critical infrastructure VM" value={values.vmid} onChange={(event) => { onChange("vmid", event.target.value); }}>
+            <option value="">Select VM</option>
+            {candidateVms.map((vm) => (
+              <option key={vm.vmid} value={String(vm.vmid)}>{vm.name} / VM {String(vm.vmid)} / {fallbackText(vm.status)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Role</span>
+          <select aria-label="Critical infrastructure role" value={values.role} onChange={(event) => { onChange("role", event.target.value); }}>
+            {infraRoleOptions.map((role) => (
+              <option key={role} value={role}>{roleLabel(role)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Notes</span>
+          <input aria-label="Critical infrastructure notes" value={values.notes} onChange={(event) => { onChange("notes", event.target.value); }} />
+        </label>
+      </div>
+      <div className="bubble-form-actions">
+        <button type="submit" className="fleet-action fleet-action--command">Save critical infrastructure</button>
+        <button type="button" className="fleet-action" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function InfraEditEditor({
+  assetLabel,
+  values,
+  onChange,
+  onSave,
+  onCancel
+}: {
+  readonly assetLabel: string;
+  readonly values: InfraEditDraft;
+  readonly onChange: (field: "role" | "notes", value: string) => void;
+  readonly onSave: () => void;
+  readonly onCancel: () => void;
+}) {
+  return (
+    <form
+      className="bubble-form"
+      aria-label={`Edit infra ${assetLabel}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <div className="bubble-form-grid">
+        <label className="bubble-form-field">
+          <span>Role</span>
+          <select aria-label={`Role for infra ${assetLabel}`} value={values.role} onChange={(event) => { onChange("role", event.target.value); }}>
+            {infraRoleOptions.map((role) => (
+              <option key={role} value={role}>{roleLabel(role)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Notes</span>
+          <input aria-label={`Notes for infra ${assetLabel}`} value={values.notes} onChange={(event) => { onChange("notes", event.target.value); }} />
+        </label>
+      </div>
+      <div className="bubble-form-actions">
+        <button type="submit" className="fleet-action fleet-action--command" aria-label={`Save infra ${assetLabel}`}>Save</button>
+        <button type="button" className="fleet-action" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function InfraMoveEditor({
+  assetLabel,
+  values,
+  bubbleOptions,
+  onChange,
+  onConfirm,
+  onCancel
+}: {
+  readonly assetLabel: string;
+  readonly values: InfraMoveDraft;
+  readonly bubbleOptions: readonly LabBubble[];
+  readonly onChange: (bubbleId: string) => void;
+  readonly onConfirm: () => void;
+  readonly onCancel: () => void;
+}) {
+  return (
+    <div className="bubble-delete-confirm" role="group" aria-label={`Move ${assetLabel}`}>
+      <label className="bubble-form-field">
+        <span>Target bubble</span>
+        <select aria-label={`Move bubble for infra ${assetLabel}`} value={values.bubbleId} onChange={(event) => { onChange(event.target.value); }}>
+          {bubbleOptions.map((bubble) => (
+            <option key={bubble.id} value={bubble.id}>{bubble.name}</option>
+          ))}
+        </select>
+      </label>
+      <button type="button" className="fleet-action fleet-action--command" aria-label={`Confirm move infra ${assetLabel}`} onClick={onConfirm}>
+        Move
+      </button>
+      <button type="button" className="fleet-action" onClick={onCancel}>
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function ServiceEditor({
+  mode,
+  values,
+  bubbleOptions,
+  assetOptions,
+  credentials,
+  onChange,
+  onSave,
+  onCancel
+}: {
+  readonly mode: ServiceDraftMode;
+  readonly values: ServiceDraft;
+  readonly bubbleOptions: readonly LabBubble[];
+  readonly assetOptions: readonly { readonly bubble: LabBubble; readonly asset: LabBubbleAsset; readonly vm: VmFleetRow | null | undefined }[];
+  readonly credentials: readonly CredentialSummary[];
+  readonly onChange: (field: keyof ServiceDraft, value: string | readonly string[]) => void;
+  readonly onSave: () => void;
+  readonly onCancel: () => void;
+}) {
+  const providers = assetOptions.filter((item) => item.bubble.id === values.bubbleId);
+  return (
+    <form
+      className="bubble-form"
+      aria-label={mode === "create" ? "Add connected service" : "Edit connected service"}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <div className="bubble-form-grid">
+        <label className="bubble-form-field">
+          <span>Bubble</span>
+          <select
+            aria-label="Service bubble"
+            value={values.bubbleId}
+            disabled={mode === "edit"}
+            onChange={(event) => { onChange("bubbleId", event.target.value); }}
+          >
+            {bubbleOptions.map((bubble) => (
+              <option key={bubble.id} value={bubble.id}>{bubble.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Kind</span>
+          <select aria-label="Service kind" value={values.serviceKind} onChange={(event) => { onChange("serviceKind", event.target.value); }}>
+            {serviceKindOptions.map((kind) => (
+              <option key={kind} value={kind}>{roleLabel(kind)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Name</span>
+          <input aria-label="Service name" value={values.serviceName} onChange={(event) => { onChange("serviceName", event.target.value); }} />
+        </label>
+        <label className="bubble-form-field">
+          <span>Scope</span>
+          <select aria-label="Service scope" value={values.scope} onChange={(event) => { onChange("scope", event.target.value); }}>
+            {serviceScopeOptions.map((scope) => (
+              <option key={scope} value={scope}>{roleLabel(scope)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Provider</span>
+          <select aria-label="Provider asset" value={values.providerAssetId} onChange={(event) => { onChange("providerAssetId", event.target.value); }}>
+            <option value="">No provider</option>
+            {providers.map((item) => (
+              <option key={item.asset.id} value={item.asset.id}>{vmAssetLabel(item.asset, item.vm)} / {roleLabel(item.asset.asset_role)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field">
+          <span>Readiness</span>
+          <select aria-label="Readiness state" value={values.readinessState} onChange={(event) => { onChange("readinessState", event.target.value); }}>
+            {serviceReadinessOptions.map((state) => (
+              <option key={state} value={state}>{roleLabel(state)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="bubble-form-field bubble-form-field--wide">
+          <span>Credentials</span>
+          <select
+            aria-label="Service credentials"
+            multiple
+            value={[...values.credentialIds]}
+            onChange={(event) => {
+              const selected = Array.from(event.currentTarget.selectedOptions).map((option) => option.value);
+              onChange("credentialIds", selected.length ? selected : event.currentTarget.value ? [event.currentTarget.value] : []);
+            }}
+          >
+            {credentials.map((credential) => (
+              <option key={credential.id} value={String(credential.id)}>{credential.name} / {roleLabel(credential.type)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="bubble-form-actions">
+        <button type="submit" className="fleet-action fleet-action--command">{mode === "create" ? "Create connected service" : "Save connected service"}</button>
+        <button type="button" className="fleet-action" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function CredentialInventory({
+  credentials,
+  error
+}: {
+  readonly credentials: readonly CredentialSummary[];
+  readonly error: string;
+}) {
+  return (
+    <section className="credential-inventory" aria-label="Credential inventory">
+      <h3>Credential inventory</h3>
+      {error ? <p className="notice" role="status">{error}</p> : null}
+      {credentials.length ? (
+        <div className="credential-list">
+          {credentials.map((credential) => (
+            <article key={credential.id} className="credential-chip">
+              <strong>{credential.name}</strong>
+              <span>{roleLabel(credential.type)}</span>
+              <small>{formatShortDateTime(credential.updated_at ?? credential.created_at)}</small>
+            </article>
+          ))}
+        </div>
+      ) : error ? null : <p className="empty">No credential summaries found.</p>}
     </section>
   );
 }

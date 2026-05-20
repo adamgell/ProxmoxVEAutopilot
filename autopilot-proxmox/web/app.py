@@ -2440,6 +2440,19 @@ def api_bubbles_services_patch(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.delete("/api/bubbles/{bubble_id}/services/{service_id}", status_code=204)
+def api_bubbles_services_delete(bubble_id: str, service_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        _api_service_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, service_id)
+        if not lab_bubbles_pg.delete_service(conn, service_id, actor="operator"):
+            raise HTTPException(status_code=404, detail="service not found")
+        return Response(status_code=204)
+
+
 @app.get("/api/bubbles/{bubble_id}/audit-events")
 def api_bubbles_audit_events(bubble_id: str):
     from web import db_pg, lab_bubbles_pg

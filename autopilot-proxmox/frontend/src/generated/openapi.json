@@ -7176,6 +7176,45 @@
       }
     },
     "/api/bubbles/{bubble_id}/services/{service_id}": {
+      "delete": {
+        "operationId": "api_bubbles_services_delete_api_bubbles__bubble_id__services__service_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service_id",
+            "required": true,
+            "schema": {
+              "title": "Service Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Services Delete"
+      },
       "patch": {
         "operationId": "api_bubbles_services_patch_api_bubbles__bubble_id__services__service_id__patch",
         "parameters": [

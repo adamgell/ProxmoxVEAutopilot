@@ -231,6 +231,22 @@ const dashboardResponses: Record<string, unknown> = {
     sha_short: "abc1234",
     build_time: "2026-05-18T12:00:00Z"
   },
+  "/api/credentials": [
+    {
+      id: 7,
+      name: "ACME Domain Join",
+      type: "domain_join",
+      created_at: "2026-05-18T17:00:00Z",
+      updated_at: "2026-05-18T17:10:00Z"
+    },
+    {
+      id: 8,
+      name: "ACME Local Admin",
+      type: "local_admin",
+      created_at: "2026-05-18T18:00:00Z",
+      updated_at: "2026-05-18T18:10:00Z"
+    }
+  ],
   "/api/vms/fleet": {
     generated_at: "2026-05-19T00:00:00Z",
     cache_age_seconds: 12,
@@ -250,6 +266,16 @@ const dashboardResponses: Record<string, unknown> = {
         aad_joined: true,
         part_of_domain: false,
         has_hash: true,
+        target_os: "windows"
+      },
+      {
+        vmid: 9109,
+        name: "ACME-FS01",
+        hostname: "ACME-FS01",
+        serial: "ACME-FS01",
+        status: "running",
+        ip_address: "10.42.12.25",
+        part_of_domain: true,
         target_os: "windows"
       }
     ],
@@ -341,10 +367,23 @@ const dashboardResponses: Record<string, unknown> = {
           scope: "external",
           readiness_state: "ready",
           provider_asset_id: "asset-dc",
-          consumer_refs: []
+          consumer_refs: [],
+          evidence_summary: {
+            credential_ids: [7]
+          }
         }
       ],
-      unassigned_assets: [],
+      unassigned_assets: [
+        {
+          vmid: 9109,
+          name: "ACME-FS01",
+          hostname: "ACME-FS01",
+          status: "running",
+          ip_address: "10.42.12.25",
+          part_of_domain: true,
+          target_os: "windows"
+        }
+      ],
       warnings: [],
       gate_states: [
         {
@@ -527,6 +566,8 @@ describe("App", () => {
     expect(screen.getAllByText("ACME Lab").length).toBeGreaterThan(0);
     expect(screen.getByText("domain controller")).toBeInTheDocument();
     expect(screen.getByText("Entra ID")).toBeInTheDocument();
+    expect(screen.getAllByText("ACME-DC01 (VM 130)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ACME Domain Join").length).toBeGreaterThan(0);
     expect(screen.getByRole("columnheader", { name: "Device Name" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Heartbeat" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Managed By" })).toBeInTheDocument();
@@ -542,6 +583,190 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Console VM 108" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Console VM 108" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Autopilot Devices" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Mep7!Qav2")).not.toBeInTheDocument();
+  });
+
+  test("adds a running Proxmox VM as critical infrastructure from inline controls", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles/bubble-1/assets": {
+        id: "asset-fs",
+        bubble_id: "bubble-1",
+        asset_type: "vm",
+        asset_role: "file_server",
+        vmid: 9109,
+        membership_state: "active",
+        evidence_state: "operator_tagged"
+      }
+    });
+
+    renderRoute("/react/vms");
+
+    await screen.findByText("domain controller");
+    fireEvent.click(await screen.findByRole("button", { name: "Add infra VM" }));
+    expect(await screen.findByLabelText("Critical infrastructure VM")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Critical infrastructure VM"), { target: { value: "9109" } });
+    fireEvent.change(screen.getByLabelText("Critical infrastructure role"), { target: { value: "file_server" } });
+    fireEvent.change(screen.getByLabelText("Critical infrastructure notes"), { target: { value: "Bubble file share" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save critical infrastructure" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1/assets",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const postCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/bubbles/bubble-1/assets"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(postCall).toBeDefined();
+    const init = postCall?.[1] as RequestInit;
+    expect(typeof init.body).toBe("string");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      asset_type: "vm",
+      asset_role: "file_server",
+      vmid: 9109,
+      membership_state: "active",
+      evidence_state: "operator_tagged",
+      notes: "Bubble file share"
+    });
+  });
+
+  test("updates, moves, and retires critical infrastructure inline", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles/bubble-1/assets/asset-dc": {
+        id: "asset-dc",
+        bubble_id: "bubble-1",
+        asset_type: "vm",
+        asset_role: "dns_server",
+        vmid: 130,
+        membership_state: "active"
+      },
+      "/api/bubbles/bubble-1/assets/asset-dc/move": {
+        id: "asset-dc",
+        bubble_id: "bubble-1",
+        asset_type: "vm",
+        asset_role: "dns_server",
+        vmid: 130,
+        membership_state: "active"
+      }
+    });
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit infra ACME-DC01" }));
+    fireEvent.change(screen.getByLabelText("Role for infra ACME-DC01"), { target: { value: "dns_server" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save infra ACME-DC01" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1/assets/asset-dc",
+        expect.objectContaining({ method: "PATCH" })
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Move infra ACME-DC01" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm move infra ACME-DC01" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1/assets/asset-dc/move",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retire infra ACME-DC01" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm retire infra ACME-DC01" }));
+
+    await waitFor(() => {
+      const retireCall = fetchMock.mock.calls.find(([input, init]) => (
+        input === "/api/bubbles/bubble-1/assets/asset-dc"
+        && init && typeof init !== "function" && "body" in init
+        && typeof init.body === "string"
+        && init.body.includes("retired")
+      ));
+      expect(retireCall).toBeDefined();
+    });
+  });
+
+  test("creates and edits connected services with provider assets and credential refs", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles/bubble-1/services": {
+        id: "svc-dhcp",
+        bubble_id: "bubble-1",
+        service_kind: "dhcp",
+        service_name: "ACME DHCP",
+        scope: "bubble_local",
+        provider_asset_id: "asset-dc",
+        readiness_state: "ready",
+        evidence_summary: { credential_ids: [7] }
+      },
+      "/api/bubbles/bubble-1/services/svc-ad": {
+        id: "svc-ad",
+        bubble_id: "bubble-1",
+        service_kind: "ad_ds",
+        service_name: "ACME AD DS",
+        scope: "bubble_local",
+        provider_asset_id: "asset-dc",
+        readiness_state: "ready",
+        evidence_summary: { credential_ids: [7, 8] }
+      }
+    });
+
+    renderRoute("/react/vms");
+
+    await screen.findByText("Entra ID");
+    fireEvent.click(await screen.findByRole("button", { name: "Add service" }));
+    fireEvent.change(screen.getByLabelText("Service kind"), { target: { value: "dhcp" } });
+    fireEvent.change(screen.getByLabelText("Service name"), { target: { value: "ACME DHCP" } });
+    fireEvent.change(screen.getByLabelText("Provider asset"), { target: { value: "asset-dc" } });
+    const credentialSelect = screen.getByLabelText("Service credentials");
+    if (!(credentialSelect instanceof HTMLSelectElement)) {
+      throw new Error("Service credentials control is not a select");
+    }
+    const firstCredentialOption = credentialSelect.options.item(0);
+    expect(firstCredentialOption).not.toBeNull();
+    if (firstCredentialOption) {
+      firstCredentialOption.selected = true;
+    }
+    fireEvent.change(credentialSelect);
+    fireEvent.change(screen.getByLabelText("Readiness state"), { target: { value: "ready" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create connected service" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1/services",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const postCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/bubbles/bubble-1/services"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(postCall).toBeDefined();
+    const postInit = postCall?.[1] as RequestInit;
+    expect(typeof postInit.body).toBe("string");
+    expect(JSON.parse(postInit.body as string)).toMatchObject({
+      service_kind: "dhcp",
+      service_name: "ACME DHCP",
+      scope: "bubble_local",
+      provider_asset_id: "asset-dc",
+      readiness_state: "ready",
+      evidence_summary: { credential_ids: [7] }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit service Entra ID" }));
+    fireEvent.change(screen.getByLabelText("Service kind"), { target: { value: "ad_ds" } });
+    fireEvent.change(screen.getByLabelText("Service name"), { target: { value: "ACME AD DS" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connected service" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1/services/svc-ad",
+        expect.objectContaining({ method: "PATCH" })
+      );
+    });
   });
 
   test("tags an existing VM asset into a selected bubble from inline React fleet controls", async () => {

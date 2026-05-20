@@ -4534,6 +4534,40 @@ export type ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostResponses = {
     201: unknown;
 };
 
+export type ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+        /**
+         * Service Id
+         */
+        service_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/services/{service_id}';
+};
+
+export type ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteError = ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteErrors[keyof ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteErrors];
+
+export type ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteResponse = ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteResponses[keyof ApiBubblesServicesDeleteApiBubblesBubbleIdServicesServiceIdDeleteResponses];
+
 export type ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchData = {
     body: BubbleServicePatch;
     path: {

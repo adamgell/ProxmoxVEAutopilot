@@ -425,6 +425,7 @@ export interface LabBubble {
   readonly dhcp_scope?: string;
   readonly dhcp_pool_start?: string;
   readonly dhcp_pool_end?: string;
+  readonly dhcp_owner_asset_id?: string | null;
   readonly dc_ready?: boolean;
   readonly dns_ready?: boolean;
   readonly dhcp_ready?: boolean;
@@ -455,7 +456,9 @@ export interface LabBubbleService {
   readonly provider_asset_id?: string | null;
   readonly readiness_state?: string;
   readonly consumer_refs?: readonly unknown[];
-  readonly evidence_summary?: Readonly<Record<string, unknown>>;
+  readonly evidence_summary?: Readonly<Record<string, unknown>> & {
+    readonly credential_ids?: readonly number[];
+  };
 }
 
 export interface LabBubbleFleetSection {
@@ -507,6 +510,14 @@ export interface VmsFleetResponse {
   readonly cache_refreshing: boolean;
   readonly monitor_sweep?: Readonly<Record<string, unknown>> | null;
   readonly generated_at: string;
+}
+
+export interface CredentialSummary {
+  readonly id: number;
+  readonly name: string;
+  readonly type: string;
+  readonly created_at?: string | null;
+  readonly updated_at?: string | null;
 }
 
 export interface VmScreenshot {

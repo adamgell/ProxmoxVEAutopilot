@@ -667,6 +667,34 @@ def update_service(conn: Connection, service_id: str, **fields: Any) -> dict:
     return service
 
 
+def delete_service(
+    conn: Connection,
+    service_id: str,
+    *,
+    actor: str = "operator",
+) -> bool:
+    current = conn.execute(
+        "SELECT * FROM lab_bubble_services WHERE id = %s",
+        (service_id,),
+    ).fetchone()
+    if current is None:
+        return False
+    old = _service_row(current)
+    conn.execute(
+        "DELETE FROM lab_bubble_services WHERE id = %s",
+        (service_id,),
+    )
+    record_audit_event(
+        conn,
+        bubble_id=old["bubble_id"],
+        action="service_deleted",
+        actor=actor,
+        old_values=old,
+    )
+    conn.commit()
+    return True
+
+
 def list_audit_events(conn: Connection, bubble_id: str) -> list[dict]:
     rows = conn.execute(
         """

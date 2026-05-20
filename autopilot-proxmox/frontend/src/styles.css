@@ -893,6 +893,11 @@ h3 {
   min-width: 120px;
 }
 
+.bubble-card-actions--left {
+  justify-content: flex-start;
+  min-width: 0;
+}
+
 .bubble-form {
   display: grid;
   gap: 14px;
@@ -939,6 +944,65 @@ h3 {
   font: inherit;
   font-size: 13px;
   font-weight: 800;
+}
+
+.bubble-form-field select[multiple] {
+  min-height: 84px;
+  padding-block: 7px;
+}
+
+.bubble-form-field--wide {
+  grid-column: 1 / -1;
+}
+
+.credential-inventory {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.credential-inventory h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.credential-list {
+  display: grid;
+  gap: 8px;
+}
+
+.credential-chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.credential-chip strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.credential-chip span,
+.credential-chip small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.credential-chip small {
+  grid-column: 1 / -1;
 }
 
 .machine-tag-row td {
