@@ -89,7 +89,6 @@ export function CloudDevicesPage({ bootstrap }: { readonly bootstrap: AppBootstr
       title="Cloud Devices"
       section="Fleet"
       path="/react/devices"
-      action={<a className="action-link" href="/legacy/cloud">Legacy</a>}
     >
       {message ? <p className="notice" role="status">{message}</p> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}

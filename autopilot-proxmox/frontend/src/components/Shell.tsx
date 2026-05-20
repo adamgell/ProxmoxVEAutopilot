@@ -5,53 +5,6 @@ import type { AppBootstrap } from "../contracts";
 import { operatorNavGroups } from "../routes";
 import { formatShortDateTime } from "../viewModels";
 
-function legacyPathForReactPath(path: string): string {
-  if (path === "/react/jobs") {
-    return "/legacy/jobs";
-  }
-  if (path === "/react/monitoring") {
-    return "/monitoring";
-  }
-  if (path === "/react/vms") {
-    return "/legacy/vms";
-  }
-  const vmMatch = /^\/react\/vms\/(\d+)$/u.exec(path);
-  const vmid = vmMatch?.[1];
-  if (vmid) {
-    return `/legacy/devices/${vmid}`;
-  }
-  if (path === "/react/legacy-vms") {
-    return "/legacy/vms";
-  }
-  if (path === "/react/devices") {
-    return "/legacy/cloud";
-  }
-  if (path === "/react/hashes") {
-    return "/legacy/hashes";
-  }
-  if (path === "/react/files") {
-    return "/legacy/files";
-  }
-  if (path === "/react/settings") {
-    return "/legacy/settings";
-  }
-  if (path === "/react/credentials") {
-    return "/legacy/credentials";
-  }
-  if (path === "/react/credentials/new") {
-    return "/legacy/credentials/new";
-  }
-  const credMatch = /^\/react\/credentials\/(\d+)\/edit$/u.exec(path);
-  const credentialId = credMatch?.[1];
-  if (credentialId) {
-    return `/legacy/credentials/${credentialId}/edit`;
-  }
-  if (path === "/react/monitoring/settings") {
-    return "/legacy/monitoring/settings";
-  }
-  return "/legacy/dashboard";
-}
-
 export function OperatorShell({
   bootstrap,
   path,
@@ -64,7 +17,6 @@ export function OperatorShell({
   readonly children: ReactNode;
 }) {
   const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
-  const legacyPath = legacyPathForReactPath(path);
   const commandId = useId();
   const [commandQuery, setCommandQuery] = useState("");
   const routes = operatorNavGroups.flatMap((group) => group.items);
@@ -118,7 +70,9 @@ export function OperatorShell({
             type="search"
             list={`${commandId}-routes`}
             value={commandQuery}
-            onChange={(event) => setCommandQuery(event.currentTarget.value)}
+            onChange={(event) => {
+              setCommandQuery(event.currentTarget.value);
+            }}
             placeholder="Search routes, VMs, jobs"
             aria-label="Search console"
           />
@@ -150,15 +104,13 @@ export function OperatorShell({
                 <a
                   key={item.path}
                   className={[
-                    item.path === path ? "is-current" : "",
-                    item.legacy ? "is-legacy" : ""
+                    item.path === path ? "is-current" : ""
                   ].filter(Boolean).join(" ")}
                   href={item.path}
-                  aria-label={item.legacy ? `${item.label} legacy page` : item.label}
+                  aria-label={item.label}
                   aria-current={item.path === path ? "page" : undefined}
                 >
                   <span>{item.label}</span>
-                  {item.legacy ? <small>Jinja</small> : null}
                 </a>
               ))}
             </section>
@@ -170,7 +122,6 @@ export function OperatorShell({
         <main id="react-content" className="workspace__content" tabIndex={-1}>{children}</main>
       </div>
       <aside className="workspace__system-tray" aria-label="Runtime status">
-        <a className="ui-mode-switch" href={legacyPath} aria-label="Switch to Legacy UI">Legacy UI</a>
         {socketState ? <span className={`socket-state socket-state--${socketState}`}>Live {socketState}</span> : null}
         <span>{buildLabel}</span>
         {bootstrap.buildTime ? (

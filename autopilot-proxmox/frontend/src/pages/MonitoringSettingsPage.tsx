@@ -89,7 +89,6 @@ export function MonitoringSettingsPage({ bootstrap }: { readonly bootstrap: AppB
       title="Monitoring Settings"
       section="Settings"
       path="/react/monitoring/settings"
-      action={<a className="action-link" href="/legacy/monitoring/settings">Legacy</a>}
     >
       {message ? <p className="notice" role="status">{message}</p> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}

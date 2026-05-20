@@ -2040,7 +2040,11 @@ function BubbleTopologyOverview({
                     ) : null}
                     <div className="bubble-card-actions bubble-card-actions--left">
                       {node.agent?.approval_status === "pending" && node.agent.approval_id ? (
-                        <button type="button" className="fleet-action" aria-label={`Approve agent ${node.agent.agent_id}`} onClick={() => { onApproveAgent(node.agent!); }}>
+                        <button type="button" className="fleet-action" aria-label={`Approve agent ${node.agent.agent_id}`} onClick={() => {
+                          if (node.agent) {
+                            onApproveAgent(node.agent);
+                          }
+                        }}>
                           Approve agent
                         </button>
                       ) : null}

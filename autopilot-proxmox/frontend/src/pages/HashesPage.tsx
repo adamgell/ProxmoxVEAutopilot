@@ -101,7 +101,6 @@ export function HashesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) 
       title="Hashes"
       section="Fleet"
       path="/react/hashes"
-      action={<a className="action-link" href="/legacy/hashes">Legacy</a>}
     >
       {message ? <p className="notice" role="status">{message}</p> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}

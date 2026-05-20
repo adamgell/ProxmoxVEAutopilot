@@ -57,7 +57,6 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       title="Files"
       section="Fleet"
       path="/react/files"
-      action={<a className="action-link" href="/legacy/files">Legacy</a>}
     >
       {message ? <p className="notice" role="status">{message}</p> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}

@@ -1756,6 +1756,24 @@ export type StepLogBody = {
 };
 
 /**
+ * UpdateCheckBody
+ */
+export type UpdateCheckBody = {
+    /**
+     * Agent Id
+     */
+    agent_id: string;
+    /**
+     * Installed Version
+     */
+    installed_version?: string | null;
+    /**
+     * Runtime Identifier
+     */
+    runtime_identifier?: string;
+};
+
+/**
  * ValidationError
  */
 export type ValidationError = {
@@ -3964,6 +3982,35 @@ export type HeartbeatApiAgentV1HeartbeatPostResponses = {
     200: unknown;
 };
 
+export type UpdateCheckApiAgentV1UpdateCheckPostData = {
+    body: UpdateCheckBody;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/agent/v1/update-check';
+};
+
+export type UpdateCheckApiAgentV1UpdateCheckPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateCheckApiAgentV1UpdateCheckPostError = UpdateCheckApiAgentV1UpdateCheckPostErrors[keyof UpdateCheckApiAgentV1UpdateCheckPostErrors];
+
+export type UpdateCheckApiAgentV1UpdateCheckPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type NextWorkApiAgentV1WorkNextPostData = {
     body: WorkNextBody;
     headers?: {
@@ -4153,6 +4200,34 @@ export type ApiAnswerIsosListApiAnswerIsosGetData = {
 };
 
 export type ApiAnswerIsosListApiAnswerIsosGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiAnswerIsosPageApiAnswerIsosPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Error
+         */
+        error?: string;
+    };
+    url: '/api/answer-isos/page';
+};
+
+export type ApiAnswerIsosPageApiAnswerIsosPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiAnswerIsosPageApiAnswerIsosPageGetError = ApiAnswerIsosPageApiAnswerIsosPageGetErrors[keyof ApiAnswerIsosPageApiAnswerIsosPageGetErrors];
+
+export type ApiAnswerIsosPageApiAnswerIsosPageGetResponses = {
     /**
      * Successful Response
      */
@@ -5072,6 +5147,38 @@ export type CatalogApiCloudosdCatalogGetResponses = {
     200: unknown;
 };
 
+export type ApiCloudosdPageApiCloudosdPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Archived
+         */
+        archived?: string;
+        /**
+         * View
+         */
+        view?: string | null;
+    };
+    url: '/api/cloudosd/page';
+};
+
+export type ApiCloudosdPageApiCloudosdPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiCloudosdPageApiCloudosdPageGetError = ApiCloudosdPageApiCloudosdPageGetErrors[keyof ApiCloudosdPageApiCloudosdPageGetErrors];
+
+export type ApiCloudosdPageApiCloudosdPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type PePackageApiCloudosdPePackageRunIdGetData = {
     body?: never;
     headers?: {
@@ -5594,6 +5701,34 @@ export type SetRunIdentityApiCloudosdRunsRunIdIdentityPostErrors = {
 export type SetRunIdentityApiCloudosdRunsRunIdIdentityPostError = SetRunIdentityApiCloudosdRunsRunIdIdentityPostErrors[keyof SetRunIdentityApiCloudosdRunsRunIdIdentityPostErrors];
 
 export type SetRunIdentityApiCloudosdRunsRunIdIdentityPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiCloudosdRunDetailPageApiCloudosdRunsRunIdPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+    };
+    query?: never;
+    url: '/api/cloudosd/runs/{run_id}/page';
+};
+
+export type ApiCloudosdRunDetailPageApiCloudosdRunsRunIdPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiCloudosdRunDetailPageApiCloudosdRunsRunIdPageGetError = ApiCloudosdRunDetailPageApiCloudosdRunsRunIdPageGetErrors[keyof ApiCloudosdRunDetailPageApiCloudosdRunsRunIdPageGetErrors];
+
+export type ApiCloudosdRunDetailPageApiCloudosdRunsRunIdPageGetResponses = {
     /**
      * Successful Response
      */
@@ -6134,6 +6269,34 @@ export type InstallTrackingUpdateApiInstallTrackingItemsItemIdPostResponses = {
     200: unknown;
 };
 
+export type InstallTrackingPageApiApiInstallTrackingPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Run Id
+         */
+        run_id?: string | null;
+    };
+    url: '/api/install-tracking/page';
+};
+
+export type InstallTrackingPageApiApiInstallTrackingPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingPageApiApiInstallTrackingPageGetError = InstallTrackingPageApiApiInstallTrackingPageGetErrors[keyof InstallTrackingPageApiApiInstallTrackingPageGetErrors];
+
+export type InstallTrackingPageApiApiInstallTrackingPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type InstallTrackingRunsApiApiInstallTrackingRunsGetData = {
     body?: never;
     path?: never;
@@ -6525,6 +6688,34 @@ export type KillJobApiJobsJobIdKillPostResponses = {
     200: unknown;
 };
 
+export type ApiJobDetailPageApiJobsJobIdPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/api/jobs/{job_id}/page';
+};
+
+export type ApiJobDetailPageApiJobsJobIdPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiJobDetailPageApiJobsJobIdPageGetError = ApiJobDetailPageApiJobsJobIdPageGetErrors[keyof ApiJobDetailPageApiJobsJobIdPageGetErrors];
+
+export type ApiJobDetailPageApiJobsJobIdPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type ResumeTemplateBuildApiJobsJobIdResumeTemplateBuildPostData = {
     body?: never;
     path: {
@@ -6689,6 +6880,20 @@ export type ApiMonitoringKeytabRefreshNowApiMonitoringKeytabRefreshNowPostData =
 };
 
 export type ApiMonitoringKeytabRefreshNowApiMonitoringKeytabRefreshNowPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiMonitoringPageApiMonitoringPageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/monitoring/page';
+};
+
+export type ApiMonitoringPageApiMonitoringPageGetResponses = {
     /**
      * Successful Response
      */
@@ -7387,6 +7592,66 @@ export type ApiUbuntuV2TemplateBuildApiOsdV2UbuntuTemplateBuildsPostResponses = 
      * Successful Response
      */
     202: unknown;
+};
+
+export type ApiOsdeployPageApiOsdeployPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Archived
+         */
+        archived?: string;
+        /**
+         * View
+         */
+        view?: string | null;
+    };
+    url: '/api/osdeploy/page';
+};
+
+export type ApiOsdeployPageApiOsdeployPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiOsdeployPageApiOsdeployPageGetError = ApiOsdeployPageApiOsdeployPageGetErrors[keyof ApiOsdeployPageApiOsdeployPageGetErrors];
+
+export type ApiOsdeployPageApiOsdeployPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiOsdeployRunDetailPageApiOsdeployRunsRunIdPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+    };
+    query?: never;
+    url: '/api/osdeploy/runs/{run_id}/page';
+};
+
+export type ApiOsdeployRunDetailPageApiOsdeployRunsRunIdPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiOsdeployRunDetailPageApiOsdeployRunsRunIdPageGetError = ApiOsdeployRunDetailPageApiOsdeployRunsRunIdPageGetErrors[keyof ApiOsdeployRunDetailPageApiOsdeployRunsRunIdPageGetErrors];
+
+export type ApiOsdeployRunDetailPageApiOsdeployRunsRunIdPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type ListArtifactsApiOsdeployV1ArtifactsGetData = {
@@ -8246,6 +8511,20 @@ export type UnarchiveRunApiOsdeployV1RunsRunIdUnarchivePostResponses = {
     200: unknown;
 };
 
+export type ApiProvisionPageApiProvisionPageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/provision/page';
+};
+
+export type ApiProvisionPageApiProvisionPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type BootstrapProxmoxPermissionsApiProxmoxBootstrapPermissionsPostData = {
     body?: never;
     path?: never;
@@ -8303,6 +8582,20 @@ export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenG
 };
 
 export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponse = ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses[keyof ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses];
+
+export type GetRunsPageApiRunsPageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/runs/page';
+};
+
+export type GetRunsPageApiRunsPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
 
 export type GetRunApiRunsRunIdGetData = {
     body?: never;
@@ -8388,6 +8681,34 @@ export type PostRunFailApiRunsRunIdFailPostResponses = {
     200: unknown;
 };
 
+export type ApiRunDetailPageApiRunsRunIdPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: number;
+    };
+    query?: never;
+    url: '/api/runs/{run_id}/page';
+};
+
+export type ApiRunDetailPageApiRunsRunIdPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiRunDetailPageApiRunsRunIdPageGetError = ApiRunDetailPageApiRunsRunIdPageGetErrors[keyof ApiRunDetailPageApiRunsRunIdPageGetErrors];
+
+export type ApiRunDetailPageApiRunsRunIdPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type ApiSequencesListApiSequencesGetData = {
     body?: never;
     path?: never;
@@ -8423,6 +8744,48 @@ export type ApiSequencesCreateApiSequencesPostResponses = {
      * Successful Response
      */
     201: unknown;
+};
+
+export type ApiSequenceNewPageApiSequencesNewPageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sequences/new/page';
+};
+
+export type ApiSequenceNewPageApiSequencesNewPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiSequencesPageApiSequencesPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Error
+         */
+        error?: string;
+    };
+    url: '/api/sequences/page';
+};
+
+export type ApiSequencesPageApiSequencesPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiSequencesPageApiSequencesPageGetError = ApiSequencesPageApiSequencesPageGetErrors[keyof ApiSequencesPageApiSequencesPageGetErrors];
+
+export type ApiSequencesPageApiSequencesPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type ApiSequencesDeleteApiSequencesSeqIdDeleteData = {
@@ -8535,6 +8898,34 @@ export type ApiSequencesDuplicateApiSequencesSeqIdDuplicatePostResponses = {
      * Successful Response
      */
     201: unknown;
+};
+
+export type ApiSequenceEditPageApiSequencesSeqIdEditPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Seq Id
+         */
+        seq_id: number;
+    };
+    query?: never;
+    url: '/api/sequences/{seq_id}/edit/page';
+};
+
+export type ApiSequenceEditPageApiSequencesSeqIdEditPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiSequenceEditPageApiSequencesSeqIdEditPageGetError = ApiSequenceEditPageApiSequencesSeqIdEditPageGetErrors[keyof ApiSequenceEditPageApiSequencesSeqIdEditPageGetErrors];
+
+export type ApiSequenceEditPageApiSequencesSeqIdEditPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type ApiServicesApiServicesGetData = {
@@ -8831,6 +9222,150 @@ export type SetupStateApiApiSetupV1StateGetResponses = {
     200: unknown;
 };
 
+export type ApiTaskEnginePageApiTaskEnginePageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/task-engine/page';
+};
+
+export type ApiTaskEnginePageApiTaskEnginePageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiTaskEngineSequencesListPageApiTaskEngineSequencesListPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Target Os
+         */
+        target_os?: string | null;
+    };
+    url: '/api/task-engine/sequences/list/page';
+};
+
+export type ApiTaskEngineSequencesListPageApiTaskEngineSequencesListPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiTaskEngineSequencesListPageApiTaskEngineSequencesListPageGetError = ApiTaskEngineSequencesListPageApiTaskEngineSequencesListPageGetErrors[keyof ApiTaskEngineSequencesListPageApiTaskEngineSequencesListPageGetErrors];
+
+export type ApiTaskEngineSequencesListPageApiTaskEngineSequencesListPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiTaskEngineSequenceNewPageApiTaskEngineSequencesNewPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Legacy Id
+         */
+        legacy_id?: number | null;
+        /**
+         * Template Id
+         */
+        template_id?: string | null;
+    };
+    url: '/api/task-engine/sequences/new/page';
+};
+
+export type ApiTaskEngineSequenceNewPageApiTaskEngineSequencesNewPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiTaskEngineSequenceNewPageApiTaskEngineSequencesNewPageGetError = ApiTaskEngineSequenceNewPageApiTaskEngineSequencesNewPageGetErrors[keyof ApiTaskEngineSequenceNewPageApiTaskEngineSequencesNewPageGetErrors];
+
+export type ApiTaskEngineSequenceNewPageApiTaskEngineSequencesNewPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiTaskEngineSequenceTemplatePageApiTaskEngineSequencesTemplatesTemplateIdPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Template Id
+         */
+        template_id: string;
+    };
+    query?: never;
+    url: '/api/task-engine/sequences/templates/{template_id}/page';
+};
+
+export type ApiTaskEngineSequenceTemplatePageApiTaskEngineSequencesTemplatesTemplateIdPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiTaskEngineSequenceTemplatePageApiTaskEngineSequencesTemplatesTemplateIdPageGetError = ApiTaskEngineSequenceTemplatePageApiTaskEngineSequencesTemplatesTemplateIdPageGetErrors[keyof ApiTaskEngineSequenceTemplatePageApiTaskEngineSequencesTemplatesTemplateIdPageGetErrors];
+
+export type ApiTaskEngineSequenceTemplatePageApiTaskEngineSequencesTemplatesTemplateIdPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiTaskEngineSequenceEditPageApiTaskEngineSequencesSequenceIdEditPageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Sequence Id
+         */
+        sequence_id: string;
+    };
+    query?: never;
+    url: '/api/task-engine/sequences/{sequence_id}/edit/page';
+};
+
+export type ApiTaskEngineSequenceEditPageApiTaskEngineSequencesSequenceIdEditPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiTaskEngineSequenceEditPageApiTaskEngineSequencesSequenceIdEditPageGetError = ApiTaskEngineSequenceEditPageApiTaskEngineSequencesSequenceIdEditPageGetErrors[keyof ApiTaskEngineSequenceEditPageApiTaskEngineSequencesSequenceIdEditPageGetErrors];
+
+export type ApiTaskEngineSequenceEditPageApiTaskEngineSequencesSequenceIdEditPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiTemplatePageApiTemplatePageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/template/page';
+};
+
+export type ApiTemplatePageApiTemplatePageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type BuildUbuntuTemplateApiUbuntuBuildTemplatePostData = {
     body?: never;
     path?: never;
@@ -9001,6 +9536,20 @@ export type ApiUpdateStatusApiUpdateStatusGetData = {
 };
 
 export type ApiUpdateStatusApiUpdateStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiUtmVmsPageApiUtmVmsPageGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/utm-vms/page';
+};
+
+export type ApiUtmVmsPageApiUtmVmsPageGetResponses = {
     /**
      * Successful Response
      */

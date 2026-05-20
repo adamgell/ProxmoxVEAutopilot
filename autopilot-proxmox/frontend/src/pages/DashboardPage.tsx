@@ -81,7 +81,6 @@ export function DashboardPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
       section="Observe"
       path="/react/dashboard"
       socketState={socketState}
-      action={<a className="action-link" href="/monitoring">Legacy monitoring</a>}
     >
       {error ? <p className="notice" role="status">{error}</p> : null}
 
@@ -137,13 +136,13 @@ export function DashboardPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
           </dl>
         </Panel>
 
-        <Panel title="Launchpad">
-          <div className="link-grid">
-            <a href="/provision">Provision</a>
-            <a href="/template">Template</a>
-            <a href="/hashes">Hashes</a>
-          </div>
-        </Panel>
+          <Panel title="Launchpad">
+            <div className="link-grid">
+            <a href="/react/provision">Provision</a>
+            <a href="/react/template">Template</a>
+            <a href="/react/hashes">Hashes</a>
+            </div>
+          </Panel>
       </section>
 
       <Panel title="Recent jobs">

@@ -2765,3 +2765,47 @@ h3 {
     min-width: 640px;
   }
 }
+
+.public-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.public-shell__panel {
+  width: min(720px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 28px;
+}
+
+.public-shell__eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.public-shell h1 {
+  margin: 0 0 20px;
+  font-size: 32px;
+}
+
+.public-shell footer {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}

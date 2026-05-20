@@ -775,6 +775,17 @@ def post_osd_hash(body: HashBody,
 api_router = APIRouter(prefix="/api", tags=["api"])
 
 
+@api_router.get("/runs/page")
+def get_runs_page():
+    db = _db_path()
+    return {
+        "runs": sequences_db.list_provisioning_runs(
+            db,
+            provision_path="winpe",
+        ),
+    }
+
+
 # Stale-run TTL: if an active run's newest step has been 'running' for
 # longer than this, /api/runs/<id> reads (and /winpe/register lookups)
 # flip the run to 'failed' inline before returning. 30 min covers the

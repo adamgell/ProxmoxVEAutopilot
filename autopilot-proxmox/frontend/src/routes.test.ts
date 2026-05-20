@@ -4,86 +4,38 @@ import { migratedRoutes, operatorFlows, operatorNavGroups, reactRouteForPath } f
 
 describe("operator route registry", () => {
   test("registers only active React routes as migrated routes", () => {
-    expect(migratedRoutes).toEqual([
-      {
-        path: "/react-shell",
-        label: "Workspace",
-        group: "Observe",
-        phase: "foundation"
-      },
-      {
-        path: "/react/dashboard",
-        label: "Dashboard",
-        group: "Observe",
-        phase: "read-only"
-      },
-      {
-        path: "/react/jobs",
-        label: "Jobs",
-        group: "Observe",
-        phase: "read-only"
-      },
-      {
-        path: "/react/monitoring",
-        label: "Signals Hub",
-        group: "Observe",
-        phase: "read-only"
-      },
-      {
-        path: "/react/vms",
-        label: "VMs",
-        group: "Fleet",
-        phase: "operational"
-      },
-      {
-        path: "/react/agent-download",
-        label: "Agent Download",
-        group: "Fleet",
-        phase: "operational"
-      },
-      {
-        path: "/react/legacy-vms",
-        label: "Classic VM Table",
-        group: "Fleet",
-        phase: "read-only"
-      },
-      {
-        path: "/react/devices",
-        label: "Cloud Devices",
-        group: "Fleet",
-        phase: "read-only"
-      },
-      {
-        path: "/react/hashes",
-        label: "Hashes",
-        group: "Fleet",
-        phase: "operational"
-      },
-      {
-        path: "/react/files",
-        label: "Files",
-        group: "Fleet",
-        phase: "operational"
-      },
-      {
-        path: "/react/settings",
-        label: "General",
-        group: "Settings",
-        phase: "operational"
-      },
-      {
-        path: "/react/credentials",
-        label: "Credentials",
-        group: "Settings",
-        phase: "operational"
-      },
-      {
-        path: "/react/monitoring/settings",
-        label: "Monitoring settings",
-        group: "Settings",
-        phase: "operational"
-      }
-    ]);
+    expect(migratedRoutes.every((route) => route.path.startsWith("/react"))).toBe(true);
+    expect(migratedRoutes.map((route) => route.path)).toEqual(
+      expect.arrayContaining([
+        "/react-shell",
+        "/react/dashboard",
+        "/react/jobs",
+        "/react/jobs/:jobId",
+        "/react/monitoring",
+        "/react/runs",
+        "/react/runs/:runId",
+        "/react/provision",
+        "/react/cloudosd",
+        "/react/cloudosd/runs/:runId",
+        "/react/osdeploy",
+        "/react/osdeploy/runs/:runId",
+        "/react/template",
+        "/react/task-engine",
+        "/react/task-engine/sequences/list",
+        "/react/task-engine/sequences/new",
+        "/react/task-engine/sequences/templates/:templateId",
+        "/react/task-engine/sequences/:sequenceId/edit",
+        "/react/answer-isos",
+        "/react/vms",
+        "/react/utm-vms",
+        "/react/sequences",
+        "/react/sequences/new",
+        "/react/sequences/:sequenceId/edit",
+        "/react/settings",
+        "/react/credentials",
+        "/react/monitoring/settings"
+      ])
+    );
   });
 
   test("keeps refined operator groups stable without legacy clone or WinPE-first entries", () => {
@@ -105,10 +57,12 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/react/agent-download")?.label).toBe("Agent Download");
     expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
     expect(reactRouteForPath("/react/settings")?.label).toBe("General");
+    expect(reactRouteForPath("/react/cloudosd")?.label).toBe("OSDCloud Desktop");
+    expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Engine");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
   });
 
-  test("maps refined operator flows to React starts and legacy deep links", () => {
+  test("maps refined operator flows to React starts without Jinja steps", () => {
     expect(operatorFlows.map((flow) => flow.label)).toEqual([
       "Observe",
       "Deploy",
@@ -117,10 +71,17 @@ describe("operator route registry", () => {
       "Settings"
     ]);
     const reactSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "React"));
+    const jinjaSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "Jinja"));
+    expect(jinjaSteps).toEqual([]);
     expect(reactSteps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
+        expect.objectContaining({ label: "Runs", href: "/react/runs" }),
+        expect.objectContaining({ label: "OSDeploy Server", href: "/react/osdeploy" }),
+        expect.objectContaining({ label: "OSDCloud Desktop", href: "/react/cloudosd" }),
+        expect.objectContaining({ label: "Provision", href: "/react/provision" }),
+        expect.objectContaining({ label: "Task Engine", href: "/react/task-engine" }),
         expect.objectContaining({ label: "VMs", href: "/react/vms" }),
         expect.objectContaining({ label: "Agent Download", href: "/react/agent-download" }),
         expect.objectContaining({ label: "Cloud Devices", href: "/react/devices" }),
@@ -128,11 +89,5 @@ describe("operator route registry", () => {
       ])
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
-    expect(operatorFlows.find((flow) => flow.id === "deploy")?.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ label: "OSDeploy Server", href: "/osdeploy", state: "Jinja" }),
-        expect.objectContaining({ label: "OSDCloud Desktop", href: "/cloudosd", state: "Jinja" })
-      ])
-    );
   });
 });

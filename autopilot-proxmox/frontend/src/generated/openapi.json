@@ -2643,6 +2643,36 @@
         "title": "StepLogBody",
         "type": "object"
       },
+      "UpdateCheckBody": {
+        "properties": {
+          "agent_id": {
+            "minLength": 1,
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "installed_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Installed Version"
+          },
+          "runtime_identifier": {
+            "default": "win-x64",
+            "title": "Runtime Identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id"
+        ],
+        "title": "UpdateCheckBody",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -6333,6 +6363,63 @@
         ]
       }
     },
+    "/api/agent/v1/update-check": {
+      "post": {
+        "operationId": "update_check_api_agent_v1_update_check_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCheckBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Check",
+        "tags": [
+          "agent-v1"
+        ]
+      }
+    },
     "/api/agent/v1/work/next": {
       "post": {
         "operationId": "next_work_api_agent_v1_work_next_post",
@@ -6643,6 +6730,44 @@
           }
         },
         "summary": "Api Answer Isos List"
+      }
+    },
+    "/api/answer-isos/page": {
+      "get": {
+        "operationId": "api_answer_isos_page_api_answer_isos_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Error",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Answer Isos Page"
       }
     },
     "/api/answer-isos/prune": {
@@ -7972,6 +8097,60 @@
         ]
       }
     },
+    "/api/cloudosd/page": {
+      "get": {
+        "operationId": "api_cloudosd_page_api_cloudosd_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": "0",
+              "title": "Archived",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "View"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Cloudosd Page"
+      }
+    },
     "/api/cloudosd/pe/package/{run_id}": {
       "get": {
         "operationId": "pe_package_api_cloudosd_pe_package__run_id__get",
@@ -8790,6 +8969,43 @@
         ]
       }
     },
+    "/api/cloudosd/runs/{run_id}/page": {
+      "get": {
+        "operationId": "api_cloudosd_run_detail_page_api_cloudosd_runs__run_id__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Cloudosd Run Detail Page"
+      }
+    },
     "/api/cloudosd/runs/{run_id}/provision": {
       "post": {
         "operationId": "provision_run_api_cloudosd_runs__run_id__provision_post",
@@ -9561,6 +9777,50 @@
         "summary": "Install Tracking Update"
       }
     },
+    "/api/install-tracking/page": {
+      "get": {
+        "operationId": "install_tracking_page_api_api_install_tracking_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Tracking Page Api"
+      }
+    },
     "/api/install-tracking/runs": {
       "get": {
         "operationId": "install_tracking_runs_api_api_install_tracking_runs_get",
@@ -10150,6 +10410,43 @@
         "summary": "Kill Job"
       }
     },
+    "/api/jobs/{job_id}/page": {
+      "get": {
+        "operationId": "api_job_detail_page_api_jobs__job_id__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Job Detail Page"
+      }
+    },
     "/api/jobs/{job_id}/resume-template-build": {
       "post": {
         "description": "Touch the resume-signal file so the paused template build can\ncontinue into sysprep. Returns 404 if the job has no pause gate,\n409 if it already resumed (file already exists).",
@@ -10365,6 +10662,22 @@
           }
         },
         "summary": "Api Monitoring Keytab Refresh Now"
+      }
+    },
+    "/api/monitoring/page": {
+      "get": {
+        "operationId": "api_monitoring_page_api_monitoring_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Monitoring Page"
       }
     },
     "/api/monitoring/runtime-services": {
@@ -11386,6 +11699,97 @@
           }
         },
         "summary": "Api Ubuntu V2 Template Build"
+      }
+    },
+    "/api/osdeploy/page": {
+      "get": {
+        "operationId": "api_osdeploy_page_api_osdeploy_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": "0",
+              "title": "Archived",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "View"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Osdeploy Page"
+      }
+    },
+    "/api/osdeploy/runs/{run_id}/page": {
+      "get": {
+        "operationId": "api_osdeploy_run_detail_page_api_osdeploy_runs__run_id__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Osdeploy Run Detail Page"
       }
     },
     "/api/osdeploy/v1/artifacts": {
@@ -12744,6 +13148,22 @@
         ]
       }
     },
+    "/api/provision/page": {
+      "get": {
+        "operationId": "api_provision_page_api_provision_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Provision Page"
+      }
+    },
     "/api/proxmox/bootstrap-permissions": {
       "post": {
         "description": "Repair Proxmox permissions and host-local OEM prerequisites over SSH.",
@@ -12809,6 +13229,25 @@
           }
         },
         "summary": "React Agent Download Bootstrap Token"
+      }
+    },
+    "/api/runs/page": {
+      "get": {
+        "operationId": "get_runs_page_api_runs_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Runs Page",
+        "tags": [
+          "api"
+        ]
       }
     },
     "/api/runs/{run_id}": {
@@ -12942,6 +13381,43 @@
         ]
       }
     },
+    "/api/runs/{run_id}/page": {
+      "get": {
+        "operationId": "api_run_detail_page_api_runs__run_id__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Run Detail Page"
+      }
+    },
     "/api/sequences": {
       "get": {
         "operationId": "api_sequences_list_api_sequences_get",
@@ -12990,6 +13466,60 @@
           }
         },
         "summary": "Api Sequences Create"
+      }
+    },
+    "/api/sequences/new/page": {
+      "get": {
+        "operationId": "api_sequence_new_page_api_sequences_new_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Sequence New Page"
+      }
+    },
+    "/api/sequences/page": {
+      "get": {
+        "operationId": "api_sequences_page_api_sequences_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Error",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Sequences Page"
       }
     },
     "/api/sequences/{seq_id}": {
@@ -13154,6 +13684,43 @@
           }
         },
         "summary": "Api Sequences Duplicate"
+      }
+    },
+    "/api/sequences/{seq_id}/edit/page": {
+      "get": {
+        "operationId": "api_sequence_edit_page_api_sequences__seq_id__edit_page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "seq_id",
+            "required": true,
+            "schema": {
+              "title": "Seq Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Sequence Edit Page"
       }
     },
     "/api/services": {
@@ -13561,6 +14128,216 @@
         "summary": "Setup State Api"
       }
     },
+    "/api/task-engine/page": {
+      "get": {
+        "operationId": "api_task_engine_page_api_task_engine_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Task Engine Page"
+      }
+    },
+    "/api/task-engine/sequences/list/page": {
+      "get": {
+        "operationId": "api_task_engine_sequences_list_page_api_task_engine_sequences_list_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target_os",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Os"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Task Engine Sequences List Page"
+      }
+    },
+    "/api/task-engine/sequences/new/page": {
+      "get": {
+        "operationId": "api_task_engine_sequence_new_page_api_task_engine_sequences_new_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legacy_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Legacy Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "template_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Template Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Task Engine Sequence New Page"
+      }
+    },
+    "/api/task-engine/sequences/templates/{template_id}/page": {
+      "get": {
+        "operationId": "api_task_engine_sequence_template_page_api_task_engine_sequences_templates__template_id__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Task Engine Sequence Template Page"
+      }
+    },
+    "/api/task-engine/sequences/{sequence_id}/edit/page": {
+      "get": {
+        "operationId": "api_task_engine_sequence_edit_page_api_task_engine_sequences__sequence_id__edit_page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sequence_id",
+            "required": true,
+            "schema": {
+              "title": "Sequence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Task Engine Sequence Edit Page"
+      }
+    },
+    "/api/template/page": {
+      "get": {
+        "operationId": "api_template_page_api_template_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Template Page"
+      }
+    },
     "/api/ubuntu/build-template": {
       "post": {
         "description": "Kick off the Ubuntu template build playbook for the given sequence.\nReturns a JSON payload with the launched job id; the UI redirects to\n/jobs/{job_id} client-side.",
@@ -13796,6 +14573,22 @@
           }
         },
         "summary": "Api Update Status"
+      }
+    },
+    "/api/utm-vms/page": {
+      "get": {
+        "operationId": "api_utm_vms_page_api_utm_vms_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Utm Vms Page"
       }
     },
     "/api/utm/answer-iso/preview": {

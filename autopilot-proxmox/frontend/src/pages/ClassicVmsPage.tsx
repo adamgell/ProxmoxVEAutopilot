@@ -51,7 +51,6 @@ export function ClassicVmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap
       title="Classic VM Table"
       section="Fleet"
       path="/react/legacy-vms"
-      action={<a className="action-link" href="/legacy/vms">Legacy</a>}
     >
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
       <section className="metric-strip" aria-label="Classic VM metrics">

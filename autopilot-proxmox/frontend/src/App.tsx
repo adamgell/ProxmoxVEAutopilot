@@ -9,6 +9,8 @@ import { HashesPage } from "./pages/HashesPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
+import { LoginPage, SetupPage } from "./pages/PublicPages";
+import { RetiredJinjaPage, retiredConfigForPath } from "./pages/RetiredJinjaPages";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
 import { VmsPage } from "./pages/VmsPage";
@@ -19,6 +21,12 @@ interface AppProps {
 
 export function App({ bootstrap }: AppProps) {
   const path = window.location.pathname;
+  if (path === "/auth/login") {
+    return <LoginPage bootstrap={bootstrap} />;
+  }
+  if (path === "/setup") {
+    return <SetupPage bootstrap={bootstrap} />;
+  }
   if (path === "/react/dashboard") {
     return <DashboardPage bootstrap={bootstrap} />;
   }
@@ -54,6 +62,10 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;
+  }
+  const retiredConfig = retiredConfigForPath(path);
+  if (retiredConfig) {
+    return <RetiredJinjaPage bootstrap={bootstrap} config={retiredConfig} />;
   }
   return <ShellIndexPage bootstrap={bootstrap} />;
 }

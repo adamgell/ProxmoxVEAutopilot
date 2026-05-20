@@ -331,13 +331,18 @@ describe("operator view models", () => {
     });
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    const row = rows[0];
+    expect(row).toBeDefined();
+    if (!row) {
+      throw new Error("expected one fleet row");
+    }
+    expect(row).toMatchObject({
       id: "agent-agent-only",
       name: "AGENT-ONLY",
       agentId: "agent-only",
       method: "agent"
     });
-    expect(fleetAgentLabel(rows[0]!)).toBe("Pending");
+    expect(fleetAgentLabel(row)).toBe("Pending");
   });
 
   test("fleetAgentLabel surfaces approved agents waiting for pairing", () => {
@@ -358,7 +363,10 @@ describe("operator view models", () => {
     })[0];
 
     expect(row).toBeDefined();
-    expect(fleetAgentLabel(row!)).toBe("Approved");
+    if (!row) {
+      throw new Error("expected approved fleet row");
+    }
+    expect(fleetAgentLabel(row)).toBe("Approved");
   });
 
   test("fleetAgentLabel surfaces upgrade availability before plain version", () => {
@@ -387,6 +395,9 @@ describe("operator view models", () => {
     })[0];
 
     expect(row).toBeDefined();
-    expect(fleetAgentLabel(row!)).toBe("Upgrade available");
+    if (!row) {
+      throw new Error("expected upgrade fleet row");
+    }
+    expect(fleetAgentLabel(row)).toBe("Upgrade available");
   });
 });

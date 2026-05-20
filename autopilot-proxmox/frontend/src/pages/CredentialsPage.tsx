@@ -116,7 +116,6 @@ export function CredentialsPage({ bootstrap }: { readonly bootstrap: AppBootstra
       title={title}
       section="Settings"
       path={path}
-      action={<a className="action-link" href="/legacy/credentials">Legacy</a>}
     >
       {message ? <p className="notice" role="status">{message}</p> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}

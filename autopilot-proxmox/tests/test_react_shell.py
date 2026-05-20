@@ -27,6 +27,26 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/credentials/new")
     assert not auth.is_exempt_path("/react/credentials/7/edit")
     assert not auth.is_exempt_path("/react/monitoring/settings")
+    assert not auth.is_exempt_path("/react/install-tracking")
+    assert not auth.is_exempt_path("/react/provision")
+    assert not auth.is_exempt_path("/react/cloudosd")
+    assert not auth.is_exempt_path("/react/cloudosd/runs/run-1")
+    assert not auth.is_exempt_path("/react/osdeploy")
+    assert not auth.is_exempt_path("/react/osdeploy/runs/run-1")
+    assert not auth.is_exempt_path("/react/template")
+    assert not auth.is_exempt_path("/react/jobs/job-1")
+    assert not auth.is_exempt_path("/react/runs")
+    assert not auth.is_exempt_path("/react/runs/1")
+    assert not auth.is_exempt_path("/react/task-engine")
+    assert not auth.is_exempt_path("/react/task-engine/sequences/list")
+    assert not auth.is_exempt_path("/react/task-engine/sequences/new")
+    assert not auth.is_exempt_path("/react/task-engine/sequences/templates/windows-baseline")
+    assert not auth.is_exempt_path("/react/task-engine/sequences/seq-1/edit")
+    assert not auth.is_exempt_path("/react/answer-isos")
+    assert not auth.is_exempt_path("/react/sequences")
+    assert not auth.is_exempt_path("/react/sequences/new")
+    assert not auth.is_exempt_path("/react/sequences/1/edit")
+    assert not auth.is_exempt_path("/react/utm-vms")
     assert not auth.is_exempt_path("/api/react/agent-download/bootstrap-token")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/legacy/dashboard")
@@ -61,6 +81,26 @@ def test_react_shell_auth_boundary_is_narrow():
     "/react/credentials/new",
     "/react/credentials/7/edit",
     "/react/monitoring/settings",
+    "/react/install-tracking",
+    "/react/provision",
+    "/react/cloudosd",
+    "/react/cloudosd/runs/run-1",
+    "/react/osdeploy",
+    "/react/osdeploy/runs/run-1",
+    "/react/template",
+    "/react/jobs/job-1",
+    "/react/runs",
+    "/react/runs/1",
+    "/react/task-engine",
+    "/react/task-engine/sequences/list",
+    "/react/task-engine/sequences/new",
+    "/react/task-engine/sequences/templates/windows-baseline",
+    "/react/task-engine/sequences/seq-1/edit",
+    "/react/answer-isos",
+    "/react/sequences",
+    "/react/sequences/new",
+    "/react/sequences/1/edit",
+    "/react/utm-vms",
 ])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     response = web_client.get(path)
@@ -68,6 +108,16 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     assert response.status_code == 200
     assert 'id="react-root"' in response.text
     assert 'data-react-shell="protected"' in response.text
+    assert "Proxmox VE Autopilot" in response.text
+
+
+@pytest.mark.parametrize("path", ["/auth/login", "/setup"])
+def test_public_react_shell_routes_render_public_bootstrap(web_client, path):
+    response = web_client.get(path)
+
+    assert response.status_code == 200
+    assert 'id="react-root"' in response.text
+    assert 'data-react-shell="public"' in response.text
     assert "Proxmox VE Autopilot" in response.text
 
 
@@ -86,6 +136,38 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
         ("/credentials/7/edit", "/react/credentials/7/edit"),
         ("/devices/108", "/react/vms/108"),
         ("/monitoring/settings", "/react/monitoring/settings"),
+        ("/install-tracking", "/react/install-tracking"),
+        ("/provision", "/react/provision"),
+        ("/cloudosd", "/react/cloudosd"),
+        ("/cloudosd/builder", "/react/cloudosd?view=builder"),
+        ("/cloudosd/cache", "/react/cloudosd?view=cache"),
+        ("/cloudosd/artifacts", "/react/cloudosd?view=artifacts"),
+        ("/osdcloud", "/react/cloudosd"),
+        ("/osdcloud/builder", "/react/cloudosd?view=builder"),
+        ("/osdcloud/cache", "/react/cloudosd?view=cache"),
+        ("/osdcloud/artifacts", "/react/cloudosd?view=artifacts"),
+        ("/cloudosd/runs/run-1", "/react/cloudosd/runs/run-1"),
+        ("/osdcloud/runs/run-1", "/react/cloudosd/runs/run-1"),
+        ("/osdeploy", "/react/osdeploy"),
+        ("/osdeploy/builder", "/react/osdeploy?view=builder"),
+        ("/osdeploy/cache", "/react/osdeploy?view=cache"),
+        ("/osdeploy/artifacts", "/react/osdeploy?view=artifacts"),
+        ("/osdeploy/runs/run-1", "/react/osdeploy/runs/run-1"),
+        ("/template", "/react/template"),
+        ("/jobs/job-1", "/react/jobs/job-1"),
+        ("/runs", "/react/runs"),
+        ("/runs/1", "/react/runs/1"),
+        ("/task-engine", "/react/task-engine"),
+        ("/task-engine/sequences/list", "/react/task-engine/sequences/list"),
+        ("/task-engine/sequences/new", "/react/task-engine/sequences/new"),
+        ("/task-engine/sequences/templates/windows-baseline", "/react/task-engine/sequences/templates/windows-baseline"),
+        ("/task-engine/sequences/seq-1/edit", "/react/task-engine/sequences/seq-1/edit"),
+        ("/answer-isos", "/react/answer-isos"),
+        ("/sequences", "/react/sequences"),
+        ("/sequences/new", "/react/sequences/new"),
+        ("/sequences/1/edit", "/react/sequences/1/edit"),
+        ("/monitoring", "/react/monitoring"),
+        ("/vms/108/console", "/react/vms/108?action=console"),
     ],
 )
 def test_primary_operator_paths_redirect_to_react(web_client, path, target):
@@ -93,25 +175,6 @@ def test_primary_operator_paths_redirect_to_react(web_client, path, target):
 
     assert response.status_code == 302
     assert response.headers["location"] == target
-
-
-@pytest.mark.parametrize(
-    ("path", "text"),
-    [
-        ("/legacy/dashboard", "Proxmox VE Autopilot"),
-        ("/legacy/jobs", "No jobs yet"),
-        ("/legacy/cloud", "Cloud Devices"),
-        ("/legacy/hashes", "Hardware Hashes"),
-        ("/legacy/files", "MSI Files"),
-        ("/legacy/settings", "Settings"),
-        ("/legacy/credentials", "Credentials"),
-    ],
-)
-def test_legacy_operator_pages_remain_available(web_client, path, text):
-    response = web_client.get(path)
-
-    assert response.status_code == 200
-    assert text in response.text
 
 
 @pytest.mark.parametrize(
@@ -124,15 +187,18 @@ def test_legacy_operator_pages_remain_available(web_client, path, text):
         ("/legacy/files", "/react/files"),
         ("/legacy/settings", "/react/settings"),
         ("/legacy/credentials", "/react/credentials"),
+        ("/legacy/credentials/new", "/react/credentials/new"),
+        ("/legacy/credentials/7/edit", "/react/credentials/7/edit"),
+        ("/legacy/vms", "/react/legacy-vms"),
+        ("/legacy/devices/108", "/react/vms/108"),
+        ("/legacy/monitoring/settings", "/react/monitoring/settings"),
     ],
 )
-def test_legacy_operator_pages_link_back_to_react(web_client, path, target):
-    response = web_client.get(path)
+def test_legacy_operator_pages_redirect_to_react(web_client, path, target):
+    response = web_client.get(path, follow_redirects=False)
 
-    assert response.status_code == 200
-    assert 'id="uiModeSwitch"' in response.text
-    assert f'href="{target}"' in response.text
-    assert "React UI" in response.text
+    assert response.status_code == 302
+    assert response.headers["location"] == target
 
 
 def test_remaining_react_read_apis_return_stable_shapes(web_client):
@@ -155,6 +221,29 @@ def test_remaining_react_read_apis_return_stable_shapes(web_client):
     monitoring = web_client.get("/api/monitoring/settings/full")
     assert monitoring.status_code == 200
     assert set(monitoring.json()) >= {"settings", "search_ous", "domain_creds", "keytab"}
+
+
+@pytest.mark.parametrize(
+    ("path", "keys"),
+    [
+        ("/api/install-tracking/page", {"tracking"}),
+        ("/api/provision/page", {"defaults", "sequences", "cloudosd_catalog", "osdeploy_catalog"}),
+        ("/api/cloudosd/page", {"runs", "artifacts", "cloudosd_cache", "view"}),
+        ("/api/osdeploy/page", {"runs", "artifacts", "osdeploy_cache", "view"}),
+        ("/api/template/page", {"profiles", "ubuntu_sequences", "hypervisor_type", "utm_iso_dir"}),
+        ("/api/jobs/missing-job/page", {"job", "log", "stream_url"}),
+        ("/api/runs/page", {"runs"}),
+        ("/api/task-engine/page", {"sequences", "runs", "flow_templates"}),
+        ("/api/answer-isos/page", {"rows", "error"}),
+        ("/api/sequences/page", {"sequences"}),
+        ("/api/utm-vms/page", {"vms", "host_summary", "isos"}),
+    ],
+)
+def test_remaining_react_page_payload_apis_return_stable_shapes(web_client, path, keys):
+    response = web_client.get(path)
+
+    assert response.status_code == 200
+    assert set(response.json()) >= keys
 
 
 def test_react_agent_download_bootstrap_token_returns_configured_proof(web_client, monkeypatch, tmp_path):

@@ -340,9 +340,10 @@ test("renders the React shell without layout overlap", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Operator workspace" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "OSDCloud Desktop Jinja", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
+  await expect(page.getByText("Jinja")).toHaveCount(0);
 
-  const hero = await page.locator(".workspace__topbar").boundingBox();
+  const hero = await page.locator(".workspace__globalbar").boundingBox();
   const panel = await page.locator(".workspace__content").boundingBox();
 
   expect(hero).not.toBeNull();
@@ -364,7 +365,7 @@ for (const viewport of [
 
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
     await expect(page.getByText("PC-001")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Provision", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Launchpad").getByRole("link", { name: "Provision", exact: true })).toHaveAttribute("href", "/react/provision");
 
     const header = await page.locator(".page-head").boundingBox();
     const metrics = await page.locator(".metric-strip").first().boundingBox();

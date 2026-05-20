@@ -764,21 +764,7 @@ async def auth_login(request: Request, next: str = "/",
         tenant_label = cfg["tenant_id"]
     from urllib.parse import quote as _q
     safe_next = _auth.safe_next_url(next)
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "error": error,
-        # URL-encode so a next path containing ?&= survives being
-        # re-emitted into the Sign-in link's query string.
-        "next_url": _q(safe_next, safe=""),
-        "tenant_label": tenant_label,
-        "auth_configured": entra_configured or local_enabled,
-        "entra_configured": entra_configured,
-        "local_enabled": local_enabled,
-        "auth_mode": auth_mode,
-        "setup_url": "/setup",
-        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
-        "build_time": _APP_VERSION.get("build_time", ""),
-    })
+    return _render_public_react_shell(request)
 
 
 @app.get("/auth/login/start")
@@ -1960,13 +1946,7 @@ async def setup_promote_artifacts(body: _PromoteSetupArtifactsBody | None = None
 
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
-    data = _setup_readiness()
-    return templates.TemplateResponse("setup.html", {
-        "request": request,
-        "setup": data,
-        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
-        "build_time": _APP_VERSION.get("build_time", ""),
-    })
+    return _render_public_react_shell(request)
 
 
 _BLISS_JPG = BASE_DIR / "files" / "bliss.jpg"
@@ -5089,6 +5069,12 @@ def _primary_ui_redirect(path: str) -> RedirectResponse:
     return RedirectResponse(url=path, status_code=302)
 
 
+def _redirect_current_query(target: str, request: Request | None = None) -> RedirectResponse:
+    if request and request.url.query and "?" not in target:
+        target = f"{target}?{request.url.query}"
+    return _primary_ui_redirect(target)
+
+
 def _render_legacy_dashboard(request: Request):
     # Every data-bearing module on the dashboard fetches via JSON
     # endpoints so the page can refresh live. We only pass the
@@ -5112,10 +5098,10 @@ async def home(request: Request):
 
 @app.get("/legacy/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_dashboard(request: Request):
-    return _render_legacy_dashboard(request)
+    return _primary_ui_redirect("/react/dashboard")
 
 
-def _render_react_shell(request: Request):
+def _render_react_shell(request: Request, *, shell_kind: str = "protected"):
     build_sha = (_APP_VERSION.get("sha_short") or "unknown")
     build_time = _APP_VERSION.get("build_time", "")
     assets = _react_asset_tags(f"{build_sha}-{build_time}")
@@ -5133,9 +5119,14 @@ def _render_react_shell(request: Request):
         "build_time": build_time,
         "user_name": user_name,
         "user_email": user_email,
+        "shell_kind": shell_kind,
     })
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+def _render_public_react_shell(request: Request):
+    return _render_react_shell(request, shell_kind="public")
 
 
 @app.get("/react-shell", response_class=HTMLResponse, include_in_schema=False)
@@ -5218,17 +5209,27 @@ async def react_monitoring_settings_shell(request: Request):
     return _render_react_shell(request)
 
 
+@app.get("/react/{react_path:path}", response_class=HTMLResponse, include_in_schema=False)
+async def react_operator_shell(request: Request, react_path: str):
+    return _render_react_shell(request)
+
+
 @app.get("/install-tracking", response_class=HTMLResponse)
 async def install_tracking_page(request: Request, run_id: str | None = None):
-    return templates.TemplateResponse("install_tracking.html", {
-        "request": request,
-        "tracking": _install_tracking_payload(run_id),
-    })
+    target = "/react/install-tracking"
+    if run_id:
+        target = f"{target}?run_id={quote_plus(run_id)}"
+    return _primary_ui_redirect(target)
 
 
 @app.get("/api/install-tracking")
 async def install_tracking_api(run_id: str | None = None):
     return _install_tracking_payload(run_id)
+
+
+@app.get("/api/install-tracking/page")
+async def install_tracking_page_api(run_id: str | None = None):
+    return {"tracking": _install_tracking_payload(run_id)}
 
 
 @app.get("/api/install-tracking/runs")
@@ -5306,6 +5307,10 @@ async def install_tracking_refresh_evidence(run_id: str):
 
 @app.get("/provision", response_class=HTMLResponse)
 async def provision_page(request: Request):
+    return _primary_ui_redirect("/react/provision")
+
+
+def _provision_page_payload() -> dict:
     from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
 
     cfg = _load_vars()
@@ -5387,8 +5392,7 @@ async def provision_page(request: Request):
         row["boot_modes"] = _legacy_sequence_boot_modes(full_sequence)
         if row["boot_modes"]:
             sequence_rows.append(row)
-    return templates.TemplateResponse("provision.html", {
-        "request": request,
+    return {
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
@@ -5411,7 +5415,12 @@ async def provision_page(request: Request):
         "cloudosd_cache": cloudosd_cache_payload,
         "osdeploy_cache": osdeploy_cache_payload,
         "ubuntu_v2_sequences": ubuntu_v2_sequences,
-    })
+    }
+
+
+@app.get("/api/provision/page")
+async def api_provision_page():
+    return _provision_page_payload()
 
 
 @app.get("/osdcloud/artifacts", response_class=HTMLResponse)
@@ -5423,6 +5432,19 @@ async def provision_page(request: Request):
 @app.get("/cloudosd/builder", response_class=HTMLResponse)
 @app.get("/cloudosd", response_class=HTMLResponse)
 async def cloudosd_page(request: Request, archived: str = "0"):
+    view = {
+        "/osdcloud/builder": "builder",
+        "/osdcloud/cache": "cache",
+        "/osdcloud/artifacts": "artifacts",
+        "/cloudosd/builder": "builder",
+        "/cloudosd/cache": "cache",
+        "/cloudosd/artifacts": "artifacts",
+    }.get(request.url.path, "")
+    suffix = f"?view={view}" if view else ""
+    return _primary_ui_redirect(f"/react/cloudosd{suffix}")
+
+
+def _cloudosd_page_payload(request: Request | None = None, archived: str = "0", view: str | None = None) -> dict:
     from web import agent_telemetry_pg, cloudosd_cache, cloudosd_endpoints, cloudosd_pg, db_pg
 
     cfg = _load_vars()
@@ -5433,7 +5455,7 @@ async def cloudosd_page(request: Request, archived: str = "0"):
         "/cloudosd/builder": "builder",
         "/cloudosd/cache": "cache",
         "/cloudosd/artifacts": "artifacts",
-    }.get(request.url.path, "overview")
+    }.get(request.url.path if request else "", view or "overview")
     show_archived = str(archived or "").lower() in {"1", "true", "yes", "on"}
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
@@ -5479,21 +5501,26 @@ async def cloudosd_page(request: Request, archived: str = "0"):
     proxmox_options = cloudosd_endpoints.proxmox_options_payload()
     catalog = cloudosd_endpoints.catalog_payload()
     ready_artifacts = [artifact for artifact in artifacts if artifact and artifact.get("ready")]
-    return templates.TemplateResponse("cloudosd.html", {
-        "request": request,
+    return {
         "artifacts": artifacts,
         "runs": runs,
         "ready_artifacts": ready_artifacts,
         "active_runs": active_runs,
         "stale_failed_runs": stale_failed_runs,
         "cloudosd_cache": cache_payload,
+        "view": cloudosd_view,
         "cloudosd_view": cloudosd_view,
         "show_archived": show_archived,
         "catalog": catalog,
         "assets_status": assets_status,
         "proxmox_options": proxmox_options,
         "proxmox_node": cfg.get("proxmox_node", "pve"),
-    })
+    }
+
+
+@app.get("/api/cloudosd/page")
+async def api_cloudosd_page(request: Request, archived: str = "0", view: str | None = None):
+    return _cloudosd_page_payload(request, archived=archived, view=view)
 
 
 @app.get("/osdeploy/artifacts", response_class=HTMLResponse)
@@ -5501,6 +5528,16 @@ async def cloudosd_page(request: Request, archived: str = "0"):
 @app.get("/osdeploy/builder", response_class=HTMLResponse)
 @app.get("/osdeploy", response_class=HTMLResponse)
 async def osdeploy_page(request: Request, archived: str = "0"):
+    view = {
+        "/osdeploy/builder": "builder",
+        "/osdeploy/cache": "cache",
+        "/osdeploy/artifacts": "artifacts",
+    }.get(request.url.path, "")
+    suffix = f"?view={view}" if view else ""
+    return _primary_ui_redirect(f"/react/osdeploy{suffix}")
+
+
+def _osdeploy_page_payload(request: Request | None = None, archived: str = "0", view: str | None = None) -> dict:
     from web import agent_telemetry_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, sequences_pg
 
     cfg = _load_vars()
@@ -5508,7 +5545,7 @@ async def osdeploy_page(request: Request, archived: str = "0"):
         "/osdeploy/builder": "builder",
         "/osdeploy/cache": "cache",
         "/osdeploy/artifacts": "artifacts",
-    }.get(request.url.path, "overview")
+    }.get(request.url.path if request else "", view or "overview")
     show_archived = str(archived or "").lower() in {"1", "true", "yes", "on"}
     with db_pg.connection(_database_url()) as conn:
         osdeploy_pg.init(conn)
@@ -5527,14 +5564,14 @@ async def osdeploy_page(request: Request, archived: str = "0"):
     proxmox_options = osdeploy_endpoints.proxmox_options_payload()
     build_defaults = osdeploy_endpoints.build_defaults_payload()
     ready_artifacts = [artifact for artifact in artifacts if artifact and artifact.get("ready")]
-    return templates.TemplateResponse("osdeploy.html", {
-        "request": request,
+    return {
         "artifacts": artifacts,
         "runs": runs,
         "ready_artifacts": ready_artifacts,
         "active_runs": active_runs,
         "stale_failed_runs": stale_failed_runs,
         "osdeploy_cache": cache_payload,
+        "view": osdeploy_view,
         "osdeploy_view": osdeploy_view,
         "show_archived": show_archived,
         "catalog": catalog,
@@ -5542,11 +5579,20 @@ async def osdeploy_page(request: Request, archived: str = "0"):
         "osdeploy_build_defaults": build_defaults,
         "osdeploy_credentials": credentials,
         "proxmox_node": cfg.get("proxmox_node", "pve"),
-    })
+    }
+
+
+@app.get("/api/osdeploy/page")
+async def api_osdeploy_page(request: Request, archived: str = "0", view: str | None = None):
+    return _osdeploy_page_payload(request, archived=archived, view=view)
 
 
 @app.get("/osdeploy/runs/{run_id}", response_class=HTMLResponse)
 async def osdeploy_run_detail_page(request: Request, run_id: str):
+    return _primary_ui_redirect(f"/react/osdeploy/runs/{quote_plus(run_id)}")
+
+
+def _osdeploy_run_detail_payload(run_id: str) -> dict:
     from web import agent_telemetry_pg, db_pg, osdeploy_endpoints, osdeploy_pg
 
     with db_pg.connection(_database_url()) as conn:
@@ -5562,20 +5608,28 @@ async def osdeploy_run_detail_page(request: Request, run_id: str):
         readiness = osdeploy_pg.get_readiness(conn, run_id)
         v2_steps = ts_engine_pg.list_run_steps(conn, run_id)
         heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
-    return templates.TemplateResponse("osdeploy_run_detail.html", {
-        "request": request,
+    return {
         "run": run,
         "artifact": artifact,
         "events": events,
         "readiness": readiness,
         "v2_steps": v2_steps,
         "heartbeat": heartbeat,
-    })
+    }
+
+
+@app.get("/api/osdeploy/runs/{run_id}/page")
+async def api_osdeploy_run_detail_page(run_id: str):
+    return _osdeploy_run_detail_payload(run_id)
 
 
 @app.get("/osdcloud/runs/{run_id}", response_class=HTMLResponse)
 @app.get("/cloudosd/runs/{run_id}", response_class=HTMLResponse)
 async def cloudosd_run_detail_page(request: Request, run_id: str):
+    return _primary_ui_redirect(f"/react/cloudosd/runs/{quote_plus(run_id)}")
+
+
+def _cloudosd_run_detail_payload(run_id: str) -> dict:
     from web import agent_telemetry_pg, cloudosd_endpoints, cloudosd_pg, db_pg
 
     with db_pg.connection(_database_url()) as conn:
@@ -5624,8 +5678,7 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         job for job in job_manager.list_jobs()
         if (job.get("args") or {}).get("cloudosd_run_id") == run_id
     ]
-    return templates.TemplateResponse("cloudosd_run_detail.html", {
-        "request": request,
+    return {
         "run": run,
         "artifact": artifact,
         "latest_heartbeat": heartbeat,
@@ -5641,21 +5694,34 @@ async def cloudosd_run_detail_page(request: Request, run_id: str):
         "os_settings": cloudosd_pg.os_settings(run),
         "user_settings": cloudosd_pg.user_settings(run),
         "task": cloudosd_pg.task_settings(run),
-    })
+    }
+
+
+@app.get("/api/cloudosd/runs/{run_id}/page")
+async def api_cloudosd_run_detail_page(run_id: str):
+    return _cloudosd_run_detail_payload(run_id)
 
 
 @app.get("/template", response_class=HTMLResponse)
 async def template_page(request: Request):
+    return _primary_ui_redirect("/react/template")
+
+
+def _template_page_payload() -> dict:
     all_seqs = sequences_db.list_sequences(SEQUENCES_DB)
     ubuntu_sequences = [s for s in all_seqs if s.get("target_os") == "ubuntu"]
     current_vars = _load_vars()
-    return templates.TemplateResponse("template.html", {
-        "request": request,
+    return {
         "profiles": load_oem_profiles(),
         "ubuntu_sequences": ubuntu_sequences,
         "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
         "utm_iso_dir": current_vars.get("utm_iso_dir", "~/UTM-ISOs"),
-    })
+    }
+
+
+@app.get("/api/template/page")
+async def api_template_page():
+    return _template_page_payload()
 
 
 def _hashes_payload() -> dict:
@@ -5689,7 +5755,7 @@ async def hashes_page(request: Request):
 
 @app.get("/legacy/hashes", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_hashes_page(request: Request, uploaded: str = "", error: str = ""):
-    return _render_legacy_hashes(request, uploaded=uploaded, error=error)
+    return _primary_ui_redirect("/react/hashes")
 
 
 def _files_payload() -> dict:
@@ -5718,7 +5784,7 @@ async def files_page(request: Request):
 
 @app.get("/legacy/files", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_files_page(request: Request, uploaded: str = "", error: str = ""):
-    return _render_legacy_files(request, uploaded=uploaded, error=error)
+    return _primary_ui_redirect("/react/files")
 
 
 def _render_legacy_jobs(request: Request):
@@ -5736,7 +5802,7 @@ async def jobs_page(request: Request):
 
 @app.get("/legacy/jobs", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_jobs_page(request: Request):
-    return _render_legacy_jobs(request)
+    return _primary_ui_redirect("/react/jobs")
 
 
 def _format_memory(mb) -> str:
@@ -5992,18 +6058,35 @@ def _detect_template_pause(job: dict, log_content: str) -> bool:
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_detail_page(request: Request, job_id: str):
+    return _primary_ui_redirect(f"/react/jobs/{quote_plus(job_id)}")
+
+
+def _job_detail_page_payload(job_id: str) -> dict:
     job = job_manager.get_job(job_id)
     if not job:
-        return HTMLResponse("<h1>Job not found</h1>", status_code=404)
+        return {
+            "job": None,
+            "plan": None,
+            "log": [],
+            "log_content": "",
+            "stream_url": f"/api/jobs/{job_id}/stream",
+            "error": "Job not found",
+        }
     plan = _build_job_plan(job)
     log_content = job_manager.get_log(job_id)
     job["paused"] = _detect_template_pause(job, log_content)
-    return templates.TemplateResponse("job_detail.html", {
-        "request": request,
+    return {
         "job": job,
         "plan": plan,
+        "log": log_content.splitlines(),
         "log_content": log_content,
-    })
+        "stream_url": f"/api/jobs/{job_id}/stream",
+    }
+
+
+@app.get("/api/jobs/{job_id}/page")
+async def api_job_detail_page(job_id: str):
+    return _job_detail_page_payload(job_id)
 
 
 def _settings_payload(saved: str = "") -> dict:
@@ -6094,7 +6177,7 @@ async def settings_page(request: Request, saved: str = ""):
 
 @app.get("/legacy/settings", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_settings_page(request: Request, saved: str = ""):
-    return _render_legacy_settings(request, saved=saved)
+    return _primary_ui_redirect("/react/settings")
 
 
 @app.get("/api/settings/node-options/{node}")
@@ -8061,7 +8144,10 @@ async def vms_page(request: Request):
 
 @app.get("/legacy/vms", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_vms_page(request: Request, error: str = ""):
-    return await _render_legacy_vms(request, error=error)
+    current_vars = _load_vars()
+    if current_vars.get("hypervisor_type") == "utm":
+        return _primary_ui_redirect("/react/utm-vms")
+    return _primary_ui_redirect("/react/legacy-vms")
 
 
 # --- API Endpoints ---
@@ -9972,32 +10058,27 @@ async def utm_host_summary():
     return result
 
 
+@app.get("/api/utm-vms/page")
+async def api_utm_vms_page():
+    vms = await utm_list_vms()
+    isos = await utm_list_isos()
+    host_summary = await utm_host_summary()
+    return {
+        "vms": vms.get("vms", []) if isinstance(vms, dict) else [],
+        "isos": isos.get("isos", []) if isinstance(isos, dict) else [],
+        "host_summary": host_summary if isinstance(host_summary, dict) else {},
+    }
+
+
 @app.get("/api/vms/{vmid}/console")
 async def vm_console(vmid: int):
     """Redirect to the embedded noVNC console page."""
-    return RedirectResponse(f"/vms/{vmid}/console")
+    return RedirectResponse(f"/react/vms/{vmid}?action=console")
 
 
 @app.get("/vms/{vmid}/console", response_class=HTMLResponse)
 async def vm_console_page(request: Request, vmid: int):
-    try:
-        node = _resolve_vm_node(vmid)
-    except Exception:
-        node = _configured_proxmox_node()
-    # VM 'name' in Proxmox is the device serial for provisioned VMs (the
-    # provisioning flow renames it to the generated serial post-clone).
-    serial = ""
-    try:
-        vm_cfg = _proxmox_api(f"/nodes/{node}/qemu/{vmid}/config")
-        serial = (vm_cfg or {}).get("name", "") if isinstance(vm_cfg, dict) else ""
-    except Exception:
-        pass
-    return templates.TemplateResponse("console.html", {
-        "request": request,
-        "vmid": vmid,
-        "node": node,
-        "serial": serial,
-    })
+    return _primary_ui_redirect(f"/react/vms/{vmid}?action=console")
 
 
 @app.get("/api/vms/{vmid}/vnc-init")
@@ -12678,7 +12759,7 @@ async def cloud_page(request: Request):
 
 @app.get("/legacy/cloud", response_class=HTMLResponse, include_in_schema=False)
 async def legacy_cloud_page(request: Request):
-    return _render_legacy_cloud(request)
+    return _primary_ui_redirect("/react/devices")
 
 
 @app.post("/api/cloud/sync")
@@ -12993,6 +13074,24 @@ class _V2BuilderSequenceIn(BaseModel):
     nodes: list[_V2BuilderNodeIn] = Field(default_factory=list)
 
 
+@app.get("/api/sequences/page")
+def api_sequences_page(error: str = ""):
+    seqs = sequences_db.list_sequences(SEQUENCES_DB)
+    return {
+        "sequences": _sequence_rows_for_ui(seqs),
+        "error": error,
+    }
+
+
+@app.get("/api/sequences/new/page")
+def api_sequence_new_page():
+    return {
+        "sequence": None,
+        "seq": None,
+        "oem_profiles": load_oem_profiles(),
+    }
+
+
 @app.get("/api/sequences")
 def api_sequences_list():
     return sequences_db.list_sequences(SEQUENCES_DB)
@@ -13182,32 +13281,39 @@ def _step_counts(steps: list[dict]) -> dict:
 
 @app.get("/runs", response_class=HTMLResponse)
 def runs_page(request: Request):
+    return _primary_ui_redirect("/react/runs")
+
+
+def _runs_page_payload() -> dict:
     runs = sequences_db.list_provisioning_runs(
         SEQUENCES_DB, provision_path="winpe",
     )
-    return templates.TemplateResponse(
-        "runs.html",
-        {"request": request, "runs": runs},
-    )
+    return {"runs": runs}
 
 
 @app.get("/runs/{run_id}", response_class=HTMLResponse)
 def run_detail_page(run_id: int, request: Request):
+    return _primary_ui_redirect(f"/react/runs/{run_id}")
+
+
+def _run_detail_page_payload(run_id: int) -> dict:
     run = sequences_db.get_provisioning_run(SEQUENCES_DB, run_id)
     if run is None:
         raise HTTPException(status_code=404)
     seq = sequences_db.get_sequence(SEQUENCES_DB, run["sequence_id"])
     steps = _run_steps_for_display(run, seq)
     run = {**run, "sequence_name": (seq or {}).get("name", "")}
-    return templates.TemplateResponse(
-        "run_detail.html",
-        {
-            "request": request,
-            "run": run,
-            "steps": steps,
-            "step_counts": _step_counts(steps),
-        },
-    )
+    return {
+        "run": run,
+        "steps": steps,
+        "step_counts": _step_counts(steps),
+        "summary": _step_counts(steps),
+    }
+
+
+@app.get("/api/runs/{run_id}/page")
+def api_run_detail_page(run_id: int):
+    return _run_detail_page_payload(run_id)
 
 
 _V2_STEP_TEMPLATES = [
@@ -14152,93 +14258,88 @@ def _save_v2_builder_sequence(conn, sequence_id: str, body: _V2BuilderSequenceIn
         raise
 
 
-@app.get("/task-engine", response_class=HTMLResponse)
-def task_engine_page(request: Request):
+def _task_engine_page_payload() -> dict:
     from web import cloudosd_pg, db_pg, ts_engine_pg
 
-    cloudosd_step_kinds = {
-        "cloudosd_preflight",
-        "cloudosd_deploy_os",
-        "stage_ad_domain_join_unattend",
-        "cloudosd_validate_offline_os",
-        "stage_osd_client",
-        "stage_autopilot_agent",
-        "capture_autopilot_hash",
-        "wait_agent_heartbeat",
-        "verify_ad_domain_join",
-    }
-    with db_pg.connection(_database_url()) as conn:
-        cloudosd_pg.sync_all_ts_progress(conn)
-        sequences = ts_engine_pg.list_sequences(conn)
-        for seq in sequences:
-            seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
-        runs = ts_engine_pg.list_runs(conn)
-        cloudosd_runs = []
-        for run in runs:
-            steps = ts_engine_pg.list_run_steps(conn, run["id"])
-            run["steps"] = steps
-            sequence_name = str(run.get("sequence_name") or "")
-            if (
-                sequence_name.startswith("OSDCloud deployment")
-                or sequence_name.startswith("CloudOSD deployment")
-                or any(step.get("kind") in cloudosd_step_kinds for step in steps)
-            ):
-                cloudosd_runs.append(run)
-        content_items = ts_engine_pg.list_content_items(conn)
-        manifest_items = ts_engine_pg.list_recent_manifest_items(conn)
-    legacy_sequences = sequences_db.list_sequences(SEQUENCES_DB)
-    return templates.TemplateResponse(
-        "task_engine.html",
-        {
-            "request": request,
-            "sequences": sequences,
-            "runs": runs,
-            "cloudosd_runs": cloudosd_runs,
-            "content_items": content_items,
-            "manifest_items": manifest_items,
-            "legacy_sequences": legacy_sequences,
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            cloudosd_pg.sync_all_ts_progress(conn)
+            sequences = ts_engine_pg.list_sequences(conn)
+            for seq in sequences:
+                seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
+            runs = ts_engine_pg.list_runs(conn)
+            content_items = ts_engine_pg.list_content_items(conn)
+            manifest_items = ts_engine_pg.list_recent_manifest_items(conn)
+    except Exception as exc:
+        return {
+            "sequences": [],
+            "runs": [],
+            "cloudosd_runs": [],
+            "content_items": [],
+            "manifest_items": [],
+            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
             "flow_templates": _v2_flow_templates(),
-        },
-    )
+            "error": str(exc),
+        }
+    cloudosd_runs = [
+        run for run in runs
+        if str(run.get("sequence_name") or "").startswith(("OSDCloud deployment", "CloudOSD deployment"))
+    ]
+    return {
+        "sequences": sequences,
+        "runs": runs,
+        "cloudosd_runs": cloudosd_runs,
+        "content_items": content_items,
+        "manifest_items": manifest_items,
+        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
+        "flow_templates": _v2_flow_templates(),
+    }
+
+
+@app.get("/api/task-engine/page")
+def api_task_engine_page():
+    return _task_engine_page_payload()
+
+
+@app.get("/task-engine", response_class=HTMLResponse)
+def task_engine_page(request: Request):
+    return _primary_ui_redirect("/react/task-engine")
+
+
+@app.get("/api/task-engine/sequences/list/page")
+def api_task_engine_sequences_list_page(target_os: str | None = None):
+    payload = _task_engine_page_payload()
+    target_filter = (target_os or "").strip().lower()
+    if target_filter:
+        payload = {
+            **payload,
+            "sequences": [
+                seq for seq in payload.get("sequences", [])
+                if (seq.get("target_os") or "windows") == target_filter
+            ],
+            "flow_templates": [
+                template for template in payload.get("flow_templates", [])
+                if (template.get("target_os") or "windows") == target_filter
+            ],
+            "target_os_filter": target_filter,
+        }
+    return payload
 
 
 @app.get("/task-engine/sequences/list", response_class=HTMLResponse)
 def task_engine_sequences_list(request: Request, target_os: str | None = None):
-    from web import db_pg, ts_engine_pg
-
-    with db_pg.connection(_database_url()) as conn:
-        sequences = ts_engine_pg.list_sequences(conn)
-        target_filter = (target_os or "").strip().lower()
-        if target_filter:
-            sequences = [
-                seq for seq in sequences
-                if (seq.get("target_os") or "windows") == target_filter
-            ]
-        for seq in sequences:
-            seq["steps"] = ts_engine_pg.list_sequence_steps(conn, seq["id"])
-    templates_for_ui = _v2_flow_templates()
-    if target_filter:
-        templates_for_ui = [
-            template for template in templates_for_ui
-            if (template.get("target_os") or "windows") == target_filter
-        ]
-    return templates.TemplateResponse(
-        "task_engine_sequences_list.html",
-        {
-            "request": request,
-            "sequences": sequences,
-            "flow_templates": templates_for_ui,
-            "target_os_filter": target_filter,
-        },
-    )
+    target = "/react/task-engine/sequences/list"
+    if target_os:
+        target = f"{target}?target_os={quote_plus(target_os)}"
+    return _primary_ui_redirect(target)
 
 
-@app.get("/task-engine/sequences/new", response_class=HTMLResponse)
-def task_engine_sequence_new(
-    request: Request,
-    legacy_id: int | None = None,
-    template_id: str | None = None,
-):
+@app.get("/api/task-engine/sequences/new/page")
+def api_task_engine_sequence_new_page(legacy_id: int | None = None, template_id: str | None = None):
+    return _task_engine_sequence_new_payload(legacy_id=legacy_id, template_id=template_id)
+
+
+def _task_engine_sequence_new_payload(legacy_id: int | None = None, template_id: str | None = None) -> dict:
     legacy = sequences_db.get_sequence(SEQUENCES_DB, legacy_id) if legacy_id else None
     flow_template = _v2_flow_template(template_id)
     if template_id and not flow_template:
@@ -14263,37 +14364,52 @@ def task_engine_sequence_new(
             "enabled": True,
         }
         nodes = _legacy_sequence_to_v2_nodes(legacy)
-    return templates.TemplateResponse(
-        "task_engine_builder.html",
-        {
-            "request": request,
-            "sequence": sequence,
-            "nodes": nodes,
-            "step_templates": _V2_STEP_TEMPLATES,
-            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
-            "legacy_source_id": legacy_id,
-            "flow_templates": _v2_flow_templates(),
-            "template_source": flow_template,
-        },
-    )
+    return {
+        "sequence": sequence,
+        "nodes": nodes,
+        "step_templates": _V2_STEP_TEMPLATES,
+        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
+        "legacy_source_id": legacy_id,
+        "flow_templates": _v2_flow_templates(),
+        "template_source": flow_template,
+    }
+
+
+@app.get("/task-engine/sequences/new", response_class=HTMLResponse)
+def task_engine_sequence_new(
+    request: Request,
+    legacy_id: int | None = None,
+    template_id: str | None = None,
+):
+    query = []
+    if legacy_id:
+        query.append(f"legacy_id={legacy_id}")
+    if template_id:
+        query.append(f"template_id={quote_plus(template_id)}")
+    suffix = f"?{'&'.join(query)}" if query else ""
+    return _primary_ui_redirect(f"/react/task-engine/sequences/new{suffix}")
 
 
 @app.get("/task-engine/sequences/templates/{template_id}", response_class=HTMLResponse)
 def task_engine_sequence_template_detail(request: Request, template_id: str):
+    return _primary_ui_redirect(f"/react/task-engine/sequences/templates/{quote_plus(template_id)}")
+
+
+@app.get("/api/task-engine/sequences/templates/{template_id}/page")
+def api_task_engine_sequence_template_page(template_id: str):
     flow_template = _v2_flow_template(template_id)
     if not flow_template:
         raise HTTPException(status_code=404, detail="v2 flow template not found")
-    return templates.TemplateResponse(
-        "task_engine_sequence_template.html",
-        {
-            "request": request,
-            "template": flow_template,
-        },
-    )
+    return {"template": flow_template}
 
 
 @app.get("/task-engine/sequences/{sequence_id}/edit", response_class=HTMLResponse)
 def task_engine_sequence_edit(request: Request, sequence_id: str):
+    return _primary_ui_redirect(f"/react/task-engine/sequences/{quote_plus(sequence_id)}/edit")
+
+
+@app.get("/api/task-engine/sequences/{sequence_id}/edit/page")
+def api_task_engine_sequence_edit_page(sequence_id: str):
     from web import db_pg, ts_engine_pg
 
     with db_pg.connection(_database_url()) as conn:
@@ -14301,19 +14417,15 @@ def task_engine_sequence_edit(request: Request, sequence_id: str):
         if not sequence:
             raise HTTPException(status_code=404, detail="v2 sequence not found")
         nodes = ts_engine_pg.list_sequence_nodes(conn, sequence_id)
-    return templates.TemplateResponse(
-        "task_engine_builder.html",
-        {
-            "request": request,
-            "sequence": sequence,
-            "nodes": nodes,
-            "step_templates": _V2_STEP_TEMPLATES,
-            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
-            "legacy_source_id": None,
-            "flow_templates": _v2_flow_templates(),
-            "template_source": None,
-        },
-    )
+    return {
+        "sequence": sequence,
+        "nodes": nodes,
+        "step_templates": _V2_STEP_TEMPLATES,
+        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
+        "legacy_source_id": None,
+        "flow_templates": _v2_flow_templates(),
+        "template_source": None,
+    }
 
 
 @app.post("/api/osd/v2/builder/sequences", status_code=201)
@@ -14384,15 +14496,18 @@ def api_v2_builder_import_legacy_sequence(legacy_id: int):
 
 @app.get("/answer-isos", response_class=HTMLResponse)
 def page_answer_isos(request: Request, error: str = ""):
+    return _primary_ui_redirect("/react/answer-isos")
+
+
+@app.get("/api/answer-isos/page")
+def api_answer_isos_page(error: str = ""):
     # Route name kept for URL stability; content is the answer-floppy
     # cache now. The template adapts — the row shape hasn't changed.
     from web import answer_floppy_cache
     rows = answer_floppy_cache.list_cache(
         SEQUENCES_DB, in_use_volids=_referenced_answer_floppy_paths(),
     )
-    return templates.TemplateResponse("answer_isos.html", {
-        "request": request, "rows": rows, "error": error,
-    })
+    return {"rows": rows, "error": error}
 
 
 @app.post("/answer-isos/prune")
@@ -14464,7 +14579,7 @@ def page_credentials(request: Request, error: str = ""):
 
 @app.get("/legacy/credentials", response_class=HTMLResponse, include_in_schema=False)
 def legacy_credentials(request: Request, error: str = ""):
-    return _render_legacy_credentials(request, error=error)
+    return _primary_ui_redirect("/react/credentials")
 
 
 def _render_legacy_credential_new(request: Request, error: str = ""):
@@ -14480,7 +14595,7 @@ def page_credential_new(request: Request, error: str = ""):
 
 @app.get("/legacy/credentials/new", response_class=HTMLResponse, include_in_schema=False)
 def legacy_credential_new(request: Request, error: str = ""):
-    return _render_legacy_credential_new(request, error=error)
+    return _primary_ui_redirect("/react/credentials/new")
 
 
 @app.post("/credentials/new")
@@ -14517,7 +14632,7 @@ def page_credential_edit(request: Request, cred_id: int, error: str = ""):
 
 @app.get("/legacy/credentials/{cred_id}/edit", response_class=HTMLResponse, include_in_schema=False)
 def legacy_credential_edit(request: Request, cred_id: int, error: str = ""):
-    return _render_legacy_credential_edit(request, cred_id=cred_id, error=error)
+    return _primary_ui_redirect(f"/react/credentials/{cred_id}/edit")
 
 
 @app.post("/credentials/{cred_id}/edit")
@@ -14611,12 +14726,7 @@ def _now_iso() -> str:
 
 @app.get("/sequences", response_class=HTMLResponse)
 def page_sequences(request: Request, error: str = ""):
-    seqs = sequences_db.list_sequences(SEQUENCES_DB)
-    return templates.TemplateResponse("sequences.html", {
-        "request": request,
-        "sequences": _sequence_rows_for_ui(seqs),
-        "error": error,
-    })
+    return _primary_ui_redirect("/react/sequences")
 
 
 @app.post("/sequences/{seq_id}/delete")
@@ -14735,21 +14845,24 @@ async def check_ubuntu_enrollment(vmid: int):
 
 @app.get("/sequences/new", response_class=HTMLResponse)
 def page_sequence_new(request: Request):
-    return templates.TemplateResponse("sequence_edit.html", {
-        "request": request, "seq": None,
-        "oem_profiles": load_oem_profiles(),
-    })
+    return _primary_ui_redirect("/react/sequences/new")
 
 
 @app.get("/sequences/{seq_id}/edit", response_class=HTMLResponse)
 def page_sequence_edit(request: Request, seq_id: int):
+    return _primary_ui_redirect(f"/react/sequences/{seq_id}/edit")
+
+
+@app.get("/api/sequences/{seq_id}/edit/page")
+def api_sequence_edit_page(seq_id: int):
     seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
     if seq is None:
         raise HTTPException(404, "sequence not found")
-    return templates.TemplateResponse("sequence_edit.html", {
-        "request": request, "seq": seq,
+    return {
+        "sequence": seq,
+        "seq": seq,
         "oem_profiles": load_oem_profiles(),
-    })
+    }
 
 
 
@@ -14917,6 +15030,11 @@ def _ad_first_seen_map() -> dict[int, str]:
 
 @app.get("/monitoring", response_class=HTMLResponse)
 def page_monitoring(request: Request):
+    return _primary_ui_redirect("/react/monitoring")
+
+
+@app.get("/api/monitoring/page")
+def api_monitoring_page():
     from web import db_pg, deployment_health, monitoring_view, service_health_pg as service_health
     latest = device_history_db.latest_per_vmid()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -14931,8 +15049,7 @@ def page_monitoring(request: Request):
     runtime_services = _runtime_container_status()
     with db_pg.connection(_database_url()) as conn:
         deployment_payload = deployment_health.build_deployments_payload(conn, limit=25)
-    return templates.TemplateResponse("monitoring.html", {
-        "request": request,
+    return {
         "rows": rows,
         "settings": settings,
         "search_ous": device_history_db.list_search_ous(),
@@ -14940,7 +15057,7 @@ def page_monitoring(request: Request):
         "service_health": svc_rows,
         "runtime_services": runtime_services,
         "deployment_health": deployment_payload,
-    })
+    }
 
 
 def _latest_match_or_none(json_str: str) -> dict:
@@ -15365,7 +15482,7 @@ def page_device_detail(request: Request, vmid: int):
 
 @app.get("/legacy/devices/{vmid}", response_class=HTMLResponse, include_in_schema=False)
 def legacy_device_detail(request: Request, vmid: int):
-    return _render_legacy_device_detail(request, vmid=vmid)
+    return _primary_ui_redirect(f"/react/vms/{vmid}")
 
 
 def _render_legacy_monitoring_settings(request: Request):
@@ -15403,7 +15520,7 @@ def page_monitoring_settings(request: Request):
 
 @app.get("/legacy/monitoring/settings", response_class=HTMLResponse, include_in_schema=False)
 def legacy_monitoring_settings(request: Request):
-    return _render_legacy_monitoring_settings(request)
+    return _primary_ui_redirect("/react/monitoring/settings")
 
 
 @app.post("/api/monitoring/keytab/refresh-now")

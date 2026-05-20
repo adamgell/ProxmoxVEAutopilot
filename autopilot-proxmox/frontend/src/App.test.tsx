@@ -695,10 +695,10 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Log out Local Operator" })).toHaveAttribute("href", "/auth/logout");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
     expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
-    expect(screen.getAllByRole("link", { name: "OSDCloud Desktop legacy page" })[0]).toHaveAttribute("href", "/cloudosd");
+    expect(screen.getAllByRole("link", { name: "OSDCloud Desktop" })[0]).toHaveAttribute("href", "/react/cloudosd");
     expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
     expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
-    expect(screen.getAllByText("Jinja").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^clone$/i })).not.toBeInTheDocument();
@@ -706,30 +706,27 @@ describe("App", () => {
   });
 
   test.each([
-    ["/react/dashboard", "/legacy/dashboard"],
-    ["/react/jobs", "/legacy/jobs"],
-    ["/react/monitoring", "/monitoring"],
-    ["/react/vms", "/legacy/vms"],
-    ["/react/vms/108", "/legacy/devices/108"],
-    ["/react/legacy-vms", "/legacy/vms"],
-    ["/react/devices", "/legacy/cloud"],
-    ["/react/hashes", "/legacy/hashes"],
-    ["/react/files", "/legacy/files"],
-    ["/react/settings", "/legacy/settings"],
-    ["/react/credentials", "/legacy/credentials"],
-    ["/react/credentials/new", "/legacy/credentials/new"],
-    ["/react/credentials/7/edit", "/legacy/credentials/7/edit"],
-    ["/react/monitoring/settings", "/legacy/monitoring/settings"],
-    ["/react/agent-download", "/legacy/dashboard"]
-  ])("links %s back to its legacy UI fallback", async (path, legacyPath) => {
+    "/react/dashboard",
+    "/react/jobs",
+    "/react/monitoring",
+    "/react/vms",
+    "/react/vms/108",
+    "/react/legacy-vms",
+    "/react/devices",
+    "/react/hashes",
+    "/react/files",
+    "/react/settings",
+    "/react/credentials",
+    "/react/credentials/new",
+    "/react/credentials/7/edit",
+    "/react/monitoring/settings",
+    "/react/agent-download"
+  ])("does not expose a legacy UI switch on %s", (path) => {
     mockFetch(dashboardResponses);
 
     renderRoute(path);
 
-    expect(await screen.findByRole("link", { name: "Switch to Legacy UI" })).toHaveAttribute(
-      "href",
-      legacyPath
-    );
+    expect(screen.queryByRole("link", { name: "Switch to Legacy UI" })).not.toBeInTheDocument();
   });
 
   test.each([
@@ -1282,7 +1279,7 @@ describe("App", () => {
     expect(await screen.findByText("autopilot")).toBeInTheDocument();
     expect(screen.getByText("PC-001")).toBeInTheDocument();
     expect(screen.getByText("Win11-Template")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Provision" })).toHaveAttribute("href", "/provision");
+    expect(screen.getAllByRole("link", { name: "Provision" }).some((link) => link.getAttribute("href") === "/react/provision")).toBe(true);
     expect(screen.queryByRole("button", { name: /kill/i })).not.toBeInTheDocument();
   });
 

@@ -85,7 +85,6 @@ export function SettingsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }
       title="Settings"
       section="Settings"
       path="/react/settings"
-      action={<a className="action-link" href="/legacy/settings">Legacy</a>}
     >
       {message ? <p className="notice" role="status">{message}</p> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
