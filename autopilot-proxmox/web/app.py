@@ -10371,6 +10371,44 @@ def _agent_supports_work_queue(version: str) -> bool:
     return tuple(parts[:3]) >= (0, 1, 1)
 
 
+def _agent_capabilities_from_latest(latest: dict | None) -> set[str]:
+    raw = latest.get("raw_json") if isinstance(latest, dict) else {}
+    capabilities = raw.get("capabilities") if isinstance(raw, dict) else []
+    if not isinstance(capabilities, list):
+        return set()
+    return {str(item).strip() for item in capabilities if str(item).strip()}
+
+
+def _latest_agent_for_capability(vmid: int, capability: str) -> dict:
+    from web import db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        latest = agent_telemetry_pg.latest_by_vmid(conn).get(int(vmid))
+    if not latest:
+        raise ValueError(
+            f"No live AutopilotAgent heartbeat found for VMID {vmid}; "
+            f"install or repair AutopilotAgent before running {capability}."
+        )
+    if not latest.get("agent_id"):
+        raise ValueError(
+            f"AutopilotAgent heartbeat for VMID {vmid} is missing agent identity."
+        )
+    version = str(latest.get("agent_version") or "").strip()
+    if not _agent_supports_work_queue(version):
+        raise ValueError(
+            f"AutopilotAgent on VMID {vmid} is version {version or 'unknown'}; "
+            f"upgrade the MSI to 0.1.1 or newer before running {capability}."
+        )
+    capabilities = _agent_capabilities_from_latest(latest)
+    if capability not in capabilities:
+        raise ValueError(
+            f"AutopilotAgent on VMID {vmid} has not advertised {capability}; "
+            "upgrade/restart the MSI so the new capability appears in heartbeat."
+        )
+    return latest
+
+
 def _start_agent_hash_capture_job(
     *,
     vmid: int,
@@ -10414,6 +10452,52 @@ def _start_agent_hash_capture_job(
         "capture_transport": "autopilot_agent",
     }
     job = job_manager.start("hash_capture", cmd, args=args)
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        agent_telemetry_pg.attach_work_item_job(conn, work["id"], job_id=job["id"])
+    return job
+
+
+def _start_agent_log_collection_job(
+    *,
+    vmid: int,
+    vm_name: str,
+) -> dict:
+    from web import db_pg
+
+    agent = _latest_agent_for_capability(vmid, "collect_logs")
+    request = {
+        "vmid": int(vmid),
+        "vm_name": vm_name,
+        "known_sources": "cmtraceopen-windows",
+        "artifact_upload_url": "/api/agent/v1/artifacts",
+    }
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent["agent_id"],
+            kind="collect_logs",
+            request=request,
+            vmid=int(vmid),
+        )
+    wait_script = BASE_DIR / "scripts" / "wait_agent_work_item.py"
+    cmd = [
+        "python",
+        str(wait_script),
+        "--work-item",
+        work["id"],
+        "--timeout",
+        "1800",
+    ]
+    args = {
+        "vmid": int(vmid),
+        "vm_name": vm_name,
+        "agent_id": agent["agent_id"],
+        "work_item_id": work["id"],
+        "collection_transport": "autopilot_agent",
+    }
+    job = job_manager.start("log_collection", cmd, args=args)
     with db_pg.connection(_database_url()) as conn:
         agent_telemetry_pg.init(conn)
         agent_telemetry_pg.attach_work_item_job(conn, work["id"], job_id=job["id"])
@@ -10561,6 +10645,94 @@ async def start_capture(
         request,
         payload={"ok": True, "action": "capture", "job_id": job["id"], "redirect": f"/jobs/{job['id']}"},
         redirect=f"/jobs/{job['id']}",
+    )
+
+
+@app.post(
+    "/api/jobs/collect-logs",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["vmid"],
+                        "properties": {
+                            "vmid": {"type": "integer"},
+                            "vm_name": {"type": "string"},
+                        },
+                    },
+                },
+                "application/x-www-form-urlencoded": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["vmid"],
+                        "properties": {
+                            "vmid": {"type": "integer"},
+                            "vm_name": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "required": True,
+        },
+        "responses": {
+            "200": {
+                "description": "Log collection job queued",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["ok", "action", "job_id", "work_item_id", "vmid", "job_type", "status_url", "web_url"],
+                            "properties": {
+                                "ok": {"type": "boolean"},
+                                "action": {"type": "string"},
+                                "job_id": {"type": "string"},
+                                "work_item_id": {"type": "string"},
+                                "vmid": {"type": "integer"},
+                                "job_type": {"type": "string"},
+                                "status_url": {"type": "string"},
+                                "web_url": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+            "400": {"description": "Invalid request or no capable AutopilotAgent is available"},
+        },
+    },
+)
+async def start_collect_logs(request: Request):
+    payload = await _request_values(request)
+    vmid_raw = _request_text(payload, "vmid")
+    try:
+        vmid = int(vmid_raw)
+    except (TypeError, ValueError):
+        return _action_error_response(request, message="vmid is required", status_code=400)
+    vm_name = _request_text(payload, "vm_name")
+    name = _sanitize_input(vm_name) if vm_name else f"vm-{vmid}"
+    try:
+        job = _start_agent_log_collection_job(
+            vmid=int(vmid),
+            vm_name=name,
+        )
+    except ValueError as exc:
+        return _action_error_response(request, message=str(exc), status_code=400)
+    work_item_id = str(job.get("args", {}).get("work_item_id", ""))
+    job_id = str(job["id"])
+    return _action_response(
+        request,
+        payload={
+            "ok": True,
+            "action": "collect-logs",
+            "job_id": job_id,
+            "work_item_id": work_item_id,
+            "vmid": int(vmid),
+            "job_type": "log_collection",
+            "status_url": f"/api/jobs/{job_id}",
+            "web_url": f"/react/jobs/{job_id}",
+        },
+        redirect=f"/jobs/{job_id}",
     )
 
 

@@ -6319,6 +6319,41 @@ export type StartCaptureAndUploadApiJobsCaptureAndUploadPostResponses = {
     200: unknown;
 };
 
+export type StartCollectLogsApiJobsCollectLogsPostData = {
+    body: {
+        vm_name?: string;
+        vmid: number;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/jobs/collect-logs';
+};
+
+export type StartCollectLogsApiJobsCollectLogsPostErrors = {
+    /**
+     * Invalid request or no capable AutopilotAgent is available
+     */
+    400: unknown;
+};
+
+export type StartCollectLogsApiJobsCollectLogsPostResponses = {
+    /**
+     * Log collection job queued
+     */
+    200: {
+        action: string;
+        job_id: string;
+        job_type: string;
+        ok: boolean;
+        status_url: string;
+        vmid: number;
+        web_url: string;
+        work_item_id: string;
+    };
+};
+
+export type StartCollectLogsApiJobsCollectLogsPostResponse = StartCollectLogsApiJobsCollectLogsPostResponses[keyof StartCollectLogsApiJobsCollectLogsPostResponses];
+
 export type StartProvisionApiJobsProvisionPostData = {
     body: BodyStartProvisionApiJobsProvisionPost;
     path?: never;

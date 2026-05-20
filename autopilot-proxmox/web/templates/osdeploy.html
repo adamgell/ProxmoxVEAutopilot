@@ -8,6 +8,7 @@
   .osdeploy-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px; }
   .osdeploy-tabs a, .osdeploy-action { border:1px solid var(--line); border-radius:6px; padding:7px 10px; background:var(--panel); color:var(--ink); }
   .osdeploy-tabs a[aria-current="page"], .osdeploy-action { border-color:var(--ms-blue-dark); color:var(--ms-blue-dark); font-weight:700; }
+  .osdeploy-action:disabled { opacity:.45; cursor:not-allowed; border-color:var(--line); color:var(--ink-muted); }
   .osdeploy-panel { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
   .osdeploy-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:14px; }
   .osdeploy-metric { border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); }
@@ -24,20 +25,31 @@
   .osdeploy-history-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
   .osdeploy-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .osdeploy-public-key { width:min(760px, 100%); min-height:42px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
-  .osdeploy-builder-form { align-items:end; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); }
-  .osdeploy-builder-form > label { min-width:0; display:flex; flex-direction:column; gap:4px; }
+  .osdeploy-builder-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:center; max-width:520px; }
+  .osdeploy-builder-actions .osdeploy-mini { min-width:110px; text-align:right; }
+  .osdeploy-builder-form { display:grid; gap:12px; margin-bottom:14px; }
+  .osdeploy-builder-section { border:1px solid var(--line); border-radius:8px; padding:10px; background:rgba(255,255,255,.025); }
+  .osdeploy-builder-section-head { display:flex; justify-content:space-between; gap:10px; align-items:baseline; margin-bottom:8px; }
+  .osdeploy-builder-section-title { font-size:14px; font-weight:800; }
+  .osdeploy-builder-section-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; align-items:end; }
+  .osdeploy-builder-section label { min-width:0; display:flex; flex-direction:column; gap:4px; }
   .osdeploy-builder-form input,
   .osdeploy-builder-form select,
   .osdeploy-builder-form textarea { width:100%; max-width:100%; min-width:0; }
   .osdeploy-builder-form select { overflow:hidden; text-overflow:ellipsis; }
-  .osdeploy-field-artifact { grid-column:span 2; }
+  .osdeploy-field-os { grid-column:span 2; }
   .osdeploy-field-name { grid-column:span 2; }
   .osdeploy-name-builder { display:grid; gap:6px; }
   .osdeploy-name-tokens { display:flex; flex-wrap:wrap; gap:6px; }
-  .osdeploy-name-token { border:1px solid var(--line); border-radius:6px; padding:4px 7px; background:var(--surface-muted); color:var(--ink); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+  .osdeploy-name-token { border:1px solid var(--line); border-radius:6px; padding:3px 6px; background:var(--surface-muted); color:var(--ink); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; line-height:1.2; }
   .osdeploy-name-preview { color:var(--ink-muted); font-size:12px; overflow-wrap:anywhere; }
+  .osdeploy-results-grid { display:grid; grid-template-columns:minmax(220px, 1fr) minmax(220px, 1fr) minmax(280px, .9fr); gap:14px; align-items:start; }
+  .osdeploy-review-panel { border:1px solid var(--line); border-radius:8px; padding:10px; background:rgba(255,255,255,.025); }
   @media (max-width: 980px) {
-    .osdeploy-field-artifact, .osdeploy-field-name { grid-column:1 / -1; }
+    .osdeploy-field-os, .osdeploy-field-name { grid-column:1 / -1; }
+    .osdeploy-builder-actions { justify-content:flex-start; max-width:none; }
+    .osdeploy-builder-actions .osdeploy-mini { text-align:left; }
+    .osdeploy-results-grid { grid-template-columns:1fr; }
   }
   .osdeploy-role-shell { grid-column:1 / -1; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-muted); display:grid; gap:12px; }
   .osdeploy-role-shell-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
@@ -117,119 +129,130 @@
   <div class="osdeploy-history-head">
     <div>
       <h2>Preflight</h2>
-      <div class="osdeploy-mini">Run artifact, cache, Proxmox, sizing, and Server role checks before launch.</div>
+      <div class="osdeploy-mini">Run OS image, cache, Proxmox, sizing, and Server role checks before launch.</div>
     </div>
-    <button type="button" id="runOsdeployPreflightBtn" class="osdeploy-action">Run Preflight</button>
+    <div id="osdeployBuilderActionBar" class="osdeploy-builder-actions">
+      <div id="osdeployPreflightStatus" class="osdeploy-mini" role="status" aria-live="polite">Waiting for input.</div>
+      <button type="button" id="runOsdeployPreflightBtn" class="osdeploy-action">Run Preflight</button>
+      <button type="button" id="launchOsdeployBtn" class="osdeploy-action" disabled>Launch OSDeploy VM</button>
+      <div id="osdeployLaunchError" class="osdeploy-badge block" style="display:none;"></div>
+    </div>
   </div>
-  <form id="osdeployRunForm" class="osdeploy-grid osdeploy-builder-form">
-    <label class="osdeploy-field osdeploy-field-artifact">
-      <span class="osdeploy-label">Artifact</span>
-      <select id="osdeploy_artifact_id" name="artifact_id" required {% if not ready_artifacts %}disabled{% endif %}>
-        {% for artifact in ready_artifacts %}
-        <option value="{{ artifact.id }}">{{ artifact.os_version }} {{ artifact.os_edition }} / {{ artifact.build_sha }} / {{ artifact.proxmox_volid }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label class="osdeploy-field-name">
-      <span class="osdeploy-label">Requested VM name</span>
-      <input id="osdeploy_vm_name" name="vm_name" value="OSDEPLOY-{role}-{date}-{rand}" required>
-      <div id="osdeployNameBuilder" class="osdeploy-name-builder">
-        <div class="osdeploy-name-tokens" aria-label="Requested name variables">
-          <button type="button" class="osdeploy-name-token" data-name-token="{role}">{role}</button>
-          <button type="button" class="osdeploy-name-token" data-name-token="{date}">{date}</button>
-          <button type="button" class="osdeploy-name-token" data-name-token="{time}">{time}</button>
-          <button type="button" class="osdeploy-name-token" data-name-token="{rand}">{rand}</button>
-          <button type="button" class="osdeploy-name-token" data-name-token="{node}">{node}</button>
-          <button type="button" class="osdeploy-name-token" data-name-token="{edition}">{edition}</button>
-          <button type="button" class="osdeploy-name-token" data-name-token="{netbios}">{netbios}</button>
-        </div>
-        <div class="osdeploy-name-preview">Resolves to <code id="osdeployNamePreview">-</code></div>
+  {% set selected_artifact = ready_artifacts[0] if ready_artifacts else none %}
+  <form id="osdeployRunForm" class="osdeploy-builder-form">
+    <section id="osdeployTargetSection" class="osdeploy-builder-section">
+      <div class="osdeploy-builder-section-head">
+        <div class="osdeploy-builder-section-title">Target</div>
+        <div class="osdeploy-mini">Deployable OS, name, and role</div>
       </div>
-    </label>
-    <label>
-      <span class="osdeploy-label">Optional VMID</span>
-      <input id="osdeploy_vmid" name="vmid" type="number" min="1" placeholder="auto">
-    </label>
-    <label>
-      <span class="osdeploy-label">Server role</span>
-      <select id="osdeploy_server_role" name="server_role">
-        {% for role in catalog.server_roles %}
-        <option value="{{ role }}" {% if role == 'base' %}selected{% endif %}>{{ role | replace('_', ' ') }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">Node</span>
-      <select id="osdeploy_node" name="node">
-        {% for value in proxmox_options.nodes %}
-        <option value="{{ value }}" {% if value == proxmox_options.defaults.node %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">ISO storage</span>
-      <select id="osdeploy_iso_storage" name="iso_storage">
-        {% for value in proxmox_options.storages.iso %}
-        <option value="{{ value }}" {% if value == proxmox_options.defaults.iso_storage %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">VM disk storage</span>
-      <select id="osdeploy_storage" name="storage">
-        {% for value in proxmox_options.storages.disk %}
-        <option value="{{ value }}" {% if value == proxmox_options.defaults.disk_storage %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">Network bridge</span>
-      <select id="osdeploy_network_bridge" name="network_bridge">
-        {% for value in proxmox_options.bridges %}
-        <option value="{{ value }}" {% if value == proxmox_options.defaults.bridge %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">Version</span>
-      <select id="osdeploy_os_version" name="os_version">
-        {% for value in catalog.os_versions %}
-        <option value="{{ value }}" {% if value == catalog.defaults.os_version %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">Edition</span>
-      <select id="osdeploy_os_edition" name="os_edition">
-        {% for value in catalog.os_editions %}
-        <option value="{{ value }}" {% if value == catalog.defaults.os_edition %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">Language</span>
-      <select id="osdeploy_os_language" name="os_language">
-        {% for value in catalog.os_languages %}
-        <option value="{{ value }}" {% if value == catalog.defaults.os_language %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span class="osdeploy-label">vCPU</span>
-      <input id="osdeploy_vm_cores" name="vm_cores" type="number" min="1" value="{{ catalog.defaults.vm_cores }}">
-    </label>
-    <label>
-      <span class="osdeploy-label">Memory MB</span>
-      <input id="osdeploy_vm_memory_mb" name="vm_memory_mb" type="number" min="{{ catalog.defaults.minimum_vm_memory_mb }}" step="512" value="{{ catalog.defaults.vm_memory_mb }}">
-    </label>
-    <label>
-      <span class="osdeploy-label">Disk GB</span>
-      <input id="osdeploy_vm_disk_size_gb" name="vm_disk_size_gb" type="number" min="{{ catalog.defaults.minimum_vm_disk_size_gb }}" value="{{ catalog.defaults.vm_disk_size_gb }}">
-    </label>
-    <label>
-      <span class="osdeploy-label">Firmware</span>
-      <span class="osdeploy-mini"><input type="checkbox" name="secure_boot"> Secure Boot</span>
-    </label>
+      <div class="osdeploy-builder-section-grid osdeploy-target-grid">
+        <label class="osdeploy-field osdeploy-field-os">
+          <span class="osdeploy-label">Deployable OS</span>
+          <select id="osdeploy_deployable_os" required {% if not ready_artifacts %}disabled{% endif %}>
+            {% for artifact in ready_artifacts %}
+            <option value="{{ artifact.id }}">{{ artifact.os_version }} {{ artifact.os_edition }} ({{ artifact.os_language }})</option>
+            {% endfor %}
+          </select>
+          <input id="osdeploy_artifact_id" name="artifact_id" type="hidden" value="{{ selected_artifact.id if selected_artifact else '' }}" required>
+          <div class="osdeploy-mini">OSDeploy picks the matching ready image automatically.</div>
+        </label>
+        <label class="osdeploy-field-name">
+          <span class="osdeploy-label">Requested VM name</span>
+          <input id="osdeploy_vm_name" name="vm_name" value="OSDEPLOY-{role}-{date}-{rand}" required>
+          <div id="osdeployNameBuilder" class="osdeploy-name-builder">
+            <div class="osdeploy-name-tokens" aria-label="Requested name variables">
+              <button type="button" class="osdeploy-name-token" data-name-token="{role}">{role}</button>
+              <button type="button" class="osdeploy-name-token" data-name-token="{date}">{date}</button>
+              <button type="button" class="osdeploy-name-token" data-name-token="{time}">{time}</button>
+              <button type="button" class="osdeploy-name-token" data-name-token="{rand}">{rand}</button>
+              <button type="button" class="osdeploy-name-token" data-name-token="{node}">{node}</button>
+              <button type="button" class="osdeploy-name-token" data-name-token="{edition}">{edition}</button>
+              <button type="button" class="osdeploy-name-token" data-name-token="{netbios}">{netbios}</button>
+            </div>
+            <div class="osdeploy-name-preview">Preview <code id="osdeployNamePreview">-</code></div>
+          </div>
+        </label>
+        <label>
+          <span class="osdeploy-label">Optional VMID</span>
+          <input id="osdeploy_vmid" name="vmid" type="number" min="1" placeholder="auto">
+        </label>
+        <label>
+          <span class="osdeploy-label">Server role</span>
+          <select id="osdeploy_server_role" name="server_role">
+            {% for role in catalog.server_roles %}
+            <option value="{{ role }}" {% if role == 'base' %}selected{% endif %}>{{ role | replace('_', ' ') }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+    </section>
+    <section id="osdeployPlacementSection" class="osdeploy-builder-section">
+      <div class="osdeploy-builder-section-head">
+        <div class="osdeploy-builder-section-title">Placement</div>
+        <div class="osdeploy-mini">Proxmox node, storage, and bridge</div>
+      </div>
+      <div class="osdeploy-builder-section-grid">
+        <label>
+          <span class="osdeploy-label">Node</span>
+          <select id="osdeploy_node" name="node">
+            {% for value in proxmox_options.nodes %}
+            <option value="{{ value }}" {% if value == proxmox_options.defaults.node %}selected{% endif %}>{{ value }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="osdeploy-label">ISO storage</span>
+          <select id="osdeploy_iso_storage" name="iso_storage">
+            {% for value in proxmox_options.storages.iso %}
+            <option value="{{ value }}" {% if value == proxmox_options.defaults.iso_storage %}selected{% endif %}>{{ value }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="osdeploy-label">VM disk storage</span>
+          <select id="osdeploy_storage" name="storage">
+            {% for value in proxmox_options.storages.disk %}
+            <option value="{{ value }}" {% if value == proxmox_options.defaults.disk_storage %}selected{% endif %}>{{ value }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="osdeploy-label">Network bridge</span>
+          <select id="osdeploy_network_bridge" name="network_bridge">
+            {% for value in proxmox_options.bridges %}
+            <option value="{{ value }}" {% if value == proxmox_options.defaults.bridge %}selected{% endif %}>{{ value }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+    </section>
+    <section id="osdeployImageSection" class="osdeploy-builder-section">
+      <div class="osdeploy-builder-section-head">
+        <div class="osdeploy-builder-section-title">Image</div>
+        <div class="osdeploy-mini">VM sizing and firmware</div>
+      </div>
+      <input id="osdeploy_os_version" name="os_version" type="hidden" value="{{ selected_artifact.os_version if selected_artifact else catalog.defaults.os_version }}">
+      <input id="osdeploy_os_edition" name="os_edition" type="hidden" value="{{ selected_artifact.os_edition if selected_artifact else catalog.defaults.os_edition }}">
+      <input id="osdeploy_os_language" name="os_language" type="hidden" value="{{ selected_artifact.os_language if selected_artifact else catalog.defaults.os_language }}">
+      <div class="osdeploy-builder-section-grid">
+        <label>
+          <span class="osdeploy-label">vCPU</span>
+          <input id="osdeploy_vm_cores" name="vm_cores" type="number" min="1" value="{{ catalog.defaults.vm_cores }}">
+        </label>
+        <label>
+          <span class="osdeploy-label">Memory MB</span>
+          <input id="osdeploy_vm_memory_mb" name="vm_memory_mb" type="number" min="{{ catalog.defaults.minimum_vm_memory_mb }}" step="512" value="{{ catalog.defaults.vm_memory_mb }}">
+        </label>
+        <label>
+          <span class="osdeploy-label">Disk GB</span>
+          <input id="osdeploy_vm_disk_size_gb" name="vm_disk_size_gb" type="number" min="{{ catalog.defaults.minimum_vm_disk_size_gb }}" value="{{ catalog.defaults.vm_disk_size_gb }}">
+        </label>
+        <label>
+          <span class="osdeploy-label">Firmware</span>
+          <span class="osdeploy-mini"><input type="checkbox" name="secure_boot"> Secure Boot</span>
+        </label>
+      </div>
+    </section>
     <section class="osdeploy-role-shell" id="osdeployRoleVariables">
       <div class="osdeploy-role-shell-head">
         <div>
@@ -321,7 +344,7 @@
       </div>
     </section>
   </form>
-  <div class="osdeploy-grid">
+  <div class="osdeploy-results-grid">
     <div>
       <b>Blocking Checks</b>
       <ul id="osdeployBlockingChecks" class="osdeploy-mini"></ul>
@@ -330,19 +353,16 @@
       <b>Warnings</b>
       <ul id="osdeployWarningChecks" class="osdeploy-mini"></ul>
     </div>
-    <div>
+    <div class="osdeploy-review-panel">
       <b>Review &amp; Launch</b>
       <dl class="osdeploy-mini">
-        <dt>Artifact</dt><dd id="reviewOsdeployArtifact">not selected</dd>
+        <dt>Deployable OS</dt><dd id="reviewOsdeployArtifact">not selected</dd>
         <dt>Computer name</dt><dd id="reviewOsdeployComputerName">-</dd>
         <dt>OS</dt><dd id="reviewOsdeployOs">-</dd>
         <dt>VM sizing</dt><dd id="reviewOsdeploySizing">-</dd>
         <dt>Role variables</dt><dd id="reviewOsdeployRoleOptions" class="osdeploy-review-json">-</dd>
         <dt>Blocking count</dt><dd id="reviewOsdeployBlocking">-</dd>
       </dl>
-      <div id="osdeployPreflightStatus" class="osdeploy-mini">Waiting for input.</div>
-      <div id="osdeployLaunchError" class="osdeploy-badge block" style="display:none;"></div>
-      <button type="button" id="launchOsdeployBtn" class="osdeploy-action" disabled>Launch OSDeploy VM</button>
     </div>
   </div>
 </section>
@@ -483,6 +503,7 @@
         proxmox_volid: {{ artifact.proxmox_volid | tojson | safe }},
         os_version: {{ artifact.os_version | tojson | safe }},
         os_edition: {{ artifact.os_edition | tojson | safe }},
+        os_language: {{ artifact.os_language | tojson | safe }},
         readiness: {{ artifact.readiness | tojson | safe }}
       }{% if not loop.last %},{% endif %}
       {% endfor %}
@@ -689,6 +710,35 @@
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    function setControlValueIfExists(id, value) {
+      const control = byId(id);
+      if (!control || !value) return false;
+      if (control instanceof HTMLSelectElement) {
+        const match = Array.from(control.options).find((option) => option.value === value);
+        if (!match) return false;
+      }
+      control.value = value;
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    }
+
+    function syncOsdeployArtifactFromDeployableOs() {
+      const deployableOs = byId("osdeploy_deployable_os");
+      const artifactId = byId("osdeploy_artifact_id");
+      if (!deployableOs || !artifactId) return;
+      artifactId.value = deployableOs.value;
+      artifactId.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function syncOsdeployOsFromArtifact() {
+      const artifact = selectedOsdeployArtifact();
+      if (!artifact) return;
+      setControlValueIfExists("osdeploy_os_version", artifact.os_version);
+      setControlValueIfExists("osdeploy_os_edition", artifact.os_edition);
+      setControlValueIfExists("osdeploy_os_language", artifact.os_language);
+    }
+
     function renderRoleOptions() {
       const role = selectedOsdeployRole();
       const metadata = osdeployState.roleCatalog[role] || {};
@@ -795,7 +845,7 @@
       const payload = osdeployFormPayload();
       const artifact = selectedOsdeployArtifact();
       const preflight = osdeployState.preflight;
-      byId("reviewOsdeployArtifact").textContent = artifact ? `${artifact.build_sha} / ${artifact.proxmox_volid}` : "not selected";
+      byId("reviewOsdeployArtifact").textContent = artifact ? `${artifact.os_version} ${artifact.os_edition} (${artifact.os_language})` : "not selected";
       byId("reviewOsdeployComputerName").textContent = preflight?.target?.computer_name || "-";
       byId("reviewOsdeployOs").textContent = `${payload.os_version || "-"} ${payload.os_edition || ""} ${payload.os_language || ""}`.trim();
       byId("reviewOsdeploySizing").textContent = `${payload.vm_cores || 0} vCPU, ${payload.vm_memory_mb || 0} MB, ${payload.vm_disk_size_gb || 0} GB`;
@@ -885,6 +935,14 @@
           scheduleOsdeployPreflight();
         });
       }
+      const deployableOsSelect = byId("osdeploy_deployable_os");
+      if (deployableOsSelect) {
+        deployableOsSelect.addEventListener("change", () => {
+          syncOsdeployArtifactFromDeployableOs();
+          syncOsdeployOsFromArtifact();
+          scheduleOsdeployPreflight();
+        });
+      }
       const roleSelect = byId("osdeploy_server_role");
       if (roleSelect) {
         roleSelect.addEventListener("input", renderRoleOptions);
@@ -900,6 +958,8 @@
       });
       if (byId("runOsdeployPreflightBtn")) byId("runOsdeployPreflightBtn").addEventListener("click", runOsdeployPreflight);
       if (byId("launchOsdeployBtn")) byId("launchOsdeployBtn").addEventListener("click", launchOsdeploy);
+      syncOsdeployArtifactFromDeployableOs();
+      syncOsdeployOsFromArtifact();
       renderOsdeployReview();
       renderOsdeployNamePreview();
       renderRoleOptions();

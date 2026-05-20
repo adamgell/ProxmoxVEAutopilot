@@ -300,11 +300,45 @@ The reset phase destroys only Autopilot dev-lab VM names and prefixes:
 `autopilot-controller-01`, `autopilot-buildhost-01`,
 `autopilot-osdeploy-blank-template`, `autopilot-cloudosd-blank-template`,
 `OSDEPLOY-E2E-*`, `CLOUDOSD-E2E-*`, `AUTOPILOT-E2E-*`, generated OSDeploy
-batch names `OSD[0-9]*`, and generated OSDCloud batch names `CSD[0-9]*`. With
-`--reset-media`, it also removes generated/downloaded lab ISOs such as
-Windows evaluation media, `virtio-win*.iso`, build-host seed ISOs, CloudOSD
-ISOs, and OSDeploy ISOs from ISO-capable storage so `--download-windows` and
+batch names `OSD[0-9]*`, generated OSDCloud batch names `CSD[0-9]*`, and
+single-VM acceptance names `APE2E[0-9]*`. With `--reset-media`, it also removes
+generated/downloaded lab ISOs such as Windows evaluation media,
+`virtio-win*.iso`, build-host seed ISOs, WinPE ISOs, CloudOSD ISOs, and
+OSDeploy ISOs from ISO-capable storage so `--download-windows` and
 `--download-virtio` are exercised on the next bootstrap run.
+
+## Latest Dev-Lab Checkpoint
+
+The latest pvetest handoff on 2026-05-18 is a clean post-reset state, ready for
+the next guided install replay:
+
+```text
+PVE node: pvetest, 192.168.2.252
+Reset state file: /root/ProxmoxVEAutopilot/autopilot-proxmox/output/setup/foundation_state.json
+State phase: reset-dev-lab
+dev_lab_reset_ready: true
+pve_host_clean_ready: true
+```
+
+Verified after teardown:
+
+- `qm list` showed no remaining VMs.
+- The Ubuntu controller at `192.168.2.127` was unreachable, as expected after
+  destroying `autopilot-controller-01`.
+- No Autopilot Docker containers were running on the PVE host.
+- `/var/lib/vz/template/iso` had no remaining ISO files.
+- Runtime secrets/state were removed and the reset state file was recreated.
+
+Where testing left off:
+
+1. Replay the console installer or `--phase all` path from this reset state.
+2. Re-exercise automated official Windows and VirtIO media downloads.
+3. Recreate the Ubuntu controller VM and verify build metadata is not
+   `unknown`.
+4. Recreate/repair the Windows build host and run source-build workloads.
+5. Promote WinPE, CloudOSD, and OSDeploy artifacts into PVE storage.
+6. Launch one real provision workflow and confirm `/setup` operational plus
+   `/monitoring` active/stuck counts are clean.
 
 ## Rollback Boundary
 

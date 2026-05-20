@@ -1173,6 +1173,44 @@ describe("App", () => {
     expect(screen.getAllByText("Live WebSocket is not connected").length).toBeGreaterThan(0);
   });
 
+  test("queues log collection from the React VM detail action", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/jobs/collect-logs": {
+        ok: true,
+        job_id: "job-log-108",
+        work_item_id: "work-log-108",
+        vmid: 108,
+        job_type: "log_collection",
+        status_url: "/api/jobs/job-log-108",
+        web_url: "/react/jobs/job-log-108"
+      }
+    });
+
+    renderRoute("/react/vms/108");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Logs" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/jobs/collect-logs",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const postCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/jobs/collect-logs"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(postCall).toBeDefined();
+    const init = postCall?.[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      vmid: 108,
+      vm_name: "WrkGrp-525570B6"
+    });
+    expect(await screen.findByText("Log collection queued for VM 108")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "job-log-108" })).toHaveAttribute("href", "/react/jobs/job-log-108");
+  });
+
   test("renders VM evidence hub panels from detail API without revealing passwords", async () => {
     mockFetch(dashboardResponses);
 

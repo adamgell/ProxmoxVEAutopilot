@@ -343,6 +343,99 @@ build-host work, and agent work.
 
 ## Dev Lab Proof Record
 
+### Latest pvetest checkpoint, 2026-05-18
+
+The latest dev-lab pass proved Foundation -> Bootstrap -> Operational on
+`pvetest`, then intentionally reset the lab back to a clean pre-init state.
+
+Accepted run before reset:
+
+```text
+PVE node: pvetest, 192.168.2.252
+Controller VM: 100, autopilot-controller-01, 192.168.2.127
+Build host VM: 101, autopilot-buildhost-01, AUTOPILOT-BLD
+Accepted test VM: 102, APE2E004, 192.168.2.143
+Accepted CloudOSD run: ace280e8-6e9c-43b1-ba15-c74ca716ac29
+Provision job: 20260518-e54b, exit code 0
+Agent ID: agent-ape2e004
+Agent version: 0.1.2.0
+Controller build: d36c2ea, 2026-05-18T03:24:45Z
+Hash file: 20260518T030221Z-vm102-APE2E004-osd-v2_hwid.csv
+Hash SHA-256: 51adeab8a3050326ade7b9fac865b23696f46802e972ce10cad4198d0dcbb750
+```
+
+Observed successful evidence:
+
+- `/api/setup/v1/state` reported `phase=operational`, `health=ready`, and
+  `blocking_count=0`.
+- Local first-run auth was active and Entra auth was not required for local
+  setup.
+- Build host VMID `101` had `agent_state=ready` and no active work.
+- Setup artifacts were ready with promoted `cloudosd-iso`, `osdeploy-iso`, and
+  `winpe-iso` kinds.
+- PVE had no running Autopilot Docker containers; Docker/Compose runtime lived
+  in the Ubuntu controller.
+- Controller containers `autopilot`, `autopilot-mcp`, and
+  `autopilot-postgres` were healthy; monitor and builder containers were
+  running.
+- QEMU Guest Agent responded for VMID `102` using `qm guest cmd 102 ping`.
+- Guest command execution returned
+  `Microsoft Windows [Version 10.0.26200.8246]`.
+- AutopilotAgent heartbeat was visible from installed Windows with
+  `computer_name=APE2E004`, `primary_ipv4=192.168.2.143`, and
+  `qga_state=Running`.
+- CloudOSD readiness reported `hash_status=captured`, the hash SHA-256 above,
+  `upload_status=not_configured`, `upload_job_id=null`, and no readiness
+  errors.
+- `/monitoring` reported `active=0`, `stuck=0`, and the accepted CloudOSD row
+  as `state=done`, `health=learning`, `duration_seconds=1523`.
+
+Known external-readiness boundary:
+
+- Entra/Graph upload credentials were intentionally not configured. The run
+  ended at `upload_not_configured` with `next_action=configure_entra`. This is
+  a configuration boundary for Autopilot import, not a failed local first-run.
+
+Reset after acceptance:
+
+```text
+Reset command:
+ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase reset-dev-lab --reset-media --non-interactive'
+
+Reset state phase: reset-dev-lab
+dev_lab_reset_ready: true
+pve_host_clean_ready: true
+```
+
+Verified after reset:
+
+- `qm list` showed no remaining VMs.
+- Controller `192.168.2.127:5000` was unreachable, as expected.
+- No Autopilot Docker containers were running on the PVE host.
+- `/var/lib/vz/template/iso` had no remaining ISO files.
+- Reset removed generated media including Windows, VirtIO, build-host seed,
+  WinPE, CloudOSD, and OSDeploy ISOs.
+
+Where testing left off:
+
+1. Start the next pass from this clean reset state.
+2. Run the console installer guided path or:
+
+   ```bash
+   ssh pve-dev-192-168-2-252 'bash /root/ProxmoxVEAutopilot/autopilot-proxmox/scripts/init-proxmox-ve.sh --phase all --resume --download-windows --download-virtio --non-interactive'
+   ```
+
+3. Confirm automated official Windows/VirtIO media download works from empty
+   ISO storage.
+4. Confirm the controller build metadata is populated under
+   `/api/version.running`.
+5. Recreate the build host and rerun source-build workloads.
+6. Promote artifacts and launch one CloudOSD or OSDeploy provision workflow.
+7. Verify `/setup` reaches operational and `/monitoring` has no active/stuck
+   rows after the provision run completes.
+
+### Previous pvetest checkpoint, 2026-05-16
+
 The 2026-05-16 dev PVE proof used:
 
 ```text

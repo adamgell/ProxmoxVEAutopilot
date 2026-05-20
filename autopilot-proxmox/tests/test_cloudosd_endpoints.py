@@ -245,7 +245,13 @@ def _patch_sequence_cipher(monkeypatch, tmp_path: Path):
     return web_app._cipher()
 
 
-def _create_domain_join_sequence(pg_conn, cipher, *, unsupported_step: bool = False):
+def _create_domain_join_sequence(
+    pg_conn,
+    cipher,
+    *,
+    unsupported_step: bool = False,
+    domain_controller_ipv4: str = "",
+):
     from web import sequences_pg
 
     cred_id = sequences_pg.create_credential(
@@ -263,7 +269,15 @@ def _create_domain_join_sequence(pg_conn, cipher, *, unsupported_step: bool = Fa
     steps = [
         {
             "step_type": "join_ad_domain",
-            "params": {"credential_id": cred_id, "ou_path": ""},
+            "params": {
+                "credential_id": cred_id,
+                "ou_path": "",
+                **(
+                    {"domain_controller_ipv4": domain_controller_ipv4}
+                    if domain_controller_ipv4
+                    else {}
+                ),
+            },
             "enabled": True,
         },
     ]
@@ -793,6 +807,99 @@ def test_cloudosd_provision_sequence_with_domain_join_adds_v2_steps_and_pe_only_
     assert domain_join["enabled"] is True
     assert domain_join["password"] == "join-secret-for-tests"
     assert domain_join["username"] == "svc-cloudjoin"
+
+
+def test_cloudosd_domain_join_with_dc_ip_uses_full_os_join_role(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg, ts_engine_pg
+
+    cipher = _patch_sequence_cipher(monkeypatch, tmp_path)
+    sequence_id = _create_domain_join_sequence(
+        pg_conn,
+        cipher,
+        domain_controller_ipv4="192.168.2.210",
+    )
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+        },
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "group_tag": "GellNative",
+            "profile": "",
+            "hostname_pattern": "GELL-FULL-{index}",
+            "sequence_id": str(sequence_id),
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    run_id = next(
+        job["args"]["cloudosd_run_id"]
+        for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    )
+    run = cloudosd_pg.get_run(pg_conn, run_id)
+    assert run["domain_join"]["domain_controller_ipv4"] == "192.168.2.210"
+
+    steps = ts_engine_pg.list_run_steps(pg_conn, run_id)
+    kinds = [step["kind"] for step in steps]
+    assert "stage_ad_domain_join_unattend" not in kinds
+    assert kinds[kinds.index("join_domain_role") + 1] == "verify_ad_domain_join"
+    join_step = next(step for step in steps if step["kind"] == "join_domain_role")
+    assert join_step["phase"] == "full_os"
+    assert join_step["reboot_behavior"] == "required"
+    assert join_step["resolved_params_json"]["domain_controller_ipv4"] == "192.168.2.210"
+
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/identity",
+        json={
+            "vmid": 245,
+            "vm_uuid": "55555555-6666-7777-8888-999999999999",
+            "mac": "52:54:00:aa:bb:55",
+            "node": "pve",
+            "computer_name": "GELL-FULL-01",
+        },
+    ).status_code == 200
+    registered = cloudosd_client.post(
+        "/api/cloudosd/pe/register",
+        json={
+            "vm_uuid": "55555555-6666-7777-8888-999999999999",
+            "mac": "52:54:00:aa:bb:55",
+            "architecture": "amd64",
+            "build_sha": "cloudosdtest",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    package = cloudosd_client.get(
+        f"/api/cloudosd/pe/package/{run_id}",
+        headers=_bearer(registered.json()["bearer_token"]),
+    )
+    assert package.status_code == 200, package.text
+    assert "domain_join" not in package.json()
+    assert "join-secret-for-tests" not in package.text
 
 
 def test_cloudosd_workgroup_run_generates_visible_local_admin_credential(

@@ -597,6 +597,7 @@ def _sanitize_domain_join(
         "credential_id": raw.get("credential_id"),
         "domain_fqdn": domain_fqdn,
         "credential_domain": credential_domain,
+        "domain_controller_ipv4": str(raw.get("domain_controller_ipv4") or "").strip(),
         "ou_path": str(raw.get("ou_path") or "").strip(),
         "acceptable_domain_names": acceptable,
         "expected_computer_name": (
@@ -1310,7 +1311,11 @@ def _step_params_for_cloudosd_sequence(
     domain_join: dict | None = None,
     vm_group_tag: str | None = None,
 ) -> dict:
-    if kind in {"stage_ad_domain_join_unattend", "verify_ad_domain_join"}:
+    if kind in {
+        "stage_ad_domain_join_unattend",
+        "join_domain_role",
+        "verify_ad_domain_join",
+    }:
         return dict(domain_join or {})
     if kind == "capture_autopilot_hash" and vm_group_tag:
         return {"group_tag": vm_group_tag}
@@ -1335,7 +1340,8 @@ def _create_sequence_for_run(
         ("OSDCloud PE preflight", "cloudosd_preflight", "pe"),
         ("Run OSDCloud workflow", "cloudosd_deploy_os", "pe"),
     ]
-    if domain_enabled:
+    full_os_domain_join = bool((domain_join or {}).get("domain_controller_ipv4"))
+    if domain_enabled and not full_os_domain_join:
         steps.append(
             ("Stage AD domain join unattend", "stage_ad_domain_join_unattend", "pe"),
         )
@@ -1347,6 +1353,10 @@ def _create_sequence_for_run(
         ("Wait for AutopilotAgent heartbeat", "wait_agent_heartbeat", "full_os"),
     ])
     if domain_enabled:
+        if full_os_domain_join:
+            steps.append(
+                ("Join AD domain", "join_domain_role", "full_os"),
+            )
         steps.append(
             ("Verify AD domain membership", "verify_ad_domain_join", "full_os"),
         )
@@ -1370,7 +1380,7 @@ def _create_sequence_for_run(
                 else 2 if kind == "capture_autopilot_hash" else 0
             ),
             retry_delay_seconds=30 if kind == "verify_ad_domain_join" else 10,
-            reboot_behavior="none",
+            reboot_behavior="required" if kind == "join_domain_role" else "none",
         )
     return ts_engine_pg.compile_sequence(conn, sequence_id, compiled_by="cloudosd")
 

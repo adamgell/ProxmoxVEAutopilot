@@ -3,6 +3,7 @@ import {
   BadgeCheck,
   Camera,
   CircleStop,
+  FileArchive,
   Hash,
   Keyboard,
   Monitor,
@@ -87,6 +88,21 @@ type ActionIcon = LucideIcon;
 type BubbleAssignment = {
   readonly bubble: LabBubble;
   readonly asset: LabBubbleAsset;
+};
+
+type ActionStatusLink = {
+  readonly href: string;
+  readonly label: string;
+};
+
+type CollectLogsResponse = {
+  readonly ok: boolean;
+  readonly job_id: string;
+  readonly work_item_id: string;
+  readonly vmid: number;
+  readonly job_type: string;
+  readonly status_url: string;
+  readonly web_url: string;
 };
 
 function bubbleSort(left: LabBubble, right: LabBubble): number {
@@ -387,6 +403,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionStatus, setActionStatus] = useState("");
+  const [actionStatusLink, setActionStatusLink] = useState<ActionStatusLink | null>(null);
   const [socketState, setSocketState] = useState("closed");
   const [sendLive, setSendLive] = useState<SendLiveMessage | null>(null);
   const [activeAction, setActiveAction] = useState<VmActionSelection | null>(null);
@@ -559,6 +576,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const stale = typeof fleet.cache_age_seconds === "number" && fleet.cache_age_seconds > 60;
 
   const runAction = useCallback(async (label: string, action: () => Promise<unknown>) => {
+    setActionStatusLink(null);
     setActionStatus(`${label}...`);
     try {
       await action();
@@ -566,6 +584,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       await load();
       return true;
     } catch (err) {
+      setActionStatusLink(null);
       setActionStatus(err instanceof Error ? err.message : `${label} failed`);
       return false;
     }
@@ -610,6 +629,28 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const captureHash = useCallback((vm: VmFleetRow) => {
     void runAction(`Capture hash VM ${String(vm.vmid)}`, () => postJson("/api/jobs/capture", { vmid: vm.vmid, vm_name: vmDisplayName(vm) }));
   }, [runAction]);
+
+  const collectLogs = useCallback((vm: VmFleetRow) => {
+    const vmid = vm.vmid;
+    if (typeof vmid !== "number") {
+      setActionStatusLink(null);
+      setActionStatus("Cannot collect logs without a VMID");
+      return;
+    }
+    setActionStatusLink(null);
+    setActionStatus(`Collect logs VM ${String(vmid)}...`);
+    void (async () => {
+      try {
+        const queued = await postJson<CollectLogsResponse>("/api/jobs/collect-logs", { vmid, vm_name: vmDisplayName(vm) });
+        setActionStatus(`Log collection queued for VM ${String(queued.vmid)}`);
+        setActionStatusLink({ href: queued.web_url || `/react/jobs/${queued.job_id}`, label: queued.job_id });
+        await load();
+      } catch (err) {
+        setActionStatusLink(null);
+        setActionStatus(err instanceof Error ? err.message : `Collect logs VM ${String(vmid)} failed`);
+      }
+    })();
+  }, [load]);
 
   const checkEnrollment = useCallback((vm: VmFleetRow) => {
     void runAction(`Check enrollment VM ${String(vm.vmid)}`, () => postJson(`/api/ubuntu/check-enrollment/${String(vm.vmid)}`));
@@ -1091,7 +1132,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         {detailLoading ? <div className="progress" aria-label="Loading VM evidence"><span /></div> : null}
         {error ? <p className="notice" role="status">{error}</p> : null}
         {detailError ? <p className="notice" role="status">{detailError}</p> : null}
-        {actionStatus ? <p className="notice" role="status">{actionStatus}</p> : null}
+        {actionStatus ? (
+          <p className="notice" role="status">
+            {actionStatus}
+            {actionStatusLink ? <> <a href={actionStatusLink.href}>{actionStatusLink.label}</a></> : null}
+          </p>
+        ) : null}
         {detailRow?.vm ? (
           <VmDetailWorkspace
             row={detailRow}
@@ -1104,6 +1150,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             onTypeText={typeText}
             onSendKey={sendKey}
             onCapture={captureHash}
+            onCollectLogs={collectLogs}
             onCheckEnrollment={checkEnrollment}
             onConsole={selectConsole}
             onScreenshot={screenshotVm}
@@ -1138,7 +1185,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     >
       {loading ? <div className="progress" aria-label="Loading fleet"><span /></div> : null}
       {error ? <p className="notice" role="status">{error}</p> : null}
-      {actionStatus ? <p className="notice" role="status">{actionStatus}</p> : null}
+      {actionStatus ? (
+        <p className="notice" role="status">
+          {actionStatus}
+          {actionStatusLink ? <> <a href={actionStatusLink.href}>{actionStatusLink.label}</a></> : null}
+        </p>
+      ) : null}
       {stale ? <p className="notice" role="status">Fleet cache is {String(fleet.cache_age_seconds)}s old.</p> : null}
       {fleet.ap_error ? <p className="notice" role="status">Intune unavailable: {fleet.ap_error}</p> : null}
 
@@ -1461,6 +1513,7 @@ function VmDetailWorkspace({
   onTypeText,
   onSendKey,
   onCapture,
+  onCollectLogs,
   onCheckEnrollment,
   onConsole,
   onScreenshot,
@@ -1482,6 +1535,7 @@ function VmDetailWorkspace({
   readonly onTypeText: (vm: VmFleetRow) => void;
   readonly onSendKey: (vm: VmFleetRow, key: "ctrl-alt-delete" | "ret") => void;
   readonly onCapture: (vm: VmFleetRow) => void;
+  readonly onCollectLogs: (vm: VmFleetRow) => void;
   readonly onCheckEnrollment: (vm: VmFleetRow) => void;
   readonly onConsole: (vm: VmFleetRow) => void;
   readonly onScreenshot: (vm: VmFleetRow) => void;
@@ -1529,6 +1583,7 @@ function VmDetailWorkspace({
             <ActionButton label="Stop" icon={CircleStop} tone="danger" onClick={() => { onPower(vm, "stop"); }} />
             <ActionButton label="Reset" icon={RotateCcw} onClick={() => { onPower(vm, "reset"); }} />
             <ActionButton label="Hash" icon={Hash} onClick={() => { onCapture(vm); }} />
+            <ActionButton label="Logs" icon={FileArchive} onClick={() => { onCollectLogs(vm); }} />
             <ActionButton label="Rename" icon={Pencil} onClick={() => { onRename(vm); }} />
             <ActionButton label="Type" icon={Keyboard} onClick={() => { onTypeText(vm); }} />
             <ActionButton label="CAD" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ctrl-alt-delete"); }} />

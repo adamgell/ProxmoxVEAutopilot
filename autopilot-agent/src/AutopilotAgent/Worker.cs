@@ -6,6 +6,7 @@ public sealed class Worker(
     AgentApiClient apiClient,
     TelemetryCollector telemetryCollector,
     HashCaptureService hashCaptureService,
+    LogCollectionService logCollectionService,
     OsdV2WorkService osdV2WorkService,
     BuildHostWorkService buildHostWorkService,
     AgentFileLog log) : BackgroundService
@@ -99,6 +100,7 @@ public sealed class Worker(
         var supportedKinds = new List<string>
         {
             "capture_autopilot_hash",
+            "collect_logs",
             "configure_build_host_role",
         };
         if (string.Equals(config.Phase, "build-host", StringComparison.OrdinalIgnoreCase)
@@ -124,6 +126,10 @@ public sealed class Worker(
                 case "capture_autopilot_hash":
                     await hashCaptureService.CaptureAsync(config, work, cancellationToken);
                     log.Info($"Completed work item {work.Id}.");
+                    break;
+                case "collect_logs":
+                    await logCollectionService.CollectAsync(config, work, cancellationToken);
+                    log.Info($"Completed log collection work item {work.Id}.");
                     break;
                 case var kind when BuildHostWorkService.SupportedKinds.Contains(
                     kind,

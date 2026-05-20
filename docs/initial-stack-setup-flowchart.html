@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProxmoxVEAutopilot Initial Stack Setup Flow</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #141613;
+      --bg-soft: #191c18;
+      --panel: #20241f;
+      --panel-strong: #272c26;
+      --ink: #f1eadc;
+      --muted: #bbb4a8;
+      --quiet: #918a7d;
+      --line: #3b4038;
+      --line-strong: #59604f;
+      --gold: #d8b36a;
+      --gold-soft: #382f1f;
+      --green: #8fbc83;
+      --green-soft: #243425;
+      --blue: #8fb6c9;
+      --blue-soft: #202f35;
+      --rust: #d28a62;
+      --rust-soft: #3a261f;
+      --violet: #b9a3db;
+      --violet-soft: #2d2836;
+      --red: #e08a7e;
+      --red-soft: #3a2320;
+      --shadow: rgba(0, 0, 0, 0.28);
+      --operator: var(--gold-soft);
+      --operator-border: var(--gold);
+      --pve: var(--blue-soft);
+      --pve-border: var(--blue);
+      --controller: var(--green-soft);
+      --controller-border: var(--green);
+      --build: var(--violet-soft);
+      --build-border: var(--violet);
+      --artifact: #1f3538;
+      --artifact-border: #7fc7c6;
+      --script: var(--panel-strong);
+      --script-border: var(--gold);
+      --gate: var(--gold-soft);
+      --gate-border: var(--gold);
+      --fail: var(--red-soft);
+      --fail-border: var(--red);
+      --shared: var(--panel-strong);
+      --shared-border: var(--line-strong);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 14% 0%, rgba(216, 179, 106, 0.12), transparent 28rem),
+        radial-gradient(circle at 88% 8%, rgba(143, 188, 131, 0.10), transparent 32rem),
+        linear-gradient(180deg, #171a16 0%, var(--bg) 38%, #10120f 100%);
+      line-height: 1.5;
+    }
+
+    header {
+      padding: 32px 34px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(20, 22, 19, 0.92);
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 1180px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .top-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 18px;
+    }
+
+    .top-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .top-links a:hover {
+      border-color: var(--gold);
+      background: rgba(216, 179, 106, 0.10);
+    }
+
+    main {
+      max-width: 1920px;
+      margin: 0 auto;
+      padding: 24px 34px 44px;
+    }
+
+    section {
+      background: rgba(32, 36, 31, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: 0 18px 48px var(--shadow);
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+
+    .section-note {
+      color: var(--muted);
+      margin: 0 0 18px;
+      font-size: 14px;
+    }
+
+    code {
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 14px 0 20px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .swatch {
+      width: 13px;
+      height: 13px;
+      border-radius: 4px;
+      display: inline-block;
+      border: 1px solid transparent;
+    }
+
+    .operator { background: var(--operator); border-color: var(--operator-border); }
+    .pve { background: var(--pve); border-color: var(--pve-border); }
+    .controller { background: var(--controller); border-color: var(--controller-border); }
+    .build { background: var(--build); border-color: var(--build-border); }
+    .artifact { background: var(--artifact); border-color: var(--artifact-border); }
+    .script { background: var(--script); border-color: var(--script-border); }
+    .gate { background: var(--gate); border-color: var(--gate-border); }
+    .fail { background: var(--fail); border-color: var(--fail-border); }
+    .shared { background: var(--shared); border-color: var(--shared-border); }
+
+    .plain-flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .plain-step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+      padding: 12px;
+      min-height: 116px;
+    }
+
+    .plain-step strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .plain-step span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .diagram {
+      overflow: auto;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(16, 18, 15, 0.72);
+    }
+
+    .diagram svg {
+      min-width: 1540px;
+      max-width: none;
+    }
+
+    .diagram.compact svg {
+      min-width: 980px;
+    }
+
+    .phase-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+    }
+
+    .phase-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018));
+      min-height: 132px;
+      position: relative;
+    }
+
+    .phase-card::after {
+      content: "->";
+      position: absolute;
+      right: -12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .phase-card:last-child::after {
+      content: "";
+    }
+
+    .phase-card strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 15px;
+      color: var(--ink);
+    }
+
+    .phase-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .note {
+      border-left: 4px solid var(--shared-border);
+      background: rgba(255, 255, 255, 0.035);
+      color: var(--muted);
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+
+    .script-callout {
+      margin: 18px 0;
+      border: 1px solid rgba(216, 179, 106, 0.48);
+      border-left: 6px solid var(--script-border);
+      border-radius: 8px;
+      background: rgba(216, 179, 106, 0.10);
+      padding: 14px 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .script-callout strong {
+      color: var(--ink);
+    }
+
+    @media (max-width: 980px) {
+      header, main { padding-left: 16px; padding-right: 16px; }
+      .plain-flow, .notes, .phase-strip { grid-template-columns: 1fr; }
+      .phase-card::after { content: ""; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Initial Stack Setup and Creation Flow</h1>
+    <p class="subtitle">
+      This shows how a clean Proxmox VE node becomes a complete ProxmoxVEAutopilot stack: PVE host setup, Ubuntu controller VM, Docker runtime, Windows build host, source-built artifacts, promoted ISOs, and operational readiness.
+    </p>
+    <nav class="top-links" aria-label="Flowchart navigation">
+      <a href="index.html#flowcharts">Customer Guide</a>
+      <a href="osdcloud-osdeploy-flowchart.html">Windows Deployment Flow</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="high-level">
+      <h2>High-Level Mental Model</h2>
+      <p class="section-note">
+        Initial setup has four machines or roles: your operator workstation, the Proxmox VE host, the Ubuntu controller VM, and the Windows build host. The Proxmox host is only the bootstrapper; the long-running Autopilot app runs in the Ubuntu controller.
+      </p>
+
+      <div class="plain-flow" aria-label="Six high-level setup phases">
+        <div class="plain-step"><strong>1. Run the installer</strong><span>The Proxmox console installer is the main setup driver. It calls the lower-level phases for you.</span></div>
+        <div class="plain-step"><strong>2. Foundation</strong><span>The script repairs PVE API access, storage, secrets, and creates or discovers the Ubuntu controller VM.</span></div>
+        <div class="plain-step"><strong>3. Controller runtime</strong><span>The script syncs source to the controller and starts Docker Compose for web, MCP, Postgres, monitor, and builder.</span></div>
+        <div class="plain-step"><strong>4. Bootstrap media</strong><span>The script finds or downloads Windows and VirtIO media and publishes readiness to <code>/setup</code>.</span></div>
+        <div class="plain-step"><strong>5. Build host</strong><span>The controller, triggered by setup, creates or repairs a Windows build-host VM and queues source-build workloads.</span></div>
+        <div class="plain-step"><strong>6. Operational</strong><span>The script promotes artifacts to PVE ISO storage and <code>/setup</code> becomes ready for real Windows provisioning.</span></div>
+      </div>
+
+      <div class="script-callout">
+        <strong>Main point:</strong> the operator mostly runs one console installer on the Proxmox host. That script drives foundation, bootstrap, controller sync, media readiness, operational repair, and setup-state publishing. The controller and build host do their jobs because the script gets the stack into the right state.
+      </div>
+
+      <div class="phase-strip" aria-label="Foundation bootstrap operational flow">
+        <div class="phase-card">
+          <strong>Foundation</strong>
+          <span>Make PVE usable for Autopilot: repair apt enough for shell tools, create API token/role/ACLs, detect storage/bridge/node/IP, generate secrets, create or find the Ubuntu controller VM, sync source, start controller runtime, verify <code>/healthz</code>.</span>
+        </div>
+        <div class="phase-card">
+          <strong>Bootstrap</strong>
+          <span>Make deployment inputs ready: revalidate and sync the PVE token/config, find or download Windows and VirtIO media, publish media readiness, detect build-host state, and create/repair blank deployment templates.</span>
+        </div>
+        <div class="phase-card">
+          <strong>Operational</strong>
+          <span>Make the stack usable: verify controller health, promote source-built setup artifacts, pull large ISOs into PVE storage when needed, republish setup state, and mark <code>/setup</code> ready for real Windows provisioning.</span>
+        </div>
+      </div>
+
+      <div class="diagram compact">
+        <pre class="mermaid">
+flowchart TD
+  A["Operator"]:::operator --> B["Run install-proxmox-ve.sh<br/>guided or unattended"]:::script
+  B --> C["Foundation phase<br/>PVE access, storage, secrets, controller VM, controller runtime"]:::pve
+  C --> D["Bootstrap phase<br/>Windows/VirtIO media, setup state, build-host/template readiness"]:::pve
+  D --> E["Build-host source builds<br/>MSI, WinPE, CloudOSD artifacts"]:::build
+  E --> F["Operational phase<br/>promote artifacts, republish setup state, verify readiness"]:::artifact
+  F --> G["/setup operational<br/>ready to deploy real Windows VMs"]:::controller
+
+  classDef operator fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef script fill:#272c26,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef pve fill:#202f35,stroke:#8fb6c9,stroke-width:1.5px,color:#f1eadc;
+  classDef controller fill:#243425,stroke:#8fbc83,stroke-width:1.5px,color:#f1eadc;
+  classDef build fill:#2d2836,stroke:#b9a3db,stroke-width:1.5px,color:#f1eadc;
+  classDef artifact fill:#1f3538,stroke:#7fc7c6,stroke-width:1.5px,color:#f1eadc;
+        </pre>
+      </div>
+    </section>
+
+    <section id="merged">
+      <h2>Merged Setup Flow</h2>
+      <p class="section-note">
+        Read this as one lifecycle. The setup script is idempotent, so Foundation, Bootstrap, and Operational can be rerun to repair drift without moving Docker or Windows build tooling onto the Proxmox host.
+      </p>
+      <div class="legend">
+        <span><i class="swatch operator"></i> Operator workstation</span>
+        <span><i class="swatch script"></i> Installer script orchestration</span>
+        <span><i class="swatch pve"></i> Proxmox VE host</span>
+        <span><i class="swatch controller"></i> Ubuntu controller VM</span>
+        <span><i class="swatch build"></i> Windows build host</span>
+        <span><i class="swatch artifact"></i> Artifacts and promoted media</span>
+        <span><i class="swatch gate"></i> Gate / decision</span>
+        <span><i class="swatch fail"></i> Blocked / repair needed</span>
+      </div>
+
+      <div class="diagram">
+        <pre class="mermaid">
+flowchart TD
+  Start["Start on operator workstation"]:::operator
+  Start --> Copy["Copy repo to PVE once<br/>/root/ProxmoxVEAutopilot<br/>exclude secrets, env, output"]:::operator
+  Copy --> ScriptHub["Main setup driver<br/>install-proxmox-ve.sh<br/>wraps init-proxmox-ve.sh phases"]:::script
+  ScriptHub --> Entry{"Installer mode"}:::gate
+  Entry -->|"guided UI"| Guided["install-proxmox-ve.sh<br/>Foundation -> Bootstrap -> Operational"]:::pve
+  Entry -->|"unattended"| All["init-proxmox-ve.sh --phase all --resume"]:::pve
+  Entry -->|"dev replay"| Reset["optional reset-dev-lab<br/>removes generated lab VMs/media only"]:::pve
+  Reset --> Guided
+  Guided --> Foundation
+  All --> Foundation
+
+  subgraph PVEFoundation["1. PVE Foundation Phase"]
+    Foundation["Script phase: foundation<br/>runs on PVE as root"]:::script
+    Foundation --> Apt["Repair apt sources enough for shell essentials"]:::pve
+    Apt --> Token["Create or repair PVE API token<br/>autopilot@pve!ansible"]:::pve
+    Token --> Role["Create AutopilotProvisioner role and ACLs"]:::pve
+    Role --> Storage["Enable snippet-capable storage<br/>detect ISO storage, VM storage, bridge, node, host IP"]:::pve
+    Storage --> Secrets["Generate runtime secrets<br/>without printing them"]:::pve
+    Secrets --> RootKey["Create controller-to-PVE root SSH key<br/>for host-local operations API tokens cannot do"]:::pve
+    RootKey --> ControllerVm["Create or discover Ubuntu controller VM<br/>Ubuntu Server 24.04, q35, OVMF, QGA, virtio network"]:::pve
+    ControllerVm --> ControllerReach{"Controller reachable?"}:::gate
+    ControllerReach -->|"no"| FoundationBlocked["Blocked: wait for SSH, QGA, ARP, IP, bridge, storage"]:::fail
+    ControllerReach -->|"yes"| SyncRepo["Sync source/config/secrets to controller<br/>/opt/ProxmoxVEAutopilot"]:::pve
+  end
+
+  subgraph Controller["2. Ubuntu Controller Runtime"]
+    SyncRepo --> ControllerBootstrap["Run init-controller-ubuntu.sh inside controller"]:::controller
+    ControllerBootstrap --> Compose["Build/start Docker Compose stack"]:::controller
+    Compose --> Containers["autopilot web UI/API<br/>autopilot-mcp<br/>autopilot-postgres<br/>autopilot-monitor<br/>autopilot-builder replica(s)"]:::controller
+    Containers --> Health["Verify controller /healthz and /api/version"]:::controller
+    Health --> RuntimeGate{"Runtime healthy?"}:::gate
+    RuntimeGate -->|"no"| RuntimeRepair["Repair controller runtime, source sync, env, compose, or network"]:::fail
+    RuntimeGate -->|"yes"| StopPveDocker["Stop accidental PVE-host Autopilot Docker runtime if present"]:::pve
+  end
+
+  subgraph Bootstrap["3. Bootstrap Media and Setup State"]
+    StopPveDocker --> BootstrapPhase["Script phase: bootstrap<br/>media and setup-state readiness"]:::script
+    BootstrapPhase --> TokenRecheck["Revalidate PVE token from vault<br/>rotate/repair if rejected"]:::pve
+    TokenRecheck --> MediaChoice{"Windows and VirtIO media ready?"}:::gate
+    MediaChoice -->|"download flags"| DownloadMedia["Download Windows ISO via official Microsoft connector<br/>download VirtIO from virtio-win source"]:::pve
+    MediaChoice -->|"manual media"| ManualMedia["Operator uploads official Windows ISO / VirtIO ISO to ISO storage"]:::operator
+    MediaChoice -->|"already present"| ScanMedia["Scan ISO storage"]:::pve
+    DownloadMedia --> ScanMedia
+    ManualMedia --> ScanMedia
+    ScanMedia --> MediaGate{"Media found?"}:::gate
+    MediaGate -->|"no"| MediaBlocked["Blocked: wait-for-media or rerun with official Windows URL/download flags"]:::fail
+    MediaGate -->|"yes"| PublishState["Publish media readiness and sanitized setup state to controller"]:::artifact
+    PublishState --> TemplatePrep["Create or repair blank templates<br/>OSDeploy blank template<br/>CloudOSD blank template"]:::pve
+  end
+
+  subgraph BuildHost["4. Windows Build Host"]
+    TemplatePrep --> SetupUi["Open controller /setup"]:::controller
+    SetupUi --> BuildHostGate{"Build host exists and heartbeating?"}:::gate
+    BuildHostGate -->|"no VM"| SeedIso["Generate seed ISO<br/>AutopilotAgent.exe, agent.json, bootstrap-build-host.ps1, first-boot unattend"]:::controller
+    SeedIso --> CreateBuildHost["Create Windows 11 build-host VM<br/>Windows ISO + VirtIO ISO + seed ISO<br/>UEFI, TPM, QGA enabled"]:::build
+    CreateBuildHost --> FirstBoot["Build host first boot installs seed agent"]:::build
+    BuildHostGate -->|"stale agent"| RepairAgent["Repair through QGA<br/>rewrite agent.json, refresh token, restart service"]:::build
+    RepairAgent --> BuildHeartbeat
+    FirstBoot --> BuildHeartbeat["Agent heartbeats as phase=build-host role=build-host"]:::build
+    BuildHostGate -->|"fresh"| BuildHeartbeat
+    BuildHeartbeat --> ApprovalGate{"Build-host identity approved?"}:::gate
+    ApprovalGate -->|"expected identity"| Approved["Auto-approved when setup state matches VMID/computer/agent id"]:::controller
+    ApprovalGate -->|"unexpected identity"| ManualApproval["Wait for operator approval"]:::operator
+    ManualApproval --> Approved
+  end
+
+  subgraph ArtifactBuild["5. Source-Built Artifacts"]
+    Approved --> QueueWork["Queue allowlisted build workloads"]:::controller
+    QueueWork --> FetchSource["fetch_source_bundle<br/>download exact controller source bundle and manifest"]:::build
+    FetchSource --> BuildAgent["build_agent_msi<br/>x64 and arm64 AutopilotAgent MSI"]:::build
+    BuildAgent --> BuildWinpe["build_winpe<br/>ADK + WinPE add-on produce ISO/WIM"]:::build
+    BuildWinpe --> BuildCloudosd["build_cloudosd<br/>CloudOSD ISO/WIM with OSDCloud module and bridge"]:::build
+    BuildCloudosd --> PublishArtifacts["publish_artifacts<br/>upload files, manifests, SHA-256, source metadata"]:::artifact
+    PublishArtifacts --> ArtifactGate{"Required setup artifacts present?"}:::gate
+    ArtifactGate -->|"no"| ArtifactBlocked["Blocked: rerun workload, repair build host, inspect agent work errors"]:::fail
+    ArtifactGate -->|"yes"| Promote["Controller promotes setup artifacts<br/>agent MSI, WinPE ISO/WIM, CloudOSD ISO/WIM"]:::artifact
+  end
+
+  subgraph Operational["6. Operational Phase and Acceptance"]
+    Promote --> OperationalPhase["Script phase: operational<br/>repair, promote, republish"]:::script
+    OperationalPhase --> PullLarge["Pull large setup ISO artifacts from controller to PVE ISO storage when multipart upload is unreliable"]:::pve
+    PullLarge --> Republish["Republish sanitized setup state to controller"]:::artifact
+    Republish --> Readiness["/api/setup/v1/readiness and /setup evaluate stack"]:::controller
+    Readiness --> ReadyGate{"Operational ready?"}:::gate
+    ReadyGate -->|"no"| RepairLoop["Repair missing phase<br/>foundation, media, build host, artifact promotion, token/config drift"]:::fail
+    RepairLoop --> Entry
+    ReadyGate -->|"yes"| Ready["Stack ready<br/>/setup operational<br/>controller healthy<br/>build host fresh<br/>media and artifacts promoted"]:::controller
+    Ready --> Deploy["Proceed to real Windows provisioning<br/>OSDCloud workstation or OSDeploy server"]:::shared
+  end
+
+  classDef operator fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef script fill:#272c26,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef pve fill:#202f35,stroke:#8fb6c9,stroke-width:1.5px,color:#f1eadc;
+  classDef controller fill:#243425,stroke:#8fbc83,stroke-width:1.5px,color:#f1eadc;
+  classDef build fill:#2d2836,stroke:#b9a3db,stroke-width:1.5px,color:#f1eadc;
+  classDef artifact fill:#1f3538,stroke:#7fc7c6,stroke-width:1.5px,color:#f1eadc;
+  classDef gate fill:#382f1f,stroke:#d8b36a,stroke-width:1.5px,color:#f1eadc;
+  classDef fail fill:#3a2320,stroke:#e08a7e,stroke-width:1.5px,color:#f1eadc;
+  classDef shared fill:#272c26,stroke:#59604f,stroke-width:1.5px,color:#f1eadc;
+        </pre>
+      </div>
+
+      <div class="notes">
+        <div class="note"><strong>PVE host:</strong> bootstrapper only. It owns API token/ACL repair, storage/media scanning, controller VM creation, artifact transfer targets, and template VM repair.</div>
+        <div class="note"><strong>Ubuntu controller:</strong> long-running app home. It owns Docker Compose, web UI/API, MCP, Postgres, monitoring, setup state, build-host orchestration, and artifact promotion.</div>
+        <div class="note"><strong>Windows build host:</strong> disposable source-builder. It owns ADK, WinPE add-on, .NET, WiX, MSI builds, WinPE builds, and CloudOSD builds. PVE never gets these tools.</div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      flowchart: {
+        htmlLabels: true,
+        curve: "basis",
+        nodeSpacing: 44,
+        rankSpacing: 64
+      },
+      theme: "base",
+      themeVariables: {
+        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+        primaryTextColor: "#f1eadc",
+        lineColor: "#59604f",
+        clusterBkg: "#20241f",
+        clusterBorder: "#3b4038",
+        edgeLabelBackground: "#20241f",
+        tertiaryColor: "#272c26"
+      }
+    });
+  </script>
+</body>
+</html>

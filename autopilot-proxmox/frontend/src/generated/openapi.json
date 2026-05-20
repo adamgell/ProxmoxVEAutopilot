@@ -9813,6 +9813,100 @@
         "summary": "Start Capture And Upload"
       }
     },
+    "/api/jobs/collect-logs": {
+      "post": {
+        "operationId": "start_collect_logs_api_jobs_collect_logs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "vm_name": {
+                    "type": "string"
+                  },
+                  "vmid": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "vmid"
+                ],
+                "type": "object"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "properties": {
+                  "vm_name": {
+                    "type": "string"
+                  },
+                  "vmid": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "vmid"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "action": {
+                      "type": "string"
+                    },
+                    "job_id": {
+                      "type": "string"
+                    },
+                    "job_type": {
+                      "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status_url": {
+                      "type": "string"
+                    },
+                    "vmid": {
+                      "type": "integer"
+                    },
+                    "web_url": {
+                      "type": "string"
+                    },
+                    "work_item_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "action",
+                    "job_id",
+                    "work_item_id",
+                    "vmid",
+                    "job_type",
+                    "status_url",
+                    "web_url"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Log collection job queued"
+          },
+          "400": {
+            "description": "Invalid request or no capable AutopilotAgent is available"
+          }
+        },
+        "summary": "Start Collect Logs"
+      }
+    },
     "/api/jobs/provision": {
       "post": {
         "operationId": "start_provision_api_jobs_provision_post",

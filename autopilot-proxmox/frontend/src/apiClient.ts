@@ -11,8 +11,8 @@ export class ApiError extends Error {
 async function responseDetail(response: Response): Promise<string> {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
-    const body = (await response.json().catch(() => null)) as { detail?: unknown; message?: unknown } | null;
-    const detail = body?.detail ?? body?.message;
+    const body = (await response.json().catch(() => null)) as { detail?: unknown; message?: unknown; error?: unknown } | null;
+    const detail = body?.detail ?? body?.message ?? body?.error;
     if (typeof detail === "string" && detail.trim()) {
       return detail;
     }

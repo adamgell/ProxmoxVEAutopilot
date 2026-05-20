@@ -88,8 +88,13 @@ def compile_cloudosd_sequence_intent(
     user_domain, _user_bare = _split_domain_user(raw_username)
     credential_domain = user_domain or domain_fqdn
     ou_path = (params.get("ou_path") or payload.get("ou_hint") or "").strip()
+    domain_controller_ipv4 = (
+        params.get("domain_controller_ipv4")
+        or payload.get("domain_controller_ipv4")
+        or ""
+    ).strip()
     acceptable = _unique_nonempty([domain_fqdn, credential_domain])
-    return {
+    domain_join = {
         "domain_join": {
             "enabled": True,
             "source_sequence_id": int(sequence["id"]),
@@ -100,6 +105,9 @@ def compile_cloudosd_sequence_intent(
             "acceptable_domain_names": acceptable,
         },
     }
+    if domain_controller_ipv4:
+        domain_join["domain_join"]["domain_controller_ipv4"] = domain_controller_ipv4
+    return domain_join
 
 
 def _unique_nonempty(values: list[str]) -> list[str]:
