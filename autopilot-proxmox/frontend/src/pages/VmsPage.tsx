@@ -1136,6 +1136,17 @@ function VmDetailWorkspace({
         <ActionButton label="Delete VM" ariaLabel={`Delete VM ${String(vm.vmid)}`} icon={Trash2} tone="danger" onClick={() => { onPower(vm, "delete"); }} />
       </section>
 
+      <section className="vm-detail-action-zone">
+        <VmActionWorkspace
+          selection={activeAction}
+          screenshot={screenshot}
+          socketState={socketState}
+          onModeChange={onModeChange}
+          onRequestScreenshot={onRequestScreenshot}
+          onClose={onCloseAction}
+        />
+      </section>
+
       <section className="vm-detail-grid" aria-label="VM details">
         <DetailPanel title="Essentials" rows={[
           ["Device name", row.name],
@@ -1179,17 +1190,6 @@ function VmDetailWorkspace({
         evidence={evidence}
         onRefreshScreenshot={() => { onScreenshot(vm); }}
       />
-
-      <section className="vm-detail-action-zone">
-        <VmActionWorkspace
-          selection={activeAction}
-          screenshot={screenshot}
-          socketState={socketState}
-          onModeChange={onModeChange}
-          onRequestScreenshot={onRequestScreenshot}
-          onClose={onCloseAction}
-        />
-      </section>
     </div>
   );
 }

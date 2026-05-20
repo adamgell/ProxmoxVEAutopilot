@@ -745,7 +745,10 @@ describe("App", () => {
     expect(screen.getByText("Agent ID")).toBeInTheDocument();
     expect(screen.getByText("agent-wrkgrp-525570b6")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Console VM 108" }));
-    expect(screen.getByRole("region", { name: "VM action workspace" })).toBeInTheDocument();
+    const actionWorkspace = screen.getByRole("region", { name: "VM action workspace" });
+    const detailsRegion = screen.getByRole("region", { name: "VM details" });
+    expect(actionWorkspace).toBeInTheDocument();
+    expect(actionWorkspace.compareDocumentPosition(detailsRegion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("heading", { name: "VM 108 action" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open legacy console" })).toHaveAttribute("href", "/vms/108/console");
     fireEvent.click(screen.getByRole("button", { name: "Expand console" }));
