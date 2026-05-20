@@ -23,6 +23,15 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _write_fake_msi(path: Path, *, size: int = 4096, payload: bytes | None = None) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if payload is not None:
+        path.write_bytes(payload)
+        return path
+    path.write_bytes(b"MZ" + (b"\0" * (size - 2)))
+    return path
+
+
 @pytest.fixture
 def cloudosd_client(pg_conn, monkeypatch):
     from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, devices_pg, jobs_pg, lab_bubbles_pg, sequences_pg, ts_engine_pg
@@ -2228,8 +2237,7 @@ def test_cloudosd_agent_msi_resolves_from_host_repo_mount(tmp_path, monkeypatch)
 
     host_repo = tmp_path / "host-repo"
     msi_path = host_repo / "autopilot-agent" / "artifacts" / "AutopilotAgent.msi"
-    msi_path.parent.mkdir(parents=True)
-    msi_path.write_bytes(b"fake-msi")
+    _write_fake_msi(msi_path)
     monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
     monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
     monkeypatch.setattr(cloudosd_endpoints, "_APP_ROOT", tmp_path / "app")
@@ -2246,11 +2254,9 @@ def test_cloudosd_agent_msi_prefers_setup_registry_x64_artifact(tmp_path, monkey
     placeholder.parent.mkdir(parents=True)
     placeholder.write_bytes(b"placeholder")
     legacy_msi = tmp_path / "app" / "output" / "cloudosd" / "AutopilotAgent.msi"
-    legacy_msi.parent.mkdir(parents=True)
-    legacy_msi.write_bytes(b"legacy-msi")
+    _write_fake_msi(legacy_msi)
     setup_msi = tmp_path / "setup-artifacts" / "agent-msi" / "AutopilotAgent-0.1.2-win-x64.msi"
-    setup_msi.parent.mkdir(parents=True)
-    setup_msi.write_bytes(b"real-msi")
+    _write_fake_msi(setup_msi)
 
     monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
     monkeypatch.setenv("HOST_REPO_MOUNT", str(host_repo))
@@ -3468,12 +3474,34 @@ def test_cloudosd_agent_msi_asset_can_come_from_app_output(
         / "AutopilotAgent.msi"
     )
     monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
-    msi_path.parent.mkdir(parents=True, exist_ok=True)
-    msi_path.write_bytes(b"fake-msi")
+    _write_fake_msi(msi_path, payload=b"MZ" + (b"f" * 4094))
     try:
         response = cloudosd_client.get("/api/cloudosd/assets/autopilotagent.msi")
         assert response.status_code == 200
-        assert response.content == b"fake-msi"
+        assert response.content == b"MZ" + (b"f" * 4094)
+    finally:
+        msi_path.unlink(missing_ok=True)
+
+
+def test_cloudosd_agent_msi_asset_rejects_placeholder_from_app_output(
+    cloudosd_client,
+    monkeypatch,
+):
+    from web import cloudosd_endpoints
+
+    msi_path = (
+        Path(cloudosd_endpoints._APP_ROOT)
+        / "output"
+        / "cloudosd"
+        / "AutopilotAgent.msi"
+    )
+    monkeypatch.delenv("AUTOPILOT_AGENT_MSI_PATH", raising=False)
+    msi_path.parent.mkdir(parents=True, exist_ok=True)
+    msi_path.write_text("placeholder", encoding="utf-8")
+    try:
+        response = cloudosd_client.get("/api/cloudosd/assets/autopilotagent.msi")
+        assert response.status_code == 404
+        assert "valid AutopilotAgent MSI" in response.json()["detail"]
     finally:
         msi_path.unlink(missing_ok=True)
 
