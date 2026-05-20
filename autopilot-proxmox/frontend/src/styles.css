@@ -1075,7 +1075,8 @@ h3 {
   grid-column: 1 / -1;
 }
 
-.utility-field span {
+.utility-field span,
+.utility-field label {
   text-transform: uppercase;
 }
 
@@ -1129,6 +1130,66 @@ h3 {
   margin: 0;
   color: var(--text);
   font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.provision-builder {
+  margin-bottom: 18px;
+}
+
+.provision-checkbox-row,
+.provision-cache-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.provision-checkbox {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.provision-checkbox input {
+  margin: 0;
+}
+
+.provision-cache-line span,
+.provision-cache-line code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.provision-chip-row {
+  margin-top: 14px;
+}
+
+.provision-progress-metrics {
+  margin-bottom: 14px;
+}
+
+.provision-progress-table {
+  min-width: 1180px;
+}
+
+.provision-progress-table td {
+  vertical-align: top;
+}
+
+.provision-progress-table td strong,
+.provision-progress-table td small {
+  display: block;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

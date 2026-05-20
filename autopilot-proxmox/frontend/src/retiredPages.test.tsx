@@ -13,7 +13,7 @@ const pageResponses: Record<string, unknown> = {
   },
   "/api/provision/page": {
     defaults: { cores: 4, memory_mb: 8192, disk_size_gb: 96 },
-    sequences: [{ id: 1, name: "Windows baseline", target_os: "windows" }],
+    sequences: [{ id: 1, name: "Windows baseline", target_os: "windows", boot_modes: ["cloudosd"] }],
     cloudosd_catalog: { count: 2 },
     osdeploy_catalog: { count: 1 }
   },
