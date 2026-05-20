@@ -372,10 +372,11 @@ export function agentIsStale(agent: AgentFleetRow, now = Date.now()): boolean {
 }
 
 export function summarizeFleet(fleet: VmsFleetResponse): FleetCounts {
-  const running = fleet.vms.filter((vm) => (vm.status || "").toLowerCase() === "running").length;
+  const proxmoxInventory = fleet.proxmox_vms?.length ? fleet.proxmox_vms : fleet.vms;
+  const running = proxmoxInventory.filter((vm) => (vm.status || "").toLowerCase() === "running").length;
   const attention = fleet.vms.filter((vm) => vmJoinLabels(vm).includes("unenrolled")).length + fleet.missing_vms.length;
   return {
-    total: fleet.vms.length,
+    total: proxmoxInventory.length,
     running,
     attention,
     agents: fleet.agents.length,

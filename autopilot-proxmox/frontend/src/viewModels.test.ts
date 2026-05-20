@@ -218,6 +218,28 @@ describe("operator view models", () => {
     });
   });
 
+  test("counts full Proxmox inventory when the fleet API provides it", () => {
+    expect(summarizeFleet({
+      vms: [
+        { vmid: 105, name: "WrkGrp-8F47E090", status: "running" }
+      ],
+      proxmox_vms: [
+        { vmid: 100, name: "autopilot-buildhost-01", status: "running" },
+        { vmid: 400, name: "Dev1", status: "stopped" },
+        { vmid: 9109, name: "FS01", status: "running" }
+      ],
+      missing_vms: [],
+      agents: [],
+      autopilot_devices: [],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-05-19T00:00:00Z"
+    })).toMatchObject({
+      total: 3,
+      running: 2
+    });
+  });
+
   test("merges VM, agent, and Autopilot device evidence into one machine row", () => {
     const rows = buildFleetMachineRows({
       vms: [
