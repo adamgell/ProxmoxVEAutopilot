@@ -18,17 +18,50 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/vms")
     assert not auth.is_exempt_path("/react/vms/108")
     assert not auth.is_exempt_path("/react/agent-download")
+    assert not auth.is_exempt_path("/react/devices")
+    assert not auth.is_exempt_path("/react/legacy-vms")
+    assert not auth.is_exempt_path("/react/hashes")
+    assert not auth.is_exempt_path("/react/files")
+    assert not auth.is_exempt_path("/react/settings")
+    assert not auth.is_exempt_path("/react/credentials")
+    assert not auth.is_exempt_path("/react/credentials/new")
+    assert not auth.is_exempt_path("/react/credentials/7/edit")
+    assert not auth.is_exempt_path("/react/monitoring/settings")
     assert not auth.is_exempt_path("/api/react/agent-download/bootstrap-token")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/legacy/dashboard")
     assert not auth.is_exempt_path("/legacy/jobs")
     assert not auth.is_exempt_path("/legacy/vms")
+    assert not auth.is_exempt_path("/legacy/cloud")
+    assert not auth.is_exempt_path("/legacy/hashes")
+    assert not auth.is_exempt_path("/legacy/files")
+    assert not auth.is_exempt_path("/legacy/settings")
+    assert not auth.is_exempt_path("/legacy/credentials")
+    assert not auth.is_exempt_path("/legacy/monitoring/settings")
+    assert not auth.is_exempt_path("/legacy/devices/108")
     assert not auth.is_exempt_path("/app")
     assert not auth.is_exempt_path("/app/jobs")
     assert not auth.is_exempt_path("/openapi.json")
 
 
-@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring", "/react/vms", "/react/vms/108", "/react/agent-download"])
+@pytest.mark.parametrize("path", [
+    "/react-shell",
+    "/react/dashboard",
+    "/react/jobs",
+    "/react/monitoring",
+    "/react/vms",
+    "/react/vms/108",
+    "/react/agent-download",
+    "/react/devices",
+    "/react/legacy-vms",
+    "/react/hashes",
+    "/react/files",
+    "/react/settings",
+    "/react/credentials",
+    "/react/credentials/new",
+    "/react/credentials/7/edit",
+    "/react/monitoring/settings",
+])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     response = web_client.get(path)
 
@@ -44,6 +77,15 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
         ("/", "/react/dashboard"),
         ("/jobs", "/react/jobs"),
         ("/vms", "/react/vms"),
+        ("/cloud", "/react/devices"),
+        ("/hashes", "/react/hashes"),
+        ("/files", "/react/files"),
+        ("/settings", "/react/settings"),
+        ("/credentials", "/react/credentials"),
+        ("/credentials/new", "/react/credentials/new"),
+        ("/credentials/7/edit", "/react/credentials/7/edit"),
+        ("/devices/108", "/react/vms/108"),
+        ("/monitoring/settings", "/react/monitoring/settings"),
     ],
 )
 def test_primary_operator_paths_redirect_to_react(web_client, path, target):
@@ -58,6 +100,11 @@ def test_primary_operator_paths_redirect_to_react(web_client, path, target):
     [
         ("/legacy/dashboard", "Proxmox VE Autopilot"),
         ("/legacy/jobs", "No jobs yet"),
+        ("/legacy/cloud", "Cloud Devices"),
+        ("/legacy/hashes", "Hardware Hashes"),
+        ("/legacy/files", "MSI Files"),
+        ("/legacy/settings", "Settings"),
+        ("/legacy/credentials", "Credentials"),
     ],
 )
 def test_legacy_operator_pages_remain_available(web_client, path, text):
@@ -72,6 +119,11 @@ def test_legacy_operator_pages_remain_available(web_client, path, text):
     [
         ("/legacy/dashboard", "/react/dashboard"),
         ("/legacy/jobs", "/react/jobs"),
+        ("/legacy/cloud", "/react/devices"),
+        ("/legacy/hashes", "/react/hashes"),
+        ("/legacy/files", "/react/files"),
+        ("/legacy/settings", "/react/settings"),
+        ("/legacy/credentials", "/react/credentials"),
     ],
 )
 def test_legacy_operator_pages_link_back_to_react(web_client, path, target):
@@ -81,6 +133,28 @@ def test_legacy_operator_pages_link_back_to_react(web_client, path, target):
     assert 'id="uiModeSwitch"' in response.text
     assert f'href="{target}"' in response.text
     assert "React UI" in response.text
+
+
+def test_remaining_react_read_apis_return_stable_shapes(web_client):
+    cloud = web_client.get("/api/cloud/devices")
+    assert cloud.status_code == 200
+    assert set(cloud.json()) >= {"groups", "unmatched", "meta", "windows_only", "deletions"}
+
+    hashes = web_client.get("/api/hashes")
+    assert hashes.status_code == 200
+    assert set(hashes.json()) >= {"hash_files"}
+
+    files = web_client.get("/api/files")
+    assert files.status_code == 200
+    assert set(files.json()) >= {"files"}
+
+    settings = web_client.get("/api/settings")
+    assert settings.status_code == 200
+    assert set(settings.json()) >= {"sections", "hypervisor_type", "proxmox_bootstrap"}
+
+    monitoring = web_client.get("/api/monitoring/settings/full")
+    assert monitoring.status_code == 200
+    assert set(monitoring.json()) >= {"settings", "search_ous", "domain_creds", "keytab"}
 
 
 def test_react_agent_download_bootstrap_token_returns_configured_proof(web_client, monkeypatch, tmp_path):

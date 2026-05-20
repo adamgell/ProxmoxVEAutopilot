@@ -40,6 +40,48 @@ describe("operator route registry", () => {
         label: "Agent Download",
         group: "Fleet",
         phase: "operational"
+      },
+      {
+        path: "/react/legacy-vms",
+        label: "Classic VM Table",
+        group: "Fleet",
+        phase: "read-only"
+      },
+      {
+        path: "/react/devices",
+        label: "Cloud Devices",
+        group: "Fleet",
+        phase: "read-only"
+      },
+      {
+        path: "/react/hashes",
+        label: "Hashes",
+        group: "Fleet",
+        phase: "operational"
+      },
+      {
+        path: "/react/files",
+        label: "Files",
+        group: "Fleet",
+        phase: "operational"
+      },
+      {
+        path: "/react/settings",
+        label: "General",
+        group: "Settings",
+        phase: "operational"
+      },
+      {
+        path: "/react/credentials",
+        label: "Credentials",
+        group: "Settings",
+        phase: "operational"
+      },
+      {
+        path: "/react/monitoring/settings",
+        label: "Monitoring settings",
+        group: "Settings",
+        phase: "operational"
       }
     ]);
   });
@@ -61,6 +103,8 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/react/jobs")?.label).toBe("Jobs");
     expect(reactRouteForPath("/react/vms")?.label).toBe("VMs");
     expect(reactRouteForPath("/react/agent-download")?.label).toBe("Agent Download");
+    expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
+    expect(reactRouteForPath("/react/settings")?.label).toBe("General");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
   });
 
@@ -78,7 +122,9 @@ describe("operator route registry", () => {
         expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
         expect.objectContaining({ label: "VMs", href: "/react/vms" }),
-        expect.objectContaining({ label: "Agent Download", href: "/react/agent-download" })
+        expect.objectContaining({ label: "Agent Download", href: "/react/agent-download" }),
+        expect.objectContaining({ label: "Cloud Devices", href: "/react/devices" }),
+        expect.objectContaining({ label: "Monitoring settings", href: "/react/monitoring/settings" })
       ])
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);

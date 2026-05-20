@@ -2371,6 +2371,27 @@
       {% set react_switch_href = '/react/jobs' %}
     {% elif current_path.startswith('/legacy/vms') or current_path == '/vms' %}
       {% set react_switch_href = '/react/vms' %}
+    {% elif current_path.startswith('/legacy/cloud') or current_path == '/cloud' %}
+      {% set react_switch_href = '/react/devices' %}
+    {% elif current_path.startswith('/legacy/hashes') or current_path == '/hashes' %}
+      {% set react_switch_href = '/react/hashes' %}
+    {% elif current_path.startswith('/legacy/files') or current_path == '/files' %}
+      {% set react_switch_href = '/react/files' %}
+    {% elif current_path.startswith('/legacy/settings') or current_path == '/settings' %}
+      {% set react_switch_href = '/react/settings' %}
+    {% elif current_path.startswith('/legacy/credentials') or current_path.startswith('/credentials') %}
+      {% if '/new' in current_path %}
+        {% set react_switch_href = '/react/credentials/new' %}
+      {% elif current_path.endswith('/edit') %}
+        {% set parts = current_path.split('/') %}
+        {% set react_switch_href = '/react/credentials/' ~ parts[-2] ~ '/edit' %}
+      {% else %}
+        {% set react_switch_href = '/react/credentials' %}
+      {% endif %}
+    {% elif current_path.startswith('/legacy/monitoring/settings') or current_path == '/monitoring/settings' %}
+      {% set react_switch_href = '/react/monitoring/settings' %}
+    {% elif current_path.startswith('/legacy/devices/') or current_path.startswith('/devices/') %}
+      {% set react_switch_href = '/react/vms/' ~ current_path.split('/')[-1] %}
     {% elif current_path.startswith('/vms/') and current_path.endswith('/console') %}
       {% set react_switch_href = '/react/vms/' ~ current_path.split('/')[2] %}
     {% elif current_path.startswith('/monitoring') %}
@@ -2444,7 +2465,7 @@
           <div
             class="nav-item"
             data-dropdown="fleet"
-            data-routes="/vms,/hashes,/files,/cloud"
+            data-routes="/react/vms,/react/hashes,/react/files,/react/devices,/vms,/hashes,/files,/cloud"
           >
             <button
               class="nav-tab"
@@ -2456,10 +2477,10 @@
               Fleet<span class="nav-caret" aria-hidden="true"></span>
             </button>
             <ul class="nav-dropdown" id="nav-dd-fleet" role="menu">
-              <li role="none"><a role="menuitem" href="/vms">Devices</a></li>
-              <li role="none"><a role="menuitem" href="/hashes">Hashes</a></li>
-              <li role="none"><a role="menuitem" href="/files">Files</a></li>
-              <li role="none"><a role="menuitem" href="/cloud">Cloud</a></li>
+              <li role="none"><a role="menuitem" href="/react/vms">VM Fleet</a></li>
+              <li role="none"><a role="menuitem" href="/react/devices">Cloud Devices</a></li>
+              <li role="none"><a role="menuitem" href="/react/hashes">Hashes</a></li>
+              <li role="none"><a role="menuitem" href="/react/files">Files</a></li>
             </ul>
           </div>
 
@@ -2474,7 +2495,7 @@
           <div
             class="nav-item"
             data-dropdown="settings"
-            data-routes="/credentials,/settings"
+            data-routes="/react/credentials,/react/settings,/react/monitoring/settings,/credentials,/settings"
           >
             <button
               class="nav-tab"
@@ -2487,10 +2508,13 @@
             </button>
             <ul class="nav-dropdown" id="nav-dd-settings" role="menu">
               <li role="none">
-                <a role="menuitem" href="/credentials">Credentials</a>
+                <a role="menuitem" href="/react/credentials">Credentials</a>
               </li>
               <li role="none">
-                <a role="menuitem" href="/settings">General</a>
+                <a role="menuitem" href="/react/settings">General</a>
+              </li>
+              <li role="none">
+                <a role="menuitem" href="/react/monitoring/settings">Monitoring</a>
               </li>
             </ul>
           </div>
@@ -2534,17 +2558,18 @@
           <a href="/install-tracking" data-route="/install-tracking">Install</a>
           <div class="nav-drawer-group">
             <span class="nav-drawer-group-label">Fleet</span>
-            <a href="/vms" data-route="/vms">Devices</a>
-            <a href="/hashes" data-route="/hashes">Hashes</a>
-            <a href="/files" data-route="/files">Files</a>
-            <a href="/cloud" data-route="/cloud">Cloud</a>
+            <a href="/react/vms" data-route="/react/vms">VM Fleet</a>
+            <a href="/react/devices" data-route="/react/devices">Cloud Devices</a>
+            <a href="/react/hashes" data-route="/react/hashes">Hashes</a>
+            <a href="/react/files" data-route="/react/files">Files</a>
           </div>
           <a href="/jobs" data-route="/jobs">Jobs</a>
           <a href="/monitoring" data-route="/monitoring">Monitoring</a>
           <div class="nav-drawer-group">
             <span class="nav-drawer-group-label">Settings</span>
-            <a href="/credentials" data-route="/credentials">Credentials</a>
-            <a href="/settings" data-route="/settings">General</a>
+            <a href="/react/credentials" data-route="/react/credentials">Credentials</a>
+            <a href="/react/settings" data-route="/react/settings">General</a>
+            <a href="/react/monitoring/settings" data-route="/react/monitoring/settings">Monitoring</a>
           </div>
         </div>
         <button
@@ -2715,13 +2740,13 @@
         </div>
         <div class="cockpit-rail-section">
           <span class="cockpit-rail-label">Fleet</span>
-          <a class="cockpit-rail-link" data-route="/vms" href="/vms"
+          <a class="cockpit-rail-link" data-route="/react/vms" href="/react/vms"
             ><span aria-hidden="true">10</span>VM Fleet</a
           >
-          <a class="cockpit-rail-link" data-route="/cloud" href="/cloud"
+          <a class="cockpit-rail-link" data-route="/react/devices" href="/react/devices"
             ><span aria-hidden="true">11</span>Cloud Devices</a
           >
-          <a class="cockpit-rail-link" data-route="/hashes" href="/hashes"
+          <a class="cockpit-rail-link" data-route="/react/hashes" href="/react/hashes"
             ><span aria-hidden="true">12</span>Hashes</a
           >
           <a
@@ -2735,17 +2760,17 @@
           <span class="cockpit-rail-label">Control</span>
           <a
             class="cockpit-rail-link"
-            data-route="/credentials"
-            href="/credentials"
+            data-route="/react/credentials"
+            href="/react/credentials"
             ><span aria-hidden="true">14</span>Credentials</a
           >
-          <a class="cockpit-rail-link" data-route="/settings" href="/settings"
+          <a class="cockpit-rail-link" data-route="/react/settings" href="/react/settings"
             ><span aria-hidden="true">15</span>Settings</a
           >
           <a
             class="cockpit-rail-link"
-            data-route="/monitoring/settings"
-            href="/monitoring/settings"
+            data-route="/react/monitoring/settings"
+            href="/react/monitoring/settings"
             ><span aria-hidden="true">16</span>Monitor Settings</a
           >
         </div>

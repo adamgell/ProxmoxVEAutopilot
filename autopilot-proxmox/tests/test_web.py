@@ -70,7 +70,7 @@ def test_template_page_renders(client):
 
 
 def test_hashes_page_empty(client):
-    response = client.get("/hashes")
+    response = client.get("/legacy/hashes")
     assert response.status_code == 200
     assert "No hash files" in response.text
 
@@ -349,7 +349,7 @@ def test_hash_upload_job_targets_selected_file_and_group_tag(client, tmp_dirs):
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/hashes?uploaded=1"
+    assert response.headers["location"] == "/react/hashes?uploaded=1"
     assert len(started) == 1
     job = started[0]
     assert job["kind"] == "upload_hash"

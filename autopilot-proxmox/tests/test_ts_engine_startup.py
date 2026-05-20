@@ -20,6 +20,8 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         device_history_pg,
         devices_pg,
         jobs_pg,
+        lab_bubbles_pg,
+        machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
         sequences_pg,
@@ -58,6 +60,9 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     def fake_devices_init(conn):
         calls.append(("devices_init", conn.__class__.__name__))
 
+    def fake_machine_lifecycle_init(conn):
+        calls.append(("machine_lifecycle_init", conn.__class__.__name__))
+
     def fake_agent_telemetry_init(conn):
         calls.append(("agent_telemetry_init", conn.__class__.__name__))
 
@@ -76,6 +81,9 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     def fake_deployment_health_init(conn):
         calls.append(("deployment_health_init", conn.__class__.__name__))
 
+    def fake_lab_bubbles_init(conn):
+        calls.append(("lab_bubbles_init", conn.__class__.__name__))
+
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", "postgresql://new")
     monkeypatch.delenv("AUTOPILOT_TS_ENGINE_DATABASE_URL", raising=False)
     monkeypatch.setattr(db_pg, "connection", fake_connection)
@@ -86,12 +94,14 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
     monkeypatch.setattr(ts_engine_pg, "init", fake_ts_init)
     monkeypatch.setattr(device_history_pg, "init", fake_device_history_init)
     monkeypatch.setattr(devices_pg, "init", fake_devices_init)
+    monkeypatch.setattr(machine_lifecycle_pg, "init", fake_machine_lifecycle_init)
     monkeypatch.setattr(agent_telemetry_pg, "init", fake_agent_telemetry_init)
     monkeypatch.setattr(cloudosd_pg, "init", fake_cloudosd_init)
     monkeypatch.setattr(cloudosd_cache, "init", fake_cloudosd_cache_init)
     monkeypatch.setattr(osdeploy_pg, "init", fake_osdeploy_init)
     monkeypatch.setattr(osdeploy_cache, "init", fake_osdeploy_cache_init)
     monkeypatch.setattr(deployment_health_pg, "init", fake_deployment_health_init)
+    monkeypatch.setattr(lab_bubbles_pg, "init", fake_lab_bubbles_init)
 
     with TestClient(web_app.app):
         pass
@@ -107,12 +117,14 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
         ("ts_init", "FakeConn"),
         ("device_history_init", "FakeConn"),
         ("devices_init", "FakeConn"),
+        ("machine_lifecycle_init", "FakeConn"),
         ("agent_telemetry_init", "FakeConn"),
         ("cloudosd_init", "FakeConn"),
         ("cloudosd_cache_init", "FakeConn"),
         ("osdeploy_init", "FakeConn"),
         ("osdeploy_cache_init", "FakeConn"),
         ("deployment_health_init", "FakeConn"),
+        ("lab_bubbles_init", "FakeConn"),
     ]
 
 

@@ -72,7 +72,7 @@ def test_cockpit_shell_renders_on_dashboard(web_client: TestClient, monkeypatch)
     assert 'class="cockpit-shell ' in body
     assert 'id="cockpitCommand"' in body
     assert 'class="cockpit-rail"' in body
-    assert 'href="/monitoring/settings"' in body
+    assert 'href="/react/monitoring/settings"' in body
     assert 'id="liveSocketIndicator"' in body
     assert "WebSocket: Connecting" in body
     assert "new WebSocket" in body
@@ -419,7 +419,7 @@ def test_cloud_retire_flow_requires_typed_confirmation(web_client: TestClient, m
     )
     monkeypatch.setattr(devices_db, "list_deletions", lambda *a, **kw: [])
 
-    res = web_client.get("/cloud")
+    res = web_client.get("/legacy/cloud")
     assert res.status_code == 200
     assert "function nukeSelected" in res.text
     assert "Type RETIRE" in res.text

@@ -32,18 +32,18 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     items: [
       { path: "/react/vms", label: "VMs", group: "Fleet", phase: "operational", active: true },
       { path: "/react/agent-download", label: "Agent Download", group: "Fleet", phase: "operational", active: true },
-      { path: "/legacy/vms", label: "Legacy VMs", group: "Fleet", phase: "legacy", active: false, legacy: true },
-      { path: "/devices", label: "Devices", group: "Fleet", phase: "legacy", active: false, legacy: true },
-      { path: "/hashes", label: "Hashes", group: "Fleet", phase: "legacy", active: false, legacy: true },
-      { path: "/files", label: "Files", group: "Fleet", phase: "legacy", active: false, legacy: true }
+      { path: "/react/legacy-vms", label: "Classic VM Table", group: "Fleet", phase: "read-only", active: true },
+      { path: "/react/devices", label: "Cloud Devices", group: "Fleet", phase: "read-only", active: true },
+      { path: "/react/hashes", label: "Hashes", group: "Fleet", phase: "operational", active: true },
+      { path: "/react/files", label: "Files", group: "Fleet", phase: "operational", active: true }
     ]
   },
   {
     label: "Settings",
     items: [
-      { path: "/settings", label: "General", group: "Settings", phase: "legacy", active: false, legacy: true },
-      { path: "/credentials", label: "Credentials", group: "Settings", phase: "legacy", active: false, legacy: true },
-      { path: "/monitoring/settings", label: "Monitoring settings", group: "Settings", phase: "legacy", active: false, legacy: true }
+      { path: "/react/settings", label: "General", group: "Settings", phase: "operational", active: true },
+      { path: "/react/credentials", label: "Credentials", group: "Settings", phase: "operational", active: true },
+      { path: "/react/monitoring/settings", label: "Monitoring settings", group: "Settings", phase: "operational", active: true }
     ]
   }
 ];
@@ -91,8 +91,10 @@ export const operatorFlows: readonly OperatorFlow[] = [
     steps: [
       { label: "VMs", href: "/react/vms", group: "Fleet", state: "React" },
       { label: "Agent Download", href: "/react/agent-download", group: "Fleet", state: "React" },
-      { label: "Devices", href: "/devices", group: "Fleet", state: "Jinja" },
-      { label: "Hashes", href: "/hashes", group: "Fleet", state: "Jinja" }
+      { label: "Cloud Devices", href: "/react/devices", group: "Fleet", state: "React" },
+      { label: "Classic VM Table", href: "/react/legacy-vms", group: "Fleet", state: "React" },
+      { label: "Hashes", href: "/react/hashes", group: "Fleet", state: "React" },
+      { label: "Files", href: "/react/files", group: "Fleet", state: "React" }
     ]
   },
   {
@@ -101,9 +103,9 @@ export const operatorFlows: readonly OperatorFlow[] = [
     group: "Settings",
     summary: "Keep credentials and monitoring configuration in guarded pages.",
     steps: [
-      { label: "Monitoring settings", href: "/monitoring/settings", group: "Settings", state: "Jinja" },
-      { label: "Credentials", href: "/credentials", group: "Settings", state: "Jinja" },
-      { label: "General", href: "/settings", group: "Settings", state: "Jinja" }
+      { label: "Monitoring settings", href: "/react/monitoring/settings", group: "Settings", state: "React" },
+      { label: "Credentials", href: "/react/credentials", group: "Settings", state: "React" },
+      { label: "General", href: "/react/settings", group: "Settings", state: "React" }
     ]
   }
 ];

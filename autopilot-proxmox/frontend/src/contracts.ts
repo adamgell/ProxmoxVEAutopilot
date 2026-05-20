@@ -598,3 +598,109 @@ export interface FleetLivePayload {
   readonly refreshing?: boolean;
   readonly generated_at?: string;
 }
+
+export interface CloudDeviceRecord {
+  readonly id?: string;
+  readonly object_id?: string;
+  readonly serial?: string;
+  readonly display_name?: string;
+  readonly name?: string;
+  readonly source?: string;
+  readonly profile?: string;
+  readonly group_tag?: string;
+  readonly last_contact?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface CloudDeviceGroup {
+  readonly serial: string;
+  readonly display_name?: string;
+  readonly intune?: CloudDeviceRecord | null;
+  readonly autopilot?: CloudDeviceRecord | null;
+  readonly entra?: CloudDeviceRecord | null;
+  readonly pve?: Readonly<Record<string, unknown>> | null;
+  readonly [key: string]: unknown;
+}
+
+export interface CloudDevicesResponse {
+  readonly groups: readonly CloudDeviceGroup[];
+  readonly unmatched: Readonly<Record<string, readonly CloudDeviceRecord[]>>;
+  readonly meta: Readonly<Record<string, unknown>>;
+  readonly windows_only: boolean;
+  readonly deletions: readonly Readonly<Record<string, unknown>>[];
+}
+
+export interface HashFileRow {
+  readonly filename: string;
+  readonly serial?: string;
+  readonly name?: string;
+  readonly group_tag?: string;
+  readonly size?: number;
+  readonly mtime?: string;
+  readonly in_intune?: boolean;
+  readonly [key: string]: unknown;
+}
+
+export interface HashesResponse {
+  readonly hash_files: readonly HashFileRow[];
+}
+
+export interface FileShelfRow {
+  readonly filename: string;
+  readonly size?: number;
+  readonly mtime?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface FilesResponse {
+  readonly files: readonly FileShelfRow[];
+}
+
+export interface SettingsField {
+  readonly key: string;
+  readonly label?: string;
+  readonly type: string;
+  readonly value?: string | number | boolean | null;
+  readonly is_set?: boolean;
+  readonly readonly?: boolean;
+  readonly source?: string;
+  readonly options?: readonly string[];
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly help?: string;
+}
+
+export interface SettingsSection {
+  readonly section: string;
+  readonly source: string;
+  readonly fields: readonly SettingsField[];
+}
+
+export interface SettingsResponse {
+  readonly sections: readonly SettingsSection[];
+  readonly saved?: boolean;
+  readonly hypervisor_type: string;
+  readonly proxmox_bootstrap: Readonly<Record<string, unknown>>;
+}
+
+export interface MonitoringSearchOu {
+  readonly id: number;
+  readonly dn: string;
+  readonly label: string;
+  readonly enabled: boolean;
+  readonly sort_order: number;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface MonitoringSettingsFullResponse {
+  readonly settings: {
+    readonly enabled: boolean;
+    readonly interval_seconds: number;
+    readonly ad_credential_id: number;
+    readonly updated_at?: string;
+    readonly error?: string;
+  };
+  readonly search_ous: readonly MonitoringSearchOu[];
+  readonly domain_creds: readonly CredentialSummary[];
+  readonly keytab: Readonly<Record<string, unknown>>;
+}

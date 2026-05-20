@@ -1,4 +1,4 @@
-"""GET /devices/<vmid> — renders four columns, linkage strip, timeline."""
+"""GET /legacy/devices/<vmid> renders four columns, linkage strip, timeline."""
 import json
 from pathlib import Path
 
@@ -78,7 +78,7 @@ def _seed_healthy_vm(db, vmid=116):
 def test_device_detail_happy_path_renders_all_columns(client):
     c, db = client
     _seed_healthy_vm(db, vmid=116)
-    r = c.get("/devices/116")
+    r = c.get("/legacy/devices/116")
     assert r.status_code == 200
     # All four column headings present.
     assert ">PVE<" in r.text
@@ -121,7 +121,7 @@ def test_device_detail_shows_known_credentials(client, monkeypatch):
         }] if vmid == 105 else [],
     )
 
-    r = c.get("/devices/105")
+    r = c.get("/legacy/devices/105")
 
     assert r.status_code == 200
     assert "Known credentials" in r.text
@@ -270,7 +270,7 @@ def test_known_credentials_includes_osdeploy_local_admin(pg_conn):
 
 def test_device_detail_404_for_unknown_vmid(client):
     c, _ = client
-    r = c.get("/devices/99999")
+    r = c.get("/legacy/devices/99999")
     assert r.status_code == 404
 
 
@@ -325,7 +325,7 @@ def test_device_detail_shows_link_broken_warning(client):
         "checked_at": "2026-04-20T23:20:00+00:00",
     })
     device_history_pg.finish_sweep(sweep2, vm_count=1)
-    r = c.get("/devices/42")
+    r = c.get("/legacy/devices/42")
     assert r.status_code == 200
     assert "link-broken" in r.text
     # Linkage strip shows ✗ (the check is False for SID mismatch).
@@ -363,7 +363,7 @@ def test_device_detail_ignores_in_progress_sweep_for_latest_pair(client):
         "checked_at": "2026-05-07T15:10:00+00:00",
     })
 
-    r = c.get("/devices/77")
+    r = c.get("/legacy/devices/77")
 
     assert r.status_code == 200
     assert "COMPLETED-NAME" in r.text

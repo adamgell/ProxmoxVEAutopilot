@@ -112,7 +112,7 @@ def test_settings_page_never_echoes_secret_values(app_client, tmp_path, monkeypa
     from unittest.mock import patch
     with patch("web.app._load_vars", return_value={}), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/settings")
+        r = app_client.get("/legacy/settings")
     body = r.text
     assert r.status_code == 200
     assert "SUPER-SECRET-XYZ" not in body, \
@@ -279,7 +279,7 @@ def test_settings_page_renders_proxmox_permission_bootstrap(
              "proxmox_iso_storage": "isos",
          }), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/settings")
+        r = app_client.get("/legacy/settings")
 
     assert r.status_code == 200
     body = r.text
@@ -299,7 +299,7 @@ def test_settings_page_treats_pve_alias_as_proxmox(app_client, monkeypatch):
              "proxmox_host": "192.168.2.200",
          }), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/settings")
+        r = app_client.get("/legacy/settings")
 
     assert r.status_code == 200
     assert "Proxmox Connection" in r.text
@@ -317,7 +317,7 @@ def test_settings_page_renders_osdeploy_build_host_fields(app_client):
          patch("web.app._vault_presence", return_value={}), \
          patch("web.app._load_proxmox_config", return_value={"hypervisor_type": "proxmox"}), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/settings")
+        r = app_client.get("/legacy/settings")
 
     assert r.status_code == 200
     body = r.text

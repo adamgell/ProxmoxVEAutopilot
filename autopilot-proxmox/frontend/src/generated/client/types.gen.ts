@@ -463,7 +463,7 @@ export type BodyStartUploadApiJobsUploadPost = {
     /**
      * Group Tags
      */
-    group_tags: Array<string>;
+    group_tags?: Array<string>;
 };
 
 /**
@@ -4673,6 +4673,20 @@ export type CloudDeleteStatusApiCloudDeleteJobIdGetResponses = {
     200: unknown;
 };
 
+export type ApiCloudDevicesApiCloudDevicesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/cloud/devices';
+};
+
+export type ApiCloudDevicesApiCloudDevicesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type CloudSyncApiCloudSyncPostData = {
     body?: never;
     path?: never;
@@ -5895,6 +5909,48 @@ export type ApiCredentialsUpdateApiCredentialsCredIdPatchResponses = {
     200: unknown;
 };
 
+export type ApiCredentialsUpdateFormApiCredentialsCredIdPostData = {
+    body?: never;
+    path: {
+        /**
+         * Cred Id
+         */
+        cred_id: number;
+    };
+    query?: never;
+    url: '/api/credentials/{cred_id}';
+};
+
+export type ApiCredentialsUpdateFormApiCredentialsCredIdPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiCredentialsUpdateFormApiCredentialsCredIdPostError = ApiCredentialsUpdateFormApiCredentialsCredIdPostErrors[keyof ApiCredentialsUpdateFormApiCredentialsCredIdPostErrors];
+
+export type ApiCredentialsUpdateFormApiCredentialsCredIdPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiFilesListApiFilesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/files';
+};
+
+export type ApiFilesListApiFilesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type UploadFileShelfItemsApiFilesUploadPostData = {
     body: BodyUploadFileShelfItemsApiFilesUploadPost;
     path?: never;
@@ -5933,6 +5989,20 @@ export type ApiFleetSummaryApiFleetSummaryGetResponses = {
 };
 
 export type ApiFleetSummaryApiFleetSummaryGetResponse = ApiFleetSummaryApiFleetSummaryGetResponses[keyof ApiFleetSummaryApiFleetSummaryGetResponses];
+
+export type ApiHashesListApiHashesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/hashes';
+};
+
+export type ApiHashesListApiHashesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
 
 export type DeleteHashesApiHashesDeletePostData = {
     body: BodyDeleteHashesApiHashesDeletePost;
@@ -6744,6 +6814,20 @@ export type ApiMonitoringSettingsUpdateApiMonitoringSettingsPutErrors = {
 export type ApiMonitoringSettingsUpdateApiMonitoringSettingsPutError = ApiMonitoringSettingsUpdateApiMonitoringSettingsPutErrors[keyof ApiMonitoringSettingsUpdateApiMonitoringSettingsPutErrors];
 
 export type ApiMonitoringSettingsUpdateApiMonitoringSettingsPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiMonitoringSettingsFullApiMonitoringSettingsFullGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/monitoring/settings/full';
+};
+
+export type ApiMonitoringSettingsFullApiMonitoringSettingsFullGetResponses = {
     /**
      * Successful Response
      */
@@ -8434,6 +8518,20 @@ export type ApiServicesApiServicesGetResponses = {
 
 export type ApiServicesApiServicesGetResponse = ApiServicesApiServicesGetResponses[keyof ApiServicesApiServicesGetResponses];
 
+export type ApiSettingsApiSettingsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/settings';
+};
+
+export type ApiSettingsApiSettingsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type SaveSettingsApiSettingsPostData = {
     body?: never;
     path?: never;
@@ -10034,22 +10132,6 @@ export type AuthLogoutAuthLogoutGetResponses = {
     200: unknown;
 };
 
-export type CloudPageCloudGetData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/cloud';
-};
-
-export type CloudPageCloudGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type CloudPageCloudGetResponse = CloudPageCloudGetResponses[keyof CloudPageCloudGetResponses];
-
 export type CloudosdPageCloudosdGetData = {
     body?: never;
     path?: never;
@@ -10200,66 +10282,6 @@ export type CloudosdRunDetailPageCloudosdRunsRunIdGetResponses = {
 
 export type CloudosdRunDetailPageCloudosdRunsRunIdGetResponse = CloudosdRunDetailPageCloudosdRunsRunIdGetResponses[keyof CloudosdRunDetailPageCloudosdRunsRunIdGetResponses];
 
-export type PageCredentialsCredentialsGetData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Error
-         */
-        error?: string;
-    };
-    url: '/credentials';
-};
-
-export type PageCredentialsCredentialsGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type PageCredentialsCredentialsGetError = PageCredentialsCredentialsGetErrors[keyof PageCredentialsCredentialsGetErrors];
-
-export type PageCredentialsCredentialsGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type PageCredentialsCredentialsGetResponse = PageCredentialsCredentialsGetResponses[keyof PageCredentialsCredentialsGetResponses];
-
-export type PageCredentialNewCredentialsNewGetData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Error
-         */
-        error?: string;
-    };
-    url: '/credentials/new';
-};
-
-export type PageCredentialNewCredentialsNewGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type PageCredentialNewCredentialsNewGetError = PageCredentialNewCredentialsNewGetErrors[keyof PageCredentialNewCredentialsNewGetErrors];
-
-export type PageCredentialNewCredentialsNewGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type PageCredentialNewCredentialsNewGetResponse = PageCredentialNewCredentialsNewGetResponses[keyof PageCredentialNewCredentialsNewGetResponses];
-
 export type SubmitCredentialNewCredentialsNewPostData = {
     body?: never;
     path?: never;
@@ -10302,41 +10324,6 @@ export type SubmitCredentialDeleteCredentialsCredIdDeletePostResponses = {
     200: unknown;
 };
 
-export type PageCredentialEditCredentialsCredIdEditGetData = {
-    body?: never;
-    path: {
-        /**
-         * Cred Id
-         */
-        cred_id: number;
-    };
-    query?: {
-        /**
-         * Error
-         */
-        error?: string;
-    };
-    url: '/credentials/{cred_id}/edit';
-};
-
-export type PageCredentialEditCredentialsCredIdEditGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type PageCredentialEditCredentialsCredIdEditGetError = PageCredentialEditCredentialsCredIdEditGetErrors[keyof PageCredentialEditCredentialsCredIdEditGetErrors];
-
-export type PageCredentialEditCredentialsCredIdEditGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type PageCredentialEditCredentialsCredIdEditGetResponse = PageCredentialEditCredentialsCredIdEditGetResponses[keyof PageCredentialEditCredentialsCredIdEditGetResponses];
-
 export type SubmitCredentialEditCredentialsCredIdEditPostData = {
     body?: never;
     path: {
@@ -10365,36 +10352,6 @@ export type SubmitCredentialEditCredentialsCredIdEditPostResponses = {
     200: unknown;
 };
 
-export type PageDeviceDetailDevicesVmidGetData = {
-    body?: never;
-    path: {
-        /**
-         * Vmid
-         */
-        vmid: number;
-    };
-    query?: never;
-    url: '/devices/{vmid}';
-};
-
-export type PageDeviceDetailDevicesVmidGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type PageDeviceDetailDevicesVmidGetError = PageDeviceDetailDevicesVmidGetErrors[keyof PageDeviceDetailDevicesVmidGetErrors];
-
-export type PageDeviceDetailDevicesVmidGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type PageDeviceDetailDevicesVmidGetResponse = PageDeviceDetailDevicesVmidGetResponses[keyof PageDeviceDetailDevicesVmidGetResponses];
-
 export type FaviconFaviconIcoGetData = {
     body?: never;
     path?: never;
@@ -10408,40 +10365,6 @@ export type FaviconFaviconIcoGetResponses = {
      */
     200: unknown;
 };
-
-export type FilesPageFilesGetData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Uploaded
-         */
-        uploaded?: string;
-        /**
-         * Error
-         */
-        error?: string;
-    };
-    url: '/files';
-};
-
-export type FilesPageFilesGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type FilesPageFilesGetError = FilesPageFilesGetErrors[keyof FilesPageFilesGetErrors];
-
-export type FilesPageFilesGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type FilesPageFilesGetResponse = FilesPageFilesGetResponses[keyof FilesPageFilesGetResponses];
 
 export type DownloadFileShelfItemFilesFilenameGetData = {
     body?: never;
@@ -10470,40 +10393,6 @@ export type DownloadFileShelfItemFilesFilenameGetResponses = {
      */
     200: unknown;
 };
-
-export type HashesPageHashesGetData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Uploaded
-         */
-        uploaded?: string;
-        /**
-         * Error
-         */
-        error?: string;
-    };
-    url: '/hashes';
-};
-
-export type HashesPageHashesGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type HashesPageHashesGetError = HashesPageHashesGetErrors[keyof HashesPageHashesGetErrors];
-
-export type HashesPageHashesGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type HashesPageHashesGetResponse = HashesPageHashesGetResponses[keyof HashesPageHashesGetResponses];
 
 export type HealthzHealthzGetData = {
     body?: never;
@@ -10594,22 +10483,6 @@ export type PageMonitoringMonitoringGetResponses = {
 };
 
 export type PageMonitoringMonitoringGetResponse = PageMonitoringMonitoringGetResponses[keyof PageMonitoringMonitoringGetResponses];
-
-export type PageMonitoringSettingsMonitoringSettingsGetData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/monitoring/settings';
-};
-
-export type PageMonitoringSettingsMonitoringSettingsGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type PageMonitoringSettingsMonitoringSettingsGetResponse = PageMonitoringSettingsMonitoringSettingsGetResponses[keyof PageMonitoringSettingsMonitoringSettingsGetResponses];
 
 export type PostOsdCompleteOsdClientCompletePostData = {
     body?: never;
@@ -11621,36 +11494,6 @@ export type PageSequenceEditSequencesSeqIdEditGetResponses = {
 };
 
 export type PageSequenceEditSequencesSeqIdEditGetResponse = PageSequenceEditSequencesSeqIdEditGetResponses[keyof PageSequenceEditSequencesSeqIdEditGetResponses];
-
-export type SettingsPageSettingsGetData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Saved
-         */
-        saved?: string;
-    };
-    url: '/settings';
-};
-
-export type SettingsPageSettingsGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type SettingsPageSettingsGetError = SettingsPageSettingsGetErrors[keyof SettingsPageSettingsGetErrors];
-
-export type SettingsPageSettingsGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type SettingsPageSettingsGetResponse = SettingsPageSettingsGetResponses[keyof SettingsPageSettingsGetResponses];
 
 export type SetupPageSetupGetData = {
     body?: never;

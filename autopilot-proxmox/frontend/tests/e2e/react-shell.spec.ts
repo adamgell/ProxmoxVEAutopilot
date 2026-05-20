@@ -273,6 +273,65 @@ async function mockReadApis(page: Page) {
       }
     });
   });
+  await page.route("**/api/cloud/devices", async (route) => {
+    await route.fulfill({
+      json: {
+        groups: [
+          {
+            serial: "SER-101",
+            display_name: "ACME-101",
+            intune: { id: "intune-101", display_name: "ACME-101" },
+            autopilot: { id: "ap-101", profile: "Autopilot profile", group_tag: "Lab" },
+            entra: { id: "entra-101", display_name: "ACME-101" },
+            pve: { vmid: 108, name: "ACME-101" }
+          }
+        ],
+        unmatched: {},
+        meta: {},
+        windows_only: true,
+        deletions: []
+      }
+    });
+  });
+  await page.route("**/api/hashes", async (route) => {
+    await route.fulfill({
+      json: {
+        hash_files: [{ filename: "ACME-101_hwid.csv", serial: "SER-101", group_tag: "Lab", size: 2048, in_intune: false }]
+      }
+    });
+  });
+  await page.route("**/api/files", async (route) => {
+    await route.fulfill({ json: { files: [{ filename: "AutopilotAgent.msi", size: 4096, mtime: "2026-05-19T12:00:00+00:00" }] } });
+  });
+  await page.route("**/api/settings", async (route) => {
+    await route.fulfill({
+      json: {
+        sections: [
+          {
+            section: "General",
+            source: "vars",
+            fields: [{ key: "hypervisor_type", label: "Hypervisor", type: "select", value: "proxmox", options: ["proxmox"], labels: { proxmox: "Proxmox" } }]
+          }
+        ],
+        saved: false,
+        hypervisor_type: "proxmox",
+        proxmox_bootstrap: { host: "pve2", disk_storage: "local-lvm", iso_storage: "local", root_password_set: true, default_token_id: "autopilot@pve!autopilot" }
+      }
+    });
+  });
+  await page.route("**/api/monitoring/settings/full", async (route) => {
+    await route.fulfill({
+      json: {
+        settings: { enabled: true, interval_seconds: 300, ad_credential_id: 0, updated_at: "2026-05-19T12:00:00+00:00" },
+        search_ous: [{ id: 1, dn: "OU=Workstations,DC=example,DC=com", label: "Workstations", enabled: true, sort_order: 10 }],
+        domain_creds: [],
+        keytab: { status: "ok", checked_at: "2026-05-19T12:00:00+00:00", message: "keytab valid" }
+      }
+    });
+  });
+  await page.route("**/api/credentials", async (route) => {
+    await route.fulfill({ json: [{ id: 7, name: "ACME Domain Join", type: "domain_join", updated_at: "2026-05-19T12:00:00+00:00" }] });
+  });
 }
 
 test("renders the React shell without layout overlap", async ({ page }) => {
@@ -345,7 +404,7 @@ for (const viewport of [
     await expect(page.getByRole("heading", { name: "Signal families" })).toBeVisible();
     await expect(page.getByText("Build host agent")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open server deploy" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Monitoring settings", exact: true })).toBeVisible();
+    await expect(page.locator("main").getByRole("link", { name: "Monitoring settings", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Deployment speed" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Lifecycle lanes" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Service health" })).toBeVisible();
@@ -409,4 +468,32 @@ for (const viewport of [
     }
     expect(hero.y + hero.height).toBeLessThanOrEqual(toolbar.y + 1);
   });
+
+  for (const route of [
+    { path: "/react/devices", heading: "Cloud Devices", text: "ACME-101" },
+    { path: "/react/legacy-vms", heading: "Classic VM Table", text: "WRKGRP-525570B6" },
+    { path: "/react/hashes", heading: "Hashes", text: "ACME-101_hwid.csv" },
+    { path: "/react/files", heading: "Files", text: "AutopilotAgent.msi" },
+    { path: "/react/settings", heading: "Settings", text: "Proxmox bootstrap" },
+    { path: "/react/credentials", heading: "Credentials", text: "ACME Domain Join" },
+    { path: "/react/monitoring/settings", heading: "Monitoring Settings", text: "OU=Workstations,DC=example,DC=com" }
+  ]) {
+    test(`renders ${route.path} without overlap on ${viewport.name}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await mockReadApis(page);
+      await page.goto(route.path);
+
+      await expect(page.locator("main").getByRole("heading", { name: route.heading, exact: true })).toBeVisible();
+      await expect(page.getByText(route.text).first()).toBeVisible();
+
+      const header = await page.locator(".page-head").boundingBox();
+      const firstPanel = await page.locator(".panel").first().boundingBox();
+      expect(header).not.toBeNull();
+      expect(firstPanel).not.toBeNull();
+      if (!header || !firstPanel) {
+        throw new Error(`${route.path} layout regions were not measurable.`);
+      }
+      expect(header.y + header.height).toBeLessThanOrEqual(firstPanel.y + 180);
+    });
+  }
 }

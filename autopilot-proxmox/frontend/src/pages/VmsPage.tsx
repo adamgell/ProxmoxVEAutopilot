@@ -1083,7 +1083,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         bootstrap={bootstrap}
         title={detailRow?.name ?? `VM ${String(detailVmid)}`}
         section="Fleet"
-        path="/react/vms"
+        path={`/react/vms/${String(detailVmid)}`}
         socketState={socketState}
         action={<a className="action-link" href="/react/vms">VMs</a>}
       >

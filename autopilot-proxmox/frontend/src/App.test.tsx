@@ -247,6 +247,98 @@ const dashboardResponses: Record<string, unknown> = {
       updated_at: "2026-05-18T18:10:00Z"
     }
   ],
+  "/api/cloud/devices": {
+    groups: [
+      {
+        serial: "SER-101",
+        display_name: "ACME-101",
+        intune: { id: "intune-101", display_name: "ACME-101", last_contact: "2026-05-19T12:00:00+00:00" },
+        autopilot: { id: "ap-101", profile: "Autopilot profile", group_tag: "Lab" },
+        entra: { id: "entra-101", display_name: "ACME-101" },
+        pve: { vmid: 101, name: "ACME-101" }
+      }
+    ],
+    unmatched: {},
+    meta: {},
+    windows_only: true,
+    deletions: []
+  },
+  "/api/hashes": {
+    hash_files: [
+      {
+        filename: "ACME-101_hwid.csv",
+        serial: "SER-101",
+        group_tag: "Lab",
+        size: 2048,
+        in_intune: false
+      }
+    ]
+  },
+  "/api/files": {
+    files: [
+      {
+        filename: "AutopilotAgent.msi",
+        size: 4096,
+        mtime: "2026-05-19T12:00:00+00:00"
+      }
+    ]
+  },
+  "/api/settings": {
+    sections: [
+      {
+        section: "General",
+        source: "vars",
+        fields: [
+          {
+            key: "hypervisor_type",
+            label: "Hypervisor",
+            type: "select",
+            value: "proxmox",
+            options: ["proxmox", "utm"],
+            labels: { proxmox: "Proxmox", utm: "UTM" }
+          }
+        ]
+      }
+    ],
+    saved: false,
+    hypervisor_type: "proxmox",
+    proxmox_bootstrap: {
+      host: "pve2",
+      disk_storage: "local-lvm",
+      iso_storage: "local",
+      root_password_set: true,
+      default_token_id: "autopilot@pve!autopilot"
+    }
+  },
+  "/api/monitoring/settings/full": {
+    settings: {
+      enabled: true,
+      interval_seconds: 300,
+      ad_credential_id: 7,
+      updated_at: "2026-05-19T12:00:00+00:00"
+    },
+    search_ous: [
+      {
+        id: 1,
+        dn: "OU=Workstations,DC=example,DC=com",
+        label: "Workstations",
+        enabled: true,
+        sort_order: 10
+      }
+    ],
+    domain_creds: [
+      {
+        id: 7,
+        name: "ACME Domain Join",
+        type: "domain_join"
+      }
+    ],
+    keytab: {
+      status: "ok",
+      checked_at: "2026-05-19T12:00:00+00:00",
+      message: "keytab valid"
+    }
+  },
   "/api/react/agent-download/bootstrap-token": {
     bootstrap_token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     token_kind: "sha256_proof"
@@ -580,7 +672,16 @@ describe("App", () => {
     ["/react/jobs", "/legacy/jobs"],
     ["/react/monitoring", "/monitoring"],
     ["/react/vms", "/legacy/vms"],
-    ["/react/vms/108", "/legacy/vms"],
+    ["/react/vms/108", "/legacy/devices/108"],
+    ["/react/legacy-vms", "/legacy/vms"],
+    ["/react/devices", "/legacy/cloud"],
+    ["/react/hashes", "/legacy/hashes"],
+    ["/react/files", "/legacy/files"],
+    ["/react/settings", "/legacy/settings"],
+    ["/react/credentials", "/legacy/credentials"],
+    ["/react/credentials/new", "/legacy/credentials/new"],
+    ["/react/credentials/7/edit", "/legacy/credentials/7/edit"],
+    ["/react/monitoring/settings", "/legacy/monitoring/settings"],
     ["/react/agent-download", "/legacy/dashboard"]
   ])("links %s back to its legacy UI fallback", async (path, legacyPath) => {
     mockFetch(dashboardResponses);
@@ -591,6 +692,25 @@ describe("App", () => {
       "href",
       legacyPath
     );
+  });
+
+  test.each([
+    ["/react/devices", "Cloud Devices", "ACME-101"],
+    ["/react/legacy-vms", "Classic VM Table", "WRKGRP-525570B6"],
+    ["/react/hashes", "Hashes", "ACME-101_hwid.csv"],
+    ["/react/files", "Files", "AutopilotAgent.msi"],
+    ["/react/settings", "Settings", "Proxmox bootstrap"],
+    ["/react/credentials", "Credentials", "ACME Domain Join"],
+    ["/react/credentials/new", "New Credential", "Create credential"],
+    ["/react/credentials/7/edit", "Edit Credential", "Edit credential"],
+    ["/react/monitoring/settings", "Monitoring Settings", "OU=Workstations,DC=example,DC=com"]
+  ])("renders migrated utility route %s", async (path, heading, content) => {
+    mockFetch(dashboardResponses);
+
+    renderRoute(path);
+
+    expect((await screen.findAllByRole("heading", { name: heading })).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(content)).length).toBeGreaterThan(0);
   });
 
   test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {
@@ -1141,10 +1261,9 @@ describe("App", () => {
     expect(screen.getByText("Build host agent")).toBeInTheDocument();
     expect(screen.getAllByText("Stage Windows ISO and VirtIO media").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/osdeploy");
-    expect(screen.getByRole("link", { name: "Monitoring settings" })).toHaveAttribute(
-      "href",
-      "/monitoring/settings"
-    );
+    expect(screen.getAllByRole("link", { name: "Monitoring settings" }).some((link) =>
+      link.getAttribute("href") === "/react/monitoring/settings"
+    )).toBe(true);
     expect(screen.queryByText(/May 19 00:00Z/u)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Deployment speed" })).toBeInTheDocument();
     expect(screen.getByText("Windows setup")).toBeInTheDocument();

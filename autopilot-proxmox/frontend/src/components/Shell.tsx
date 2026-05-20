@@ -5,6 +5,15 @@ import { operatorNavGroups, reactRouteForPath } from "../routes";
 import { formatShortDateTime } from "../viewModels";
 
 function currentPageLabel(path: string): string {
+  if (path === "/react/credentials/new") {
+    return "New Credential";
+  }
+  if (/^\/react\/credentials\/\d+\/edit$/u.test(path)) {
+    return "Edit Credential";
+  }
+  if (/^\/react\/vms\/\d+$/u.test(path)) {
+    return "VM Detail";
+  }
   return reactRouteForPath(path)?.label ?? "Shell";
 }
 
@@ -15,8 +24,42 @@ function legacyPathForReactPath(path: string): string {
   if (path === "/react/monitoring") {
     return "/monitoring";
   }
-  if (path === "/react/vms" || /^\/react\/vms\/\d+$/u.test(path)) {
+  if (path === "/react/vms") {
     return "/legacy/vms";
+  }
+  const vmMatch = /^\/react\/vms\/(\d+)$/u.exec(path);
+  const vmid = vmMatch?.[1];
+  if (vmid) {
+    return `/legacy/devices/${vmid}`;
+  }
+  if (path === "/react/legacy-vms") {
+    return "/legacy/vms";
+  }
+  if (path === "/react/devices") {
+    return "/legacy/cloud";
+  }
+  if (path === "/react/hashes") {
+    return "/legacy/hashes";
+  }
+  if (path === "/react/files") {
+    return "/legacy/files";
+  }
+  if (path === "/react/settings") {
+    return "/legacy/settings";
+  }
+  if (path === "/react/credentials") {
+    return "/legacy/credentials";
+  }
+  if (path === "/react/credentials/new") {
+    return "/legacy/credentials/new";
+  }
+  const credMatch = /^\/react\/credentials\/(\d+)\/edit$/u.exec(path);
+  const credentialId = credMatch?.[1];
+  if (credentialId) {
+    return `/legacy/credentials/${credentialId}/edit`;
+  }
+  if (path === "/react/monitoring/settings") {
+    return "/legacy/monitoring/settings";
   }
   return "/legacy/dashboard";
 }

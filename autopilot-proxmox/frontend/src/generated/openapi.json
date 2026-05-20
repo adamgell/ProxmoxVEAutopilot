@@ -628,6 +628,7 @@
             "type": "array"
           },
           "group_tags": {
+            "default": [],
             "items": {
               "type": "string"
             },
@@ -636,8 +637,7 @@
           }
         },
         "required": [
-          "files",
-          "group_tags"
+          "files"
         ],
         "title": "Body_start_upload_api_jobs_upload_post",
         "type": "object"
@@ -7373,6 +7373,22 @@
         "summary": "Cloud Delete Status"
       }
     },
+    "/api/cloud/devices": {
+      "get": {
+        "operationId": "api_cloud_devices_api_cloud_devices_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Cloud Devices"
+      }
+    },
     "/api/cloud/sync": {
       "post": {
         "operationId": "cloud_sync_api_cloud_sync_post",
@@ -9221,6 +9237,57 @@
           }
         },
         "summary": "Api Credentials Update"
+      },
+      "post": {
+        "operationId": "api_credentials_update_form_api_credentials__cred_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cred_id",
+            "required": true,
+            "schema": {
+              "title": "Cred Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Credentials Update Form"
+      }
+    },
+    "/api/files": {
+      "get": {
+        "operationId": "api_files_list_api_files_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Files List"
       }
     },
     "/api/files/upload": {
@@ -9276,6 +9343,22 @@
           }
         },
         "summary": "Api Fleet Summary"
+      }
+    },
+    "/api/hashes": {
+      "get": {
+        "operationId": "api_hashes_list_api_hashes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Hashes List"
       }
     },
     "/api/hashes/delete": {
@@ -10404,6 +10487,22 @@
           }
         },
         "summary": "Api Monitoring Settings Update"
+      }
+    },
+    "/api/monitoring/settings/full": {
+      "get": {
+        "operationId": "api_monitoring_settings_full_api_monitoring_settings_full_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Monitoring Settings Full"
       }
     },
     "/api/monitoring/signals": {
@@ -12983,6 +13082,20 @@
       }
     },
     "/api/settings": {
+      "get": {
+        "operationId": "api_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Settings"
+      },
       "post": {
         "operationId": "save_settings_api_settings_post",
         "responses": {
@@ -15186,24 +15299,6 @@
         "summary": "Auth Logout"
       }
     },
-    "/cloud": {
-      "get": {
-        "operationId": "cloud_page_cloud_get",
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Cloud Page"
-      }
-    },
     "/cloudosd": {
       "get": {
         "operationId": "cloudosd_page_cloudosd_get",
@@ -15403,85 +15498,7 @@
         "summary": "Cloudosd Run Detail Page"
       }
     },
-    "/credentials": {
-      "get": {
-        "operationId": "page_credentials_credentials_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "error",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Error",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Page Credentials"
-      }
-    },
     "/credentials/new": {
-      "get": {
-        "operationId": "page_credential_new_credentials_new_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "error",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Error",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Page Credential New"
-      },
       "post": {
         "operationId": "submit_credential_new_credentials_new_post",
         "responses": {
@@ -15535,53 +15552,6 @@
       }
     },
     "/credentials/{cred_id}/edit": {
-      "get": {
-        "operationId": "page_credential_edit_credentials__cred_id__edit_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "cred_id",
-            "required": true,
-            "schema": {
-              "title": "Cred Id",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "error",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Error",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Page Credential Edit"
-      },
       "post": {
         "operationId": "submit_credential_edit_credentials__cred_id__edit_post",
         "parameters": [
@@ -15618,45 +15588,6 @@
         "summary": "Submit Credential Edit"
       }
     },
-    "/devices/{vmid}": {
-      "get": {
-        "operationId": "page_device_detail_devices__vmid__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "vmid",
-            "required": true,
-            "schema": {
-              "title": "Vmid",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Page Device Detail"
-      }
-    },
     "/favicon.ico": {
       "get": {
         "description": "Browsers auto-fetch /favicon.ico; serve the SVG mark so tabs\nshow the app icon. Exempt route via explicit exemption list in\n_require_auth \u2014 shipping as SVG (not ICO) is fine for modern\nbrowsers and saves bundling a raster version.",
@@ -15672,56 +15603,6 @@
           }
         },
         "summary": "Favicon"
-      }
-    },
-    "/files": {
-      "get": {
-        "operationId": "files_page_files_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "uploaded",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Uploaded",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "error",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Error",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Files Page"
       }
     },
     "/files/{filename}": {
@@ -15759,56 +15640,6 @@
           }
         },
         "summary": "Download File Shelf Item"
-      }
-    },
-    "/hashes": {
-      "get": {
-        "operationId": "hashes_page_hashes_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "uploaded",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Uploaded",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "error",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Error",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Hashes Page"
       }
     },
     "/healthz": {
@@ -15929,24 +15760,6 @@
           }
         },
         "summary": "Page Monitoring"
-      }
-    },
-    "/monitoring/settings": {
-      "get": {
-        "operationId": "page_monitoring_settings_monitoring_settings_get",
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Page Monitoring Settings"
       }
     },
     "/osd/client/complete": {
@@ -17529,46 +17342,6 @@
           }
         },
         "summary": "Page Sequence Edit"
-      }
-    },
-    "/settings": {
-      "get": {
-        "operationId": "settings_page_settings_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "saved",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Saved",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Settings Page"
       }
     },
     "/setup": {

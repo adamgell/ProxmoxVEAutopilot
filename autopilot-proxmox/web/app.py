@@ -53,6 +53,16 @@ def _redirect_with_error(path: str, error: str) -> RedirectResponse:
     return RedirectResponse(f"{path}?error={quote_plus(str(error))}", status_code=303)
 
 
+def _redirect_with_query(path: str, **query: object) -> RedirectResponse:
+    pairs = [
+        f"{quote_plus(str(key))}={quote_plus(str(value))}"
+        for key, value in query.items()
+        if value not in (None, "")
+    ]
+    suffix = f"?{'&'.join(pairs)}" if pairs else ""
+    return RedirectResponse(f"{path}{suffix}", status_code=303)
+
+
 def _is_unique_violation(exc: Exception) -> bool:
     return isinstance(exc, psycopg.errors.UniqueViolation) or "unique" in str(exc).lower()
 
@@ -5150,6 +5160,51 @@ async def react_agent_download_shell(request: Request):
     return _render_react_shell(request)
 
 
+@app.get("/react/devices", response_class=HTMLResponse, include_in_schema=False)
+async def react_devices_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/legacy-vms", response_class=HTMLResponse, include_in_schema=False)
+async def react_legacy_vms_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/hashes", response_class=HTMLResponse, include_in_schema=False)
+async def react_hashes_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/files", response_class=HTMLResponse, include_in_schema=False)
+async def react_files_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/settings", response_class=HTMLResponse, include_in_schema=False)
+async def react_settings_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/credentials", response_class=HTMLResponse, include_in_schema=False)
+async def react_credentials_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/credentials/new", response_class=HTMLResponse, include_in_schema=False)
+async def react_credential_new_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/credentials/{cred_id}/edit", response_class=HTMLResponse, include_in_schema=False)
+async def react_credential_edit_shell(request: Request, cred_id: int):
+    return _render_react_shell(request)
+
+
+@app.get("/react/monitoring/settings", response_class=HTMLResponse, include_in_schema=False)
+async def react_monitoring_settings_shell(request: Request):
+    return _render_react_shell(request)
+
+
 @app.get("/install-tracking", response_class=HTMLResponse)
 async def install_tracking_page(request: Request, run_id: str | None = None):
     return templates.TemplateResponse("install_tracking.html", {
@@ -5590,29 +5645,67 @@ async def template_page(request: Request):
     })
 
 
-@app.get("/hashes", response_class=HTMLResponse)
-async def hashes_page(request: Request, uploaded: str = "", error: str = ""):
+def _hashes_payload() -> dict:
     hash_files = get_hash_files()
     devices, _ = get_autopilot_devices()
     ap_serials = {d["serial"] for d in devices}
     for f in hash_files:
         f["in_intune"] = f["serial"] in ap_serials
+    return {"hash_files": hash_files}
+
+
+def _render_legacy_hashes(request: Request, uploaded: str = "", error: str = ""):
+    payload = _hashes_payload()
     return templates.TemplateResponse("hashes.html", {
         "request": request,
-        "hash_files": hash_files,
+        "hash_files": payload["hash_files"],
         "uploaded": uploaded,
         "error": error,
     })
 
 
-@app.get("/files", response_class=HTMLResponse)
-async def files_page(request: Request, uploaded: str = "", error: str = ""):
+@app.get("/api/hashes")
+async def api_hashes_list():
+    return _hashes_payload()
+
+
+@app.get("/hashes", include_in_schema=False)
+async def hashes_page(request: Request):
+    return _primary_ui_redirect("/react/hashes")
+
+
+@app.get("/legacy/hashes", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_hashes_page(request: Request, uploaded: str = "", error: str = ""):
+    return _render_legacy_hashes(request, uploaded=uploaded, error=error)
+
+
+def _files_payload() -> dict:
+    return {"files": get_file_shelf_items()}
+
+
+def _render_legacy_files(request: Request, uploaded: str = "", error: str = ""):
+    payload = _files_payload()
     return templates.TemplateResponse("files.html", {
         "request": request,
-        "files": get_file_shelf_items(),
+        "files": payload["files"],
         "uploaded": uploaded,
         "error": error,
     })
+
+
+@app.get("/api/files")
+async def api_files_list():
+    return _files_payload()
+
+
+@app.get("/files", include_in_schema=False)
+async def files_page(request: Request):
+    return _primary_ui_redirect("/react/files")
+
+
+@app.get("/legacy/files", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_files_page(request: Request, uploaded: str = "", error: str = ""):
+    return _render_legacy_files(request, uploaded=uploaded, error=error)
 
 
 def _render_legacy_jobs(request: Request):
@@ -5900,8 +5993,7 @@ async def job_detail_page(request: Request, job_id: str):
     })
 
 
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, saved: str = ""):
+def _settings_payload(saved: str = "") -> dict:
     current_vars = _load_vars()
     vault_present = _vault_presence()
     vault_values = _load_vault()
@@ -5952,8 +6044,7 @@ async def settings_page(request: Request, saved: str = ""):
             continue
         sections.append({"section": group["section"], "fields": fields,
                          "source": source})
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return {
         "sections": sections,
         "saved": saved == "1",
         "hypervisor_type": hv_type,
@@ -5968,7 +6059,29 @@ async def settings_page(request: Request, saved: str = ""):
             "snippet_storage": proxmox_permissions.DEFAULT_SNIPPET_STORAGE,
             "chassis_types": ",".join(str(v) for v in proxmox_permissions.DEFAULT_CHASSIS_TYPES),
         },
+    }
+
+
+def _render_legacy_settings(request: Request, saved: str = ""):
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        **_settings_payload(saved=saved),
     })
+
+
+@app.get("/api/settings")
+async def api_settings():
+    return _settings_payload()
+
+
+@app.get("/settings", include_in_schema=False)
+async def settings_page(request: Request, saved: str = ""):
+    return _primary_ui_redirect("/react/settings")
+
+
+@app.get("/legacy/settings", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_settings_page(request: Request, saved: str = ""):
+    return _render_legacy_settings(request, saved=saved)
 
 
 @app.get("/api/settings/node-options/{node}")
@@ -6179,7 +6292,9 @@ async def save_settings(request: Request):
         _save_vars(vars_updates)
     if vault_updates:
         _save_vault(vault_updates)
-    return RedirectResponse("/settings?saved=1", status_code=303)
+    if _request_wants_json(request):
+        return {"ok": True, **_settings_payload(saved="1")}
+    return RedirectResponse("/react/settings?saved=1", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -10451,11 +10566,14 @@ async def start_capture(
 
 @app.post("/api/jobs/upload")
 async def start_upload(
+    request: Request,
     files: list[str] = Form(...),
-    group_tags: list[str] = Form(...),
+    group_tags: list[str] = Form(default=[]),
 ):
     """Upload selected hash files to Intune with per-file group tags."""
-    for filename, tag in zip(files, group_tags):
+    job_ids = []
+    for index, filename in enumerate(files):
+        tag = group_tags[index] if index < len(group_tags) else ""
         try:
             file_path = _safe_path(HASH_DIR, filename)
         except ValueError:
@@ -10471,9 +10589,12 @@ async def start_upload(
             cmd += ["-e", f"vm_group_tag={tag}"]
         cmd += ["-e", f"hash_file={file_path}"]
 
-        job_manager.start("upload_hash", cmd, args={"file": filename, "group_tag": tag})
+        job = job_manager.start("upload_hash", cmd, args={"file": filename, "group_tag": tag})
+        job_ids.append(job["id"])
 
-    return RedirectResponse("/hashes?uploaded=1", status_code=303)
+    if _request_wants_json(request):
+        return {"ok": True, "job_ids": job_ids, "count": len(job_ids)}
+    return _redirect_with_query("/react/hashes", uploaded=1)
 
 
 @app.get("/api/jobs", response_model=list[JobTableRowResponse])
@@ -10770,7 +10891,8 @@ async def sync_autopilot(request: Request):
 
 
 @app.post("/api/hashes/delete")
-async def delete_hashes(files: list[str] = Form(...)):
+async def delete_hashes(request: Request, files: list[str] = Form(...)):
+    deleted = 0
     for filename in files:
         try:
             file_path = _safe_path(HASH_DIR, filename)
@@ -10778,7 +10900,10 @@ async def delete_hashes(files: list[str] = Form(...)):
             continue
         if file_path.exists() and file_path.suffix == ".csv":
             file_path.unlink()
-    return RedirectResponse("/hashes", status_code=303)
+            deleted += 1
+    if _request_wants_json(request):
+        return {"ok": True, "deleted": deleted}
+    return RedirectResponse("/react/hashes", status_code=303)
 
 
 @app.get("/api/hashes/{filename}")
@@ -10809,7 +10934,7 @@ async def download_file_shelf_item(filename: str):
 
 
 @app.post("/api/hashes/upload")
-async def upload_hash_files(files: list[UploadFile] = File(...)):
+async def upload_hash_files(request: Request, files: list[UploadFile] = File(...)):
     HASH_DIR.mkdir(parents=True, exist_ok=True)
     saved = 0
     for upload in files:
@@ -10826,12 +10951,16 @@ async def upload_hash_files(files: list[UploadFile] = File(...)):
         dest.write_bytes(content)
         saved += 1
     if saved == 0:
-        return _redirect_with_error("/hashes", "No valid CSV files found")
-    return RedirectResponse(f"/hashes?uploaded={saved}", status_code=303)
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No valid CSV files found"}, status_code=400)
+        return _redirect_with_error("/react/hashes", "No valid CSV files found")
+    if _request_wants_json(request):
+        return {"ok": True, "uploaded": saved}
+    return _redirect_with_query("/react/hashes", uploaded=saved)
 
 
 @app.post("/api/files/upload")
-async def upload_file_shelf_items(files: list[UploadFile] = File(...)):
+async def upload_file_shelf_items(request: Request, files: list[UploadFile] = File(...)):
     FILE_SHELF_DIR.mkdir(parents=True, exist_ok=True)
     saved = 0
     for upload in files:
@@ -10845,8 +10974,12 @@ async def upload_file_shelf_items(files: list[UploadFile] = File(...)):
         dest.write_bytes(content)
         saved += 1
     if saved == 0:
-        return _redirect_with_error("/files", "No valid MSI files found")
-    return RedirectResponse(f"/files?uploaded={saved}", status_code=303)
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No valid MSI files found"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid MSI files found")
+    if _request_wants_json(request):
+        return {"ok": True, "uploaded": saved}
+    return _redirect_with_query("/react/files", uploaded=saved)
 
 
 # --- Answer ISO rebuild ----------------------------------------------------
@@ -12205,47 +12338,87 @@ async def _run_cloud_delete(job_id: str):
         job["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-@app.get("/cloud", response_class=HTMLResponse)
-async def cloud_page(request: Request):
+def _cloud_devices_payload(windows_only: bool = True) -> dict:
     # ?all=1 disables the Windows-only filter so iOS/Android/macOS records
     # can be inspected or deleted if needed.
-    windows_only = request.query_params.get("all") != "1"
-    groups, extra = devices_db.list_grouped(windows_only=windows_only)
+    try:
+        groups, extra = devices_db.list_grouped(windows_only=windows_only)
+    except Exception as exc:
+        groups = []
+        extra = {
+            "unmatched": {},
+            "meta": {
+                "error": str(exc),
+                "counts": {"autopilot": 0, "intune": 0, "entra": 0},
+            },
+        }
 
     # One Proxmox API call to map serial → {vmid, status}. Attach to each
     # group so the UI can show a 'pve' line alongside the other IDs.
-    pve_by_serial = _pve_autopilot_vms_by_serial()
+    try:
+        pve_by_serial = _pve_autopilot_vms_by_serial()
+    except Exception:
+        pve_by_serial = {}
     for g in groups:
         g["pve"] = pve_by_serial.get(g["serial"])
 
+    try:
+        deletions = devices_db.list_deletions(limit=25)
+    except Exception:
+        deletions = []
+    return {
+        "groups": groups,
+        "unmatched": extra.get("unmatched", {}),
+        "meta": extra.get("meta", {}),
+        "windows_only": windows_only,
+        "deletions": deletions,
+    }
+
+
+def _render_legacy_cloud(request: Request):
+    windows_only = request.query_params.get("all") != "1"
+    payload = _cloud_devices_payload(windows_only=windows_only)
     return templates.TemplateResponse(
         "devices.html",
         {
             "request": request,
-            "groups": groups,
-            "unmatched": extra["unmatched"],
-            "meta": extra["meta"],
-            "windows_only": windows_only,
-            "deletions": devices_db.list_deletions(limit=25),
+            **payload,
         },
     )
 
 
+@app.get("/api/cloud/devices")
+async def api_cloud_devices(request: Request):
+    return _cloud_devices_payload(windows_only=request.query_params.get("all") != "1")
+
+
+@app.get("/cloud", include_in_schema=False)
+async def cloud_page(request: Request):
+    return _primary_ui_redirect("/react/devices")
+
+
+@app.get("/legacy/cloud", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_cloud_page(request: Request):
+    return _render_legacy_cloud(request)
+
+
 @app.post("/api/cloud/sync")
-async def cloud_sync():
+async def cloud_sync(request: Request):
     try:
         ap = _graph_api_all("/deviceManagement/windowsAutopilotDeviceIdentities") or []
         it = _graph_api_all("/deviceManagement/managedDevices") or []
         en = _graph_api_all("/devices") or []
     except Exception as e:
-        return _redirect_with_error("/cloud", str(e)[:200])
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=502)
+        return _redirect_with_error("/react/devices", str(e)[:200])
     devices_db.upsert_autopilot(ap)
     devices_db.upsert_intune(it)
     devices_db.upsert_entra(en)
-    return RedirectResponse(
-        f"/cloud?synced=autopilot:{len(ap)},intune:{len(it)},entra:{len(en)}",
-        status_code=303,
-    )
+    synced = f"autopilot:{len(ap)},intune:{len(it)},entra:{len(en)}"
+    if _request_wants_json(request):
+        return {"ok": True, "synced": synced}
+    return _redirect_with_query("/react/devices", synced=synced)
 
 
 @app.post("/api/cloud/delete")
@@ -12438,6 +12611,34 @@ def api_credentials_update(cred_id: int, body: _CredentialUpdate):
     except psycopg.IntegrityError as e:
         if _is_unique_violation(e):
             raise HTTPException(409, f"credential name already exists: {body.name}")
+        raise
+    return {"ok": True}
+
+
+@app.post("/api/credentials/{cred_id}")
+async def api_credentials_update_form(request: Request, cred_id: int):
+    existing = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
+    if existing is None:
+        raise HTTPException(404, "credential not found")
+    ctype = (request.headers.get("content-type") or "").lower()
+    try:
+        if ctype.startswith("multipart/") or ctype.startswith("application/x-www-form-urlencoded"):
+            form = await request.form()
+            name = str(form.get("name") or existing["name"]).strip()
+            payload = await _payload_from_form(existing["type"], form, existing=existing["payload"])
+        else:
+            body = _CredentialUpdate.model_validate(await request.json())
+            name = body.name or existing["name"]
+            payload = body.payload if body.payload is not None else existing["payload"]
+        sequences_db.update_credential(
+            SEQUENCES_DB, _cipher(), cred_id,
+            name=name, payload=payload,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except psycopg.IntegrityError as e:
+        if _is_unique_violation(e):
+            raise HTTPException(409, f"credential name already exists: {name}")
         raise
     return {"ok": True}
 
@@ -13968,8 +14169,7 @@ async def api_answer_isos_prune(request: Request):
     return {"removed": removed}
 
 
-@app.get("/credentials", response_class=HTMLResponse)
-def page_credentials(request: Request, error: str = ""):
+def _render_legacy_credentials(request: Request, error: str = ""):
     creds = sequences_db.list_credentials(SEQUENCES_DB)
     return templates.TemplateResponse("credentials.html", {
         "request": request,
@@ -13978,11 +14178,30 @@ def page_credentials(request: Request, error: str = ""):
     })
 
 
-@app.get("/credentials/new", response_class=HTMLResponse)
-def page_credential_new(request: Request, error: str = ""):
+@app.get("/credentials", include_in_schema=False)
+def page_credentials(request: Request, error: str = ""):
+    return _primary_ui_redirect("/react/credentials")
+
+
+@app.get("/legacy/credentials", response_class=HTMLResponse, include_in_schema=False)
+def legacy_credentials(request: Request, error: str = ""):
+    return _render_legacy_credentials(request, error=error)
+
+
+def _render_legacy_credential_new(request: Request, error: str = ""):
     return templates.TemplateResponse("credential_edit.html", {
         "request": request, "cred": None, "error": error,
     })
+
+
+@app.get("/credentials/new", include_in_schema=False)
+def page_credential_new(request: Request, error: str = ""):
+    return _primary_ui_redirect("/react/credentials/new")
+
+
+@app.get("/legacy/credentials/new", response_class=HTMLResponse, include_in_schema=False)
+def legacy_credential_new(request: Request, error: str = ""):
+    return _render_legacy_credential_new(request, error=error)
 
 
 @app.post("/credentials/new")
@@ -13997,20 +14216,29 @@ async def submit_credential_new(request: Request):
         )
     except psycopg.IntegrityError as e:
         msg = "name already exists" if _is_unique_violation(e) else str(e)
-        return _redirect_with_error("/credentials/new", msg)
+        return _redirect_with_error("/react/credentials/new", msg)
     except ValueError as e:
-        return _redirect_with_error("/credentials/new", str(e))
-    return RedirectResponse("/credentials", status_code=303)
+        return _redirect_with_error("/react/credentials/new", str(e))
+    return RedirectResponse("/react/credentials", status_code=303)
 
 
-@app.get("/credentials/{cred_id}/edit", response_class=HTMLResponse)
-def page_credential_edit(request: Request, cred_id: int, error: str = ""):
+def _render_legacy_credential_edit(request: Request, cred_id: int, error: str = ""):
     cred = sequences_db.get_credential(SEQUENCES_DB, _cipher(), cred_id)
     if cred is None:
         raise HTTPException(404, "credential not found")
     return templates.TemplateResponse("credential_edit.html", {
         "request": request, "cred": cred, "error": error,
     })
+
+
+@app.get("/credentials/{cred_id}/edit", include_in_schema=False)
+def page_credential_edit(request: Request, cred_id: int, error: str = ""):
+    return _primary_ui_redirect(f"/react/credentials/{cred_id}/edit")
+
+
+@app.get("/legacy/credentials/{cred_id}/edit", response_class=HTMLResponse, include_in_schema=False)
+def legacy_credential_edit(request: Request, cred_id: int, error: str = ""):
+    return _render_legacy_credential_edit(request, cred_id=cred_id, error=error)
 
 
 @app.post("/credentials/{cred_id}/edit")
@@ -14027,10 +14255,10 @@ async def submit_credential_edit(request: Request, cred_id: int):
         )
     except psycopg.IntegrityError as e:
         msg = "name already exists" if _is_unique_violation(e) else str(e)
-        return _redirect_with_error(f"/credentials/{cred_id}/edit", msg)
+        return _redirect_with_error(f"/react/credentials/{cred_id}/edit", msg)
     except ValueError as e:
-        return _redirect_with_error(f"/credentials/{cred_id}/edit", str(e))
-    return RedirectResponse("/credentials", status_code=303)
+        return _redirect_with_error(f"/react/credentials/{cred_id}/edit", str(e))
+    return RedirectResponse("/react/credentials", status_code=303)
 
 
 @app.post("/credentials/{cred_id}/delete")
@@ -14039,8 +14267,8 @@ def submit_credential_delete(cred_id: int):
         sequences_db.delete_credential(SEQUENCES_DB, cred_id)
     except sequences_db.CredentialInUse as e:
         msg = f"in use by sequence(s) {e.sequence_ids}"
-        return _redirect_with_error("/credentials", msg)
-    return RedirectResponse("/credentials", status_code=303)
+        return _redirect_with_error("/react/credentials", msg)
+    return RedirectResponse("/react/credentials", status_code=303)
 
 
 async def _payload_from_form(cred_type: str, form, existing: Optional[dict] = None) -> dict:
@@ -14268,6 +14496,54 @@ class _SearchOuPatch(BaseModel):
     label: Optional[str] = None
     enabled: Optional[bool] = None
     sort_order: Optional[int] = None
+
+
+def _monitoring_settings_payload() -> dict:
+    try:
+        s = device_history_db.get_settings()
+        settings = {
+            "enabled": s.enabled,
+            "interval_seconds": s.interval_seconds,
+            "ad_credential_id": s.ad_credential_id,
+            "updated_at": s.updated_at,
+        }
+    except Exception as exc:
+        settings = {
+            "enabled": False,
+            "interval_seconds": 300,
+            "ad_credential_id": 0,
+            "updated_at": "",
+            "error": str(exc),
+        }
+    try:
+        ous = [
+            {"id": o.id, "dn": o.dn, "label": o.label,
+             "enabled": o.enabled, "sort_order": o.sort_order,
+             "created_at": o.created_at, "updated_at": o.updated_at}
+            for o in device_history_db.list_search_ous()
+        ]
+    except Exception:
+        ous = []
+    try:
+        all_creds = sequences_db.list_credentials(SEQUENCES_DB)
+        domain_creds = [c for c in all_creds if c.get("type") == "domain_join"]
+    except Exception:
+        domain_creds = []
+    try:
+        keytab = device_history_db.get_keytab_health() or {}
+    except Exception:
+        keytab = {}
+    return {
+        "settings": settings,
+        "search_ous": ous,
+        "domain_creds": domain_creds,
+        "keytab": keytab,
+    }
+
+
+@app.get("/api/monitoring/settings/full")
+def api_monitoring_settings_full():
+    return _monitoring_settings_payload()
 
 
 @app.get("/api/monitoring/settings")
@@ -14765,8 +15041,7 @@ async def api_vm_detail_evidence(vmid: int):
     return await _vm_detail_evidence_payload(vmid)
 
 
-@app.get("/devices/{vmid}", response_class=HTMLResponse)
-def page_device_detail(request: Request, vmid: int):
+def _render_legacy_device_detail(request: Request, vmid: int):
     from web import device_regression, monitoring_view
     latest_pair = device_history_db.latest_completed_pair_for_vmid(vmid)
     if latest_pair is None:
@@ -14804,21 +15079,52 @@ def page_device_detail(request: Request, vmid: int):
     })
 
 
-@app.get("/monitoring/settings", response_class=HTMLResponse)
-def page_monitoring_settings(request: Request):
-    settings = device_history_db.get_settings()
-    ous = device_history_db.list_search_ous()
-    # Only credentials of type domain_join are useful for AD.
-    all_creds = sequences_db.list_credentials(SEQUENCES_DB)
-    domain_creds = [c for c in all_creds if c.get("type") == "domain_join"]
-    keytab = device_history_db.get_keytab_health()
+@app.get("/devices/{vmid}", include_in_schema=False)
+def page_device_detail(request: Request, vmid: int):
+    return _primary_ui_redirect(f"/react/vms/{vmid}")
+
+
+@app.get("/legacy/devices/{vmid}", response_class=HTMLResponse, include_in_schema=False)
+def legacy_device_detail(request: Request, vmid: int):
+    return _render_legacy_device_detail(request, vmid=vmid)
+
+
+def _render_legacy_monitoring_settings(request: Request):
+    payload = _monitoring_settings_payload()
+    class _SettingsProxy:
+        def __init__(self, values: dict):
+            self.enabled = bool(values.get("enabled"))
+            self.interval_seconds = int(values.get("interval_seconds") or 300)
+            self.ad_credential_id = int(values.get("ad_credential_id") or 0)
+            self.updated_at = str(values.get("updated_at") or "")
+
+    class _SearchOuProxy:
+        def __init__(self, values: dict):
+            self.id = int(values.get("id") or 0)
+            self.dn = str(values.get("dn") or "")
+            self.label = str(values.get("label") or "")
+            self.enabled = bool(values.get("enabled"))
+            self.sort_order = int(values.get("sort_order") or 0)
+            self.created_at = str(values.get("created_at") or "")
+            self.updated_at = str(values.get("updated_at") or "")
+
     return templates.TemplateResponse("monitoring_settings.html", {
         "request": request,
-        "settings": settings,
-        "search_ous": ous,
-        "domain_creds": domain_creds,
-        "keytab": keytab,
+        "settings": _SettingsProxy(payload["settings"]),
+        "search_ous": [_SearchOuProxy(row) for row in payload["search_ous"]],
+        "domain_creds": payload["domain_creds"],
+        "keytab": payload["keytab"],
     })
+
+
+@app.get("/monitoring/settings", include_in_schema=False)
+def page_monitoring_settings(request: Request):
+    return _primary_ui_redirect("/react/monitoring/settings")
+
+
+@app.get("/legacy/monitoring/settings", response_class=HTMLResponse, include_in_schema=False)
+def legacy_monitoring_settings(request: Request):
+    return _render_legacy_monitoring_settings(request)
 
 
 @app.post("/api/monitoring/keytab/refresh-now")

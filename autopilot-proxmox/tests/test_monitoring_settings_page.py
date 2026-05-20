@@ -1,4 +1,4 @@
-"""GET /monitoring/settings smoke test — renders controls + seeded OU."""
+"""GET /legacy/monitoring/settings smoke test — renders controls + seeded OU."""
 import pytest
 
 
@@ -14,7 +14,7 @@ def client(pg_conn):
 
 
 def test_settings_page_renders(client):
-    r = client.get("/monitoring/settings")
+    r = client.get("/legacy/monitoring/settings")
     assert r.status_code == 200
     # Controls present.
     assert 'id="enabled"' in r.text

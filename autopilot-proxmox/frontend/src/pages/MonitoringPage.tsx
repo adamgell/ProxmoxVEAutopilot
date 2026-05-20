@@ -114,7 +114,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
       action={
         <span className="action-cluster">
           <a className="action-link" href="/react/jobs">Jobs</a>
-          <a className="action-link" href="/monitoring/settings">Monitoring settings</a>
+          <a className="action-link" href="/react/monitoring/settings">Monitoring settings</a>
         </span>
       }
     >

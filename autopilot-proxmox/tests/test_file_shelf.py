@@ -11,7 +11,7 @@ def test_files_page_lists_uploaded_msi_files(tmp_path: Path, monkeypatch):
     (tmp_path / "notes.txt").write_text("ignore me", encoding="utf-8")
 
     client = TestClient(app_module.app)
-    response = client.get("/files")
+    response = client.get("/legacy/files")
 
     assert response.status_code == 200
     assert "MSI Files" in response.text
@@ -37,7 +37,7 @@ def test_upload_files_accepts_only_msi_and_sanitizes_names(tmp_path: Path, monke
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/files?uploaded=2"
+    assert response.headers["location"] == "/react/files?uploaded=2"
     assert (tmp_path / "Agent_Tools_1.0.msi").read_bytes() == b"msi-bytes"
     assert (tmp_path / "evil.msi").read_bytes() == b"evil-bytes"
     assert not (tmp_path / "ignore.exe").exists()

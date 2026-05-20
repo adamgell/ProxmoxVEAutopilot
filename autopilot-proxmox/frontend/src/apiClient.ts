@@ -49,3 +49,24 @@ export async function postJson<T>(path: string, body: Readonly<Record<string, un
     body: JSON.stringify(body)
   });
 }
+
+export async function postForm<T>(path: string, body: FormData): Promise<T> {
+  return fetchJson<T>(path, {
+    method: "POST",
+    body
+  });
+}
+
+export async function putJson<T>(path: string, body: Readonly<Record<string, unknown>> = {}): Promise<T> {
+  return fetchJson<T>(path, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+export async function deleteJson<T>(path: string): Promise<T> {
+  return fetchJson<T>(path, { method: "DELETE" });
+}
