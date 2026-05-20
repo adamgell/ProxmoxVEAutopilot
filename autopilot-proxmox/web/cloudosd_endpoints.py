@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
-from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, lab_bubbles_pg, osd_package, winpe_token
+from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, osd_package, winpe_token
 from web.sequence_compiler import _split_domain_user
 
 
@@ -290,9 +290,11 @@ def _package_response(
             "quality_updates": [],
             "error": str(exc),
         }
-    domain_join = domain_join_secret or _domain_join_package_stub(run)
-    if domain_join.get("enabled"):
-        response["domain_join"] = domain_join
+    run_domain_join = run.get("domain_join") or {}
+    if not run_domain_join.get("domain_controller_ipv4"):
+        domain_join = domain_join_secret or _domain_join_package_stub(run)
+        if domain_join.get("enabled"):
+            response["domain_join"] = domain_join
     return response
 
 
@@ -2252,6 +2254,8 @@ def create_run(body: RunCreateBody):
     target = preflight["target"]
     with _conn() as conn:
         if body.bubble_id:
+            from web import lab_bubbles_pg
+
             lab_bubbles_pg.init(conn)
             if not lab_bubbles_pg.get_bubble(conn, body.bubble_id):
                 raise HTTPException(status_code=404, detail="Bubble not found")
@@ -2294,6 +2298,8 @@ def create_run(body: RunCreateBody):
                 outbound_policy=body.outbound_policy,
             )
             if body.bubble_id:
+                from web import lab_bubbles_pg
+
                 lab_bubbles_pg.add_asset(
                     conn,
                     body.bubble_id,

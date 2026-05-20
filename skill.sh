@@ -39,6 +39,11 @@ usage() {
 }
 
 token() {
+  if [[ -n "${AUTOPILOT_MCP_TOKEN:-}" ]]; then
+    printf '%s\n' "${AUTOPILOT_MCP_TOKEN}"
+    return 0
+  fi
+
   ssh "${REMOTE_HOST}" \
     "REMOTE_APP_DIR='${REMOTE_APP_DIR}' REMOTE_ENV_FILE='${REMOTE_ENV_FILE}' bash -s" <<'SH'
 set -euo pipefail

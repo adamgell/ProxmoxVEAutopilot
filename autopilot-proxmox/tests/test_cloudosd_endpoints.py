@@ -873,6 +873,34 @@ def test_cloudosd_domain_join_with_dc_ip_uses_full_os_join_role(
     assert join_step["reboot_behavior"] == "required"
     assert join_step["resolved_params_json"]["domain_controller_ipv4"] == "192.168.2.210"
 
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/identity",
+        json={
+            "vmid": 245,
+            "vm_uuid": "55555555-6666-7777-8888-999999999999",
+            "mac": "52:54:00:aa:bb:55",
+            "node": "pve",
+            "computer_name": "GELL-FULL-01",
+        },
+    ).status_code == 200
+    registered = cloudosd_client.post(
+        "/api/cloudosd/pe/register",
+        json={
+            "vm_uuid": "55555555-6666-7777-8888-999999999999",
+            "mac": "52:54:00:aa:bb:55",
+            "architecture": "amd64",
+            "build_sha": "cloudosdtest",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    package = cloudosd_client.get(
+        f"/api/cloudosd/pe/package/{run_id}",
+        headers=_bearer(registered.json()["bearer_token"]),
+    )
+    assert package.status_code == 200, package.text
+    assert "domain_join" not in package.json()
+    assert "join-secret-for-tests" not in package.text
+
 
 def test_cloudosd_workgroup_run_generates_visible_local_admin_credential(
     cloudosd_client,
