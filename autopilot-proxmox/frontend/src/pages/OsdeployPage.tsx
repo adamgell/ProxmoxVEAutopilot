@@ -6,6 +6,7 @@ import { Metric, Panel } from "../components/ui";
 import type { AppBootstrap } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
 import { textValue } from "../utilityModels";
+import { formatShortDateTime } from "../viewModels";
 
 type OsdeployView = "overview" | "builder" | "cache" | "artifacts";
 type ActionState = "idle" | "working" | "ready" | "failed";
@@ -54,6 +55,7 @@ interface OsdeployRun {
   readonly artifact_id?: string;
   readonly requested_vm_name?: string;
   readonly expected_computer_name?: string;
+  readonly vm_name?: string;
   readonly vmid?: string | number;
   readonly state?: string;
   readonly server_role?: string;
@@ -427,12 +429,12 @@ function RunsTable({ payload, archiveAction }: {
             return (
               <tr key={runId}>
                 <td><StatusBadge value={textValue(run.state)} /></td>
-                <td>{textValue(run.requested_vm_name)}<br /><small>{textValue(run.expected_computer_name)}</small></td>
+                <td>{textValue(run.requested_vm_name ?? run.vm_name ?? run.expected_computer_name)}<br /><small>{textValue(run.expected_computer_name)}</small></td>
                 <td>{textValue(run.vmid)}</td>
                 <td>{textValue(run.server_role).replaceAll("_", " ")}</td>
                 <td>{[run.os_version, run.os_edition].filter(Boolean).join(" ") || "-"}</td>
-                <td>{textValue(run.created_at)}</td>
-                <td>{textValue(run.first_heartbeat_at)}</td>
+                <td>{formatShortDateTime(run.created_at)}</td>
+                <td>{formatShortDateTime(run.first_heartbeat_at)}</td>
                 <td><code>{textValue(artifact?.build_sha ?? run.artifact_id)}</code></td>
                 <td><a href={`/react/osdeploy/runs/${encodeURIComponent(runId)}`}>Open</a></td>
                 <td>
@@ -563,12 +565,12 @@ function RoleVariables({ role, metadata, credentials }: {
   const requiredFields = metadata.required_fields ?? [];
   return (
     <Panel title="Role variables">
-      <div className="cloudosd-dense-grid">
-        <Metric label="Role" value={metadata.name ?? role.replaceAll("_", " ")} />
-        <Metric label="Readiness" value={metadata.readiness_status_name ?? metadata.readiness_status ?? `${role}_ready`} />
-        <Metric label="Required fields" value={requiredFields.length ? requiredFields.join(", ") : "none"} />
-        <Metric label="Generated steps" value={(metadata.step_kinds ?? []).join(", ") || "base only"} />
-      </div>
+      <dl className="utility-definition-grid">
+        <MetricTermText label="Role" value={metadata.name ?? role.replaceAll("_", " ")} />
+        <MetricTermText label="Readiness" value={metadata.readiness_status_name ?? metadata.readiness_status ?? `${role}_ready`} />
+        <MetricTermText label="Required fields" value={requiredFields.length ? requiredFields.join(", ") : "none"} />
+        <MetricTermText label="Generated steps" value={(metadata.step_kinds ?? []).join(", ") || "base only"} />
+      </dl>
       {role === "base" ? <p className="empty">No additional variables are required for the base server role.</p> : null}
       {role === "file_server" ? (
         <div className="cloudosd-dense-grid">
