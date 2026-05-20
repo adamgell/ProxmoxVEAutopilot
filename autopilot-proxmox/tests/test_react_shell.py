@@ -18,6 +18,9 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/vms")
     assert not auth.is_exempt_path("/react/vms/108")
     assert not auth.is_exempt_path("/react")
+    assert not auth.is_exempt_path("/legacy/dashboard")
+    assert not auth.is_exempt_path("/legacy/jobs")
+    assert not auth.is_exempt_path("/legacy/vms")
     assert not auth.is_exempt_path("/app")
     assert not auth.is_exempt_path("/app/jobs")
     assert not auth.is_exempt_path("/openapi.json")
@@ -31,6 +34,35 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     assert 'id="react-root"' in response.text
     assert 'data-react-shell="protected"' in response.text
     assert "Proxmox VE Autopilot" in response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "target"),
+    [
+        ("/", "/react/dashboard"),
+        ("/jobs", "/react/jobs"),
+        ("/vms", "/react/vms"),
+    ],
+)
+def test_primary_operator_paths_redirect_to_react(web_client, path, target):
+    response = web_client.get(path, follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == target
+
+
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        ("/legacy/dashboard", "Proxmox VE Autopilot"),
+        ("/legacy/jobs", "No jobs yet"),
+    ],
+)
+def test_legacy_operator_pages_remain_available(web_client, path, text):
+    response = web_client.get(path)
+
+    assert response.status_code == 200
+    assert text in response.text
 
 
 def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):

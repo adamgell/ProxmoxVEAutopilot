@@ -616,7 +616,7 @@ def test_vms_agent_inventory_renders_hard_delete_crud_controls(agent_client, pg_
     })
     monkeypatch.setattr(app_module.sequences_db, "get_vm_provisioning", lambda db, vmid: None)
 
-    response = agent_client.get("/vms")
+    response = agent_client.get("/legacy/vms")
 
     assert response.status_code == 200
     assert 'action="/api/agents"' in response.text

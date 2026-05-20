@@ -5022,8 +5022,11 @@ def _install_tracking_refresh_snapshot() -> dict:
 
 # --- HTML Pages ---
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+def _primary_ui_redirect(path: str) -> RedirectResponse:
+    return RedirectResponse(url=path, status_code=302)
+
+
+def _render_legacy_dashboard(request: Request):
     # Every data-bearing module on the dashboard fetches via JSON
     # endpoints so the page can refresh live. We only pass the
     # initial running/queued counts so the first paint shows real
@@ -5037,6 +5040,16 @@ async def home(request: Request):
         "initial_queued_count": 0,
         "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
     })
+
+
+@app.get("/", include_in_schema=False)
+async def home(request: Request):
+    return _primary_ui_redirect("/react/dashboard")
+
+
+@app.get("/legacy/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_dashboard(request: Request):
+    return _render_legacy_dashboard(request)
 
 
 def _render_react_shell(request: Request):
@@ -5545,13 +5558,22 @@ async def files_page(request: Request, uploaded: str = "", error: str = ""):
     })
 
 
-@app.get("/jobs", response_class=HTMLResponse)
-async def jobs_page(request: Request):
+def _render_legacy_jobs(request: Request):
     jobs = _job_table_rows()
     return templates.TemplateResponse("jobs.html", {
         "request": request,
         "jobs": jobs,
     })
+
+
+@app.get("/jobs", include_in_schema=False)
+async def jobs_page(request: Request):
+    return _primary_ui_redirect("/react/jobs")
+
+
+@app.get("/legacy/jobs", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_jobs_page(request: Request):
+    return _render_legacy_jobs(request)
 
 
 def _format_memory(mb) -> str:
@@ -7688,8 +7710,7 @@ async def api_vms_fleet():
     return await _vms_fleet_payload()
 
 
-@app.get("/vms", response_class=HTMLResponse)
-async def vms_page(request: Request, error: str = ""):
+async def _render_legacy_vms(request: Request, error: str = ""):
     current_vars = _load_vars()
     if current_vars.get("hypervisor_type") == "utm":
         from web import utm_cli
@@ -7723,6 +7744,16 @@ async def vms_page(request: Request, error: str = ""):
         "cache_refreshing": fleet["cache_refreshing"],
         "monitor_sweep": fleet["monitor_sweep"],
     })
+
+
+@app.get("/vms", include_in_schema=False)
+async def vms_page(request: Request):
+    return _primary_ui_redirect("/react/vms")
+
+
+@app.get("/legacy/vms", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_vms_page(request: Request, error: str = ""):
+    return await _render_legacy_vms(request, error=error)
 
 
 # --- API Endpoints ---
@@ -15029,7 +15060,7 @@ def _signals_hub_payload() -> dict:
             ),
             "count": 1 if build_host.get("expected_agent_id") else 0,
             "source": "setup readiness and agent telemetry",
-            "href": "/vms",
+            "href": "/react/vms",
         },
         {
             "id": "lifecycle",

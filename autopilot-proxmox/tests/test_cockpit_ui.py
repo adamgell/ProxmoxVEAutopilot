@@ -66,7 +66,7 @@ def test_cockpit_shell_renders_on_dashboard(web_client: TestClient, monkeypatch)
 
     monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
 
-    res = web_client.get("/")
+    res = web_client.get("/legacy/dashboard")
     assert res.status_code == 200
     body = res.text
     assert 'class="cockpit-shell ' in body
@@ -386,7 +386,7 @@ def test_cockpit_shell_has_light_mode_tokens(web_client: TestClient, monkeypatch
 
     monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
 
-    res = web_client.get("/")
+    res = web_client.get("/legacy/dashboard")
     assert res.status_code == 200
     body = res.text
     assert 'html:not([data-theme="dark"]) .cockpit-shell' in body
@@ -509,7 +509,7 @@ def test_vms_agent_heartbeat_uses_local_timezone_markup(web_client: TestClient, 
         ],
     )
 
-    res = web_client.get("/vms")
+    res = web_client.get("/legacy/vms")
 
     assert res.status_code == 200
     body = res.text
@@ -570,7 +570,7 @@ def test_home_page_uses_live_jobs_websocket(web_client: TestClient, monkeypatch)
 
     monkeypatch.setattr(web_app.job_manager, "list_jobs", lambda: [])
 
-    res = web_client.get("/")
+    res = web_client.get("/legacy/dashboard")
     assert res.status_code == 200
     body = res.text
     assert "/api/live/ws" in body

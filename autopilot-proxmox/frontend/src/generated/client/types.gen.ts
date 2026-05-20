@@ -891,6 +891,10 @@ export type HeartbeatBody = {
      */
     boot_time?: string | null;
     /**
+     * Bubble Id
+     */
+    bubble_id?: string | null;
+    /**
      * Capabilities
      */
     capabilities?: Array<string>;
@@ -910,6 +914,12 @@ export type HeartbeatBody = {
      * Current Step Id
      */
     current_step_id?: string | null;
+    /**
+     * Dc Readiness
+     */
+    dc_readiness?: {
+        [key: string]: unknown;
+    };
     /**
      * Domain Joined
      */
@@ -2112,6 +2122,12 @@ export type VmsFleetResponse = {
      */
     autopilot_devices?: Array<AutopilotDeviceFleetRowResponse>;
     /**
+     * Bubble Topology
+     */
+    bubble_topology?: {
+        [key: string]: unknown;
+    };
+    /**
      * Cache Age Seconds
      */
     cache_age_seconds?: number | null;
@@ -2191,6 +2207,312 @@ export type WorkNextBody = {
      * Supported Kinds
      */
     supported_kinds?: Array<string>;
+};
+
+/**
+ * _BubbleAssetCreate
+ */
+export type BubbleAssetCreate = {
+    /**
+     * Agent Id
+     */
+    agent_id?: string | null;
+    /**
+     * Asset Role
+     */
+    asset_role: string;
+    /**
+     * Asset Type
+     */
+    asset_type: string;
+    /**
+     * Evidence State
+     */
+    evidence_state?: string;
+    /**
+     * Membership State
+     */
+    membership_state?: string;
+    /**
+     * Notes
+     */
+    notes?: string;
+    /**
+     * Run Id
+     */
+    run_id?: string | null;
+    /**
+     * Service Id
+     */
+    service_id?: string | null;
+    /**
+     * Vm Uuid
+     */
+    vm_uuid?: string | null;
+    /**
+     * Vmid
+     */
+    vmid?: number | null;
+};
+
+/**
+ * _BubbleAssetMove
+ */
+export type BubbleAssetMove = {
+    /**
+     * Reason
+     */
+    reason?: string;
+    /**
+     * Target Bubble Id
+     */
+    target_bubble_id: string;
+};
+
+/**
+ * _BubbleAssetPatch
+ */
+export type BubbleAssetPatch = {
+    /**
+     * Agent Id
+     */
+    agent_id?: string | null;
+    /**
+     * Asset Role
+     */
+    asset_role?: string | null;
+    /**
+     * Evidence State
+     */
+    evidence_state?: string | null;
+    /**
+     * Membership State
+     */
+    membership_state?: string | null;
+    /**
+     * Notes
+     */
+    notes?: string | null;
+    /**
+     * Run Id
+     */
+    run_id?: string | null;
+    /**
+     * Service Id
+     */
+    service_id?: string | null;
+    /**
+     * Vm Uuid
+     */
+    vm_uuid?: string | null;
+    /**
+     * Vmid
+     */
+    vmid?: number | null;
+};
+
+/**
+ * _BubbleCreate
+ */
+export type BubbleCreate = {
+    /**
+     * Cidr
+     */
+    cidr?: string;
+    /**
+     * Description
+     */
+    description?: string;
+    /**
+     * Dhcp Pool End
+     */
+    dhcp_pool_end?: string;
+    /**
+     * Dhcp Pool Start
+     */
+    dhcp_pool_start?: string;
+    /**
+     * Dhcp Scope
+     */
+    dhcp_scope?: string;
+    /**
+     * Domain Name
+     */
+    domain_name?: string;
+    /**
+     * Gateway Ip
+     */
+    gateway_ip?: string;
+    /**
+     * Isolation Status
+     */
+    isolation_status?: string;
+    /**
+     * Lifecycle State
+     */
+    lifecycle_state?: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Netbios Name
+     */
+    netbios_name?: string;
+    /**
+     * Planned Bridge
+     */
+    planned_bridge?: string;
+    /**
+     * Planned Vlan
+     */
+    planned_vlan?: number | null;
+};
+
+/**
+ * _BubblePatch
+ */
+export type BubblePatch = {
+    /**
+     * Cidr
+     */
+    cidr?: string | null;
+    /**
+     * Dc Ready
+     */
+    dc_ready?: boolean | null;
+    /**
+     * Description
+     */
+    description?: string | null;
+    /**
+     * Dhcp Pool End
+     */
+    dhcp_pool_end?: string | null;
+    /**
+     * Dhcp Pool Start
+     */
+    dhcp_pool_start?: string | null;
+    /**
+     * Dhcp Ready
+     */
+    dhcp_ready?: boolean | null;
+    /**
+     * Dhcp Scope
+     */
+    dhcp_scope?: string | null;
+    /**
+     * Dns Ready
+     */
+    dns_ready?: boolean | null;
+    /**
+     * Domain Name
+     */
+    domain_name?: string | null;
+    /**
+     * Gateway Ip
+     */
+    gateway_ip?: string | null;
+    /**
+     * Isolation Status
+     */
+    isolation_status?: string | null;
+    /**
+     * Lifecycle State
+     */
+    lifecycle_state?: string | null;
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Netbios Name
+     */
+    netbios_name?: string | null;
+    /**
+     * Planned Bridge
+     */
+    planned_bridge?: string | null;
+    /**
+     * Planned Vlan
+     */
+    planned_vlan?: number | null;
+    /**
+     * Workload Ready
+     */
+    workload_ready?: boolean | null;
+};
+
+/**
+ * _BubbleServiceCreate
+ */
+export type BubbleServiceCreate = {
+    /**
+     * Consumer Refs
+     */
+    consumer_refs?: Array<unknown>;
+    /**
+     * Evidence Summary
+     */
+    evidence_summary?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Provider Asset Id
+     */
+    provider_asset_id?: string | null;
+    /**
+     * Readiness State
+     */
+    readiness_state?: string;
+    /**
+     * Scope
+     */
+    scope?: string;
+    /**
+     * Service Kind
+     */
+    service_kind: string;
+    /**
+     * Service Name
+     */
+    service_name: string;
+};
+
+/**
+ * _BubbleServicePatch
+ */
+export type BubbleServicePatch = {
+    /**
+     * Consumer Refs
+     */
+    consumer_refs?: Array<unknown> | null;
+    /**
+     * Evidence Summary
+     */
+    evidence_summary?: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Provider Asset Id
+     */
+    provider_asset_id?: string | null;
+    /**
+     * Readiness State
+     */
+    readiness_state?: string | null;
+    /**
+     * Scope
+     */
+    scope?: string | null;
+    /**
+     * Service Kind
+     */
+    service_kind?: string | null;
+    /**
+     * Service Name
+     */
+    service_name?: string | null;
 };
 
 /**
@@ -2874,6 +3196,14 @@ export type WebCloudosdEndpointsRunCreateBody = {
      */
     artifact_id: string;
     /**
+     * Asset Role
+     */
+    asset_role?: string | null;
+    /**
+     * Bubble Id
+     */
+    bubble_id?: string | null;
+    /**
      * Chassis Type Override
      */
     chassis_type_override?: number;
@@ -3168,6 +3498,14 @@ export type WebOsdeployEndpointsRunCreateBody = {
      */
     artifact_id: string;
     /**
+     * Asset Role
+     */
+    asset_role?: string | null;
+    /**
+     * Bubble Id
+     */
+    bubble_id?: string | null;
+    /**
      * Iso Storage
      */
     iso_storage?: string | null;
@@ -3294,22 +3632,6 @@ export type WebWinpeEndpointsStepResultBody = {
      */
     stdout_tail?: string | null;
 };
-
-export type HomeGetData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/';
-};
-
-export type HomeGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type HomeGetResponse = HomeGetResponses[keyof HomeGetResponses];
 
 export type PageAnswerIsosAnswerIsosGetData = {
     body?: never;
@@ -3851,6 +4173,393 @@ export type SyncAutopilotApiAutopilotSyncPostData = {
 };
 
 export type SyncAutopilotApiAutopilotSyncPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesListApiBubblesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/bubbles';
+};
+
+export type ApiBubblesListApiBubblesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesCreateApiBubblesPostData = {
+    body: BubbleCreate;
+    path?: never;
+    query?: never;
+    url: '/api/bubbles';
+};
+
+export type ApiBubblesCreateApiBubblesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesCreateApiBubblesPostError = ApiBubblesCreateApiBubblesPostErrors[keyof ApiBubblesCreateApiBubblesPostErrors];
+
+export type ApiBubblesCreateApiBubblesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
+};
+
+export type ApiBubblesDeleteApiBubblesBubbleIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}';
+};
+
+export type ApiBubblesDeleteApiBubblesBubbleIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesDeleteApiBubblesBubbleIdDeleteError = ApiBubblesDeleteApiBubblesBubbleIdDeleteErrors[keyof ApiBubblesDeleteApiBubblesBubbleIdDeleteErrors];
+
+export type ApiBubblesDeleteApiBubblesBubbleIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type ApiBubblesDeleteApiBubblesBubbleIdDeleteResponse = ApiBubblesDeleteApiBubblesBubbleIdDeleteResponses[keyof ApiBubblesDeleteApiBubblesBubbleIdDeleteResponses];
+
+export type ApiBubblesGetApiBubblesBubbleIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}';
+};
+
+export type ApiBubblesGetApiBubblesBubbleIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesGetApiBubblesBubbleIdGetError = ApiBubblesGetApiBubblesBubbleIdGetErrors[keyof ApiBubblesGetApiBubblesBubbleIdGetErrors];
+
+export type ApiBubblesGetApiBubblesBubbleIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesPatchApiBubblesBubbleIdPatchData = {
+    body: BubblePatch;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}';
+};
+
+export type ApiBubblesPatchApiBubblesBubbleIdPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesPatchApiBubblesBubbleIdPatchError = ApiBubblesPatchApiBubblesBubbleIdPatchErrors[keyof ApiBubblesPatchApiBubblesBubbleIdPatchErrors];
+
+export type ApiBubblesPatchApiBubblesBubbleIdPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesAssetsListApiBubblesBubbleIdAssetsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/assets';
+};
+
+export type ApiBubblesAssetsListApiBubblesBubbleIdAssetsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesAssetsListApiBubblesBubbleIdAssetsGetError = ApiBubblesAssetsListApiBubblesBubbleIdAssetsGetErrors[keyof ApiBubblesAssetsListApiBubblesBubbleIdAssetsGetErrors];
+
+export type ApiBubblesAssetsListApiBubblesBubbleIdAssetsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesAssetsCreateApiBubblesBubbleIdAssetsPostData = {
+    body: BubbleAssetCreate;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/assets';
+};
+
+export type ApiBubblesAssetsCreateApiBubblesBubbleIdAssetsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesAssetsCreateApiBubblesBubbleIdAssetsPostError = ApiBubblesAssetsCreateApiBubblesBubbleIdAssetsPostErrors[keyof ApiBubblesAssetsCreateApiBubblesBubbleIdAssetsPostErrors];
+
+export type ApiBubblesAssetsCreateApiBubblesBubbleIdAssetsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
+};
+
+export type ApiBubblesAssetsPatchApiBubblesBubbleIdAssetsAssetIdPatchData = {
+    body: BubbleAssetPatch;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+        /**
+         * Asset Id
+         */
+        asset_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/assets/{asset_id}';
+};
+
+export type ApiBubblesAssetsPatchApiBubblesBubbleIdAssetsAssetIdPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesAssetsPatchApiBubblesBubbleIdAssetsAssetIdPatchError = ApiBubblesAssetsPatchApiBubblesBubbleIdAssetsAssetIdPatchErrors[keyof ApiBubblesAssetsPatchApiBubblesBubbleIdAssetsAssetIdPatchErrors];
+
+export type ApiBubblesAssetsPatchApiBubblesBubbleIdAssetsAssetIdPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesAssetsMoveApiBubblesBubbleIdAssetsAssetIdMovePostData = {
+    body: BubbleAssetMove;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+        /**
+         * Asset Id
+         */
+        asset_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/assets/{asset_id}/move';
+};
+
+export type ApiBubblesAssetsMoveApiBubblesBubbleIdAssetsAssetIdMovePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesAssetsMoveApiBubblesBubbleIdAssetsAssetIdMovePostError = ApiBubblesAssetsMoveApiBubblesBubbleIdAssetsAssetIdMovePostErrors[keyof ApiBubblesAssetsMoveApiBubblesBubbleIdAssetsAssetIdMovePostErrors];
+
+export type ApiBubblesAssetsMoveApiBubblesBubbleIdAssetsAssetIdMovePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesAuditEventsApiBubblesBubbleIdAuditEventsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/audit-events';
+};
+
+export type ApiBubblesAuditEventsApiBubblesBubbleIdAuditEventsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesAuditEventsApiBubblesBubbleIdAuditEventsGetError = ApiBubblesAuditEventsApiBubblesBubbleIdAuditEventsGetErrors[keyof ApiBubblesAuditEventsApiBubblesBubbleIdAuditEventsGetErrors];
+
+export type ApiBubblesAuditEventsApiBubblesBubbleIdAuditEventsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesReadinessApiBubblesBubbleIdReadinessGetData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/readiness';
+};
+
+export type ApiBubblesReadinessApiBubblesBubbleIdReadinessGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesReadinessApiBubblesBubbleIdReadinessGetError = ApiBubblesReadinessApiBubblesBubbleIdReadinessGetErrors[keyof ApiBubblesReadinessApiBubblesBubbleIdReadinessGetErrors];
+
+export type ApiBubblesReadinessApiBubblesBubbleIdReadinessGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesServicesListApiBubblesBubbleIdServicesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/services';
+};
+
+export type ApiBubblesServicesListApiBubblesBubbleIdServicesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesServicesListApiBubblesBubbleIdServicesGetError = ApiBubblesServicesListApiBubblesBubbleIdServicesGetErrors[keyof ApiBubblesServicesListApiBubblesBubbleIdServicesGetErrors];
+
+export type ApiBubblesServicesListApiBubblesBubbleIdServicesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostData = {
+    body: BubbleServiceCreate;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/services';
+};
+
+export type ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostError = ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostErrors[keyof ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostErrors];
+
+export type ApiBubblesServicesCreateApiBubblesBubbleIdServicesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
+};
+
+export type ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchData = {
+    body: BubbleServicePatch;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+        /**
+         * Service Id
+         */
+        service_id: string;
+    };
+    query?: never;
+    url: '/api/bubbles/{bubble_id}/services/{service_id}';
+};
+
+export type ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchError = ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchErrors[keyof ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchErrors];
+
+export type ApiBubblesServicesPatchApiBubblesBubbleIdServicesServiceIdPatchResponses = {
     /**
      * Successful Response
      */
@@ -9768,22 +10477,6 @@ export type InstallTrackingPageInstallTrackingGetResponses = {
 
 export type InstallTrackingPageInstallTrackingGetResponse = InstallTrackingPageInstallTrackingGetResponses[keyof InstallTrackingPageInstallTrackingGetResponses];
 
-export type JobsPageJobsGetData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/jobs';
-};
-
-export type JobsPageJobsGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type JobsPageJobsGetResponse = JobsPageJobsGetResponses[keyof JobsPageJobsGetResponses];
-
 export type JobDetailPageJobsJobIdGetData = {
     body?: never;
     path: {
@@ -11058,36 +11751,6 @@ export type TemplatePageTemplateGetResponses = {
 };
 
 export type TemplatePageTemplateGetResponse = TemplatePageTemplateGetResponses[keyof TemplatePageTemplateGetResponses];
-
-export type VmsPageVmsGetData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Error
-         */
-        error?: string;
-    };
-    url: '/vms';
-};
-
-export type VmsPageVmsGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type VmsPageVmsGetError = VmsPageVmsGetErrors[keyof VmsPageVmsGetErrors];
-
-export type VmsPageVmsGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: string;
-};
-
-export type VmsPageVmsGetResponse = VmsPageVmsGetResponses[keyof VmsPageVmsGetResponses];
 
 export type VmConsolePageVmsVmidConsoleGetData = {
     body?: never;

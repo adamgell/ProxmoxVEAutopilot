@@ -739,7 +739,11 @@ def test_local_operator_session_unlocks_cockpit_without_entra(monkeypatch):
     assert started.status_code == 303
     assert started.headers["location"] == "/"
 
-    cockpit = client.get("/")
-    assert cockpit.status_code == 200
-    assert "Proxmox VE Autopilot" in cockpit.text
-    assert "Local Operator" in cockpit.text
+    cockpit = client.get("/", follow_redirects=False)
+    assert cockpit.status_code == 302
+    assert cockpit.headers["location"] == "/react/dashboard"
+
+    legacy = client.get("/legacy/dashboard")
+    assert legacy.status_code == 200
+    assert "Proxmox VE Autopilot" in legacy.text
+    assert "Local Operator" in legacy.text

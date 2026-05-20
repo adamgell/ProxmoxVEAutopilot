@@ -1288,6 +1288,17 @@
             ],
             "title": "Boot Time"
           },
+          "bubble_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bubble Id"
+          },
           "capabilities": {
             "items": {
               "type": "string"
@@ -1338,6 +1349,11 @@
               }
             ],
             "title": "Current Step Id"
+          },
+          "dc_readiness": {
+            "additionalProperties": true,
+            "title": "Dc Readiness",
+            "type": "object"
           },
           "domain_joined": {
             "anyOf": [
@@ -3129,6 +3145,11 @@
             "title": "Autopilot Devices",
             "type": "array"
           },
+          "bubble_topology": {
+            "additionalProperties": true,
+            "title": "Bubble Topology",
+            "type": "object"
+          },
           "cache_age_seconds": {
             "anyOf": [
               {
@@ -3250,6 +3271,623 @@
           "agent_id"
         ],
         "title": "WorkNextBody",
+        "type": "object"
+      },
+      "_BubbleAssetCreate": {
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "asset_role": {
+            "title": "Asset Role",
+            "type": "string"
+          },
+          "asset_type": {
+            "title": "Asset Type",
+            "type": "string"
+          },
+          "evidence_state": {
+            "default": "unknown",
+            "title": "Evidence State",
+            "type": "string"
+          },
+          "membership_state": {
+            "default": "active",
+            "title": "Membership State",
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          },
+          "vm_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vm Uuid"
+          },
+          "vmid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vmid"
+          }
+        },
+        "required": [
+          "asset_type",
+          "asset_role"
+        ],
+        "title": "_BubbleAssetCreate",
+        "type": "object"
+      },
+      "_BubbleAssetMove": {
+        "properties": {
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "target_bubble_id": {
+            "title": "Target Bubble Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_bubble_id"
+        ],
+        "title": "_BubbleAssetMove",
+        "type": "object"
+      },
+      "_BubbleAssetPatch": {
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "asset_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Role"
+          },
+          "evidence_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence State"
+          },
+          "membership_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Membership State"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          },
+          "vm_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vm Uuid"
+          },
+          "vmid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vmid"
+          }
+        },
+        "title": "_BubbleAssetPatch",
+        "type": "object"
+      },
+      "_BubbleCreate": {
+        "properties": {
+          "cidr": {
+            "default": "",
+            "title": "Cidr",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "dhcp_pool_end": {
+            "default": "",
+            "title": "Dhcp Pool End",
+            "type": "string"
+          },
+          "dhcp_pool_start": {
+            "default": "",
+            "title": "Dhcp Pool Start",
+            "type": "string"
+          },
+          "dhcp_scope": {
+            "default": "",
+            "title": "Dhcp Scope",
+            "type": "string"
+          },
+          "domain_name": {
+            "default": "",
+            "title": "Domain Name",
+            "type": "string"
+          },
+          "gateway_ip": {
+            "default": "",
+            "title": "Gateway Ip",
+            "type": "string"
+          },
+          "isolation_status": {
+            "default": "planned",
+            "title": "Isolation Status",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "default": "planned",
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "netbios_name": {
+            "default": "",
+            "title": "Netbios Name",
+            "type": "string"
+          },
+          "planned_bridge": {
+            "default": "",
+            "title": "Planned Bridge",
+            "type": "string"
+          },
+          "planned_vlan": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Vlan"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "_BubbleCreate",
+        "type": "object"
+      },
+      "_BubblePatch": {
+        "properties": {
+          "cidr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cidr"
+          },
+          "dc_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dc Ready"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "dhcp_pool_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dhcp Pool End"
+          },
+          "dhcp_pool_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dhcp Pool Start"
+          },
+          "dhcp_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dhcp Ready"
+          },
+          "dhcp_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dhcp Scope"
+          },
+          "dns_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dns Ready"
+          },
+          "domain_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Name"
+          },
+          "gateway_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Ip"
+          },
+          "isolation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isolation Status"
+          },
+          "lifecycle_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle State"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "netbios_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netbios Name"
+          },
+          "planned_bridge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Bridge"
+          },
+          "planned_vlan": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Vlan"
+          },
+          "workload_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workload Ready"
+          }
+        },
+        "title": "_BubblePatch",
+        "type": "object"
+      },
+      "_BubbleServiceCreate": {
+        "properties": {
+          "consumer_refs": {
+            "items": {},
+            "title": "Consumer Refs",
+            "type": "array"
+          },
+          "evidence_summary": {
+            "additionalProperties": true,
+            "title": "Evidence Summary",
+            "type": "object"
+          },
+          "provider_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Asset Id"
+          },
+          "readiness_state": {
+            "default": "unknown",
+            "title": "Readiness State",
+            "type": "string"
+          },
+          "scope": {
+            "default": "bubble_local",
+            "title": "Scope",
+            "type": "string"
+          },
+          "service_kind": {
+            "title": "Service Kind",
+            "type": "string"
+          },
+          "service_name": {
+            "title": "Service Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_kind",
+          "service_name"
+        ],
+        "title": "_BubbleServiceCreate",
+        "type": "object"
+      },
+      "_BubbleServicePatch": {
+        "properties": {
+          "consumer_refs": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consumer Refs"
+          },
+          "evidence_summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Summary"
+          },
+          "provider_asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Asset Id"
+          },
+          "readiness_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readiness State"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "service_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Kind"
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
+          }
+        },
+        "title": "_BubbleServicePatch",
         "type": "object"
       },
       "_BuildHostRepairBody": {
@@ -4410,6 +5048,28 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "asset_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Role"
+          },
+          "bubble_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bubble Id"
+          },
           "chassis_type_override": {
             "default": 0,
             "minimum": 0.0,
@@ -4865,6 +5525,28 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "asset_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Role"
+          },
+          "bubble_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bubble Id"
+          },
           "iso_storage": {
             "anyOf": [
               {
@@ -5093,24 +5775,6 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/": {
-      "get": {
-        "operationId": "home__get",
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Home"
-      }
-    },
     "/answer-isos": {
       "get": {
         "operationId": "page_answer_isos_answer_isos_get",
@@ -5997,6 +6661,574 @@
           }
         },
         "summary": "Sync Autopilot"
+      }
+    },
+    "/api/bubbles": {
+      "get": {
+        "operationId": "api_bubbles_list_api_bubbles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Bubbles List"
+      },
+      "post": {
+        "operationId": "api_bubbles_create_api_bubbles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubbleCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Create"
+      }
+    },
+    "/api/bubbles/{bubble_id}": {
+      "delete": {
+        "operationId": "api_bubbles_delete_api_bubbles__bubble_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Delete"
+      },
+      "get": {
+        "operationId": "api_bubbles_get_api_bubbles__bubble_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Get"
+      },
+      "patch": {
+        "operationId": "api_bubbles_patch_api_bubbles__bubble_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubblePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Patch"
+      }
+    },
+    "/api/bubbles/{bubble_id}/assets": {
+      "get": {
+        "operationId": "api_bubbles_assets_list_api_bubbles__bubble_id__assets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Assets List"
+      },
+      "post": {
+        "operationId": "api_bubbles_assets_create_api_bubbles__bubble_id__assets_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubbleAssetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Assets Create"
+      }
+    },
+    "/api/bubbles/{bubble_id}/assets/{asset_id}": {
+      "patch": {
+        "operationId": "api_bubbles_assets_patch_api_bubbles__bubble_id__assets__asset_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubbleAssetPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Assets Patch"
+      }
+    },
+    "/api/bubbles/{bubble_id}/assets/{asset_id}/move": {
+      "post": {
+        "operationId": "api_bubbles_assets_move_api_bubbles__bubble_id__assets__asset_id__move_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubbleAssetMove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Assets Move"
+      }
+    },
+    "/api/bubbles/{bubble_id}/audit-events": {
+      "get": {
+        "operationId": "api_bubbles_audit_events_api_bubbles__bubble_id__audit_events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Audit Events"
+      }
+    },
+    "/api/bubbles/{bubble_id}/readiness": {
+      "get": {
+        "operationId": "api_bubbles_readiness_api_bubbles__bubble_id__readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Readiness"
+      }
+    },
+    "/api/bubbles/{bubble_id}/services": {
+      "get": {
+        "operationId": "api_bubbles_services_list_api_bubbles__bubble_id__services_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Services List"
+      },
+      "post": {
+        "operationId": "api_bubbles_services_create_api_bubbles__bubble_id__services_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubbleServiceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Services Create"
+      }
+    },
+    "/api/bubbles/{bubble_id}/services/{service_id}": {
+      "patch": {
+        "operationId": "api_bubbles_services_patch_api_bubbles__bubble_id__services__service_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service_id",
+            "required": true,
+            "schema": {
+              "title": "Service Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_BubbleServicePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Bubbles Services Patch"
       }
     },
     "/api/cloud/delete": {
@@ -14555,24 +15787,6 @@
         "summary": "Install Tracking Page"
       }
     },
-    "/jobs": {
-      "get": {
-        "operationId": "jobs_page_jobs_get",
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Jobs Page"
-      }
-    },
     "/jobs/{job_id}": {
       "get": {
         "operationId": "job_detail_page_jobs__job_id__get",
@@ -16508,46 +17722,6 @@
           }
         },
         "summary": "Template Page"
-      }
-    },
-    "/vms": {
-      "get": {
-        "operationId": "vms_page_vms_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "error",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Error",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Vms Page"
       }
     },
     "/vms/{vmid}/console": {
