@@ -956,6 +956,133 @@ def test_capture_job_refuses_agents_without_work_queue_support(
     assert jobs_pg.list_jobs() == []
 
 
+def test_collect_logs_job_accepts_react_json(agent_client, pg_conn):
+    from web import agent_telemetry_pg, jobs_pg
+
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-react-logs",
+        token="agent-react-logs-secret",
+        vmid=123,
+        computer_name="Gell-REACTLOGS",
+        agent_version="0.2.0-test",
+    )
+    heartbeat = agent_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer("agent-react-logs-secret"),
+        json={
+            "agent_id": "agent-react-logs",
+            "vmid": 123,
+            "computer_name": "Gell-REACTLOGS",
+            "agent_version": "0.2.0-test",
+            "capabilities": ["capture_autopilot_hash", "collect_logs"],
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    response = agent_client.post(
+        "/api/jobs/collect-logs",
+        json={"vmid": 123, "vm_name": "Gell-REACTLOGS"},
+        headers={"accept": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["action"] == "collect-logs"
+    assert body["vmid"] == 123
+    assert body["job_type"] == "log_collection"
+    assert body["status_url"] == f"/api/jobs/{body['job_id']}"
+    assert body["web_url"] == f"/react/jobs/{body['job_id']}"
+
+    job = jobs_pg.get_job(body["job_id"])
+    assert job["job_type"] == "log_collection"
+    assert job["args"]["agent_id"] == "agent-react-logs"
+    assert job["args"]["work_item_id"] == body["work_item_id"]
+
+    work = agent_telemetry_pg.get_work_item(pg_conn, body["work_item_id"])
+    assert work["kind"] == "collect_logs"
+    assert work["request_json"]["vmid"] == 123
+    assert work["request_json"]["known_sources"] == "cmtraceopen-windows"
+
+
+def test_collect_logs_job_requires_agent_capability(agent_client):
+    from web import jobs_pg
+
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-react-no-logs",
+        token="agent-react-no-logs-secret",
+        vmid=124,
+        computer_name="Gell-NOREACTLOGS",
+        agent_version="0.2.0-test",
+    )
+
+    response = agent_client.post(
+        "/api/jobs/collect-logs",
+        json={"vmid": 124, "vm_name": "Gell-NOREACTLOGS"},
+        headers={"accept": "application/json"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.headers["content-type"].startswith("application/json")
+    assert "has not advertised collect_logs" in response.json()["error"]
+    assert jobs_pg.list_jobs() == []
+
+
+def test_collect_logs_form_post_keeps_legacy_redirect(agent_client):
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-form-logs",
+        token="agent-form-logs-secret",
+        vmid=125,
+        computer_name="Gell-FORMLOGS",
+        agent_version="0.2.0-test",
+    )
+    heartbeat = agent_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer("agent-form-logs-secret"),
+        json={
+            "agent_id": "agent-form-logs",
+            "vmid": 125,
+            "computer_name": "Gell-FORMLOGS",
+            "agent_version": "0.2.0-test",
+            "capabilities": ["collect_logs"],
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    response = agent_client.post(
+        "/api/jobs/collect-logs",
+        data={"vmid": "125", "vm_name": "Gell-FORMLOGS"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"].startswith("/jobs/")
+
+
+def test_collect_logs_missing_vmid_returns_json_error(agent_client):
+    from web import jobs_pg
+
+    response = agent_client.post(
+        "/api/jobs/collect-logs",
+        json={},
+        headers={"accept": "application/json"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {"ok": False, "error": "vmid is required"}
+    assert jobs_pg.list_jobs() == []
+
+
+def test_collect_logs_route_is_exposed_in_openapi(agent_client):
+    schema = agent_client.get("/openapi.json").json()
+
+    assert "post" in schema["paths"]["/api/jobs/collect-logs"]
+
+
 def test_agent_hash_persists_csv_and_completes_capture_work_item(
     agent_client,
     pg_conn,

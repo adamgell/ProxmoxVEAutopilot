@@ -38,4 +38,18 @@ describe("fetchJson", () => {
       "GET /api/version failed: authentication required"
     );
   });
+
+  test("uses API error fields when JSON endpoints return operator errors", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error: "vmid is required" }), {
+        status: 400,
+        statusText: "Bad Request",
+        headers: { "content-type": "application/json" }
+      })
+    );
+
+    await expect(fetchJson("/api/jobs/collect-logs")).rejects.toThrow(
+      "GET /api/jobs/collect-logs failed: vmid is required"
+    );
+  });
 });
