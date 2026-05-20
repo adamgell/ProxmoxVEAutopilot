@@ -544,7 +544,7 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "Autopilot Devices" })).not.toBeInTheDocument();
   });
 
-  test("tags an existing VM asset into a selected bubble from the React fleet", async () => {
+  test("tags an existing VM asset into a selected bubble from inline React fleet controls", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,
       "/api/bubbles/bubble-1/assets/asset-ws": {
@@ -556,14 +556,15 @@ describe("App", () => {
         membership_state: "active"
       }
     });
-    vi.spyOn(window, "prompt")
-      .mockReturnValueOnce("1")
-      .mockReturnValueOnce("domain_controller");
+    const promptSpy = vi.spyOn(window, "prompt");
 
     renderRoute("/react/vms");
 
     const tagButton = await screen.findByRole("button", { name: "Tag VM 108" });
     fireEvent.click(tagButton);
+    expect(screen.getByLabelText("Bubble for VM 108")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Asset role for VM 108"), { target: { value: "domain_controller" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save VM 108 bubble tag" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -583,9 +584,72 @@ describe("App", () => {
       vmid: 108,
       membership_state: "active"
     });
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 
-  test("edits a bubble from the React fleet", async () => {
+  test("creates a bubble from inline React fleet fields", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles": {
+        id: "bubble-3",
+        name: "LAB 3",
+        domain_name: "lab3.home.gell.one",
+        netbios_name: "LAB3",
+        cidr: "192.168.3.0/24",
+        gateway_ip: "192.168.3.1",
+        dhcp_scope: "192.168.3.0",
+        dhcp_pool_start: "192.168.3.100",
+        dhcp_pool_end: "192.168.3.199",
+        lifecycle_state: "active",
+        isolation_status: "ready"
+      }
+    });
+    const promptSpy = vi.spyOn(window, "prompt");
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "New bubble" }));
+    fireEvent.change(screen.getByLabelText("Bubble name"), { target: { value: "LAB 3" } });
+    fireEvent.change(screen.getByLabelText("Domain name"), { target: { value: "lab3.home.gell.one" } });
+    fireEvent.change(screen.getByLabelText("NetBIOS name"), { target: { value: "LAB3" } });
+    fireEvent.change(screen.getByLabelText("Isolated CIDR"), { target: { value: "192.168.3.0/24" } });
+    fireEvent.change(screen.getByLabelText("Gateway IP"), { target: { value: "192.168.3.1" } });
+    fireEvent.change(screen.getByLabelText("DHCP scope"), { target: { value: "192.168.3.0" } });
+    fireEvent.change(screen.getByLabelText("DHCP pool start"), { target: { value: "192.168.3.100" } });
+    fireEvent.change(screen.getByLabelText("DHCP pool end"), { target: { value: "192.168.3.199" } });
+    fireEvent.change(screen.getByLabelText("Lifecycle state"), { target: { value: "active" } });
+    fireEvent.change(screen.getByLabelText("Isolation status"), { target: { value: "ready" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create bubble" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const postCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/bubbles"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(postCall).toBeDefined();
+    const init = postCall?.[1] as RequestInit;
+    expect(typeof init.body).toBe("string");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      name: "LAB 3",
+      domain_name: "lab3.home.gell.one",
+      netbios_name: "LAB3",
+      cidr: "192.168.3.0/24",
+      gateway_ip: "192.168.3.1",
+      dhcp_scope: "192.168.3.0",
+      dhcp_pool_start: "192.168.3.100",
+      dhcp_pool_end: "192.168.3.199",
+      lifecycle_state: "active",
+      isolation_status: "ready"
+    });
+    expect(promptSpy).not.toHaveBeenCalled();
+  });
+
+  test("edits a bubble from inline React fleet fields", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,
       "/api/bubbles/bubble-1": {
@@ -602,21 +666,22 @@ describe("App", () => {
         isolation_status: "ready"
       }
     });
-    vi.spyOn(window, "prompt")
-      .mockReturnValueOnce("LAB 3")
-      .mockReturnValueOnce("lab3.home.gell.one")
-      .mockReturnValueOnce("LAB3")
-      .mockReturnValueOnce("192.168.3.0/24")
-      .mockReturnValueOnce("192.168.3.1")
-      .mockReturnValueOnce("192.168.3.0")
-      .mockReturnValueOnce("192.168.3.100")
-      .mockReturnValueOnce("192.168.3.199")
-      .mockReturnValueOnce("active")
-      .mockReturnValueOnce("ready");
+    const promptSpy = vi.spyOn(window, "prompt");
 
     renderRoute("/react/vms");
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit bubble ACME Lab" }));
+    fireEvent.change(screen.getByLabelText("Bubble name"), { target: { value: "LAB 3" } });
+    fireEvent.change(screen.getByLabelText("Domain name"), { target: { value: "lab3.home.gell.one" } });
+    fireEvent.change(screen.getByLabelText("NetBIOS name"), { target: { value: "LAB3" } });
+    fireEvent.change(screen.getByLabelText("Isolated CIDR"), { target: { value: "192.168.3.0/24" } });
+    fireEvent.change(screen.getByLabelText("Gateway IP"), { target: { value: "192.168.3.1" } });
+    fireEvent.change(screen.getByLabelText("DHCP scope"), { target: { value: "192.168.3.0" } });
+    fireEvent.change(screen.getByLabelText("DHCP pool start"), { target: { value: "192.168.3.100" } });
+    fireEvent.change(screen.getByLabelText("DHCP pool end"), { target: { value: "192.168.3.199" } });
+    fireEvent.change(screen.getByLabelText("Lifecycle state"), { target: { value: "active" } });
+    fireEvent.change(screen.getByLabelText("Isolation status"), { target: { value: "ready" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save bubble ACME Lab" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -643,18 +708,21 @@ describe("App", () => {
       lifecycle_state: "active",
       isolation_status: "ready"
     });
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 
-  test("deletes a bubble from the React fleet after typed confirmation", async () => {
+  test("deletes a bubble from an inline React fleet confirmation", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,
       "/api/bubbles/bubble-1": { ok: true }
     });
-    vi.spyOn(window, "prompt").mockReturnValueOnce("ACME Lab");
+    const promptSpy = vi.spyOn(window, "prompt");
 
     renderRoute("/react/vms");
 
     fireEvent.click(await screen.findByRole("button", { name: "Delete bubble ACME Lab" }));
+    expect(screen.getByText("Delete ACME Lab?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete bubble ACME Lab" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -662,6 +730,7 @@ describe("App", () => {
         expect.objectContaining({ method: "DELETE" })
       );
     });
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 
   test("opens VM console and screenshot actions inside a VM detail page", async () => {

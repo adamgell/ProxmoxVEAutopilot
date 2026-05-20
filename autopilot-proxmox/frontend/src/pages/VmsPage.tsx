@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
   Camera,
@@ -120,55 +120,71 @@ function topologyAssignmentsByVmid(topology: LabBubbleTopology): ReadonlyMap<num
   return byVmid;
 }
 
-function bubbleChoiceText(bubbles: readonly LabBubble[]): string {
-  return bubbles.map((bubble, index) => {
-    const network = bubble.cidr ? ` / ${bubble.cidr}` : "";
-    const domain = bubble.domain_name ? ` / ${bubble.domain_name}` : "";
-    return `${String(index + 1)}. ${bubble.name}${domain}${network}`;
-  }).join("\n");
-}
+type BubbleDraftMode = "create" | "edit";
 
-function findBubbleChoice(bubbles: readonly LabBubble[], value: string): LabBubble | undefined {
-  const trimmed = value.trim();
-  const byNumber = Number.parseInt(trimmed, 10);
-  if (Number.isFinite(byNumber) && byNumber > 0 && byNumber <= bubbles.length) {
-    return bubbles[byNumber - 1];
-  }
-  const normalized = trimmed.toLowerCase();
-  return bubbles.find((bubble) => (
-    bubble.id.toLowerCase() === normalized
-    || bubble.name.toLowerCase() === normalized
-    || (bubble.slug ?? "").toLowerCase() === normalized
-  ));
-}
+type BubbleFormValues = {
+  readonly name: string;
+  readonly domain_name: string;
+  readonly netbios_name: string;
+  readonly cidr: string;
+  readonly gateway_ip: string;
+  readonly dhcp_scope: string;
+  readonly dhcp_pool_start: string;
+  readonly dhcp_pool_end: string;
+  readonly lifecycle_state: string;
+  readonly isolation_status: string;
+};
 
-function promptBubbleFields(existing?: LabBubble): Readonly<Record<string, unknown>> | null {
-  const name = window.prompt("Bubble name", existing?.name ?? "");
-  if (!name?.trim()) {
-    return null;
-  }
-  const domainName = window.prompt("Domain name", existing?.domain_name ?? "") ?? "";
-  const netbiosName = window.prompt("NetBIOS name", existing?.netbios_name ?? "") ?? "";
-  const cidr = window.prompt("Isolated CIDR", existing?.cidr ?? "") ?? "";
-  const gatewayIp = window.prompt("Gateway IP", existing?.gateway_ip ?? "") ?? "";
-  const dhcpScope = window.prompt("DHCP scope", existing?.dhcp_scope ?? cidr.replace(/\/\d+$/, "")) ?? "";
-  const dhcpPoolStart = window.prompt("DHCP pool start", existing?.dhcp_pool_start ?? "") ?? "";
-  const dhcpPoolEnd = window.prompt("DHCP pool end", existing?.dhcp_pool_end ?? "") ?? "";
-  const lifecycleState = window.prompt("Lifecycle state", existing?.lifecycle_state ?? "planned") ?? "planned";
-  const isolationStatus = window.prompt("Isolation status", existing?.isolation_status ?? "planned") ?? "planned";
+type BubbleFormField = keyof BubbleFormValues;
+
+const blankBubbleForm: BubbleFormValues = {
+  name: "",
+  domain_name: "",
+  netbios_name: "",
+  cidr: "",
+  gateway_ip: "",
+  dhcp_scope: "",
+  dhcp_pool_start: "",
+  dhcp_pool_end: "",
+  lifecycle_state: "planned",
+  isolation_status: "planned"
+};
+
+function bubbleFormFromBubble(bubble: LabBubble): BubbleFormValues {
   return {
-    name: name.trim(),
-    domain_name: domainName.trim(),
-    netbios_name: netbiosName.trim(),
-    cidr: cidr.trim(),
-    gateway_ip: gatewayIp.trim(),
-    dhcp_scope: dhcpScope.trim(),
-    dhcp_pool_start: dhcpPoolStart.trim(),
-    dhcp_pool_end: dhcpPoolEnd.trim(),
-    lifecycle_state: lifecycleState.trim() || "planned",
-    isolation_status: isolationStatus.trim() || "planned"
+    name: bubble.name,
+    domain_name: bubble.domain_name ?? "",
+    netbios_name: bubble.netbios_name ?? "",
+    cidr: bubble.cidr ?? "",
+    gateway_ip: bubble.gateway_ip ?? "",
+    dhcp_scope: bubble.dhcp_scope ?? "",
+    dhcp_pool_start: bubble.dhcp_pool_start ?? "",
+    dhcp_pool_end: bubble.dhcp_pool_end ?? "",
+    lifecycle_state: bubble.lifecycle_state ?? "planned",
+    isolation_status: bubble.isolation_status ?? "planned"
   };
 }
+
+function bubbleFormPayload(values: BubbleFormValues): Readonly<Record<string, unknown>> {
+  return {
+    name: values.name.trim(),
+    domain_name: values.domain_name.trim(),
+    netbios_name: values.netbios_name.trim(),
+    cidr: values.cidr.trim(),
+    gateway_ip: values.gateway_ip.trim(),
+    dhcp_scope: values.dhcp_scope.trim(),
+    dhcp_pool_start: values.dhcp_pool_start.trim(),
+    dhcp_pool_end: values.dhcp_pool_end.trim(),
+    lifecycle_state: values.lifecycle_state.trim() || "planned",
+    isolation_status: values.isolation_status.trim() || "planned"
+  };
+}
+
+type MachineTagDraft = {
+  readonly rowId: string;
+  readonly bubbleId: string;
+  readonly assetRole: string;
+};
 
 async function deleteJson(path: string): Promise<void> {
   const response = await fetch(path, {
@@ -261,6 +277,11 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [detailEvidence, setDetailEvidence] = useState<VmDetailEvidenceResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [bubbleDraftMode, setBubbleDraftMode] = useState<BubbleDraftMode | null>(null);
+  const [bubbleDraftId, setBubbleDraftId] = useState<string | null>(null);
+  const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
+  const [deleteBubbleId, setDeleteBubbleId] = useState<string | null>(null);
+  const [machineTagDraft, setMachineTagDraft] = useState<MachineTagDraft | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -402,8 +423,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       await action();
       setActionStatus(`${label} complete`);
       await load();
+      return true;
     } catch (err) {
       setActionStatus(err instanceof Error ? err.message : `${label} failed`);
+      return false;
     }
   }, [load]);
 
@@ -488,31 +511,74 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   }, [sendLive]);
 
   const createBubble = useCallback(() => {
-    const fields = promptBubbleFields();
-    if (!fields) {
-      return;
-    }
-    void runAction(`Create bubble ${String(fields.name)}`, () => postJson("/api/bubbles", fields));
-  }, [runAction]);
+    setDeleteBubbleId(null);
+    setBubbleDraftMode("create");
+    setBubbleDraftId(null);
+    setBubbleDraft(blankBubbleForm);
+  }, []);
 
   const editBubble = useCallback((bubble: LabBubble) => {
-    const fields = promptBubbleFields(bubble);
-    if (!fields) {
+    setDeleteBubbleId(null);
+    setBubbleDraftMode("edit");
+    setBubbleDraftId(bubble.id);
+    setBubbleDraft(bubbleFormFromBubble(bubble));
+  }, []);
+
+  const updateBubbleDraft = useCallback((field: BubbleFormField, value: string) => {
+    setBubbleDraft((current) => ({ ...current, [field]: value }));
+  }, []);
+
+  const cancelBubbleDraft = useCallback(() => {
+    setBubbleDraftMode(null);
+    setBubbleDraftId(null);
+    setBubbleDraft(blankBubbleForm);
+  }, []);
+
+  const saveBubbleDraft = useCallback(() => {
+    const payload = bubbleFormPayload(bubbleDraft);
+    const bubbleName = bubbleDraft.name.trim() || "bubble";
+    if (!bubbleDraftMode || !bubbleName.trim()) {
       return;
     }
-    void runAction(`Edit bubble ${bubble.name}`, () => fetchJson(`/api/bubbles/${bubble.id}`, {
+    if (bubbleDraftMode === "create") {
+      void runAction(`Create bubble ${bubbleName}`, () => postJson("/api/bubbles", payload)).then((ok) => {
+        if (ok) {
+          cancelBubbleDraft();
+        }
+      });
+      return;
+    }
+    if (!bubbleDraftId) {
+      return;
+    }
+    void runAction(`Edit bubble ${bubbleName}`, () => fetchJson(`/api/bubbles/${bubbleDraftId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(fields)
-    }));
-  }, [runAction]);
+      body: JSON.stringify(payload)
+    })).then((ok) => {
+      if (ok) {
+        cancelBubbleDraft();
+      }
+    });
+  }, [bubbleDraft, bubbleDraftId, bubbleDraftMode, cancelBubbleDraft, runAction]);
+
+  const requestDeleteBubble = useCallback((bubble: LabBubble) => {
+    setBubbleDraftMode(null);
+    setBubbleDraftId(null);
+    setBubbleDraft(blankBubbleForm);
+    setDeleteBubbleId(bubble.id);
+  }, []);
+
+  const cancelDeleteBubble = useCallback(() => {
+    setDeleteBubbleId(null);
+  }, []);
 
   const deleteBubble = useCallback((bubble: LabBubble) => {
-    const typed = window.prompt(`Type ${bubble.name} to delete bubble`);
-    if (typed !== bubble.name) {
-      return;
-    }
-    void runAction(`Delete bubble ${bubble.name}`, () => deleteJson(`/api/bubbles/${bubble.id}`));
+    void runAction(`Delete bubble ${bubble.name}`, () => deleteJson(`/api/bubbles/${bubble.id}`)).then((ok) => {
+      if (ok) {
+        setDeleteBubbleId(null);
+      }
+    });
   }, [runAction]);
 
   const tagMachine = useCallback((row: FleetMachineRow) => {
@@ -524,25 +590,35 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       return;
     }
     const current = assignmentsByVmid.get(row.vmid);
-    const selected = window.prompt(
-      `Bubble for VM ${String(row.vmid)}\n${bubbleChoiceText(bubbleOptions)}`,
-      current?.bubble.name ?? bubbleOptions[0]?.name ?? ""
-    );
-    if (!selected) {
+    setMachineTagDraft({
+      rowId: row.id,
+      bubbleId: current?.bubble.id ?? bubbleOptions[0]?.id ?? "",
+      assetRole: current?.asset.asset_role ?? "workstation"
+    });
+  }, [assignmentsByVmid, bubbleOptions]);
+
+  const updateMachineTagDraft = useCallback((field: "bubbleId" | "assetRole", value: string) => {
+    setMachineTagDraft((current) => current ? { ...current, [field]: value } : current);
+  }, []);
+
+  const cancelMachineTagDraft = useCallback(() => {
+    setMachineTagDraft(null);
+  }, []);
+
+  const saveMachineTag = useCallback((row: FleetMachineRow) => {
+    if (row.vmid === undefined || !machineTagDraft || machineTagDraft.rowId !== row.id) {
       return;
     }
-    const targetBubble = findBubbleChoice(bubbleOptions, selected);
+    const targetBubble = bubbleOptions.find((bubble) => bubble.id === machineTagDraft.bubbleId);
     if (!targetBubble) {
       setActionStatus("Bubble selection did not match an existing bubble.");
       return;
     }
-    const role = (window.prompt(
-      "Asset role",
-      current?.asset.asset_role ?? "workstation"
-    ) ?? "").trim();
+    const role = machineTagDraft.assetRole.trim();
     if (!role) {
       return;
     }
+    const current = assignmentsByVmid.get(row.vmid);
     void runAction(`Tag VM ${String(row.vmid)}`, async () => {
       if (!current) {
         await postJson(`/api/bubbles/${targetBubble.id}/assets`, {
@@ -570,8 +646,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           membership_state: "active"
         })
       });
+    }).then((ok) => {
+      if (ok) {
+        setMachineTagDraft(null);
+      }
     });
-  }, [assignmentsByVmid, bubbleOptions, runAction]);
+  }, [assignmentsByVmid, bubbleOptions, machineTagDraft, runAction]);
 
   const deleteAgent = useCallback((agent: AgentFleetRow) => {
     const typed = window.prompt(`Type ${agent.agent_id} to delete agent`);
@@ -713,7 +793,16 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         topology={bubbleTopology}
         onCreateBubble={createBubble}
         onEditBubble={editBubble}
-        onDeleteBubble={deleteBubble}
+        onRequestDeleteBubble={requestDeleteBubble}
+        onConfirmDeleteBubble={deleteBubble}
+        onCancelDeleteBubble={cancelDeleteBubble}
+        bubbleDraftMode={bubbleDraftMode}
+        bubbleDraftId={bubbleDraftId}
+        bubbleDraft={bubbleDraft}
+        onBubbleDraftChange={updateBubbleDraft}
+        onSaveBubbleDraft={saveBubbleDraft}
+        onCancelBubbleDraft={cancelBubbleDraft}
+        deleteBubbleId={deleteBubbleId}
       />
 
       <section className="fleet-lanes" aria-label="Fleet lanes">
@@ -722,6 +811,11 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             rows={filteredMachines}
             onCreateAgent={createAgent}
             onTagMachine={tagMachine}
+            tagDraft={machineTagDraft}
+            bubbleOptions={bubbleOptions}
+            onTagDraftChange={updateMachineTagDraft}
+            onSaveTag={saveMachineTag}
+            onCancelTag={cancelMachineTagDraft}
             assignmentsByVmid={assignmentsByVmid}
           />
         </div>
@@ -734,11 +828,21 @@ function FleetMachineTable({
   rows,
   onCreateAgent,
   onTagMachine,
+  tagDraft,
+  bubbleOptions,
+  onTagDraftChange,
+  onSaveTag,
+  onCancelTag,
   assignmentsByVmid
 }: {
   readonly rows: readonly FleetMachineRow[];
   readonly onCreateAgent: () => void;
   readonly onTagMachine: (row: FleetMachineRow) => void;
+  readonly tagDraft: MachineTagDraft | null;
+  readonly bubbleOptions: readonly LabBubble[];
+  readonly onTagDraftChange: (field: "bubbleId" | "assetRole", value: string) => void;
+  readonly onSaveTag: (row: FleetMachineRow) => void;
+  readonly onCancelTag: () => void;
   readonly assignmentsByVmid: ReadonlyMap<number, BubbleAssignment>;
 }) {
   return (
@@ -769,18 +873,92 @@ function FleetMachineTable({
             </thead>
             <tbody>
               {rows.map((row) => (
-                <MachineRow
-                  key={row.id}
-                  row={row}
-                  assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
-                  onTag={onTagMachine}
-                />
+                <Fragment key={row.id}>
+                  <MachineRow
+                    row={row}
+                    assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
+                    onTag={onTagMachine}
+                  />
+                  {tagDraft?.rowId === row.id && row.vmid !== undefined ? (
+                    <tr className="machine-tag-row">
+                      <td colSpan={11}>
+                        <MachineTagEditor
+                          row={row}
+                          values={tagDraft}
+                          bubbleOptions={bubbleOptions}
+                          onChange={onTagDraftChange}
+                          onSave={() => { onSaveTag(row); }}
+                          onCancel={onCancelTag}
+                        />
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
         ) : <p className="empty">No fleet machines found.</p>}
       </div>
     </Panel>
+  );
+}
+
+function MachineTagEditor({
+  row,
+  values,
+  bubbleOptions,
+  onChange,
+  onSave,
+  onCancel
+}: {
+  readonly row: FleetMachineRow;
+  readonly values: MachineTagDraft;
+  readonly bubbleOptions: readonly LabBubble[];
+  readonly onChange: (field: "bubbleId" | "assetRole", value: string) => void;
+  readonly onSave: () => void;
+  readonly onCancel: () => void;
+}) {
+  const vmid = row.vmid ?? 0;
+  return (
+    <form
+      className="machine-tag-editor"
+      aria-label={`Tag VM ${String(vmid)} into a bubble`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <label className="bubble-form-field">
+        <span>Bubble</span>
+        <select
+          aria-label={`Bubble for VM ${String(vmid)}`}
+          value={values.bubbleId}
+          onChange={(event) => { onChange("bubbleId", event.target.value); }}
+        >
+          {bubbleOptions.map((bubble) => (
+            <option key={bubble.id} value={bubble.id}>
+              {bubble.name}{bubble.domain_name ? ` / ${bubble.domain_name}` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="bubble-form-field">
+        <span>Asset role</span>
+        <input
+          aria-label={`Asset role for VM ${String(vmid)}`}
+          value={values.assetRole}
+          onChange={(event) => { onChange("assetRole", event.target.value); }}
+        />
+      </label>
+      <div className="machine-tag-editor__actions">
+        <button type="submit" className="fleet-action fleet-action--command" aria-label={`Save VM ${String(vmid)} bubble tag`}>
+          Save tag
+        </button>
+        <button type="button" className="fleet-action" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1055,16 +1233,109 @@ function gateLabel(gate: Readonly<Record<string, unknown>> | undefined): string 
   return allowed ? "allowed" : "blocked";
 }
 
+function BubbleEditor({
+  mode,
+  bubbleName,
+  values,
+  onChange,
+  onSave,
+  onCancel
+}: {
+  readonly mode: BubbleDraftMode;
+  readonly bubbleName?: string;
+  readonly values: BubbleFormValues;
+  readonly onChange: (field: BubbleFormField, value: string) => void;
+  readonly onSave: () => void;
+  readonly onCancel: () => void;
+}) {
+  const saveLabel = mode === "create" ? "Create bubble" : `Save bubble ${bubbleName ?? values.name}`;
+  return (
+    <form
+      className="bubble-form"
+      aria-label={mode === "create" ? "Create bubble" : `Edit bubble ${bubbleName ?? values.name}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <div className="bubble-form-grid">
+        <BubbleTextField label="Bubble name" field="name" value={values.name} onChange={onChange} required />
+        <BubbleTextField label="Domain name" field="domain_name" value={values.domain_name} onChange={onChange} />
+        <BubbleTextField label="NetBIOS name" field="netbios_name" value={values.netbios_name} onChange={onChange} />
+        <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} />
+        <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} />
+        <BubbleTextField label="DHCP scope" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} />
+        <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} />
+        <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} />
+        <BubbleTextField label="Lifecycle state" field="lifecycle_state" value={values.lifecycle_state} onChange={onChange} />
+        <BubbleTextField label="Isolation status" field="isolation_status" value={values.isolation_status} onChange={onChange} />
+      </div>
+      <div className="bubble-form-actions">
+        <button type="submit" className="fleet-action fleet-action--command" aria-label={saveLabel}>
+          {mode === "create" ? "Create bubble" : "Save"}
+        </button>
+        <button type="button" className="fleet-action" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function BubbleTextField({
+  label,
+  field,
+  value,
+  onChange,
+  required = false
+}: {
+  readonly label: string;
+  readonly field: BubbleFormField;
+  readonly value: string;
+  readonly onChange: (field: BubbleFormField, value: string) => void;
+  readonly required?: boolean;
+}) {
+  return (
+    <label className="bubble-form-field">
+      <span>{label}</span>
+      <input
+        aria-label={label}
+        value={value}
+        required={required}
+        onChange={(event) => { onChange(field, event.target.value); }}
+      />
+    </label>
+  );
+}
+
 function BubbleTopologyOverview({
   topology,
   onCreateBubble,
   onEditBubble,
-  onDeleteBubble
+  onRequestDeleteBubble,
+  onConfirmDeleteBubble,
+  onCancelDeleteBubble,
+  bubbleDraftMode,
+  bubbleDraftId,
+  bubbleDraft,
+  onBubbleDraftChange,
+  onSaveBubbleDraft,
+  onCancelBubbleDraft,
+  deleteBubbleId
 }: {
   readonly topology: LabBubbleTopology;
   readonly onCreateBubble: () => void;
   readonly onEditBubble: (bubble: LabBubble) => void;
-  readonly onDeleteBubble: (bubble: LabBubble) => void;
+  readonly onRequestDeleteBubble: (bubble: LabBubble) => void;
+  readonly onConfirmDeleteBubble: (bubble: LabBubble) => void;
+  readonly onCancelDeleteBubble: () => void;
+  readonly bubbleDraftMode: BubbleDraftMode | null;
+  readonly bubbleDraftId: string | null;
+  readonly bubbleDraft: BubbleFormValues;
+  readonly onBubbleDraftChange: (field: BubbleFormField, value: string) => void;
+  readonly onSaveBubbleDraft: () => void;
+  readonly onCancelBubbleDraft: () => void;
+  readonly deleteBubbleId: string | null;
 }) {
   const fleets = topology.workstation_fleets;
   const infra = topology.critical_infrastructure;
@@ -1079,6 +1350,15 @@ function BubbleTopologyOverview({
               <span>New bubble</span>
             </button>
           </div>
+          {bubbleDraftMode === "create" ? (
+            <BubbleEditor
+              mode="create"
+              values={bubbleDraft}
+              onChange={onBubbleDraftChange}
+              onSave={onSaveBubbleDraft}
+              onCancel={onCancelBubbleDraft}
+            />
+          ) : null}
           {topology.warnings.length ? (
             <p className="notice" role="status">{topology.warnings.join(" ")}</p>
           ) : null}
@@ -1107,12 +1387,38 @@ function BubbleTopologyOverview({
                           type="button"
                           className="fleet-action fleet-action--danger"
                           aria-label={`Delete bubble ${fleet.bubble.name}`}
-                          onClick={() => { onDeleteBubble(fleet.bubble); }}
+                          onClick={() => { onRequestDeleteBubble(fleet.bubble); }}
                         >
                           Delete
                         </button>
                       </div>
                     </header>
+                    {bubbleDraftMode === "edit" && bubbleDraftId === fleet.bubble.id ? (
+                      <BubbleEditor
+                        mode="edit"
+                        bubbleName={fleet.bubble.name}
+                        values={bubbleDraft}
+                        onChange={onBubbleDraftChange}
+                        onSave={onSaveBubbleDraft}
+                        onCancel={onCancelBubbleDraft}
+                      />
+                    ) : null}
+                    {deleteBubbleId === fleet.bubble.id ? (
+                      <div className="bubble-delete-confirm" role="group" aria-label={`Delete ${fleet.bubble.name}`}>
+                        <strong>Delete {fleet.bubble.name}?</strong>
+                        <button
+                          type="button"
+                          className="fleet-action fleet-action--danger"
+                          aria-label={`Confirm delete bubble ${fleet.bubble.name}`}
+                          onClick={() => { onConfirmDeleteBubble(fleet.bubble); }}
+                        >
+                          Confirm
+                        </button>
+                        <button type="button" className="fleet-action" onClick={onCancelDeleteBubble}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
                     <dl className="fleet-detail-grid">
                       <div><dt>Domain</dt><dd>{fallbackText(fleet.bubble.domain_name)}</dd></div>
                       <div><dt>Network</dt><dd>{fallbackText(fleet.bubble.cidr)}</dd></div>
