@@ -578,6 +578,23 @@ def test_agent_admin_hard_delete_removes_local_agent_state(agent_client, pg_conn
     ).fetchone()["count"] == 0
 
 
+def test_hard_delete_missing_agent_does_not_remove_approval_only_row(pg_conn):
+    from web import agent_telemetry_pg
+
+    agent_telemetry_pg.init(pg_conn)
+    approval = agent_telemetry_pg.create_bootstrap_approval(
+        pg_conn,
+        bootstrap_token="approval-only-bootstrap",
+        agent_id="agent-approval-only",
+        computer_name="GELL-APPROVAL",
+    )
+
+    deleted = agent_telemetry_pg.hard_delete_agent(pg_conn, "agent-approval-only")
+
+    assert deleted is False
+    assert agent_telemetry_pg.get_bootstrap_approval(pg_conn, approval["approval_id"]) is not None
+
+
 def test_agent_admin_delete_missing_returns_operator_error(agent_client):
     response = agent_client.post(
         "/api/agents/missing-agent/delete",

@@ -6578,6 +6578,10 @@ def _filter_and_purge_agents_without_current_vm(
     purge_agent_ids: list[str] = []
     for agent in agents:
         agent_id = agent.get("agent_id") or ""
+        approval_status = str(agent.get("approval_status") or "").casefold()
+        if agent.get("approval_id") and approval_status in {"pending", "approved"}:
+            kept.append(agent)
+            continue
         agent_vmid = _agent_row_vmid(agent)
         if (
             (expected_build_host_agent and agent_id == expected_build_host_agent)

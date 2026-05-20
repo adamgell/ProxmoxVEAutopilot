@@ -392,16 +392,19 @@ def update_agent_metadata(
 
 
 def hard_delete_agent(conn: Connection, agent_id: str) -> bool:
-    conn.execute(
-        "DELETE FROM agent_bootstrap_approvals WHERE agent_id = %s",
-        (agent_id,),
-    )
     row = conn.execute(
         "DELETE FROM agent_devices WHERE agent_id = %s RETURNING agent_id",
         (agent_id,),
     ).fetchone()
+    if not row:
+        _commit(conn)
+        return False
+    conn.execute(
+        "DELETE FROM agent_bootstrap_approvals WHERE agent_id = %s",
+        (agent_id,),
+    )
     _commit(conn)
-    return row is not None
+    return True
 
 
 def create_bootstrap_approval(

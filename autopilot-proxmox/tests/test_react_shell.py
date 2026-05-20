@@ -308,6 +308,46 @@ def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatc
     assert deleted == ["agent-no-vm", "agent-deleted-vm"]
 
 
+def test_react_vms_fleet_keeps_pending_approval_without_current_vm(web_client, monkeypatch, tmp_path):
+    from web import app as web_app
+
+    deleted: list[str] = []
+    setup_state_path = tmp_path / "foundation_state.json"
+    setup_state_path.write_text("{}", encoding="utf-8")
+
+    async def fake_vms_payload():
+        return ({
+            "data": [],
+            "devices": ([], ""),
+            "hash_serials": set(),
+            "fetched_at": 1.0,
+            "refreshing": False,
+        }, 0.0)
+
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", setup_state_path)
+    monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 0})
+    monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
+    monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_vmids", lambda _vmids: {})
+    monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
+    monkeypatch.setattr(web_app, "_agent_inventory_rows", lambda: [
+        {
+            "agent_id": "agent-vm-110",
+            "approval_id": "approval-110",
+            "approval_status": "pending",
+            "vmid": 110,
+            "computer_name": "DNS3",
+        },
+    ])
+
+    response = web_client.get("/api/vms/fleet")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [agent["agent_id"] for agent in body["agents"]] == ["agent-vm-110"]
+    assert deleted == []
+
+
 def test_vm_power_endpoint_returns_json_for_react_callers(web_client, monkeypatch):
     from web import app as web_app
 
