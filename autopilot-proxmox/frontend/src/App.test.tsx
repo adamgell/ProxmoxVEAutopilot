@@ -585,6 +585,85 @@ describe("App", () => {
     });
   });
 
+  test("edits a bubble from the React fleet", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles/bubble-1": {
+        id: "bubble-1",
+        name: "LAB 3",
+        domain_name: "lab3.home.gell.one",
+        netbios_name: "LAB3",
+        cidr: "192.168.3.0/24",
+        gateway_ip: "192.168.3.1",
+        dhcp_scope: "192.168.3.0",
+        dhcp_pool_start: "192.168.3.100",
+        dhcp_pool_end: "192.168.3.199",
+        lifecycle_state: "active",
+        isolation_status: "ready"
+      }
+    });
+    vi.spyOn(window, "prompt")
+      .mockReturnValueOnce("LAB 3")
+      .mockReturnValueOnce("lab3.home.gell.one")
+      .mockReturnValueOnce("LAB3")
+      .mockReturnValueOnce("192.168.3.0/24")
+      .mockReturnValueOnce("192.168.3.1")
+      .mockReturnValueOnce("192.168.3.0")
+      .mockReturnValueOnce("192.168.3.100")
+      .mockReturnValueOnce("192.168.3.199")
+      .mockReturnValueOnce("active")
+      .mockReturnValueOnce("ready");
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit bubble ACME Lab" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1",
+        expect.objectContaining({ method: "PATCH" })
+      );
+    });
+    const patchCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/bubbles/bubble-1"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(patchCall).toBeDefined();
+    const init = patchCall?.[1] as RequestInit;
+    expect(typeof init.body).toBe("string");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      name: "LAB 3",
+      domain_name: "lab3.home.gell.one",
+      netbios_name: "LAB3",
+      cidr: "192.168.3.0/24",
+      gateway_ip: "192.168.3.1",
+      dhcp_scope: "192.168.3.0",
+      dhcp_pool_start: "192.168.3.100",
+      dhcp_pool_end: "192.168.3.199",
+      lifecycle_state: "active",
+      isolation_status: "ready"
+    });
+  });
+
+  test("deletes a bubble from the React fleet after typed confirmation", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles/bubble-1": { ok: true }
+    });
+    vi.spyOn(window, "prompt").mockReturnValueOnce("ACME Lab");
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete bubble ACME Lab" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+  });
+
   test("opens VM console and screenshot actions inside a VM detail page", async () => {
     mockFetch(dashboardResponses);
 

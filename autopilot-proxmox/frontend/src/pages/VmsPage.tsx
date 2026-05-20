@@ -142,6 +142,45 @@ function findBubbleChoice(bubbles: readonly LabBubble[], value: string): LabBubb
   ));
 }
 
+function promptBubbleFields(existing?: LabBubble): Readonly<Record<string, unknown>> | null {
+  const name = window.prompt("Bubble name", existing?.name ?? "");
+  if (!name?.trim()) {
+    return null;
+  }
+  const domainName = window.prompt("Domain name", existing?.domain_name ?? "") ?? "";
+  const netbiosName = window.prompt("NetBIOS name", existing?.netbios_name ?? "") ?? "";
+  const cidr = window.prompt("Isolated CIDR", existing?.cidr ?? "") ?? "";
+  const gatewayIp = window.prompt("Gateway IP", existing?.gateway_ip ?? "") ?? "";
+  const dhcpScope = window.prompt("DHCP scope", existing?.dhcp_scope ?? cidr.replace(/\/\d+$/, "")) ?? "";
+  const dhcpPoolStart = window.prompt("DHCP pool start", existing?.dhcp_pool_start ?? "") ?? "";
+  const dhcpPoolEnd = window.prompt("DHCP pool end", existing?.dhcp_pool_end ?? "") ?? "";
+  const lifecycleState = window.prompt("Lifecycle state", existing?.lifecycle_state ?? "planned") ?? "planned";
+  const isolationStatus = window.prompt("Isolation status", existing?.isolation_status ?? "planned") ?? "planned";
+  return {
+    name: name.trim(),
+    domain_name: domainName.trim(),
+    netbios_name: netbiosName.trim(),
+    cidr: cidr.trim(),
+    gateway_ip: gatewayIp.trim(),
+    dhcp_scope: dhcpScope.trim(),
+    dhcp_pool_start: dhcpPoolStart.trim(),
+    dhcp_pool_end: dhcpPoolEnd.trim(),
+    lifecycle_state: lifecycleState.trim() || "planned",
+    isolation_status: isolationStatus.trim() || "planned"
+  };
+}
+
+async function deleteJson(path: string): Promise<void> {
+  const response = await fetch(path, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: { accept: "application/json" }
+  });
+  if (!response.ok) {
+    throw new Error(`DELETE ${path} failed: ${response.statusText || String(response.status)}`);
+  }
+}
+
 function detailVmidFromPath(path: string): number | null {
   const match = /^\/react\/vms\/(\d+)$/.exec(path);
   if (!match?.[1]) {
@@ -449,21 +488,31 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   }, [sendLive]);
 
   const createBubble = useCallback(() => {
-    const name = window.prompt("Bubble name");
-    if (!name?.trim()) {
+    const fields = promptBubbleFields();
+    if (!fields) {
       return;
     }
-    const domainName = window.prompt("Domain name", "") ?? "";
-    const cidr = window.prompt("Isolated CIDR", "") ?? "";
-    const gatewayIp = window.prompt("Gateway IP", "") ?? "";
-    const dhcpScope = window.prompt("DHCP scope", cidr.replace(/\/\d+$/, "")) ?? "";
-    void runAction(`Create bubble ${name.trim()}`, () => postJson("/api/bubbles", {
-      name: name.trim(),
-      domain_name: domainName.trim(),
-      cidr: cidr.trim(),
-      gateway_ip: gatewayIp.trim(),
-      dhcp_scope: dhcpScope.trim()
+    void runAction(`Create bubble ${String(fields.name)}`, () => postJson("/api/bubbles", fields));
+  }, [runAction]);
+
+  const editBubble = useCallback((bubble: LabBubble) => {
+    const fields = promptBubbleFields(bubble);
+    if (!fields) {
+      return;
+    }
+    void runAction(`Edit bubble ${bubble.name}`, () => fetchJson(`/api/bubbles/${bubble.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(fields)
     }));
+  }, [runAction]);
+
+  const deleteBubble = useCallback((bubble: LabBubble) => {
+    const typed = window.prompt(`Type ${bubble.name} to delete bubble`);
+    if (typed !== bubble.name) {
+      return;
+    }
+    void runAction(`Delete bubble ${bubble.name}`, () => deleteJson(`/api/bubbles/${bubble.id}`));
   }, [runAction]);
 
   const tagMachine = useCallback((row: FleetMachineRow) => {
@@ -660,7 +709,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         </div>
       </section>
 
-      <BubbleTopologyOverview topology={bubbleTopology} onCreateBubble={createBubble} />
+      <BubbleTopologyOverview
+        topology={bubbleTopology}
+        onCreateBubble={createBubble}
+        onEditBubble={editBubble}
+        onDeleteBubble={deleteBubble}
+      />
 
       <section className="fleet-lanes" aria-label="Fleet lanes">
         <div className="fleet-primary-stack">
@@ -1003,10 +1057,14 @@ function gateLabel(gate: Readonly<Record<string, unknown>> | undefined): string 
 
 function BubbleTopologyOverview({
   topology,
-  onCreateBubble
+  onCreateBubble,
+  onEditBubble,
+  onDeleteBubble
 }: {
   readonly topology: LabBubbleTopology;
   readonly onCreateBubble: () => void;
+  readonly onEditBubble: (bubble: LabBubble) => void;
+  readonly onDeleteBubble: (bubble: LabBubble) => void;
 }) {
   const fleets = topology.workstation_fleets;
   const infra = topology.critical_infrastructure;
@@ -1035,7 +1093,25 @@ function BubbleTopologyOverview({
                         <span className="status status--active">{fallbackText(fleet.bubble.lifecycle_state || "planned")}</span>
                         <h3>{fleet.bubble.name}</h3>
                       </div>
-                      <strong>{String(fleet.workstation_count ?? 0)} VMs</strong>
+                      <div className="bubble-card-actions">
+                        <strong>{String(fleet.workstation_count ?? 0)} VMs</strong>
+                        <button
+                          type="button"
+                          className="fleet-action"
+                          aria-label={`Edit bubble ${fleet.bubble.name}`}
+                          onClick={() => { onEditBubble(fleet.bubble); }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="fleet-action fleet-action--danger"
+                          aria-label={`Delete bubble ${fleet.bubble.name}`}
+                          onClick={() => { onDeleteBubble(fleet.bubble); }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </header>
                     <dl className="fleet-detail-grid">
                       <div><dt>Domain</dt><dd>{fallbackText(fleet.bubble.domain_name)}</dd></div>

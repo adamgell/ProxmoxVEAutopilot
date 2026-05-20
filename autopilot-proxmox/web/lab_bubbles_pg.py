@@ -211,6 +211,8 @@ def create_bubble(
     gateway_ip: str = "",
     planned_bridge: str = "",
     planned_vlan: int | None = None,
+    lifecycle_state: str = "planned",
+    isolation_status: str = "planned",
     dhcp_scope: str = "",
     dhcp_pool_start: str = "",
     dhcp_pool_end: str = "",
@@ -220,10 +222,11 @@ def create_bubble(
         """
         INSERT INTO lab_bubbles (
             id, name, slug, description, domain_name, netbios_name, cidr,
-            gateway_ip, planned_bridge, planned_vlan, dhcp_scope,
+            gateway_ip, planned_bridge, planned_vlan, lifecycle_state,
+            isolation_status, dhcp_scope,
             dhcp_pool_start, dhcp_pool_end, created_at, updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -237,6 +240,8 @@ def create_bubble(
             gateway_ip.strip(),
             planned_bridge.strip(),
             planned_vlan,
+            lifecycle_state.strip() or "planned",
+            isolation_status.strip() or "planned",
             dhcp_scope.strip(),
             dhcp_pool_start.strip(),
             dhcp_pool_end.strip(),
@@ -305,6 +310,12 @@ def update_bubble(conn: Connection, bubble_id: str, commit: bool = True, **field
     if commit:
         conn.commit()
     return _row(row)
+
+
+def delete_bubble(conn: Connection, bubble_id: str) -> bool:
+    result = conn.execute("DELETE FROM lab_bubbles WHERE id = %s", (bubble_id,))
+    conn.commit()
+    return result.rowcount > 0
 
 
 def record_audit_event(

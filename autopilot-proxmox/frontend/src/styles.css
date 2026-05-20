@@ -862,6 +862,14 @@ h3 {
   white-space: nowrap;
 }
 
+.bubble-card-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 120px;
+}
+
 .fleet-lanes {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -941,8 +949,8 @@ h3 {
 .fleet-machine-table th:nth-child(7) { width: 11%; }
 .fleet-machine-table th:nth-child(8) { width: 8%; }
 .fleet-machine-table th:nth-child(9) { width: 8%; }
-.fleet-machine-table th:nth-child(10) { width: 9%; }
-.fleet-machine-table th:nth-child(11) { width: 3%; }
+.fleet-machine-table th:nth-child(10) { width: 8%; }
+.fleet-machine-table th:nth-child(11) { width: 4%; }
 
 .machine-name {
   display: block;

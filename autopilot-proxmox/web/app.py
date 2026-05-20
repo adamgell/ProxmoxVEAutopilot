@@ -2138,18 +2138,21 @@ def _init_app_database() -> None:
 class _BubbleCreate(BaseModel):
     name: str
     description: str = ""
+    lifecycle_state: str = "planned"
     domain_name: str = ""
     netbios_name: str = ""
     cidr: str = ""
     gateway_ip: str = ""
     planned_bridge: str = ""
     planned_vlan: Optional[int] = None
+    isolation_status: str = "planned"
     dhcp_scope: str = ""
     dhcp_pool_start: str = ""
     dhcp_pool_end: str = ""
 
 
 class _BubblePatch(BaseModel):
+    name: Optional[str] = None
     description: Optional[str] = None
     lifecycle_state: Optional[str] = None
     domain_name: Optional[str] = None
@@ -2159,6 +2162,9 @@ class _BubblePatch(BaseModel):
     planned_bridge: Optional[str] = None
     planned_vlan: Optional[int] = None
     isolation_status: Optional[str] = None
+    dhcp_scope: Optional[str] = None
+    dhcp_pool_start: Optional[str] = None
+    dhcp_pool_end: Optional[str] = None
     dc_ready: Optional[bool] = None
     dns_ready: Optional[bool] = None
     dhcp_ready: Optional[bool] = None
@@ -2292,6 +2298,17 @@ def api_bubbles_patch(bubble_id: str, body: _BubblePatch):
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.delete("/api/bubbles/{bubble_id}", status_code=204)
+def api_bubbles_delete(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        if not lab_bubbles_pg.delete_bubble(conn, bubble_id):
+            raise HTTPException(status_code=404, detail="bubble not found")
+        return Response(status_code=204)
 
 
 @app.get("/api/bubbles/{bubble_id}/readiness")

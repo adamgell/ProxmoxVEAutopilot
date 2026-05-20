@@ -1148,9 +1148,38 @@ def test_bubble_api_returns_404_for_missing_nested_bubble(web_client: TestClient
     lab_bubbles_pg.init(pg_conn)
 
     missing_bubble = "00000000-0000-0000-0000-000000000001"
+    assert web_client.delete(f"/api/bubbles/{missing_bubble}").status_code == 404
     assert web_client.get(f"/api/bubbles/{missing_bubble}/assets").status_code == 404
     assert web_client.get(f"/api/bubbles/{missing_bubble}/services").status_code == 404
     assert web_client.get(f"/api/bubbles/{missing_bubble}/audit-events").status_code == 404
+
+
+def test_bubble_api_delete_removes_bubble_assets_and_services(web_client: TestClient, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    asset = lab_bubbles_pg.add_asset(
+        pg_conn,
+        bubble["id"],
+        asset_type="vm",
+        asset_role="domain_controller",
+        vmid=130,
+    )
+    lab_bubbles_pg.add_service(
+        pg_conn,
+        bubble["id"],
+        service_kind="dhcp",
+        service_name="ACME DHCP",
+        provider_asset_id=asset["id"],
+    )
+
+    deleted = web_client.delete(f"/api/bubbles/{bubble['id']}")
+
+    assert deleted.status_code == 204
+    assert lab_bubbles_pg.get_bubble(pg_conn, bubble["id"]) is None
+    assert lab_bubbles_pg.list_assets(pg_conn, bubble["id"]) == []
 
 
 def test_bubble_api_patch_nulls_are_explicit(web_client: TestClient, pg_conn):
