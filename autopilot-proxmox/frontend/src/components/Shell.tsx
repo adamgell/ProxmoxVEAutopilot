@@ -8,6 +8,19 @@ function currentPageLabel(path: string): string {
   return reactRouteForPath(path)?.label ?? "Shell";
 }
 
+function legacyPathForReactPath(path: string): string {
+  if (path === "/react/jobs") {
+    return "/legacy/jobs";
+  }
+  if (path === "/react/monitoring") {
+    return "/monitoring";
+  }
+  if (path === "/react/vms" || /^\/react\/vms\/\d+$/u.test(path)) {
+    return "/legacy/vms";
+  }
+  return "/legacy/dashboard";
+}
+
 export function OperatorShell({
   bootstrap,
   path,
@@ -21,6 +34,7 @@ export function OperatorShell({
 }) {
   const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
   const pageLabel = currentPageLabel(path);
+  const legacyPath = legacyPathForReactPath(path);
 
   return (
     <div className="workspace">
@@ -61,6 +75,7 @@ export function OperatorShell({
             <strong>{pageLabel}</strong>
           </div>
           <div className="workspace__status" aria-label="Runtime status">
+            <a className="ui-mode-switch" href={legacyPath} aria-label="Switch to Legacy UI">Legacy UI</a>
             {socketState ? <span className={`socket-state socket-state--${socketState}`}>Live {socketState}</span> : null}
             <span>{buildLabel}</span>
             {bootstrap.buildTime ? (

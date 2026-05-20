@@ -65,6 +65,22 @@ def test_legacy_operator_pages_remain_available(web_client, path, text):
     assert text in response.text
 
 
+@pytest.mark.parametrize(
+    ("path", "target"),
+    [
+        ("/legacy/dashboard", "/react/dashboard"),
+        ("/legacy/jobs", "/react/jobs"),
+    ],
+)
+def test_legacy_operator_pages_link_back_to_react(web_client, path, target):
+    response = web_client.get(path)
+
+    assert response.status_code == 200
+    assert 'id="uiModeSwitch"' in response.text
+    assert f'href="{target}"' in response.text
+    assert "React UI" in response.text
+
+
 def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     from web import app as web_app, db_pg, lab_bubbles_pg
 

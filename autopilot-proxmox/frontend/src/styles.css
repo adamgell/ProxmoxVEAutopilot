@@ -256,6 +256,27 @@ h3 {
   text-align: right;
 }
 
+.ui-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ui-mode-switch:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  color: var(--accent);
+}
+
 .workspace__content {
   width: min(1760px, calc(100vw - 296px));
   margin: 0 auto;

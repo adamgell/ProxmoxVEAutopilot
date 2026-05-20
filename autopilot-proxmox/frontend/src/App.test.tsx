@@ -548,6 +548,23 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: /winpe/i })).not.toBeInTheDocument();
   });
 
+  test.each([
+    ["/react/dashboard", "/legacy/dashboard"],
+    ["/react/jobs", "/legacy/jobs"],
+    ["/react/monitoring", "/monitoring"],
+    ["/react/vms", "/legacy/vms"],
+    ["/react/vms/108", "/legacy/vms"]
+  ])("links %s back to its legacy UI fallback", async (path, legacyPath) => {
+    mockFetch(dashboardResponses);
+
+    renderRoute(path);
+
+    expect(await screen.findByRole("link", { name: "Switch to Legacy UI" })).toHaveAttribute(
+      "href",
+      legacyPath
+    );
+  });
+
   test("renders the VMs fleet workspace as a reduced inventory", async () => {
     mockFetch(dashboardResponses);
 
