@@ -10,15 +10,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 INIT_SCRIPT="${SCRIPT_DIR}/init-proxmox-ve.sh"
-STATE_FILE="${APP_DIR}/output/setup/foundation_state.json"
+STATE_HELPER="${SCRIPT_DIR}/installer_state.py"
+STATE_FILE="${INSTALLER_STATE_FILE:-${APP_DIR}/output/setup/foundation_state.json}"
+DETECT_FILE="${INSTALLER_DETECT_FILE:-${APP_DIR}/output/setup/installer_detect.json}"
+FAILURE_FILE="${INSTALLER_FAILURE_FILE:-${APP_DIR}/output/setup/install-last-failure.json}"
+INSTALL_LOG="${INSTALLER_LOG_FILE:-${APP_DIR}/output/setup/install.log}"
+SUPPORT_DIR="${INSTALLER_SUPPORT_DIR:-${APP_DIR}/output/support}"
 
 ACTION="menu"
 YES=0
 DRY_RUN=0
 RESUME=1
 MEDIA_MODE="auto"
-DOWNLOAD_VIRTIO=1
+ALLOW_WINDOWS_DOWNLOAD=0
+DOWNLOAD_VIRTIO=0
 RESET_MEDIA=0
+SUPPORT_PRINT=0
+SUPPORT_NO_BUNDLE=0
 
 NODE=""
 ISO_STORAGE=""
@@ -44,7 +52,7 @@ Default:
   Launch an interactive console installer on the Proxmox VE shell.
 
 Actions:
-  --action menu|guided|foundation|bootstrap|operational|runtime-config|status|reset-dev-lab
+  --action menu|detect|recommended|guided|foundation|bootstrap|operational|runtime-config|status|support|reset-dev-lab
 
 Options:
   --yes                      Use defaults and skip confirmations where possible.
@@ -54,8 +62,10 @@ Options:
   --download-windows         Use the Microsoft software-download resolver.
   --windows-iso-url <url>    Use an operator-supplied official Microsoft direct URL.
   --windows-iso-language <l> Windows ISO language for automatic resolver.
-  --download-virtio          Download VirtIO ISO; default enabled.
+  --download-virtio          Download VirtIO ISO.
   --no-download-virtio       Do not download VirtIO ISO.
+  --support-print            Print the generated GitHub issue draft.
+  --support-no-bundle        Write only the issue draft and redaction report.
   --node <node>              Proxmox node override.
   --iso-storage <storage>    ISO storage override.
   --controller-ip <ip>       Static or already-known controller IP.
@@ -70,14 +80,22 @@ Options:
 
 Examples:
   bash scripts/install-proxmox-ve.sh
-  bash scripts/install-proxmox-ve.sh --action guided --yes
+  bash scripts/install-proxmox-ve.sh --action recommended --yes
+  bash scripts/install-proxmox-ve.sh --action detect
+  bash scripts/install-proxmox-ve.sh --action bootstrap --yes --download-windows --download-virtio
   bash scripts/install-proxmox-ve.sh --action bootstrap --windows-iso-url "https://download.microsoft.com/..."
+  bash scripts/install-proxmox-ve.sh --action support --support-print
   bash scripts/install-proxmox-ve.sh --action reset-dev-lab --reset-media --yes
 USAGE
 }
 
 log() {
   printf '[installer] %s\n' "$*" >&2
+}
+
+installer_log() {
+  mkdir -p "$(dirname "${INSTALL_LOG}")"
+  printf '[installer] %s\n' "$*" >>"${INSTALL_LOG}"
 }
 
 die() {
@@ -139,33 +157,39 @@ prompt_yes_no() {
 select_media_mode() {
   local choice
   if [[ "${YES}" == "1" ]]; then
-    MEDIA_MODE="${MEDIA_MODE:-auto}"
     return 0
   fi
   echo
   echo "Windows media source"
-  echo "  1) Automatic Microsoft software download resolver (recommended)"
+  echo "  1) Automatic Microsoft software download resolver"
   echo "  2) Paste official Microsoft direct ISO URL"
   echo "  3) Manual upload to Proxmox ISO storage"
-  read -r -p "Select media source [1]: " choice
-  case "${choice:-1}" in
-    1) MEDIA_MODE="auto" ;;
+  read -r -p "Select media source [3]: " choice
+  case "${choice:-3}" in
+    1)
+      MEDIA_MODE="auto"
+      ALLOW_WINDOWS_DOWNLOAD=1
+      ;;
     2)
       MEDIA_MODE="url"
+      ALLOW_WINDOWS_DOWNLOAD=1
       WINDOWS_ISO_URL="$(prompt_value "Official Microsoft direct ISO URL" "${WINDOWS_ISO_URL}")"
       [[ -n "${WINDOWS_ISO_URL}" ]] || die "Windows ISO URL is required for media source 2"
       ;;
-    3) MEDIA_MODE="manual" ;;
+    3)
+      MEDIA_MODE="manual"
+      ALLOW_WINDOWS_DOWNLOAD=0
+      ;;
     *) die "invalid media source: ${choice}" ;;
   esac
-  if prompt_yes_no "Download VirtIO ISO automatically" "yes"; then
+  if prompt_yes_no "Download VirtIO ISO automatically" "no"; then
     DOWNLOAD_VIRTIO=1
   else
     DOWNLOAD_VIRTIO=0
   fi
 }
 
-configure_interactive() {
+configure_targeting_interactive() {
   [[ "${YES}" == "1" ]] && return 0
 
   echo
@@ -184,8 +208,15 @@ configure_interactive() {
   CONTROLLER_VMID="$(prompt_value "Controller VMID" "${CONTROLLER_VMID}")"
   CONTROLLER_STORAGE="$(prompt_value "Controller VM storage" "${CONTROLLER_STORAGE}")"
   CONTROLLER_BRIDGE="$(prompt_value "Controller network bridge" "${CONTROLLER_BRIDGE}")"
+}
 
-  select_media_mode
+configure_for_phase() {
+  local phase="$1"
+  [[ "${YES}" == "1" ]] && return 0
+  configure_targeting_interactive
+  case "${phase}" in
+    guided|bootstrap|all) select_media_mode ;;
+  esac
 }
 
 build_common_args() {
@@ -207,14 +238,92 @@ build_common_args() {
 build_media_args() {
   MEDIA_ARGS=()
   case "${MEDIA_MODE}" in
-    auto) MEDIA_ARGS+=(--download-windows) ;;
-    url) MEDIA_ARGS+=(--windows-iso-url "${WINDOWS_ISO_URL}") ;;
+    auto)
+      [[ "${ALLOW_WINDOWS_DOWNLOAD}" == "1" ]] && MEDIA_ARGS+=(--download-windows)
+      ;;
+    url)
+      [[ -n "${WINDOWS_ISO_URL}" ]] || die "--windows-iso-url requires a URL"
+      MEDIA_ARGS+=(--windows-iso-url "${WINDOWS_ISO_URL}")
+      ;;
     manual) ;;
     *) die "invalid media mode: ${MEDIA_MODE}" ;;
   esac
   [[ -n "${WINDOWS_ISO_LANGUAGE}" ]] && MEDIA_ARGS+=(--windows-iso-language "${WINDOWS_ISO_LANGUAGE}")
   [[ "${DOWNLOAD_VIRTIO}" == "1" ]] && MEDIA_ARGS+=(--download-virtio)
   return 0
+}
+
+failure_step_id_for_phase() {
+  local phase="$1" rc="${2:-1}"
+  case "${phase}:${rc}" in
+    bootstrap:20) echo "bootstrap.media|Bootstrap media|bootstrap.media.windows_iso_missing|Windows ISO media is missing" ;;
+    foundation:*) echo "foundation.setup|Foundation setup|foundation.setup.phase_failed|Foundation phase failed" ;;
+    bootstrap:*) echo "bootstrap.media|Bootstrap media|bootstrap.media.phase_failed|Bootstrap phase failed" ;;
+    operational:*) echo "operational.repair|Operational repair|operational.repair.phase_failed|Operational phase failed" ;;
+    runtime-config:*) echo "runtime_config.repair|Runtime config repair|runtime_config.repair.phase_failed|Runtime config repair failed" ;;
+    *) echo "${phase}.run|${phase}|${phase}.run.phase_failed|${phase} failed" ;;
+  esac
+}
+
+record_failure() {
+  local action="$1" phase="$2" rc="$3" mapping
+  mapping="$(failure_step_id_for_phase "${phase}" "${rc}")"
+  python3 - "${FAILURE_FILE}" "${DETECT_FILE}" "${action}" "${phase}" "${rc}" "${mapping}" <<'PY'
+import datetime as dt
+import json
+import sys
+from pathlib import Path
+
+failure_path = Path(sys.argv[1])
+detect_path = Path(sys.argv[2])
+action, phase, rc, mapping = sys.argv[3], sys.argv[4], int(sys.argv[5]), sys.argv[6]
+step_id, step_label, check_id, check_label = mapping.split("|", 3)
+try:
+    detection = json.loads(detect_path.read_text(encoding="utf-8"))
+except Exception:
+    detection = {}
+payload = {
+    "schema": 1,
+    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "action": action,
+    "phase": phase,
+    "step_id": step_id,
+    "step_label": step_label,
+    "check_id": check_id,
+    "check_label": check_label,
+    "exit_code": rc,
+    "classification": detection.get("classification", ""),
+    "confidence": detection.get("confidence", ""),
+    "blocked_reasons": detection.get("blocked_reasons", []),
+    "recommended_action": detection.get("recommended_action", ""),
+    "sanitized_planned_commands": detection.get("planned_commands", []),
+}
+failure_path.parent.mkdir(parents=True, exist_ok=True)
+failure_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+show_failure_footer() {
+  local phase="$1" rc="$2" mapping
+  mapping="$(failure_step_id_for_phase "${phase}" "${rc}")"
+  IFS='|' read -r step_id step_label check_id check_label <<<"${mapping}"
+  cat <<EOF
+
+${step_label} did not complete.
+
+Step: ${step_label}
+Step ID: ${step_id}
+Failed check: ${check_label}
+Check ID: ${check_id}
+Exit code: ${rc}
+
+Next actions:
+  1) Retry recommended repair
+  2) Detection details
+  3) Manual phase selection
+  4) Create GitHub issue / support bundle
+  0) Return to main menu
+EOF
 }
 
 run_init_phase() {
@@ -227,7 +336,9 @@ run_init_phase() {
   case "${phase}" in
     bootstrap|all)
       build_media_args
-      cmd+=("${MEDIA_ARGS[@]}")
+      if ((${#MEDIA_ARGS[@]})); then
+        cmd+=("${MEDIA_ARGS[@]}")
+      fi
       ;;
     reset-dev-lab)
       [[ "${RESET_MEDIA}" == "1" ]] && cmd+=(--reset-media)
@@ -237,6 +348,7 @@ run_init_phase() {
   echo
   echo "Running:"
   quote_cmd "${cmd[@]}"
+  installer_log "running phase=${phase} command=$(quote_cmd "${cmd[@]}")"
   if [[ "${DRY_RUN}" == "1" ]]; then
     return 0
   fi
@@ -245,13 +357,51 @@ run_init_phase() {
   "${cmd[@]}"
   rc=$?
   set -e
-  if [[ "${rc}" == "20" ]]; then
-    echo
-    echo "Media gate is still blocked."
-    echo "Upload Windows ISO media to Proxmox ISO storage, or rerun bootstrap with"
-    echo "--download-windows or --windows-iso-url."
+  if [[ "${rc}" != "0" ]]; then
+    run_detect >/dev/null 2>&1 || true
+    record_failure "${ACTION}" "${phase}" "${rc}" || true
+    installer_log "phase=${phase} failed rc=${rc}"
+    if [[ "${rc}" == "20" ]]; then
+      echo
+      echo "Media gate is still blocked."
+      echo "Upload Windows ISO media to Proxmox ISO storage, or rerun bootstrap with"
+      echo "--download-windows or --windows-iso-url."
+    fi
+    show_failure_footer "${phase}" "${rc}"
   fi
   return "${rc}"
+}
+
+run_detect() {
+  local show_commands="${1:-0}"
+  local args
+  args=(python3 "${STATE_HELPER}" detect --state-file "${STATE_FILE}" --output "${DETECT_FILE}")
+  [[ "${ALLOW_WINDOWS_DOWNLOAD}" == "1" ]] && args+=(--allow-windows-download)
+  [[ "${DOWNLOAD_VIRTIO}" == "1" ]] && args+=(--allow-virtio-download)
+  [[ -n "${WINDOWS_ISO_URL}" ]] && args+=(--windows-iso-url "${WINDOWS_ISO_URL}")
+  [[ "${show_commands}" == "1" ]] && args+=(--show-commands)
+  "${args[@]}"
+}
+
+detect_value() {
+  local key="$1"
+  python3 - "${DETECT_FILE}" "${key}" <<'PY'
+import json
+import sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    print("")
+    raise SystemExit(0)
+value = data.get(key, "")
+if isinstance(value, bool):
+    print("1" if value else "0")
+elif isinstance(value, list):
+    print(",".join(str(item) for item in value))
+else:
+    print(value)
+PY
 }
 
 show_state() {
@@ -301,9 +451,14 @@ for key in keys:
 PY
 }
 
+show_status() {
+  run_detect
+  show_state
+}
+
 guided_install() {
   local rc
-  configure_interactive
+  configure_for_phase guided
   set +e
   run_init_phase foundation
   rc=$?
@@ -321,8 +476,8 @@ guided_install() {
     show_state
     if [[ "${rc}" == "20" ]]; then
       echo
-      echo "Resume from this installer after media is available with action 3 or:"
-      echo "  bash ${0} --action bootstrap --yes --download-windows --download-virtio"
+      echo "Resume after media is available with:"
+      echo "  bash ${0} --action recommended --yes"
     fi
     return "${rc}"
   fi
@@ -343,7 +498,7 @@ guided_install() {
 run_single_phase() {
   local phase="$1"
   local rc
-  configure_interactive
+  configure_for_phase "${phase}"
   set +e
   run_init_phase "${phase}"
   rc=$?
@@ -353,6 +508,33 @@ run_single_phase() {
     return "${rc}"
   fi
   show_state
+}
+
+run_recommended() {
+  local action safe confidence
+  run_detect
+  action="$(detect_value recommended_action)"
+  safe="$(detect_value safe_to_auto_run)"
+  confidence="$(detect_value confidence)"
+
+  if [[ "${safe}" != "1" || "${confidence}" == "low" || -z "${action}" ]]; then
+    echo
+    echo "Recommended repair is not safe to run automatically."
+    echo "Use Detection details or Create GitHub issue / support bundle for next steps."
+    return 2
+  fi
+
+  case "${action}" in
+    foundation|bootstrap|operational|runtime-config)
+      run_single_phase "${action}"
+      ;;
+    status|none)
+      show_state
+      ;;
+    *)
+      die "invalid recommended action from detection: ${action}"
+      ;;
+  esac
 }
 
 confirm_reset() {
@@ -371,12 +553,30 @@ run_reset() {
   fi
 }
 
+create_support_bundle() {
+  local args
+  run_detect >/dev/null 2>&1 || true
+  args=(
+    python3 "${STATE_HELPER}" support
+    --detection-file "${DETECT_FILE}"
+    --failure-file "${FAILURE_FILE}"
+    --log-file "${INSTALL_LOG}"
+    --output-dir "${SUPPORT_DIR}"
+  )
+  [[ "${SUPPORT_NO_BUNDLE}" == "1" ]] && args+=(--no-bundle)
+  [[ "${SUPPORT_PRINT}" == "1" ]] && args+=(--print)
+  "${args[@]}"
+}
+
 show_one_liners() {
   cat <<EOF
 
 Common one-liners
 -----------------
-Guided default install:
+Continue safest detected repair:
+  bash ${0} --action recommended --yes
+
+Guided install / repair:
   bash ${0} --action guided --yes
 
 Foundation only:
@@ -385,42 +585,83 @@ Foundation only:
 Bootstrap with official media downloads:
   bash ${0} --action bootstrap --yes --download-windows --download-virtio
 
+Bootstrap with direct Windows ISO URL:
+  bash ${0} --action bootstrap --yes --windows-iso-url "https://download.microsoft.com/..." --download-virtio
+
 Operational repair/promote:
   bash ${0} --action operational --yes
+
+Create sanitized support issue draft:
+  bash ${0} --action support --support-print
 
 Reset disposable dev lab:
   bash ${0} --action reset-dev-lab --reset-media --yes
 EOF
 }
 
-menu_loop() {
+manual_phase_menu() {
   local choice
-  [[ -t 0 ]] || die "interactive menu requires a TTY; use --action guided --yes for unattended runs"
   while true; do
-    clear 2>/dev/null || true
-    echo "ProxmoxVEAutopilot First-Run Installer"
-    echo "======================================"
-    show_state
     echo
-    echo "Actions"
-    echo "  1) Guided install: Foundation -> Bootstrap -> Operational"
-    echo "  2) Foundation only: PVE access + Ubuntu controller runtime"
-    echo "  3) Bootstrap media: Windows/VirtIO media gate"
+    echo "Choose phase"
+    echo "------------"
+    echo "  1) Auto-detect again"
+    echo "  2) Foundation"
+    echo "  3) Bootstrap media"
     echo "  4) Operational repair/promote"
     echo "  5) Runtime config repair"
-    echo "  6) Reset disposable dev lab"
-    echo "  7) Show one-liners"
+    echo "  6) Status only"
+    echo "  7) Create GitHub issue / support bundle"
+    echo "  8) Reset disposable dev lab"
+    echo "  9) Return to main menu"
     echo "  0) Quit"
-    echo
-    read -r -p "Select action: " choice
+    read -r -p "Select phase: " choice
     case "${choice}" in
-      1) guided_install || true ;;
+      1) run_detect 1 ;;
       2) run_single_phase foundation || true ;;
       3) run_single_phase bootstrap || true ;;
       4) run_single_phase operational || true ;;
       5) run_single_phase runtime-config || true ;;
-      6) run_reset || true; show_state ;;
-      7) show_one_liners ;;
+      6) show_status ;;
+      7) create_support_bundle ;;
+      8) run_reset || true; show_state ;;
+      9) return 0 ;;
+      0|q|Q) exit 0 ;;
+      *) echo "Invalid selection." ;;
+    esac
+  done
+}
+
+menu_loop() {
+  local choice
+  [[ -t 0 ]] || die "interactive menu requires a TTY; use --action recommended --yes for unattended runs"
+  while true; do
+    clear 2>/dev/null || true
+    echo "ProxmoxVEAutopilot First-Run Installer"
+    echo "======================================"
+    run_detect || true
+    show_state
+    echo
+    echo "Main menu"
+    echo "---------"
+    echo "  1) Continue recommended repair"
+    echo "  2) Guided install / repair"
+    echo "  3) Detection details"
+    echo "  4) Manual phase selection"
+    echo "  5) Configure install inputs"
+    echo "  6) Show one-liners"
+    echo "  7) Create GitHub issue / support bundle"
+    echo "  0) Quit without changes"
+    echo
+    read -r -p "Select action: " choice
+    case "${choice}" in
+      1) run_recommended || true ;;
+      2) guided_install || true ;;
+      3) run_detect 1 ;;
+      4) manual_phase_menu ;;
+      5) configure_for_phase guided ;;
+      6) show_one_liners ;;
+      7) create_support_bundle ;;
       0|q|Q) return 0 ;;
       *) echo "Invalid selection." ;;
     esac
@@ -437,12 +678,14 @@ parse_args() {
       --dry-run) DRY_RUN=1; shift ;;
       --resume) RESUME=1; shift ;;
       --no-resume) RESUME=0; shift ;;
-      --manual-media) MEDIA_MODE="manual"; shift ;;
-      --download-windows) MEDIA_MODE="auto"; shift ;;
-      --windows-iso-url) MEDIA_MODE="url"; WINDOWS_ISO_URL="${2:-}"; shift 2 ;;
+      --manual-media) MEDIA_MODE="manual"; ALLOW_WINDOWS_DOWNLOAD=0; shift ;;
+      --download-windows) MEDIA_MODE="auto"; ALLOW_WINDOWS_DOWNLOAD=1; shift ;;
+      --windows-iso-url) MEDIA_MODE="url"; ALLOW_WINDOWS_DOWNLOAD=1; WINDOWS_ISO_URL="${2:-}"; shift 2 ;;
       --windows-iso-language) WINDOWS_ISO_LANGUAGE="${2:-}"; shift 2 ;;
       --download-virtio) DOWNLOAD_VIRTIO=1; shift ;;
       --no-download-virtio) DOWNLOAD_VIRTIO=0; shift ;;
+      --support-print) SUPPORT_PRINT=1; shift ;;
+      --support-no-bundle) SUPPORT_NO_BUNDLE=1; shift ;;
       --node) NODE="${2:-}"; shift 2 ;;
       --iso-storage) ISO_STORAGE="${2:-}"; shift 2 ;;
       --controller-ip) CONTROLLER_IP="${2:-}"; shift 2 ;;
@@ -461,6 +704,7 @@ parse_args() {
 
 main() {
   [[ -x "${INIT_SCRIPT}" || -f "${INIT_SCRIPT}" ]] || die "init script not found: ${INIT_SCRIPT}"
+  [[ -x "${STATE_HELPER}" || -f "${STATE_HELPER}" ]] || die "state helper not found: ${STATE_HELPER}"
   parse_args "$@"
   if [[ "${MEDIA_MODE}" == "url" && -z "${WINDOWS_ISO_URL}" ]]; then
     die "--windows-iso-url requires a URL"
@@ -468,12 +712,15 @@ main() {
 
   case "${ACTION}" in
     menu) menu_loop ;;
+    detect) run_detect ;;
+    recommended) run_recommended ;;
     guided) guided_install ;;
     foundation) run_single_phase foundation ;;
     bootstrap) run_single_phase bootstrap ;;
     operational) run_single_phase operational ;;
     runtime-config) run_single_phase runtime-config ;;
-    status) show_state ;;
+    status) show_status ;;
+    support) create_support_bundle ;;
     reset-dev-lab) run_reset; show_state ;;
     *) die "invalid --action: ${ACTION}" ;;
   esac
