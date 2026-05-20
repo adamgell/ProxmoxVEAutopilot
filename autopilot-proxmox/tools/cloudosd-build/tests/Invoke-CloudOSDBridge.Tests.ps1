@@ -670,6 +670,39 @@ Describe 'Test-CloudOSDOfflineWindows' {
         ($result.errors -join '|') | Should -Match 'UnattendedJoin'
     }
 
+    It 'allows local admin credentials in the offline run package' {
+        $offlineRoot = Join-Path $TestDrive 'offline-local-admin'
+        $windowsRoot = Join-Path $offlineRoot 'Windows'
+        $driverStore = Join-Path $windowsRoot 'System32/DriverStore/FileRepository'
+        foreach ($driver in @(
+            @{ dir = 'vioscsi.inf_amd64_test'; inf = 'vioscsi.inf'; sys = 'vioscsi.sys' },
+            @{ dir = 'netkvm.inf_amd64_test'; inf = 'netkvm.inf'; sys = 'netkvm.sys' }
+        )) {
+            $driverDir = Join-Path $driverStore $driver.dir
+            New-Item -ItemType Directory -Path $driverDir -Force | Out-Null
+            'inf' | Set-Content -LiteralPath (Join-Path $driverDir $driver.inf)
+            'sys' | Set-Content -LiteralPath (Join-Path $driverDir $driver.sys)
+        }
+        $scripts = Join-Path $windowsRoot 'Setup/Scripts'
+        New-Item -ItemType Directory -Path $scripts -Force | Out-Null
+        'rem PVEAUTOPILOT-CLOUDOSD-SENTINEL' |
+            Set-Content -LiteralPath (Join-Path $scripts 'SetupComplete.cmd') -Encoding ASCII
+        Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot -ComputerName 'GELL-OSD-001'
+        $specialize = Join-Path $windowsRoot 'Temp/osdcloud'
+        New-Item -ItemType Directory -Path $specialize -Force | Out-Null
+        'call C:\Windows\Setup\Scripts\PVEAutopilot-SetupComplete.cmd' |
+            Set-Content -LiteralPath (Join-Path $specialize 'SetupSpecialize.cmd') -Encoding ASCII
+        $stage = Join-Path $offlineRoot 'ProgramData/ProxmoxVEAutopilot/CloudOSD'
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        '{"local_admin":{"username":"localadmin","password":"StrongPass123"}}' |
+            Set-Content -LiteralPath (Join-Path $stage 'cloudosd-run.json')
+
+        $result = Test-CloudOSDOfflineWindows -WindowsRoot $windowsRoot
+
+        $result.ok | Should -BeTrue
+        ($result.errors -join '|') | Should -Not -Match 'domain join credentials'
+    }
+
     It 'reports offline validation and SetupComplete milestones before PE completion' {
         $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' 'Invoke-CloudOSDBridge.ps1') -Raw
 
