@@ -2365,6 +2365,17 @@
     </style>
   </head>
   <body class="cockpit-shell {% block body_class %}{% endblock %}">
+    {% set current_path = request.url.path if request else '' %}
+    {% set react_switch_href = '/react/dashboard' %}
+    {% if current_path.startswith('/legacy/jobs') or current_path == '/jobs' %}
+      {% set react_switch_href = '/react/jobs' %}
+    {% elif current_path.startswith('/legacy/vms') or current_path == '/vms' %}
+      {% set react_switch_href = '/react/vms' %}
+    {% elif current_path.startswith('/vms/') and current_path.endswith('/console') %}
+      {% set react_switch_href = '/react/vms/' ~ current_path.split('/')[2] %}
+    {% elif current_path.startswith('/monitoring') %}
+      {% set react_switch_href = '/react/monitoring' %}
+    {% endif %}
     <header id="header">
       <div class="header-inner">
         <a class="brand" href="/">
@@ -2577,6 +2588,14 @@
             />
           </svg>
         </button>
+        <a
+          id="uiModeSwitch"
+          class="operator-action-btn"
+          href="{{ react_switch_href }}"
+          aria-label="Switch to React UI"
+        >
+          React UI
+        </a>
         <span class="operator-actions" aria-label="Live data controls">
           <button
             id="reloadLiveDataBtn"

@@ -16,7 +16,7 @@ from typing import Any, Optional
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
-from web import db_pg
+from web import db_pg, machine_lifecycle_pg
 
 
 SCHEMA = """
@@ -576,6 +576,30 @@ def insert_device_probe(sweep_id: int, probe: dict) -> int:
             """,
             [row[c] for c in cols],
         ).fetchone()
+        machine_lifecycle_pg.observe_from_monitor_probe(
+            conn,
+            probe={
+                **probe,
+                "checked_at": row["checked_at"],
+                "vmid": row["vmid"],
+                "serial": row["serial"],
+                "win_name": row["win_name"],
+                "vm_name": row["vm_name"],
+                "dsreg_status": _json_obj(probe.get("dsreg_status")),
+                "ad_found": row["ad_found"],
+                "ad_matches_json": _json_list(
+                    probe.get("ad_matches_json", probe.get("ad_matches"))
+                ),
+                "entra_found": row["entra_found"],
+                "entra_matches_json": _json_list(
+                    probe.get("entra_matches_json", probe.get("entra_matches"))
+                ),
+                "intune_found": row["intune_found"],
+                "intune_matches_json": _json_list(
+                    probe.get("intune_matches_json", probe.get("intune_matches"))
+                ),
+            },
+        )
         conn.commit()
         return int(inserted["id"])
 

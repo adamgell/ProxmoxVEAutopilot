@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-react-shell="protected">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Proxmox VE Autopilot</title>
+    <link rel="icon" type="image/svg+xml" href="/auth/logo" />
+    {% for href in asset_styles %}
+    <link rel="stylesheet" href="{{ href }}" />
+    {% endfor %}
+  </head>
+  <body>
+    <div
+      id="react-root"
+      data-build-sha="{{ build_sha }}"
+      data-build-time="{{ build_time }}"
+    >
+      <noscript>Proxmox VE Autopilot requires JavaScript for the React console.</noscript>
+    </div>
+    {% for src in asset_scripts %}
+    <script type="module" src="{{ src }}"></script>
+    {% endfor %}
+  </body>
+</html>

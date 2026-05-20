@@ -39,7 +39,11 @@ def client(tmp_dirs, pg_conn):
 
 
 def test_home_page_renders(client):
-    response = client.get("/")
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/dashboard"
+
+    response = client.get("/legacy/dashboard")
     assert response.status_code == 200
     assert "Proxmox VE Autopilot" in response.text
 
@@ -72,7 +76,7 @@ def test_hashes_page_empty(client):
 
 
 def test_jobs_page_empty(client):
-    response = client.get("/jobs")
+    response = client.get("/legacy/jobs")
     assert response.status_code == 200
     assert "No jobs yet" in response.text
 
@@ -162,7 +166,7 @@ def test_update_sidecar_rebuilds_image_with_version_args():
 
 
 def test_cockpit_pages_use_shared_full_width_shell(client):
-    response = client.get("/jobs")
+    response = client.get("/legacy/jobs")
     runs_response = client.get("/runs")
 
     assert response.status_code == 200
@@ -178,7 +182,7 @@ def test_cockpit_pages_use_shared_full_width_shell(client):
 
 
 def test_base_shell_exposes_global_cache_and_live_reload_controls(client):
-    response = client.get("/jobs")
+    response = client.get("/legacy/jobs")
 
     assert response.status_code == 200
     assert 'id="reloadLiveDataBtn"' in response.text
@@ -311,7 +315,7 @@ def test_jobs_page_uses_live_jobs_websocket(client):
         "args": {},
     }]
 
-    response = client.get("/jobs")
+    response = client.get("/legacy/jobs")
 
     assert response.status_code == 200
     assert "/api/live/ws" in response.text
@@ -489,7 +493,7 @@ def test_vms_page_shows_check_enrollment_for_ubuntu_vm(client):
     with patch("web.app.get_autopilot_vms", return_value=fake_vms):
         with patch("web.app.get_autopilot_devices", return_value=([], None)):
             with patch("web.app.get_hash_files", return_value=[]):
-                resp = client.get("/vms")
+                resp = client.get("/legacy/vms")
     assert resp.status_code == 200
     body = resp.text
     # Ubuntu VM: Check Enrollment button wired via data-* attributes
@@ -633,7 +637,7 @@ def test_jobs_page_marks_paused_jobs(client):
     job_manager.get_log.return_value = (
         "TASK [PAUSE — install software in VMID 9001]\nok: [localhost]\n"
     )
-    r = client.get("/jobs")
+    r = client.get("/legacy/jobs")
     assert r.status_code == 200
     body = r.text
     assert "PAUSED" in body
@@ -673,6 +677,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
         devices_pg,
         deployment_health_pg,
         jobs_pg,
+        lab_bubbles_pg,
         osdeploy_cache,
         osdeploy_pg,
         sequences_pg,
@@ -733,6 +738,9 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     def fake_deployment_health_init(conn):
         calls.append(("deployment_health_init", conn.__class__.__name__))
 
+    def fake_lab_bubbles_init(conn):
+        calls.append(("lab_bubbles_init", conn.__class__.__name__))
+
     def fake_heartbeat(**kwargs):
         calls.append(("heartbeat", kwargs))
         heartbeat_seen.set()
@@ -753,6 +761,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     monkeypatch.setattr(osdeploy_pg, "init", fake_osdeploy_init)
     monkeypatch.setattr(osdeploy_cache, "init", fake_osdeploy_cache_init)
     monkeypatch.setattr(deployment_health_pg, "init", fake_deployment_health_init)
+    monkeypatch.setattr(lab_bubbles_pg, "init", fake_lab_bubbles_init)
     monkeypatch.setattr(web_app, "SEQUENCES_DB", tmp_path / "sequences.db")
     monkeypatch.setattr(web_app, "SECRETS_DIR", tmp_path / "secrets")
     monkeypatch.setattr(
@@ -773,6 +782,7 @@ def test_web_writes_service_health_heartbeat_on_startup(monkeypatch, tmp_path):
     assert ("osdeploy_init", "FakeConn") in calls
     assert ("osdeploy_cache_init", "FakeConn") in calls
     assert ("deployment_health_init", "FakeConn") in calls
+    assert ("lab_bubbles_init", "FakeConn") in calls
     heartbeat_calls = [call for call in calls if call[0] == "heartbeat"]
     assert heartbeat_calls == [
         (
@@ -853,7 +863,7 @@ def test_vms_page_escapes_vm_name_in_data_attributes(client):
     with patch("web.app.get_autopilot_vms", return_value=fake_vms), \
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]):
-        r = client.get("/vms")
+        r = client.get("/legacy/vms")
     assert r.status_code == 200
     body = r.text
     assert 'data-vm-name="evil&#39;); alert(1)//"' in body \
@@ -905,7 +915,7 @@ def test_vms_page_cold_start_uses_monitor_snapshot(client, tmp_path, pg_conn):
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/vms")
+        r = client.get("/legacy/vms")
 
     assert r.status_code == 200
     assert "Gell-EC41E7EB" in r.text
@@ -950,7 +960,7 @@ def test_vms_page_renders_monitor_snapshot_freshness(client, tmp_path, pg_conn):
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/vms")
+        r = client.get("/legacy/vms")
 
     assert r.status_code == 200
     assert "Last monitor sweep" in r.text
@@ -1012,7 +1022,7 @@ def test_monitoring_sweep_now_refreshes_warm_vms_cache(client, tmp_path, monkeyp
     r = client.post("/api/monitoring/sweep-now")
     assert r.status_code == 202
 
-    r = client.get("/vms")
+    r = client.get("/legacy/vms")
     assert r.status_code == 200
     assert "fresh-vm" in r.text
     assert "stale-vm" not in r.text
@@ -1085,7 +1095,7 @@ def test_vms_refresh_preserves_monitor_join_evidence_over_live_fallback(
     r = client.post("/api/vms/refresh")
     assert r.status_code == 200
 
-    r = client.get("/vms")
+    r = client.get("/legacy/vms")
     assert r.status_code == 200
     assert ">Entra ID<" in r.text
     assert ">workgroup<" not in r.text
@@ -1127,7 +1137,7 @@ def test_vms_page_hybrid_entra_trust_shows_domain_badge(client, tmp_path, pg_con
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/vms")
+        r = client.get("/legacy/vms")
 
     assert r.status_code == 200
     assert "Hybrid Entra join" in r.text
@@ -1171,7 +1181,7 @@ def test_vms_page_entra_join_shows_entra_badge_not_workgroup(client, tmp_path, p
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/vms")
+        r = client.get("/legacy/vms")
 
     assert r.status_code == 200
     assert "Entra ID joined" in r.text
@@ -1226,7 +1236,7 @@ def test_vms_page_entra_badge_explains_intune_entra_link(client, tmp_path, pg_co
          patch("web.app.get_autopilot_devices", return_value=([], None)), \
          patch("web.app.get_hash_files", return_value=[]), \
          patch("web.app._refresh_vms_cache_bg"):
-        r = client.get("/vms")
+        r = client.get("/legacy/vms")
 
     assert r.status_code == 200
     assert ">Entra ID<" in r.text
@@ -1745,7 +1755,7 @@ def test_vms_page_includes_live_socket_and_screenshot_action(client):
         }, 0.0)
 
     with patch("web.app._get_vms_payload", fake_payload):
-        response = client.get("/vms")
+        response = client.get("/legacy/vms")
 
     assert response.status_code == 200
     assert "/api/live/ws" in response.text

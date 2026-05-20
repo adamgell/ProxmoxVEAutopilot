@@ -60,7 +60,8 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
         stop = threading.Event()
         with patch("web.monitor_main._do_sweep_tick", return_value=None), \
              patch("web.monitor_main._do_keytab_tick", return_value=None), \
-             patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}):
+             patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}), \
+             patch("web.monitor_main._do_screenshot_capture_tick", return_value={"captured": 0}):
             t = threading.Thread(
                 target=monitor_main._run_loops,
                 kwargs={"stop_event": stop,
@@ -69,7 +70,8 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
                         "heartbeat_interval_seconds": 0.1,
                         "sweep_interval_seconds": 10,
                         "keytab_interval_seconds": 10,
-                        "readiness_interval_seconds": 10},
+                        "readiness_interval_seconds": 10,
+                        "screenshot_interval_seconds": 10},
                 daemon=True,
             )
             t.start()
@@ -77,6 +79,28 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
             stop.set()
             t.join(timeout=2)
         assert jobs_pg.get_job("stale")["status"] == "orphaned"
+
+
+def test_screenshot_capture_tick_collects_running_vms(monkeypatch, tmp_path):
+    from web import app as app_module, monitor_main
+
+    monkeypatch.setattr(app_module, "SCREENSHOT_STORE_DIR", tmp_path / "screenshots")
+    monkeypatch.setattr(
+        app_module,
+        "_running_vmids_for_screenshot_capture",
+        lambda: [105, 116],
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_capture_vm_screenshot_png",
+        lambda vmid: b"\x89PNG\r\n\x1a\n" + str(vmid).encode(),
+    )
+
+    result = monitor_main._do_screenshot_capture_tick()
+
+    assert result == {"enabled": True, "running": 2, "captured": 2, "failed": 0}
+    assert app_module._latest_vm_screenshot(105)["source"] == "collector"
+    assert app_module._latest_vm_screenshot(116)["source"] == "collector"
 
 
 def test_run_monitor_passes_monitor_db_path_to_loops(monkeypatch):

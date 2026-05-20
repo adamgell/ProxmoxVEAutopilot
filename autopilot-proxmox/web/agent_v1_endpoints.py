@@ -65,6 +65,8 @@ class HeartbeatBody(BaseModel):
     server_url: Optional[str] = None
     agent_version: Optional[str] = None
     capabilities: list[str] = Field(default_factory=list)
+    bubble_id: Optional[str] = None
+    dc_readiness: dict = Field(default_factory=dict)
 
 
 class EventBody(BaseModel):
@@ -413,6 +415,22 @@ def heartbeat(body: HeartbeatBody, device: dict = Depends(_require_agent)):
             agent_id=body.agent_id,
             payload=payload,
         )
+        if body.bubble_id and body.dc_readiness:
+            from web import lab_bubbles_pg
+
+            lab_bubbles_pg.init(conn)
+            dc_asset = lab_bubbles_pg.asset_for_agent(
+                conn,
+                body.bubble_id,
+                body.agent_id,
+            )
+            if dc_asset and dc_asset["asset_role"] == "domain_controller":
+                lab_bubbles_pg.update_readiness_from_dc_evidence(
+                    conn,
+                    body.bubble_id,
+                    dc_asset_id=dc_asset["id"],
+                    evidence=body.dc_readiness,
+                )
         if body.current_run_id and (body.current_phase or "").lower() == "full_os":
             from web import osdeploy_pg
 

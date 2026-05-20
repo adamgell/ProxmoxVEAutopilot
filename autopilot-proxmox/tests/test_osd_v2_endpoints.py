@@ -465,6 +465,11 @@ def test_cloudosd_v2_agent_hash_queues_autopilot_upload(
     cloudosd_pg.reset_for_tests(pg_conn)
     cloudosd_pg.init(pg_conn)
     monkeypatch.setattr(web_app, "HASH_DIR", tmp_path)
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "vault_entra_app_id": "app-id",
+        "vault_entra_tenant_id": "tenant-id",
+        "vault_entra_app_secret": "secret",
+    })
     artifact = cloudosd_pg.create_artifact(
         pg_conn,
         architecture="amd64",

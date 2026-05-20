@@ -9,9 +9,9 @@ import secrets
 import subprocess
 import time
 import urllib3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import requests
@@ -20,13 +20,15 @@ import yaml
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from web.jobs import JobManager
 from web import devices_pg as devices_db
 from web import jobs_pg as jobs_db
 from web.live import LiveHub, utc_now_iso
+from web import machine_lifecycle_pg
 from web import monitoring_evidence
 from web import proxmox_permissions
 
@@ -162,8 +164,37 @@ def _safe_path(base_dir, filename):
     if not str(resolved).startswith(str(base_dir.resolve())):
         raise ValueError(f"Path traversal blocked: {filename}")
     return resolved
+
+
+def _react_asset_tags() -> dict[str, list[str]]:
+    """Return Vite-built React asset URLs for the protected shell.
+
+    Tests and source checkouts may not have a built frontend yet, so the
+    fallback shell renders without asset tags until ``frontend/dist`` is copied
+    into ``web/static/react`` by the Docker build.
+    """
+    try:
+        manifest = json.loads(REACT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"scripts": [], "styles": []}
+
+    entry = manifest.get("src/main.tsx") or manifest.get("index.html") or {}
+    scripts: list[str] = []
+    styles: list[str] = []
+    if entry.get("file"):
+        scripts.append(f"/static/react/{entry['file']}")
+    for css_file in entry.get("css") or []:
+        styles.append(f"/static/react/{css_file}")
+    return {"scripts": scripts, "styles": styles}
+
+
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+REACT_DIST_DIR = Path(__file__).resolve().parent / "static" / "react"
+REACT_MANIFEST_PATH = REACT_DIST_DIR / ".vite" / "manifest.json"
 HASH_DIR = BASE_DIR / "output" / "hashes"
+SCREENSHOT_STORE_DIR = Path(
+    os.environ.get("AUTOPILOT_VM_SCREENSHOT_DIR", str(BASE_DIR / "output" / "vm-screenshots"))
+)
 FILE_SHELF_DIR = Path(
     os.environ.get("AUTOPILOT_FILE_SHELF_DIR", str(BASE_DIR / "output" / "files"))
 )
@@ -544,6 +575,11 @@ def _save_vault(updates):
     _save_yaml_file(VAULT_PATH, updates)
 
 app = FastAPI(title="Proxmox VE Autopilot")
+app.mount(
+    "/static/react",
+    StaticFiles(directory=str(REACT_DIST_DIR), check_dir=False),
+    name="react-static",
+)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["tojson"] = lambda x, indent=None: json.dumps(x, indent=indent)
 job_manager = JobManager(
@@ -2078,6 +2114,8 @@ def _init_app_database() -> None:
         deployment_health_pg,
         device_history_pg,
         devices_pg,
+        lab_bubbles_pg,
+        machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
         ts_engine_pg,
@@ -2087,12 +2125,342 @@ def _init_app_database() -> None:
         ts_engine_pg.init(conn)
         device_history_pg.init(conn)
         devices_pg.init(conn)
+        machine_lifecycle_pg.init(conn)
         agent_telemetry_pg.init(conn)
         cloudosd_pg.init(conn)
         cloudosd_cache.init(conn)
         osdeploy_pg.init(conn)
         osdeploy_cache.init(conn)
         deployment_health_pg.init(conn)
+        lab_bubbles_pg.init(conn)
+
+
+class _BubbleCreate(BaseModel):
+    name: str
+    description: str = ""
+    lifecycle_state: str = "planned"
+    domain_name: str = ""
+    netbios_name: str = ""
+    cidr: str = ""
+    gateway_ip: str = ""
+    planned_bridge: str = ""
+    planned_vlan: Optional[int] = None
+    isolation_status: str = "planned"
+    dhcp_scope: str = ""
+    dhcp_pool_start: str = ""
+    dhcp_pool_end: str = ""
+
+
+class _BubblePatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    lifecycle_state: Optional[str] = None
+    domain_name: Optional[str] = None
+    netbios_name: Optional[str] = None
+    cidr: Optional[str] = None
+    gateway_ip: Optional[str] = None
+    planned_bridge: Optional[str] = None
+    planned_vlan: Optional[int] = None
+    isolation_status: Optional[str] = None
+    dhcp_scope: Optional[str] = None
+    dhcp_pool_start: Optional[str] = None
+    dhcp_pool_end: Optional[str] = None
+    dc_ready: Optional[bool] = None
+    dns_ready: Optional[bool] = None
+    dhcp_ready: Optional[bool] = None
+    workload_ready: Optional[bool] = None
+
+
+class _BubbleAssetCreate(BaseModel):
+    asset_type: str
+    asset_role: str
+    vmid: Optional[int] = None
+    vm_uuid: Optional[str] = None
+    run_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    service_id: Optional[str] = None
+    membership_state: str = "active"
+    evidence_state: str = "unknown"
+    notes: str = ""
+
+
+class _BubbleServiceCreate(BaseModel):
+    service_kind: str
+    service_name: str
+    scope: str = "bubble_local"
+    provider_asset_id: Optional[str] = None
+    consumer_refs: list = Field(default_factory=list)
+    readiness_state: str = "unknown"
+    evidence_summary: dict = Field(default_factory=dict)
+
+
+class _BubbleAssetPatch(BaseModel):
+    asset_role: Optional[str] = None
+    vmid: Optional[int] = None
+    vm_uuid: Optional[str] = None
+    run_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    service_id: Optional[str] = None
+    membership_state: Optional[str] = None
+    evidence_state: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class _BubbleAssetMove(BaseModel):
+    target_bubble_id: str
+    reason: str = ""
+
+
+class _BubbleServicePatch(BaseModel):
+    service_kind: Optional[str] = None
+    service_name: Optional[str] = None
+    scope: Optional[str] = None
+    provider_asset_id: Optional[str] = None
+    consumer_refs: Optional[list] = None
+    readiness_state: Optional[str] = None
+    evidence_summary: Optional[dict] = None
+
+
+def _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id: str) -> dict:
+    bubble = lab_bubbles_pg.get_bubble(conn, bubble_id)
+    if bubble is None:
+        raise HTTPException(status_code=404, detail="bubble not found")
+    return bubble
+
+
+def _api_asset_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id: str, asset_id: str) -> dict:
+    for asset in lab_bubbles_pg.list_assets(conn, bubble_id):
+        if asset["id"] == asset_id:
+            return asset
+    raise HTTPException(status_code=404, detail="asset not found in bubble")
+
+
+def _api_service_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id: str, service_id: str) -> dict:
+    for service in lab_bubbles_pg.list_services(conn, bubble_id):
+        if service["id"] == service_id:
+            return service
+    raise HTTPException(status_code=404, detail="service not found in bubble")
+
+
+def _patch_fields(body: BaseModel, *, nullable: set[str]) -> dict:
+    updates = body.model_dump(exclude_unset=True)
+    invalid_nulls = sorted(
+        key for key, value in updates.items()
+        if value is None and key not in nullable
+    )
+    if invalid_nulls:
+        joined = ", ".join(invalid_nulls)
+        raise HTTPException(status_code=400, detail=f"null is not allowed for: {joined}")
+    return updates
+
+
+@app.get("/api/bubbles")
+def api_bubbles_list():
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        return {"bubbles": lab_bubbles_pg.list_bubbles(conn)}
+
+
+@app.post("/api/bubbles", status_code=201)
+def api_bubbles_create(body: _BubbleCreate):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.create_bubble(conn, **body.model_dump())
+        except psycopg.errors.UniqueViolation as exc:
+            raise HTTPException(status_code=409, detail="bubble already exists") from exc
+
+
+@app.get("/api/bubbles/{bubble_id}")
+def api_bubbles_get(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        return _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+
+
+@app.patch("/api/bubbles/{bubble_id}")
+def api_bubbles_patch(bubble_id: str, body: _BubblePatch):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.update_bubble(
+                conn,
+                bubble_id,
+                **_patch_fields(body, nullable={"planned_vlan"}),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.delete("/api/bubbles/{bubble_id}", status_code=204)
+def api_bubbles_delete(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        if not lab_bubbles_pg.delete_bubble(conn, bubble_id):
+            raise HTTPException(status_code=404, detail="bubble not found")
+        return Response(status_code=204)
+
+
+@app.get("/api/bubbles/{bubble_id}/readiness")
+def api_bubbles_readiness(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        bubble = _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {
+            "bubble": bubble,
+            "assets": lab_bubbles_pg.list_assets(conn, bubble_id),
+            "services": lab_bubbles_pg.list_services(conn, bubble_id),
+        }
+
+
+@app.get("/api/bubbles/{bubble_id}/assets")
+def api_bubbles_assets_list(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {"assets": lab_bubbles_pg.list_assets(conn, bubble_id)}
+
+
+@app.post("/api/bubbles/{bubble_id}/assets", status_code=201)
+def api_bubbles_assets_create(bubble_id: str, body: _BubbleAssetCreate):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        try:
+            return lab_bubbles_pg.add_asset(
+                conn,
+                bubble_id,
+                **body.model_dump(),
+                actor="operator",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/bubbles/{bubble_id}/assets/{asset_id}")
+def api_bubbles_assets_patch(bubble_id: str, asset_id: str, body: _BubbleAssetPatch):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+            _api_asset_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, asset_id)
+            return lab_bubbles_pg.update_asset(
+                conn,
+                asset_id,
+                **_patch_fields(
+                    body,
+                    nullable={"vmid", "vm_uuid", "run_id", "agent_id", "service_id"},
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/bubbles/{bubble_id}/assets/{asset_id}/move")
+def api_bubbles_assets_move(bubble_id: str, asset_id: str, body: _BubbleAssetMove):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+            _api_asset_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, asset_id)
+            _api_bubble_or_404(conn, lab_bubbles_pg, body.target_bubble_id)
+            return lab_bubbles_pg.move_asset(
+                conn,
+                asset_id,
+                body.target_bubble_id,
+                reason=body.reason,
+                actor="operator",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/bubbles/{bubble_id}/services")
+def api_bubbles_services_list(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {"services": lab_bubbles_pg.list_services(conn, bubble_id)}
+
+
+@app.post("/api/bubbles/{bubble_id}/services", status_code=201)
+def api_bubbles_services_create(bubble_id: str, body: _BubbleServiceCreate):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        try:
+            return lab_bubbles_pg.add_service(conn, bubble_id, **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/bubbles/{bubble_id}/services/{service_id}")
+def api_bubbles_services_patch(
+    bubble_id: str,
+    service_id: str,
+    body: _BubbleServicePatch,
+):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+            _api_service_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, service_id)
+            return lab_bubbles_pg.update_service(
+                conn,
+                service_id,
+                **_patch_fields(body, nullable={"provider_asset_id"}),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/bubbles/{bubble_id}/services/{service_id}", status_code=204)
+def api_bubbles_services_delete(bubble_id: str, service_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        _api_service_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, service_id)
+        if not lab_bubbles_pg.delete_service(conn, service_id, actor="operator"):
+            raise HTTPException(status_code=404, detail="service not found")
+        return Response(status_code=204)
+
+
+@app.get("/api/bubbles/{bubble_id}/audit-events")
+def api_bubbles_audit_events(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {"events": lab_bubbles_pg.list_audit_events(conn, bubble_id)}
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -3955,6 +4323,30 @@ def get_autopilot_vms():
     return sorted(result, key=lambda v: v["vmid"])
 
 
+def _proxmox_cluster_vm_rows() -> list[dict]:
+    try:
+        rows = _proxmox_api("/cluster/resources?type=vm") or []
+    except Exception:
+        return []
+    out: list[dict] = []
+    for row in rows:
+        if row.get("type") != "qemu":
+            continue
+        try:
+            vmid = int(row.get("vmid"))
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "vmid": vmid,
+            "name": row.get("name") or "",
+            "hostname": row.get("name") or "",
+            "status": row.get("status") or "unknown",
+            "node": row.get("node") or "",
+            "target_os": "windows",
+        })
+    return sorted(out, key=lambda vm: vm["vmid"])
+
+
 def _graph_token():
     cfg = _load_proxmox_config()
     tenant = cfg.get("vault_entra_tenant_id", "")
@@ -4263,6 +4655,353 @@ def _live_jobs_payload() -> dict:
     }
 
 
+class ApiExtraModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class JobTableRowResponse(ApiExtraModel):
+    id: str
+    playbook: str | None = None
+    status: str | None = None
+    started: str | None = None
+    ended: str | None = None
+    duration: str | None = None
+    args: dict[str, Any] = Field(default_factory=dict)
+    paused: bool = False
+
+
+class RecentJobResponse(ApiExtraModel):
+    id: str
+    playbook: str | None = None
+    status: str | None = None
+    started: str | None = None
+    ended: str | None = None
+    duration: str | None = None
+    target: str = ""
+
+
+class RunningJobResponse(ApiExtraModel):
+    id: str
+    playbook: str = ""
+    target: str = ""
+    started: str | None = None
+    elapsed_seconds: int = 0
+    progress_pct: int = 0
+    paused: bool = False
+
+
+class RunningJobsResponse(BaseModel):
+    running: list[RunningJobResponse] = Field(default_factory=list)
+    running_count: int = 0
+    queued_count: int = 0
+
+
+class RecentJobsResponse(BaseModel):
+    jobs: list[RecentJobResponse] = Field(default_factory=list)
+
+
+class JobsTableResponse(BaseModel):
+    jobs: list[JobTableRowResponse] = Field(default_factory=list)
+
+
+class LiveJobsPayloadResponse(BaseModel):
+    running: RunningJobsResponse
+    recent: RecentJobsResponse
+    table: JobsTableResponse
+    generated_at: str
+
+
+class ServicesResponse(BaseModel):
+    services: list[dict[str, Any]] = Field(default_factory=list)
+    available: bool = True
+    error: str = ""
+
+
+class RuntimeContainerResponse(ApiExtraModel):
+    id: str = ""
+    name: str = ""
+    service: str = ""
+    image: str = ""
+    status: str = ""
+    health: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    restart_count: int = 0
+    log_url: str = ""
+
+
+class RuntimeServicesResponse(BaseModel):
+    available: bool = True
+    error: str = ""
+    containers: list[RuntimeContainerResponse] = Field(default_factory=list)
+
+
+class DeploymentSummaryResponse(ApiExtraModel):
+    total: int = 0
+    active: int = 0
+    running: int = 0
+    completed: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    stuck: int = 0
+    regressed: int = 0
+    slow: int = 0
+    median_completion_seconds: int | None = None
+    p95_completion_seconds: int | None = None
+    recent_failure_rate: float = 0
+
+
+class SignalMetricResponse(BaseModel):
+    label: str
+    value: str
+    tone: str = "neutral"
+
+
+class SignalSourceHealthResponse(BaseModel):
+    runtime_available: bool = True
+    setup_health: str = "unknown"
+    keytab_status: str = ""
+
+
+class OperatorSignalResponse(ApiExtraModel):
+    id: str
+    family: str
+    label: str
+    status: str
+    tone: str = "neutral"
+    summary: str
+    count: str | int | None = None
+    source: str = ""
+    href: str = ""
+
+
+class OperatorPathResponse(ApiExtraModel):
+    id: str
+    priority: int
+    label: str
+    status: str
+    tone: str = "neutral"
+    summary: str
+    action_label: str
+    href: str
+    source: str = ""
+
+
+class LifecycleLaneResponse(BaseModel):
+    id: str
+    label: str
+    value: str
+    detail: str = ""
+    status: str = "unknown"
+    tone: str = "neutral"
+
+
+class DeploymentHealthDigestResponse(BaseModel):
+    summary: DeploymentSummaryResponse = Field(default_factory=DeploymentSummaryResponse)
+    active: list[dict[str, Any]] = Field(default_factory=list)
+    recent_completions: list[dict[str, Any]] = Field(default_factory=list)
+    bottlenecks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FleetSignalRowResponse(ApiExtraModel):
+    vmid: int
+    vm_name: str = ""
+    node: str = ""
+    lifecycle: str = ""
+    tone: str = "neutral"
+    pve_status: str = ""
+    windows: str = ""
+    serial: str = ""
+    ad: str = ""
+    entra: str = ""
+    intune: str = ""
+    last_checked: str = ""
+    href: str = ""
+
+
+class SignalsHubResponse(BaseModel):
+    generated_at: str
+    build: dict[str, Any] = Field(default_factory=dict)
+    source_health: SignalSourceHealthResponse
+    metrics: list[SignalMetricResponse] = Field(default_factory=list)
+    signals: list[OperatorSignalResponse] = Field(default_factory=list)
+    operator_paths: list[OperatorPathResponse] = Field(default_factory=list)
+    lifecycle_lanes: list[LifecycleLaneResponse] = Field(default_factory=list)
+    deployment_health: DeploymentHealthDigestResponse = Field(default_factory=DeploymentHealthDigestResponse)
+    services: list[dict[str, Any]] = Field(default_factory=list)
+    runtime: RuntimeServicesResponse = Field(default_factory=RuntimeServicesResponse)
+    fleet_attention: list[FleetSignalRowResponse] = Field(default_factory=list)
+
+
+class FleetSummaryResponse(ApiExtraModel):
+    total: int = 0
+
+
+class MonitoringSummaryResponse(BaseModel):
+    devices: int = 0
+    ad: int = 0
+    entra: int = 0
+    intune: int = 0
+
+
+class CockpitSummaryResponse(BaseModel):
+    readiness_score: int = 0
+    jobs: RunningJobsResponse
+    recent_jobs: list[RecentJobResponse] = Field(default_factory=list)
+    services: ServicesResponse
+    fleet: FleetSummaryResponse
+    monitoring: MonitoringSummaryResponse
+
+
+class VmFleetRowResponse(ApiExtraModel):
+    vmid: int
+    name: str = ""
+    hostname: str = ""
+    serial: str = ""
+    status: str = "unknown"
+    ip_address: str = ""
+    os_caption: str = ""
+    os_build: str = ""
+    in_autopilot: bool = False
+    in_intune: bool = False
+    aad_joined: bool = False
+    part_of_domain: bool = False
+    hybrid_joined: bool = False
+    entra_id_joined: bool = False
+    has_hash: bool = False
+    lifecycle_state: str = ""
+    lifecycle_label: str = ""
+    lifecycle_source: str = ""
+    lifecycle_observed_at: str = ""
+    lifecycle_domain_joined: bool = False
+    lifecycle_entra_joined: bool = False
+    lifecycle_intune_enrolled: bool = False
+    lifecycle_autopilot_registered: bool = False
+    target_os: str = "windows"
+    sequence_name: str | None = None
+
+
+class AgentFleetRowResponse(ApiExtraModel):
+    agent_id: str
+    approval_id: str = ""
+    approval_status: str = ""
+    vmid: int | None = None
+    computer_name: str = ""
+    serial_number: str = ""
+    primary_ipv4: str = ""
+    os_name: str = ""
+    os_build: str = ""
+    qga_state: str = ""
+    domain_joined: bool | None = None
+    entra_joined: bool | None = None
+    lifecycle_state: str = ""
+    lifecycle_label: str = ""
+    lifecycle_source: str = ""
+    lifecycle_observed_at: str = ""
+    lifecycle_domain_joined: bool = False
+    lifecycle_entra_joined: bool = False
+    lifecycle_intune_enrolled: bool = False
+    lifecycle_autopilot_registered: bool = False
+    current_phase: str = ""
+    current_run_id: str = ""
+    agent_version: str = ""
+    hash_capture_supported: bool = False
+    last_heartbeat_at: str = ""
+    last_seen_at: str = ""
+
+
+class AutopilotDeviceFleetRowResponse(ApiExtraModel):
+    id: str = ""
+    serial: str = ""
+    display_name: str = ""
+    group_tag: str = ""
+    profile_status: str = ""
+    profile_ok: bool = False
+    enrollment_state: str = ""
+    manufacturer: str = ""
+    model: str = ""
+    last_contact: str = ""
+    has_local_hash: bool = False
+
+
+class VmsFleetResponse(BaseModel):
+    vms: list[VmFleetRowResponse] = Field(default_factory=list)
+    proxmox_vms: list[VmFleetRowResponse] = Field(default_factory=list)
+    missing_vms: list[VmFleetRowResponse] = Field(default_factory=list)
+    agents: list[AgentFleetRowResponse] = Field(default_factory=list)
+    autopilot_devices: list[AutopilotDeviceFleetRowResponse] = Field(default_factory=list)
+    bubble_topology: dict[str, Any] = Field(default_factory=dict)
+    ap_error: str = ""
+    cache_age_seconds: int | None = None
+    cache_fetched_at_iso: str = ""
+    cache_refreshing: bool = False
+    monitor_sweep: dict[str, Any] | None = None
+    generated_at: str
+
+
+class VmScreenshotResponse(ApiExtraModel):
+    vmid: int
+    image_url: str
+    content_type: str = "image/png"
+    captured_at: str
+    expires_at: str
+    source: str = "manual"
+    bytes: int = 0
+
+
+class VmLinkageCheckResponse(ApiExtraModel):
+    label: str
+    ok: bool | None = None
+    value: str = ""
+
+
+class VmKnownCredentialResponse(ApiExtraModel):
+    source: str = ""
+    label: str = ""
+    username: str = ""
+    password_available: bool = False
+    password_mask: str = ""
+    vm_name: str = ""
+    run_id: str = ""
+    run_url: str = ""
+    updated_at: str | None = None
+    note: str = ""
+
+
+class VmTimelineEventResponse(ApiExtraModel):
+    at: str = ""
+    source: str = ""
+    type: str = ""
+    severity: str = "event"
+    summary: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class VmIdentitySyncResponse(BaseModel):
+    source: str = "monitoring_sweep"
+    last_checked_at: str = ""
+    ad_count: int = 0
+    entra_count: int = 0
+    intune_count: int = 0
+
+
+class VmDetailEvidenceResponse(BaseModel):
+    vmid: int
+    fleet_vm: VmFleetRowResponse | None = None
+    pve: dict[str, Any] = Field(default_factory=dict)
+    probe: dict[str, Any] = Field(default_factory=dict)
+    ad_matches: list[dict[str, Any]] = Field(default_factory=list)
+    entra_matches: list[dict[str, Any]] = Field(default_factory=list)
+    intune_matches: list[dict[str, Any]] = Field(default_factory=list)
+    linkage: list[VmLinkageCheckResponse] = Field(default_factory=list)
+    known_credentials: list[VmKnownCredentialResponse] = Field(default_factory=list)
+    latest_screenshot: VmScreenshotResponse | None = None
+    screenshot_history: list[VmScreenshotResponse] = Field(default_factory=list)
+    timeline: list[VmTimelineEventResponse] = Field(default_factory=list)
+    history: dict[str, Any] = Field(default_factory=dict)
+    identity_sync: VmIdentitySyncResponse = Field(default_factory=VmIdentitySyncResponse)
+
+
 class InstallTrackingUpdate(BaseModel):
     status: str = Field(..., min_length=1, max_length=32)
     detail: str = Field("", max_length=2000)
@@ -4321,8 +5060,11 @@ def _install_tracking_refresh_snapshot() -> dict:
 
 # --- HTML Pages ---
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+def _primary_ui_redirect(path: str) -> RedirectResponse:
+    return RedirectResponse(url=path, status_code=302)
+
+
+def _render_legacy_dashboard(request: Request):
     # Every data-bearing module on the dashboard fetches via JSON
     # endpoints so the page can refresh live. We only pass the
     # initial running/queued counts so the first paint shows real
@@ -4336,6 +5078,57 @@ async def home(request: Request):
         "initial_queued_count": 0,
         "hypervisor_type": current_vars.get("hypervisor_type", "proxmox"),
     })
+
+
+@app.get("/", include_in_schema=False)
+async def home(request: Request):
+    return _primary_ui_redirect("/react/dashboard")
+
+
+@app.get("/legacy/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_dashboard(request: Request):
+    return _render_legacy_dashboard(request)
+
+
+def _render_react_shell(request: Request):
+    assets = _react_asset_tags()
+    return templates.TemplateResponse("react_shell.html", {
+        "request": request,
+        "asset_scripts": assets["scripts"],
+        "asset_styles": assets["styles"],
+        "build_sha": (_APP_VERSION.get("sha_short") or "unknown"),
+        "build_time": _APP_VERSION.get("build_time", ""),
+    })
+
+
+@app.get("/react-shell", response_class=HTMLResponse, include_in_schema=False)
+async def react_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def react_dashboard_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/jobs", response_class=HTMLResponse, include_in_schema=False)
+async def react_jobs_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/monitoring", response_class=HTMLResponse, include_in_schema=False)
+async def react_monitoring_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/vms", response_class=HTMLResponse, include_in_schema=False)
+async def react_vms_shell(request: Request):
+    return _render_react_shell(request)
+
+
+@app.get("/react/vms/{vmid}", response_class=HTMLResponse, include_in_schema=False)
+async def react_vm_detail_shell(request: Request, vmid: int):
+    return _render_react_shell(request)
 
 
 @app.get("/install-tracking", response_class=HTMLResponse)
@@ -4803,13 +5596,22 @@ async def files_page(request: Request, uploaded: str = "", error: str = ""):
     })
 
 
-@app.get("/jobs", response_class=HTMLResponse)
-async def jobs_page(request: Request):
+def _render_legacy_jobs(request: Request):
     jobs = _job_table_rows()
     return templates.TemplateResponse("jobs.html", {
         "request": request,
         "jobs": jobs,
     })
+
+
+@app.get("/jobs", include_in_schema=False)
+async def jobs_page(request: Request):
+    return _primary_ui_redirect("/react/jobs")
+
+
+@app.get("/legacy/jobs", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_jobs_page(request: Request):
+    return _render_legacy_jobs(request)
 
 
 def _format_memory(mb) -> str:
@@ -5596,6 +6398,28 @@ def _enrich_agent_vmid_from_pve(agent: dict, pve_vms: list[dict] | None = None) 
     return agent
 
 
+def _apply_lifecycle(row: dict, lifecycle: dict | None) -> dict:
+    if not lifecycle:
+        row.setdefault("lifecycle_state", "")
+        row.setdefault("lifecycle_label", "")
+        row.setdefault("lifecycle_source", "")
+        row.setdefault("lifecycle_observed_at", "")
+        row.setdefault("lifecycle_domain_joined", False)
+        row.setdefault("lifecycle_entra_joined", False)
+        row.setdefault("lifecycle_intune_enrolled", False)
+        row.setdefault("lifecycle_autopilot_registered", False)
+        return row
+    row["lifecycle_state"] = lifecycle.get("state") or ""
+    row["lifecycle_label"] = lifecycle.get("label") or ""
+    row["lifecycle_source"] = lifecycle.get("source") or ""
+    row["lifecycle_observed_at"] = lifecycle.get("last_observed_at") or ""
+    row["lifecycle_domain_joined"] = bool(lifecycle.get("domain_joined"))
+    row["lifecycle_entra_joined"] = bool(lifecycle.get("entra_joined"))
+    row["lifecycle_intune_enrolled"] = bool(lifecycle.get("intune_enrolled"))
+    row["lifecycle_autopilot_registered"] = bool(lifecycle.get("autopilot_registered"))
+    return row
+
+
 def _agent_inventory_rows() -> list[dict]:
     pve_vms = list(_VMS_CACHE.get("data") or [])
     try:
@@ -5679,7 +6503,94 @@ def _agent_inventory_rows() -> list[dict]:
             "last_heartbeat_at": "",
             "last_seen_at": _iso_or_blank(row.get("requested_at")),
         }, pve_vms))
-    return out
+    try:
+        lifecycles = machine_lifecycle_pg.current_by_agents([
+            agent["agent_id"] for agent in out if agent.get("agent_id")
+        ])
+    except Exception:
+        lifecycles = {}
+    return [
+        _apply_lifecycle(agent, lifecycles.get(agent.get("agent_id") or ""))
+        for agent in out
+    ]
+
+
+def _agent_row_vmid(agent: dict) -> int | None:
+    try:
+        vmid = agent.get("vmid")
+        if vmid is None or vmid == "":
+            return None
+        return int(vmid)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hard_delete_agent_by_id(agent_id: str) -> bool:
+    from web import agent_telemetry_pg, db_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        agent_telemetry_pg.init(conn)
+        return agent_telemetry_pg.hard_delete_agent(conn, agent_id)
+
+
+def _filter_and_purge_agents_without_current_vm(
+    agents: list[dict],
+    vms: list[dict],
+) -> list[dict]:
+    current_vmids: set[int] = set()
+    for vm in vms:
+        try:
+            vmid = vm.get("vmid")
+            if vmid is not None and vmid != "":
+                current_vmids.add(int(vmid))
+        except (TypeError, ValueError):
+            continue
+
+    state = _read_json_file(SETUP_STATE_PATH)
+    expected_build_host_agent = str(
+        state.get("build_host_expected_agent_id") or ""
+    ).strip()
+    try:
+        expected_build_host_vmid = int(state.get("build_host_vmid") or 0)
+    except (TypeError, ValueError):
+        expected_build_host_vmid = 0
+
+    kept: list[dict] = []
+    purge_agent_ids: list[str] = []
+    for agent in agents:
+        agent_id = agent.get("agent_id") or ""
+        agent_vmid = _agent_row_vmid(agent)
+        if (
+            (expected_build_host_agent and agent_id == expected_build_host_agent)
+            or (expected_build_host_vmid and agent_vmid == expected_build_host_vmid)
+        ):
+            kept.append(agent)
+            continue
+        if agent_vmid is not None and agent_vmid in current_vmids:
+            kept.append(agent)
+            continue
+        if agent_id:
+            purge_agent_ids.append(agent_id)
+
+    if purge_agent_ids:
+        import logging as _logging
+        log = _logging.getLogger("web.vms")
+        for agent_id in purge_agent_ids:
+            try:
+                _hard_delete_agent_by_id(agent_id)
+            except Exception:
+                log.exception(
+                    "failed to purge agent without current VM",
+                    extra={"agent_id": agent_id},
+                )
+    return kept
+
+
+def _agent_inventory_rows_for_current_vms() -> list[dict]:
+    pve_vms = list(_VMS_CACHE.get("data") or [])
+    if not pve_vms:
+        pve_vms = _vms_from_monitor_snapshot()
+    return _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), pve_vms)
 
 
 def _fetch_vms_payload_live():
@@ -5795,8 +6706,92 @@ async def api_vms_refresh():
     return {"ok": True, "fetched_at": _VMS_CACHE["fetched_at"]}
 
 
+def _request_wants_json(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    content_type = request.headers.get("content-type", "")
+    return "application/json" in accept or content_type.startswith("application/json")
+
+
+def _action_response(
+    request: Request,
+    *,
+    payload: dict,
+    redirect: str = "/vms",
+    status_code: int = 200,
+):
+    if _request_wants_json(request):
+        return JSONResponse(payload, status_code=status_code)
+    return RedirectResponse(redirect, status_code=303)
+
+
+def _action_error_response(
+    request: Request,
+    *,
+    message: str,
+    redirect: str = "/vms",
+    status_code: int = 500,
+):
+    if _request_wants_json(request):
+        return JSONResponse({"ok": False, "error": message}, status_code=status_code)
+    return _redirect_with_error(redirect, message)
+
+
+async def _request_values(request: Request) -> dict:
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        try:
+            body = await request.json()
+        except Exception:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    form = await request.form()
+    values: dict = {}
+    for key, value in form.multi_items():
+        text = str(value)
+        if key in values:
+            current = values[key]
+            if isinstance(current, list):
+                current.append(text)
+            else:
+                values[key] = [current, text]
+        else:
+            values[key] = text
+    return values
+
+
+def _request_text(values: dict, key: str, default: str = "") -> str:
+    value = values.get(key, default)
+    if isinstance(value, list):
+        value = value[0] if value else default
+    if value is None:
+        return default
+    return str(value)
+
+
+def _request_list(values: dict, key: str) -> list[str]:
+    value = values.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
 _SCREENSHOT_CACHE: dict[str, dict] = {}
 _SCREENSHOT_TTL_SECONDS = 120
+_VM_SCREENSHOT_HISTORY_LIMIT = max(
+    1,
+    int(os.environ.get("AUTOPILOT_VM_SCREENSHOT_HISTORY_LIMIT", "5") or "5"),
+)
+_VM_SCREENSHOT_STORE_TTL_SECONDS = max(
+    60,
+    int(os.environ.get("AUTOPILOT_VM_SCREENSHOT_TTL_SECONDS", "900") or "900"),
+)
+_VM_SCREENSHOT_MAX_BYTES = max(
+    1024,
+    int(os.environ.get("AUTOPILOT_VM_SCREENSHOT_MAX_BYTES", str(8 * 1024 * 1024)) or str(8 * 1024 * 1024)),
+)
 _LIVE_HUB: LiveHub | None = None
 _LIVE_QGA_FAILURE_BACKOFF_SECONDS = 60.0
 _LIVE_QGA_FAILURES: dict[int, dict] = {}
@@ -5892,6 +6887,14 @@ def _store_screenshot(*, vmid: int, png_bytes: bytes) -> dict:
         "captured_at": captured_at,
         "expires_at_monotonic": time.monotonic() + _SCREENSHOT_TTL_SECONDS,
     }
+    try:
+        _store_vm_screenshot_record(
+            vmid=vmid,
+            png_bytes=png_bytes,
+            source="manual",
+        )
+    except Exception:
+        pass
     return {
         "vmid": vmid,
         "image_url": f"/api/live/screenshots/{screenshot_id}",
@@ -5900,6 +6903,192 @@ def _store_screenshot(*, vmid: int, png_bytes: bytes) -> dict:
         "expires_at": datetime.fromtimestamp(
             time.time() + _SCREENSHOT_TTL_SECONDS, timezone.utc,
         ).isoformat(),
+    }
+
+
+def _vm_screenshot_dir(vmid: int) -> Path:
+    return SCREENSHOT_STORE_DIR / str(int(vmid))
+
+
+def _vm_screenshot_metadata_path(vmid: int) -> Path:
+    return _vm_screenshot_dir(vmid) / "metadata.json"
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _public_vm_screenshot(item: dict) -> dict:
+    return {
+        "vmid": int(item.get("vmid") or 0),
+        "image_url": str(item.get("image_url") or ""),
+        "content_type": str(item.get("content_type") or "image/png"),
+        "captured_at": str(item.get("captured_at") or ""),
+        "expires_at": str(item.get("expires_at") or ""),
+        "source": str(item.get("source") or "manual"),
+        "bytes": int(item.get("bytes") or 0),
+    }
+
+
+def _read_vm_screenshot_metadata(vmid: int, *, prune: bool = True) -> dict:
+    path = _vm_screenshot_metadata_path(vmid)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"vmid": int(vmid), "items": []}
+    if not isinstance(raw, dict):
+        return {"vmid": int(vmid), "items": []}
+    items = [item for item in raw.get("items") or [] if isinstance(item, dict)]
+    if not prune:
+        return {"vmid": int(vmid), "items": items}
+
+    now = datetime.now(timezone.utc)
+    keep: list[dict] = []
+    delete: list[dict] = []
+    for item in items:
+        expires_at = _parse_iso_datetime(item.get("expires_at"))
+        filename = str(item.get("filename") or "")
+        if not filename or (expires_at is not None and expires_at <= now):
+            delete.append(item)
+            continue
+        if not (_vm_screenshot_dir(vmid) / filename).is_file():
+            continue
+        keep.append(item)
+    keep = sorted(keep, key=lambda item: str(item.get("captured_at") or ""), reverse=True)[
+        :_VM_SCREENSHOT_HISTORY_LIMIT
+    ]
+    keep_ids = {str(item.get("id") or "") for item in keep}
+    delete.extend(item for item in items if str(item.get("id") or "") not in keep_ids)
+    if len(keep) != len(items):
+        _write_vm_screenshot_metadata(vmid, keep)
+        for item in delete:
+            filename = str(item.get("filename") or "")
+            if filename:
+                try:
+                    (_vm_screenshot_dir(vmid) / filename).unlink()
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
+    return {"vmid": int(vmid), "items": keep}
+
+
+def _write_vm_screenshot_metadata(vmid: int, items: list[dict]) -> None:
+    vm_dir = _vm_screenshot_dir(vmid)
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    path = _vm_screenshot_metadata_path(vmid)
+    payload = {
+        "vmid": int(vmid),
+        "latest_id": str(items[0].get("id") or "") if items else "",
+        "items": items,
+        "updated_at": utc_now_iso(),
+    }
+    tmp_path = path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _store_vm_screenshot_record(*, vmid: int, png_bytes: bytes, source: str = "manual") -> dict:
+    if len(png_bytes) > _VM_SCREENSHOT_MAX_BYTES:
+        raise ValueError("screenshot exceeds configured size limit")
+    _read_vm_screenshot_metadata(vmid, prune=True)
+    screenshot_id = uuid4().hex
+    captured_at_dt = datetime.now(timezone.utc)
+    captured_at = captured_at_dt.isoformat()
+    expires_at = (captured_at_dt + timedelta(seconds=_VM_SCREENSHOT_STORE_TTL_SECONDS)).isoformat()
+    filename = f"{screenshot_id}.png"
+    vm_dir = _vm_screenshot_dir(vmid)
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    image_path = vm_dir / filename
+    image_path.write_bytes(png_bytes)
+    item = {
+        "id": screenshot_id,
+        "vmid": int(vmid),
+        "filename": filename,
+        "image_url": f"/api/vms/{int(vmid)}/screenshots/{screenshot_id}",
+        "content_type": "image/png",
+        "captured_at": captured_at,
+        "expires_at": expires_at,
+        "source": source or "manual",
+        "bytes": len(png_bytes),
+    }
+    existing = _read_vm_screenshot_metadata(vmid, prune=False).get("items") or []
+    items = [item, *[old for old in existing if old.get("id") != screenshot_id]]
+    items = sorted(items, key=lambda old: str(old.get("captured_at") or ""), reverse=True)[
+        :_VM_SCREENSHOT_HISTORY_LIMIT
+    ]
+    keep_files = {str(old.get("filename") or "") for old in items}
+    _write_vm_screenshot_metadata(vmid, items)
+    for old in existing:
+        filename_old = str(old.get("filename") or "")
+        if filename_old and filename_old not in keep_files:
+            try:
+                (vm_dir / filename_old).unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+    return _public_vm_screenshot(item)
+
+
+def _vm_screenshot_history(vmid: int) -> list[dict]:
+    metadata = _read_vm_screenshot_metadata(vmid, prune=True)
+    return [_public_vm_screenshot(item) for item in metadata.get("items") or []]
+
+
+def _latest_vm_screenshot(vmid: int) -> dict | None:
+    history = _vm_screenshot_history(vmid)
+    return history[0] if history else None
+
+
+def _running_vmids_for_screenshot_capture() -> list[int]:
+    rows = _vms_from_monitor_snapshot()
+    if not rows:
+        rows = list(_VMS_CACHE.get("data") or [])
+    vmids: list[int] = []
+    for row in rows:
+        if str(row.get("status") or "").lower() != "running":
+            continue
+        try:
+            vmid = int(row.get("vmid"))
+        except Exception:
+            continue
+        if vmid > 0:
+            vmids.append(vmid)
+    return sorted(set(vmids))
+
+
+def _capture_running_vm_screenshots_once() -> dict:
+    enabled = str(os.environ.get("AUTOPILOT_VM_SCREENSHOT_COLLECTOR", "1")).lower() not in {"0", "false", "no", "off"}
+    if not enabled:
+        return {"enabled": False, "running": 0, "captured": 0, "failed": 0}
+    vmids = _running_vmids_for_screenshot_capture()
+    captured = 0
+    failed = 0
+    for vmid in vmids:
+        try:
+            png = _capture_vm_screenshot_png(vmid)
+            _store_vm_screenshot_record(
+                vmid=vmid,
+                png_bytes=png,
+                source="collector",
+            )
+            captured += 1
+        except Exception:
+            failed += 1
+    return {
+        "enabled": True,
+        "running": len(vmids),
+        "captured": captured,
+        "failed": failed,
     }
 
 
@@ -6019,7 +7208,7 @@ async def _live_snapshot_provider(topics: set[str], vmids: set[int]) -> list[dic
             "type": "snapshot",
             "topic": "agents",
             "data": {
-                "agents": await asyncio.to_thread(_agent_inventory_rows),
+                "agents": await asyncio.to_thread(_agent_inventory_rows_for_current_vms),
                 "generated_at": utc_now_iso(),
             },
         })
@@ -6091,7 +7280,7 @@ async def _live_patch_provider(
         messages.append({
             "type": "patch",
             "topic": "agents",
-            "agents": await asyncio.to_thread(_agent_inventory_rows),
+            "agents": await asyncio.to_thread(_agent_inventory_rows_for_current_vms),
             "generated_at": utc_now_iso(),
         })
     return messages
@@ -6272,6 +7461,43 @@ async def live_screenshot(screenshot_id: str):
     )
 
 
+@app.get("/api/vms/{vmid}/screenshots/latest", response_model=VmScreenshotResponse)
+async def api_vm_latest_screenshot(vmid: int):
+    latest = _latest_vm_screenshot(vmid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="no screenshot available")
+    return latest
+
+
+@app.get("/api/vms/{vmid}/screenshots/{screenshot_id}")
+async def api_vm_screenshot_image(vmid: int, screenshot_id: str):
+    metadata = _read_vm_screenshot_metadata(vmid, prune=True)
+    item = next(
+        (
+            candidate for candidate in metadata.get("items") or []
+            if str(candidate.get("id") or "") == screenshot_id
+        ),
+        None,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    filename = str(item.get("filename") or "")
+    if not filename or not re.fullmatch(r"[a-f0-9]{32}\.png", filename):
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    path = _vm_screenshot_dir(vmid) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="screenshot expired or not found")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "X-VMID": str(int(vmid)),
+            "X-Captured-At": str(item.get("captured_at") or ""),
+        },
+    )
+
+
 def _optional_agent_int(value) -> int | None:
     text = _optional_text(value)
     if not text:
@@ -6313,21 +7539,17 @@ def _agent_metadata_form(
 
 @app.post("/api/agents")
 async def create_agent_record(
-    agent_id: str = Form(...),
-    vmid: str = Form(""),
-    computer_name: str = Form(""),
-    serial_number: str = Form(""),
-    agent_version: str = Form(""),
-    created_from_run_id: str = Form(""),
+    request: Request,
 ):
     try:
+        payload = await _request_values(request)
         values = _agent_metadata_form(
-            agent_id=agent_id,
-            vmid=vmid,
-            computer_name=computer_name,
-            serial_number=serial_number,
-            agent_version=agent_version,
-            created_from_run_id=created_from_run_id,
+            agent_id=_request_text(payload, "agent_id"),
+            vmid=_request_text(payload, "vmid"),
+            computer_name=_request_text(payload, "computer_name"),
+            serial_number=_request_text(payload, "serial_number"),
+            agent_version=_request_text(payload, "agent_version"),
+            created_from_run_id=_request_text(payload, "created_from_run_id"),
         )
         from web import db_pg
 
@@ -6335,27 +7557,27 @@ async def create_agent_record(
             agent_telemetry_pg.init(conn)
             agent_telemetry_pg.upsert_manual_agent(conn, **values)
     except Exception as exc:
-        return _redirect_with_error("/vms", f"Create agent failed: {exc}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Create agent failed: {exc}")
+    return _action_response(
+        request,
+        payload={"ok": True, "agent_id": values["agent_id"], "action": "create"},
+    )
 
 
 @app.post("/api/agents/{agent_id}/update")
 async def update_agent_record(
     agent_id: str,
-    vmid: str = Form(""),
-    computer_name: str = Form(""),
-    serial_number: str = Form(""),
-    agent_version: str = Form(""),
-    created_from_run_id: str = Form(""),
+    request: Request,
 ):
     try:
+        payload = await _request_values(request)
         values = _agent_metadata_form(
             agent_id=agent_id,
-            vmid=vmid,
-            computer_name=computer_name,
-            serial_number=serial_number,
-            agent_version=agent_version,
-            created_from_run_id=created_from_run_id,
+            vmid=_request_text(payload, "vmid"),
+            computer_name=_request_text(payload, "computer_name"),
+            serial_number=_request_text(payload, "serial_number"),
+            agent_version=_request_text(payload, "agent_version"),
+            created_from_run_id=_request_text(payload, "created_from_run_id"),
         )
         from web import db_pg
 
@@ -6363,14 +7585,17 @@ async def update_agent_record(
             agent_telemetry_pg.init(conn)
             updated = agent_telemetry_pg.update_agent_metadata(conn, **values)
         if updated is None:
-            return _redirect_with_error("/vms", f"Agent not found: {values['agent_id']}")
+            return _action_error_response(request, message=f"Agent not found: {values['agent_id']}", status_code=404)
     except Exception as exc:
-        return _redirect_with_error("/vms", f"Update agent failed: {exc}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Update agent failed: {exc}")
+    return _action_response(
+        request,
+        payload={"ok": True, "agent_id": values["agent_id"], "action": "update"},
+    )
 
 
 @app.post("/api/agents/{agent_id}/delete")
-async def delete_agent_record(agent_id: str):
+async def delete_agent_record(agent_id: str, request: Request):
     try:
         agent_id = _sanitize_input(_optional_text(agent_id))
         if not agent_id:
@@ -6381,10 +7606,13 @@ async def delete_agent_record(agent_id: str):
             agent_telemetry_pg.init(conn)
             deleted = agent_telemetry_pg.hard_delete_agent(conn, agent_id)
         if not deleted:
-            return _redirect_with_error("/vms", f"Agent not found: {agent_id}")
+            return _action_error_response(request, message=f"Agent not found: {agent_id}", status_code=404)
     except Exception as exc:
-        return _redirect_with_error("/vms", f"Delete agent failed: {exc}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Delete agent failed: {exc}")
+    return _action_response(
+        request,
+        payload={"ok": True, "agent_id": agent_id, "action": "delete"},
+    )
 
 
 @app.post("/api/agent-approvals/{approval_id}/approve")
@@ -6419,8 +7647,125 @@ async def approve_agent_bootstrap(approval_id: str, request: Request):
     }
 
 
-@app.get("/vms", response_class=HTMLResponse)
-async def vms_page(request: Request, error: str = ""):
+def _cache_fetched_at_iso(cache_age: float | None) -> str:
+    if cache_age is None or cache_age == float("inf"):
+        return ""
+    return datetime.fromtimestamp(
+        time.time() - cache_age, tz=timezone.utc
+    ).isoformat(timespec="seconds")
+
+
+async def _vms_fleet_payload() -> dict:
+    cache, cache_age = await _get_vms_payload()
+    vms = [dict(vm) for vm in list(cache["data"] or [])]
+    proxmox_vms = _proxmox_cluster_vm_rows() or vms
+    vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
+    devices, ap_error = cache["devices"] or ([], "")
+    devices = [dict(device) for device in devices]
+    hash_serials = cache["hash_serials"] or set()
+    ap_serials = {d["serial"] for d in devices}
+    serial_to_vm = {vm["serial"]: vm for vm in vms if vm.get("serial")}
+
+    matched_devices = [d for d in devices if d["serial"] in vm_serials]
+    for device in matched_devices:
+        device["has_local_hash"] = device["serial"] in hash_serials
+        if not device.get("display_name"):
+            vm = serial_to_vm.get(device["serial"])
+            if vm and vm.get("hostname"):
+                device["display_name"] = vm["hostname"]
+
+    for vm in vms:
+        vm["in_autopilot"] = vm.get("serial", "") in ap_serials
+        vm["in_intune"] = bool(vm.get("in_intune"))
+        vm["has_hash"] = vm.get("serial", "") in hash_serials
+        prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
+        seq = None
+        if prov and prov.get("sequence_id"):
+            seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
+        vm["target_os"] = (seq or {}).get("target_os") or "windows"
+        vm["sequence_name"] = (seq or {}).get("name")
+
+    autopilot_vms = [vm for vm in vms if vm.get("in_autopilot")]
+    if autopilot_vms:
+        try:
+            from web import db_pg
+
+            with db_pg.connection(_database_url()) as conn:
+                for vm in autopilot_vms:
+                    machine_lifecycle_pg.observe_autopilot_registration(
+                        conn,
+                        vmid=vm.get("vmid"),
+                        serial_number=vm.get("serial") or "",
+                        computer_name=vm.get("hostname") or vm.get("name") or "",
+                        registered=True,
+                        evidence={"serial": vm.get("serial") or ""},
+                    )
+                conn.commit()
+        except Exception:
+            pass
+
+    try:
+        lifecycles = machine_lifecycle_pg.current_by_vmids([
+            int(vm["vmid"]) for vm in vms if vm.get("vmid") is not None
+        ])
+    except Exception:
+        lifecycles = {}
+    vms = [
+        _apply_lifecycle(vm, lifecycles.get(int(vm["vmid"])))
+        for vm in vms
+    ]
+
+    missing_vms = [
+        vm for vm in vms
+        if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
+    ]
+    agents = _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), vms)
+    bubble_topology = {
+        "workstation_fleets": [],
+        "critical_infrastructure": [],
+        "connected_services": [],
+        "unassigned_assets": [],
+        "warnings": [],
+        "gate_states": [],
+    }
+    try:
+        from web import db_pg, lab_bubbles_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            lab_bubbles_pg.init(conn)
+            bubble_topology = lab_bubbles_pg.build_vm_page_payload(
+                conn,
+                vms=vms,
+                agent_rows=agents,
+            )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger("web.react.vms").exception("bubble topology unavailable")
+        bubble_topology["warnings"] = ["Bubble topology is temporarily unavailable."]
+
+    return {
+        "vms": vms,
+        "proxmox_vms": proxmox_vms,
+        "missing_vms": missing_vms,
+        "agents": agents,
+        "autopilot_devices": matched_devices,
+        "bubble_topology": bubble_topology,
+        "ap_error": ap_error or "",
+        "cache_age_seconds": None if cache_age == float("inf") else int(cache_age),
+        "cache_fetched_at_iso": _cache_fetched_at_iso(cache_age),
+        "cache_refreshing": bool(_VMS_CACHE["refreshing"]),
+        "monitor_sweep": _latest_monitor_sweep_status(),
+        "generated_at": utc_now_iso(),
+    }
+
+
+@app.get("/api/vms/fleet", response_model=VmsFleetResponse)
+async def api_vms_fleet():
+    return await _vms_fleet_payload()
+
+
+async def _render_legacy_vms(request: Request, error: str = ""):
     current_vars = _load_vars()
     if current_vars.get("hypervisor_type") == "utm":
         from web import utm_cli
@@ -6438,67 +7783,32 @@ async def vms_page(request: Request, error: str = ""):
             "library_path": str(utm_cli.utm_library_path()),
         })
 
-    cache, cache_age = await _get_vms_payload()
-    vms = list(cache["data"] or [])
-    vm_serials = {vm["serial"] for vm in vms if vm.get("serial")}
-    devices, ap_error = cache["devices"] or ([], "")
-    hash_serials = cache["hash_serials"] or set()
-    ap_serials = {d["serial"] for d in devices}
-
-    # Only show Autopilot devices that match a Proxmox VM serial
-    serial_to_vm = {vm["serial"]: vm for vm in vms if vm.get("serial")}
-    matched_devices = [d for d in devices if d["serial"] in vm_serials]
-    for d in matched_devices:
-        d["has_local_hash"] = d["serial"] in hash_serials
-        # Use guest agent hostname as fallback for empty Intune display name
-        if not d["display_name"]:
-            vm = serial_to_vm.get(d["serial"])
-            if vm and vm.get("hostname"):
-                d["display_name"] = vm["hostname"]
-
-    # Tag VMs with their Autopilot status, plus the target_os + sequence
-    # name of the sequence that provisioned them (if any). The UI uses
-    # target_os to conditionally show the Check Enrollment action for
-    # Ubuntu VMs and disable Capture Hash for them (no Autopilot hash on
-    # Linux).
-    for vm in vms:
-        vm["in_autopilot"] = vm.get("serial", "") in ap_serials
-        vm["in_intune"] = bool(vm.get("in_intune"))
-        vm["has_hash"] = vm.get("serial", "") in hash_serials
-        prov = sequences_db.get_vm_provisioning(SEQUENCES_DB, vmid=vm["vmid"])
-        seq = None
-        if prov and prov.get("sequence_id"):
-            seq = sequences_db.get_sequence(SEQUENCES_DB, prov["sequence_id"])
-        vm["target_os"] = (seq or {}).get("target_os") or "windows"
-        vm["sequence_name"] = (seq or {}).get("name")
-
-    # VMs needing a registration action. A device that is already
-    # Intune MDM-enrolled via hybrid/domain-join GPO is not missing,
-    # even if it has no Windows Autopilot hardware-hash identity.
-    missing_vms = [
-        vm for vm in vms
-        if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
-    ]
+    fleet = await _vms_fleet_payload()
 
     return templates.TemplateResponse("vms.html", {
         "request": request,
-        "vms": vms,
-        "devices": matched_devices,
-        "missing_vms": missing_vms,
-        "agent_devices": _agent_inventory_rows(),
-        "ap_error": ap_error,
+        "vms": fleet["vms"],
+        "devices": fleet["autopilot_devices"],
+        "missing_vms": fleet["missing_vms"],
+        "agent_devices": fleet["agents"],
+        "ap_error": fleet["ap_error"],
         "error": error,
         # Surface to the footer so the operator can tell whether
-        "cache_age_seconds": int(cache_age),
-        "cache_fetched_at_iso": (
-            datetime.fromtimestamp(
-                time.time() - cache_age, tz=timezone.utc
-            ).isoformat(timespec="seconds")
-            if cache_age is not None else ""
-        ),
-        "cache_refreshing": _VMS_CACHE["refreshing"],
-        "monitor_sweep": _latest_monitor_sweep_status(),
+        "cache_age_seconds": fleet["cache_age_seconds"],
+        "cache_fetched_at_iso": fleet["cache_fetched_at_iso"],
+        "cache_refreshing": fleet["cache_refreshing"],
+        "monitor_sweep": fleet["monitor_sweep"],
     })
+
+
+@app.get("/vms", include_in_schema=False)
+async def vms_page(request: Request):
+    return _primary_ui_redirect("/react/vms")
+
+
+@app.get("/legacy/vms", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_vms_page(request: Request, error: str = ""):
+    return await _render_legacy_vms(request, error=error)
 
 
 # --- API Endpoints ---
@@ -8552,47 +9862,47 @@ async def vm_vnc_websocket(websocket: WebSocket, vmid: int):
 
 
 @app.post("/api/vms/{vmid}/start")
-async def vm_start(vmid: int):
+async def vm_start(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/start")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Start failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Start failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "start"})
 
 
 @app.post("/api/vms/{vmid}/shutdown")
-async def vm_shutdown(vmid: int):
+async def vm_shutdown(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/shutdown")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Shutdown failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Shutdown failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "shutdown"})
 
 
 @app.post("/api/vms/{vmid}/stop")
-async def vm_stop(vmid: int):
+async def vm_stop(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/stop")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Force stop failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Force stop failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "stop"})
 
 
 @app.post("/api/vms/{vmid}/reset")
-async def vm_reset(vmid: int):
+async def vm_reset(vmid: int, request: Request):
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_post(f"/nodes/{node}/qemu/{vmid}/status/reset")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Reset failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Reset failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "reset"})
 
 
 @app.post("/api/vms/{vmid}/delete")
-async def vm_delete(vmid: int):
+async def vm_delete(vmid: int, request: Request):
     import time
     try:
         node = _resolve_vm_node(vmid)
@@ -8604,8 +9914,8 @@ async def vm_delete(vmid: int):
             pass  # Already stopped or doesn't matter
         _proxmox_api_delete(f"/nodes/{node}/qemu/{vmid}")
     except Exception as e:
-        return _redirect_with_error("/vms", f"Delete failed: {e}")
-    return RedirectResponse("/vms", status_code=303)
+        return _action_error_response(request, message=f"Delete failed: {e}")
+    return _action_response(request, payload={"ok": True, "vmid": vmid, "action": "delete"})
 
 
 # Scancode mapping for typing text via QMP sendkey
@@ -8709,9 +10019,12 @@ async def vm_action_json(vmid: int, action: str):
 
 
 @app.post("/api/vms/{vmid}/type")
-async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form("")):
+async def vm_type_json(vmid: int, request: Request):
     """Type text via QMP sendkey. Returns JSON."""
     import time
+    payload = await _request_values(request)
+    text = _request_text(payload, "text")
+    press_enter = _request_text(payload, "press_enter")
     skipped = []
     keys = []
     for ch in text:
@@ -8738,8 +10051,12 @@ async def vm_type_json(vmid: int, text: str = Form(""), press_enter: str = Form(
 
 
 @app.post("/api/vms/{vmid}/key")
-async def vm_key_json(vmid: int, key: str = Form(...)):
+async def vm_key_json(vmid: int, request: Request):
     """Single QEMU keyname (e.g. 'ctrl-alt-delete'). Returns JSON."""
+    payload = await _request_values(request)
+    key = _request_text(payload, "key")
+    if not key:
+        return JSONResponse({"ok": False, "error": "key is required"}, status_code=400)
     try:
         node = _resolve_vm_node(vmid)
         _proxmox_api_put(f"/nodes/{node}/qemu/{vmid}/sendkey", data={"key": key})
@@ -8803,7 +10120,7 @@ async def vm_rename_suggest(vmid: int):
 
 
 @app.post("/api/vms/{vmid}/rename")
-async def vm_rename(vmid: int, new_name: str = Form("")):
+async def vm_rename(vmid: int, request: Request):
     """Rename the Windows computer inside the VM.
 
     ``new_name`` is the operator's final choice (maybe with a prefix,
@@ -8812,18 +10129,20 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
     Updates the Proxmox VM name to match so /vms, /devices, and
     monitoring stay in sync.
     """
+    payload = await _request_values(request)
     try:
         node = _resolve_vm_node(vmid)
-        target = (new_name or "").strip()
+        target = _request_text(payload, "new_name").strip()
         if not target:
             target = _suggested_rename_for_vm(vmid, node)
         hostname = _sanitize_windows_hostname(target)
         if not hostname:
-            return _redirect_with_error(
-                "/vms",
-                f"Rename target '{target}' produced an empty hostname "
+            return _action_error_response(
+                request,
+                message=f"Rename target '{target}' produced an empty hostname "
                 "after sanitisation (Windows allows A-Z, 0-9, '-' only, "
                 "max 15 chars).",
+                status_code=400,
             )
         # Update Proxmox VM name (uses same sanitised form).
         _proxmox_api_put(
@@ -8841,6 +10160,18 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
             # PVE rename succeeded, guest-side didn't. User sees the
             # VM-name change; Windows-side rename requires manual
             # action or agent recovery.
+            warning = (
+                f"Renamed VM {vmid} to {hostname} (PVE only; guest "
+                "agent unreachable)"
+            )
+            if _request_wants_json(request):
+                return JSONResponse({
+                    "ok": True,
+                    "vmid": vmid,
+                    "action": "rename",
+                    "hostname": hostname,
+                    "warning": warning,
+                })
             return _redirect_with_error(
                 "/vms",
                 f"Renamed VM {vmid} to {hostname} (PVE only — guest "
@@ -8848,11 +10179,17 @@ async def vm_rename(vmid: int, new_name: str = Form("")):
                 "Windows or reboot to pick up the new name).",
             )
     except Exception as e:
-        return _redirect_with_error("/vms", f"Rename failed: {e}")
-    return _redirect_with_error(
-        "/vms",
-        f"Renamed VM {vmid} to {hostname} — restart required to apply",
-    )
+        return _action_error_response(request, message=f"Rename failed: {e}")
+    message = f"Renamed VM {vmid} to {hostname}; restart required"
+    if _request_wants_json(request):
+        return JSONResponse({
+            "ok": True,
+            "vmid": vmid,
+            "action": "rename",
+            "hostname": hostname,
+            "message": message,
+        })
+    return _redirect_with_error("/vms", f"Renamed VM {vmid} to {hostname} — restart required to apply")
 
 
 def _latest_capture_agent(vmid: int) -> dict:
@@ -8939,10 +10276,14 @@ def _start_agent_hash_capture_job(
 
 @app.post("/api/jobs/capture-and-upload")
 async def start_capture_and_upload(
-    missing_vmids: list[str] = Form(...),
-    group_tag: str = Form(""),
+    request: Request,
 ):
     """Capture hashes for selected VMs in parallel, then upload all to Intune."""
+    payload = await _request_values(request)
+    missing_vmids = _request_list(payload, "missing_vmids")
+    if not missing_vmids:
+        missing_vmids = _request_list(payload, "vmids")
+    group_tag = _request_text(payload, "group_tag")
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
@@ -8963,7 +10304,7 @@ async def start_capture_and_upload(
             for vm in vm_list
         ]
     except ValueError as exc:
-        return _redirect_with_error("/vms", str(exc))
+        return _action_error_response(request, message=str(exc), status_code=400)
 
     import tempfile
     work_ids = [job["args"]["work_item_id"] for job in capture_jobs]
@@ -8997,43 +10338,68 @@ async def start_capture_and_upload(
     script_path.write_text("\n".join(script_lines))
     script_path.chmod(0o755)
 
-    job_manager.start("upload_after_capture", ["bash", str(script_path)],
-                      args={"vms": [v["name"] for v in vm_list], "work_item_ids": work_ids, "group_tag": group_tag, "upload": True})
+    upload_job = job_manager.start(
+        "upload_after_capture",
+        ["bash", str(script_path)],
+        args={"vms": [v["name"] for v in vm_list], "work_item_ids": work_ids, "group_tag": group_tag, "upload": True},
+    )
 
-    return RedirectResponse("/jobs", status_code=303)
+    return _action_response(
+        request,
+        payload={
+            "ok": True,
+            "action": "capture-and-upload",
+            "capture_job_ids": [job["id"] for job in capture_jobs],
+            "upload_job_id": upload_job["id"],
+        },
+        redirect="/jobs",
+    )
 
 
 @app.post("/api/jobs/bulk-capture")
 async def start_bulk_capture(
-    vmids: list[str] = Form(...),
-    group_tag: str = Form(""),
+    request: Request,
 ):
     """Capture hashes for multiple VMs in parallel (one job per VM)."""
+    payload = await _request_values(request)
+    vmids = _request_list(payload, "vmids")
+    group_tag = _request_text(payload, "group_tag")
     if group_tag:
         group_tag = _sanitize_input(group_tag)
 
     try:
+        jobs = []
         for entry in vmids:
             vmid, name = entry.split(":", 1)
             _sanitize_input(vmid)
             _sanitize_input(name)
-            _start_agent_hash_capture_job(
+            jobs.append(_start_agent_hash_capture_job(
                 vmid=int(vmid),
                 vm_name=name,
                 group_tag=group_tag,
-            )
+            ))
     except ValueError as exc:
-        return _redirect_with_error("/vms", str(exc))
+        return _action_error_response(request, message=str(exc), status_code=400)
 
-    return RedirectResponse("/jobs", status_code=303)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "bulk-capture", "job_ids": [job["id"] for job in jobs]},
+        redirect="/jobs",
+    )
 
 
 @app.post("/api/jobs/capture")
 async def start_capture(
-    vmid: int = Form(...),
-    vm_name: str = Form(""),
-    group_tag: str = Form(""),
+    request: Request,
 ):
+    payload = await _request_values(request)
+    vmid_raw = _request_text(payload, "vmid")
+    try:
+        vmid = int(vmid_raw)
+    except (TypeError, ValueError):
+        return _action_error_response(request, message="vmid is required", status_code=400)
+    vm_name = _request_text(payload, "vm_name")
+    group_tag = _request_text(payload, "group_tag")
     name = _sanitize_input(vm_name) if vm_name else f"autopilot-{vmid}"
     if group_tag:
         group_tag = _sanitize_input(group_tag)
@@ -9044,8 +10410,12 @@ async def start_capture(
             group_tag=group_tag,
         )
     except ValueError as exc:
-        return _redirect_with_error("/vms", str(exc))
-    return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
+        return _action_error_response(request, message=str(exc), status_code=400)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "capture", "job_id": job["id"], "redirect": f"/jobs/{job['id']}"},
+        redirect=f"/jobs/{job['id']}",
+    )
 
 
 @app.post("/api/jobs/upload")
@@ -9075,9 +10445,9 @@ async def start_upload(
     return RedirectResponse("/hashes?uploaded=1", status_code=303)
 
 
-@app.get("/api/jobs")
+@app.get("/api/jobs", response_model=list[JobTableRowResponse])
 async def api_list_jobs():
-    return job_manager.list_jobs()
+    return _job_table_rows()
 
 
 @app.post("/api/jobs/{job_id}/kill")
@@ -9110,7 +10480,7 @@ if os.environ.get("AUTOPILOT_ENABLE_TEST_JOBS") == "1":
         return {"id": entry["id"]}
 
 
-@app.get("/api/jobs/recent")
+@app.get("/api/jobs/recent", response_model=RecentJobsResponse)
 async def api_recent_jobs(limit: int = 5):
     """Return the N most recently-started jobs, newest first.
 
@@ -9122,7 +10492,7 @@ async def api_recent_jobs(limit: int = 5):
     return _recent_jobs_payload(limit=limit)
 
 
-@app.get("/api/jobs/running")
+@app.get("/api/jobs/running", response_model=RunningJobsResponse)
 async def api_running_jobs():
     """Return currently-running jobs with elapsed seconds + a
     rough progress estimate (0-99).
@@ -9134,12 +10504,15 @@ async def api_running_jobs():
     return _running_jobs_payload()
 
 
-@app.get("/api/services")
+@app.get("/api/services", response_model=ServicesResponse)
 async def api_services():
     """Read per-service heartbeats from the PostgreSQL service_health table."""
     from web import service_health_pg
 
-    return {"services": service_health_pg.list_services(), "available": True}
+    try:
+        return {"services": service_health_pg.list_services(), "available": True, "error": ""}
+    except Exception as exc:
+        return {"services": [], "available": False, "error": str(exc)}
 
 
 def _docker_client():
@@ -9218,7 +10591,7 @@ def _redact_log_line(line: str) -> str:
     return _LOG_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[redacted]", line)
 
 
-@app.get("/api/monitoring/runtime-services")
+@app.get("/api/monitoring/runtime-services", response_model=RuntimeServicesResponse)
 async def api_monitoring_runtime_services():
     return _runtime_container_status()
 
@@ -9253,7 +10626,7 @@ async def api_monitoring_service_logs(request: Request):
     }
 
 
-@app.get("/api/fleet/summary")
+@app.get("/api/fleet/summary", response_model=FleetSummaryResponse)
 async def api_fleet_summary():
     """Fleet enrollment counts + percentages from the most-recent
     sweep's ``device_probes`` rows.
@@ -9269,7 +10642,7 @@ async def api_fleet_summary():
         return {"total": 0}
 
 
-@app.get("/api/cockpit/summary")
+@app.get("/api/cockpit/summary", response_model=CockpitSummaryResponse)
 async def api_cockpit_summary():
     """Aggregate the existing dashboard data sources for the cockpit UI.
 
@@ -9336,21 +10709,33 @@ async def api_get_job(job_id: str):
 
 
 @app.post("/api/autopilot/delete")
-async def delete_autopilot_device(device_id: str = Form(...)):
+async def delete_autopilot_device(request: Request):
+    payload = await _request_values(request)
+    device_id = _request_text(payload, "device_id")
+    if not device_id:
+        return _action_error_response(request, message="device_id is required", status_code=400)
     try:
         _graph_api(f"/deviceManagement/windowsAutopilotDeviceIdentities/{device_id}", method="DELETE")
-    except Exception:
-        pass
-    return RedirectResponse("/vms", status_code=303)
+    except Exception as exc:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "delete-autopilot", "device_id": device_id},
+    )
 
 
 @app.post("/api/autopilot/sync")
-async def sync_autopilot():
+async def sync_autopilot(request: Request):
     try:
         _graph_api("/deviceManagement/windowsAutopilotSettings/sync", method="POST")
-    except Exception:
-        pass
-    return RedirectResponse("/vms", status_code=303)
+    except Exception as exc:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    return _action_response(
+        request,
+        payload={"ok": True, "action": "sync-autopilot"},
+    )
 
 
 @app.post("/api/hashes/delete")
@@ -13161,6 +14546,194 @@ def _known_credentials_for_vmid(vmid: int) -> list[dict]:
     return credentials
 
 
+def _masked_known_credentials_for_vmid(vmid: int) -> list[dict]:
+    masked: list[dict] = []
+    for item in _known_credentials_for_vmid(vmid):
+        password = str(item.get("password") or "")
+        masked.append({
+            "source": str(item.get("source") or ""),
+            "label": str(item.get("label") or ""),
+            "username": str(item.get("username") or ""),
+            "password_available": bool(password),
+            "password_mask": "********" if password else "",
+            "vm_name": str(item.get("vm_name") or ""),
+            "run_id": str(item.get("run_id") or ""),
+            "run_url": str(item.get("run_url") or ""),
+            "updated_at": item.get("updated_at"),
+            "note": str(item.get("note") or ""),
+        })
+    return masked
+
+
+def _event_to_dict(event: object) -> dict:
+    if isinstance(event, dict):
+        return {
+            "at": str(event.get("at") or ""),
+            "source": str(event.get("source") or ""),
+            "type": str(event.get("type") or ""),
+            "severity": str(event.get("severity") or "event"),
+            "summary": str(event.get("summary") or ""),
+            "details": event.get("details") if isinstance(event.get("details"), dict) else {},
+        }
+    return {
+        "at": str(getattr(event, "at", "") or ""),
+        "source": str(getattr(event, "source", "") or ""),
+        "type": str(getattr(event, "type", "") or ""),
+        "severity": str(getattr(event, "severity", "event") or "event"),
+        "summary": str(getattr(event, "summary", "") or ""),
+        "details": getattr(event, "details", {}) if isinstance(getattr(event, "details", {}), dict) else {},
+    }
+
+
+def _screenshot_timeline_events(vmid: int) -> list[dict]:
+    events: list[dict] = []
+    for item in _vm_screenshot_history(vmid):
+        events.append({
+            "at": item["captured_at"],
+            "source": "screenshot",
+            "type": "screenshot-captured",
+            "severity": "event",
+            "summary": f"Screenshot captured by {item['source']}",
+            "details": {
+                "image_url": item["image_url"],
+                "bytes": item["bytes"],
+                "expires_at": item["expires_at"],
+            },
+        })
+    return events
+
+
+def _credential_timeline_events(credentials: list[dict]) -> list[dict]:
+    events: list[dict] = []
+    for credential in credentials:
+        updated_at = credential.get("updated_at")
+        if not updated_at:
+            continue
+        events.append({
+            "at": str(updated_at),
+            "source": str(credential.get("source") or "credentials"),
+            "type": "credential-discovered",
+            "severity": "event",
+            "summary": (
+                f"{credential.get('label') or 'Credential'} available for "
+                f"{credential.get('username') or 'account'}"
+            ),
+            "details": {
+                "username": credential.get("username") or "",
+                "vm_name": credential.get("vm_name") or "",
+                "run_url": credential.get("run_url") or "",
+            },
+        })
+    return events
+
+
+def _identity_sync_payload(probe: dict | None, pve: dict | None) -> dict:
+    probe = probe or {}
+    pve = pve or {}
+    return {
+        "source": "monitoring_sweep",
+        "last_checked_at": probe.get("checked_at") or pve.get("checked_at") or "",
+        "ad_count": int(probe.get("ad_match_count") or len(_json_obj(probe.get("ad_matches_json"), []))),
+        "entra_count": int(probe.get("entra_match_count") or len(_json_obj(probe.get("entra_matches_json"), []))),
+        "intune_count": int(probe.get("intune_match_count") or len(_json_obj(probe.get("intune_matches_json"), []))),
+    }
+
+
+def _identity_sync_timeline_event(sync: dict) -> dict | None:
+    checked_at = sync.get("last_checked_at")
+    if not checked_at:
+        return None
+    return {
+        "at": str(checked_at),
+        "source": "monitoring",
+        "type": "identity-sync",
+        "severity": "event",
+        "summary": (
+            f"Evidence sync: AD {sync.get('ad_count', 0)}, "
+            f"Entra {sync.get('entra_count', 0)}, Intune {sync.get('intune_count', 0)}"
+        ),
+        "details": dict(sync),
+    }
+
+
+async def _vm_detail_evidence_payload(vmid: int) -> dict:
+    from web import device_regression
+
+    latest_pair = device_history_db.latest_completed_pair_for_vmid(vmid)
+    pve_dict = (latest_pair or {}).get("pve") or {}
+    probe_dict = (latest_pair or {}).get("probe") or {}
+
+    fleet_vm = None
+    if not pve_dict:
+        try:
+            fleet = await _vms_fleet_payload()
+            fleet_vm = next((vm for vm in fleet.get("vms") or [] if int(vm.get("vmid") or 0) == vmid), None)
+            if fleet_vm:
+                pve_dict = {
+                    "vmid": vmid,
+                    "name": fleet_vm.get("name") or "",
+                    "status": fleet_vm.get("status") or "",
+                    "checked_at": fleet_vm.get("monitor_checked_at") or "",
+                }
+        except Exception:
+            fleet_vm = None
+    else:
+        try:
+            fleet = await _vms_fleet_payload()
+            fleet_vm = next((vm for vm in fleet.get("vms") or [] if int(vm.get("vmid") or 0) == vmid), None)
+        except Exception:
+            fleet_vm = None
+
+    if not pve_dict and not probe_dict and not fleet_vm:
+        raise HTTPException(404, f"no VM evidence for vmid {vmid}")
+
+    history = device_history_db.history_for_vmid(
+        vmid,
+        limit=50,
+        completed_only=True,
+    )
+    timeline = [
+        _event_to_dict(event)
+        for event in device_regression.build_timeline(
+            list(reversed(history["pve_snapshots"])),
+            list(reversed(history["device_probes"])),
+        )
+    ]
+    known_credentials = _masked_known_credentials_for_vmid(vmid)
+    identity_sync = _identity_sync_payload(probe_dict, pve_dict)
+    timeline.extend(_screenshot_timeline_events(vmid))
+    timeline.extend(_credential_timeline_events(known_credentials))
+    sync_event = _identity_sync_timeline_event(identity_sync)
+    if sync_event:
+        timeline.append(sync_event)
+    timeline.sort(key=lambda event: str(event.get("at") or ""), reverse=True)
+
+    ad_matches = _json_obj(probe_dict.get("ad_matches_json"), [])
+    entra_matches = _json_obj(probe_dict.get("entra_matches_json"), [])
+    intune_matches = _json_obj(probe_dict.get("intune_matches_json"), [])
+    return {
+        "vmid": int(vmid),
+        "fleet_vm": fleet_vm,
+        "pve": pve_dict,
+        "probe": probe_dict,
+        "ad_matches": ad_matches,
+        "entra_matches": entra_matches,
+        "intune_matches": intune_matches,
+        "linkage": _linkage_health(pve_dict, probe_dict),
+        "known_credentials": known_credentials,
+        "latest_screenshot": _latest_vm_screenshot(vmid),
+        "screenshot_history": _vm_screenshot_history(vmid),
+        "timeline": timeline,
+        "history": history,
+        "identity_sync": identity_sync,
+    }
+
+
+@app.get("/api/vms/{vmid}/detail", response_model=VmDetailEvidenceResponse)
+async def api_vm_detail_evidence(vmid: int):
+    return await _vm_detail_evidence_payload(vmid)
+
+
 @app.get("/devices/{vmid}", response_class=HTMLResponse)
 def page_device_detail(request: Request, vmid: int):
     from web import device_regression, monitoring_view
@@ -13243,12 +14816,514 @@ def api_monitoring_keytab_health():
     return device_history_db.get_keytab_health() or {}
 
 
-@app.get("/api/monitoring/deployments/summary")
+def _deployment_summary_for_react(summary: dict) -> dict:
+    return {
+        **summary,
+        "running": int(summary.get("active") or 0),
+        "succeeded": int(summary.get("completed") or 0),
+    }
+
+
+def _signal_tone(status: str) -> str:
+    normalized = (status or "").casefold()
+    if normalized in {"ok", "healthy", "ready", "complete", "completed"}:
+        return "good"
+    if normalized in {"running", "busy", "active", "pending", "queued"}:
+        return "active"
+    if normalized in {"failed", "error", "blocked", "missing", "stale", "mismatch", "unavailable", "degraded"}:
+        return "bad"
+    return "neutral"
+
+
+def _signals_metric(label: str, value: str | int, tone: str = "neutral") -> dict:
+    return {"label": label, "value": str(value), "tone": tone}
+
+
+def _monitoring_lane_payload() -> tuple[list[dict], list[dict], dict]:
+    from web import monitoring_view
+
+    try:
+        latest = device_history_db.latest_per_vmid()
+        rows = monitoring_view.build_dashboard_rows(
+            latest,
+            ad_first_seen=_ad_first_seen_map(),
+            now_iso=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+    except Exception:
+        return [], [], {
+            "total": 0,
+            "running": 0,
+            "guest_identity": 0,
+            "ad_ok": 0,
+            "entra_ok": 0,
+            "entra_pending": 0,
+            "intune_ok": 0,
+            "attention": 0,
+        }
+
+    total = len(rows)
+    counts = {
+        "total": total,
+        "running": sum(1 for row in rows if row.pve_status == "running"),
+        "guest_identity": sum(1 for row in rows if row.win_name or row.serial),
+        "ad_ok": sum(1 for row in rows if row.ad_badge == "ok"),
+        "entra_ok": sum(1 for row in rows if row.entra_badge == "ok"),
+        "entra_pending": sum(1 for row in rows if row.entra_badge == "pending"),
+        "intune_ok": sum(1 for row in rows if row.intune_badge == "ok"),
+        "attention": 0,
+    }
+
+    def _lane(label: str, value: int, detail: str, lane_id: str) -> dict:
+        ready = total > 0 and value == total
+        return {
+            "id": lane_id,
+            "label": label,
+            "value": f"{value}/{total}",
+            "detail": detail,
+            "status": "ready" if ready else "attention",
+            "tone": "good" if ready else "active",
+        }
+
+    lanes = [
+        _lane("Provisioned", counts["running"], "Running in Proxmox and visible to the monitor.", "provisioned"),
+        _lane("Guest identity", counts["guest_identity"], "Windows name or serial captured from the guest.", "guest-identity"),
+        _lane("AD joined", counts["ad_ok"], "Single active computer object found in scope.", "ad-joined"),
+        _lane("Entra synced", counts["entra_ok"], f"{counts['entra_pending']} pending inside the expected sync window.", "entra-synced"),
+        _lane("Intune compliant", counts["intune_ok"], "Endpoint record exists and reports compliant.", "intune-compliant"),
+    ]
+
+    attention_rows = []
+    for row in rows:
+        ready = row.ad_badge == "ok" and row.entra_badge == "ok" and row.intune_badge == "ok"
+        row_attention = (
+            row.ad_badge in {"warn", "missing", "error"}
+            or row.entra_badge in {"warn", "missing", "error"}
+            or row.intune_badge in {"warn", "missing", "error"}
+        )
+        if not row_attention and ready:
+            continue
+        counts["attention"] += 1
+        attention_rows.append({
+            "vmid": row.vmid,
+            "vm_name": row.vm_name or "(unnamed)",
+            "node": row.node or "",
+            "lifecycle": "Needs check" if row_attention else "In progress",
+            "tone": "bad" if row_attention else "active",
+            "pve_status": row.pve_status or "unknown",
+            "windows": row.win_name or "unknown",
+            "serial": row.serial or "unknown",
+            "ad": row.ad_badge,
+            "entra": row.entra_badge,
+            "intune": row.intune_badge,
+            "last_checked": row.last_checked or "",
+            "href": f"/devices/{row.vmid}",
+        })
+    return lanes, attention_rows[:8], counts
+
+
+def _signals_hub_payload() -> dict:
+    runtime = _runtime_container_status()
+    runtime_containers = runtime.get("containers") or []
+    unhealthy_runtime = [
+        row for row in runtime_containers
+        if (row.get("health") and row.get("health") != "healthy")
+        or row.get("status") not in {"running", "healthy"}
+    ]
+
+    table_jobs = _job_table_rows()
+    running_payload = _running_jobs_payload()
+    failed_jobs = [
+        row for row in table_jobs
+        if str(row.get("status") or "").casefold() in {"failed", "orphaned", "stuck", "regressed"}
+    ]
+
+    try:
+        readiness = _setup_readiness()
+    except Exception as exc:
+        readiness = {
+            "phase": "unknown",
+            "health": "unavailable",
+            "blocking_count": 0,
+            "build_host": {},
+            "artifacts": {},
+            "media": {},
+            "error": str(exc),
+        }
+    build_host = readiness.get("build_host") if isinstance(readiness.get("build_host"), dict) else {}
+    artifacts = readiness.get("artifacts") if isinstance(readiness.get("artifacts"), dict) else {}
+    media = readiness.get("media") if isinstance(readiness.get("media"), dict) else {}
+    blocking_count = int(readiness.get("blocking_count") or 0)
+
+    try:
+        keytab = device_history_db.get_keytab_health() or {}
+    except Exception:
+        keytab = {}
+    keytab_status = str(keytab.get("status") or keytab.get("last_probe_status") or "unknown")
+    keytab_detail = str(
+        keytab.get("detail")
+        or keytab.get("message")
+        or keytab.get("last_probe_message")
+        or "keytab health not reported"
+    )
+
+    try:
+        fleet = device_history_db.fleet_summary()
+    except Exception:
+        fleet = {"total": 0}
+
+    try:
+        from web import service_health_pg as service_health
+        service_rows = service_health.list_services()
+    except Exception:
+        service_rows = []
+
+    lifecycle_lanes, fleet_attention, lane_counts = _monitoring_lane_payload()
+
+    try:
+        from web import db_pg, deployment_health
+
+        with db_pg.connection(_database_url()) as conn:
+            deployment_payload = deployment_health.build_deployments_payload(conn, limit=25)
+    except Exception:
+        deployment_payload = {
+            "summary": {"total": 0, "active": 0, "completed": 0, "failed": 0},
+            "active": [],
+            "recent_completions": [],
+            "bottlenecks": [],
+        }
+    deployments = deployment_payload.get("summary") or {}
+    deployments = _deployment_summary_for_react(deployments)
+
+    osdeploy_ready = int(artifacts.get("osdeploy_ready_count") or 0)
+    cloudosd_ready = int(artifacts.get("cloudosd_ready_count") or 0)
+    artifacts_ready = bool(artifacts.get("ready"))
+    windows_ready = bool(media.get("windows_iso_ready"))
+    virtio_ready = bool(media.get("virtio_iso_ready"))
+
+    build_host_state = str(build_host.get("agent_state") or ("ready" if build_host.get("agent_ready") else "missing"))
+    active_work = build_host.get("active_work") if isinstance(build_host.get("active_work"), dict) else None
+    if active_work and active_work.get("within_timeout"):
+        build_host_status = "busy"
+    elif build_host.get("agent_ready"):
+        build_host_status = "ready"
+    else:
+        build_host_status = build_host_state
+
+    unhealthy_services = [
+        row for row in service_rows
+        if str(row.get("status") or "").casefold() not in {"ok", "healthy", "ready"}
+    ]
+    deployment_attention = int(deployments.get("failed") or 0) + int(deployments.get("stuck") or 0) + int(deployments.get("regressed") or 0)
+
+    signals = [
+        {
+            "id": "runtime",
+            "family": "runtime",
+            "label": "Runtime containers",
+            "status": "degraded" if unhealthy_runtime or not runtime.get("available") else "healthy",
+            "tone": "bad" if unhealthy_runtime or not runtime.get("available") else "good",
+            "summary": (
+                runtime.get("error")
+                if not runtime.get("available")
+                else f"{len(runtime_containers)} runtime services visible; {len(unhealthy_runtime)} need attention"
+            ),
+            "count": len(runtime_containers),
+            "source": "/api/monitoring/runtime-services",
+            "href": "/react/monitoring#runtime",
+        },
+        {
+            "id": "services",
+            "family": "service_health",
+            "label": "Service health",
+            "status": "degraded" if unhealthy_services else "healthy",
+            "tone": "bad" if unhealthy_services else "good",
+            "summary": f"{len(service_rows)} services reporting; {len(unhealthy_services)} degraded or dead",
+            "count": len(service_rows),
+            "source": "service health table",
+            "href": "/react/monitoring#services",
+        },
+        {
+            "id": "jobs",
+            "family": "jobs",
+            "label": "Jobs and live work",
+            "status": "failed" if failed_jobs else ("running" if running_payload.get("running_count") else "ready"),
+            "tone": "bad" if failed_jobs else ("active" if running_payload.get("running_count") else "good"),
+            "summary": f"{running_payload.get('running_count', 0)} running, {running_payload.get('queued_count', 0)} queued, {len(failed_jobs)} failed or orphaned",
+            "count": len(table_jobs),
+            "source": "/api/jobs and /api/live/ws",
+            "href": "/react/jobs",
+        },
+        {
+            "id": "build-host",
+            "family": "build_host",
+            "label": "Build host",
+            "status": build_host_status,
+            "tone": _signal_tone(build_host_status),
+            "summary": (
+                f"{build_host.get('name') or 'build host'} on {build_host.get('node') or '-'}; "
+                f"agent {build_host.get('expected_agent_id') or '-'}; heartbeat age {build_host.get('last_heartbeat_age_seconds') if build_host.get('last_heartbeat_age_seconds') is not None else '-'}s"
+            ),
+            "count": 1 if build_host.get("expected_agent_id") else 0,
+            "source": "/api/setup/v1/readiness",
+            "href": "/setup",
+        },
+        {
+            "id": "artifacts",
+            "family": "artifacts",
+            "label": "Operational artifacts",
+            "status": "ready" if artifacts_ready else "missing",
+            "tone": "good" if artifacts_ready else "bad",
+            "summary": f"{cloudosd_ready} CloudOSD and {osdeploy_ready} OSDeploy artifacts ready",
+            "count": cloudosd_ready + osdeploy_ready,
+            "source": "/api/setup/v1/readiness",
+            "href": "/osdeploy" if osdeploy_ready else "/setup",
+        },
+        {
+            "id": "deploy-readiness",
+            "family": "deploy_readiness",
+            "label": "Deploy readiness",
+            "status": "blocked" if blocking_count else str(readiness.get("health") or "unknown"),
+            "tone": "bad" if blocking_count else _signal_tone(str(readiness.get("health") or "")),
+            "summary": f"phase {readiness.get('phase') or 'unknown'}; {blocking_count} blocked checks",
+            "count": blocking_count,
+            "source": "/api/setup/v1/readiness",
+            "href": "/setup",
+        },
+        {
+            "id": "deployment-speed",
+            "family": "deployment_speed",
+            "label": "Deployment speed",
+            "status": "attention" if deployment_attention else ("running" if deployments.get("active") else "ready"),
+            "tone": "bad" if deployment_attention else ("active" if deployments.get("active") else "good"),
+            "summary": (
+                f"{deployments.get('active', 0)} active, {deployments.get('stuck', 0)} stuck, "
+                f"{deployments.get('failed', 0)} failed, p95 {deployments.get('p95_completion_seconds') or '-'}s"
+            ),
+            "count": deployments.get("total", 0),
+            "source": "/api/monitoring/deployments/runs",
+            "href": "/react/monitoring#deployment-speed",
+        },
+        {
+            "id": "agent",
+            "family": "agent",
+            "label": "AutopilotAgent triage",
+            "status": build_host_status,
+            "tone": _signal_tone(build_host_status),
+            "summary": (
+                f"{build_host.get('computer_name') or build_host.get('expected_computer_name') or 'agent'} "
+                f"version {build_host.get('agent_version') or '-'} at {build_host.get('primary_ipv4') or '-'}"
+            ),
+            "count": 1 if build_host.get("expected_agent_id") else 0,
+            "source": "setup readiness and agent telemetry",
+            "href": "/react/vms",
+        },
+        {
+            "id": "lifecycle",
+            "family": "lifecycle",
+            "label": "Lifecycle lanes",
+            "status": "attention" if lane_counts["attention"] else "ready",
+            "tone": "bad" if lane_counts["attention"] else "good",
+            "summary": (
+                f"{lane_counts['running']}/{lane_counts['total']} running; "
+                f"{lane_counts['ad_ok']} AD, {lane_counts['entra_ok']} Entra, {lane_counts['intune_ok']} Intune ready"
+            ),
+            "count": lane_counts["attention"],
+            "source": "/monitoring",
+            "href": "/react/monitoring#lifecycle",
+        },
+        {
+            "id": "identity",
+            "family": "identity",
+            "label": "AD, auth, and keytab",
+            "status": keytab_status,
+            "tone": _signal_tone(keytab_status),
+            "summary": keytab_detail,
+            "count": keytab_status,
+            "source": "/api/monitoring/keytab/health",
+            "href": "/monitoring/settings",
+        },
+        {
+            "id": "fleet-evidence",
+            "family": "fleet_evidence",
+            "label": "Fleet evidence",
+            "status": "ready" if int(fleet.get("total") or 0) else "empty",
+            "tone": "good" if int(fleet.get("total") or 0) else "neutral",
+            "summary": f"{lane_counts['total'] or int(fleet.get('total') or 0)} devices in latest sweep; {len(fleet_attention)} need review",
+            "count": int(fleet.get("total") or 0),
+            "source": "/api/fleet/summary",
+            "href": "/devices",
+        },
+    ]
+
+    operator_paths = []
+    if not (windows_ready and virtio_ready):
+        operator_paths.append({
+            "id": "stage-bootstrap-media",
+            "priority": 10,
+            "label": "Stage Windows ISO and VirtIO media",
+            "status": "blocked",
+            "tone": "bad",
+            "summary": "Bootstrap recovery media is not staged; fix this before rebuilding the build host.",
+            "action_label": "Open setup",
+            "href": "/setup",
+            "source": "/api/setup/v1/media",
+        })
+    if failed_jobs:
+        operator_paths.append({
+            "id": "review-failed-jobs",
+            "priority": 15,
+            "label": "Review failed or orphaned jobs",
+            "status": "failed",
+            "tone": "bad",
+            "summary": f"{len(failed_jobs)} jobs need operator review before more work is started.",
+            "action_label": "Open jobs",
+            "href": "/react/jobs",
+            "source": "/api/jobs",
+        })
+    if deployment_attention:
+        operator_paths.append({
+            "id": "review-deployment-speed",
+            "priority": 18,
+            "label": "Review deployment timing regressions",
+            "status": "attention",
+            "tone": "bad",
+            "summary": f"{deployment_attention} deployment timing signals are failed, stuck, or regressed.",
+            "action_label": "Open legacy monitoring",
+            "href": "/monitoring",
+            "source": "/api/monitoring/deployments/runs",
+        })
+    if fleet_attention:
+        operator_paths.append({
+            "id": "review-fleet-lifecycle",
+            "priority": 22,
+            "label": "Review fleet lifecycle drift",
+            "status": "attention",
+            "tone": "bad",
+            "summary": f"{len(fleet_attention)} devices need AD, Entra, Intune, or guest identity review.",
+            "action_label": "Open devices",
+            "href": "/devices",
+            "source": "/monitoring",
+        })
+    if build_host_status in {"stale", "missing", "mismatch"}:
+        operator_paths.append({
+            "id": "repair-build-host-agent",
+            "priority": 20,
+            "label": "Repair build host agent",
+            "status": build_host_status,
+            "tone": "bad",
+            "summary": "The build-host agent is not fresh; repair only after checking active work.",
+            "action_label": "Open setup",
+            "href": "/setup",
+            "source": "/api/setup/v1/readiness",
+        })
+    elif build_host_status == "busy":
+        operator_paths.append({
+            "id": "watch-build-host",
+            "priority": 25,
+            "label": "Build host is busy",
+            "status": "running",
+            "tone": "active",
+            "summary": "Active work is within timeout; watch the job instead of repairing the agent.",
+            "action_label": "Watch jobs",
+            "href": "/react/jobs",
+            "source": "/api/setup/v1/readiness",
+        })
+    elif build_host_status == "ready":
+        operator_paths.append({
+            "id": "queue-build-host-work",
+            "priority": 35,
+            "label": "Build host agent is fresh and idle",
+            "status": "ready",
+            "tone": "good",
+            "summary": "The build host can accept build workloads when new artifacts are needed.",
+            "action_label": "Open setup",
+            "href": "/setup",
+            "source": "/api/setup/v1/readiness",
+        })
+    if osdeploy_ready:
+        operator_paths.append({
+            "id": "server-deploy-ready",
+            "priority": 40,
+            "label": "Windows Server OSDeploy artifact is available",
+            "status": "ready",
+            "tone": "good",
+            "summary": "Open the existing OSDeploy execution flow with the promoted artifact ready.",
+            "action_label": "Open server deploy",
+            "href": "/osdeploy",
+            "source": "/api/setup/v1/readiness",
+        })
+    if cloudosd_ready:
+        operator_paths.append({
+            "id": "desktop-deploy-ready",
+            "priority": 45,
+            "label": "CloudOSD desktop artifacts are available",
+            "status": "ready",
+            "tone": "good",
+            "summary": "Desktop deployment can start from the existing CloudOSD flow.",
+            "action_label": "Open desktop deploy",
+            "href": "/cloudosd",
+            "source": "/api/setup/v1/readiness",
+        })
+    if int(deployments.get("succeeded") or 0):
+        operator_paths.append({
+            "id": "review-fleet-evidence",
+            "priority": 60,
+            "label": "Review fleet evidence",
+            "status": "ready",
+            "tone": "good",
+            "summary": "Confirm VM, device, hash, and artifact records after completed deployments.",
+            "action_label": "Open devices",
+            "href": "/devices",
+            "source": "/api/fleet/summary",
+        })
+    operator_paths.sort(key=lambda item: (int(item.get("priority") or 100), str(item.get("label") or "")))
+
+    bad_count = sum(1 for signal in signals if signal["tone"] == "bad")
+    action_count = sum(1 for signal in signals if signal["tone"] in {"bad", "active"})
+    ready_count = sum(1 for signal in signals if signal["tone"] == "good")
+
+    return {
+        "generated_at": utc_now_iso(),
+        "build": _APP_VERSION,
+        "source_health": {
+            "runtime_available": bool(runtime.get("available")),
+            "setup_health": str(readiness.get("health") or "unknown"),
+            "keytab_status": keytab_status,
+        },
+        "metrics": [
+            _signals_metric("Critical", bad_count, "bad" if bad_count else "good"),
+            _signals_metric("Needs operator", action_count, "bad" if action_count else "good"),
+            _signals_metric("Ready", ready_count, "good" if ready_count else "neutral"),
+            _signals_metric("Runtime", "up" if runtime.get("available") else "down", "good" if runtime.get("available") else "bad"),
+            _signals_metric("Fleet attention", len(fleet_attention), "bad" if fleet_attention else "good"),
+        ],
+        "signals": signals,
+        "operator_paths": operator_paths,
+        "lifecycle_lanes": lifecycle_lanes,
+        "deployment_health": {
+            "summary": deployments,
+            "active": (deployment_payload.get("active") or [])[:6],
+            "recent_completions": (deployment_payload.get("recent_completions") or [])[:6],
+            "bottlenecks": (deployment_payload.get("bottlenecks") or [])[:6],
+        },
+        "services": service_rows,
+        "runtime": runtime,
+        "fleet_attention": fleet_attention,
+    }
+
+
+@app.get("/api/monitoring/deployments/summary", response_model=DeploymentSummaryResponse)
 def api_monitoring_deployments_summary():
     from web import db_pg, deployment_health
 
     with db_pg.connection(_database_url()) as conn:
-        return deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+        summary = deployment_health.build_deployments_payload(conn, limit=1)["summary"]
+    return _deployment_summary_for_react(summary)
+
+
+@app.get("/api/monitoring/signals", response_model=SignalsHubResponse)
+def api_monitoring_signals():
+    return _signals_hub_payload()
 
 
 @app.get("/api/monitoring/deployments/runs")

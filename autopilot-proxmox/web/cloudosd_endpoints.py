@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
-from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, osd_package, winpe_token
+from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, lab_bubbles_pg, osd_package, winpe_token
 from web.sequence_compiler import _split_domain_user
 
 
@@ -79,6 +79,8 @@ class RunCreateBody(BaseModel):
     driver_pack_policy: str = cloudosd_pg.DEFAULT_DRIVER_PACK_POLICY
     analytics_enabled: bool = False
     outbound_policy: dict = Field(default_factory=dict)
+    bubble_id: Optional[str] = None
+    asset_role: Optional[str] = None
 
 
 class RunIdentityBody(BaseModel):
@@ -2180,7 +2182,14 @@ def _download_token_payload(run_id: str, token: str) -> dict:
     return payload
 
 
-@router.api_route("/cache/{entry_id}/download/{file_name:path}", methods=["GET", "HEAD"])
+@router.head(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="head_cloudosd_cache_entry_download",
+)
+@router.get(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="get_cloudosd_cache_entry_download",
+)
 def download_cache_entry(entry_id: str, file_name: str, request: Request, run_id: str = "", token: str = ""):
     _download_token_payload(run_id, token)
     with _conn() as conn:
@@ -2242,6 +2251,10 @@ def create_run(body: RunCreateBody):
         )
     target = preflight["target"]
     with _conn() as conn:
+        if body.bubble_id:
+            lab_bubbles_pg.init(conn)
+            if not lab_bubbles_pg.get_bubble(conn, body.bubble_id):
+                raise HTTPException(status_code=404, detail="Bubble not found")
         artifact = cloudosd_pg.get_artifact(conn, body.artifact_id)
         if not artifact:
             raise HTTPException(status_code=404, detail="CloudOSD artifact not found")
@@ -2280,6 +2293,17 @@ def create_run(body: RunCreateBody):
                 analytics_enabled=body.analytics_enabled,
                 outbound_policy=body.outbound_policy,
             )
+            if body.bubble_id:
+                lab_bubbles_pg.add_asset(
+                    conn,
+                    body.bubble_id,
+                    asset_type="vm",
+                    asset_role=(body.asset_role or "workstation").strip() or "workstation",
+                    vmid=run.get("vmid") or run.get("requested_vmid") or body.vmid,
+                    run_id=run["run_id"],
+                    membership_state="provisioning",
+                    actor="cloudosd",
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     return run

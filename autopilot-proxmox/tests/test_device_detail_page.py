@@ -132,6 +132,90 @@ def test_device_detail_shows_known_credentials(client, monkeypatch):
     assert "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5" in r.text
 
 
+def test_vm_detail_api_returns_masked_evidence_and_latest_screenshot(client, monkeypatch, tmp_path):
+    from web import app as app_module
+
+    c, db = client
+    _seed_healthy_vm(db, vmid=105)
+    monkeypatch.setattr(app_module, "SCREENSHOT_STORE_DIR", tmp_path / "screenshots")
+    stored = app_module._store_vm_screenshot_record(
+        vmid=105,
+        png_bytes=b"\x89PNG\r\n\x1a\nlatest",
+        source="collector",
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_known_credentials_for_vmid",
+        lambda vmid: [{
+            "source": "CloudOSD",
+            "label": "Local admin",
+            "username": "localadmin",
+            "password": "Mep7!Qav2",
+            "vm_name": "WrkGrp-8F47E090",
+            "run_url": "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5",
+            "updated_at": "2026-05-18T17:10:00+00:00",
+            "note": "Visible workgroup credential from the deployment run.",
+        }] if vmid == 105 else [],
+    )
+
+    r = c.get("/api/vms/105/detail")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["vmid"] == 105
+    assert body["pve"]["name"] == "Gell-EC41E7EB"
+    assert body["probe"]["win_name"] == "GELL-EC41E7EB"
+    assert body["latest_screenshot"]["image_url"] == stored["image_url"]
+    assert body["latest_screenshot"]["source"] == "collector"
+    assert body["known_credentials"] == [{
+        "source": "CloudOSD",
+        "label": "Local admin",
+        "username": "localadmin",
+        "password_available": True,
+        "password_mask": "********",
+        "vm_name": "WrkGrp-8F47E090",
+        "run_id": "",
+        "run_url": "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5",
+        "updated_at": "2026-05-18T17:10:00+00:00",
+        "note": "Visible workgroup credential from the deployment run.",
+    }]
+    assert "password" not in body["known_credentials"][0]
+    assert any(event["type"] == "screenshot-captured" for event in body["timeline"])
+    assert any(event["type"] == "credential-discovered" for event in body["timeline"])
+    assert any(event["type"] == "identity-sync" for event in body["timeline"])
+    assert body["identity_sync"]["source"] == "monitoring_sweep"
+
+
+def test_vm_latest_screenshot_api_serves_shared_store(client, monkeypatch, tmp_path):
+    from web import app as app_module
+
+    c, _ = client
+    monkeypatch.setattr(app_module, "SCREENSHOT_STORE_DIR", tmp_path / "screenshots")
+    stored = app_module._store_vm_screenshot_record(
+        vmid=116,
+        png_bytes=b"\x89PNG\r\n\x1a\npreview",
+        source="manual",
+    )
+
+    latest = c.get("/api/vms/116/screenshots/latest")
+    image = c.get(stored["image_url"])
+
+    assert latest.status_code == 200
+    assert latest.json()["image_url"] == stored["image_url"]
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.content == b"\x89PNG\r\n\x1a\npreview"
+
+
+def test_vm_latest_screenshot_api_returns_404_when_empty(client, monkeypatch, tmp_path):
+    from web import app as app_module
+
+    c, _ = client
+    monkeypatch.setattr(app_module, "SCREENSHOT_STORE_DIR", tmp_path / "screenshots")
+
+    assert c.get("/api/vms/116/screenshots/latest").status_code == 404
+
+
 def test_known_credentials_includes_osdeploy_local_admin(pg_conn):
     from web import app as app_module, cloudosd_pg, osdeploy_pg, ts_engine_pg
 

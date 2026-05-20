@@ -454,6 +454,8 @@ class RunCreateBody(BaseModel):
     secure_boot: bool = False
     outbound_policy: dict = Field(default_factory=dict)
     role_options: dict = Field(default_factory=dict)
+    bubble_id: Optional[str] = None
+    asset_role: Optional[str] = None
 
 
 class IdentityBody(BaseModel):
@@ -1317,6 +1319,34 @@ def preflight_payload(body: RunCreateBody) -> dict:
             }
         except Exception:
             credential_ids = set()
+        bubble_gate = None
+        if body.bubble_id:
+            from web import lab_bubbles_pg
+
+            lab_bubbles_pg.init(conn)
+            sanitized_role_options = osdeploy_roles.sanitize_role_options(
+                body.server_role,
+                body.role_options,
+            )
+            bootstrap_role = _is_bubble_bootstrap_role(body.server_role)
+            requires_domain_join = (
+                _requires_bubble_domain_readiness(body.server_role, sanitized_role_options)
+                and not bootstrap_role
+            )
+            bubbles = lab_bubbles_pg.list_bubbles(conn)
+            domain_names = {
+                str(bubble.get("domain_name") or "").strip().lower()
+                for bubble in bubbles
+                if str(bubble.get("domain_name") or "").strip()
+            }
+            bubble_gate = lab_bubbles_pg.evaluate_launch_gate(
+                conn,
+                body.bubble_id,
+                requires_domain_join=requires_domain_join,
+                requires_configmgr=False,
+                is_multi_bubble_context=(len(bubbles) > 1 and not bootstrap_role),
+                is_multi_domain_context=(len(domain_names) > 1 and not bootstrap_role),
+            )
     if not artifact:
         blocking.append(_blocking_check("artifact_missing", "OSDeploy artifact was not found."))
     else:
@@ -1371,6 +1401,12 @@ def preflight_payload(body: RunCreateBody) -> dict:
             ))
     if (cache_payload.get("summary") or {}).get("ready", 0) == 0:
         warnings.append(_warning_check("cache_empty", "No ready OSDeploy cache entries are available."))
+    if bubble_gate:
+        message = "; ".join(bubble_gate["reasons"])
+        if not bubble_gate["allowed"]:
+            blocking.append(_blocking_check("bubble_not_ready", message))
+        elif bubble_gate["state"] == "warning":
+            warnings.append(_warning_check("bubble_warning", message))
     return {
         "schema_version": 1,
         "launch_allowed": not blocking,
@@ -1386,6 +1422,27 @@ def preflight_payload(body: RunCreateBody) -> dict:
             "os": f"{body.os_version} {body.os_edition} {body.os_language}",
         },
     }
+
+
+def _requires_bubble_domain_readiness(server_role: str, role_options: dict) -> bool:
+    domain_join = role_options.get("domain_join")
+    if isinstance(domain_join, dict) and domain_join.get("enabled"):
+        return True
+    return False
+
+
+def _is_bubble_bootstrap_role(server_role: str) -> bool:
+    return server_role in {"isolated_domain_controller", "lab_in_a_box"}
+
+
+def _bubble_asset_role(server_role: str, explicit_role: str | None = None) -> str:
+    if explicit_role:
+        return explicit_role
+    if server_role == "isolated_domain_controller":
+        return "domain_controller"
+    if server_role == "mecm_prereq":
+        return "configmgr"
+    return server_role or "server"
 
 
 def provision_progress_summary(rows: list[dict]) -> dict:
@@ -1626,7 +1683,14 @@ def delete_cache_entry(entry_id: str):
     return _queue_cache_job("osdeploy_cache_delete", "delete", {"entry_id": entry_id})
 
 
-@router.api_route("/cache/{entry_id}/download/{file_name:path}", methods=["GET", "HEAD"])
+@router.head(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="head_osdeploy_cache_entry_download",
+)
+@router.get(
+    "/cache/{entry_id}/download/{file_name:path}",
+    operation_id="get_osdeploy_cache_entry_download",
+)
 def download_cache_entry(entry_id: str, file_name: str, request: Request):
     with _conn() as conn:
         entry = osdeploy_cache.get_entry(conn, entry_id)
@@ -1657,6 +1721,13 @@ def preflight(body: RunCreateBody):
 
 @router.post("/runs", status_code=201)
 def create_run(body: RunCreateBody):
+    if body.bubble_id:
+        with _conn() as conn:
+            from web import lab_bubbles_pg
+
+            lab_bubbles_pg.init(conn)
+            if not lab_bubbles_pg.get_bubble(conn, body.bubble_id):
+                raise HTTPException(status_code=404, detail="Bubble not found")
     preflight = preflight_payload(body)
     if preflight["blocking_checks"]:
         raise HTTPException(
@@ -1689,6 +1760,20 @@ def create_run(body: RunCreateBody):
                 outbound_policy=body.outbound_policy,
                 role_options=body.role_options,
             )
+            if body.bubble_id:
+                lab_bubbles_pg.add_asset(
+                    conn,
+                    body.bubble_id,
+                    asset_type="vm",
+                    asset_role=_bubble_asset_role(body.server_role, body.asset_role),
+                    vmid=run.get("vmid") or run.get("requested_vmid"),
+                    vm_uuid=run.get("vm_uuid"),
+                    run_id=run["run_id"],
+                    membership_state="provisioning",
+                    evidence_state="run_created",
+                    notes=f"OSDeploy run {run['workflow_name']}",
+                    actor="osdeploy",
+                )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True, "run": run}
@@ -1698,6 +1783,13 @@ def create_run(body: RunCreateBody):
 def create_bundle(body: RunCreateBody):
     if body.server_role != "lab_in_a_box":
         raise HTTPException(status_code=400, detail="Only lab_in_a_box bundles are supported.")
+    if body.bubble_id:
+        with _conn() as conn:
+            from web import lab_bubbles_pg
+
+            lab_bubbles_pg.init(conn)
+            if not lab_bubbles_pg.get_bubble(conn, body.bubble_id):
+                raise HTTPException(status_code=404, detail="Bubble not found")
     preflight = preflight_payload(body)
     if preflight["blocking_checks"]:
         raise HTTPException(
@@ -1728,6 +1820,25 @@ def create_bundle(body: RunCreateBody):
                 outbound_policy=body.outbound_policy,
                 role_options=body.role_options,
             )
+            if body.bubble_id:
+                from web import lab_bubbles_pg
+
+                lab_bubbles_pg.init(conn)
+                for child in created["children"]:
+                    run = child["run"]
+                    lab_bubbles_pg.add_asset(
+                        conn,
+                        body.bubble_id,
+                        asset_type="vm",
+                        asset_role=_bubble_asset_role(child["server_role"]),
+                        vmid=run.get("vmid") or run.get("requested_vmid"),
+                        vm_uuid=run.get("vm_uuid"),
+                        run_id=run["run_id"],
+                        membership_state="provisioning",
+                        evidence_state="run_created",
+                        notes=f"OSDeploy bundle {created['bundle']['id']}",
+                        actor="osdeploy",
+                    )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True, **created}
