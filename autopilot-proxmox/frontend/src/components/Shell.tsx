@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { LogOut, Search } from "lucide-react";
 
 import type { AppBootstrap } from "../contracts";
-import { operatorNavGroups } from "../routes";
+import { isOperatorNavRoute, navPathForPath, operatorNavGroups, operatorNavItems } from "../routes";
 import { formatShortDateTime } from "../viewModels";
 
 export function OperatorShell({
@@ -19,7 +19,8 @@ export function OperatorShell({
   const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
   const commandId = useId();
   const [commandQuery, setCommandQuery] = useState("");
-  const routes = operatorNavGroups.flatMap((group) => group.items);
+  const routes = operatorNavItems;
+  const currentNavPath = navPathForPath(path);
   const userLabel = bootstrap.userName || bootstrap.userEmail || "Signed in";
 
   function submitCommandSearch(event: FormEvent<HTMLFormElement>) {
@@ -100,15 +101,15 @@ export function OperatorShell({
           {operatorNavGroups.map((group) => (
             <section key={group.label} aria-labelledby={`nav-${group.label.toLowerCase()}`}>
               <h2 id={`nav-${group.label.toLowerCase()}`}>{group.label}</h2>
-              {group.items.map((item) => (
+              {group.items.filter(isOperatorNavRoute).map((item) => (
                 <a
                   key={item.path}
                   className={[
-                    item.path === path ? "is-current" : ""
+                    item.path === currentNavPath ? "is-current" : ""
                   ].filter(Boolean).join(" ")}
                   href={item.path}
                   aria-label={item.label}
-                  aria-current={item.path === path ? "page" : undefined}
+                  aria-current={item.path === currentNavPath ? "page" : undefined}
                 >
                   <span>{item.label}</span>
                 </a>

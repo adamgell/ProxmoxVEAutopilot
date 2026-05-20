@@ -39,6 +39,7 @@ import type {
   VmsFleetResponse
 } from "../contracts";
 import { connectFleetLive } from "../liveSocket";
+import { reactHrefForUiPath } from "../routes";
 import {
   buildFleetMachineRows,
   fleetAgentLabel,
@@ -643,7 +644,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       try {
         const queued = await postJson<CollectLogsResponse>("/api/jobs/collect-logs", { vmid, vm_name: vmDisplayName(vm) });
         setActionStatus(`Log collection queued for VM ${String(queued.vmid)}`);
-        setActionStatusLink({ href: queued.web_url || `/react/jobs/${queued.job_id}`, label: queued.job_id });
+        setActionStatusLink({ href: reactHrefForUiPath(queued.web_url || `/react/jobs/${queued.job_id}`), label: queued.job_id });
         await load();
       } catch (err) {
         setActionStatusLink(null);
@@ -1470,7 +1471,9 @@ function MachineRow({
         <span className="machine-primary-value">{fleetOsVersion(row)}</span>
       </td>
       <td>
-        {row.vmid !== undefined ? <a className="machine-vmid-link" href={`/devices/${String(row.vmid)}`}>{row.vmid}</a> : <span className="machine-primary-value">-</span>}
+        {row.vmid !== undefined ? (
+          <a className="machine-vmid-link" href={reactHrefForUiPath(`/devices/${String(row.vmid)}`)}>{row.vmid}</a>
+        ) : <span className="machine-primary-value">-</span>}
       </td>
       <td>
         <span className="machine-primary-value">{fallbackText(row.ipAddress)}</span>

@@ -338,9 +338,16 @@ test("renders the React shell without layout overlap", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Operator workspace" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Operator workspace" });
+  await expect(nav).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Job Detail", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Run Detail", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "OSDCloud Run", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "OSDeploy Run", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Task Template", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Edit Sequence", exact: true })).toHaveCount(0);
   await expect(page.getByText("Jinja")).toHaveCount(0);
 
   const hero = await page.locator(".workspace__globalbar").boundingBox();
@@ -405,6 +412,7 @@ for (const viewport of [
     await expect(page.getByRole("heading", { name: "Signal families" })).toBeVisible();
     await expect(page.getByText("Build host agent")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open server deploy" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/react/osdeploy");
     await expect(page.locator("main").getByRole("link", { name: "Monitoring settings", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Deployment speed" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Lifecycle lanes" })).toBeVisible();
@@ -413,6 +421,7 @@ for (const viewport of [
     await page.getByRole("button", { name: "Tail" }).click();
     await expect(page.getByText("2026-05-19T00:00:00Z autopilot ready")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Fleet attention" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/react/vms/101");
 
     const header = await page.locator(".page-head").boundingBox();
     const metrics = await page.locator(".metric-strip").first().boundingBox();
@@ -436,6 +445,9 @@ for (const viewport of [
     await page.getByRole("link", { name: "WrkGrp-525570B6" }).click();
     await expect(page).toHaveURL(/\/react\/vms\/108$/);
     await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Operator workspace" }).getByRole("link", { name: "VMs", exact: true })
+    ).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Console VM 108" })).toBeVisible();
     await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();

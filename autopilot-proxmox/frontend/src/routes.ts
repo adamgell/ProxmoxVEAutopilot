@@ -7,10 +7,26 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
       { path: "/react-shell", label: "Workspace", group: "Observe", phase: "foundation", active: true },
       { path: "/react/dashboard", label: "Dashboard", group: "Observe", phase: "read-only", active: true },
       { path: "/react/jobs", label: "Jobs", group: "Observe", phase: "read-only", active: true },
-      { path: "/react/jobs/:jobId", label: "Job Detail", group: "Observe", phase: "operational", active: true },
+      {
+        path: "/react/jobs/:jobId",
+        label: "Job Detail",
+        group: "Observe",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/jobs",
+        showInNav: false
+      },
       { path: "/react/monitoring", label: "Signals Hub", group: "Observe", phase: "read-only", active: true },
       { path: "/react/runs", label: "Runs", group: "Observe", phase: "read-only", active: true },
-      { path: "/react/runs/:runId", label: "Run Detail", group: "Observe", phase: "read-only", active: true },
+      {
+        path: "/react/runs/:runId",
+        label: "Run Detail",
+        group: "Observe",
+        phase: "read-only",
+        active: true,
+        navParentPath: "/react/runs",
+        showInNav: false
+      },
       { path: "/react/install-tracking", label: "Install Tracking", group: "Observe", phase: "read-only", active: true }
     ]
   },
@@ -18,9 +34,25 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     label: "Deploy",
     items: [
       { path: "/react/cloudosd", label: "OSDCloud Desktop", group: "Deploy", phase: "operational", active: true },
-      { path: "/react/cloudosd/runs/:runId", label: "OSDCloud Run", group: "Deploy", phase: "operational", active: true },
+      {
+        path: "/react/cloudosd/runs/:runId",
+        label: "OSDCloud Run",
+        group: "Deploy",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/cloudosd",
+        showInNav: false
+      },
       { path: "/react/osdeploy", label: "OSDeploy Server", group: "Deploy", phase: "operational", active: true },
-      { path: "/react/osdeploy/runs/:runId", label: "OSDeploy Run", group: "Deploy", phase: "operational", active: true },
+      {
+        path: "/react/osdeploy/runs/:runId",
+        label: "OSDeploy Run",
+        group: "Deploy",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/osdeploy",
+        showInNav: false
+      },
       { path: "/react/provision", label: "Provision", group: "Deploy", phase: "operational", active: true }
     ]
   },
@@ -31,8 +63,24 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
       { path: "/react/task-engine", label: "Task Engine", group: "Build", phase: "operational", active: true },
       { path: "/react/task-engine/sequences/list", label: "Task Sequences", group: "Build", phase: "operational", active: true },
       { path: "/react/task-engine/sequences/new", label: "New Task Sequence", group: "Build", phase: "operational", active: true },
-      { path: "/react/task-engine/sequences/templates/:templateId", label: "Task Template", group: "Build", phase: "read-only", active: true },
-      { path: "/react/task-engine/sequences/:sequenceId/edit", label: "Edit Task Sequence", group: "Build", phase: "operational", active: true },
+      {
+        path: "/react/task-engine/sequences/templates/:templateId",
+        label: "Task Template",
+        group: "Build",
+        phase: "read-only",
+        active: true,
+        navParentPath: "/react/task-engine/sequences/list",
+        showInNav: false
+      },
+      {
+        path: "/react/task-engine/sequences/:sequenceId/edit",
+        label: "Edit Task Sequence",
+        group: "Build",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/task-engine/sequences/list",
+        showInNav: false
+      },
       { path: "/react/answer-isos", label: "Answer ISOs", group: "Build", phase: "operational", active: true }
     ]
   },
@@ -40,6 +88,15 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     label: "Fleet",
     items: [
       { path: "/react/vms", label: "VMs", group: "Fleet", phase: "operational", active: true },
+      {
+        path: "/react/vms/:vmid",
+        label: "VM Detail",
+        group: "Fleet",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/vms",
+        showInNav: false
+      },
       { path: "/react/agent-download", label: "Agent Download", group: "Fleet", phase: "operational", active: true },
       { path: "/react/legacy-vms", label: "Classic VM Table", group: "Fleet", phase: "read-only", active: true },
       { path: "/react/utm-vms", label: "UTM VMs", group: "Fleet", phase: "operational", active: true },
@@ -48,7 +105,15 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
       { path: "/react/files", label: "Files", group: "Fleet", phase: "operational", active: true },
       { path: "/react/sequences", label: "Sequences", group: "Fleet", phase: "operational", active: true },
       { path: "/react/sequences/new", label: "New Sequence", group: "Fleet", phase: "operational", active: true },
-      { path: "/react/sequences/:sequenceId/edit", label: "Edit Sequence", group: "Fleet", phase: "operational", active: true }
+      {
+        path: "/react/sequences/:sequenceId/edit",
+        label: "Edit Sequence",
+        group: "Fleet",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/sequences",
+        showInNav: false
+      }
     ]
   },
   {
@@ -137,6 +202,14 @@ export const migratedRoutes: readonly MigratedRoute[] = operatorNavGroups.flatMa
     }))
 );
 
+export function isOperatorNavRoute(route: OperatorRoute): boolean {
+  return route.active && route.showInNav !== false && !route.path.includes(":");
+}
+
+export const operatorNavItems: readonly OperatorRoute[] = operatorNavGroups.flatMap((group) =>
+  group.items.filter(isOperatorNavRoute)
+);
+
 export function reactRouteForPath(path: string): OperatorRoute | undefined {
   return operatorNavGroups.flatMap((group) => group.items).find((route) => {
     if (!route.active) {
@@ -148,4 +221,56 @@ export function reactRouteForPath(path: string): OperatorRoute | undefined {
     const pattern = `^${route.path.replaceAll("/", "\\/").replace(/:[^/]+/gu, "[^/]+")}$`;
     return new RegExp(pattern, "u").test(path);
   });
+}
+
+export function navPathForPath(path: string): string | undefined {
+  const route = reactRouteForPath(path);
+  return route?.navParentPath ?? (route && isOperatorNavRoute(route) ? route.path : undefined);
+}
+
+export function reactHrefForUiPath(href: string): string {
+  if (!href.startsWith("/") || href.startsWith("/api/") || href.startsWith("/static/") || href.startsWith("/files/")) {
+    return href;
+  }
+  const parsed = new URL(href, "http://autopilot.local");
+  const suffix = `${parsed.search}${parsed.hash}`;
+  const path = parsed.pathname;
+  const withSuffix = (pathValue: string): string => {
+    if (pathValue.includes("?") && suffix.startsWith("?")) {
+      return `${pathValue}&${suffix.slice(1)}`;
+    }
+    return `${pathValue}${suffix}`;
+  };
+  const dynamicRules: readonly [RegExp, (match: RegExpExecArray) => string][] = [
+    [/^\/jobs\/([^/]+)$/u, (match) => `/react/jobs/${match[1] ?? ""}`],
+    [/^\/runs\/([^/]+)$/u, (match) => `/react/runs/${match[1] ?? ""}`],
+    [/^\/(?:cloudosd|osdcloud)\/runs\/([^/]+)$/u, (match) => `/react/cloudosd/runs/${match[1] ?? ""}`],
+    [/^\/osdeploy\/runs\/([^/]+)$/u, (match) => `/react/osdeploy/runs/${match[1] ?? ""}`],
+    [/^\/devices\/(\d+)$/u, (match) => `/react/vms/${match[1] ?? ""}`],
+    [/^\/vms\/(\d+)\/console$/u, (match) => `/react/vms/${match[1] ?? ""}?action=console`]
+  ];
+  for (const [pattern, build] of dynamicRules) {
+    const match = pattern.exec(path);
+    if (match) {
+      return withSuffix(build(match));
+    }
+  }
+  const staticRules: Readonly<Record<string, string>> = {
+    "/": "/react/dashboard",
+    "/cloud": "/react/devices",
+    "/cloudosd": "/react/cloudosd",
+    "/credentials": "/react/credentials",
+    "/hashes": "/react/hashes",
+    "/legacy/vms": "/react/legacy-vms",
+    "/monitoring": "/react/monitoring",
+    "/monitoring/settings": "/react/monitoring/settings",
+    "/osdcloud": "/react/cloudosd",
+    "/osdeploy": "/react/osdeploy",
+    "/provision": "/react/provision",
+    "/runs": "/react/runs",
+    "/settings": "/react/settings",
+    "/template": "/react/template",
+    "/vms": "/react/vms"
+  };
+  return withSuffix(staticRules[path] ?? path);
 }

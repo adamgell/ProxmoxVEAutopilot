@@ -17,6 +17,7 @@ import type {
   SignalsHubResponse
 } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
+import { reactHrefForUiPath } from "../routes";
 import {
   buildSignalMetrics,
   fallbackText,
@@ -168,7 +169,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                       <p>{path.summary}</p>
                       <small>{path.source || "Signals Hub"}</small>
                     </div>
-                    <a href={path.href}>{path.action_label}</a>
+                    <a href={reactHrefForUiPath(path.href)}>{path.action_label}</a>
                   </li>
                 ))}
               </ul>
@@ -359,7 +360,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                       <p>VMID {row.vmid} / {fallbackText(row.node)} / {fallbackText(row.pve_status)} / {fallbackText(row.windows)}</p>
                       <small>AD {fallbackText(row.ad)} / Entra {fallbackText(row.entra)} / Intune {fallbackText(row.intune)}</small>
                     </div>
-                    <a href={row.href}>Inspect</a>
+                    <a href={reactHrefForUiPath(row.href)}>Inspect</a>
                   </li>
                 ))}
               </ul>

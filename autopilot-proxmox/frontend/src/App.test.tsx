@@ -696,6 +696,12 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
     expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getAllByRole("link", { name: "OSDCloud Desktop" })[0]).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.queryByRole("link", { name: "Job Detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Run Detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "OSDCloud Run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "OSDeploy Run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Task Template" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Edit Sequence" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
     expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
@@ -1315,7 +1321,7 @@ describe("App", () => {
     expect(await screen.findByText("PC-001")).toBeInTheDocument();
     expect(screen.getByText("SN-001")).toBeInTheDocument();
     expect(screen.getByText("2 jobs")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "job-running" })).toHaveAttribute("href", "/jobs/job-running");
+    expect(screen.getByRole("link", { name: "job-running" })).toHaveAttribute("href", "/react/jobs/job-running");
     fireEvent.click(screen.getByRole("button", { name: "failed" }));
     expect(screen.getByText("1 of 2 jobs")).toBeInTheDocument();
     expect(screen.queryByText("PC-001")).not.toBeInTheDocument();
@@ -1338,7 +1344,7 @@ describe("App", () => {
     });
     expect(screen.getByText("Build host agent")).toBeInTheDocument();
     expect(screen.getAllByText("Stage Windows ISO and VirtIO media").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/osdeploy");
+    expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/react/osdeploy");
     expect(screen.getAllByRole("link", { name: "Monitoring settings" }).some((link) =>
       link.getAttribute("href") === "/react/monitoring/settings"
     )).toBe(true);
@@ -1353,7 +1359,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tail" }));
     expect(await screen.findByText("2026-05-19T00:00:00Z autopilot ready")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Fleet attention" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/devices/101");
+    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/react/vms/101");
     expect(screen.queryByRole("button", { name: /sweep/i })).not.toBeInTheDocument();
   });
 });

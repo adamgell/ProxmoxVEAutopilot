@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 
-import { migratedRoutes, operatorFlows, operatorNavGroups, reactRouteForPath } from "./routes";
+import {
+  migratedRoutes,
+  navPathForPath,
+  operatorFlows,
+  operatorNavGroups,
+  operatorNavItems,
+  reactHrefForUiPath,
+  reactRouteForPath
+} from "./routes";
 
 describe("operator route registry", () => {
   test("registers only active React routes as migrated routes", () => {
@@ -27,6 +35,7 @@ describe("operator route registry", () => {
         "/react/task-engine/sequences/:sequenceId/edit",
         "/react/answer-isos",
         "/react/vms",
+        "/react/vms/:vmid",
         "/react/utm-vms",
         "/react/sequences",
         "/react/sequences/new",
@@ -53,13 +62,46 @@ describe("operator route registry", () => {
 
   test("finds active React routes and ignores legacy deep links", () => {
     expect(reactRouteForPath("/react/jobs")?.label).toBe("Jobs");
+    expect(reactRouteForPath("/react/jobs/job-123")?.label).toBe("Job Detail");
     expect(reactRouteForPath("/react/vms")?.label).toBe("VMs");
+    expect(reactRouteForPath("/react/vms/108")?.label).toBe("VM Detail");
     expect(reactRouteForPath("/react/agent-download")?.label).toBe("Agent Download");
     expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
     expect(reactRouteForPath("/react/settings")?.label).toBe("General");
     expect(reactRouteForPath("/react/cloudosd")?.label).toBe("OSDCloud Desktop");
     expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Engine");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
+  });
+
+  test("keeps primary navigation free of parameterized route templates", () => {
+    expect(operatorNavItems.every((route) => !route.path.includes(":"))).toBe(true);
+    expect(operatorNavItems.map((route) => route.label)).not.toEqual(
+      expect.arrayContaining([
+        "Job Detail",
+        "Run Detail",
+        "OSDCloud Run",
+        "OSDeploy Run",
+        "VM Detail",
+        "Task Template",
+        "Edit Task Sequence",
+        "Edit Sequence"
+      ])
+    );
+    expect(navPathForPath("/react/jobs/job-123")).toBe("/react/jobs");
+    expect(navPathForPath("/react/vms/108")).toBe("/react/vms");
+    expect(navPathForPath("/react/task-engine/sequences/7/edit")).toBe("/react/task-engine/sequences/list");
+  });
+
+  test("normalizes old operator UI hrefs into React destinations", () => {
+    expect(reactHrefForUiPath("/jobs/job-running")).toBe("/react/jobs/job-running");
+    expect(reactHrefForUiPath("/osdeploy")).toBe("/react/osdeploy");
+    expect(reactHrefForUiPath("/osdeploy/runs/run-1")).toBe("/react/osdeploy/runs/run-1");
+    expect(reactHrefForUiPath("/cloudosd/runs/run-1")).toBe("/react/cloudosd/runs/run-1");
+    expect(reactHrefForUiPath("/devices/108")).toBe("/react/vms/108");
+    expect(reactHrefForUiPath("/vms/108/console")).toBe("/react/vms/108?action=console");
+    expect(reactHrefForUiPath("/vms/108/console?source=tray")).toBe("/react/vms/108?action=console&source=tray");
+    expect(reactHrefForUiPath("/files/AutopilotAgent.msi")).toBe("/files/AutopilotAgent.msi");
+    expect(reactHrefForUiPath("/api/hashes/foo.csv")).toBe("/api/hashes/foo.csv");
   });
 
   test("maps refined operator flows to React starts without Jinja steps", () => {

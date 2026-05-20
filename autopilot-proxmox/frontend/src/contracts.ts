@@ -21,6 +21,8 @@ export interface OperatorRoute {
   readonly phase: MigratedRoute["phase"] | "legacy";
   readonly active: boolean;
   readonly legacy?: boolean;
+  readonly navParentPath?: string;
+  readonly showInNav?: boolean;
 }
 
 export interface OperatorNavGroup {

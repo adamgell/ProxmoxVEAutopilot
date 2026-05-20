@@ -1,14 +1,14 @@
 import type { AppBootstrap, OperatorFlow, OperatorFlowStep } from "../contracts";
 import { OperatorShell } from "../components/Shell";
 import { Panel } from "../components/ui";
-import { migratedRoutes, operatorFlows, operatorNavGroups } from "../routes";
+import { isOperatorNavRoute, operatorFlows, operatorNavGroups, operatorNavItems } from "../routes";
 
 function routeCount(label: string): string {
   const group = operatorNavGroups.find((item) => item.label === label);
   if (!group) {
     return "0";
   }
-  return String(group.items.length);
+  return String(group.items.filter(isOperatorNavRoute).length);
 }
 
 function stepClass(step: OperatorFlowStep): string {
@@ -25,7 +25,6 @@ function FlowCard({ flow }: { readonly flow: OperatorFlow }) {
             <li key={`${flow.id}-${step.href}-${step.label}`}>
               <a className={stepClass(step)} href={step.href}>
                 <span>{step.label}</span>
-                <small>{step.state}</small>
               </a>
             </li>
           ))}
@@ -48,8 +47,8 @@ export function ShellIndexPage({ bootstrap }: { readonly bootstrap: AppBootstrap
 
       <section className="metric-strip metric-strip--workspace" aria-label="Operator map totals">
         <div>
-          <span>React</span>
-          <strong>{String(migratedRoutes.length)}</strong>
+          <span>Surfaces</span>
+          <strong>{String(operatorNavItems.length)}</strong>
         </div>
         <div>
           <span>Deploy</span>
