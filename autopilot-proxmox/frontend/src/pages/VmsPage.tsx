@@ -1344,12 +1344,14 @@ function BubbleTopologyOverview({
   return (
     <section className="bubble-layout" aria-label="Tenant bubbles">
       <div className="bubble-primary-stack">
-        <Panel title="VM Workstation Fleets">
-          <div className="fleet-lane-command">
+        <Panel
+          title="VM Workstation Fleets"
+          action={(
             <button type="button" className="fleet-action fleet-action--command" onClick={onCreateBubble}>
               <span>New bubble</span>
             </button>
-          </div>
+          )}
+        >
           {bubbleDraftMode === "create" ? (
             <BubbleEditor
               mode="create"

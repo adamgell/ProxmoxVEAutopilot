@@ -475,6 +475,26 @@ h3 {
   border-top: 1px solid var(--line);
 }
 
+.panel__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  margin-bottom: 14px;
+}
+
+.panel__header h2 {
+  min-width: 0;
+  margin: 0;
+}
+
+.panel__action {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .row-list {
   display: grid;
   gap: 8px;
@@ -2164,6 +2184,10 @@ h3 {
 
   .filter-row__top {
     grid-template-columns: 1fr;
+  }
+
+  .panel__header {
+    align-items: flex-start;
   }
 
   .result-count {

@@ -31,14 +31,18 @@ export function MetricTerm({ label, value }: { readonly label: string; readonly 
 
 interface PanelProps {
   readonly title: string;
+  readonly action?: ReactNode;
   readonly children: ReactNode;
 }
 
-export function Panel({ title, children }: PanelProps) {
+export function Panel({ title, action, children }: PanelProps) {
   const titleId = `${title.toLowerCase().replaceAll(" ", "-")}-title`;
   return (
     <section className="panel" aria-labelledby={titleId}>
-      <h2 id={titleId}>{title}</h2>
+      <div className="panel__header">
+        <h2 id={titleId}>{title}</h2>
+        {action ? <div className="panel__action">{action}</div> : null}
+      </div>
       {children}
     </section>
   );
