@@ -30,7 +30,7 @@ const pageResponses: Record<string, unknown> = {
     osdeploy_cache: { summary: { entries: 2 } }
   },
   "/api/template/page": {
-    profiles: [{ name: "Surface" }],
+    profiles: { surface: { manufacturer: "Microsoft", product: "Surface Pro" } },
     ubuntu_sequences: [{ id: 2, name: "Ubuntu Desktop" }],
     hypervisor_type: "proxmox",
     utm_iso_dir: "/Users/Adam/UTM-ISOs"
@@ -54,7 +54,14 @@ const pageResponses: Record<string, unknown> = {
     flow_templates: [{ id: "template-1", name: "Windows baseline" }]
   },
   "/api/answer-isos/page": {
-    rows: [{ id: "answer-1", path: "/var/lib/vz/snippets/autopilot-unattend.img", in_use: true }],
+    rows: [{
+      hash: "answer-1",
+      short_hash: "answer-1",
+      volid: "/var/lib/vz/snippets/autopilot-unattend.img",
+      compiled_at: "2026-05-20T12:00:00-04:00",
+      last_used_at: null,
+      in_use: true
+    }],
     error: ""
   },
   "/api/sequences/page": {
@@ -101,12 +108,12 @@ describe("retired Jinja React pages", () => {
     ["/react/provision", "Provision", "Windows baseline"],
     ["/react/cloudosd", "OSDCloud Desktop", "Gell-EC41E7EB"],
     ["/react/osdeploy", "OSDeploy Server", "SRV-01"],
-    ["/react/template", "Template", "Ubuntu Desktop"],
+    ["/react/template", "Build Template", "Surface Pro"],
     ["/react/jobs/job-1", "Job Detail", "provision.yml"],
     ["/react/runs", "Runs", "WinPE-1"],
     ["/react/runs/1", "Run Detail", "rename_computer"],
     ["/react/task-engine", "Task Engine", "CloudOSD deployment"],
-    ["/react/answer-isos", "Answer ISOs", "autopilot-unattend.img"],
+    ["/react/answer-isos", "Answer ISO Cache", "autopilot-unattend.img"],
     ["/react/sequences", "Sequences", "Legacy baseline"],
     ["/react/utm-vms", "UTM VMs", "Win11-UTM"],
     ["/setup", "Setup", "ready"]

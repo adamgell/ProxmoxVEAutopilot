@@ -9326,6 +9326,7 @@ async def start_template(
 ):
     if _load_vars().get("hypervisor_type") == "utm":
         return await _enqueue_utm_template_job(
+            request=request,
             vm_os_kind=vm_os_kind,
             vm_name=vm_name,
             utm_iso_name=utm_iso_name,
@@ -9357,11 +9358,14 @@ async def start_template(
         args["pause_enabled"] = True
 
     job = job_manager.start("build_template", cmd, args=args)
+    if _request_wants_json(request):
+        return {"ok": True, "job_id": job["id"]}
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
 async def _enqueue_utm_template_job(
     *,
+    request: Request,
     vm_os_kind: str,
     vm_name: str,
     utm_iso_name: str,
@@ -9424,6 +9428,8 @@ async def _enqueue_utm_template_job(
         "vm_disk_gb": disk_gb,
     }
     job = job_manager.start("build_utm_template", cmd, args=args)
+    if _request_wants_json(request):
+        return {"ok": True, "job_id": job["id"]}
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 

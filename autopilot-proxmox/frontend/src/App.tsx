@@ -1,5 +1,6 @@
 import type { AppBootstrap } from "./contracts";
 import { AgentDownloadPage } from "./pages/AgentDownloadPage";
+import { AnswerIsosPage } from "./pages/AnswerIsosPage";
 import { ClassicVmsPage } from "./pages/ClassicVmsPage";
 import { CloudDevicesPage } from "./pages/CloudDevicesPage";
 import { CloudosdPage } from "./pages/CloudosdPage";
@@ -16,6 +17,7 @@ import { LoginPage, SetupPage } from "./pages/PublicPages";
 import { RetiredJinjaPage, retiredConfigForPath } from "./pages/RetiredJinjaPages";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
+import { TemplatePage } from "./pages/TemplatePage";
 import { VmsPage } from "./pages/VmsPage";
 
 interface AppProps {
@@ -71,6 +73,12 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/osdeploy") {
     return <OsdeployPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/template") {
+    return <TemplatePage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/answer-isos") {
+    return <AnswerIsosPage bootstrap={bootstrap} />;
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;

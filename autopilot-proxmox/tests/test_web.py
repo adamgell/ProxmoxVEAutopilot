@@ -530,6 +530,25 @@ def test_template_form_post_without_pause_leaves_args_unannotated(client):
     assert not any("template_pause_signal_path" in t for t in captured["cmd"])
 
 
+def test_template_form_post_json_accept_returns_job_payload(client):
+    """React submits the same FormData endpoint but asks for JSON instead of
+    following the old browser redirect."""
+    from web.app import job_manager
+    captured = {}
+    def fake_start(name, cmd, args=None):
+        captured["cmd"] = list(cmd); captured["args"] = args or {}
+        return {"id": "fake-id"}
+    job_manager.start.side_effect = fake_start
+    r = client.post(
+        "/api/jobs/template",
+        data={"profile": "lenovo-t14", "pause_before_sysprep": "on"},
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "job_id": "fake-id"}
+    assert captured["args"]["pause_enabled"] is True
+
+
 def test_template_form_post_with_pause_passes_signal_path(client):
     """Ticking the checkbox adds template_pause_signal_path to the
     ansible -e args and stashes the absolute path in job.args so the UI
