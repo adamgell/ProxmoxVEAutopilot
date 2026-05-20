@@ -2114,6 +2114,7 @@ def _init_app_database() -> None:
         deployment_health_pg,
         device_history_pg,
         devices_pg,
+        lab_bubbles_pg,
         machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
@@ -2131,6 +2132,305 @@ def _init_app_database() -> None:
         osdeploy_pg.init(conn)
         osdeploy_cache.init(conn)
         deployment_health_pg.init(conn)
+        lab_bubbles_pg.init(conn)
+
+
+class _BubbleCreate(BaseModel):
+    name: str
+    description: str = ""
+    domain_name: str = ""
+    netbios_name: str = ""
+    cidr: str = ""
+    gateway_ip: str = ""
+    planned_bridge: str = ""
+    planned_vlan: Optional[int] = None
+    dhcp_scope: str = ""
+    dhcp_pool_start: str = ""
+    dhcp_pool_end: str = ""
+
+
+class _BubblePatch(BaseModel):
+    description: Optional[str] = None
+    lifecycle_state: Optional[str] = None
+    domain_name: Optional[str] = None
+    netbios_name: Optional[str] = None
+    cidr: Optional[str] = None
+    gateway_ip: Optional[str] = None
+    planned_bridge: Optional[str] = None
+    planned_vlan: Optional[int] = None
+    isolation_status: Optional[str] = None
+    dc_ready: Optional[bool] = None
+    dns_ready: Optional[bool] = None
+    dhcp_ready: Optional[bool] = None
+    workload_ready: Optional[bool] = None
+
+
+class _BubbleAssetCreate(BaseModel):
+    asset_type: str
+    asset_role: str
+    vmid: Optional[int] = None
+    vm_uuid: Optional[str] = None
+    run_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    service_id: Optional[str] = None
+    membership_state: str = "active"
+    evidence_state: str = "unknown"
+    notes: str = ""
+
+
+class _BubbleServiceCreate(BaseModel):
+    service_kind: str
+    service_name: str
+    scope: str = "bubble_local"
+    provider_asset_id: Optional[str] = None
+    consumer_refs: list = Field(default_factory=list)
+    readiness_state: str = "unknown"
+    evidence_summary: dict = Field(default_factory=dict)
+
+
+class _BubbleAssetPatch(BaseModel):
+    asset_role: Optional[str] = None
+    vmid: Optional[int] = None
+    vm_uuid: Optional[str] = None
+    run_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    service_id: Optional[str] = None
+    membership_state: Optional[str] = None
+    evidence_state: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class _BubbleAssetMove(BaseModel):
+    target_bubble_id: str
+    reason: str = ""
+
+
+class _BubbleServicePatch(BaseModel):
+    service_kind: Optional[str] = None
+    service_name: Optional[str] = None
+    scope: Optional[str] = None
+    provider_asset_id: Optional[str] = None
+    consumer_refs: Optional[list] = None
+    readiness_state: Optional[str] = None
+    evidence_summary: Optional[dict] = None
+
+
+def _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id: str) -> dict:
+    bubble = lab_bubbles_pg.get_bubble(conn, bubble_id)
+    if bubble is None:
+        raise HTTPException(status_code=404, detail="bubble not found")
+    return bubble
+
+
+def _api_asset_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id: str, asset_id: str) -> dict:
+    for asset in lab_bubbles_pg.list_assets(conn, bubble_id):
+        if asset["id"] == asset_id:
+            return asset
+    raise HTTPException(status_code=404, detail="asset not found in bubble")
+
+
+def _api_service_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id: str, service_id: str) -> dict:
+    for service in lab_bubbles_pg.list_services(conn, bubble_id):
+        if service["id"] == service_id:
+            return service
+    raise HTTPException(status_code=404, detail="service not found in bubble")
+
+
+def _patch_fields(body: BaseModel, *, nullable: set[str]) -> dict:
+    updates = body.model_dump(exclude_unset=True)
+    invalid_nulls = sorted(
+        key for key, value in updates.items()
+        if value is None and key not in nullable
+    )
+    if invalid_nulls:
+        joined = ", ".join(invalid_nulls)
+        raise HTTPException(status_code=400, detail=f"null is not allowed for: {joined}")
+    return updates
+
+
+@app.get("/api/bubbles")
+def api_bubbles_list():
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        return {"bubbles": lab_bubbles_pg.list_bubbles(conn)}
+
+
+@app.post("/api/bubbles", status_code=201)
+def api_bubbles_create(body: _BubbleCreate):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.create_bubble(conn, **body.model_dump())
+        except psycopg.errors.UniqueViolation as exc:
+            raise HTTPException(status_code=409, detail="bubble already exists") from exc
+
+
+@app.get("/api/bubbles/{bubble_id}")
+def api_bubbles_get(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        return _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+
+
+@app.patch("/api/bubbles/{bubble_id}")
+def api_bubbles_patch(bubble_id: str, body: _BubblePatch):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            return lab_bubbles_pg.update_bubble(
+                conn,
+                bubble_id,
+                **_patch_fields(body, nullable={"planned_vlan"}),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/api/bubbles/{bubble_id}/readiness")
+def api_bubbles_readiness(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        bubble = _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {
+            "bubble": bubble,
+            "assets": lab_bubbles_pg.list_assets(conn, bubble_id),
+            "services": lab_bubbles_pg.list_services(conn, bubble_id),
+        }
+
+
+@app.get("/api/bubbles/{bubble_id}/assets")
+def api_bubbles_assets_list(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {"assets": lab_bubbles_pg.list_assets(conn, bubble_id)}
+
+
+@app.post("/api/bubbles/{bubble_id}/assets", status_code=201)
+def api_bubbles_assets_create(bubble_id: str, body: _BubbleAssetCreate):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        try:
+            return lab_bubbles_pg.add_asset(
+                conn,
+                bubble_id,
+                **body.model_dump(),
+                actor="operator",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/bubbles/{bubble_id}/assets/{asset_id}")
+def api_bubbles_assets_patch(bubble_id: str, asset_id: str, body: _BubbleAssetPatch):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+            _api_asset_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, asset_id)
+            return lab_bubbles_pg.update_asset(
+                conn,
+                asset_id,
+                **_patch_fields(
+                    body,
+                    nullable={"vmid", "vm_uuid", "run_id", "agent_id", "service_id"},
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/bubbles/{bubble_id}/assets/{asset_id}/move")
+def api_bubbles_assets_move(bubble_id: str, asset_id: str, body: _BubbleAssetMove):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+            _api_asset_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, asset_id)
+            _api_bubble_or_404(conn, lab_bubbles_pg, body.target_bubble_id)
+            return lab_bubbles_pg.move_asset(
+                conn,
+                asset_id,
+                body.target_bubble_id,
+                reason=body.reason,
+                actor="operator",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/bubbles/{bubble_id}/services")
+def api_bubbles_services_list(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {"services": lab_bubbles_pg.list_services(conn, bubble_id)}
+
+
+@app.post("/api/bubbles/{bubble_id}/services", status_code=201)
+def api_bubbles_services_create(bubble_id: str, body: _BubbleServiceCreate):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        try:
+            return lab_bubbles_pg.add_service(conn, bubble_id, **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/bubbles/{bubble_id}/services/{service_id}")
+def api_bubbles_services_patch(
+    bubble_id: str,
+    service_id: str,
+    body: _BubbleServicePatch,
+):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        try:
+            _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+            _api_service_in_bubble_or_404(conn, lab_bubbles_pg, bubble_id, service_id)
+            return lab_bubbles_pg.update_service(
+                conn,
+                service_id,
+                **_patch_fields(body, nullable={"provider_asset_id"}),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/bubbles/{bubble_id}/audit-events")
+def api_bubbles_audit_events(bubble_id: str):
+    from web import db_pg, lab_bubbles_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        lab_bubbles_pg.init(conn)
+        _api_bubble_or_404(conn, lab_bubbles_pg, bubble_id)
+        return {"events": lab_bubbles_pg.list_audit_events(conn, bubble_id)}
 
 
 def _init_ts_engine_database_if_configured() -> bool:
@@ -4575,6 +4875,7 @@ class VmsFleetResponse(BaseModel):
     missing_vms: list[VmFleetRowResponse] = Field(default_factory=list)
     agents: list[AgentFleetRowResponse] = Field(default_factory=list)
     autopilot_devices: list[AutopilotDeviceFleetRowResponse] = Field(default_factory=list)
+    bubble_topology: dict[str, Any] = Field(default_factory=dict)
     ap_error: str = ""
     cache_age_seconds: int | None = None
     cache_fetched_at_iso: str = ""
@@ -7326,12 +7627,36 @@ async def _vms_fleet_payload() -> dict:
         if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
     ]
     agents = _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), vms)
+    bubble_topology = {
+        "workstation_fleets": [],
+        "critical_infrastructure": [],
+        "connected_services": [],
+        "unassigned_assets": [],
+        "warnings": [],
+        "gate_states": [],
+    }
+    try:
+        from web import db_pg, lab_bubbles_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            lab_bubbles_pg.init(conn)
+            bubble_topology = lab_bubbles_pg.build_vm_page_payload(
+                conn,
+                vms=vms,
+                agent_rows=agents,
+            )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger("web.react.vms").exception("bubble topology unavailable")
+        bubble_topology["warnings"] = ["Bubble topology is temporarily unavailable."]
 
     return {
         "vms": vms,
         "missing_vms": missing_vms,
         "agents": agents,
         "autopilot_devices": matched_devices,
+        "bubble_topology": bubble_topology,
         "ap_error": ap_error or "",
         "cache_age_seconds": None if cache_age == float("inf") else int(cache_age),
         "cache_fetched_at_iso": _cache_fetched_at_iso(cache_age),

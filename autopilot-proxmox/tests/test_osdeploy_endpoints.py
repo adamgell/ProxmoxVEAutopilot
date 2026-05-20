@@ -21,7 +21,15 @@ def _bearer(token: str) -> dict[str, str]:
 
 @pytest.fixture
 def osdeploy_client(pg_conn, monkeypatch):
-    from web import agent_telemetry_pg, jobs_pg, osdeploy_cache, osdeploy_pg, sequences_pg, ts_engine_pg
+    from web import (
+        agent_telemetry_pg,
+        jobs_pg,
+        lab_bubbles_pg,
+        osdeploy_cache,
+        osdeploy_pg,
+        sequences_pg,
+        ts_engine_pg,
+    )
 
     sequences_pg.reset_for_tests(pg_conn)
     sequences_pg.init(pg_conn)
@@ -35,6 +43,8 @@ def osdeploy_client(pg_conn, monkeypatch):
     osdeploy_cache.init(pg_conn)
     osdeploy_pg.reset_for_tests(pg_conn)
     osdeploy_pg.init(pg_conn)
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
 
     from web import app as web_app
@@ -564,6 +574,227 @@ def test_osdeploy_preflight_accepts_launchable_role_with_required_options(
         "configure_file_server_role",
         "wait_agent_heartbeat",
     ]
+
+
+def test_osdeploy_run_records_bubble_membership(osdeploy_client, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+
+    res = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="ACME-DC01",
+            server_role="isolated_domain_controller",
+            role_options=_isolated_dc_options(
+                forest_admin_credential_id=creds["forest_admin"],
+                dsrm_credential_id=creds["dsrm"],
+            ),
+            bubble_id=bubble["id"],
+            asset_role="domain_controller",
+        ),
+    )
+
+    assert res.status_code == 201, res.text
+    run_id = res.json()["run"]["run_id"]
+    assets = lab_bubbles_pg.list_assets(pg_conn, bubble["id"])
+    assert any(
+        asset["run_id"] == run_id
+        and asset["asset_type"] == "vm"
+        and asset["asset_role"] == "domain_controller"
+        and asset["membership_state"] == "provisioning"
+        for asset in assets
+    )
+
+
+def test_osdeploy_run_rejects_missing_bubble_before_run_create(osdeploy_client, pg_conn):
+    from web import lab_bubbles_pg, osdeploy_pg
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    missing_bubble = "00000000-0000-0000-0000-000000000001"
+
+    res = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="ACME-MISSING-BUBBLE",
+            bubble_id=missing_bubble,
+            asset_role="file_server",
+        ),
+    )
+
+    assert res.status_code == 404
+    assert osdeploy_pg.list_runs(pg_conn) == []
+    assert lab_bubbles_pg.list_assets(pg_conn, missing_bubble) == []
+
+
+def test_osdeploy_bundle_records_bubble_child_memberships(osdeploy_client, pg_conn):
+    from web import lab_bubbles_pg
+
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+    options = _lab_bundle_options(
+        domain_join_credential_id=creds["domain_join"],
+        children=[
+            {
+                "role": "isolated_domain_controller",
+                "vm_name": "LAB-DC01",
+                "role_options": _isolated_dc_options(
+                    forest_admin_credential_id=creds["forest_admin"],
+                    dsrm_credential_id=creds["dsrm"],
+                ),
+            },
+            {
+                "role": "file_server",
+                "vm_name": "LAB-FS01",
+                "role_options": _file_server_options(),
+            },
+            {
+                "role": "mecm_prereq",
+                "vm_name": "LAB-CM01",
+                "role_options": _mecm_options(),
+            },
+        ],
+    )
+
+    res = osdeploy_client.post(
+        "/api/osdeploy/v1/bundles",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="ACME-BUNDLE",
+            server_role="lab_in_a_box",
+            role_options=options,
+            bubble_id=bubble["id"],
+        ),
+    )
+
+    assert res.status_code == 201, res.text
+    child_run_ids = {child["run"]["run_id"] for child in res.json()["children"]}
+    assets = lab_bubbles_pg.list_assets(pg_conn, bubble["id"])
+    assert {asset["run_id"] for asset in assets} == child_run_ids
+    assert {asset["asset_role"] for asset in assets} == {
+        "domain_controller",
+        "file_server",
+        "configmgr",
+    }
+    assert all(asset["membership_state"] == "provisioning" for asset in assets)
+
+
+def test_osdeploy_preflight_blocks_domain_join_before_bubble_readiness(osdeploy_client, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+
+    body = _run_payload(
+        artifact["id"],
+        vm_name="ACME-FS01",
+        server_role="file_server",
+        role_options=_file_server_options(
+            domain_join={
+                "credential_id": creds["domain_join"],
+                "domain_fqdn": "lab.gell.one",
+                "credential_domain": "LAB",
+            },
+        ),
+        bubble_id=bubble["id"],
+        asset_role="file_server",
+    )
+    res = osdeploy_client.post("/api/osdeploy/v1/preflight", json=body)
+
+    assert res.status_code == 200, res.text
+    checks = res.json()["blocking_checks"]
+    assert any(check["id"] == "bubble_not_ready" for check in checks)
+
+
+def test_osdeploy_preflight_allows_workgroup_launch_before_bubble_readiness(osdeploy_client, pg_conn):
+    from web import lab_bubbles_pg
+
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    artifact = _create_osdeploy_artifact(pg_conn)
+
+    res = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="ACME-FS01",
+            server_role="file_server",
+            role_options=_file_server_options(),
+            bubble_id=bubble["id"],
+            asset_role="file_server",
+        ),
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["launch_allowed"] is True
+    assert "bubble_warning" in {warning["id"] for warning in body["warnings"]}
+
+
+def test_osdeploy_preflight_blocks_workgroup_launch_in_multi_bubble_context(
+    osdeploy_client,
+    pg_conn,
+):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="Contoso Lab")
+    artifact = _create_osdeploy_artifact(pg_conn)
+
+    res = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="CONTOSO-FS01",
+            server_role="file_server",
+            role_options=_file_server_options(),
+            bubble_id=bubble["id"],
+            asset_role="file_server",
+        ),
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["launch_allowed"] is False
+    assert {check["id"] for check in body["blocking_checks"]} == {"bubble_not_ready"}
+
+
+def test_osdeploy_preflight_allows_dc_bootstrap_in_multi_bubble_context(osdeploy_client, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="Contoso Lab")
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+
+    res = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="CONTOSO-DC01",
+            server_role="isolated_domain_controller",
+            role_options=_isolated_dc_options(
+                forest_admin_credential_id=creds["forest_admin"],
+                dsrm_credential_id=creds["dsrm"],
+            ),
+            bubble_id=bubble["id"],
+            asset_role="domain_controller",
+        ),
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["launch_allowed"] is True
+    assert "bubble_warning" in {warning["id"] for warning in body["warnings"]}
 
 
 def test_osdeploy_preflight_rejects_role_missing_required_options(osdeploy_client, pg_conn):

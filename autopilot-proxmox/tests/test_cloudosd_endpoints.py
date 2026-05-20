@@ -25,7 +25,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 @pytest.fixture
 def cloudosd_client(pg_conn, monkeypatch):
-    from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, devices_pg, jobs_pg, sequences_pg, ts_engine_pg
+    from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, devices_pg, jobs_pg, lab_bubbles_pg, sequences_pg, ts_engine_pg
 
     sequences_pg.reset_for_tests(pg_conn)
     sequences_pg.init(pg_conn)
@@ -41,6 +41,8 @@ def cloudosd_client(pg_conn, monkeypatch):
     cloudosd_cache.init(pg_conn)
     cloudosd_pg.reset_for_tests(pg_conn)
     cloudosd_pg.init(pg_conn)
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
 
     from web import app as web_app
@@ -175,6 +177,59 @@ def _create_cloudosd_run(cloudosd_client, pg_conn, **overrides):
     response = cloudosd_client.post("/api/cloudosd/runs", json=payload)
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_cloudosd_run_records_bubble_membership(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import lab_bubbles_pg
+
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    artifact = _create_artifact(pg_conn)
+
+    response = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(
+            artifact["id"],
+            bubble_id=bubble["id"],
+            asset_role="domain_controller",
+            vmid=245,
+        ),
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assets = lab_bubbles_pg.list_assets(pg_conn, bubble["id"])
+    assert len(assets) == 1
+    assert assets[0]["asset_type"] == "vm"
+    assert assets[0]["asset_role"] == "domain_controller"
+    assert assets[0]["vmid"] == 245
+    assert assets[0]["run_id"] == run["run_id"]
+    assert assets[0]["membership_state"] == "provisioning"
+
+
+def test_cloudosd_run_rejects_missing_bubble_before_run_create(
+    cloudosd_client,
+    pg_conn,
+):
+    from web import cloudosd_pg, lab_bubbles_pg
+
+    artifact = _create_artifact(pg_conn)
+    missing_bubble = "00000000-0000-0000-0000-000000000001"
+
+    response = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(
+            artifact["id"],
+            bubble_id=missing_bubble,
+            vmid=246,
+        ),
+    )
+
+    assert response.status_code == 404
+    assert cloudosd_pg.list_runs(pg_conn) == []
+    assert lab_bubbles_pg.list_assets(pg_conn, missing_bubble) == []
 
 
 def _patch_sequence_cipher(monkeypatch, tmp_path: Path):

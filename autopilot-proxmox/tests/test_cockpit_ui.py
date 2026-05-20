@@ -996,3 +996,221 @@ def test_task_engine_imports_legacy_sequence_into_v2(
         "verify_ad_domain_join",
     ]
     assert nodes[0]["params"]["ou_path"] == "OU=Workstations,DC=example,DC=com"
+
+
+def test_bubble_api_create_assets_services_and_audit(web_client: TestClient, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+
+    created = web_client.post(
+        "/api/bubbles",
+        json={
+            "name": "ACME Lab",
+            "domain_name": "lab.acme.test",
+            "netbios_name": "ACME",
+            "cidr": "10.42.12.0/24",
+            "gateway_ip": "10.42.12.1",
+        },
+    )
+    assert created.status_code == 201
+    bubble_id = created.json()["id"]
+
+    asset = web_client.post(
+        f"/api/bubbles/{bubble_id}/assets",
+        json={
+            "asset_type": "vm",
+            "asset_role": "domain_controller",
+            "vmid": 130,
+            "agent_id": "dc01",
+        },
+    )
+    assert asset.status_code == 201
+    asset_id = asset.json()["id"]
+
+    service = web_client.post(
+        f"/api/bubbles/{bubble_id}/services",
+        json={
+            "service_kind": "dhcp",
+            "service_name": "ACME DHCP",
+            "scope": "bubble_local",
+            "provider_asset_id": asset_id,
+        },
+    )
+    assert service.status_code == 201
+    service_id = service.json()["id"]
+
+    patched_service = web_client.patch(
+        f"/api/bubbles/{bubble_id}/services/{service_id}",
+        json={"readiness_state": "ready", "evidence_summary": {"leases": 3}},
+    )
+    assert patched_service.status_code == 200
+    assert patched_service.json()["readiness_state"] == "ready"
+
+    patched_asset = web_client.patch(
+        f"/api/bubbles/{bubble_id}/assets/{asset_id}",
+        json={"evidence_state": "confirmed", "notes": "agent matched"},
+    )
+    assert patched_asset.status_code == 200
+    assert patched_asset.json()["evidence_state"] == "confirmed"
+
+    moved = web_client.post(
+        f"/api/bubbles/{bubble_id}/assets/{asset_id}/move",
+        json={"target_bubble_id": bubble_id, "reason": "self move audit check"},
+    )
+    assert moved.status_code == 200
+
+    readiness = web_client.get(f"/api/bubbles/{bubble_id}/readiness")
+    assert readiness.status_code == 200
+    assert readiness.json()["bubble"]["id"] == bubble_id
+
+    audit = web_client.get(f"/api/bubbles/{bubble_id}/audit-events")
+    assert audit.status_code == 200
+    assert any(row["action"] == "asset_added" for row in audit.json()["events"])
+    assert any(row["action"] == "asset_moved" for row in audit.json()["events"])
+
+
+def test_bubble_api_rejects_cross_bubble_asset_and_service_mutation(
+    web_client: TestClient,
+    pg_conn,
+):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+    source = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    target = lab_bubbles_pg.create_bubble(pg_conn, name="Contoso Lab")
+    source_asset = lab_bubbles_pg.add_asset(
+        pg_conn,
+        source["id"],
+        asset_type="vm",
+        asset_role="domain_controller",
+        vmid=130,
+    )
+    target_asset = lab_bubbles_pg.add_asset(
+        pg_conn,
+        target["id"],
+        asset_type="vm",
+        asset_role="domain_controller",
+        vmid=230,
+    )
+    source_service = lab_bubbles_pg.add_service(
+        pg_conn,
+        source["id"],
+        service_kind="dhcp",
+        service_name="ACME DHCP",
+        provider_asset_id=source_asset["id"],
+    )
+
+    wrong_asset_patch = web_client.patch(
+        f"/api/bubbles/{target['id']}/assets/{source_asset['id']}",
+        json={"notes": "wrong bubble"},
+    )
+    assert wrong_asset_patch.status_code == 404
+    assert lab_bubbles_pg.list_assets(pg_conn, source["id"])[0]["notes"] == ""
+
+    wrong_asset_move = web_client.post(
+        f"/api/bubbles/{target['id']}/assets/{source_asset['id']}/move",
+        json={"target_bubble_id": target["id"], "reason": "wrong source"},
+    )
+    assert wrong_asset_move.status_code == 404
+    assert lab_bubbles_pg.list_assets(pg_conn, source["id"])[0]["bubble_id"] == source["id"]
+
+    wrong_service_patch = web_client.patch(
+        f"/api/bubbles/{target['id']}/services/{source_service['id']}",
+        json={"readiness_state": "ready"},
+    )
+    assert wrong_service_patch.status_code == 404
+    assert lab_bubbles_pg.list_services(pg_conn, source["id"])[0]["readiness_state"] == "unknown"
+
+    wrong_provider = web_client.post(
+        f"/api/bubbles/{target['id']}/services",
+        json={
+            "service_kind": "dns",
+            "service_name": "Wrong DNS",
+            "provider_asset_id": source_asset["id"],
+        },
+    )
+    assert wrong_provider.status_code == 400
+
+    wrong_provider_patch = web_client.patch(
+        f"/api/bubbles/{source['id']}/services/{source_service['id']}",
+        json={"provider_asset_id": target_asset["id"]},
+    )
+    assert wrong_provider_patch.status_code == 400
+
+
+def test_bubble_api_returns_404_for_missing_nested_bubble(web_client: TestClient, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+
+    missing_bubble = "00000000-0000-0000-0000-000000000001"
+    assert web_client.get(f"/api/bubbles/{missing_bubble}/assets").status_code == 404
+    assert web_client.get(f"/api/bubbles/{missing_bubble}/services").status_code == 404
+    assert web_client.get(f"/api/bubbles/{missing_bubble}/audit-events").status_code == 404
+
+
+def test_bubble_api_patch_nulls_are_explicit(web_client: TestClient, pg_conn):
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+    bubble = lab_bubbles_pg.create_bubble(
+        pg_conn,
+        name="ACME Lab",
+        planned_vlan=42,
+    )
+    asset = lab_bubbles_pg.add_asset(
+        pg_conn,
+        bubble["id"],
+        asset_type="vm",
+        asset_role="domain_controller",
+        vmid=130,
+        agent_id="dc01",
+    )
+    service = lab_bubbles_pg.add_service(
+        pg_conn,
+        bubble["id"],
+        service_kind="dhcp",
+        service_name="ACME DHCP",
+        provider_asset_id=asset["id"],
+    )
+
+    cleared_bubble = web_client.patch(
+        f"/api/bubbles/{bubble['id']}",
+        json={"planned_vlan": None},
+    )
+    assert cleared_bubble.status_code == 200
+    assert cleared_bubble.json()["planned_vlan"] is None
+
+    cleared_asset = web_client.patch(
+        f"/api/bubbles/{bubble['id']}/assets/{asset['id']}",
+        json={"vmid": None, "agent_id": None},
+    )
+    assert cleared_asset.status_code == 200
+    assert cleared_asset.json()["vmid"] is None
+    assert cleared_asset.json()["agent_id"] is None
+
+    cleared_service = web_client.patch(
+        f"/api/bubbles/{bubble['id']}/services/{service['id']}",
+        json={"provider_asset_id": None},
+    )
+    assert cleared_service.status_code == 200
+    assert cleared_service.json()["provider_asset_id"] is None
+
+    bad_asset_null = web_client.patch(
+        f"/api/bubbles/{bubble['id']}/assets/{asset['id']}",
+        json={"asset_role": None},
+    )
+    assert bad_asset_null.status_code == 400
+    assert "asset_role" in bad_asset_null.json()["detail"]
+
+    bad_service_null = web_client.patch(
+        f"/api/bubbles/{bubble['id']}/services/{service['id']}",
+        json={"service_name": None},
+    )
+    assert bad_service_null.status_code == 400
+    assert "service_name" in bad_service_null.json()["detail"]

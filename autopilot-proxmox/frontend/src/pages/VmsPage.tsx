@@ -26,7 +26,9 @@ import { VmActionWorkspace, type ScreenshotWorkspaceState, type VmActionMode, ty
 import type {
   AgentFleetRow,
   AppBootstrap,
-  AutopilotDeviceFleetRow,
+  LabBubble,
+  LabBubbleAsset,
+  LabBubbleTopology,
   LiveSocketMessage,
   VmDetailEvidenceResponse,
   VmFleetRow,
@@ -35,7 +37,6 @@ import type {
 import { connectFleetLive } from "../liveSocket";
 import {
   buildFleetMachineRows,
-  deviceDisplayName,
   fleetAgentLabel,
   fleetManagedByLabel,
   fleetOsName,
@@ -55,13 +56,91 @@ const emptyFleet: VmsFleetResponse = {
   missing_vms: [],
   agents: [],
   autopilot_devices: [],
+  bubble_topology: {
+    workstation_fleets: [],
+    critical_infrastructure: [],
+    connected_services: [],
+    unassigned_assets: [],
+    warnings: [],
+    gate_states: []
+  },
   ap_error: "",
   cache_refreshing: false,
   generated_at: ""
 };
 
+const emptyBubbleTopology: LabBubbleTopology = {
+  workstation_fleets: [],
+  critical_infrastructure: [],
+  connected_services: [],
+  unassigned_assets: [],
+  warnings: [],
+  gate_states: []
+};
+
 type SendLiveMessage = (message: Readonly<Record<string, unknown>>) => boolean;
 type ActionIcon = LucideIcon;
+type BubbleAssignment = {
+  readonly bubble: LabBubble;
+  readonly asset: LabBubbleAsset;
+};
+
+function bubbleSort(left: LabBubble, right: LabBubble): number {
+  return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+}
+
+function topologyBubbles(topology: LabBubbleTopology): readonly LabBubble[] {
+  const byId = new Map<string, LabBubble>();
+  for (const fleet of topology.workstation_fleets) {
+    byId.set(fleet.bubble.id, fleet.bubble);
+  }
+  for (const node of topology.critical_infrastructure) {
+    byId.set(node.bubble.id, node.bubble);
+  }
+  for (const service of topology.connected_services) {
+    byId.set(service.bubble.id, service.bubble);
+  }
+  return Array.from(byId.values()).toSorted(bubbleSort);
+}
+
+function topologyAssignmentsByVmid(topology: LabBubbleTopology): ReadonlyMap<number, BubbleAssignment> {
+  const byVmid = new Map<number, BubbleAssignment>();
+  for (const fleet of topology.workstation_fleets) {
+    for (const asset of fleet.assets ?? []) {
+      if (typeof asset.vmid === "number") {
+        byVmid.set(asset.vmid, { bubble: fleet.bubble, asset });
+      }
+    }
+  }
+  for (const node of topology.critical_infrastructure) {
+    if (typeof node.asset.vmid === "number") {
+      byVmid.set(node.asset.vmid, { bubble: node.bubble, asset: node.asset });
+    }
+  }
+  return byVmid;
+}
+
+function bubbleChoiceText(bubbles: readonly LabBubble[]): string {
+  return bubbles.map((bubble, index) => {
+    const network = bubble.cidr ? ` / ${bubble.cidr}` : "";
+    const domain = bubble.domain_name ? ` / ${bubble.domain_name}` : "";
+    return `${String(index + 1)}. ${bubble.name}${domain}${network}`;
+  }).join("\n");
+}
+
+function findBubbleChoice(bubbles: readonly LabBubble[], value: string): LabBubble | undefined {
+  const trimmed = value.trim();
+  const byNumber = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(byNumber) && byNumber > 0 && byNumber <= bubbles.length) {
+    return bubbles[byNumber - 1];
+  }
+  const normalized = trimmed.toLowerCase();
+  return bubbles.find((bubble) => (
+    bubble.id.toLowerCase() === normalized
+    || bubble.name.toLowerCase() === normalized
+    || (bubble.slug ?? "").toLowerCase() === normalized
+  ));
+}
 
 function detailVmidFromPath(path: string): number | null {
   const match = /^\/react\/vms\/(\d+)$/.exec(path);
@@ -268,6 +347,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
   const counts = useMemo(() => summarizeFleet(fleet), [fleet]);
   const machineRows = useMemo(() => buildFleetMachineRows(fleet), [fleet]);
+  const bubbleTopology = fleet.bubble_topology ?? emptyBubbleTopology;
+  const bubbleOptions = useMemo(() => topologyBubbles(bubbleTopology), [bubbleTopology]);
+  const assignmentsByVmid = useMemo(() => topologyAssignmentsByVmid(bubbleTopology), [bubbleTopology]);
   const detailRow = useMemo(
     () => detailVmid === null ? undefined : machineRows.find((row) => row.vmid === detailVmid),
     [detailVmid, machineRows]
@@ -366,13 +448,81 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setActionStatus(sent ? `QGA probe requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected");
   }, [sendLive]);
 
-  const deleteAutopilotDevice = useCallback((device: AutopilotDeviceFleetRow) => {
-    const typed = window.prompt(`Type ${device.serial} to delete Autopilot identity`);
-    if (typed !== device.serial) {
+  const createBubble = useCallback(() => {
+    const name = window.prompt("Bubble name");
+    if (!name?.trim()) {
       return;
     }
-    void runAction(`Delete Autopilot ${device.serial}`, () => postJson("/api/autopilot/delete", { device_id: device.id }));
+    const domainName = window.prompt("Domain name", "") ?? "";
+    const cidr = window.prompt("Isolated CIDR", "") ?? "";
+    const gatewayIp = window.prompt("Gateway IP", "") ?? "";
+    const dhcpScope = window.prompt("DHCP scope", cidr.replace(/\/\d+$/, "")) ?? "";
+    void runAction(`Create bubble ${name.trim()}`, () => postJson("/api/bubbles", {
+      name: name.trim(),
+      domain_name: domainName.trim(),
+      cidr: cidr.trim(),
+      gateway_ip: gatewayIp.trim(),
+      dhcp_scope: dhcpScope.trim()
+    }));
   }, [runAction]);
+
+  const tagMachine = useCallback((row: FleetMachineRow) => {
+    if (row.vmid === undefined) {
+      return;
+    }
+    if (!bubbleOptions.length) {
+      setActionStatus("Create a bubble before tagging VM assets.");
+      return;
+    }
+    const current = assignmentsByVmid.get(row.vmid);
+    const selected = window.prompt(
+      `Bubble for VM ${String(row.vmid)}\n${bubbleChoiceText(bubbleOptions)}`,
+      current?.bubble.name ?? bubbleOptions[0]?.name ?? ""
+    );
+    if (!selected) {
+      return;
+    }
+    const targetBubble = findBubbleChoice(bubbleOptions, selected);
+    if (!targetBubble) {
+      setActionStatus("Bubble selection did not match an existing bubble.");
+      return;
+    }
+    const role = (window.prompt(
+      "Asset role",
+      current?.asset.asset_role ?? "workstation"
+    ) ?? "").trim();
+    if (!role) {
+      return;
+    }
+    void runAction(`Tag VM ${String(row.vmid)}`, async () => {
+      if (!current) {
+        await postJson(`/api/bubbles/${targetBubble.id}/assets`, {
+          asset_type: "vm",
+          asset_role: role,
+          vmid: row.vmid,
+          membership_state: "active",
+          evidence_state: "operator_tagged",
+          notes: `Tagged from React VMs as ${row.name}`
+        });
+        return;
+      }
+      if (current.bubble.id !== targetBubble.id) {
+        await postJson(`/api/bubbles/${current.bubble.id}/assets/${current.asset.id}/move`, {
+          target_bubble_id: targetBubble.id,
+          reason: `React VMs retag to ${targetBubble.name}`
+        });
+      }
+      await fetchJson(`/api/bubbles/${targetBubble.id}/assets/${current.asset.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          asset_role: role,
+          vmid: row.vmid,
+          membership_state: "active"
+        })
+      });
+    });
+  }, [assignmentsByVmid, bubbleOptions, runAction]);
 
   const deleteAgent = useCallback((agent: AgentFleetRow) => {
     const typed = window.prompt(`Type ${agent.agent_id} to delete agent`);
@@ -475,7 +625,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       section="Fleet"
       path="/react/vms"
       socketState={socketState}
-      action={<a className="action-link" href="/vms">Legacy VMs</a>}
+      action={<a className="action-link" href="/react/monitoring">Signals</a>}
     >
       {loading ? <div className="progress" aria-label="Loading fleet"><span /></div> : null}
       {error ? <p className="notice" role="status">{error}</p> : null}
@@ -510,15 +660,16 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         </div>
       </section>
 
+      <BubbleTopologyOverview topology={bubbleTopology} onCreateBubble={createBubble} />
+
       <section className="fleet-lanes" aria-label="Fleet lanes">
         <div className="fleet-primary-stack">
           <FleetMachineTable
             rows={filteredMachines}
             onCreateAgent={createAgent}
+            onTagMachine={tagMachine}
+            assignmentsByVmid={assignmentsByVmid}
           />
-        </div>
-        <div className="fleet-side-stack">
-          <IntuneLane devices={fleet.autopilot_devices} onDelete={deleteAutopilotDevice} onSync={() => { void runAction("Sync Autopilot", () => postJson("/api/autopilot/sync")); }} />
         </div>
       </section>
     </PageFrame>
@@ -527,10 +678,14 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
 function FleetMachineTable({
   rows,
-  onCreateAgent
+  onCreateAgent,
+  onTagMachine,
+  assignmentsByVmid
 }: {
   readonly rows: readonly FleetMachineRow[];
   readonly onCreateAgent: () => void;
+  readonly onTagMachine: (row: FleetMachineRow) => void;
+  readonly assignmentsByVmid: ReadonlyMap<number, BubbleAssignment>;
 }) {
   return (
     <Panel title="Fleet machines">
@@ -554,6 +709,8 @@ function FleetMachineTable({
                 <th scope="col">IP Address</th>
                 <th scope="col">Runtime</th>
                 <th scope="col">Agent</th>
+                <th scope="col">Bubble</th>
+                <th scope="col">Tag</th>
               </tr>
             </thead>
             <tbody>
@@ -561,6 +718,8 @@ function FleetMachineTable({
                 <MachineRow
                   key={row.id}
                   row={row}
+                  assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
+                  onTag={onTagMachine}
                 />
               ))}
             </tbody>
@@ -572,9 +731,13 @@ function FleetMachineTable({
 }
 
 function MachineRow({
-  row
+  row,
+  assignment,
+  onTag
 }: {
   readonly row: FleetMachineRow;
+  readonly assignment: BubbleAssignment | undefined;
+  readonly onTag: (row: FleetMachineRow) => void;
 }) {
   const runtimeLabel = fleetRuntimeLabel(row);
   const agentLabel = fleetAgentLabel(row);
@@ -618,6 +781,23 @@ function MachineRow({
         <span className={agentLabel === "Stale" || agentLabel === "None" ? "status status--bad" : "status status--good"}>
           {agentLabel}
         </span>
+      </td>
+      <td>
+        <span className="machine-primary-value">
+          {assignment ? `${assignment.bubble.name} / ${roleLabel(assignment.asset.asset_role)}` : "-"}
+        </span>
+      </td>
+      <td>
+        {row.vmid !== undefined ? (
+          <button
+            type="button"
+            className="fleet-action"
+            aria-label={`Tag VM ${String(row.vmid)}`}
+            onClick={() => { onTag(row); }}
+          >
+            Tag
+          </button>
+        ) : <span className="machine-primary-value">-</span>}
       </td>
     </tr>
   );
@@ -797,44 +977,133 @@ function DetailPanel({ title, rows }: { readonly title: string; readonly rows: r
   );
 }
 
-function IntuneLane({
-  devices,
-  onDelete,
-  onSync
+function readinessClass(ok: unknown): string {
+  return ok === true ? "status status--good" : "status status--bad";
+}
+
+function readinessLabel(ok: unknown): string {
+  return ok === true ? "ready" : "waiting";
+}
+
+function roleLabel(value: string | undefined): string {
+  return fallbackText(value).replaceAll("_", " ");
+}
+
+function gateLabel(gate: Readonly<Record<string, unknown>> | undefined): string {
+  if (!gate) {
+    return "-";
+  }
+  const state = typeof gate.state === "string" ? gate.state : "";
+  const allowed = gate.allowed === true;
+  if (state) {
+    return allowed ? state : `blocked: ${state}`;
+  }
+  return allowed ? "allowed" : "blocked";
+}
+
+function BubbleTopologyOverview({
+  topology,
+  onCreateBubble
 }: {
-  readonly devices: readonly AutopilotDeviceFleetRow[];
-  readonly onDelete: (device: AutopilotDeviceFleetRow) => void;
-  readonly onSync: () => void;
+  readonly topology: LabBubbleTopology;
+  readonly onCreateBubble: () => void;
 }) {
+  const fleets = topology.workstation_fleets;
+  const infra = topology.critical_infrastructure;
+  const services = topology.connected_services;
+  const gateByBubble = new Map(topology.gate_states.map((gate) => [gate.bubble_id, gate]));
   return (
-    <Panel title="Autopilot Devices">
-      <div className="fleet-lane-command">
-        <button type="button" className="action-link" onClick={onSync}>Sync Autopilot</button>
-      </div>
-      <div className="fleet-card-list fleet-card-list--compact">
-        {devices.length ? devices.map((device) => (
-          <article key={device.id || device.serial} className="fleet-card fleet-card--device">
-            <header>
-              <div>
-                <span className={device.profile_ok ? "status status--good" : "status status--bad"}>
-                  {fallbackText(device.profile_status)}
-                </span>
-                <h3>{deviceDisplayName(device)}</h3>
-              </div>
-              <strong>{fallbackText(device.group_tag)}</strong>
-            </header>
-            <dl className="fleet-detail-grid">
-              <div><dt>Serial</dt><dd>{fallbackText(device.serial)}</dd></div>
-              <div><dt>Enroll</dt><dd>{fallbackText(device.enrollment_state)}</dd></div>
-              <div><dt>Model</dt><dd>{fallbackText(device.model)}</dd></div>
-              <div><dt>Hash</dt><dd>{device.has_local_hash ? "local" : "-"}</dd></div>
-            </dl>
-            <div className="fleet-actions">
-              <ActionButton label="Delete" tone="danger" onClick={() => { onDelete(device); }} />
+    <section className="bubble-layout" aria-label="Tenant bubbles">
+      <div className="bubble-primary-stack">
+        <Panel title="VM Workstation Fleets">
+          <div className="fleet-lane-command">
+            <button type="button" className="fleet-action fleet-action--command" onClick={onCreateBubble}>
+              <span>New bubble</span>
+            </button>
+          </div>
+          {topology.warnings.length ? (
+            <p className="notice" role="status">{topology.warnings.join(" ")}</p>
+          ) : null}
+          {fleets.length ? (
+            <div className="bubble-fleet-grid">
+              {fleets.map((fleet) => {
+                const gate = gateByBubble.get(fleet.bubble.id);
+                return (
+                  <article key={fleet.bubble.id} className="bubble-card">
+                    <header>
+                      <div>
+                        <span className="status status--active">{fallbackText(fleet.bubble.lifecycle_state || "planned")}</span>
+                        <h3>{fleet.bubble.name}</h3>
+                      </div>
+                      <strong>{String(fleet.workstation_count ?? 0)} VMs</strong>
+                    </header>
+                    <dl className="fleet-detail-grid">
+                      <div><dt>Domain</dt><dd>{fallbackText(fleet.bubble.domain_name)}</dd></div>
+                      <div><dt>Network</dt><dd>{fallbackText(fleet.bubble.cidr)}</dd></div>
+                      <div><dt>DHCP</dt><dd>{fallbackText(fleet.bubble.dhcp_scope)}</dd></div>
+                      <div><dt>Running</dt><dd>{String(fleet.running_count ?? 0)}</dd></div>
+                    </dl>
+                    <div className="chip-row">
+                      <span className={readinessClass(fleet.readiness?.dc_ready)}>DC {readinessLabel(fleet.readiness?.dc_ready)}</span>
+                      <span className={readinessClass(fleet.readiness?.dns_ready)}>DNS {readinessLabel(fleet.readiness?.dns_ready)}</span>
+                      <span className={readinessClass(fleet.readiness?.dhcp_ready)}>DHCP {readinessLabel(fleet.readiness?.dhcp_ready)}</span>
+                    </div>
+                    <p className="muted">Workgroup launch: {gateLabel(gate?.workgroup)} / Domain launch: {gateLabel(gate?.domain_join)}</p>
+                  </article>
+                );
+              })}
             </div>
-          </article>
-        )) : <p className="empty">No matching Autopilot devices.</p>}
+          ) : <p className="empty">No workstation bubbles tagged yet.</p>}
+        </Panel>
       </div>
-    </Panel>
+      <div className="bubble-side-stack">
+        <Panel title="Critical Infrastructure">
+          {infra.length ? (
+            <div className="fleet-card-list fleet-card-list--compact">
+              {infra.map((node) => (
+                <article key={node.asset.id} className="fleet-card">
+                  <header>
+                    <div>
+                      <span className="status">{node.bubble.name}</span>
+                      <h3>{roleLabel(node.role)}</h3>
+                    </div>
+                    <strong>{node.asset.vmid ? `VM ${String(node.asset.vmid)}` : fallbackText(node.asset.agent_id)}</strong>
+                  </header>
+                  <dl className="fleet-detail-grid">
+                    <div><dt>State</dt><dd>{fallbackText(node.asset.membership_state)}</dd></div>
+                    <div><dt>Evidence</dt><dd>{fallbackText(node.asset.evidence_state)}</dd></div>
+                    <div><dt>Agent</dt><dd>{fallbackText(node.agent?.agent_id ?? node.asset.agent_id)}</dd></div>
+                    <div><dt>Runtime</dt><dd>{fallbackText(node.vm?.status)}</dd></div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+          ) : <p className="empty">No infrastructure assets tagged yet.</p>}
+        </Panel>
+        <Panel title="Connected Services">
+          {services.length ? (
+            <div className="fleet-card-list fleet-card-list--compact">
+              {services.map((service) => (
+                <article key={service.id} className="fleet-card">
+                  <header>
+                    <div>
+                      <span className={service.readiness_state === "ready" ? "status status--good" : "status"}>{fallbackText(service.readiness_state)}</span>
+                      <h3>{service.service_name}</h3>
+                    </div>
+                    <strong>{service.bubble.name}</strong>
+                  </header>
+                  <dl className="fleet-detail-grid">
+                    <div><dt>Kind</dt><dd>{roleLabel(service.service_kind)}</dd></div>
+                    <div><dt>Scope</dt><dd>{fallbackText(service.scope)}</dd></div>
+                    <div><dt>Provider</dt><dd>{fallbackText(service.provider_asset_id)}</dd></div>
+                    <div><dt>Consumers</dt><dd>{String(service.consumer_refs?.length ?? 0)}</dd></div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+          ) : <p className="empty">No connected services linked yet.</p>}
+        </Panel>
+      </div>
+    </section>
   );
 }

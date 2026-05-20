@@ -410,11 +410,97 @@ export interface AutopilotDeviceFleetRow {
   readonly has_local_hash?: boolean;
 }
 
+export interface LabBubble {
+  readonly id: string;
+  readonly name: string;
+  readonly slug?: string;
+  readonly lifecycle_state?: string;
+  readonly domain_name?: string;
+  readonly netbios_name?: string;
+  readonly cidr?: string;
+  readonly gateway_ip?: string;
+  readonly planned_bridge?: string;
+  readonly planned_vlan?: number | null;
+  readonly isolation_status?: string;
+  readonly dhcp_scope?: string;
+  readonly dhcp_pool_start?: string;
+  readonly dhcp_pool_end?: string;
+  readonly dc_ready?: boolean;
+  readonly dns_ready?: boolean;
+  readonly dhcp_ready?: boolean;
+  readonly workload_ready?: boolean;
+}
+
+export interface LabBubbleAsset {
+  readonly id: string;
+  readonly bubble_id: string;
+  readonly asset_type: string;
+  readonly asset_role: string;
+  readonly vmid?: number | null;
+  readonly vm_uuid?: string | null;
+  readonly run_id?: string | null;
+  readonly agent_id?: string | null;
+  readonly service_id?: string | null;
+  readonly membership_state?: string;
+  readonly evidence_state?: string;
+  readonly notes?: string;
+}
+
+export interface LabBubbleService {
+  readonly id: string;
+  readonly bubble_id: string;
+  readonly service_kind: string;
+  readonly service_name: string;
+  readonly scope?: string;
+  readonly provider_asset_id?: string | null;
+  readonly readiness_state?: string;
+  readonly consumer_refs?: readonly unknown[];
+  readonly evidence_summary?: Readonly<Record<string, unknown>>;
+}
+
+export interface LabBubbleFleetSection {
+  readonly bubble: LabBubble;
+  readonly workstation_count?: number;
+  readonly running_count?: number;
+  readonly stopped_count?: number;
+  readonly assets?: readonly LabBubbleAsset[];
+  readonly vms?: readonly VmFleetRow[];
+  readonly readiness?: Readonly<Record<string, boolean>>;
+}
+
+export interface LabBubbleInfrastructureNode {
+  readonly bubble: LabBubble;
+  readonly asset: LabBubbleAsset;
+  readonly role: string;
+  readonly vm?: VmFleetRow | null;
+  readonly agent?: AgentFleetRow | null;
+}
+
+export interface LabBubbleConnectedService extends LabBubbleService {
+  readonly bubble: LabBubble;
+}
+
+export interface LabBubbleGateState {
+  readonly bubble_id: string;
+  readonly workgroup?: Readonly<Record<string, unknown>>;
+  readonly domain_join?: Readonly<Record<string, unknown>>;
+}
+
+export interface LabBubbleTopology {
+  readonly workstation_fleets: readonly LabBubbleFleetSection[];
+  readonly critical_infrastructure: readonly LabBubbleInfrastructureNode[];
+  readonly connected_services: readonly LabBubbleConnectedService[];
+  readonly unassigned_assets: readonly VmFleetRow[];
+  readonly warnings: readonly string[];
+  readonly gate_states: readonly LabBubbleGateState[];
+}
+
 export interface VmsFleetResponse {
   readonly vms: readonly VmFleetRow[];
   readonly missing_vms: readonly VmFleetRow[];
   readonly agents: readonly AgentFleetRow[];
   readonly autopilot_devices: readonly AutopilotDeviceFleetRow[];
+  readonly bubble_topology?: LabBubbleTopology;
   readonly ap_error: string;
   readonly cache_age_seconds?: number | null;
   readonly cache_fetched_at_iso?: string;

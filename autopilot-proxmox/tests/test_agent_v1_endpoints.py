@@ -105,7 +105,7 @@ def _approved_agent_with_heartbeat(
 
 @pytest.fixture
 def agent_client(pg_conn, monkeypatch):
-    from web import agent_telemetry_pg, ts_engine_pg
+    from web import agent_telemetry_pg, lab_bubbles_pg, ts_engine_pg
 
     monkeypatch.delenv("AUTOPILOT_AGENT_BOOTSTRAP_TOKEN", raising=False)
     monkeypatch.setenv(
@@ -116,6 +116,8 @@ def agent_client(pg_conn, monkeypatch):
     ts_engine_pg.init(pg_conn)
     agent_telemetry_pg.reset_for_tests(pg_conn)
     agent_telemetry_pg.init(pg_conn)
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
 
     from web import app as web_app
 
@@ -668,6 +670,148 @@ def test_agent_heartbeat_updates_latest_telemetry(agent_client, pg_conn):
     assert config.status_code == 200, config.text
     assert config.json()["last_heartbeat_at"]
     assert config.json()["last_primary_ipv4"] == "10.211.55.119"
+
+
+def test_agent_heartbeat_updates_bubble_dc_dns_dhcp_readiness(agent_client, pg_conn):
+    from web import agent_telemetry_pg, lab_bubbles_pg
+
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="dc01-agent",
+        token="secret-token",
+        vmid=130,
+        computer_name="DC01",
+    )
+    lab_bubbles_pg.add_asset(
+        pg_conn,
+        bubble["id"],
+        asset_type="vm",
+        asset_role="domain_controller",
+        vmid=130,
+        agent_id="dc01-agent",
+    )
+
+    response = agent_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer("secret-token"),
+        json={
+            "agent_id": "dc01-agent",
+            "vmid": 130,
+            "computer_name": "DC01",
+            "current_phase": "full_os",
+            "bubble_id": bubble["id"],
+            "dc_readiness": {
+                "ad_ds_ready": True,
+                "dns_ready": True,
+                "dhcp_ready": True,
+                "dhcp_scope": "10.42.12.0",
+                "dhcp_pool_start": "10.42.12.100",
+                "dhcp_pool_end": "10.42.12.199",
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    refreshed = lab_bubbles_pg.get_bubble(pg_conn, bubble["id"])
+    assert refreshed["dc_ready"] is True
+    assert refreshed["dns_ready"] is True
+    assert refreshed["dhcp_ready"] is True
+    assert refreshed["workload_ready"] is True
+    assert refreshed["dhcp_scope"] == "10.42.12.0"
+    assert refreshed["dhcp_pool_start"] == "10.42.12.100"
+    assert refreshed["dhcp_pool_end"] == "10.42.12.199"
+
+
+def test_agent_heartbeat_ignores_dc_readiness_from_wrong_bubble(agent_client, pg_conn):
+    from web import agent_telemetry_pg, lab_bubbles_pg
+
+    source_bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    target_bubble = lab_bubbles_pg.create_bubble(pg_conn, name="Contoso Lab")
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="dc01-agent",
+        token="secret-token",
+        vmid=130,
+        computer_name="DC01",
+    )
+    lab_bubbles_pg.add_asset(
+        pg_conn,
+        source_bubble["id"],
+        asset_type="vm",
+        asset_role="domain_controller",
+        vmid=130,
+        agent_id="dc01-agent",
+    )
+
+    response = agent_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer("secret-token"),
+        json={
+            "agent_id": "dc01-agent",
+            "vmid": 130,
+            "computer_name": "DC01",
+            "current_phase": "full_os",
+            "bubble_id": target_bubble["id"],
+            "dc_readiness": {
+                "ad_ds_ready": True,
+                "dns_ready": True,
+                "dhcp_ready": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    refreshed_source = lab_bubbles_pg.get_bubble(pg_conn, source_bubble["id"])
+    refreshed_target = lab_bubbles_pg.get_bubble(pg_conn, target_bubble["id"])
+    assert refreshed_source["dc_ready"] is False
+    assert refreshed_target["dc_ready"] is False
+    assert refreshed_target["dhcp_owner_asset_id"] is None
+
+
+def test_agent_heartbeat_ignores_dc_readiness_from_non_dc_asset(agent_client, pg_conn):
+    from web import agent_telemetry_pg, lab_bubbles_pg
+
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="fs01-agent",
+        token="secret-token",
+        vmid=131,
+        computer_name="FS01",
+    )
+    lab_bubbles_pg.add_asset(
+        pg_conn,
+        bubble["id"],
+        asset_type="vm",
+        asset_role="file_server",
+        vmid=131,
+        agent_id="fs01-agent",
+    )
+
+    response = agent_client.post(
+        "/api/agent/v1/heartbeat",
+        headers=_bearer("secret-token"),
+        json={
+            "agent_id": "fs01-agent",
+            "vmid": 131,
+            "computer_name": "FS01",
+            "current_phase": "full_os",
+            "bubble_id": bubble["id"],
+            "dc_readiness": {
+                "ad_ds_ready": True,
+                "dns_ready": True,
+                "dhcp_ready": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    refreshed = lab_bubbles_pg.get_bubble(pg_conn, bubble["id"])
+    assert refreshed["dc_ready"] is False
+    assert refreshed["dns_ready"] is False
+    assert refreshed["dhcp_ready"] is False
+    assert refreshed["dhcp_owner_asset_id"] is None
 
 
 def test_agent_heartbeat_records_claimable_capabilities(agent_client, pg_conn):

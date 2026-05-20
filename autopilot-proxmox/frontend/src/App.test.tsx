@@ -278,7 +278,82 @@ const dashboardResponses: Record<string, unknown> = {
         enrollment_state: "enrolled",
         has_local_hash: true
       }
-    ]
+    ],
+    bubble_topology: {
+      workstation_fleets: [
+        {
+          bubble: {
+            id: "bubble-1",
+            name: "ACME Lab",
+            lifecycle_state: "active",
+            domain_name: "lab.gell.one",
+            cidr: "10.42.12.0/24",
+            dhcp_scope: "10.42.12.0"
+          },
+          workstation_count: 1,
+          running_count: 1,
+          stopped_count: 0,
+          assets: [
+            {
+              id: "asset-ws",
+              bubble_id: "bubble-1",
+              asset_type: "vm",
+              asset_role: "workstation",
+              vmid: 108,
+              membership_state: "active",
+              evidence_state: "operator_tagged"
+            }
+          ],
+          vms: [],
+          readiness: {
+            dc_ready: true,
+            dns_ready: true,
+            dhcp_ready: true,
+            workload_ready: true
+          }
+        }
+      ],
+      critical_infrastructure: [
+        {
+          bubble: { id: "bubble-1", name: "ACME Lab" },
+          role: "domain_controller",
+          asset: {
+            id: "asset-dc",
+            bubble_id: "bubble-1",
+            asset_type: "vm",
+            asset_role: "domain_controller",
+            vmid: 130,
+            membership_state: "active",
+            evidence_state: "ready",
+            agent_id: "dc01-agent"
+          },
+          vm: { vmid: 130, name: "ACME-DC01", status: "running" },
+          agent: { agent_id: "dc01-agent", approval_status: "active" }
+        }
+      ],
+      connected_services: [
+        {
+          id: "svc-ad",
+          bubble_id: "bubble-1",
+          bubble: { id: "bubble-1", name: "ACME Lab" },
+          service_kind: "entra",
+          service_name: "Entra ID",
+          scope: "external",
+          readiness_state: "ready",
+          provider_asset_id: "asset-dc",
+          consumer_refs: []
+        }
+      ],
+      unassigned_assets: [],
+      warnings: [],
+      gate_states: [
+        {
+          bubble_id: "bubble-1",
+          workgroup: { state: "allowed", allowed: true, reasons: [] },
+          domain_join: { state: "allowed", allowed: true, reasons: [] }
+        }
+      ]
+    }
   },
   "/api/vms/108/detail": {
     vmid: 108,
@@ -446,16 +521,68 @@ describe("App", () => {
       expect(screen.getAllByText("WrkGrp-525570B6").length).toBeGreaterThan(0);
     });
     expect(screen.getByRole("table", { name: "Fleet machines" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "VM Workstation Fleets" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Critical Infrastructure" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connected Services" })).toBeInTheDocument();
+    expect(screen.getAllByText("ACME Lab").length).toBeGreaterThan(0);
+    expect(screen.getByText("domain controller")).toBeInTheDocument();
+    expect(screen.getByText("Entra ID")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Device Name" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Heartbeat" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Managed By" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Bubble" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "WrkGrp-525570B6" })).toHaveAttribute("href", "/react/vms/108");
+    expect(screen.getByRole("button", { name: "New bubble" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tag VM 108" })).toBeInTheDocument();
+    expect(screen.getByText("ACME Lab / workstation")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "AutopilotAgent" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Screenshot VM 108" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete VM 108" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Console VM 108" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Console VM 108" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Autopilot Devices" })).not.toBeInTheDocument();
+  });
+
+  test("tags an existing VM asset into a selected bubble from the React fleet", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/bubbles/bubble-1/assets/asset-ws": {
+        id: "asset-ws",
+        bubble_id: "bubble-1",
+        asset_type: "vm",
+        asset_role: "domain_controller",
+        vmid: 108,
+        membership_state: "active"
+      }
+    });
+    vi.spyOn(window, "prompt")
+      .mockReturnValueOnce("1")
+      .mockReturnValueOnce("domain_controller");
+
+    renderRoute("/react/vms");
+
+    const tagButton = await screen.findByRole("button", { name: "Tag VM 108" });
+    fireEvent.click(tagButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/bubbles/bubble-1/assets/asset-ws",
+        expect.objectContaining({ method: "PATCH" })
+      );
+    });
+    const patchCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/bubbles/bubble-1/assets/asset-ws"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(patchCall).toBeDefined();
+    const init = patchCall?.[1] as RequestInit;
+    expect(typeof init.body).toBe("string");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      asset_role: "domain_controller",
+      vmid: 108,
+      membership_state: "active"
+    });
   });
 
   test("opens VM console and screenshot actions inside a VM detail page", async () => {

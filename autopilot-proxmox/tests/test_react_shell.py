@@ -34,7 +34,7 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
 
 
 def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
-    from web import app as web_app
+    from web import app as web_app, db_pg, lab_bubbles_pg
 
     async def fake_vms_payload():
         return ({
@@ -92,6 +92,43 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
         }
     })
     monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
+    with db_pg.connection(web_app._database_url()) as conn:
+        lab_bubbles_pg.reset_for_tests(conn)
+        lab_bubbles_pg.init(conn)
+        bubble = lab_bubbles_pg.create_bubble(
+            conn,
+            name="ACME Lab",
+            domain_name="lab.gell.one",
+            cidr="10.42.12.0/24",
+            dhcp_scope="10.42.12.0",
+        )
+        workstation = lab_bubbles_pg.add_asset(
+            conn,
+            bubble["id"],
+            asset_type="vm",
+            asset_role="workstation",
+            vmid=108,
+            membership_state="active",
+        )
+        dc = lab_bubbles_pg.add_asset(
+            conn,
+            bubble["id"],
+            asset_type="vm",
+            asset_role="domain_controller",
+            vmid=130,
+            agent_id="dc01-agent",
+            membership_state="active",
+        )
+        lab_bubbles_pg.add_service(
+            conn,
+            bubble["id"],
+            service_kind="entra",
+            service_name="Entra ID",
+            scope="external",
+            provider_asset_id=dc["id"],
+            readiness_state="ready",
+        )
+        assert workstation["vmid"] == 108
 
     response = web_client.get("/api/vms/fleet")
 
@@ -102,6 +139,7 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
         "missing_vms",
         "agents",
         "autopilot_devices",
+        "bubble_topology",
         "ap_error",
         "cache_age_seconds",
         "cache_refreshing",
@@ -116,6 +154,10 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     assert body["vms"][0]["lifecycle_autopilot_registered"] is True
     assert body["agents"][0]["agent_id"] == "agent-wrkgrp-525570b6"
     assert body["autopilot_devices"][0]["display_name"] == "WRKGRP-525570B6"
+    assert body["bubble_topology"]["workstation_fleets"][0]["bubble"]["name"] == "ACME Lab"
+    assert body["bubble_topology"]["workstation_fleets"][0]["workstation_count"] == 1
+    assert body["bubble_topology"]["critical_infrastructure"][0]["role"] == "domain_controller"
+    assert body["bubble_topology"]["connected_services"][0]["service_name"] == "Entra ID"
 
 
 def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatch):
