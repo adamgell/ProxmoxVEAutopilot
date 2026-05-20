@@ -166,9 +166,10 @@ def _looks_like_msi(path: Path, size_bytes: int) -> bool:
         return False
     try:
         with path.open("rb") as handle:
-            return handle.read(2) == b"MZ"
+            header = handle.read(8)
     except OSError:
         return False
+    return header.startswith(b"MZ") or header == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def latest_agent_release(*, runtime_identifier: str = "win-x64") -> dict | None:
