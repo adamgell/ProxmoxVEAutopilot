@@ -5131,6 +5131,11 @@ async def react_vm_detail_shell(request: Request, vmid: int):
     return _render_react_shell(request)
 
 
+@app.get("/react/agent-download", response_class=HTMLResponse, include_in_schema=False)
+async def react_agent_download_shell(request: Request):
+    return _render_react_shell(request)
+
+
 @app.get("/install-tracking", response_class=HTMLResponse)
 async def install_tracking_page(request: Request, run_id: str | None = None):
     return templates.TemplateResponse("install_tracking.html", {
@@ -7719,7 +7724,15 @@ async def _vms_fleet_payload() -> dict:
         vm for vm in vms
         if not vm["in_autopilot"] and not vm["in_intune"] and vm.get("serial")
     ]
-    agents = _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), vms)
+    topology_vms_by_id: dict[int, dict] = {}
+    for vm in proxmox_vms:
+        if vm.get("vmid") is not None:
+            topology_vms_by_id[int(vm["vmid"])] = dict(vm)
+    for vm in vms:
+        if vm.get("vmid") is not None:
+            topology_vms_by_id[int(vm["vmid"])] = dict(vm)
+    topology_vms = [topology_vms_by_id[vmid] for vmid in sorted(topology_vms_by_id)]
+    agents = _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), topology_vms)
     bubble_topology = {
         "workstation_fleets": [],
         "critical_infrastructure": [],
@@ -7735,7 +7748,7 @@ async def _vms_fleet_payload() -> dict:
             lab_bubbles_pg.init(conn)
             bubble_topology = lab_bubbles_pg.build_vm_page_payload(
                 conn,
-                vms=vms,
+                vms=topology_vms,
                 agent_rows=agents,
             )
     except Exception:

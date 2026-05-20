@@ -376,8 +376,8 @@ const dashboardResponses: Record<string, unknown> = {
             evidence_state: "ready",
             agent_id: "dc01-agent"
           },
-          vm: { vmid: 130, name: "ACME-DC01", status: "running" },
-          agent: { agent_id: "dc01-agent", approval_status: "active" }
+          vm: { vmid: 130, name: "ACME-DC01", status: "running", ip_address: "10.42.12.10" },
+          agent: { agent_id: "dc01-agent", approval_status: "active", primary_ipv4: "10.42.12.10" }
         }
       ],
       connected_services: [
@@ -576,7 +576,8 @@ describe("App", () => {
     ["/react/jobs", "/legacy/jobs"],
     ["/react/monitoring", "/monitoring"],
     ["/react/vms", "/legacy/vms"],
-    ["/react/vms/108", "/legacy/vms"]
+    ["/react/vms/108", "/legacy/vms"],
+    ["/react/agent-download", "/legacy/dashboard"]
   ])("links %s back to its legacy UI fallback", async (path, legacyPath) => {
     mockFetch(dashboardResponses);
 
@@ -586,6 +587,21 @@ describe("App", () => {
       "href",
       legacyPath
     );
+  });
+
+  test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/agent-download");
+
+    expect(await screen.findByRole("heading", { name: "AutopilotAgent Download" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Controller infrastructure")).toHaveDisplayValue("ACME Lab / ACME-DC01 / VM 130");
+    expect(screen.getByLabelText("Controller URL")).toHaveValue("http://10.42.12.10:5000");
+    expect(screen.getByText("http://10.42.12.10:5000/api/cloudosd/assets/autopilotagent.msi")).toBeInTheDocument();
+    expect(screen.getByText(/Invoke-WebRequest -UseBasicParsing -Uri "http:\/\/10\.42\.12\.10:5000\/api\/cloudosd\/assets\/autopilotagent\.msi"/)).toBeInTheDocument();
+    expect(screen.getByText(/-ServerUrl "http:\/\/10\.42\.12\.10:5000"/)).toBeInTheDocument();
+    expect(screen.getByText(/-Vmid 130/)).toBeInTheDocument();
+    expect(screen.getByText("dc01-agent")).toBeInTheDocument();
   });
 
   test("renders the VMs fleet workspace as a reduced inventory", async () => {

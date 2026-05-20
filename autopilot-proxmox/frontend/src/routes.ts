@@ -31,6 +31,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     label: "Fleet",
     items: [
       { path: "/react/vms", label: "VMs", group: "Fleet", phase: "operational", active: true },
+      { path: "/react/agent-download", label: "Agent Download", group: "Fleet", phase: "operational", active: true },
       { path: "/legacy/vms", label: "Legacy VMs", group: "Fleet", phase: "legacy", active: false, legacy: true },
       { path: "/devices", label: "Devices", group: "Fleet", phase: "legacy", active: false, legacy: true },
       { path: "/hashes", label: "Hashes", group: "Fleet", phase: "legacy", active: false, legacy: true },
@@ -89,6 +90,7 @@ export const operatorFlows: readonly OperatorFlow[] = [
     summary: "Triage VM, device, hash, and artifact evidence.",
     steps: [
       { label: "VMs", href: "/react/vms", group: "Fleet", state: "React" },
+      { label: "Agent Download", href: "/react/agent-download", group: "Fleet", state: "React" },
       { label: "Devices", href: "/devices", group: "Fleet", state: "Jinja" },
       { label: "Hashes", href: "/hashes", group: "Fleet", state: "Jinja" }
     ]

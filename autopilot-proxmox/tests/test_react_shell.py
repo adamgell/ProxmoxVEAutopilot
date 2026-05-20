@@ -17,6 +17,7 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/react/monitoring")
     assert not auth.is_exempt_path("/react/vms")
     assert not auth.is_exempt_path("/react/vms/108")
+    assert not auth.is_exempt_path("/react/agent-download")
     assert not auth.is_exempt_path("/react")
     assert not auth.is_exempt_path("/legacy/dashboard")
     assert not auth.is_exempt_path("/legacy/jobs")
@@ -26,7 +27,7 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/openapi.json")
 
 
-@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring", "/react/vms", "/react/vms/108"])
+@pytest.mark.parametrize("path", ["/react-shell", "/react/dashboard", "/react/jobs", "/react/monitoring", "/react/vms", "/react/vms/108", "/react/agent-download"])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     response = web_client.get(path)
 
@@ -118,6 +119,7 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
     monkeypatch.setattr(web_app, "_proxmox_api", lambda path: [
         {"type": "qemu", "vmid": 108, "name": "WrkGrp-525570B6", "status": "running", "node": "pve2"},
+        {"type": "qemu", "vmid": 130, "name": "ACME-DC01", "status": "running", "node": "pve2"},
         {"type": "qemu", "vmid": 400, "name": "Dev1", "status": "stopped", "node": "pve1"},
         {"type": "lxc", "vmid": 500, "name": "autopilot-docker", "status": "running", "node": "pve2"},
     ] if path == "/cluster/resources?type=vm" else [])
@@ -205,13 +207,14 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     assert body["vms"][0]["lifecycle_state"] == "workgroup_unenrolled"
     assert body["vms"][0]["lifecycle_label"] == "unenrolled"
     assert body["vms"][0]["lifecycle_autopilot_registered"] is True
-    assert [vm["vmid"] for vm in body["proxmox_vms"]] == [108, 400]
-    assert body["proxmox_vms"][1]["node"] == "pve1"
+    assert [vm["vmid"] for vm in body["proxmox_vms"]] == [108, 130, 400]
+    assert body["proxmox_vms"][2]["node"] == "pve1"
     assert body["agents"][0]["agent_id"] == "agent-wrkgrp-525570b6"
     assert body["autopilot_devices"][0]["display_name"] == "WRKGRP-525570B6"
     assert body["bubble_topology"]["workstation_fleets"][0]["bubble"]["name"] == "ACME Lab"
     assert body["bubble_topology"]["workstation_fleets"][0]["workstation_count"] == 1
     assert body["bubble_topology"]["critical_infrastructure"][0]["role"] == "domain_controller"
+    assert body["bubble_topology"]["critical_infrastructure"][0]["vm"]["name"] == "ACME-DC01"
     assert body["bubble_topology"]["connected_services"][0]["service_name"] == "Entra ID"
 
 

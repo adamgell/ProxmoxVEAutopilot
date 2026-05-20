@@ -1,4 +1,5 @@
 import type { AppBootstrap } from "./contracts";
+import { AgentDownloadPage } from "./pages/AgentDownloadPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -22,6 +23,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/vms" || /^\/react\/vms\/\d+$/.test(path)) {
     return <VmsPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/agent-download") {
+    return <AgentDownloadPage bootstrap={bootstrap} />;
   }
   return <ShellIndexPage bootstrap={bootstrap} />;
 }

@@ -976,6 +976,73 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.agent-download-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.agent-url-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-url-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.agent-url-row div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.agent-url-row span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agent-url-row code,
+.agent-command-panel pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-url-row code {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-command-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-command-panel pre {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
 .credential-inventory {
   display: grid;
   gap: 10px;
@@ -1934,6 +2001,10 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .agent-download-grid {
+    grid-template-columns: 1fr;
+  }
+
   .vm-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2259,6 +2330,8 @@ h3 {
   .fleet-grid,
   .fleet-grid--four,
   .fleet-grid--six,
+  .agent-download-grid,
+  .agent-url-row,
   .link-grid {
     grid-template-columns: 1fr;
   }

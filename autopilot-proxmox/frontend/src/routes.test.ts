@@ -34,6 +34,12 @@ describe("operator route registry", () => {
         label: "VMs",
         group: "Fleet",
         phase: "operational"
+      },
+      {
+        path: "/react/agent-download",
+        label: "Agent Download",
+        group: "Fleet",
+        phase: "operational"
       }
     ]);
   });
@@ -54,6 +60,7 @@ describe("operator route registry", () => {
   test("finds active React routes and ignores legacy deep links", () => {
     expect(reactRouteForPath("/react/jobs")?.label).toBe("Jobs");
     expect(reactRouteForPath("/react/vms")?.label).toBe("VMs");
+    expect(reactRouteForPath("/react/agent-download")?.label).toBe("Agent Download");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
   });
 
@@ -70,7 +77,8 @@ describe("operator route registry", () => {
       expect.arrayContaining([
         expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
-        expect.objectContaining({ label: "VMs", href: "/react/vms" })
+        expect.objectContaining({ label: "VMs", href: "/react/vms" }),
+        expect.objectContaining({ label: "Agent Download", href: "/react/agent-download" })
       ])
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
