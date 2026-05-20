@@ -48,11 +48,6 @@ const pageResponses: Record<string, unknown> = {
     steps: [{ kind: "rename_computer", state: "ok" }],
     summary: { total: 1, ok: 1 }
   },
-  "/api/task-engine/page": {
-    sequences: [{ id: "seq-1", name: "CloudOSD deployment", target_os: "windows" }],
-    runs: [{ id: "run-1", state: "running" }],
-    flow_templates: [{ id: "template-1", name: "Windows baseline" }]
-  },
   "/api/answer-isos/page": {
     rows: [{
       hash: "answer-1",
@@ -112,7 +107,6 @@ describe("retired Jinja React pages", () => {
     ["/react/jobs/job-1", "Job Detail", "provision.yml"],
     ["/react/runs", "Runs", "WinPE-1"],
     ["/react/runs/1", "Run Detail", "rename_computer"],
-    ["/react/task-engine", "Task Engine", "CloudOSD deployment"],
     ["/react/answer-isos", "Answer ISO Cache", "autopilot-unattend.img"],
     ["/react/sequences", "Sequences", "Legacy baseline"],
     ["/react/utm-vms", "UTM VMs", "Win11-UTM"],

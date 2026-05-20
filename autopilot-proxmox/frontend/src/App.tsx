@@ -17,6 +17,7 @@ import { LoginPage, SetupPage } from "./pages/PublicPages";
 import { RetiredJinjaPage, retiredConfigForPath } from "./pages/RetiredJinjaPages";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
+import { TaskEnginePage } from "./pages/TaskEnginePage";
 import { TemplatePage } from "./pages/TemplatePage";
 import { VmsPage } from "./pages/VmsPage";
 
@@ -79,6 +80,15 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/answer-isos") {
     return <AnswerIsosPage bootstrap={bootstrap} />;
+  }
+  if (
+    path === "/react/task-engine" ||
+    path === "/react/task-engine/sequences/list" ||
+    path === "/react/task-engine/sequences/new" ||
+    /^\/react\/task-engine\/sequences\/templates\/[^/]+$/u.test(path) ||
+    /^\/react\/task-engine\/sequences\/[^/]+\/edit$/u.test(path)
+  ) {
+    return <TaskEnginePage bootstrap={bootstrap} />;
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;
