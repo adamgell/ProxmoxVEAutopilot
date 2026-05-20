@@ -6546,11 +6546,26 @@ def _filter_and_purge_agents_without_current_vm(
         except (TypeError, ValueError):
             continue
 
+    state = _read_json_file(SETUP_STATE_PATH)
+    expected_build_host_agent = str(
+        state.get("build_host_expected_agent_id") or ""
+    ).strip()
+    try:
+        expected_build_host_vmid = int(state.get("build_host_vmid") or 0)
+    except (TypeError, ValueError):
+        expected_build_host_vmid = 0
+
     kept: list[dict] = []
     purge_agent_ids: list[str] = []
     for agent in agents:
         agent_id = agent.get("agent_id") or ""
         agent_vmid = _agent_row_vmid(agent)
+        if (
+            (expected_build_host_agent and agent_id == expected_build_host_agent)
+            or (expected_build_host_vmid and agent_vmid == expected_build_host_vmid)
+        ):
+            kept.append(agent)
+            continue
         if agent_vmid is not None and agent_vmid in current_vmids:
             kept.append(agent)
             continue

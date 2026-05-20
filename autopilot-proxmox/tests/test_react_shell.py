@@ -215,10 +215,18 @@ def test_react_vms_fleet_api_response_shape(web_client, monkeypatch):
     assert body["bubble_topology"]["connected_services"][0]["service_name"] == "Entra ID"
 
 
-def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatch):
+def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatch, tmp_path):
     from web import app as web_app
 
     deleted: list[str] = []
+    setup_state_path = tmp_path / "foundation_state.json"
+    setup_state_path.write_text(
+        json.dumps({
+            "build_host_expected_agent_id": "buildhost-100",
+            "build_host_vmid": "100",
+        }),
+        encoding="utf-8",
+    )
 
     async def fake_vms_payload():
         return ({
@@ -236,6 +244,7 @@ def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatc
             "refreshing": False,
         }, 0.0)
 
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", setup_state_path)
     monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
     monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
     monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
@@ -254,6 +263,12 @@ def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatc
             "computer_name": "AGENT-ONLY",
         },
         {
+            "agent_id": "buildhost-100",
+            "approval_status": "active",
+            "vmid": 100,
+            "computer_name": "AUTOPILOT-BLD",
+        },
+        {
             "agent_id": "agent-deleted-vm",
             "approval_status": "active",
             "vmid": 999,
@@ -265,7 +280,10 @@ def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatc
 
     assert response.status_code == 200
     body = response.json()
-    assert [agent["agent_id"] for agent in body["agents"]] == ["agent-attached"]
+    assert [agent["agent_id"] for agent in body["agents"]] == [
+        "agent-attached",
+        "buildhost-100",
+    ]
     assert deleted == ["agent-no-vm", "agent-deleted-vm"]
 
 
