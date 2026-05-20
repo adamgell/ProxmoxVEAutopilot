@@ -806,33 +806,36 @@ h3 {
 
 .metric-strip--fleet {
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin-bottom: 20px;
 }
 
 .bubble-layout {
   display: grid;
-  grid-template-columns: minmax(620px, 1fr) minmax(360px, 460px);
-  gap: 18px;
+  grid-template-columns: minmax(680px, 1fr) minmax(360px, 420px);
+  gap: 22px;
   align-items: start;
+  margin-top: 4px;
+  margin-bottom: 22px;
 }
 
 .bubble-primary-stack,
 .bubble-side-stack {
   display: grid;
-  gap: 18px;
+  gap: 20px;
   min-width: 0;
 }
 
 .bubble-fleet-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: 14px;
 }
 
 .bubble-card {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -841,7 +844,7 @@ h3 {
 .bubble-card header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   align-items: flex-start;
   min-width: 0;
 }
@@ -866,33 +869,33 @@ h3 {
   display: inline-flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 7px;
   min-width: 120px;
 }
 
 .bubble-form {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
 }
 
 .bubble-card .bubble-form {
-  padding: 10px;
+  padding: 12px;
 }
 
 .bubble-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .bubble-form-field {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -907,8 +910,8 @@ h3 {
 .bubble-form-field select {
   width: 100%;
   min-width: 0;
-  min-height: 34px;
-  padding: 0 9px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--text);
@@ -926,9 +929,9 @@ h3 {
 .machine-tag-editor {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(140px, 220px) auto;
-  gap: 10px;
+  gap: 12px;
   align-items: end;
-  padding: 12px;
+  padding: 14px;
   border-top: 1px solid var(--line-soft);
   background: var(--surface-2);
 }
@@ -969,6 +972,7 @@ h3 {
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-items: start;
+  margin-top: 22px;
 }
 
 .fleet-primary-stack {
@@ -1005,7 +1009,7 @@ h3 {
 
 .fleet-machine-table th,
 .fleet-machine-table td {
-  padding: 12px 10px;
+  padding: 13px 12px;
   border-bottom: 1px solid var(--line-soft);
   color: var(--text);
   font-size: 12px;
@@ -2004,7 +2008,7 @@ h3 {
 .filter-row {
   display: grid;
   gap: 10px;
-  margin-bottom: 18px;
+  margin-bottom: 22px;
 }
 
 .filter-row__top {

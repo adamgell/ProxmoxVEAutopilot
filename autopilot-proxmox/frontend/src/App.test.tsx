@@ -614,7 +614,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("NetBIOS name"), { target: { value: "LAB3" } });
     fireEvent.change(screen.getByLabelText("Isolated CIDR"), { target: { value: "192.168.3.0/24" } });
     fireEvent.change(screen.getByLabelText("Gateway IP"), { target: { value: "192.168.3.1" } });
-    fireEvent.change(screen.getByLabelText("DHCP scope"), { target: { value: "192.168.3.0" } });
+    fireEvent.change(screen.getByLabelText("DHCP network ID"), { target: { value: "192.168.3.0" } });
     fireEvent.change(screen.getByLabelText("DHCP pool start"), { target: { value: "192.168.3.100" } });
     fireEvent.change(screen.getByLabelText("DHCP pool end"), { target: { value: "192.168.3.199" } });
     fireEvent.change(screen.getByLabelText("Lifecycle state"), { target: { value: "active" } });
@@ -676,7 +676,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("NetBIOS name"), { target: { value: "LAB3" } });
     fireEvent.change(screen.getByLabelText("Isolated CIDR"), { target: { value: "192.168.3.0/24" } });
     fireEvent.change(screen.getByLabelText("Gateway IP"), { target: { value: "192.168.3.1" } });
-    fireEvent.change(screen.getByLabelText("DHCP scope"), { target: { value: "192.168.3.0" } });
+    fireEvent.change(screen.getByLabelText("DHCP network ID"), { target: { value: "192.168.3.0" } });
     fireEvent.change(screen.getByLabelText("DHCP pool start"), { target: { value: "192.168.3.100" } });
     fireEvent.change(screen.getByLabelText("DHCP pool end"), { target: { value: "192.168.3.199" } });
     fireEvent.change(screen.getByLabelText("Lifecycle state"), { target: { value: "active" } });

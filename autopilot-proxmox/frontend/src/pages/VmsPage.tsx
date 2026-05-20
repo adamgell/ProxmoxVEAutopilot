@@ -1264,7 +1264,7 @@ function BubbleEditor({
         <BubbleTextField label="NetBIOS name" field="netbios_name" value={values.netbios_name} onChange={onChange} />
         <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} />
         <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} />
-        <BubbleTextField label="DHCP scope" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} />
+        <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} />
         <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} />
         <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} />
         <BubbleTextField label="Lifecycle state" field="lifecycle_state" value={values.lifecycle_state} onChange={onChange} />
