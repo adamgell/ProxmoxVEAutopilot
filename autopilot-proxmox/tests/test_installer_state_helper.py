@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import sys
+import tarfile
 from pathlib import Path
 
 
@@ -223,6 +224,16 @@ abc
     assert installer_state.has_residual_secret(redacted) is False
 
 
+def test_redaction_does_not_treat_benign_key_substrings_as_secrets():
+    text = '{"keyboard_layout": "en-US", "api_key": "secret-value"}\nMONKEY=banana\n'
+    redacted, _ = installer_state.redact_text(text)
+
+    assert '"keyboard_layout": "en-US"' in redacted
+    assert "MONKEY=banana" in redacted
+    assert "secret-value" not in redacted
+    assert '"api_key": "[REDACTED]"' in redacted
+
+
 def test_support_bundle_fails_closed_when_residual_secret_remains(tmp_path):
     suspicious = "token = still-present-secret-value"
     assert installer_state.has_residual_secret(suspicious) is True
@@ -282,6 +293,52 @@ def test_support_bundle_success_contains_only_redacted_artifacts(tmp_path):
     bundles = list(output_dir.glob("support-bundle-*.tar.gz"))
     assert len(bundles) == 1
     assert "abc123" not in next(output_dir.glob("github-issue-*.md")).read_text(encoding="utf-8")
+
+
+def test_support_outputs_redact_signed_urls_from_logs_and_planned_commands(tmp_path):
+    signed_url = "https://download.example.test/windows.iso?sv=2026&sig=secret-signature"
+    detection = installer_state.bootstrap_detection(
+        {
+            "controller_runtime_ready": True,
+            "windows_iso_ready": False,
+            "virtio_iso_ready": True,
+            "media_ready": False,
+        },
+        allow_windows_download=True,
+        allow_virtio_download=False,
+        windows_iso_url=signed_url,
+    )
+    detection_file = tmp_path / "detect.json"
+    failure_file = tmp_path / "failure.json"
+    log_file = tmp_path / "install.log"
+    output_dir = tmp_path / "support"
+    detection_file.write_text(json.dumps(detection.to_dict()), encoding="utf-8")
+    failure_file.write_text("{}", encoding="utf-8")
+    log_file.write_text(f"download url: {signed_url}\n", encoding="utf-8")
+
+    rc = installer_state.write_support_outputs(
+        detection_file=detection_file,
+        failure_file=failure_file,
+        log_file=log_file,
+        output_dir=output_dir,
+        no_bundle=False,
+        print_draft=False,
+        include_environment=False,
+    )
+
+    assert rc == 0
+    issue = next(output_dir.glob("github-issue-*.md")).read_text(encoding="utf-8")
+    assert "secret-signature" not in issue
+    assert "[REDACTED_SIGNED_URL]" in issue
+    bundle = next(output_dir.glob("support-bundle-*.tar.gz"))
+    with tarfile.open(bundle, "r:gz") as tar:
+        payload = "\n".join(
+            tar.extractfile(member).read().decode("utf-8")
+            for member in tar.getmembers()
+            if member.isfile()
+        )
+    assert "secret-signature" not in payload
+    assert "[REDACTED_SIGNED_URL]" in payload
 
 
 def test_issue_draft_includes_step_and_check_ids():

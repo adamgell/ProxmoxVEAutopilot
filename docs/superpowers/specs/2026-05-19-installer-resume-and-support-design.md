@@ -636,8 +636,12 @@ At minimum, redaction must cover:
 - SSH private key blocks
 - Cookie headers
 - `.env` key/value lines
-- JSON fields whose names contain `token`, `secret`, `password`, `key`,
+- JSON fields whose names contain `token`, `secret`, `password`,
   `authorization`, or `cookie`
+- Explicit key fields such as `api_key`, `secret_key`, `access_key`,
+  `private_key`, `session_key`, `key_secret`, or `key_value`; do not redact
+  unrelated words that merely contain the letters `key`, such as
+  `keyboard_layout`
 
 The support bundle should include a redaction report listing which file types
 were included, which were skipped, and which redaction patterns matched. The

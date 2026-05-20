@@ -377,16 +377,20 @@ Acceptance for this task:
 Core redaction constants:
 
 ```python
-SECRET_KEY_RE = re.compile(r"(token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|key)", re.I)
+SECRET_FIELD_PATTERN = (
+    r"token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|"
+    r"(?:private|secret|api|access|session)[_-]?key|key[_-]?(?:id|secret|value)"
+)
+SECRET_KEY_RE = re.compile(rf"\b(?:{SECRET_FIELD_PATTERN})\b", re.I)
 PRIVATE_BLOCK_RE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
     re.S,
 )
 HEADER_SECRET_RE = re.compile(r"(?im)^(authorization|cookie):\s*.+$")
 PVE_TOKEN_RE = re.compile(r"PVEAPIToken=[^\s'\"`]+")
-DOTENV_SECRET_RE = re.compile(r"(?im)^([A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CLIENT_SECRET|KEY)[A-Z0-9_]*)=.*$")
+DOTENV_SECRET_RE = re.compile(rf"(?im)^([A-Z0-9_]*(?:{SECRET_FIELD_PATTERN})[A-Z0-9_]*)=.*$")
 GENERIC_SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)(token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|key)\s*[:=]\s*(?P<value>\S+)"
+    rf"(?i)(?:{SECRET_FIELD_PATTERN})\s*[:=]\s*(?P<value>\S+)"
 )
 ```
 

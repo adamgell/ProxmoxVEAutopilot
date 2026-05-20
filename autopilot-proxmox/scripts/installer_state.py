@@ -44,10 +44,11 @@ class Detection:
         return dataclasses.asdict(self)
 
 
-SECRET_KEY_RE = re.compile(
-    r"(token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|key)",
-    re.I,
+SECRET_FIELD_PATTERN = (
+    r"token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|"
+    r"(?:private|secret|api|access|session)[_-]?key|key[_-]?(?:id|secret|value)"
 )
+SECRET_KEY_RE = re.compile(rf"\b(?:{SECRET_FIELD_PATTERN})\b", re.I)
 PRIVATE_BLOCK_RE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
     re.S,
@@ -55,13 +56,19 @@ PRIVATE_BLOCK_RE = re.compile(
 HEADER_SECRET_RE = re.compile(r"(?im)^(authorization|cookie):\s*.+$")
 PVE_TOKEN_RE = re.compile(r"PVEAPIToken=[^\s'\"`]+")
 DOTENV_SECRET_RE = re.compile(
-    r"(?im)^([A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CLIENT_SECRET|KEY)[A-Z0-9_]*)=.*$"
+    rf"(?im)^([A-Z0-9_]*(?:{SECRET_FIELD_PATTERN})[A-Z0-9_]*)=.*$"
 )
 JSON_SECRET_RE = re.compile(
-    r'(?i)("(?:[^"]*(?:token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|key)[^"]*)"\s*:\s*)"[^"]*"'
+    rf'(?i)("(?:[^"]*(?:{SECRET_FIELD_PATTERN})[^"]*)"\s*:\s*)"[^"]*"'
 )
 GENERIC_SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)(token|secret|password|passwd|apikey|api_key|client_secret|authorization|cookie|key)\s*[:=]\s*(?P<value>\S+)"
+    rf"(?i)(?:{SECRET_FIELD_PATTERN})\s*[:=]\s*(?P<value>\S+)"
+)
+CREDENTIAL_URL_RE = re.compile(r"https?://[^/\s'\"`<>)]*:[^@\s'\"`<>)]*@[^\s'\"`<>)]*", re.I)
+SIGNED_URL_RE = re.compile(
+    r"https?://[^\s'\"`<>)]*(?:[?&](?:sig|signature|token|access_token|"
+    r"x-amz-signature|x-amz-credential|se|sp|sv|st)=)[^\s'\"`<>)]*",
+    re.I,
 )
 
 
@@ -367,6 +374,8 @@ def redact_text(text: str) -> tuple[str, list[str]]:
     matches: list[str] = []
     replacements = [
         (PRIVATE_BLOCK_RE, "[REDACTED_PRIVATE_KEY]", "private_key_block"),
+        (CREDENTIAL_URL_RE, "[REDACTED_CREDENTIAL_URL]", "credential_url"),
+        (SIGNED_URL_RE, "[REDACTED_SIGNED_URL]", "signed_url"),
         (HEADER_SECRET_RE, r"\1: [REDACTED]", "secret_header"),
         (PVE_TOKEN_RE, "PVEAPIToken=[REDACTED]", "pve_api_token"),
         (DOTENV_SECRET_RE, r"\1=[REDACTED]", "dotenv_secret"),
@@ -382,6 +391,8 @@ def redact_text(text: str) -> tuple[str, list[str]]:
 
 def has_residual_secret(text: str) -> bool:
     if PRIVATE_BLOCK_RE.search(text):
+        return True
+    if CREDENTIAL_URL_RE.search(text) or SIGNED_URL_RE.search(text):
         return True
     if re.search(r"(?i)authorization:\s*bearer\s+\S+", text):
         return True
@@ -501,7 +512,16 @@ def write_support_outputs(
     failure = load_json_file(failure_file)
     raw_tail = tail_text(log_file)
     redacted_tail, matches = redact_text(raw_tail)
-    residual = has_residual_secret(redacted_tail)
+    detection_json, detection_matches = redact_text(
+        json.dumps(detection.to_dict(), indent=2, sort_keys=True)
+    )
+    failure_json, failure_matches = redact_text(json.dumps(failure, indent=2, sort_keys=True))
+    matches = sorted(set(matches + detection_matches + failure_matches))
+    residual = (
+        has_residual_secret(redacted_tail)
+        or has_residual_secret(detection_json)
+        or has_residual_secret(failure_json)
+    )
 
     bundle_path: Path | None = None
     report = {
@@ -520,8 +540,8 @@ def write_support_outputs(
         safe_detection = output_dir / f"installer-detect-{now}.json"
         safe_failure = output_dir / f"install-last-failure-{now}.json"
         safe_log.write_text(redacted_tail + "\n", encoding="utf-8")
-        safe_detection.write_text(json.dumps(detection.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        safe_failure.write_text(json.dumps(failure, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        safe_detection.write_text(detection_json + "\n", encoding="utf-8")
+        safe_failure.write_text(failure_json + "\n", encoding="utf-8")
         with tarfile.open(bundle_path, "w:gz") as tar:
             for item in (safe_log, safe_detection, safe_failure):
                 tar.add(item, arcname=item.name)
@@ -529,7 +549,6 @@ def write_support_outputs(
     elif residual:
         report["skipped_files"].append("support bundle refused: residual secret pattern detected")
 
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     draft = build_issue_draft(
         detection,
         failure,
@@ -537,10 +556,16 @@ def write_support_outputs(
         include_environment=include_environment,
         support_bundle_path=bundle_path,
     )
+    draft, draft_matches = redact_text(draft)
+    if draft_matches:
+        report["redaction_patterns"] = sorted(
+            set(report["redaction_patterns"] + draft_matches)
+        )
     if has_residual_secret(draft):
         draft = "# Installer support snapshot\n\nRedaction failed. A full issue draft was not written.\n"
     draft_path = output_dir / f"github-issue-{now}.md"
     draft_path.write_text(draft, encoding="utf-8")
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     print(f"Issue draft: {draft_path}")
     if bundle_path:
