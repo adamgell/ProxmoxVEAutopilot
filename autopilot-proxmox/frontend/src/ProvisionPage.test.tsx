@@ -200,7 +200,7 @@ describe("ProvisionPage", () => {
     renderProvision();
 
     expect(await screen.findByRole("heading", { name: "Provision" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Boot mode" })).toHaveValue("cloudosd");
+    expect(await screen.findByRole("combobox", { name: "Boot mode" })).toHaveValue("cloudosd");
     expect(screen.getByRole("combobox", { name: "OSDCloud artifact" })).toHaveValue("cloud-artifact");
     expect(screen.getByRole("combobox", { name: "Task sequence" })).toHaveValue("");
     expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(2);

@@ -10,6 +10,7 @@ import { HashesPage } from "./pages/HashesPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
+import { OsdeployPage } from "./pages/OsdeployPage";
 import { ProvisionPage } from "./pages/ProvisionPage";
 import { LoginPage, SetupPage } from "./pages/PublicPages";
 import { RetiredJinjaPage, retiredConfigForPath } from "./pages/RetiredJinjaPages";
@@ -67,6 +68,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/cloudosd") {
     return <CloudosdPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/osdeploy") {
+    return <OsdeployPage bootstrap={bootstrap} />;
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;

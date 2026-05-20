@@ -1349,9 +1349,30 @@ h3 {
 
 .cloudosd-field input,
 .cloudosd-field select,
+.cloudosd-field textarea,
 .cloudosd-artifact-form input {
   min-width: 0;
   width: 100%;
+}
+
+.cloudosd-field textarea,
+.cloudosd-public-key {
+  min-height: 7rem;
+  font-family: var(--font-mono);
+}
+
+.cloudosd-public-key {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  padding: 0.7rem;
+}
+
+.cloudosd-field-help {
+  color: var(--muted);
+  margin: 0.65rem 0;
 }
 
 .cloudosd-value {
