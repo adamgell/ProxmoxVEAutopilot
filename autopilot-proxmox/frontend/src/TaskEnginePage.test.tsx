@@ -236,7 +236,7 @@ describe("TaskEnginePage", () => {
     expect(await screen.findByRole("heading", { name: "V2 Sequence Library" })).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Filter sequences and templates" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Target OS" })).toHaveValue("windows");
-    expect(screen.getByRole("table", { name: "Editable V2 sequences" })).toHaveTextContent("CloudOSD deployment");
+    expect(await screen.findByRole("table", { name: "Editable V2 sequences" })).toHaveTextContent("CloudOSD deployment");
     expect(screen.getByRole("heading", { name: "Read-only Flow Templates" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Inspect OSDCloud Desktop Client" })).toHaveAttribute("href", "/react/task-engine/sequences/templates/cloudosd-desktop");
     expect(screen.getByRole("link", { name: "Clone OSDCloud Desktop Client" })).toHaveAttribute("href", "/react/task-engine/sequences/new?template_id=cloudosd-desktop");

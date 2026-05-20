@@ -35,19 +35,6 @@ const pageResponses: Record<string, unknown> = {
     hypervisor_type: "proxmox",
     utm_iso_dir: "/Users/Adam/UTM-ISOs"
   },
-  "/api/jobs/job-1/page": {
-    job: { id: "job-1", status: "running", playbook: "provision.yml", args: { target: "VM 105" } },
-    log: ["started"],
-    stream_url: "/api/jobs/job-1/stream"
-  },
-  "/api/runs/page": {
-    runs: [{ id: 1, vm_name: "WinPE-1", state: "running", provision_path: "winpe" }]
-  },
-  "/api/runs/1/page": {
-    run: { id: 1, vm_name: "WinPE-1", state: "running", sequence_name: "Baseline" },
-    steps: [{ kind: "rename_computer", state: "ok" }],
-    summary: { total: 1, ok: 1 }
-  },
   "/api/answer-isos/page": {
     rows: [{
       hash: "answer-1",
@@ -104,9 +91,6 @@ describe("retired Jinja React pages", () => {
     ["/react/cloudosd", "OSDCloud Desktop", "Gell-EC41E7EB"],
     ["/react/osdeploy", "OSDeploy Server", "SRV-01"],
     ["/react/template", "Build Template", "Surface Pro"],
-    ["/react/jobs/job-1", "Job Detail", "provision.yml"],
-    ["/react/runs", "Runs", "WinPE-1"],
-    ["/react/runs/1", "Run Detail", "rename_computer"],
     ["/react/answer-isos", "Answer ISO Cache", "autopilot-unattend.img"],
     ["/react/sequences", "Sequences", "Legacy baseline"],
     ["/react/utm-vms", "UTM VMs", "Win11-UTM"],

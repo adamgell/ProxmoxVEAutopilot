@@ -8,6 +8,7 @@ import { CredentialsPage } from "./pages/CredentialsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HashesPage } from "./pages/HashesPage";
+import { JobDetailPage, RunDetailPage, RunsPage } from "./pages/JobAndRunsPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
@@ -38,6 +39,21 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/jobs") {
     return <JobsPage bootstrap={bootstrap} />;
+  }
+  {
+    const jobMatch = /^\/react\/jobs\/([^/]+)$/u.exec(path);
+    if (jobMatch?.[1]) {
+      return <JobDetailPage bootstrap={bootstrap} jobId={jobMatch[1]} />;
+    }
+  }
+  if (path === "/react/runs") {
+    return <RunsPage bootstrap={bootstrap} />;
+  }
+  {
+    const runMatch = /^\/react\/runs\/(\d+)$/u.exec(path);
+    if (runMatch?.[1]) {
+      return <RunDetailPage bootstrap={bootstrap} runId={runMatch[1]} />;
+    }
   }
   if (path === "/react/monitoring") {
     return <MonitoringPage bootstrap={bootstrap} />;
