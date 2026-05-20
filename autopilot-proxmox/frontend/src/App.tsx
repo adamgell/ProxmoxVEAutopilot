@@ -2,6 +2,7 @@ import type { AppBootstrap } from "./contracts";
 import { AgentDownloadPage } from "./pages/AgentDownloadPage";
 import { ClassicVmsPage } from "./pages/ClassicVmsPage";
 import { CloudDevicesPage } from "./pages/CloudDevicesPage";
+import { CloudosdPage } from "./pages/CloudosdPage";
 import { CredentialsPage } from "./pages/CredentialsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FilesPage } from "./pages/FilesPage";
@@ -63,6 +64,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/provision") {
     return <ProvisionPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/cloudosd") {
+    return <CloudosdPage bootstrap={bootstrap} />;
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;
