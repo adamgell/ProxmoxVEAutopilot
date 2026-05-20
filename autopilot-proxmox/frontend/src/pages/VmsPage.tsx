@@ -546,6 +546,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const bubbleOptions = useMemo(() => topologyBubbles(bubbleTopology), [bubbleTopology]);
   const assignmentsByVmid = useMemo(() => topologyAssignmentsByVmid(bubbleTopology), [bubbleTopology]);
   const bubbleAssets = useMemo(() => topologyAssets(bubbleTopology), [bubbleTopology]);
+  const infraVmCandidates = useMemo(
+    () => fleet.vms.length ? fleet.vms : bubbleTopology.unassigned_assets,
+    [bubbleTopology.unassigned_assets, fleet.vms]
+  );
   const detailRow = useMemo(
     () => detailVmid === null ? undefined : machineRows.find((row) => row.vmid === detailVmid),
     [detailVmid, machineRows]
@@ -794,14 +798,14 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       setActionStatus("Create a bubble before tagging infrastructure.");
       return;
     }
-    const runningCandidate = bubbleTopology.unassigned_assets.find((vm) => vm.status === "running") ?? bubbleTopology.unassigned_assets[0];
+    const runningCandidate = infraVmCandidates.find((vm) => vm.status === "running") ?? infraVmCandidates[0];
     setInfraDraft({
       ...blankInfraDraft,
       bubbleId: bubbleOptions[0]?.id ?? "",
       vmid: runningCandidate ? String(runningCandidate.vmid) : ""
     });
     setInfraDraftOpen(true);
-  }, [bubbleOptions, bubbleTopology.unassigned_assets]);
+  }, [bubbleOptions, infraVmCandidates]);
 
   const updateInfraDraft = useCallback((field: keyof InfraDraft, value: string) => {
     setInfraDraft((current) => ({ ...current, [field]: value }));
@@ -1166,6 +1170,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
       <BubbleTopologyOverview
         topology={bubbleTopology}
+        infraVmCandidates={infraVmCandidates}
         credentials={credentialSummaries}
         credentialsError={credentialsError}
         onCreateBubble={createBubble}
@@ -1719,6 +1724,7 @@ function BubbleTextField({
 
 function BubbleTopologyOverview({
   topology,
+  infraVmCandidates,
   credentials,
   credentialsError,
   onCreateBubble,
@@ -1767,6 +1773,7 @@ function BubbleTopologyOverview({
   onCancelDeleteService
 }: {
   readonly topology: LabBubbleTopology;
+  readonly infraVmCandidates: readonly VmFleetRow[];
   readonly credentials: readonly CredentialSummary[];
   readonly credentialsError: string;
   readonly onCreateBubble: () => void;
@@ -1821,8 +1828,6 @@ function BubbleTopologyOverview({
   const assetOptions = topologyAssets(topology);
   const providerById = new Map(assetOptions.map((item) => [item.asset.id, item]));
   const credentialById = new Map(credentials.map((credential) => [credential.id, credential]));
-  const infraCandidates = topology.unassigned_assets.filter((vm) => vm.status === "running");
-  const candidateVms = infraCandidates.length ? infraCandidates : topology.unassigned_assets;
   const gateByBubble = new Map(topology.gate_states.map((gate) => [gate.bubble_id, gate]));
   return (
     <section className="bubble-layout" aria-label="Tenant bubbles">
@@ -1936,7 +1941,7 @@ function BubbleTopologyOverview({
             <InfraDraftEditor
               values={infraDraft}
               bubbleOptions={bubbleOptions}
-              candidateVms={candidateVms}
+              candidateVms={infraVmCandidates}
               onChange={onInfraDraftChange}
               onSave={onSaveInfraDraft}
               onCancel={onCancelInfraDraft}

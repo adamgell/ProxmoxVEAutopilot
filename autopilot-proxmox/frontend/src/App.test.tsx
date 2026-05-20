@@ -605,6 +605,7 @@ describe("App", () => {
     await screen.findByText("domain controller");
     fireEvent.click(await screen.findByRole("button", { name: "Add infra VM" }));
     expect(await screen.findByLabelText("Critical infrastructure VM")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "WrkGrp-525570B6 / VM 108 / running" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Critical infrastructure VM"), { target: { value: "9109" } });
     fireEvent.change(screen.getByLabelText("Critical infrastructure role"), { target: { value: "file_server" } });
     fireEvent.change(screen.getByLabelText("Critical infrastructure notes"), { target: { value: "Bubble file share" } });
