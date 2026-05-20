@@ -4,13 +4,6 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 
 const pageResponses: Record<string, unknown> = {
-  "/api/install-tracking/page": {
-    tracking: {
-      run: { run_id: "install-1", name: "Clean install", target: "pve2" },
-      items: [{ item_id: "media", label: "Media staged", status: "ok", detail: "ready" }],
-      summary: { total: 1, ok: 1, blocked: 0 }
-    }
-  },
   "/api/provision/page": {
     defaults: { cores: 4, memory_mb: 8192, disk_size_gb: 96 },
     sequences: [{ id: 1, name: "Windows baseline", target_os: "windows", boot_modes: ["cloudosd"] }],
@@ -49,11 +42,6 @@ const pageResponses: Record<string, unknown> = {
   "/api/sequences/page": {
     sequences: [{ id: 1, name: "Legacy baseline", target_os: "windows", steps: [] }]
   },
-  "/api/utm-vms/page": {
-    vms: [{ name: "Win11-UTM", status: "started", ip: "192.168.64.10" }],
-    host_summary: { running: 1 },
-    isos: [{ name: "Win11.iso" }]
-  },
   "/api/setup/v1/state": {
     ready: true,
     phase: "ready",
@@ -86,14 +74,12 @@ afterEach(() => {
 
 describe("retired Jinja React pages", () => {
   test.each([
-    ["/react/install-tracking", "Install Tracking", "Clean install"],
     ["/react/provision", "Provision", "Windows baseline"],
     ["/react/cloudosd", "OSDCloud Desktop", "Gell-EC41E7EB"],
     ["/react/osdeploy", "OSDeploy Server", "SRV-01"],
     ["/react/template", "Build Template", "Surface Pro"],
     ["/react/answer-isos", "Answer ISO Cache", "autopilot-unattend.img"],
     ["/react/sequences", "Sequences", "Legacy baseline"],
-    ["/react/utm-vms", "UTM VMs", "Win11-UTM"],
     ["/setup", "Setup", "ready"]
   ])("renders %s from page payload", async (path, heading, visibleText) => {
     mockFetch();

@@ -8,6 +8,7 @@ import { CredentialsPage } from "./pages/CredentialsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HashesPage } from "./pages/HashesPage";
+import { InstallTrackingPage } from "./pages/InstallTrackingPage";
 import { JobDetailPage, RunDetailPage, RunsPage } from "./pages/JobAndRunsPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -20,6 +21,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
 import { TaskEnginePage } from "./pages/TaskEnginePage";
 import { TemplatePage } from "./pages/TemplatePage";
+import { UtmVmsPage } from "./pages/UtmVmsPage";
 import { VmsPage } from "./pages/VmsPage";
 
 interface AppProps {
@@ -58,11 +60,17 @@ export function App({ bootstrap }: AppProps) {
   if (path === "/react/monitoring") {
     return <MonitoringPage bootstrap={bootstrap} />;
   }
+  if (path === "/react/install-tracking") {
+    return <InstallTrackingPage bootstrap={bootstrap} />;
+  }
   if (path === "/react/vms" || /^\/react\/vms\/\d+$/.test(path)) {
     return <VmsPage bootstrap={bootstrap} />;
   }
   if (path === "/react/legacy-vms") {
     return <ClassicVmsPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/utm-vms") {
+    return <UtmVmsPage bootstrap={bootstrap} />;
   }
   if (path === "/react/devices") {
     return <CloudDevicesPage bootstrap={bootstrap} />;
