@@ -19,6 +19,12 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _write_fake_msi(path: Path, *, size: int = 4096) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"MZ" + (b"\0" * (size - 2)))
+    return path
+
+
 def _bootstrap_fleet_agent(client: TestClient, agent_id: str = "agent-ninja", **payload):
     body = {"agent_id": agent_id, "computer_name": "GELL-NINJA107"}
     body.update(payload)
@@ -101,6 +107,104 @@ def _approved_agent_with_heartbeat(
     )
     assert heartbeat.status_code == 200, heartbeat.text
     return agent_token
+
+
+def test_agent_update_check_reports_newer_published_msi(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import setup_artifacts
+
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(
+        setup_artifacts,
+        "REGISTRY_PATH",
+        artifact_root / "artifact_registry.json",
+    )
+    msi = _write_fake_msi(
+        artifact_root / "agent-msi" / "AutopilotAgent-0.1.3-win-x64.msi"
+    )
+    setup_artifacts.register_existing_artifact(
+        kind="agent-msi",
+        path=msi,
+        metadata={"version": "0.1.3", "rid": "win-x64"},
+    )
+    token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-update-old",
+        token="agent-update-token",
+        vmid=118,
+        computer_name="GELL-UPDATE118",
+        agent_version="0.1.2",
+    )
+
+    response = agent_client.post(
+        "/api/agent/v1/update-check",
+        headers=_bearer(token),
+        json={
+            "agent_id": "agent-update-old",
+            "installed_version": "0.1.2",
+            "runtime_identifier": "win-x64",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "upgrade_available"
+    assert body["published_version"] == "0.1.3"
+    assert body["download_url"].endswith("/api/cloudosd/assets/autopilotagent.msi")
+    assert body["sha256"]
+    assert body["size_bytes"] >= 4096
+
+
+def test_agent_update_check_reports_current_when_versions_match(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import setup_artifacts
+
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(
+        setup_artifacts,
+        "REGISTRY_PATH",
+        artifact_root / "artifact_registry.json",
+    )
+    msi = _write_fake_msi(
+        artifact_root / "agent-msi" / "AutopilotAgent-0.1.3-win-x64.msi"
+    )
+    setup_artifacts.register_existing_artifact(
+        kind="agent-msi",
+        path=msi,
+        metadata={"version": "0.1.3", "rid": "win-x64"},
+    )
+    token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-update-current",
+        token="agent-update-current-token",
+        vmid=119,
+        computer_name="GELL-UPDATE119",
+        agent_version="0.1.3",
+    )
+
+    response = agent_client.post(
+        "/api/agent/v1/update-check",
+        headers=_bearer(token),
+        json={
+            "agent_id": "agent-update-current",
+            "installed_version": "0.1.3",
+            "runtime_identifier": "win-x64",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "current"
+    assert response.json()["download_url"] is None
 
 
 @pytest.fixture
