@@ -816,6 +816,71 @@ describe("App", () => {
     });
   });
 
+  test("renders a Files upload queue before uploading", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/files");
+
+    const uploadInput = await screen.findByLabelText("Upload files");
+    const files = [
+      new File(["setup"], "setup.exe", { type: "application/octet-stream" }),
+      new File(["notes"], "notes.txt", { type: "text/plain" })
+    ];
+    fireEvent.change(uploadInput, { target: { files } });
+
+    expect(screen.getByRole("heading", { name: "Upload queue" })).toBeInTheDocument();
+    expect(screen.getByText("setup.exe")).toBeInTheDocument();
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getAllByText("Queued")).toHaveLength(2);
+    expect(screen.getByRole("progressbar", { name: "Upload progress for setup.exe" })).toHaveValue(0);
+    expect(screen.getByRole("button", { name: "Start upload (2)" })).toBeEnabled();
+  });
+
+  test("bulk deletes selected Files shelf rows", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/files": {
+        files: [
+          {
+            name: "AutopilotAgent.msi",
+            url: "/files/AutopilotAgent.msi",
+            size: "4,096 bytes",
+            size_bytes: 4096,
+            modified: "2026-05-19 12:00",
+            modified_epoch: 1779192000
+          },
+          {
+            name: "VSCodeSetup-x64.exe",
+            url: "/files/VSCodeSetup-x64.exe",
+            size: "88,000,000 bytes",
+            size_bytes: 88000000,
+            modified: "2026-05-21 16:04",
+            modified_epoch: 1779379440
+          }
+        ]
+      },
+      "/api/files/delete": { ok: true, deleted: 2 }
+    });
+
+    renderRoute("/react/files");
+
+    fireEvent.click(await screen.findByLabelText("Select AutopilotAgent.msi"));
+    fireEvent.click(screen.getByLabelText("Select VSCodeSetup-x64.exe"));
+    const bulkDelete = screen.getByRole("button", { name: "Delete selected (2)" });
+    expect(bulkDelete).toBeEnabled();
+
+    fireEvent.click(bulkDelete);
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("Delete 2 selected file(s)?");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/delete",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+  });
+
   test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {
     mockFetch(dashboardResponses);
 
