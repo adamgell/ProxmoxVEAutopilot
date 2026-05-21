@@ -97,9 +97,6 @@ def test_react_shell_auth_boundary_is_narrow():
     "/react/task-engine/sequences/templates/windows-baseline",
     "/react/task-engine/sequences/seq-1/edit",
     "/react/answer-isos",
-    "/react/sequences",
-    "/react/sequences/new",
-    "/react/sequences/1/edit",
     "/react/utm-vms",
 ])
 def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
@@ -109,6 +106,21 @@ def test_react_shell_routes_render_authenticated_bootstrap(web_client, path):
     assert 'id="react-root"' in response.text
     assert 'data-react-shell="protected"' in response.text
     assert "Proxmox VE Autopilot" in response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "target"),
+    [
+        ("/react/sequences", "/react/task-engine/sequences/list"),
+        ("/react/sequences/new", "/react/task-engine/sequences/new"),
+        ("/react/sequences/1/edit", "/react/task-engine/sequences/list"),
+    ],
+)
+def test_retired_v1_react_sequence_routes_redirect_to_v2(web_client, path, target):
+    response = web_client.get(path, follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == target
 
 
 @pytest.mark.parametrize("path", ["/auth/login", "/setup"])
@@ -163,9 +175,9 @@ def test_public_react_shell_routes_render_public_bootstrap(web_client, path):
         ("/task-engine/sequences/templates/windows-baseline", "/react/task-engine/sequences/templates/windows-baseline"),
         ("/task-engine/sequences/seq-1/edit", "/react/task-engine/sequences/seq-1/edit"),
         ("/answer-isos", "/react/answer-isos"),
-        ("/sequences", "/react/sequences"),
-        ("/sequences/new", "/react/sequences/new"),
-        ("/sequences/1/edit", "/react/sequences/1/edit"),
+        ("/sequences", "/react/task-engine/sequences/list"),
+        ("/sequences/new", "/react/task-engine/sequences/new"),
+        ("/sequences/1/edit", "/react/task-engine/sequences/list"),
         ("/monitoring", "/react/monitoring"),
         ("/vms/108/console", "/react/vms/108?action=console"),
     ],
@@ -235,7 +247,6 @@ def test_remaining_react_read_apis_return_stable_shapes(web_client):
         ("/api/runs/page", {"runs"}),
         ("/api/task-engine/page", {"sequences", "runs", "flow_templates"}),
         ("/api/answer-isos/page", {"rows", "error"}),
-        ("/api/sequences/page", {"sequences"}),
         ("/api/utm-vms/page", {"vms", "host_summary", "isos"}),
     ],
 )

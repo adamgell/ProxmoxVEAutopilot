@@ -60,9 +60,25 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     label: "Build",
     items: [
       { path: "/react/template", label: "Template", group: "Build", phase: "operational", active: true },
-      { path: "/react/task-engine", label: "Task Engine", group: "Build", phase: "operational", active: true },
-      { path: "/react/task-engine/sequences/list", label: "Task Sequences", group: "Build", phase: "operational", active: true },
-      { path: "/react/task-engine/sequences/new", label: "New Task Sequence", group: "Build", phase: "operational", active: true },
+      { path: "/react/task-engine", label: "Task Sequences", group: "Build", phase: "operational", active: true },
+      {
+        path: "/react/task-engine/sequences/list",
+        label: "Sequence Library",
+        group: "Build",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/task-engine",
+        showInNav: false
+      },
+      {
+        path: "/react/task-engine/sequences/new",
+        label: "New Sequence",
+        group: "Build",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/task-engine",
+        showInNav: false
+      },
       {
         path: "/react/task-engine/sequences/templates/:templateId",
         label: "Task Template",
@@ -102,18 +118,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
       { path: "/react/utm-vms", label: "UTM VMs", group: "Fleet", phase: "operational", active: true, showInNav: false },
       { path: "/react/devices", label: "Cloud Devices", group: "Fleet", phase: "read-only", active: true },
       { path: "/react/hashes", label: "Hashes", group: "Fleet", phase: "operational", active: true },
-      { path: "/react/files", label: "Files", group: "Fleet", phase: "operational", active: true },
-      { path: "/react/sequences", label: "Sequences", group: "Fleet", phase: "operational", active: true },
-      { path: "/react/sequences/new", label: "New Sequence", group: "Fleet", phase: "operational", active: true },
-      {
-        path: "/react/sequences/:sequenceId/edit",
-        label: "Edit Sequence",
-        group: "Fleet",
-        phase: "operational",
-        active: true,
-        navParentPath: "/react/sequences",
-        showInNav: false
-      }
+      { path: "/react/files", label: "Files", group: "Fleet", phase: "operational", active: true }
     ]
   },
   {
@@ -157,7 +162,7 @@ export const operatorFlows: readonly OperatorFlow[] = [
     group: "Build",
     summary: "Open build orchestration, templates, and generated media.",
     steps: [
-      { label: "Task Engine", href: "/react/task-engine", group: "Build", state: "React" },
+      { label: "Task Sequences", href: "/react/task-engine", group: "Build", state: "React" },
       { label: "Template", href: "/react/template", group: "Build", state: "React" },
       { label: "Answer ISOs", href: "/react/answer-isos", group: "Build", state: "React" }
     ]
@@ -173,8 +178,7 @@ export const operatorFlows: readonly OperatorFlow[] = [
       { label: "Cloud Devices", href: "/react/devices", group: "Fleet", state: "React" },
       { label: "Classic VM Table", href: "/react/legacy-vms", group: "Fleet", state: "React" },
       { label: "Hashes", href: "/react/hashes", group: "Fleet", state: "React" },
-      { label: "Files", href: "/react/files", group: "Fleet", state: "React" },
-      { label: "Sequences", href: "/react/sequences", group: "Fleet", state: "React" }
+      { label: "Files", href: "/react/files", group: "Fleet", state: "React" }
     ]
   },
   {
@@ -245,6 +249,7 @@ export function reactHrefForUiPath(href: string): string {
     [/^\/runs\/([^/]+)$/u, (match) => `/react/runs/${match[1] ?? ""}`],
     [/^\/(?:cloudosd|osdcloud)\/runs\/([^/]+)$/u, (match) => `/react/cloudosd/runs/${match[1] ?? ""}`],
     [/^\/osdeploy\/runs\/([^/]+)$/u, (match) => `/react/osdeploy/runs/${match[1] ?? ""}`],
+    [/^\/sequences\/\d+\/edit$/u, () => "/react/task-engine/sequences/list"],
     [/^\/devices\/(\d+)$/u, (match) => `/react/vms/${match[1] ?? ""}`],
     [/^\/vms\/(\d+)\/console$/u, (match) => `/react/vms/${match[1] ?? ""}?action=console`]
   ];
@@ -267,6 +272,8 @@ export function reactHrefForUiPath(href: string): string {
     "/osdeploy": "/react/osdeploy",
     "/provision": "/react/provision",
     "/runs": "/react/runs",
+    "/sequences": "/react/task-engine/sequences/list",
+    "/sequences/new": "/react/task-engine/sequences/new",
     "/settings": "/react/settings",
     "/template": "/react/template",
     "/vms": "/react/vms"

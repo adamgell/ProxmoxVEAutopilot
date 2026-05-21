@@ -2640,14 +2640,14 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
     assert body["cloudosd_options"]["storages"]["disk"]
 
 
-def test_provision_page_filters_legacy_sequences_by_boot_mode(
+def test_provision_page_excludes_legacy_v1_sequences(
     cloudosd_client,
     pg_conn,
 ):
     from web import sequences_pg
 
     _create_artifact(pg_conn)
-    cloudosd_seq = sequences_pg.create_sequence(
+    sequences_pg.create_sequence(
         None,
         name="CloudOSD AD Domain Join UI",
         description="CloudOSD-only domain join intent",
@@ -2660,7 +2660,7 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
             },
         ],
     )
-    windows_seq = sequences_pg.create_sequence(
+    sequences_pg.create_sequence(
         None,
         name="Clone and WinPE Windows UI",
         description="Generic Windows sequence",
@@ -2670,7 +2670,7 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
             {"step_type": "autopilot_entra", "params": {}, "enabled": True},
         ],
     )
-    winpe_seq = sequences_pg.create_sequence(
+    sequences_pg.create_sequence(
         None,
         name="WinPE E2E Smoke UI",
         description="WinPE-only smoke sequence",
@@ -2688,14 +2688,8 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
     response = cloudosd_client.get("/api/provision/page")
 
     assert response.status_code == 200, response.text
-    rows = {row["id"]: row for row in response.json()["sequences"]}
-    assert cloudosd_seq in rows
-    assert windows_seq in rows
-    assert winpe_seq in rows
-    assert all(row["target_os"] == "windows" for row in rows.values())
-    assert rows[cloudosd_seq]["boot_modes"] == ["cloudosd"]
-    assert rows[windows_seq]["boot_modes"] == ["clone", "winpe"]
-    assert rows[winpe_seq]["boot_modes"] == ["winpe"]
+    assert response.json()["sequences"] == []
+    assert response.json()["default_sequence_id"] == ""
 
 
 def test_provision_rejects_sequence_for_wrong_boot_mode(

@@ -624,7 +624,7 @@ def test_run_detail_previews_all_winpe_tasks_before_agent_registers(
     }
 
 
-def test_sequences_page_shows_winpe_plan_and_hash_phase(
+def test_legacy_sequences_page_redirects_to_v2_library(
     web_client: TestClient, test_db
 ):
     from web import sequences_db
@@ -639,14 +639,7 @@ def test_sequences_page_shows_winpe_plan_and_hash_phase(
 
     res = web_client.get("/sequences", follow_redirects=False)
     assert res.status_code == 302
-    assert res.headers["location"] == "/react/sequences"
-
-    res = web_client.get("/api/sequences/page")
-
-    assert res.status_code == 200
-    rows = {row["name"]: row for row in res.json()["sequences"]}
-    assert rows["WinPE capable sequence"]["produces_autopilot_hash"] is True
-    assert rows["WinPE capable sequence"]["hash_capture_phase"] == "winpe"
+    assert res.headers["location"] == "/react/task-engine/sequences/list"
 
 
 def test_task_engine_page_shows_v2_sequences_runs_and_content(

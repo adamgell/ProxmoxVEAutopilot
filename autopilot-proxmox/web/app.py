@@ -5209,6 +5209,21 @@ async def react_monitoring_settings_shell(request: Request):
     return _render_react_shell(request)
 
 
+@app.get("/react/sequences", include_in_schema=False)
+async def react_legacy_sequences_redirect(request: Request):
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
+
+
+@app.get("/react/sequences/new", include_in_schema=False)
+async def react_legacy_sequence_new_redirect(request: Request):
+    return _primary_ui_redirect("/react/task-engine/sequences/new")
+
+
+@app.get("/react/sequences/{seq_id}/edit", include_in_schema=False)
+async def react_legacy_sequence_edit_redirect(request: Request, seq_id: int):
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
+
+
 @app.get("/react/{react_path:path}", response_class=HTMLResponse, include_in_schema=False)
 async def react_operator_shell(request: Request, react_path: str):
     return _render_react_shell(request)
@@ -5311,7 +5326,7 @@ async def provision_page(request: Request):
 
 
 def _provision_page_payload() -> dict:
-    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
+    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
 
     cfg = _load_vars()
     # Best-effort: look up template disk size so the UI can show the minimum.
@@ -5377,27 +5392,12 @@ def _provision_page_payload() -> dict:
         cloudosd_batch_progress = cloudosd_endpoints.provision_progress_payload(limit=25)
     except Exception:
         cloudosd_batch_progress = {"schema_version": 1, "runs": []}
-    sequences = sequences_db.list_sequences(SEQUENCES_DB)
-    default_sequence_id = ""
-    sequence_rows = []
-    for sequence in sequences:
-        if sequence.get("is_default"):
-            default_sequence_id = str(sequence["id"])
-        row = dict(sequence)
-        full_sequence = sequences_db.get_sequence(SEQUENCES_DB, int(sequence["id"]))
-        unsupported = cloudosd_sequence.unsupported_enabled_steps(full_sequence)
-        cloudosd_supported = _cloudosd_supported_enabled_steps(full_sequence)
-        row["cloudosd_unsupported_steps"] = unsupported
-        row["cloudosd_compatible"] = bool(cloudosd_supported) and not unsupported
-        row["boot_modes"] = _legacy_sequence_boot_modes(full_sequence)
-        if row["boot_modes"]:
-            sequence_rows.append(row)
     return {
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
-        "sequences": sequence_rows,
-        "default_sequence_id": default_sequence_id,
+        "sequences": [],
+        "default_sequence_id": "",
         "winpe_enabled": _winpe_enabled(),
         "cloudosd_catalog": cloudosd_catalog,
         "cloudosd_options": cloudosd_options,
@@ -13141,10 +13141,11 @@ class _V2BuilderSequenceIn(BaseModel):
 
 @app.get("/api/sequences/page")
 def api_sequences_page(error: str = ""):
-    seqs = sequences_db.list_sequences(SEQUENCES_DB)
     return {
-        "sequences": _sequence_rows_for_ui(seqs),
+        "sequences": [],
         "error": error,
+        "retired": True,
+        "redirect": "/react/task-engine/sequences/list",
     }
 
 
@@ -13154,6 +13155,8 @@ def api_sequence_new_page():
         "sequence": None,
         "seq": None,
         "oem_profiles": load_oem_profiles(),
+        "retired": True,
+        "redirect": "/react/task-engine/sequences/new",
     }
 
 
@@ -14342,7 +14345,6 @@ def _task_engine_page_payload() -> dict:
             "cloudosd_runs": [],
             "content_items": [],
             "manifest_items": [],
-            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
             "flow_templates": _v2_flow_templates(),
             "error": str(exc),
         }
@@ -14356,7 +14358,6 @@ def _task_engine_page_payload() -> dict:
         "cloudosd_runs": cloudosd_runs,
         "content_items": content_items,
         "manifest_items": manifest_items,
-        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
         "flow_templates": _v2_flow_templates(),
     }
 
@@ -14405,7 +14406,6 @@ def api_task_engine_sequence_new_page(legacy_id: int | None = None, template_id:
 
 
 def _task_engine_sequence_new_payload(legacy_id: int | None = None, template_id: str | None = None) -> dict:
-    legacy = sequences_db.get_sequence(SEQUENCES_DB, legacy_id) if legacy_id else None
     flow_template = _v2_flow_template(template_id)
     if template_id and not flow_template:
         raise HTTPException(status_code=404, detail="v2 flow template not found")
@@ -14420,21 +14420,10 @@ def _task_engine_sequence_new_payload(legacy_id: int | None = None, template_id:
             "enabled": True,
         }
         nodes = flow_template["nodes"]
-    elif legacy:
-        sequence = {
-            "id": None,
-            "name": f"{legacy['name']} v2",
-            "description": legacy.get("description") or "",
-            "target_os": legacy.get("target_os") or "windows",
-            "enabled": True,
-        }
-        nodes = _legacy_sequence_to_v2_nodes(legacy)
     return {
         "sequence": sequence,
         "nodes": nodes,
         "step_templates": _V2_STEP_TEMPLATES,
-        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
-        "legacy_source_id": legacy_id,
         "flow_templates": _v2_flow_templates(),
         "template_source": flow_template,
     }
@@ -14486,8 +14475,6 @@ def api_task_engine_sequence_edit_page(sequence_id: str):
         "sequence": sequence,
         "nodes": nodes,
         "step_templates": _V2_STEP_TEMPLATES,
-        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
-        "legacy_source_id": None,
         "flow_templates": _v2_flow_templates(),
         "template_source": None,
     }
@@ -14791,7 +14778,7 @@ def _now_iso() -> str:
 
 @app.get("/sequences", response_class=HTMLResponse)
 def page_sequences(request: Request, error: str = ""):
-    return _primary_ui_redirect("/react/sequences")
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
 
 
 @app.post("/sequences/{seq_id}/delete")
@@ -14910,23 +14897,22 @@ async def check_ubuntu_enrollment(vmid: int):
 
 @app.get("/sequences/new", response_class=HTMLResponse)
 def page_sequence_new(request: Request):
-    return _primary_ui_redirect("/react/sequences/new")
+    return _primary_ui_redirect("/react/task-engine/sequences/new")
 
 
 @app.get("/sequences/{seq_id}/edit", response_class=HTMLResponse)
 def page_sequence_edit(request: Request, seq_id: int):
-    return _primary_ui_redirect(f"/react/sequences/{seq_id}/edit")
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
 
 
 @app.get("/api/sequences/{seq_id}/edit/page")
 def api_sequence_edit_page(seq_id: int):
-    seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
-    if seq is None:
-        raise HTTPException(404, "sequence not found")
     return {
-        "sequence": seq,
-        "seq": seq,
+        "sequence": None,
+        "seq": None,
         "oem_profiles": load_oem_profiles(),
+        "retired": True,
+        "redirect": "/react/task-engine/sequences/list",
     }
 
 

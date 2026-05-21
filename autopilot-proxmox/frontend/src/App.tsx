@@ -17,7 +17,6 @@ import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
 import { OsdeployPage } from "./pages/OsdeployPage";
 import { ProvisionPage } from "./pages/ProvisionPage";
 import { LoginPage, SetupPage } from "./pages/PublicPages";
-import { SequencesPage } from "./pages/SequencesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
 import { TaskEnginePage } from "./pages/TaskEnginePage";
@@ -72,9 +71,6 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/utm-vms") {
     return <UtmVmsPage bootstrap={bootstrap} />;
-  }
-  if (path === "/react/sequences" || path === "/react/sequences/new" || /^\/react\/sequences\/\d+\/edit$/u.test(path)) {
-    return <SequencesPage bootstrap={bootstrap} />;
   }
   if (path === "/react/devices") {
     return <CloudDevicesPage bootstrap={bootstrap} />;

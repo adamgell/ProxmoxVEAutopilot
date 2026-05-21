@@ -6,7 +6,6 @@ import { App } from "./App";
 const pageResponses: Record<string, unknown> = {
   "/api/provision/page": {
     defaults: { cores: 4, memory_mb: 8192, disk_size_gb: 96 },
-    sequences: [{ id: 1, name: "Windows baseline", target_os: "windows", boot_modes: ["cloudosd"] }],
     cloudosd_catalog: { count: 2 },
     osdeploy_catalog: { count: 1 }
   },
@@ -71,7 +70,7 @@ afterEach(() => {
 
 describe("retired Jinja React pages", () => {
   test.each([
-    ["/react/provision", "Provision", "Windows baseline"],
+    ["/react/provision", "Provision", "Provision VMs"],
     ["/react/cloudosd", "OSDCloud Desktop", "Gell-EC41E7EB"],
     ["/react/osdeploy", "OSDeploy Server", "SRV-01"],
     ["/react/template", "Build Template", "Surface Pro"],

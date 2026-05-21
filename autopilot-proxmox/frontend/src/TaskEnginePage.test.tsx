@@ -78,9 +78,6 @@ const taskEnginePayload = {
       source_uri: "/files/AutopilotAgent.msi"
     }
   ],
-  legacy_sequences: [
-    { id: 7, name: "Legacy baseline", target_os: "windows" }
-  ],
   flow_templates: [
     {
       id: "cloudosd-desktop",
@@ -159,7 +156,6 @@ function mockFetch() {
             description: "Wait for agent"
           }
         ],
-        legacy_sequences: taskEnginePayload.legacy_sequences,
         flow_templates: taskEnginePayload.flow_templates,
         template_source: taskEnginePayload.flow_templates[0]
       }));
@@ -177,7 +173,6 @@ function mockFetch() {
             description: "Capture hash"
           }
         ],
-        legacy_sequences: taskEnginePayload.legacy_sequences,
         flow_templates: taskEnginePayload.flow_templates,
         template_source: null
       }));
@@ -187,9 +182,6 @@ function mockFetch() {
     }
     if (url.pathname === "/api/osd/v2/builder/sequences/seq-1" && init?.method === "PUT") {
       return Promise.resolve(response({ ok: true, id: "seq-1", current_version_id: "ver-2" }));
-    }
-    if (url.pathname === "/api/osd/v2/builder/import-legacy/7" && init?.method === "POST") {
-      return Promise.resolve(response({ id: "seq-imported", current_version_id: "ver-imported" }));
     }
     return Promise.resolve(new Response("not found", { status: 404 }));
   });
@@ -208,25 +200,21 @@ afterEach(() => {
 });
 
 describe("TaskEnginePage", () => {
-  test("renders the v2 task engine overview with templates, runs, content, and import controls", async () => {
-    const fetchMock = mockFetch();
+  test("renders the v2 task sequences overview with templates, runs, content, and no v1 controls", async () => {
+    mockFetch();
     renderPath("/react/task-engine");
 
-    expect(await screen.findByRole("heading", { name: "Task Sequence Engine v2" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sequence library" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
-    expect(screen.getByRole("link", { name: "New v2 sequence" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+    expect(await screen.findByRole("heading", { name: "Task Sequences" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
+    expect(screen.getByRole("link", { name: "New sequence" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+    expect(screen.queryByText("Import v1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create v2 copy" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Read-only Flow Templates" })).toBeInTheDocument();
     expect(screen.getByText("OSDCloud Desktop Client")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "V2 task sequences" })).toHaveTextContent("CloudOSD deployment");
     expect(screen.getByRole("table", { name: "V2 runs" })).toHaveTextContent("run-1");
     expect(screen.getByRole("table", { name: "Content library" })).toHaveTextContent("AutopilotAgent");
     expect(screen.getByRole("table", { name: "Content manifest" })).toHaveTextContent("agent-msi");
-
-    fireEvent.click(screen.getByRole("button", { name: "Create v2 copy" }));
-
-    await waitFor(() => expect(screen.getByText(/seq-imported/u)).toBeInTheDocument());
-    const importCall = fetchMock.mock.calls.find(([input]) => input === "/api/osd/v2/builder/import-legacy/7");
-    expect(importCall?.[1]?.method).toBe("POST");
   });
 
   test("renders the sequence library with filter and read-only template actions", async () => {

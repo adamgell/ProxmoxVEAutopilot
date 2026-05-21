@@ -1,4 +1,4 @@
-import { CopyPlus, Library, ListTree, Plus, Save, Trash2 } from "lucide-react";
+import { Library, ListTree, Plus, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { fetchJson, postJson, putJson } from "../apiClient";
@@ -85,12 +85,6 @@ interface ManifestItem {
   readonly source_uri?: string;
 }
 
-interface LegacySequence {
-  readonly id: number;
-  readonly name: string;
-  readonly target_os?: string;
-}
-
 interface FlowTemplate {
   readonly id: string;
   readonly name: string;
@@ -120,8 +114,6 @@ interface BuilderPayload {
   readonly sequence: V2Sequence | null;
   readonly nodes: readonly V2Step[];
   readonly step_templates: readonly StepTemplate[];
-  readonly legacy_sequences: readonly LegacySequence[];
-  readonly legacy_source_id?: number | null;
   readonly flow_templates: readonly FlowTemplate[];
   readonly template_source?: FlowTemplate | null;
 }
@@ -153,7 +145,6 @@ interface TaskEnginePayload {
   readonly cloudosd_runs?: readonly V2Run[];
   readonly content_items?: readonly ContentItem[];
   readonly manifest_items?: readonly ManifestItem[];
-  readonly legacy_sequences?: readonly LegacySequence[];
   readonly flow_templates: readonly FlowTemplate[];
   readonly target_os_filter?: string;
   readonly error?: string;
@@ -175,7 +166,6 @@ function defaultTaskEnginePayload(): TaskEnginePayload {
     cloudosd_runs: [],
     content_items: [],
     manifest_items: [],
-    legacy_sequences: [],
     flow_templates: [],
     target_os_filter: "",
     error: ""
@@ -631,52 +621,19 @@ function TaskSequenceBuilderPage({
 
 function TaskEngineOverviewPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const { payload, loading, error } = useTaskEnginePayload("/api/task-engine/page");
-  const [legacyId, setLegacyId] = useState("");
-  const [status, setStatus] = useState("");
-  const legacySequences = payload.legacy_sequences ?? [];
-  const selectedLegacyId = legacyId || String(legacySequences[0]?.id ?? "");
-
-  const importLegacy = async () => {
-    if (!selectedLegacyId) {
-      setStatus("select legacy sequence first");
-      return;
-    }
-    try {
-      const response = await postJson<ImportLegacyResponse>(`/api/osd/v2/builder/import-legacy/${encodeURIComponent(selectedLegacyId)}`);
-      setStatus(`created ${response.id}`);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Import failed");
-    }
-  };
 
   return (
-    <PageFrame bootstrap={bootstrap} title="Task Sequence Engine v2" section="Build" path="/react/task-engine">
-      {loading ? <LoadingStrip label="Task Engine" /> : null}
+    <PageFrame bootstrap={bootstrap} title="Task Sequences" section="Build" path="/react/task-engine">
+      {loading ? <LoadingStrip label="Task Sequences" /> : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
-      {status ? <p className="notice" role="status">{status}</p> : null}
 
-      <Panel title="Smart V2 Builder" action={<a className="utility-button" href="/react/task-engine/sequences/list"><Library size={15} aria-hidden="true" /> Sequence library</a>}>
+      <Panel title="V2 Builder" action={<a className="utility-button" href="/react/task-engine/sequences/list"><Library size={15} aria-hidden="true" /> Library</a>}>
         <div className="utility-form-actions">
-          <a className="utility-button" href="/react/task-engine/sequences/new"><ListTree size={15} aria-hidden="true" /> New v2 sequence</a>
-          {legacySequences.length ? (
-            <>
-              <label className="utility-field" style={{ minWidth: "240px" }}>
-                <span>Import v1</span>
-                <select value={selectedLegacyId} onChange={(event) => {
-                  setLegacyId(event.target.value);
-                }}>
-                  {legacySequences.map((sequence) => <option key={sequence.id} value={sequence.id}>{sequence.name}</option>)}
-                </select>
-              </label>
-              <button className="utility-button" type="button" onClick={() => { void importLegacy(); }}>
-                <CopyPlus size={15} aria-hidden="true" /> Create v2 copy
-              </button>
-            </>
-          ) : null}
+          <a className="utility-button" href="/react/task-engine/sequences/new"><ListTree size={15} aria-hidden="true" /> New sequence</a>
         </div>
       </Panel>
 
-      <section className="metric-strip" aria-label="Task Engine metrics">
+      <section className="metric-strip" aria-label="Task Sequence metrics">
         <Metric label="V2 sequences" value={String(payload.sequences.length)} />
         <Metric label="V2 runs" value={String(payload.runs.length)} />
         <Metric label="Content items" value={String(payload.content_items?.length ?? 0)} />

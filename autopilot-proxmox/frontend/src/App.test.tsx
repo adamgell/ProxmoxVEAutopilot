@@ -718,6 +718,9 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: "OSDeploy Run" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Task Template" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Edit Sequence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sequence Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New Sequence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sequences" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "UTM VMs" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
     expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();

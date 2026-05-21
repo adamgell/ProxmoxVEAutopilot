@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
@@ -22,25 +22,6 @@ const provisionPayload = {
     hostname_pattern: "autopilot-{serial}"
   },
   template_disk_gb: 80,
-  sequences: [
-    {
-      id: 1,
-      name: "Windows baseline",
-      target_os: "windows",
-      is_default: true,
-      cloudosd_compatible: true,
-      boot_modes: ["cloudosd", "winpe", "clone"]
-    },
-    {
-      id: 2,
-      name: "Server baseline",
-      target_os: "windows",
-      is_default: false,
-      cloudosd_compatible: false,
-      boot_modes: ["osdeploy"]
-    }
-  ],
-  default_sequence_id: "1",
   winpe_enabled: false,
   cloudosd_catalog: {
     os_versions: ["Windows 11 24H2"],
@@ -202,7 +183,7 @@ describe("ProvisionPage", () => {
     expect(await screen.findByRole("heading", { name: "Provision" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Boot mode" })).toHaveValue("cloudosd");
     expect(screen.getByRole("combobox", { name: "OSDCloud artifact" })).toHaveValue("cloud-artifact");
-    expect(screen.getByRole("combobox", { name: "Task sequence" })).toHaveValue("");
+    expect(screen.queryByRole("combobox", { name: "Task sequence" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(2);
     expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");
     expect(screen.getByRole("button", { name: "Provision VMs" })).toBeInTheDocument();
@@ -229,23 +210,5 @@ describe("ProvisionPage", () => {
     expect(screen.queryByRole("combobox", { name: "OSDeploy artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Ubuntu v2 sequence" })).toHaveValue("");
     expect(screen.getByRole("spinbutton", { name: "Ubuntu template VMID" })).toHaveValue(250);
-  });
-
-  test("keeps sequence options filtered to the selected boot mode", async () => {
-    mockFetch();
-    renderProvision();
-
-    const bootMode = await screen.findByRole("combobox", { name: "Boot mode" });
-    const taskSequence = screen.getByRole("combobox", { name: "Task sequence" });
-    expect(within(taskSequence).getByRole("option", { name: "OSDCloud base deployment" })).toBeInTheDocument();
-    expect(within(taskSequence).getByRole("option", { name: "Windows baseline (default)" })).toBeInTheDocument();
-    expect(within(taskSequence).queryByRole("option", { name: "Server baseline" })).not.toBeInTheDocument();
-
-    fireEvent.change(bootMode, { target: { value: "osdeploy" } });
-    await waitFor(() => {
-      expect(within(taskSequence).getByRole("option", { name: "OSDeploy Server base deployment" })).toBeInTheDocument();
-    });
-    expect(within(taskSequence).getByRole("option", { name: "Server baseline" })).toBeInTheDocument();
-    expect(within(taskSequence).queryByRole("option", { name: "Windows baseline (default)" })).not.toBeInTheDocument();
   });
 });

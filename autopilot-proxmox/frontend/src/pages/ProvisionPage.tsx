@@ -13,8 +13,6 @@ interface ProvisionPagePayload {
   readonly profiles: Readonly<Record<string, OemProfile>>;
   readonly defaults: ProvisionDefaults;
   readonly template_disk_gb?: number | null;
-  readonly sequences: readonly ProvisionSequence[];
-  readonly default_sequence_id?: string;
   readonly winpe_enabled?: boolean;
   readonly cloudosd_catalog: CatalogPayload;
   readonly cloudosd_options: ProxmoxOptionsPayload;
@@ -45,16 +43,6 @@ interface ProvisionDefaults {
   readonly oem_profile?: string;
   readonly template_vmid?: string | number;
   readonly hostname_pattern?: string;
-}
-
-interface ProvisionSequence {
-  readonly id: string | number;
-  readonly name?: string;
-  readonly target_os?: string;
-  readonly is_default?: boolean;
-  readonly cloudosd_compatible?: boolean;
-  readonly cloudosd_unsupported_steps?: readonly string[];
-  readonly boot_modes?: readonly string[];
 }
 
 interface CatalogPayload {
@@ -156,7 +144,6 @@ interface ProgressMilestone {
 const EMPTY_PAYLOAD: ProvisionPagePayload = {
   profiles: {},
   defaults: {},
-  sequences: [],
   cloudosd_catalog: {},
   cloudosd_options: {},
   osdeploy_catalog: {},
@@ -191,8 +178,6 @@ function provisionPayloadFromUnknown(value: unknown): ProvisionPagePayload {
     profiles: asRecord(record.profiles) as Readonly<Record<string, OemProfile>>,
     defaults,
     template_disk_gb: typeof record.template_disk_gb === "number" ? record.template_disk_gb : null,
-    sequences: Array.isArray(record.sequences) ? record.sequences as readonly ProvisionSequence[] : [],
-    default_sequence_id: textValue(record.default_sequence_id, ""),
     winpe_enabled: Boolean(record.winpe_enabled),
     cloudosd_catalog: cloudosdCatalog,
     cloudosd_options: cloudosdOptions,
@@ -215,32 +200,6 @@ function firstReadyArtifact(artifacts: readonly { readonly id?: string; readonly
 
 function optionLabel(parts: readonly unknown[]): string {
   return parts.map((part) => textValue(part, "")).filter(Boolean).join(" / ") || "-";
-}
-
-function modesForSequence(sequence: ProvisionSequence): readonly string[] {
-  return Array.isArray(sequence.boot_modes) ? sequence.boot_modes.map((mode) => String(mode)) : [];
-}
-
-function sequenceAllowed(sequence: ProvisionSequence, bootMode: BootMode): boolean {
-  return modesForSequence(sequence).includes(bootMode);
-}
-
-function selectedSequenceOptions(payload: ProvisionPagePayload, bootMode: BootMode): readonly { readonly value: string; readonly label: string }[] {
-  if (bootMode === "ubuntu") {
-    return [];
-  }
-  const base = bootMode === "osdeploy"
-    ? [{ value: "", label: "OSDeploy Server base deployment" }]
-    : bootMode === "cloudosd"
-      ? [{ value: "", label: "OSDCloud base deployment" }]
-      : [];
-  const matching = payload.sequences
-    .filter((sequence) => sequenceAllowed(sequence, bootMode))
-    .map((sequence) => ({
-      value: textValue(sequence.id, ""),
-      label: `${textValue(sequence.name, "Sequence")} ${sequence.is_default ? "(default)" : ""}`.trim()
-    }));
-  return [...base, ...matching];
 }
 
 function SelectField({
@@ -624,7 +583,6 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
 
   usePolling(load);
 
-  const sequenceOptions = useMemo(() => selectedSequenceOptions(payload, bootMode), [bootMode, payload]);
   const profileOptions = useMemo(() => {
     const rows = Object.entries(payload.profiles).map(([key, profile]) => ({
       value: key,
@@ -678,13 +636,6 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
                     { value: "clone", label: "Clone" }
                   ]}
                   help="OSDCloud for desktop clients, OSDeploy for Server, Ubuntu v2 for Linux clients."
-                />
-                <SelectField
-                  label="Task sequence"
-                  name="sequence_id"
-                  defaultValue={bootMode === "cloudosd" ? "" : payload.default_sequence_id}
-                  options={sequenceOptions}
-                  help="Filtered by boot mode."
                 />
                 <SelectField label="OEM profile" name="profile" defaultValue={textValue(defaults.oem_profile, "")} options={profileOptions} />
                 <SelectField

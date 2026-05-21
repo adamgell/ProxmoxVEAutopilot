@@ -37,9 +37,6 @@ describe("operator route registry", () => {
         "/react/vms",
         "/react/vms/:vmid",
         "/react/utm-vms",
-        "/react/sequences",
-        "/react/sequences/new",
-        "/react/sequences/:sequenceId/edit",
         "/react/settings",
         "/react/credentials",
         "/react/monitoring/settings"
@@ -69,7 +66,7 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
     expect(reactRouteForPath("/react/settings")?.label).toBe("General");
     expect(reactRouteForPath("/react/cloudosd")?.label).toBe("OSDCloud Desktop");
-    expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Engine");
+    expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Sequences");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
   });
 
@@ -83,6 +80,8 @@ describe("operator route registry", () => {
         "OSDeploy Run",
         "VM Detail",
         "UTM VMs",
+        "Sequence Library",
+        "New Sequence",
         "Task Template",
         "Edit Task Sequence",
         "Edit Sequence"
@@ -101,6 +100,9 @@ describe("operator route registry", () => {
     expect(reactHrefForUiPath("/devices/108")).toBe("/react/vms/108");
     expect(reactHrefForUiPath("/vms/108/console")).toBe("/react/vms/108?action=console");
     expect(reactHrefForUiPath("/vms/108/console?source=tray")).toBe("/react/vms/108?action=console&source=tray");
+    expect(reactHrefForUiPath("/sequences")).toBe("/react/task-engine/sequences/list");
+    expect(reactHrefForUiPath("/sequences/new")).toBe("/react/task-engine/sequences/new");
+    expect(reactHrefForUiPath("/sequences/1/edit")).toBe("/react/task-engine/sequences/list");
     expect(reactHrefForUiPath("/files/AutopilotAgent.msi")).toBe("/files/AutopilotAgent.msi");
     expect(reactHrefForUiPath("/api/hashes/foo.csv")).toBe("/api/hashes/foo.csv");
   });
@@ -124,7 +126,7 @@ describe("operator route registry", () => {
         expect.objectContaining({ label: "OSDeploy Server", href: "/react/osdeploy" }),
         expect.objectContaining({ label: "OSDCloud Desktop", href: "/react/cloudosd" }),
         expect.objectContaining({ label: "Provision", href: "/react/provision" }),
-        expect.objectContaining({ label: "Task Engine", href: "/react/task-engine" }),
+        expect.objectContaining({ label: "Task Sequences", href: "/react/task-engine" }),
         expect.objectContaining({ label: "VMs", href: "/react/vms" }),
         expect.objectContaining({ label: "Agent Download", href: "/react/agent-download" }),
         expect.objectContaining({ label: "Cloud Devices", href: "/react/devices" }),
@@ -133,5 +135,6 @@ describe("operator route registry", () => {
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
     expect(reactSteps.some((step) => step.label === "UTM VMs")).toBe(false);
+    expect(reactSteps.some((step) => step.href === "/react/sequences")).toBe(false);
   });
 });
