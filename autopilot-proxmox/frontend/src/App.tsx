@@ -17,7 +17,6 @@ import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
 import { OsdeployPage } from "./pages/OsdeployPage";
 import { ProvisionPage } from "./pages/ProvisionPage";
 import { LoginPage, SetupPage } from "./pages/PublicPages";
-import { RetiredJinjaPage, retiredConfigForPath } from "./pages/RetiredJinjaPages";
 import { SequencesPage } from "./pages/SequencesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ShellIndexPage } from "./pages/ShellIndexPage";
@@ -133,10 +132,6 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;
-  }
-  const retiredConfig = retiredConfigForPath(path);
-  if (retiredConfig) {
-    return <RetiredJinjaPage bootstrap={bootstrap} config={retiredConfig} />;
   }
   return <ShellIndexPage bootstrap={bootstrap} />;
 }
