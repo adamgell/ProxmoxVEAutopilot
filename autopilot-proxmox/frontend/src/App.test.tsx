@@ -170,7 +170,17 @@ const dashboardResponses: Record<string, unknown> = {
           next_expected_evidence: "agent heartbeat"
         }
       ],
-      recent_completions: [],
+      recent_completions: [
+        {
+          deployment_key: "cloudosd/run-7",
+          deployment_type: "cloudosd",
+          duration_seconds: 480,
+          slowest_phase: "agent_heartbeat",
+          slowest_phase_seconds: 180,
+          health: "healthy",
+          state: "complete"
+        }
+      ],
       bottlenecks: [
         {
           deployment_type: "osdeploy",
@@ -226,6 +236,9 @@ const dashboardResponses: Record<string, unknown> = {
     service: "autopilot",
     tail: 180,
     lines: ["2026-05-19T00:00:00Z autopilot ready"]
+  },
+  "/api/monitoring/sweep-now": {
+    ok: true
   },
   "/api/version": {
     sha_short: "abc1234",
@@ -1351,6 +1364,8 @@ describe("App", () => {
     expect(screen.queryByText(/May 19 00:00Z/u)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Deployment speed" })).toBeInTheDocument();
     expect(screen.getByText("Windows setup")).toBeInTheDocument();
+    expect(screen.getByText("cloudosd/run-7")).toBeInTheDocument();
+    expect(screen.getByText(/480s total/u)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Lifecycle lanes" })).toBeInTheDocument();
     expect(screen.getByText("Provisioned")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Service health" })).toBeInTheDocument();
@@ -1360,6 +1375,7 @@ describe("App", () => {
     expect(await screen.findByText("2026-05-19T00:00:00Z autopilot ready")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Fleet attention" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/react/vms/101");
-    expect(screen.queryByRole("button", { name: /sweep/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sweep now" }));
+    expect(await screen.findByText("Sweep queued.")).toBeInTheDocument();
   });
 });
