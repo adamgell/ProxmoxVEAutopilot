@@ -290,9 +290,12 @@ const dashboardResponses: Record<string, unknown> = {
   "/api/files": {
     files: [
       {
-        filename: "AutopilotAgent.msi",
-        size: 4096,
-        mtime: "2026-05-19T12:00:00+00:00"
+        name: "AutopilotAgent.msi",
+        url: "/files/AutopilotAgent.msi",
+        size: "4,096 bytes",
+        size_bytes: 4096,
+        modified: "2026-05-19 12:00",
+        modified_epoch: 1779192000
       }
     ]
   },
@@ -715,6 +718,7 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: "OSDeploy Run" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Task Template" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Edit Sequence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "UTM VMs" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
     expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
@@ -765,6 +769,44 @@ describe("App", () => {
 
     expect((await screen.findAllByRole("heading", { name: heading })).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(content)).length).toBeGreaterThan(0);
+  });
+
+  test("renders Files shelf URLs and CRUD actions", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/files/delete": { ok: true, deleted: 1 },
+      "/api/files/AutopilotAgent.msi/replace": { ok: true, replaced: "AutopilotAgent.msi" }
+    });
+
+    renderRoute("/react/files");
+
+    expect(await screen.findByRole("link", { name: "AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
+    expect(screen.getByRole("link", { name: "/files/AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
+    expect(screen.getByRole("button", { name: "Upload / Replace MSI" })).toBeInTheDocument();
+
+    const replacement = new File(["replacement-msi"], "replacement.msi", { type: "application/octet-stream" });
+    fireEvent.change(screen.getByLabelText("Replacement MSI for AutopilotAgent.msi"), {
+      target: { files: [replacement] }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/AutopilotAgent.msi/replace",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("Delete AutopilotAgent.msi?");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/delete",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
   });
 
   test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {

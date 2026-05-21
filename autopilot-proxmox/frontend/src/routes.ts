@@ -99,7 +99,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
       },
       { path: "/react/agent-download", label: "Agent Download", group: "Fleet", phase: "operational", active: true },
       { path: "/react/legacy-vms", label: "Classic VM Table", group: "Fleet", phase: "read-only", active: true },
-      { path: "/react/utm-vms", label: "UTM VMs", group: "Fleet", phase: "operational", active: true },
+      { path: "/react/utm-vms", label: "UTM VMs", group: "Fleet", phase: "operational", active: true, showInNav: false },
       { path: "/react/devices", label: "Cloud Devices", group: "Fleet", phase: "read-only", active: true },
       { path: "/react/hashes", label: "Hashes", group: "Fleet", phase: "operational", active: true },
       { path: "/react/files", label: "Files", group: "Fleet", phase: "operational", active: true },
@@ -172,7 +172,6 @@ export const operatorFlows: readonly OperatorFlow[] = [
       { label: "Agent Download", href: "/react/agent-download", group: "Fleet", state: "React" },
       { label: "Cloud Devices", href: "/react/devices", group: "Fleet", state: "React" },
       { label: "Classic VM Table", href: "/react/legacy-vms", group: "Fleet", state: "React" },
-      { label: "UTM VMs", href: "/react/utm-vms", group: "Fleet", state: "React" },
       { label: "Hashes", href: "/react/hashes", group: "Fleet", state: "React" },
       { label: "Files", href: "/react/files", group: "Fleet", state: "React" },
       { label: "Sequences", href: "/react/sequences", group: "Fleet", state: "React" }

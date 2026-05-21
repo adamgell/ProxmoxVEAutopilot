@@ -7,12 +7,18 @@ import type { AppBootstrap, FileShelfRow, FilesResponse } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
 import { bytesLabel, lowerText, textValue } from "../utilityModels";
 
+function fileDownloadUrl(row: FileShelfRow): string {
+  return row.url || `/files/${encodeURIComponent(row.name)}`;
+}
+
 export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const replaceInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [rows, setRows] = useState<readonly FileShelfRow[]>([]);
   const [filter, setFilter] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [pendingAction, setPendingAction] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -27,8 +33,8 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   usePolling(load);
 
   const query = filter.trim().toLowerCase();
-  const filtered = useMemo(() => rows.filter((row) => lowerText(row.filename).includes(query)), [query, rows]);
-  const totalBytes = rows.reduce((sum, row) => sum + (typeof row.size === "number" ? row.size : 0), 0);
+  const filtered = useMemo(() => rows.filter((row) => lowerText(row.name).includes(query)), [query, rows]);
+  const totalBytes = rows.reduce((sum, row) => sum + (typeof row.size_bytes === "number" ? row.size_bytes : 0), 0);
 
   const uploadFiles = async () => {
     const files = fileInput.current?.files;
@@ -39,15 +45,61 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     Array.from(files).forEach((file) => {
       form.append("files", file);
     });
+    setPendingAction("upload");
     try {
       const result = await postForm<{ readonly uploaded?: number }>("/api/files/upload", form);
-      setMessage(`Uploaded ${String(result.uploaded ?? files.length)} MSI file(s)`);
+      setMessage(`Uploaded or replaced ${String(result.uploaded ?? files.length)} MSI file(s)`);
+      setError("");
       if (fileInput.current) {
         fileInput.current.value = "";
       }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "File upload failed");
+    } finally {
+      setPendingAction("");
+    }
+  };
+
+  const replaceFile = async (name: string) => {
+    const input = replaceInputs.current[name];
+    const file = input?.files?.[0];
+    if (!file) {
+      setError(`Choose a replacement MSI for ${name}`);
+      return;
+    }
+    const form = new FormData();
+    form.append("file", file);
+    setPendingAction(`replace:${name}`);
+    try {
+      const result = await postForm<{ readonly replaced?: string }>(`/api/files/${encodeURIComponent(name)}/replace`, form);
+      setMessage(`Replaced ${result.replaced ?? name}`);
+      setError("");
+      input.value = "";
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Replace failed for ${name}`);
+    } finally {
+      setPendingAction("");
+    }
+  };
+
+  const deleteFile = async (name: string) => {
+    if (!window.confirm(`Delete ${name}?`)) {
+      return;
+    }
+    const form = new FormData();
+    form.append("files", name);
+    setPendingAction(`delete:${name}`);
+    try {
+      const result = await postForm<{ readonly deleted?: number }>("/api/files/delete", form);
+      setMessage(`Deleted ${String(result.deleted ?? 1)} MSI file(s)`);
+      setError("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Delete failed for ${name}`);
+    } finally {
+      setPendingAction("");
     }
   };
 
@@ -76,7 +128,14 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         </div>
         <div className="utility-upload-row">
           <input ref={fileInput} type="file" accept=".msi,application/octet-stream" multiple aria-label="Upload MSI files" />
-          <button className="utility-button" type="button" onClick={() => { void uploadFiles(); }}>Upload MSI</button>
+          <button
+            className="utility-button"
+            type="button"
+            disabled={pendingAction === "upload"}
+            onClick={() => { void uploadFiles(); }}
+          >
+            Upload / Replace MSI
+          </button>
         </div>
       </section>
       <Panel title="MSI files">
@@ -85,16 +144,51 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             <thead>
               <tr>
                 <th scope="col">File</th>
+                <th scope="col">URL</th>
                 <th scope="col">Size</th>
                 <th scope="col">Modified</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((row) => (
-                <tr key={row.filename}>
-                  <td><a href={`/files/${encodeURIComponent(row.filename)}`}>{row.filename}</a></td>
-                  <td>{bytesLabel(row.size)}</td>
-                  <td>{textValue(row.mtime)}</td>
+                <tr key={row.name}>
+                  <td><a href={fileDownloadUrl(row)}>{row.name}</a></td>
+                  <td>
+                    <a className="mono-link" href={fileDownloadUrl(row)}>{fileDownloadUrl(row)}</a>
+                  </td>
+                  <td>{bytesLabel(row.size_bytes)}</td>
+                  <td>{textValue(row.modified)}</td>
+                  <td>
+                    <div className="utility-action-stack">
+                      <input
+                        ref={(input) => {
+                          replaceInputs.current[row.name] = input;
+                        }}
+                        type="file"
+                        accept=".msi,application/octet-stream"
+                        aria-label={`Replacement MSI for ${row.name}`}
+                      />
+                      <div className="utility-action-row">
+                        <button
+                          className="utility-button"
+                          type="button"
+                          disabled={pendingAction === `replace:${row.name}`}
+                          onClick={() => { void replaceFile(row.name); }}
+                        >
+                          Replace
+                        </button>
+                        <button
+                          className="utility-button utility-button--danger"
+                          type="button"
+                          disabled={pendingAction === `delete:${row.name}`}
+                          onClick={() => { void deleteFile(row.name); }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

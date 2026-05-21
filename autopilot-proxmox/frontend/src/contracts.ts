@@ -658,9 +658,12 @@ export interface HashesResponse {
 }
 
 export interface FileShelfRow {
-  readonly filename: string;
-  readonly size?: number;
-  readonly mtime?: string;
+  readonly name: string;
+  readonly url: string;
+  readonly size?: string;
+  readonly size_bytes?: number;
+  readonly modified?: string;
+  readonly modified_epoch?: number;
   readonly [key: string]: unknown;
 }
 

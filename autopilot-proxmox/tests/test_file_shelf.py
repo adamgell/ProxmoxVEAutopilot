@@ -67,9 +67,68 @@ def test_download_file_serves_only_safe_msi_paths(tmp_path: Path, monkeypatch):
     assert traversal.status_code in {403, 404}
 
 
+def test_delete_files_removes_selected_msi_for_react_callers(tmp_path: Path, monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setattr(app_module, "FILE_SHELF_DIR", tmp_path)
+    (tmp_path / "tool.msi").write_bytes(b"delete-me")
+    (tmp_path / "keep.msi").write_bytes(b"keep-me")
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/files/delete",
+        data={"files": "tool.msi"},
+        headers={"accept": "application/json"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "deleted": 1}
+    assert not (tmp_path / "tool.msi").exists()
+    assert (tmp_path / "keep.msi").exists()
+
+
+def test_replace_file_keeps_existing_download_url_and_sanitizes_target(tmp_path: Path, monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setattr(app_module, "FILE_SHELF_DIR", tmp_path)
+    (tmp_path / "tool.msi").write_bytes(b"old")
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/files/tool.msi/replace",
+        files={"file": ("replacement.msi", b"new-msi", "application/octet-stream")},
+        headers={"accept": "application/json"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "replaced": "tool.msi", "size_bytes": 7}
+    assert (tmp_path / "tool.msi").read_bytes() == b"new-msi"
+    assert not (tmp_path / "replacement.msi").exists()
+
+
+def test_replace_file_rejects_non_msi_uploads(tmp_path: Path, monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setattr(app_module, "FILE_SHELF_DIR", tmp_path)
+    (tmp_path / "tool.msi").write_bytes(b"old")
+
+    client = TestClient(app_module.app)
+    response = client.post(
+        "/api/files/tool.msi/replace",
+        files={"file": ("replacement.exe", b"bad", "application/octet-stream")},
+        headers={"accept": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "No valid replacement MSI found"
+    assert (tmp_path / "tool.msi").read_bytes() == b"old"
+
+
 def test_files_download_routes_are_public_but_upload_api_is_not():
     from web import auth
 
     assert auth.is_exempt_path("/files")
     assert auth.is_exempt_path("/files/tool.msi")
     assert not auth.is_exempt_path("/api/files/upload")
+    assert not auth.is_exempt_path("/api/files/delete")
+    assert not auth.is_exempt_path("/api/files/tool.msi/replace")

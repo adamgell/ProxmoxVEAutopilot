@@ -11348,6 +11348,65 @@ async def upload_file_shelf_items(request: Request, files: list[UploadFile] = Fi
     return _redirect_with_query("/react/files", uploaded=saved)
 
 
+@app.post("/api/files/delete")
+async def delete_file_shelf_items(request: Request, files: list[str] = Form(...)):
+    deleted = 0
+    valid = 0
+    for filename in files:
+        safe_name = _safe_file_shelf_name(filename)
+        if not safe_name or safe_name != filename:
+            continue
+        valid += 1
+        try:
+            file_path = _safe_path(FILE_SHELF_DIR, safe_name)
+        except ValueError:
+            continue
+        if file_path.exists() and file_path.suffix.lower() == ".msi":
+            file_path.unlink()
+            deleted += 1
+    if valid == 0:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No valid MSI files selected"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid MSI files selected")
+    if deleted == 0:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No matching MSI files found"}, status_code=404)
+        return _redirect_with_error("/react/files", "No matching MSI files found")
+    if _request_wants_json(request):
+        return {"ok": True, "deleted": deleted}
+    return _redirect_with_query("/react/files", deleted=deleted)
+
+
+@app.post("/api/files/{filename}/replace")
+async def replace_file_shelf_item(request: Request, filename: str, file: UploadFile = File(...)):
+    safe_name = _safe_file_shelf_name(filename)
+    if not safe_name or safe_name != filename:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Invalid MSI filename"}, status_code=400)
+        return _redirect_with_error("/react/files", "Invalid MSI filename")
+    upload_name = _safe_file_shelf_name(file.filename)
+    if not upload_name:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No valid replacement MSI found"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid replacement MSI found")
+    content = await file.read()
+    if not content:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Replacement MSI is empty"}, status_code=400)
+        return _redirect_with_error("/react/files", "Replacement MSI is empty")
+    FILE_SHELF_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        dest = _safe_path(FILE_SHELF_DIR, safe_name)
+    except ValueError:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Invalid MSI filename"}, status_code=400)
+        return _redirect_with_error("/react/files", "Invalid MSI filename")
+    dest.write_bytes(content)
+    if _request_wants_json(request):
+        return {"ok": True, "replaced": safe_name, "size_bytes": len(content)}
+    return _redirect_with_query("/react/files", replaced=safe_name)
+
+
 # --- Answer ISO rebuild ----------------------------------------------------
 
 

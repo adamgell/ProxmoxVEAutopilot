@@ -357,6 +357,22 @@
         "title": "Body_cloud_delete_api_cloud_delete_post",
         "type": "object"
       },
+      "Body_delete_file_shelf_items_api_files_delete_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "Body_delete_file_shelf_items_api_files_delete_post",
+        "type": "object"
+      },
       "Body_delete_hashes_api_hashes_delete_post": {
         "properties": {
           "files": {
@@ -371,6 +387,20 @@
           "files"
         ],
         "title": "Body_delete_hashes_api_hashes_delete_post",
+        "type": "object"
+      },
+      "Body_replace_file_shelf_item_api_files__filename__replace_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_replace_file_shelf_item_api_files__filename__replace_post",
         "type": "object"
       },
       "Body_start_provision_api_jobs_provision_post": {
@@ -9506,6 +9536,42 @@
         "summary": "Api Files List"
       }
     },
+    "/api/files/delete": {
+      "post": {
+        "operationId": "delete_file_shelf_items_api_files_delete_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_delete_file_shelf_items_api_files_delete_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete File Shelf Items"
+      }
+    },
     "/api/files/upload": {
       "post": {
         "operationId": "upload_file_shelf_items_api_files_upload_post",
@@ -9540,6 +9606,53 @@
           }
         },
         "summary": "Upload File Shelf Items"
+      }
+    },
+    "/api/files/{filename}/replace": {
+      "post": {
+        "operationId": "replace_file_shelf_item_api_files__filename__replace_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_replace_file_shelf_item_api_files__filename__replace_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace File Shelf Item"
       }
     },
     "/api/fleet/summary": {

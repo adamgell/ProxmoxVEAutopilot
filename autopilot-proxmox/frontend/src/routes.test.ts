@@ -82,6 +82,7 @@ describe("operator route registry", () => {
         "OSDCloud Run",
         "OSDeploy Run",
         "VM Detail",
+        "UTM VMs",
         "Task Template",
         "Edit Task Sequence",
         "Edit Sequence"
@@ -131,5 +132,6 @@ describe("operator route registry", () => {
       ])
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
+    expect(reactSteps.some((step) => step.label === "UTM VMs")).toBe(false);
   });
 });

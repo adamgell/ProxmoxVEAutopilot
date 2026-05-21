@@ -997,6 +997,31 @@ h3 {
   color: var(--bad);
 }
 
+.utility-action-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 260px;
+}
+
+.utility-action-stack input {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+}
+
+.utility-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .utility-upload-row,
 .utility-form-actions,
 .utility-row-actions {
@@ -1019,6 +1044,14 @@ h3 {
 
 .utility-table {
   min-width: 920px;
+}
+
+.utility-table .mono-link {
+  display: inline-block;
+  max-width: 280px;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
 }
 
 .utility-list {
