@@ -39,9 +39,6 @@ const pageResponses: Record<string, unknown> = {
     }],
     error: ""
   },
-  "/api/sequences/page": {
-    sequences: [{ id: 1, name: "Legacy baseline", target_os: "windows", steps: [] }]
-  },
   "/api/setup/v1/state": {
     ready: true,
     phase: "ready",
@@ -79,7 +76,6 @@ describe("retired Jinja React pages", () => {
     ["/react/osdeploy", "OSDeploy Server", "SRV-01"],
     ["/react/template", "Build Template", "Surface Pro"],
     ["/react/answer-isos", "Answer ISO Cache", "autopilot-unattend.img"],
-    ["/react/sequences", "Sequences", "Legacy baseline"],
     ["/setup", "Setup", "ready"]
   ])("renders %s from page payload", async (path, heading, visibleText) => {
     mockFetch();
