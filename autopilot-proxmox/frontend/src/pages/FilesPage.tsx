@@ -7,6 +7,8 @@ import type { AppBootstrap, FileShelfRow, FilesResponse } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
 import { bytesLabel, lowerText, textValue } from "../utilityModels";
 
+const FILE_LIMIT_LABEL = "Up to 10 GiB per file. Any file type.";
+
 function fileDownloadUrl(row: FileShelfRow): string {
   return row.url || `/files/${encodeURIComponent(row.name)}`;
 }
@@ -48,7 +50,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setPendingAction("upload");
     try {
       const result = await postForm<{ readonly uploaded?: number }>("/api/files/upload", form);
-      setMessage(`Uploaded or replaced ${String(result.uploaded ?? files.length)} MSI file(s)`);
+      setMessage(`Uploaded or replaced ${String(result.uploaded ?? files.length)} file(s)`);
       setError("");
       if (fileInput.current) {
         fileInput.current.value = "";
@@ -65,7 +67,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     const input = replaceInputs.current[name];
     const file = input?.files?.[0];
     if (!file) {
-      setError(`Choose a replacement MSI for ${name}`);
+      setError(`Choose a replacement file for ${name}`);
       return;
     }
     const form = new FormData();
@@ -93,7 +95,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setPendingAction(`delete:${name}`);
     try {
       const result = await postForm<{ readonly deleted?: number }>("/api/files/delete", form);
-      setMessage(`Deleted ${String(result.deleted ?? 1)} MSI file(s)`);
+      setMessage(`Deleted ${String(result.deleted ?? 1)} file(s)`);
       setError("");
       await load();
     } catch (err) {
@@ -116,29 +118,30 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <Metric label="Files" value={String(rows.length)} />
         <Metric label="Storage" value={bytesLabel(totalBytes)} />
         <Metric label="Visible" value={String(filtered.length)} />
-        <Metric label="Type" value="MSI" />
+        <Metric label="Limit" value="10 GiB" />
       </section>
       <section className="filter-row" aria-label="File shelf controls">
         <div className="filter-row__top">
           <label className="filter">
             <span>Search files</span>
-            <input value={filter} onChange={(event) => { setFilter(event.target.value); }} placeholder="MSI filename" />
+            <input value={filter} onChange={(event) => { setFilter(event.target.value); }} placeholder="Filename" />
           </label>
           <span className="result-count">{String(filtered.length)} of {String(rows.length)}</span>
         </div>
         <div className="utility-upload-row">
-          <input ref={fileInput} type="file" accept=".msi,application/octet-stream" multiple aria-label="Upload MSI files" />
+          <input ref={fileInput} type="file" multiple aria-label="Upload files" />
           <button
             className="utility-button"
             type="button"
             disabled={pendingAction === "upload"}
             onClick={() => { void uploadFiles(); }}
           >
-            Upload / Replace MSI
+            Upload / Replace files
           </button>
+          <span className="muted">{FILE_LIMIT_LABEL}</span>
         </div>
       </section>
-      <Panel title="MSI files">
+      <Panel title="Uploaded files">
         <div className="table-wrap">
           <table className="jobs-table utility-table">
             <thead>
@@ -166,8 +169,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                           replaceInputs.current[row.name] = input;
                         }}
                         type="file"
-                        accept=".msi,application/octet-stream"
-                        aria-label={`Replacement MSI for ${row.name}`}
+                        aria-label={`Replacement file for ${row.name}`}
                       />
                       <div className="utility-action-row">
                         <button
@@ -194,7 +196,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             </tbody>
           </table>
         </div>
-        {!filtered.length ? <p className="empty">No MSI files.</p> : null}
+        {!filtered.length ? <p className="empty">No files.</p> : null}
       </Panel>
     </PageFrame>
   );

@@ -786,10 +786,14 @@ describe("App", () => {
 
     expect(await screen.findByRole("link", { name: "AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
     expect(screen.getByRole("link", { name: "/files/AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
-    expect(screen.getByRole("button", { name: "Upload / Replace MSI" })).toBeInTheDocument();
+    expect(screen.getByText("Up to 10 GiB per file. Any file type.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Upload files")).not.toHaveAttribute("accept");
+    expect(screen.getByRole("button", { name: "Upload / Replace files" })).toBeInTheDocument();
 
-    const replacement = new File(["replacement-msi"], "replacement.msi", { type: "application/octet-stream" });
-    fireEvent.change(screen.getByLabelText("Replacement MSI for AutopilotAgent.msi"), {
+    const replacement = new File(["replacement-zip"], "replacement.zip", { type: "application/zip" });
+    const replacementInput = screen.getByLabelText("Replacement file for AutopilotAgent.msi");
+    expect(replacementInput).not.toHaveAttribute("accept");
+    fireEvent.change(replacementInput, {
       target: { files: [replacement] }
     });
     fireEvent.click(screen.getByRole("button", { name: "Replace" }));

@@ -209,6 +209,8 @@ SCREENSHOT_STORE_DIR = Path(
 FILE_SHELF_DIR = Path(
     os.environ.get("AUTOPILOT_FILE_SHELF_DIR", str(BASE_DIR / "output" / "files"))
 )
+FILE_SHELF_MAX_BYTES = int(os.environ.get("AUTOPILOT_FILE_SHELF_MAX_BYTES", str(10 * 1024 * 1024 * 1024)))
+FILE_SHELF_UPLOAD_CHUNK_BYTES = 1024 * 1024
 SETUP_STATE_PATH = BASE_DIR / "output" / "setup" / "foundation_state.json"
 AGENT_SEED_MANIFEST_PATH = BASE_DIR / "output" / "setup" / "agent-seed" / "manifest.json"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
@@ -4499,17 +4501,55 @@ def _safe_file_shelf_name(filename: str | None) -> str:
     raw_name = (filename or "").replace("\\", "/").split("/")[-1].strip()
     safe_name = re.sub(r"[^\w\-.]", "_", raw_name)
     safe_name = safe_name.lstrip(".")
-    if not safe_name or Path(safe_name).suffix.lower() != ".msi":
+    if not safe_name:
         return ""
     return safe_name
+
+
+class _FileShelfUploadTooLarge(ValueError):
+    def __init__(self, filename: str, max_bytes: int):
+        super().__init__(f"File {filename} exceeds {max_bytes} bytes")
+        self.filename = filename
+        self.max_bytes = max_bytes
+
+
+async def _write_file_shelf_upload(upload: UploadFile, dest: Path, display_name: str) -> int:
+    tmp_path = dest.with_name(f".{dest.name}.{uuid4().hex}.upload")
+    total = 0
+    try:
+        with tmp_path.open("wb") as fh:
+            while True:
+                chunk = await upload.read(FILE_SHELF_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > FILE_SHELF_MAX_BYTES:
+                    raise _FileShelfUploadTooLarge(display_name, FILE_SHELF_MAX_BYTES)
+                fh.write(chunk)
+        if total == 0:
+            tmp_path.unlink(missing_ok=True)
+            return 0
+        tmp_path.replace(dest)
+        return total
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _file_shelf_size_error_response(request: Request, exc: _FileShelfUploadTooLarge):
+    if _request_wants_json(request):
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=413)
+    return _redirect_with_error("/react/files", str(exc))
 
 
 def get_file_shelf_items():
     if not FILE_SHELF_DIR.exists():
         return []
     files = []
-    for f in sorted(FILE_SHELF_DIR.glob("*.msi"), key=lambda item: item.name.lower()):
+    for f in sorted(FILE_SHELF_DIR.iterdir(), key=lambda item: item.name.lower()):
         if not f.is_file():
+            continue
+        if f.name.startswith(".") and f.name.endswith(".upload"):
             continue
         stat = f.stat()
         files.append({
@@ -11285,8 +11325,6 @@ async def download_hash(filename: str):
 
 @app.get("/files/{filename}")
 async def download_file_shelf_item(filename: str):
-    if Path(filename).suffix.lower() != ".msi":
-        return HTMLResponse("<h1>File not found</h1>", status_code=404)
     safe_name = _safe_file_shelf_name(filename)
     if not safe_name or safe_name != filename:
         return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
@@ -11294,7 +11332,7 @@ async def download_file_shelf_item(filename: str):
         file_path = _safe_path(FILE_SHELF_DIR, safe_name)
     except ValueError:
         return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
-    if not file_path.exists() or file_path.suffix.lower() != ".msi":
+    if not file_path.exists() or not file_path.is_file():
         return HTMLResponse("<h1>File not found</h1>", status_code=404)
     return FileResponse(file_path, media_type="application/octet-stream", filename=safe_name)
 
@@ -11334,15 +11372,17 @@ async def upload_file_shelf_items(request: Request, files: list[UploadFile] = Fi
         if not safe_name:
             continue
         dest = FILE_SHELF_DIR / safe_name
-        content = await upload.read()
-        if not content:
+        try:
+            size = await _write_file_shelf_upload(upload, dest, safe_name)
+        except _FileShelfUploadTooLarge as exc:
+            return _file_shelf_size_error_response(request, exc)
+        if size == 0:
             continue
-        dest.write_bytes(content)
         saved += 1
     if saved == 0:
         if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "No valid MSI files found"}, status_code=400)
-        return _redirect_with_error("/react/files", "No valid MSI files found")
+            return JSONResponse({"ok": False, "error": "No valid files found"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid files found")
     if _request_wants_json(request):
         return {"ok": True, "uploaded": saved}
     return _redirect_with_query("/react/files", uploaded=saved)
@@ -11361,17 +11401,17 @@ async def delete_file_shelf_items(request: Request, files: list[str] = Form(...)
             file_path = _safe_path(FILE_SHELF_DIR, safe_name)
         except ValueError:
             continue
-        if file_path.exists() and file_path.suffix.lower() == ".msi":
+        if file_path.exists() and file_path.is_file():
             file_path.unlink()
             deleted += 1
     if valid == 0:
         if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "No valid MSI files selected"}, status_code=400)
-        return _redirect_with_error("/react/files", "No valid MSI files selected")
+            return JSONResponse({"ok": False, "error": "No valid files selected"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid files selected")
     if deleted == 0:
         if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "No matching MSI files found"}, status_code=404)
-        return _redirect_with_error("/react/files", "No matching MSI files found")
+            return JSONResponse({"ok": False, "error": "No matching files found"}, status_code=404)
+        return _redirect_with_error("/react/files", "No matching files found")
     if _request_wants_json(request):
         return {"ok": True, "deleted": deleted}
     return _redirect_with_query("/react/files", deleted=deleted)
@@ -11382,28 +11422,26 @@ async def replace_file_shelf_item(request: Request, filename: str, file: UploadF
     safe_name = _safe_file_shelf_name(filename)
     if not safe_name or safe_name != filename:
         if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "Invalid MSI filename"}, status_code=400)
-        return _redirect_with_error("/react/files", "Invalid MSI filename")
-    upload_name = _safe_file_shelf_name(file.filename)
-    if not upload_name:
-        if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "No valid replacement MSI found"}, status_code=400)
-        return _redirect_with_error("/react/files", "No valid replacement MSI found")
-    content = await file.read()
-    if not content:
-        if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "Replacement MSI is empty"}, status_code=400)
-        return _redirect_with_error("/react/files", "Replacement MSI is empty")
+            return JSONResponse({"ok": False, "error": "Invalid filename"}, status_code=400)
+        return _redirect_with_error("/react/files", "Invalid filename")
     FILE_SHELF_DIR.mkdir(parents=True, exist_ok=True)
     try:
         dest = _safe_path(FILE_SHELF_DIR, safe_name)
     except ValueError:
         if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "Invalid MSI filename"}, status_code=400)
-        return _redirect_with_error("/react/files", "Invalid MSI filename")
-    dest.write_bytes(content)
+            return JSONResponse({"ok": False, "error": "Invalid filename"}, status_code=400)
+        return _redirect_with_error("/react/files", "Invalid filename")
+    replacement_name = _safe_file_shelf_name(file.filename) or safe_name
+    try:
+        size = await _write_file_shelf_upload(file, dest, replacement_name)
+    except _FileShelfUploadTooLarge as exc:
+        return _file_shelf_size_error_response(request, exc)
+    if size == 0:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Replacement file is empty"}, status_code=400)
+        return _redirect_with_error("/react/files", "Replacement file is empty")
     if _request_wants_json(request):
-        return {"ok": True, "replaced": safe_name, "size_bytes": len(content)}
+        return {"ok": True, "replaced": safe_name, "size_bytes": size}
     return _redirect_with_query("/react/files", replaced=safe_name)
 
 
