@@ -6,6 +6,7 @@ import { CloudDevicesPage } from "./pages/CloudDevicesPage";
 import { CloudosdPage } from "./pages/CloudosdPage";
 import { CredentialsPage } from "./pages/CredentialsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DeploymentRunPage } from "./pages/DeploymentRunPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HashesPage } from "./pages/HashesPage";
 import { InstallTrackingPage } from "./pages/InstallTrackingPage";
@@ -100,8 +101,20 @@ export function App({ bootstrap }: AppProps) {
   if (path === "/react/cloudosd") {
     return <CloudosdPage bootstrap={bootstrap} />;
   }
+  {
+    const cloudosdRunMatch = /^\/react\/cloudosd\/runs\/([^/]+)$/u.exec(path);
+    if (cloudosdRunMatch?.[1]) {
+      return <DeploymentRunPage bootstrap={bootstrap} kind="cloudosd" runId={cloudosdRunMatch[1]} />;
+    }
+  }
   if (path === "/react/osdeploy") {
     return <OsdeployPage bootstrap={bootstrap} />;
+  }
+  {
+    const osdeployRunMatch = /^\/react\/osdeploy\/runs\/([^/]+)$/u.exec(path);
+    if (osdeployRunMatch?.[1]) {
+      return <DeploymentRunPage bootstrap={bootstrap} kind="osdeploy" runId={osdeployRunMatch[1]} />;
+    }
   }
   if (path === "/react/template") {
     return <TemplatePage bootstrap={bootstrap} />;
