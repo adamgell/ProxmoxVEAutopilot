@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { DragEvent } from "react";
 
 import { fetchJson, postForm } from "../apiClient";
 import { PageFrame } from "../components/Shell";
@@ -27,6 +28,17 @@ function fileDownloadUrl(row: FileShelfRow): string {
 
 function queueId(file: File, index: number): string {
   return `${file.name}:${String(file.size)}:${String(file.lastModified)}:${String(index)}`;
+}
+
+function queueItems(files: readonly File[]): readonly UploadQueueItem[] {
+  return files.map((file, index) => ({
+    id: queueId(file, index),
+    file,
+    name: file.name,
+    size: file.size,
+    status: "queued",
+    progress: 0
+  }));
 }
 
 function htmlDetail(text: string): string {
@@ -117,21 +129,22 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setUploadQueue((current) => current.map((item) => (item.id === id ? patch(item) : item)));
   };
 
-  const selectUploadFiles = () => {
-    const files = fileInput.current?.files;
-    if (!files?.length) {
+  const queueUploadFiles = (files: readonly File[]) => {
+    if (!files.length) {
       return;
     }
-    setUploadQueue(Array.from(files).map((file, index) => ({
-      id: queueId(file, index),
-      file,
-      name: file.name,
-      size: file.size,
-      status: "queued",
-      progress: 0
-    })));
+    setUploadQueue(queueItems(files));
     setMessage("");
     setError("");
+  };
+
+  const selectUploadFiles = () => {
+    queueUploadFiles(Array.from(fileInput.current?.files ?? []));
+  };
+
+  const dropUploadFiles = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    queueUploadFiles(Array.from(event.dataTransfer.files));
   };
 
   const uploadFiles = async () => {
@@ -320,34 +333,50 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           </label>
           <span className="result-count">{String(filtered.length)} of {String(rows.length)}</span>
         </div>
-        <div className="utility-upload-row">
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            aria-label="Upload files"
-            onChange={selectUploadFiles}
-          />
+      </section>
+      <Panel title="Upload files">
+        <div
+          className="upload-dropzone"
+          onDragOver={(event) => { event.preventDefault(); }}
+          onDrop={dropUploadFiles}
+        >
+          <div>
+            <strong>Drop files here</strong>
+            <small>{FILE_LIMIT_LABEL}</small>
+          </div>
+          <label className="utility-button upload-picker">
+            Choose files
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              aria-label="Choose upload files"
+              onChange={selectUploadFiles}
+            />
+          </label>
+        </div>
+        <div className="utility-upload-row utility-upload-row--queue-actions">
           <button
             className="utility-button"
             type="button"
             disabled={pendingAction === "upload" || uploadQueue.length === 0}
             onClick={() => { void uploadFiles(); }}
           >
-            {uploadQueue.length ? `Start upload (${String(uploadQueue.length)})` : "Upload / Replace files"}
+            Start upload ({String(uploadQueue.length)})
           </button>
-          {uploadQueue.length ? (
-            <button className="utility-button utility-button--muted" type="button" disabled={pendingAction === "upload"} onClick={clearUploadQueue}>
-              Clear queue
-            </button>
-          ) : null}
-          <span className="muted">{FILE_LIMIT_LABEL}</span>
+          <button
+            className="utility-button utility-button--muted"
+            type="button"
+            disabled={pendingAction === "upload" || uploadQueue.length === 0}
+            onClick={clearUploadQueue}
+          >
+            Clear queue
+          </button>
         </div>
-      </section>
-      {uploadQueue.length ? (
-        <Panel title="Upload queue">
-          <div className="upload-queue" aria-label="Files upload queue">
-            {uploadQueue.map((item) => (
+      </Panel>
+      <Panel title="Upload queue">
+        <div className="upload-queue" aria-label="Files upload queue">
+          {uploadQueue.length ? uploadQueue.map((item) => (
               <div className="upload-queue__row" key={item.id}>
                 <div>
                   <strong>{item.name}</strong>
@@ -357,10 +386,14 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                 <progress aria-label={`Upload progress for ${item.name}`} value={item.progress} max={100} />
                 {item.error ? <small className="notice-inline notice-inline--bad">{item.error}</small> : null}
               </div>
-            ))}
-          </div>
-        </Panel>
-      ) : null}
+            )) : (
+            <div className="upload-queue__empty">
+              <strong>No files queued</strong>
+              <small>Choose files or drop them here.</small>
+            </div>
+          )}
+        </div>
+      </Panel>
       <Panel title="Uploaded files">
         <div className="bulk-action-row">
           <label className="file-select-all">

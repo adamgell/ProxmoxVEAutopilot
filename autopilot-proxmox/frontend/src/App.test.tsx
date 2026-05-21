@@ -787,8 +787,10 @@ describe("App", () => {
     expect(await screen.findByRole("link", { name: "AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
     expect(screen.getByRole("link", { name: "/files/AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
     expect(screen.getByText("Up to 10 GiB per file. Any file type.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Upload files")).not.toHaveAttribute("accept");
-    expect(screen.getByRole("button", { name: "Upload / Replace files" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Choose upload files")).not.toHaveAttribute("accept");
+    expect(screen.getByText("Drop files here")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start upload (0)" })).toBeDisabled();
+    expect(screen.getByText("No files queued")).toBeInTheDocument();
 
     const replacement = new File(["replacement-zip"], "replacement.zip", { type: "application/zip" });
     const replacementInput = screen.getByLabelText("Replacement file for AutopilotAgent.msi");
@@ -821,7 +823,7 @@ describe("App", () => {
 
     renderRoute("/react/files");
 
-    const uploadInput = await screen.findByLabelText("Upload files");
+    const uploadInput = await screen.findByLabelText("Choose upload files");
     const files = [
       new File(["setup"], "setup.exe", { type: "application/octet-stream" }),
       new File(["notes"], "notes.txt", { type: "text/plain" })
