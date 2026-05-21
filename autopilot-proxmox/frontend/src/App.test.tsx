@@ -1358,6 +1358,7 @@ describe("App", () => {
     expect(screen.getByText("Build host agent")).toBeInTheDocument();
     expect(screen.getAllByText("Stage Windows ISO and VirtIO media").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/react/osdeploy");
+    expect(screen.queryByRole("link", { name: "Open legacy monitoring" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: "Monitoring settings" }).some((link) =>
       link.getAttribute("href") === "/react/monitoring/settings"
     )).toBe(true);

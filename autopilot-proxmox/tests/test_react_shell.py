@@ -622,6 +622,7 @@ def test_observe_monitoring_api_response_shapes(web_client):
         "fleet_evidence",
     }.issubset({item["family"] for item in signals_body["signals"]})
     assert any(path["href"].startswith(("/react/", "/cloudosd", "/osdeploy", "/setup", "/vms", "/devices", "/hashes")) for path in signals_body["operator_paths"])
+    assert "Open legacy monitoring" not in {path.get("action_label") for path in signals_body["operator_paths"]}
 
 
 def test_openapi_export_script_uses_local_app_import(tmp_path):

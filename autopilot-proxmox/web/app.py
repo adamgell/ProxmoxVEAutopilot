@@ -15867,7 +15867,7 @@ def _signals_hub_payload() -> dict:
                 f"{lane_counts['ad_ok']} AD, {lane_counts['entra_ok']} Entra, {lane_counts['intune_ok']} Intune ready"
             ),
             "count": lane_counts["attention"],
-            "source": "/monitoring",
+            "source": "monitoring sweep",
             "href": "/react/monitoring#lifecycle",
         },
         {
@@ -15927,8 +15927,8 @@ def _signals_hub_payload() -> dict:
             "status": "attention",
             "tone": "bad",
             "summary": f"{deployment_attention} deployment timing signals are failed, stuck, or regressed.",
-            "action_label": "Open legacy monitoring",
-            "href": "/monitoring",
+            "action_label": "Open monitoring",
+            "href": "/react/monitoring#deployment-speed",
             "source": "/api/monitoring/deployments/runs",
         })
     if fleet_attention:
@@ -15941,7 +15941,7 @@ def _signals_hub_payload() -> dict:
             "summary": f"{len(fleet_attention)} devices need AD, Entra, Intune, or guest identity review.",
             "action_label": "Open devices",
             "href": "/devices",
-            "source": "/monitoring",
+            "source": "monitoring sweep",
         })
     if build_host_status in {"stale", "missing", "mismatch"}:
         operator_paths.append({
