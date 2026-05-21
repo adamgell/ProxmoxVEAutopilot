@@ -17,6 +17,12 @@ async function responseDetail(response: Response): Promise<string> {
       return detail;
     }
   }
+  if (contentType.includes("text/html")) {
+    const html = await response.text().catch(() => "");
+    const title = /<title[^>]*>([^<]+)<\/title>/iu.exec(html)?.[1]?.trim();
+    const heading = /<h1[^>]*>([^<]+)<\/h1>/iu.exec(html)?.[1]?.trim();
+    return title || heading || response.statusText || `HTTP ${String(response.status)}`;
+  }
   const text = await response.text().catch(() => "");
   return text.trim() || response.statusText || `HTTP ${String(response.status)}`;
 }
