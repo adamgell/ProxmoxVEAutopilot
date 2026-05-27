@@ -193,9 +193,17 @@ def probe_ad(body: ProbeAdRequest, owner_sub: str = Depends(_owner_sub)):
         return onboarding_probes.probe_ad(body.domain, body.account, body.password)
 
 
-@router.post("/probe/tenant", status_code=501)
-def probe_tenant():
-    raise HTTPException(status_code=501, detail="tenant probe not yet implemented")
+class ProbeTenantRequest(BaseModel):
+    tenant_id: str
+    tenant_domain: str
+    graph_check: bool = True
+
+
+@router.post("/probe/tenant")
+def probe_tenant(body: ProbeTenantRequest, owner_sub: str = Depends(_owner_sub)):
+    from web import onboarding_probes
+    with _probe_lock(owner_sub, "tenant"):
+        return onboarding_probes.probe_tenant(body.tenant_id, body.tenant_domain, graph_check=body.graph_check)
 
 
 @router.post("/probe/artifact", status_code=501)

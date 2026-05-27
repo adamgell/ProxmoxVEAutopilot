@@ -70,3 +70,16 @@ def test_ldap_bind_unbinds_on_failure(monkeypatch):
     ok, detail = onboarding_probes._ldap_bind("home.gell.one", "x", "y")
     assert ok is False
     assert closed == [True], "unbind_s must be called even when bind raises"
+
+
+def test_probe_tenant_validates_uuid_shape():
+    result = onboarding_probes.probe_tenant("not-a-uuid", "contoso.onmicrosoft.com", graph_check=False)
+    assert result["ok"] is False
+    assert "Tenant id format" in result["detail"]
+
+
+def test_probe_tenant_accepts_valid_uuid_when_graph_skipped():
+    result = onboarding_probes.probe_tenant(
+        "12345678-1234-1234-1234-123456789abc", "contoso.onmicrosoft.com", graph_check=False
+    )
+    assert result["ok"] is True

@@ -5,8 +5,10 @@ Each probe returns a dict shaped as:
 """
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
+import urllib.request
 
 
 def _dns_resolve(domain: str) -> tuple[bool, str]:
@@ -92,3 +94,35 @@ def probe_ad(domain: str, account: str, password: str) -> dict:
             "ldap": {"ok": ldap_ok, "detail": ldap_detail},
         },
     }
+
+
+_TENANT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+
+def probe_tenant(tenant_id: str, tenant_domain: str, *, graph_check: bool = True) -> dict:
+    """Validate Autopilot tenant values. Shape check first; optional Graph sanity-check."""
+    if not _TENANT_ID_RE.match(tenant_id or ""):
+        return {
+            "ok": False,
+            "detail": "Tenant id format invalid. Check the value in https://entra.microsoft.com under Overview.",
+            "checks": {"shape": {"ok": False, "detail": "not a uuid"}},
+        }
+    if not tenant_domain or "." not in tenant_domain:
+        return {
+            "ok": False,
+            "detail": "Tenant domain looks wrong; expected something like contoso.onmicrosoft.com.",
+            "checks": {"shape": {"ok": True}, "domain": {"ok": False, "detail": "missing dot"}},
+        }
+    if not graph_check:
+        return {"ok": True, "detail": "shape ok; Graph sanity-check skipped", "checks": {"shape": {"ok": True}}}
+    # Graph sanity check: hit the OpenID metadata endpoint, no creds needed.
+    try:
+        with urllib.request.urlopen(
+            f"https://login.microsoftonline.com/{tenant_id}/v2.0/.well-known/openid-configuration",
+            timeout=5,
+        ) as r:
+            if r.status == 200:
+                return {"ok": True, "detail": "tenant resolves on login.microsoftonline.com", "checks": {"shape": {"ok": True}, "graph": {"ok": True}}}
+            return {"ok": False, "detail": f"login.microsoftonline.com returned {r.status}", "checks": {"shape": {"ok": True}, "graph": {"ok": False}}}
+    except Exception as e:
+        return {"ok": False, "detail": f"could not reach login.microsoftonline.com: {e}", "checks": {"shape": {"ok": True}, "graph": {"ok": False}}}

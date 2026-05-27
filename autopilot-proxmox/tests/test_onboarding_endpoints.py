@@ -72,9 +72,35 @@ def test_delete_state_clears_row():
 
 def test_probe_endpoints_stubbed_to_501():
     client = TestClient(app)
-    for path in ("tenant", "artifact"):
+    for path in ("artifact",):
         r = client.post(f"/api/onboarding/probe/{path}", json={})
         assert r.status_code == 501
+
+
+def test_probe_tenant_returns_probe_helper_result(monkeypatch):
+    from web import onboarding_probes
+
+    expected = {
+        "ok": True,
+        "detail": "tenant resolves on login.microsoftonline.com",
+        "checks": {"shape": {"ok": True}, "graph": {"ok": True}},
+    }
+    monkeypatch.setattr(
+        onboarding_probes,
+        "probe_tenant",
+        lambda tenant_id, tenant_domain, graph_check=True: expected,
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/onboarding/probe/tenant",
+        json={
+            "tenant_id": "12345678-1234-1234-1234-123456789abc",
+            "tenant_domain": "contoso.onmicrosoft.com",
+            "graph_check": True,
+        },
+    )
+    assert r.status_code == 200
+    assert r.json() == expected
 
 
 def test_probe_ad_returns_probe_helper_result(monkeypatch):

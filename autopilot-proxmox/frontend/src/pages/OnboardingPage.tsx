@@ -13,6 +13,7 @@ import { StepRail } from "../onboarding/StepRail";
 import { AlreadyConfiguredCard } from "../onboarding/AlreadyConfiguredCard";
 import { WelcomePersonaStep } from "../onboarding/steps/WelcomePersonaStep";
 import { IdentityStep } from "../onboarding/steps/IdentityStep";
+import { TenantStep } from "../onboarding/steps/TenantStep";
 import {
   fetchState,
   putState,
@@ -150,8 +151,16 @@ export function OnboardingPage(_props: Props) {
             void persist({ answers: patch });
           }}
         />
+      ) : state.currentStep === "tenant" ? (
+        <TenantStep
+          state={state}
+          onPatch={(patch) => {
+            dispatch({ type: "patchAnswers", patch });
+            void persist({ answers: patch });
+          }}
+        />
       ) : (
-        // Subsequent step components land in Tasks 8-10.
+        // Subsequent step components land in Tasks 9-10.
         <section><p>Step {state.currentStep} pending implementation.</p></section>
       )}
       <footer className="onboarding-footer">
