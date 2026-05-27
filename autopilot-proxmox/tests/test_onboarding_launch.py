@@ -108,6 +108,15 @@ def test_launch_rolls_back_on_kick_failure(pg_conn, monkeypatch):
     ).fetchall()
     assert runs == []
 
+    # And no phase items either: items are seeded with the same run_id and
+    # would have an FK violation against the rolled-back run row, but assert
+    # explicitly so a future change that decouples the FK still gets caught.
+    items = pg_conn.execute(
+        "SELECT run_id FROM install_tracking_items WHERE run_id LIKE %s",
+        ("onboarding-dave-%",),
+    ).fetchall()
+    assert items == []
+
 
 def test_launch_rejects_when_no_row(pg_conn, monkeypatch):
     monkeypatch.setattr(onboarding_launch, "_kick_provision", lambda *a, **kw: {})

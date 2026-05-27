@@ -11,9 +11,14 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import requests
 from psycopg import Connection
 
 from web import install_tracking_pg, onboarding_pg
+
+# The provision endpoint is a quick handoff that enqueues a job; 30s is the
+# worst-case ceiling for cluster-wide network blips.
+PROVISION_KICK_TIMEOUT_SECONDS = 30
 
 
 def _phases_for(answers: dict[str, Any]) -> list[dict[str, Any]]:
@@ -56,11 +61,13 @@ def _kick_provision(kind: str, run_id: str, payload: dict[str, Any]) -> dict:
 
     Hardcoded to localhost:8000 for now; the launch transaction is the
     artifact-discovery surface, not config-driven endpoint resolution.
-    """
-    import requests
 
+    Secrets invariant: payload["answers"] is already-scrubbed (intake_secrets
+    has moved raw secrets to vault); raw secrets must never pass through this
+    seam.
+    """
     url = f"http://localhost:8000/api/{kind}/runs/{run_id}/provision"
-    response = requests.post(url, json=payload, timeout=30)
+    response = requests.post(url, json=payload, timeout=PROVISION_KICK_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 
@@ -111,6 +118,14 @@ def launch(conn: Connection, *, owner_sub: str) -> dict:
             sort_order=item["sort_order"],
             commit=False,
         )
+    # Two-system transaction window: if _kick_provision succeeds but
+    # set_launched_run then fails (e.g. concurrent DELETE of the onboarding
+    # row), the artifact-side provision job is already started but the
+    # install_tracking rows roll back, leaving an orphan job referencing a
+    # run_id with no install_tracking entries. The window is bounded
+    # (set_launched_run is one quick UPDATE), and the provision side must
+    # be idempotent on missing-run lookups. Acknowledged tradeoff; see
+    # Task 11 review.
     try:
         _kick_provision(kind, run_id, {"answers": answers})
     except Exception:
