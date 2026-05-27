@@ -92,3 +92,39 @@ def test_probe_tenant_rejects_trailing_whitespace():
     )
     assert result["ok"] is False
     assert "Tenant id format" in result["detail"]
+
+
+def test_probe_artifact_lists_cache_contents(monkeypatch):
+    """Inventory both CloudOSD and OSDeploy artifact stores.
+
+    Deviation from plan text: the modules cloudosd_cache.py / osdeploy_cache.py
+    exist but do NOT expose list_artifacts(); they manage cache *entries*
+    (catalog downloads), not built artifacts. The canonical list-of-built-
+    artifacts comes from cloudosd_pg.list_artifacts(conn) /
+    osdeploy_pg.list_artifacts(conn), which the existing /artifacts endpoints
+    already wrap. The probe monkeypatches those.
+    """
+    monkeypatch.setattr(
+        "web.onboarding_probes._list_cloudosd_artifacts",
+        lambda: [{"id": "cosd-1", "label": "CloudOSD 2026-05", "built_at": "2026-05-20T10:00Z"}],
+    )
+    monkeypatch.setattr(
+        "web.onboarding_probes._list_osdeploy_artifacts",
+        lambda: [{"id": "osd-1", "label": "OSDeploy 2026-05", "built_at": "2026-05-22T10:00Z"}],
+    )
+    result = onboarding_probes.probe_artifact()
+    assert result["ok"] is True
+    assert any(a["id"] == "cosd-1" for a in result["cloudosd"])
+    assert any(a["id"] == "osd-1" for a in result["osdeploy"])
+
+
+def test_probe_artifact_returns_empty_lists_when_db_unavailable(monkeypatch):
+    """If the DB is not configured the probe still returns a usable shape."""
+    def boom():
+        raise RuntimeError("CloudOSD database is not configured")
+    monkeypatch.setattr("web.onboarding_probes._list_cloudosd_artifacts", boom)
+    monkeypatch.setattr("web.onboarding_probes._list_osdeploy_artifacts", boom)
+    result = onboarding_probes.probe_artifact()
+    assert result["ok"] is False
+    assert result["cloudosd"] == []
+    assert result["osdeploy"] == []

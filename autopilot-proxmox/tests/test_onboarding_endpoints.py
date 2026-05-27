@@ -70,11 +70,25 @@ def test_delete_state_clears_row():
     assert r2.status_code == 404
 
 
-def test_probe_endpoints_stubbed_to_501():
+def test_probe_artifact_returns_probe_helper_result(monkeypatch):
+    from web import onboarding_probes
+
+    expected = {
+        "ok": True,
+        "detail": "2 CloudOSD, 1 OSDeploy",
+        "cloudosd": [
+            {"id": "cosd-1", "label": "CloudOSD 2026-05", "built_at": "2026-05-20T10:00Z"},
+            {"id": "cosd-2", "label": "CloudOSD 2026-04", "built_at": "2026-04-15T10:00Z"},
+        ],
+        "osdeploy": [
+            {"id": "osd-1", "label": "OSDeploy 2026-05", "built_at": "2026-05-22T10:00Z"},
+        ],
+    }
+    monkeypatch.setattr(onboarding_probes, "probe_artifact", lambda: expected)
     client = TestClient(app)
-    for path in ("artifact",):
-        r = client.post(f"/api/onboarding/probe/{path}", json={})
-        assert r.status_code == 501
+    r = client.post("/api/onboarding/probe/artifact")
+    assert r.status_code == 200
+    assert r.json() == expected
 
 
 def test_probe_tenant_returns_probe_helper_result(monkeypatch):

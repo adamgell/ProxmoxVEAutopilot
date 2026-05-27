@@ -206,9 +206,11 @@ def probe_tenant(body: ProbeTenantRequest, owner_sub: str = Depends(_owner_sub))
         return onboarding_probes.probe_tenant(body.tenant_id, body.tenant_domain, graph_check=body.graph_check)
 
 
-@router.post("/probe/artifact", status_code=501)
-def probe_artifact():
-    raise HTTPException(status_code=501, detail="artifact probe not yet implemented")
+@router.post("/probe/artifact")
+def probe_artifact(owner_sub: str = Depends(_owner_sub)):
+    from web import onboarding_probes
+    with _probe_lock(owner_sub, "artifact"):
+        return onboarding_probes.probe_artifact()
 
 
 @router.post("/launch", status_code=501)

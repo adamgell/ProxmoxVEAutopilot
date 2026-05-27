@@ -96,6 +96,58 @@ def probe_ad(domain: str, account: str, password: str) -> dict:
     }
 
 
+def _list_cloudosd_artifacts() -> list[dict]:
+    """List CloudOSD artifacts via the same path the GET /artifacts endpoint uses.
+
+    Deviation from the plan text: web.cloudosd_cache does NOT expose
+    list_artifacts(); the cache module manages catalog downloads (entries), not
+    built artifacts. cloudosd_pg.list_artifacts(conn) is the canonical source.
+    We open the same _conn() the endpoint uses so connection setup + schema
+    init mirror production.
+    """
+    from web import cloudosd_endpoints, cloudosd_pg  # type: ignore
+    with cloudosd_endpoints._conn() as conn:
+        return [
+            cloudosd_endpoints.enrich_artifact(a) or a
+            for a in cloudosd_pg.list_artifacts(conn)
+        ]
+
+
+def _list_osdeploy_artifacts() -> list[dict]:
+    """List OSDeploy artifacts. Same deviation note as _list_cloudosd_artifacts."""
+    from web import osdeploy_endpoints, osdeploy_pg  # type: ignore
+    with osdeploy_endpoints._conn() as conn:
+        return [
+            osdeploy_endpoints.enrich_artifact(a) or a
+            for a in osdeploy_pg.list_artifacts(conn)
+        ]
+
+
+def probe_artifact() -> dict:
+    """Inventory CloudOSD + OSDeploy artifact stores.
+
+    ok is True iff at least one artifact exists somewhere. Each kind is fetched
+    independently: a failure in one (e.g. cloudosd_pg schema not initialised)
+    leaves the other intact. The broad except is intentional because deployment
+    shapes vary -- the DB might be unconfigured, the schema not yet migrated, or
+    one of the import paths may not be loaded.
+    """
+    try:
+        cloudosd = list(_list_cloudosd_artifacts())
+    except Exception:
+        cloudosd = []
+    try:
+        osdeploy = list(_list_osdeploy_artifacts())
+    except Exception:
+        osdeploy = []
+    return {
+        "ok": bool(cloudosd or osdeploy),
+        "detail": f"{len(cloudosd)} CloudOSD, {len(osdeploy)} OSDeploy",
+        "cloudosd": cloudosd,
+        "osdeploy": osdeploy,
+    }
+
+
 _TENANT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE)
 
 
