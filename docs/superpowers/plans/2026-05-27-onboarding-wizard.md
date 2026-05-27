@@ -592,6 +592,56 @@ def _probe_lock(owner_sub: str, probe_name: str):
     return _Releaser()
 
 
+@router.get("/already-configured")
+def already_configured():
+    """Aggregator for the wizard's step 1 'Already configured' card.
+
+    Reads Proxmox version + storages + bridges from the existing Proxmox client,
+    and AD vault presence from settings_vault. Each row is independent: a failure
+    in one does not poison the others.
+    """
+    import importlib
+    out = {
+        "proxmox": {"ok": False, "summary": "not checked"},
+        "storage": {"ok": False, "summary": "not checked"},
+        "network": {"ok": False, "summary": "not checked"},
+        "ad_vault": {"ok": False, "summary": "not checked"},
+    }
+    # Proxmox version + node listing. Reuse the existing client; grep for an
+    # existing call site like `_proxmox_get` or `proxmox_request` in app.py and
+    # call it here. Pattern, with the exact helper name confirmed at landing:
+    try:
+        from web import app as web_app  # type: ignore
+        nodes = web_app._proxmox_get("/nodes")  # confirm helper name when implementing
+        if nodes:
+            node = nodes[0]
+            out["proxmox"] = {"ok": True, "summary": f"connected to {node['node']} v{node.get('version', '?')}"}
+            try:
+                storages = web_app._proxmox_get(f"/nodes/{node['node']}/storage")
+                out["storage"] = {"ok": True, "summary": f"{len(storages)} storage pools on {node['node']}"}
+            except Exception as e:
+                out["storage"] = {"ok": False, "summary": f"could not list storages: {e}"}
+            try:
+                bridges = web_app._proxmox_get(f"/nodes/{node['node']}/network")
+                bridge_names = [b["iface"] for b in bridges if b.get("type") == "bridge"]
+                out["network"] = {"ok": True, "summary": f"bridges: {', '.join(bridge_names) or '(none)'}"}
+            except Exception as e:
+                out["network"] = {"ok": False, "summary": f"could not list bridges: {e}"}
+    except Exception as e:
+        out["proxmox"] = {"ok": False, "summary": f"Couldn't reach Proxmox: {e}"}
+    # AD vault status.
+    try:
+        from web import settings_vault
+        present = bool(settings_vault.get_value("vault_ad_join_password"))
+        out["ad_vault"] = {
+            "ok": present,
+            "summary": "AD service account password set" if present else "no AD password vaulted yet",
+        }
+    except Exception as e:
+        out["ad_vault"] = {"ok": False, "summary": f"vault check failed: {e}"}
+    return out
+
+
 # Probe + launch + setup-status: stubs for now (Tasks 7-12 will implement).
 @router.post("/probe/ad", status_code=501)
 def probe_ad():
@@ -1543,34 +1593,37 @@ import { useEffect, useState } from "react";
 
 interface CardRow {
   readonly label: string;
-  readonly detail: string;
   readonly ok: boolean;
+  readonly summary: string;
 }
 
-async function probe(url: string, label: string): Promise<CardRow> {
-  try {
-    const r = await fetch(url, { credentials: "include" });
-    if (!r.ok) {
-      return { label, detail: `Couldn't reach ${label} (HTTP ${r.status})`, ok: false };
-    }
-    const body = await r.json();
-    return { label, detail: typeof body.summary === "string" ? body.summary : "ok", ok: true };
-  } catch (e) {
-    return { label, detail: `Couldn't reach ${label} (${(e as Error).message})`, ok: false };
-  }
+interface AlreadyConfiguredResponse {
+  readonly proxmox: { ok: boolean; summary: string };
+  readonly storage: { ok: boolean; summary: string };
+  readonly network: { ok: boolean; summary: string };
+  readonly ad_vault: { ok: boolean; summary: string };
 }
 
 export function AlreadyConfiguredCard() {
   const [rows, setRows] = useState<CardRow[]>([]);
   useEffect(() => {
     void (async () => {
-      const collected = await Promise.all([
-        probe("/api/proxmox/health", "Proxmox"),
-        probe("/api/proxmox/storages", "Storage"),
-        probe("/api/networks/bridges", "Network"),
-        probe("/api/settings/ad-vault-status", "AD vault"),
-      ]);
-      setRows(collected);
+      try {
+        const r = await fetch("/api/onboarding/already-configured", { credentials: "include" });
+        if (!r.ok) {
+          setRows([{ label: "Status", ok: false, summary: `Couldn't reach controller (HTTP ${r.status})` }]);
+          return;
+        }
+        const body = (await r.json()) as AlreadyConfiguredResponse;
+        setRows([
+          { label: "Proxmox", ok: body.proxmox.ok, summary: body.proxmox.summary },
+          { label: "Storage", ok: body.storage.ok, summary: body.storage.summary },
+          { label: "Network", ok: body.network.ok, summary: body.network.summary },
+          { label: "AD vault", ok: body.ad_vault.ok, summary: body.ad_vault.summary },
+        ]);
+      } catch (e) {
+        setRows([{ label: "Status", ok: false, summary: (e as Error).message }]);
+      }
     })();
   }, []);
   return (
@@ -1579,7 +1632,7 @@ export function AlreadyConfiguredCard() {
       <ul>
         {rows.map((row) => (
           <li key={row.label} className={row.ok ? "ok" : "warn"}>
-            <strong>{row.label}:</strong> {row.detail}
+            <strong>{row.label}:</strong> {row.summary}
           </li>
         ))}
       </ul>
@@ -1591,7 +1644,7 @@ export function AlreadyConfiguredCard() {
 }
 ```
 
-(If any of the `/api/proxmox/health`, `/api/proxmox/storages`, `/api/networks/bridges`, `/api/settings/ad-vault-status` endpoints does not yet exist, this task includes adding a thin GET wrapper that calls into the existing surface in `proxmox_permissions`, `proxmox_sdn`, or `settings_vault`. Grep for the closest existing endpoint before adding a new one.)
+The aggregator endpoint `/api/onboarding/already-configured` is implemented in Task 2 (alongside the state CRUD). It reads from the existing Proxmox client + `settings_vault` and returns one JSON blob with four independent rows. No new domain endpoints are introduced.
 
 - [ ] **Step 5: Implement WelcomePersonaStep**
 
@@ -1737,6 +1790,9 @@ export function OnboardingPage({ bootstrap: _bootstrap }: Props) {
   }
 
   function onAdvance() {
+    // If the current step has any locally-held secrets (IdentityStep, for now),
+    // give it a chance to flush them into the next state PUT.
+    (window as any).__onboardingIdentityFlush?.();
     dispatch({ type: "advance" });
     void persist({ current_step: STEP_ORDER[STEP_ORDER.indexOf(state.currentStep) + 1] });
   }
@@ -2026,13 +2082,21 @@ interface Props {
 
 export function IdentityStep({ state, onPatch }: Props) {
   const identity = state.answers.identity;
+  // Passwords live in local component state, NOT in the wizard machine state.
+  // This avoids PUTting partial passwords on every keystroke and keeps the
+  // plaintext value out of any serialized state until the operator submits.
+  // The values are flushed to the server (and vaulted) exactly twice:
+  //   - on "Test this now" click (sent inline in the probe request body)
+  //   - on "Next" click (included in the state PUT; _intake_secrets vaults it)
+  const [adPassword, setAdPassword] = useState("");
+  const [localAdminPassword, setLocalAdminPassword] = useState("");
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<{ ok: boolean; detail: string } | null>(
     state.answers.probeResults.ad
   );
 
   async function runProbe() {
-    if (!identity.adDomain || !identity.adJoinAccount) {
+    if (!identity.adDomain || !identity.adJoinAccount || !adPassword) {
       return;
     }
     setProbing(true);
@@ -2043,7 +2107,7 @@ export function IdentityStep({ state, onPatch }: Props) {
       body: JSON.stringify({
         domain: identity.adDomain,
         account: identity.adJoinAccount,
-        password: "", // server reads from vault via separate write
+        password: adPassword,
       }),
     });
     const body = await r.json();
@@ -2053,6 +2117,25 @@ export function IdentityStep({ state, onPatch }: Props) {
       probeResults: { ...state.answers.probeResults, ad: { at: new Date().toISOString(), ok: body.ok, detail: body.detail } },
     });
   }
+
+  // Called by the parent when the operator clicks Next. Flushes any locally-held
+  // passwords into the state PUT exactly once, where the server-side
+  // _intake_secrets handler will route them to settings_vault.
+  // The parent wires this up via a ref or by calling onPatch directly here.
+  function flushPasswordsBeforeAdvance() {
+    const flush: Record<string, unknown> = {};
+    if (adPassword) flush.ad_join_password = adPassword;
+    if (localAdminPassword) flush.local_admin_password = localAdminPassword;
+    if (Object.keys(flush).length === 0) return;
+    onPatch({ identity: { ...identity, ...flush } as any });
+    setAdPassword("");
+    setLocalAdminPassword("");
+  }
+  // Expose to the parent via a stable property on window for the simple wiring;
+  // a cleaner version uses useImperativeHandle. The parent OnboardingPage calls
+  // `(window as any).__onboardingIdentityFlush?.()` from the Next button handler
+  // before calling persist.
+  (window as any).__onboardingIdentityFlush = flushPasswordsBeforeAdvance;
 
   return (
     <section className="onboarding-step" aria-labelledby="identity-h">
@@ -2102,32 +2185,18 @@ export function IdentityStep({ state, onPatch }: Props) {
             Join password
             <input
               type="password"
+              value={adPassword}
               placeholder={identity.adJoinPasswordRef.isSet ? "(set; type to replace)" : ""}
-              onChange={(e) => {
-                // PUT the raw password as ad_join_password; the server writes it to vault.yml and
-                // returns the row with adJoinPasswordRef = {ref, isSet: true} via _scrub_for_client.
-                onPatch({
-                  identity: {
-                    ...identity,
-                    ad_join_password: e.target.value || undefined,
-                  } as any,
-                });
-              }}
+              onChange={(e) => setAdPassword(e.target.value)}
             />
           </label>
           <label>
             Local admin password
             <input
               type="password"
+              value={localAdminPassword}
               placeholder={identity.localAdminPasswordRef.isSet ? "(set; type to replace)" : ""}
-              onChange={(e) => {
-                onPatch({
-                  identity: {
-                    ...identity,
-                    local_admin_password: e.target.value || undefined,
-                  } as any,
-                });
-              }}
+              onChange={(e) => setLocalAdminPassword(e.target.value)}
             />
           </label>
           <button type="button" onClick={() => void runProbe()} disabled={probing}>
@@ -2630,11 +2699,23 @@ export function ArtifactStep({ state, onPatch }: Props) {
             <button
               type="button"
               onClick={async () => {
-                const r = await fetch(`/api/${artifact.kind}/build`, { method: "POST", credentials: "include" });
-                if (r.ok) {
+                // Real endpoints: POST /api/cloudosd/artifacts/build (202) and
+                // POST /api/osdeploy/artifacts/build (202). The response body shape
+                // varies between the two; both include a job-style identifier the
+                // wizard can poll via /api/jobs/{id}. Confirm the exact key name
+                // (artifact_id, job_id, or build_id) by reading the existing
+                // endpoint's response model in the relevant *_endpoints.py.
+                const r = await fetch(`/api/${artifact.kind}/artifacts/build`, {
+                  method: "POST",
+                  credentials: "include",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ source: "onboarding" }),
+                });
+                if (r.status === 202 || r.ok) {
                   const body = await r.json();
-                  setBuildStatus({ jobId: body.job_id, status: "started" });
-                  onPatch({ artifact: { ...artifact, buildJobId: body.job_id } });
+                  const jobId = body.job_id ?? body.artifact_id ?? body.build_id;
+                  setBuildStatus({ jobId, status: "started" });
+                  onPatch({ artifact: { ...artifact, buildJobId: jobId } });
                 }
               }}
             >
@@ -3267,6 +3348,8 @@ export function OnboardingSetupPage(_props: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    let intervalId: number | null = null;
+
     async function tick() {
       try {
         const r = await fetch("/api/onboarding/setup-status", { credentials: "include" });
@@ -3284,12 +3367,21 @@ export function OnboardingSetupPage(_props: Props) {
         setErrors((e as Error).message);
       }
     }
+
+    function resetInterval() {
+      if (intervalId !== null) window.clearInterval(intervalId);
+      const ms = document.visibilityState === "visible" ? 2000 : 10000;
+      intervalId = window.setInterval(() => void tick(), ms);
+    }
+
     void tick();
-    const interval = document.visibilityState === "visible" ? 2000 : 10000;
-    const id = setInterval(() => void tick(), interval);
+    resetInterval();
+    document.addEventListener("visibilitychange", resetInterval);
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (intervalId !== null) window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", resetInterval);
     };
   }, []);
 
