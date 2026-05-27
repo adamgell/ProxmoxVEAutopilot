@@ -138,9 +138,11 @@ export function ArtifactStep({ state, onPatch }: Props) {
         return;
       }
       const body = (await r.json()) as Record<string, unknown>;
-      const jobId = body.job_id;
+      // OSDeploy's preflight can route to build_host_agent mode, which returns
+      // work_item_id instead of job_id. Accept either envelope.
+      const jobId = body.job_id ?? body.work_item_id;
       if (typeof jobId !== "string" || !jobId) {
-        setBuildError("Build endpoint did not return a job_id.");
+        setBuildError("Build endpoint did not return a job_id or work_item_id.");
         return;
       }
       onPatch({ artifact: { ...artifact, buildJobId: jobId } });
@@ -151,8 +153,6 @@ export function ArtifactStep({ state, onPatch }: Props) {
     }
   }
 
-  const available = artifact.kind === "cloudosd" ? inventory?.cloudosd ?? [] : inventory?.osdeploy ?? [];
-
   return (
     <section className="onboarding-step" aria-labelledby="artifact-h">
       <h1 id="artifact-h">Artifact</h1>
@@ -161,29 +161,6 @@ export function ArtifactStep({ state, onPatch }: Props) {
         build host and stream their log to /react/jobs.
       </p>
       <fieldset>
-        <legend>Artifact kind</legend>
-        <label>
-          <input
-            type="radio"
-            checked={artifact.kind === "cloudosd"}
-            onChange={() =>
-              onPatch({ artifact: { ...artifact, kind: "cloudosd", existingArtifactId: null, buildJobId: null } })
-            }
-          />
-          CloudOSD
-        </label>
-        <label>
-          <input
-            type="radio"
-            checked={artifact.kind === "osdeploy"}
-            onChange={() =>
-              onPatch({ artifact: { ...artifact, kind: "osdeploy", existingArtifactId: null, buildJobId: null } })
-            }
-          />
-          OSDeploy
-        </label>
-      </fieldset>
-      <fieldset>
         <legend>Source</legend>
         <label>
           <input
@@ -191,7 +168,7 @@ export function ArtifactStep({ state, onPatch }: Props) {
             checked={artifact.source === "existing"}
             onChange={() => onPatch({ artifact: { ...artifact, source: "existing" } })}
           />
-          Pick an existing artifact
+          Use an existing artifact
         </label>
         <label>
           <input
@@ -199,40 +176,99 @@ export function ArtifactStep({ state, onPatch }: Props) {
             checked={artifact.source === "build"}
             onChange={() => onPatch({ artifact: { ...artifact, source: "build" } })}
           />
-          Kick a build
+          Build one now
         </label>
       </fieldset>
       {inventoryLoading ? (
-        <p aria-live="polite">Loading artifact inventory...</p>
+        <p aria-live="polite">Loading inventory...</p>
       ) : inventoryError ? (
         <p role="alert">{inventoryError}</p>
       ) : artifact.source === "existing" ? (
         <fieldset>
           <legend>Pick an artifact</legend>
-          {available.length === 0 ? (
-            <p>No {artifact.kind} artifacts yet. Switch to "Kick a build" or build one from the dedicated page.</p>
+          {inventory ? (
+            <>
+              <h4>CloudOSD</h4>
+              {inventory.cloudosd.length === 0 ? (
+                <p>None on disk.</p>
+              ) : (
+                <ul>
+                  {inventory.cloudosd.map((a) => (
+                    <li key={a.id}>
+                      <label>
+                        <input
+                          type="radio"
+                          checked={artifact.kind === "cloudosd" && artifact.existingArtifactId === a.id}
+                          onChange={() =>
+                            onPatch({
+                              artifact: { ...artifact, kind: "cloudosd", existingArtifactId: a.id },
+                            })
+                          }
+                        />
+                        {a.label} <small>built {a.built_at}</small>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <h4>OSDeploy</h4>
+              {inventory.osdeploy.length === 0 ? (
+                <p>None on disk.</p>
+              ) : (
+                <ul>
+                  {inventory.osdeploy.map((a) => (
+                    <li key={a.id}>
+                      <label>
+                        <input
+                          type="radio"
+                          checked={artifact.kind === "osdeploy" && artifact.existingArtifactId === a.id}
+                          onChange={() =>
+                            onPatch({
+                              artifact: { ...artifact, kind: "osdeploy", existingArtifactId: a.id },
+                            })
+                          }
+                        />
+                        {a.label} <small>built {a.built_at}</small>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           ) : (
-            <label>
-              Artifact
-              <select
-                value={artifact.existingArtifactId ?? ""}
-                onChange={(e) =>
-                  onPatch({ artifact: { ...artifact, existingArtifactId: e.target.value || null } })
-                }
-              >
-                <option value="">-- choose --</option>
-                {available.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.label ?? a.id} {a.built_at ? `(built ${a.built_at})` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <p>Loading inventory...</p>
           )}
         </fieldset>
       ) : (
         <fieldset>
-          <legend>Kick a build</legend>
+          <legend>Build one now</legend>
+          <fieldset>
+            <legend>Kind</legend>
+            <label>
+              <input
+                type="radio"
+                checked={artifact.kind === "cloudosd"}
+                onChange={() =>
+                  onPatch({
+                    artifact: { ...artifact, kind: "cloudosd", existingArtifactId: null, buildJobId: null },
+                  })
+                }
+              />
+              CloudOSD
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={artifact.kind === "osdeploy"}
+                onChange={() =>
+                  onPatch({
+                    artifact: { ...artifact, kind: "osdeploy", existingArtifactId: null, buildJobId: null },
+                  })
+                }
+              />
+              OSDeploy
+            </label>
+          </fieldset>
           {artifact.buildJobId ? (
             <>
               <p>
@@ -264,7 +300,9 @@ export function ArtifactStep({ state, onPatch }: Props) {
             <p>No build has been kicked yet for this onboarding session.</p>
           )}
           <button type="button" onClick={() => void kickBuild()} disabled={building}>
-            {building ? "Kicking..." : artifact.buildJobId ? "Kick another build" : "Kick a build"}
+            {building
+              ? "Kicking..."
+              : `Build ${artifact.kind === "cloudosd" ? "CloudOSD" : "OSDeploy"} now`}
           </button>
           {buildError ? (
             <p role="alert" aria-live="polite">

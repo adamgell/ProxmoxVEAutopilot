@@ -49,7 +49,7 @@ describe("ArtifactStep inventory fetch", () => {
     render(<ArtifactStep state={artifactState()} onPatch={onPatch} />);
 
     await waitFor(() =>
-      expect(screen.getByRole("option", { name: /CloudOSD 2026-05/ })).toBeInTheDocument(),
+      expect(screen.getByRole("radio", { name: /CloudOSD 2026-05/ })).toBeInTheDocument(),
     );
   });
 
@@ -60,7 +60,7 @@ describe("ArtifactStep inventory fetch", () => {
     const onPatch = vi.fn();
     render(<ArtifactStep state={artifactState()} onPatch={onPatch} />);
 
-    await waitFor(() => expect(screen.queryByText(/Loading artifact inventory/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/Loading inventory/)).not.toBeInTheDocument());
     expect(screen.getByText(/Could not load artifact inventory.*network down/)).toBeInTheDocument();
   });
 
@@ -69,7 +69,7 @@ describe("ArtifactStep inventory fetch", () => {
     const onPatch = vi.fn();
     render(<ArtifactStep state={artifactState()} onPatch={onPatch} />);
 
-    await waitFor(() => expect(screen.queryByText(/Loading artifact inventory/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/Loading inventory/)).not.toBeInTheDocument());
     expect(screen.getByText(/HTTP 503/)).toBeInTheDocument();
   });
 });
@@ -89,10 +89,10 @@ describe("ArtifactStep build button", () => {
     const onPatch = vi.fn();
     render(<ArtifactStep state={artifactState({ source: "build" })} onPatch={onPatch} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /Kick a build/i })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: /Kick a build/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Build CloudOSD now/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /Build CloudOSD now/i }));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /Kick a build/i })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Build CloudOSD now/i })).toBeEnabled());
     expect(screen.getByText(/Build request failed.*HTTP 502/)).toBeInTheDocument();
     // onPatch should NOT have been called with a buildJobId on failure.
     const patchCalls = onPatch.mock.calls.map((c) => c[0]);
@@ -108,13 +108,39 @@ describe("ArtifactStep build button", () => {
     const onPatch = vi.fn();
     render(<ArtifactStep state={artifactState({ source: "build" })} onPatch={onPatch} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /Kick a build/i })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: /Kick a build/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Build CloudOSD now/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /Build CloudOSD now/i }));
 
     await waitFor(() => {
       expect(onPatch).toHaveBeenCalledWith(
         expect.objectContaining({
           artifact: expect.objectContaining({ buildJobId: "job-123" }),
+        }),
+      );
+    });
+  });
+
+  it("happy path accepts work_item_id as a fallback (OSDeploy build_host_agent mode)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(probeResponse({ ok: false, detail: "empty", cloudosd: [], osdeploy: [] }))
+      .mockResolvedValueOnce(
+        probeResponse(
+          { ok: true, work_item_id: "wi-456", agent_id: "agent-1", kind: "osdeploy", status: "queued", dependencies: [] },
+          { status: 202 },
+        ),
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const onPatch = vi.fn();
+    render(<ArtifactStep state={artifactState({ source: "build" })} onPatch={onPatch} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /Build CloudOSD now/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /Build CloudOSD now/i }));
+
+    await waitFor(() => {
+      expect(onPatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifact: expect.objectContaining({ buildJobId: "wi-456" }),
         }),
       );
     });
