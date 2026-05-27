@@ -3305,6 +3305,57 @@ h3 {
   margin: 0;
 }
 
+.networks-loading-bar {
+  position: relative;
+  height: 2px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  background: transparent;
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.networks-loading-bar.is-active {
+  opacity: 1;
+}
+
+.networks-loading-bar.is-active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--active) 50%,
+    transparent 100%
+  );
+  animation: networks-loading-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes networks-loading-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(450%); }
+}
+
+.networks-loading-status {
+  margin: 32px 0;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted-2);
+  text-align: center;
+  font-size: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .networks-loading-bar.is-active::before {
+    animation-duration: 4s;
+  }
+}
+
 .networks-scope-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

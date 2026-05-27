@@ -439,13 +439,19 @@ export function NetworksPage({
   const [creating, setCreating] = useState<SdnKindKey | null>(null);
   const [busyKey, setBusyKey] = useState<string>("");
   const [mutationError, setMutationError] = useState<string>("");
+  const [initialLoaded, setInitialLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    setRefreshing(true);
     try {
       setPayload(await fetchJson<NetworksPayload>("/api/sdn/inventory"));
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load network inventory");
+    } finally {
+      setRefreshing(false);
+      setInitialLoaded(true);
     }
   }, []);
 
@@ -615,8 +621,22 @@ export function NetworksPage({
 
   return (
     <PageFrame bootstrap={bootstrap} title="Networks" section="Infrastructure" path={path}>
+      <div
+        className={`networks-loading-bar${refreshing ? " is-active" : ""}`}
+        role="progressbar"
+        aria-label="Loading network inventory"
+        aria-busy={refreshing}
+      />
       {error ? <p className="notice" role="status">{error}</p> : null}
 
+      {!initialLoaded ? (
+        <p className="networks-loading-status" role="status" aria-live="polite">
+          Loading network inventory from Proxmox SDN...
+        </p>
+      ) : null}
+
+      {!initialLoaded ? null : (
+      <>
       <section className="metric-strip metric-strip--networks" aria-label="SDN inventory">
         <Metric label="Zones" value={String(zoneRows.length)} />
         <Metric label="VNets" value={String(vnetRows.length)} tone={vnetRows.length ? "active" : "neutral"} />
@@ -910,6 +930,8 @@ export function NetworksPage({
           </Panel>
         ) : null}
       </section>
+      </>
+      )}
     </PageFrame>
   );
 }

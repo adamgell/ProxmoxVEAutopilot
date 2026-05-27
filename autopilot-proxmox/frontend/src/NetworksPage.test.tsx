@@ -58,7 +58,7 @@ describe("NetworksPage", () => {
 
     render(<NetworksPage bootstrap={{ buildSha: "test" }} path="/react/networks" />);
 
-    fireEvent.change(screen.getByLabelText("Lock token"), { target: { value: "digest-123" } });
+    fireEvent.change(await screen.findByLabelText("Lock token"), { target: { value: "digest-123" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply SDN" }));
 
     await waitFor(() => {
