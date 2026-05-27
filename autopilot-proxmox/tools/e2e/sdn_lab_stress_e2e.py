@@ -36,14 +36,21 @@ DEFAULT_CLOUDOSD_OS_VERSION = "Windows 11 24H2"
 DEFAULT_CLOUDOSD_OS_ACTIVATION = "Volume"
 DEFAULT_CLOUDOSD_OS_EDITION = "Enterprise"
 DEFAULT_CLOUDOSD_OS_LANGUAGE = "en-us"
+# Fixed VMIDs in the E2E reserved range. Production VMs that churn into
+# this range will collide with clones (PVE returns
+# "unable to create VM N: config file already exists" and exit_code=2).
+# Keep gaps (117, 120, 129+) for future tests; before adding new mappings,
+# verify with `qm list` across the cluster that the VMID is unused.
+# BAD-01 was reassigned 123 -> 117 on 2026-05-27 after schellman-template
+# took 123.
 PLANNED_VMIDS = {
     "E2E30-DC01": 114,
     "E2E40-DC01": 115,
+    "E2E30-BAD-01": 117,
     "E2E30-WK-01": 118,
     "E2E30-WK-02": 119,
     "E2E30-WK-03": 121,
     "E2E30-WK-04": 122,
-    "E2E30-BAD-01": 123,
     "E2E40-WK-01": 125,
     "E2E40-WK-02": 126,
     "E2E40-WK-03": 127,
@@ -1471,6 +1478,30 @@ print(json.dumps({{'run': run, 'plan_steps': plan_steps, 'provision_job': provis
         self.remember_vmid(run.get("vmid"))
         return run
 
+    def fetch_job_status(self, job_id: str) -> dict[str, Any] | None:
+        """Return the current jobs row for `job_id` as a dict, or None.
+
+        Used by verify_negative_run to detect setup failures (provisioning
+        job died at clone time before the cloudosd_run state advanced
+        past 'created') without burning the full negative timeout budget.
+        """
+        if not job_id:
+            return None
+        payload = self.controller_python(
+            f"""
+import json
+from web import db_pg
+with db_pg.connect() as conn:
+    row = conn.execute(
+        "select id, job_type, status, exit_code, ended_at, args_json->>'vm_name' as vm_name from jobs where id = %s",
+        ({job_id!r},),
+    ).fetchone()
+print(json.dumps(dict(row) if row else None, default=str))
+""",
+            timeout=30,
+        )
+        return payload if isinstance(payload, dict) else None
+
     def fetch_run_status(self, run_ids: list[str], *, job_ids: list[str] | None = None) -> dict[str, Any]:
         return self.controller_python(
             f"""
@@ -2603,8 +2634,48 @@ print(json.dumps({{'cloudosd': cloudosd, 'osdeploy': osdeploy, 'bubbles': bubble
             return
         self.log("verifying negative-path workstation behavior")
         run_id = run["run_id"]
+        provision_job_id = str(run.get("provision_job_id") or "")
         status = self.fetch_run_status([run_id])
         state = ""
+
+        # Fast-fail before the full 2h poll if the negative-path provisioning
+        # job has already terminated abnormally and the run never advanced
+        # past `created`. That signals a setup failure (e.g. VMID collision
+        # with a production VM, missing artifact), not the expected bad-
+        # password domain-join refusal. Without this, a clone-time failure
+        # makes the harness wait the full --negative-timeout-seconds budget
+        # for state to flip to {failed, full_os_waiting_domain_join, done},
+        # which it never will because the run never registered PE.
+        if provision_job_id:
+            initial_rows = status.get("cloudosd") or []
+            initial_state = ""
+            if initial_rows:
+                initial_state = str(initial_rows[0].get("ts_state") or initial_rows[0].get("state") or "")
+            if initial_state in ("", "created", "cloudosd_created"):
+                job_status = self.fetch_job_status(provision_job_id)
+                if job_status and str(job_status.get("status") or "") in ("failed", "complete"):
+                    exit_code = job_status.get("exit_code")
+                    if exit_code not in (None, 0):
+                        self.record(
+                            "negative_run_setup_failure",
+                            {
+                                "run_id": run_id,
+                                "run_state": initial_state,
+                                "job_id": provision_job_id,
+                                "job_status": job_status,
+                            },
+                        )
+                        raise E2EError(
+                            "negative-path provisioning job "
+                            f"{provision_job_id} terminated with "
+                            f"status={job_status.get('status')} "
+                            f"exit_code={exit_code} before the run advanced "
+                            f"past state={initial_state!r}; this is a setup "
+                            "failure (e.g. VMID collision with a production "
+                            "VM, missing artifact), not a negative-path "
+                            "signal -- aborting verify_negative_run instead "
+                            "of waiting negative_timeout_seconds."
+                        )
 
         def predicate() -> tuple[bool, Any]:
             nonlocal state

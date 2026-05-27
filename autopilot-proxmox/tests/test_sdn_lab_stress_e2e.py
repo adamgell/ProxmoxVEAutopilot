@@ -1637,6 +1637,176 @@ def test_teardown_only_with_include_cxw_adds_cxw_sdn_and_sets_baseline_flag(tmp_
     assert e2e.SdnObject(kind="subnet", vnet="cxwlab1", name="10.77.20.0/24") in harness.created_sdn
 
 
+def test_planned_vmids_avoid_known_production_collisions():
+    """PLANNED_VMIDS pins fixed VMIDs in the 113-128 range. Production VMs
+    that churn into that range collide with clones (PVE returns
+    'unable to create VM N: config file already exists'). Document the
+    known-occupied VMIDs as of 2026-05-27 and assert none of them are
+    reused by PLANNED_VMIDS. When you add a mapping, run
+    `qm list` across the cluster first and update KNOWN_OCCUPIED below.
+    """
+    e2e = _load_module()
+    KNOWN_OCCUPIED_2026_05_27 = {
+        100,  # autopilot-buildhost-01
+        103,  # DNS4
+        105, 108, 109, 111,  # WrkGrp-*
+        106, 107,  # CODEX-DC01/DC02
+        110,  # DNS3
+        112,  # CDW-DevWorkspace
+        113,  # mcc
+        116,  # Gell-EC41E7EB
+        123,  # schellman-template (caused E2E30-BAD-01 collision)
+        124,  # EntraSync
+        200, 250, 400, 990, 9001, 9109,
+    }
+    planned = set(e2e.PLANNED_VMIDS.values())
+    collisions = planned & KNOWN_OCCUPIED_2026_05_27
+    assert not collisions, (
+        f"PLANNED_VMIDS collides with known-occupied production VMs: "
+        f"{collisions}. Reassign these mappings to free VMIDs."
+    )
+    assert len(planned) == len(e2e.PLANNED_VMIDS), (
+        "PLANNED_VMIDS values must be unique"
+    )
+
+
+def test_verify_negative_run_fast_fails_on_provision_setup_failure(tmp_path):
+    """If BAD-01's provision_cloudosd job terminated abnormally (exit_code != 0)
+    before the cloudosd_run state advanced past 'created', that signals a
+    setup failure (e.g. VMID collision with a production VM, missing
+    artifact), NOT the expected bad-password domain-join refusal.
+    verify_negative_run must abort immediately with a descriptive E2EError
+    instead of polling for the full --negative-timeout-seconds budget
+    waiting for a state transition that will never happen.
+    """
+    e2e = _load_module()
+    harness = object.__new__(e2e.StressHarness)
+    harness.args = SimpleNamespace(negative_timeout_seconds=7200)
+    harness.evidence_dir = tmp_path
+    harness.secrets = []
+    records: dict[str, object] = {}
+    harness.record = lambda name, payload: records.setdefault(name, payload)
+    harness.log = lambda message: None
+    harness.sync_run_status = lambda status: {}
+
+    fetched_runs: list[list[str]] = []
+    fetched_jobs: list[str] = []
+
+    def fetch_run_status(run_ids, **kwargs):
+        fetched_runs.append(list(run_ids))
+        return {
+            "cloudosd": [
+                {
+                    "run_id": "neg-1",
+                    "expected_computer_name": "E2E30-BAD-01",
+                    "vmid": None,
+                    "state": "created",
+                    "ts_state": "cloudosd_created",
+                    "phase": "cloudosd",
+                }
+            ]
+        }
+
+    def fetch_job_status(job_id):
+        fetched_jobs.append(job_id)
+        return {
+            "id": job_id,
+            "job_type": "provision_cloudosd",
+            "status": "failed",
+            "exit_code": 2,
+            "ended_at": "2026-05-27 15:21:34+00",
+            "vm_name": "E2E30-BAD-01",
+        }
+
+    def fail_predicate(*args, **kwargs):
+        raise AssertionError(
+            "wait_until must not be invoked when the provision job already "
+            "failed with exit_code != 0"
+        )
+
+    harness.fetch_run_status = fetch_run_status
+    harness.fetch_job_status = fetch_job_status
+
+    try:
+        harness.verify_negative_run({
+            "run_id": "neg-1",
+            "provision_job_id": "20260527-deadbeef",
+        })
+    except e2e.E2EError as exc:
+        message = str(exc)
+        assert "20260527-deadbeef" in message
+        assert "exit_code=2" in message
+        assert "setup failure" in message.lower()
+    else:
+        raise AssertionError(
+            "verify_negative_run should raise E2EError when the provision "
+            "job failed before the run advanced"
+        )
+
+    assert fetched_jobs == ["20260527-deadbeef"]
+    assert "negative_run_setup_failure" in records
+
+
+def test_verify_negative_run_polls_normally_when_job_is_still_running(tmp_path):
+    """If the provision job is still running (or the run already advanced
+    past 'created'), verify_negative_run must NOT short-circuit -- it
+    needs to keep polling until the expected bad-password signal arrives
+    or the timeout fires.
+    """
+    e2e = _load_module()
+    harness = object.__new__(e2e.StressHarness)
+    harness.args = SimpleNamespace(negative_timeout_seconds=1)
+    harness.evidence_dir = tmp_path
+    harness.secrets = []
+    harness.record = lambda name, payload: None
+    harness.log = lambda message: None
+    harness.sync_run_status = lambda status: {}
+
+    # Pre-condition: job still running, run still at 'created'. Fast-fail
+    # MUST NOT trigger; the harness should fall through to the wait loop.
+    harness.fetch_job_status = lambda job_id: {
+        "id": job_id,
+        "status": "running",
+        "exit_code": None,
+    }
+    harness.fetch_run_status = lambda run_ids, **kw: {
+        "cloudosd": [
+            {
+                "run_id": "neg-1",
+                "state": "created",
+                "ts_state": "cloudosd_created",
+            }
+        ],
+        "events": [],
+    }
+
+    # Force the eventual wait_until to terminate quickly. Patch the
+    # module-level wait_until used by verify_negative_run.
+    captured: dict[str, object] = {}
+
+    def fake_wait_until(predicate, *, timeout_seconds, interval_seconds):
+        captured["called"] = True
+        # Simulate one predicate call returning False, then return the
+        # observed payload as if timed out.
+        ok, observed = predicate()
+        captured["ok"] = ok
+        return observed
+
+    import sys
+    module = sys.modules["sdn_lab_stress_e2e"]
+    original_wait_until = module.wait_until
+    module.wait_until = fake_wait_until
+    try:
+        harness.verify_negative_run({
+            "run_id": "neg-1",
+            "provision_job_id": "20260527-running",
+        })
+    finally:
+        module.wait_until = original_wait_until
+
+    assert captured.get("called") is True
+
+
 def test_main_dispatches_to_teardown_only_when_flag_set(monkeypatch, tmp_path):
     e2e = _load_module()
     dispatched: dict[str, bool] = {}
