@@ -173,7 +173,26 @@ def test_launch_endpoint_returns_400_when_launch_raises_value_error(monkeypatch)
     assert r.json()["detail"] == "no onboarding row to launch"
 
 
-def test_setup_status_stubbed_to_501():
+def test_setup_status_returns_snapshot_from_onboarding_phases(monkeypatch):
+    from web import onboarding_phases
+
+    expected = {"run_id": "x", "phases": []}
+    monkeypatch.setattr(
+        onboarding_phases,
+        "snapshot",
+        lambda conn, *, owner_sub: expected if owner_sub == "tester@example.com" else None,
+    )
     client = TestClient(app)
     r = client.get("/api/onboarding/setup-status")
-    assert r.status_code == 501
+    assert r.status_code == 200
+    assert r.json() == expected
+
+
+def test_setup_status_returns_404_when_no_launched_run(monkeypatch):
+    from web import onboarding_phases
+
+    monkeypatch.setattr(onboarding_phases, "snapshot", lambda conn, *, owner_sub: None)
+    client = TestClient(app)
+    r = client.get("/api/onboarding/setup-status")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "no launched onboarding run"

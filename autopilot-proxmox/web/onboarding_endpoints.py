@@ -222,6 +222,11 @@ def launch(owner_sub: str = Depends(_owner_sub)):
             raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/setup-status", status_code=501)
-def setup_status():
-    raise HTTPException(status_code=501, detail="setup-status not yet implemented")
+@router.get("/setup-status")
+def setup_status(owner_sub: str = Depends(_owner_sub)):
+    from web import onboarding_phases
+    with db_pg.connection() as conn:
+        snap = onboarding_phases.snapshot(conn, owner_sub=owner_sub)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="no launched onboarding run")
+    return snap
