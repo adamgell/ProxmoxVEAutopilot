@@ -15,6 +15,7 @@ import { WelcomePersonaStep } from "../onboarding/steps/WelcomePersonaStep";
 import { IdentityStep } from "../onboarding/steps/IdentityStep";
 import { TenantStep } from "../onboarding/steps/TenantStep";
 import { ArtifactStep } from "../onboarding/steps/ArtifactStep";
+import { ReviewLaunchStep } from "../onboarding/steps/ReviewLaunchStep";
 import {
   fetchState,
   putState,
@@ -136,6 +137,20 @@ export function OnboardingPage(_props: Props) {
     window.location.href = "/react-shell";
   }
 
+  async function onLaunch() {
+    const r = await fetch("/api/onboarding/launch", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!r.ok) {
+      throw new Error(`Launch failed (HTTP ${r.status})`);
+    }
+    const body = await r.json();
+    dispatch({ type: "markLaunched", runId: body.run_id });
+    window.location.href = "/react/onboarding/setup";
+  }
+
   return (
     <main className="onboarding-page">
       <StepRail steps={STEP_ORDER} current={state.currentStep} optional={optionalSteps} onJump={onJump} />
@@ -168,8 +183,17 @@ export function OnboardingPage(_props: Props) {
             void persist({ answers: patch });
           }}
         />
+      ) : state.currentStep === "review" ? (
+        <ReviewLaunchStep
+          state={state}
+          onPatch={(patch) => {
+            dispatch({ type: "patchAnswers", patch });
+            void persist({ answers: patch });
+          }}
+          onJump={onJump}
+          onLaunch={onLaunch}
+        />
       ) : (
-        // Review step lands in Task 10.
         <section><p>Step {state.currentStep} pending implementation.</p></section>
       )}
       <footer className="onboarding-footer">
