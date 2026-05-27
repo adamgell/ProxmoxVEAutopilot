@@ -82,7 +82,10 @@ Persistence (NEW table: onboarding_state)
   id              uuid primary key
   owner_sub       text unique  (Entra sub, or 'local-operator' in local-auth mode)
   status          text         pending | in_progress | launched | complete | aborted
-  current_step    text         state-machine pointer
+                               (post-launch success/failure is derived from
+                                install_tracking, not persisted here)
+  current_step    text         wizard-step pointer; frozen once status flips
+                               to 'launched'
   answers         jsonb        every field collected so far
   launched_run_id uuid         null until launch; fk to install_tracking
   persona         text         'lab' | 'msp' | 'corp'
@@ -147,7 +150,7 @@ Five steps. Each carries the same shape: explainer copy, field(s), inline valida
 ### 5. Review + Launch
 
 - Renders every prior answer with inline edit links back to its step.
-- New fields on this step: trial VM parameters - VM name (default `autopilot-trial-NNNN`), target node (default the controller's known node for lab, auto-pick first for msp, prompt for corp), OS edition (default Win11 Pro).
+- New fields on this step: trial VM parameters - VM name (default `autopilot-trial-<vmid>` where `<vmid>` is the Proxmox VMID the controller will allocate at clone time), target node (default the controller's known node for lab, auto-pick first for msp, prompt for corp), OS edition (default Win11 Pro). The VM name is editable; the `<vmid>` placeholder updates live as the operator types if they keep the suffix pattern.
 - "Start setup" button at the bottom. Disabled with a precondition tooltip if anything is missing.
 
 ### Persona-default crosswalk
@@ -165,12 +168,12 @@ Page: `/react/onboarding/setup`. Landed on right after "Start setup."
 
 ### Phase definitions
 
-Phases are projected from wizard answers. Skipped phases never appear in the rail.
+Phases are projected from wizard answers. Skipped phases appear in the rail with `skipped` status (greyed and labeled) so the operator can see what was elided and why.
 
 | Phase             | Triggers                                          | Always runs |
 | ----------------- | ------------------------------------------------- | ----------- |
 | Validate          | Sanity-check answers, probe live cluster once more | Yes        |
-| Build artifact    | Only if step 4 chose "build now"                  | Conditional |
+| Build artifact    | Phase tracks the existing build job if one was kicked from step 4's "build now"; never starts a new build at launch | Conditional |
 | Clone template    | Proxmox clone + storage move                      | Yes         |
 | Inject Autopilot  | Panther-inject path; tenant values from step 3    | Identity != workgroup |
 | Provision         | Start VM, run task sequence                       | Yes         |
@@ -185,8 +188,8 @@ Phases are projected from wizard answers. Skipped phases never appear in the rai
 
 ### Terminal states
 
-- All phases ok: completion card with the VM's IP, RDP shortcut, "Open VM detail" deep link to `/react/vms/<id>`. Wizard status set to `complete`; ShellIndexPage hero CTA disappears.
-- Any phase failed: phase rail shows the failure inline. The "What if this fails?" panel for that phase auto-expands with the actual failure summary and three concrete next steps.
+- All phases ok: completion card with the VM's IP, RDP shortcut, "Open VM detail" deep link to `/react/vms/<vmid>` (Proxmox VMID, matching the existing route pattern `/^\/react\/vms\/\d+$/`). Wizard status set to `complete`; ShellIndexPage hero CTA disappears.
+- Any phase failed: phase rail shows the failure inline. The "What if it fails" expander for that phase auto-expands with the actual failure summary and three concrete next steps.
   - "Retry phase" button is shown only when the phase's job kind is idempotent. Idempotent phases at launch: Validate, Build artifact, Watch OOBE. Non-idempotent phases (Clone template, Inject Autopilot, Provision) get a "Back to wizard" button only, plus a manual-cleanup hint pointing at the VM in `/react/vms/<id>` so the operator can destroy it before retrying.
   - "Back to wizard" always present; returns the operator to the step that produced the bad answer and flips wizard status back to `in_progress`.
 - Mid-run navigate-away: wizard status stays `launched`. ShellIndexPage hero changes to "Resume setup monitor". URL is bookmarkable.
@@ -198,12 +201,24 @@ Phases are projected from wizard answers. Skipped phases never appear in the rai
 `frontend/src/onboarding/machine.ts`. Pure reducer: `(state, event) -> nextState`. No side effects in the reducer itself.
 
 ```
-States: welcome -> identity -> tenant -> artifact -> review -> launched
-                  (each can jump back to any prior step via edit link)
-Plus:   launched -> running -> succeeded | failed
-        failed   -> retry-phase | back-to-wizard:<step>
-        complete -> terminal; CTA hidden
-        aborted  -> terminal; explicit DELETE
+Persisted statuses (onboarding_state.status):
+        pending -> in_progress -> launched -> complete
+                                           \
+                                            +-> (back to in_progress on retry)
+        any              -> aborted   (explicit DELETE)
+
+Wizard-only steps (current_step; only mutate while status='in_progress'):
+        welcome -> identity -> tenant -> artifact -> review
+                  (each can jump back to any prior step via edit link;
+                   "review" is the terminal step before launch)
+
+Monitor-only sub-states (derived from launched_run_id; never persisted on
+the wizard row):
+        running -> succeeded | failed
+        failed  -> retry-phase | back-to-wizard:<step>
+                                 (back-to-wizard flips status to in_progress
+                                  and restores current_step to the step the
+                                  operator picked to revisit)
 ```
 
 - Forward transitions require the current step's gate to pass. Identity step gate: "either workgroup, or (AD + bind probe succeeded)." Backward transitions are always allowed.
@@ -248,7 +263,7 @@ Plus:   launched -> running -> succeeded | failed
 }
 ```
 
-- Secrets never round-trip. The wizard PUTs a sentinel ref string; the value itself is written to `vault.yml` via the same path `settings_vault` uses today. On GET the secret slot is `{is_set: true}`.
+- Secrets never round-trip. The wizard PUTs the actual secret value once at the password field on the form; the controller writes it to `vault.yml` via the same path `settings_vault` uses today and replaces the value in `answers.identity` with the sentinel ref string shown in the schema. On GET, every `*_password_ref` field returns the shape `{ref: "vault:onboarding/...", is_set: true|false}` so the UI can render a "set" indicator without seeing the value.
 - Optimistic concurrency: `PUT /api/onboarding/state` requires an `If-Match` header carrying the row's `updated_at` value, encoded as a weak ETag (e.g. `W/"2026-05-27T14:32:11.482Z"`). The GET response sets the same value as its `ETag` header. Stale write returns 409 and the page re-fetches. Two tabs cannot overwrite each other silently.
 
 ## Error handling + resume
@@ -273,7 +288,7 @@ Plus:   launched -> running -> succeeded | failed
 - Step rail is `<nav aria-label="Onboarding steps">` with `aria-current="step"` on the active step.
 - Probe results announce via `aria-live="polite"` regions; failures get `role="alert"`.
 - "What if it fails" is a real `<details>`/`<summary>` element so it is keyboard-toggleable with Space/Enter.
-- Setup monitor phase rail is `aria-live="polite"`. Status transitions announce as "Phase 2 of 6, Build artifact, now running."
+- Setup monitor phase rail is `aria-live="polite"`. Status transitions announce as "Phase X of N, <phase name>, now <status>" where N is the count of phases actually included for this run (skipped phases still count toward N so the operator hears a stable total).
 - Log stream is muted from screen readers by default; a "Read latest log line" button surfaces the most recent line on demand.
 - No focus traps anywhere. Esc on any modal-ish panel returns focus to the trigger.
 
