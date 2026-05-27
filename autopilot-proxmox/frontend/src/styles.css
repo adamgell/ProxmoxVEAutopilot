@@ -3160,9 +3160,33 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.networks-table {
+  /* Subnet/VNet/Gateway columns are short; relax the jobs-table 720px
+     min-width so the panel doesn't force horizontal scroll on the
+     Networks page. table-wrap still scrolls if a row overflows. */
+  min-width: 0;
+}
+
 .networks-table td,
 .networks-table th {
   white-space: nowrap;
+}
+
+.networks-table thead th {
+  background: var(--surface-2);
+  border-bottom: 2px solid var(--line);
+}
+
+.networks-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.networks-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--active) 9%, transparent);
+}
+
+.networks-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .networks-scope-grid {

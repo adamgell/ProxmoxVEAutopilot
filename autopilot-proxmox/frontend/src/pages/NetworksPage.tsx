@@ -126,7 +126,7 @@ function ObjectTable({ rows, kind }: { readonly rows: readonly SdnObject[]; read
   }
   return (
     <div className="table-wrap">
-      <table className="cloudosd-table networks-table">
+      <table className="jobs-table cloudosd-table networks-table">
         <thead>
           <tr>
             <th scope="col">Name</th>
@@ -156,7 +156,7 @@ function SubnetTable({ rows }: { readonly rows: readonly (SdnObject & { readonly
   }
   return (
     <div className="table-wrap">
-      <table className="cloudosd-table networks-table">
+      <table className="jobs-table cloudosd-table networks-table">
         <thead>
           <tr>
             <th scope="col">Subnet</th>
