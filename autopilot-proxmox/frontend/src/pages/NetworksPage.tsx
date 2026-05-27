@@ -1,11 +1,30 @@
 import { useCallback, useMemo, useState } from "react";
 
-import { fetchJson, postJson } from "../apiClient";
+import { deleteJson, fetchJson, patchJson, postJson } from "../apiClient";
+import { SdnInlineForm } from "../components/SdnInlineForm";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import type { AppBootstrap } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
+import {
+  bodyFromValues,
+  controllerSchema,
+  dnsSchema,
+  ipamSchema,
+  sdnSchemas,
+  subnetSchema,
+  vnetSchema,
+  zoneSchema,
+  type SdnKindKey,
+  type SdnKindSchema
+} from "../networksSchema";
 import { textValue } from "../utilityModels";
+
+interface SdnTarget {
+  readonly kind: SdnKindKey;
+  readonly id: string;
+  readonly parent?: string | undefined;
+}
 
 type NetworksTab = "overview" | "zones" | "vnets" | "subnets" | "controllers" | "ipam" | "dns" | "firewall" | "pending";
 
@@ -120,7 +139,77 @@ function subnets(payload: NetworksPayload): readonly (SdnObject & { readonly par
   );
 }
 
-function ObjectTable({ rows, kind }: { readonly rows: readonly SdnObject[]; readonly kind: string }) {
+interface RowActions {
+  readonly kind: SdnKindKey;
+  readonly canEdit: boolean;
+  readonly editingId?: string | undefined;
+  readonly editingParent?: string | undefined;
+  readonly busy?: string | undefined;
+  readonly onEdit: (id: string, parent?: string) => void;
+  readonly onCancelEdit: () => void;
+  readonly onDelete: (id: string, parent?: string) => void;
+  readonly onSubmitEdit: (id: string, values: Readonly<Record<string, string>>, parent?: string) => void;
+  readonly mutationError?: string | undefined;
+}
+
+function rowActionLabels(kind: SdnKindKey) {
+  return sdnSchemas[kind].singular;
+}
+
+function ActionsCell({
+  id,
+  parent,
+  actions
+}: {
+  readonly id: string;
+  readonly parent?: string | undefined;
+  readonly actions?: RowActions | undefined;
+}) {
+  if (!actions) {
+    return null;
+  }
+  const busyKey = parent ? `${actions.kind}:${parent}/${id}` : `${actions.kind}:${id}`;
+  const isBusy = actions.busy === busyKey;
+  const label = rowActionLabels(actions.kind);
+  return (
+    <td className="networks-actions">
+      {actions.canEdit ? (
+        <button
+          type="button"
+          className="networks-row-action"
+          onClick={() => {
+            actions.onEdit(id, parent);
+          }}
+          disabled={isBusy}
+          aria-label={`Edit ${label} ${id}`}
+        >
+          Edit
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="networks-row-action networks-row-action--danger"
+        onClick={() => {
+          actions.onDelete(id, parent);
+        }}
+        disabled={isBusy}
+        aria-label={`Delete ${label} ${id}`}
+      >
+        {isBusy ? "..." : "Delete"}
+      </button>
+    </td>
+  );
+}
+
+function ObjectTable({
+  rows,
+  kind,
+  actions
+}: {
+  readonly rows: readonly SdnObject[];
+  readonly kind: string;
+  readonly actions?: RowActions | undefined;
+}) {
   if (!rows.length) {
     return <p className="empty">No {kind} found.</p>;
   }
@@ -133,24 +222,62 @@ function ObjectTable({ rows, kind }: { readonly rows: readonly SdnObject[]; read
             <th scope="col">Type</th>
             <th scope="col">Zone</th>
             <th scope="col">Detail</th>
+            {actions ? <th scope="col" aria-label="actions" className="networks-actions-col" /> : null}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={`${kind}-${objectId(row)}-${String(index)}`}>
-              <td><code>{objectId(row)}</code></td>
-              <td>{objectType(row)}</td>
-              <td>{row.zone ? `zone ${textValue(row.zone)}` : "-"}</td>
-              <td>{textValue(row.gateway ?? row.subnet ?? row.vnet, "-")}</td>
-            </tr>
-          ))}
+          {rows.flatMap((row, index) => {
+            const id = objectId(row);
+            const editing = Boolean(actions && actions.editingId === id && !actions.editingParent);
+            const baseRow = (
+              <tr key={`${kind}-${id}-${String(index)}`}>
+                <td><code>{id}</code></td>
+                <td>{objectType(row)}</td>
+                <td>{row.zone ? `zone ${textValue(row.zone)}` : "-"}</td>
+                <td>{textValue(row.gateway ?? row.subnet ?? row.vnet, "-")}</td>
+                <ActionsCell id={id} actions={actions} />
+              </tr>
+            );
+            if (editing && actions) {
+              const schema = sdnSchemas[actions.kind];
+              const colSpan = 4 + 1;
+              return [
+                baseRow,
+                (
+                  <tr key={`${kind}-${id}-${String(index)}-edit`}>
+                    <td colSpan={colSpan} className="networks-edit-cell">
+                      <SdnInlineForm
+                        mode="edit"
+                        title={`Edit ${schema.singular} ${id}`}
+                        fields={schema.editFields}
+                        initialValues={row as Readonly<Record<string, string>>}
+                        busy={actions.busy === `${actions.kind}:${id}`}
+                        error={actions.mutationError}
+                        onCancel={actions.onCancelEdit}
+                        onSubmit={(values) => {
+                          actions.onSubmitEdit(id, values);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                )
+              ];
+            }
+            return [baseRow];
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function SubnetTable({ rows }: { readonly rows: readonly (SdnObject & { readonly parentVnet: string })[] }) {
+function SubnetTable({
+  rows,
+  actions
+}: {
+  readonly rows: readonly (SdnObject & { readonly parentVnet: string })[];
+  readonly actions?: RowActions | undefined;
+}) {
   if (!rows.length) {
     return <p className="empty">No subnets found.</p>;
   }
@@ -163,20 +290,106 @@ function SubnetTable({ rows }: { readonly rows: readonly (SdnObject & { readonly
             <th scope="col">VNet</th>
             <th scope="col">Gateway</th>
             <th scope="col">SNAT</th>
+            {actions ? <th scope="col" aria-label="actions" className="networks-actions-col" /> : null}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={`${row.parentVnet}-${textValue(row.subnet)}`}>
-              <td><code>{textValue(row.subnet)}</code></td>
-              <td>{row.parentVnet}</td>
-              <td>{textValue(row.gateway, "-")}</td>
-              <td>{row.snat ? "enabled" : "not set"}</td>
-            </tr>
-          ))}
+          {rows.flatMap((row) => {
+            const id = textValue(row.subnet);
+            const editing = Boolean(
+              actions && actions.editingId === id && actions.editingParent === row.parentVnet
+            );
+            const baseRow = (
+              <tr key={`${row.parentVnet}-${id}`}>
+                <td><code>{id}</code></td>
+                <td>{row.parentVnet}</td>
+                <td>{textValue(row.gateway, "-")}</td>
+                <td>{row.snat ? "enabled" : "not set"}</td>
+                <ActionsCell id={id} parent={row.parentVnet} actions={actions} />
+              </tr>
+            );
+            if (editing && actions) {
+              return [
+                baseRow,
+                (
+                  <tr key={`${row.parentVnet}-${id}-edit`}>
+                    <td colSpan={5} className="networks-edit-cell">
+                      <SdnInlineForm
+                        mode="edit"
+                        title={`Edit subnet ${id}`}
+                        fields={subnetSchema.editFields}
+                        initialValues={row as Readonly<Record<string, string>>}
+                        busy={actions.busy === `${actions.kind}:${row.parentVnet}/${id}`}
+                        error={actions.mutationError}
+                        onCancel={actions.onCancelEdit}
+                        onSubmit={(values) => {
+                          actions.onSubmitEdit(id, values, row.parentVnet);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                )
+              ];
+            }
+            return [baseRow];
+          })}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CreatePanelAffordance({
+  schema,
+  open,
+  busy,
+  error,
+  parentOptions,
+  onToggle,
+  onSubmit
+}: {
+  readonly schema: SdnKindSchema;
+  readonly open: boolean;
+  readonly busy: boolean;
+  readonly error?: string | undefined;
+  readonly parentOptions?: readonly string[] | undefined;
+  readonly onToggle: () => void;
+  readonly onSubmit: (values: Readonly<Record<string, string>>) => void;
+}) {
+  if (!open) {
+    return (
+      <div className="networks-create-toggle">
+        <button type="button" className="utility-button" onClick={onToggle}>
+          + New {schema.singular}
+        </button>
+      </div>
+    );
+  }
+  let fields = schema.createFields;
+  if (schema.key === "subnet") {
+    const parents = parentOptions ?? [];
+    fields = [
+      {
+        name: "parentVnet",
+        label: "Under VNet",
+        kind: "select",
+        required: true,
+        options: parents.map((value) => ({ value, label: value }))
+      },
+      ...fields
+    ];
+  }
+  return (
+    <SdnInlineForm
+      mode="create"
+      title={`Create ${schema.singular}`}
+      fields={fields}
+      submitLabel={`Create ${schema.singular}`}
+      busy={busy}
+      error={error}
+      onCancel={onToggle}
+      onSubmit={onSubmit}
+    />
   );
 }
 
@@ -222,6 +435,10 @@ export function NetworksPage({
     cidr: "",
     gateway_ip: ""
   });
+  const [editing, setEditing] = useState<SdnTarget | null>(null);
+  const [creating, setCreating] = useState<SdnKindKey | null>(null);
+  const [busyKey, setBusyKey] = useState<string>("");
+  const [mutationError, setMutationError] = useState<string>("");
 
   const load = useCallback(async () => {
     try {
@@ -245,6 +462,103 @@ export function NetworksPage({
   const selectedSubnetRows = subnetRows.filter((row) => row.parentVnet === selectedVnet);
   const selectedSubnet = labForm.subnet || formObjectId(selectedSubnetRows[0], "subnet");
   const canCreateLab = Boolean(selectedZone && selectedVnet && selectedSubnet);
+
+  function makeBusyKey(kind: SdnKindKey, id: string, parent?: string): string {
+    return parent ? `${kind}:${parent}/${id}` : `${kind}:${id}`;
+  }
+
+  async function createObject(kind: SdnKindKey, values: Readonly<Record<string, string>>) {
+    const schema = sdnSchemas[kind];
+    const id = (values[schema.idField] ?? "").trim();
+    if (!id) {
+      setMutationError(`${schema.singular} ID is required`);
+      return;
+    }
+    const parent = kind === "subnet" ? (values.parentVnet ?? "").trim() : undefined;
+    if (kind === "subnet" && !parent) {
+      setMutationError("Parent VNet is required for a subnet");
+      return;
+    }
+    const body = bodyFromValues(schema.createFields, values, { includeEmptyBooleans: true });
+    setBusyKey(makeBusyKey(kind, id, parent));
+    setMutationError("");
+    try {
+      await postJson<Record<string, unknown>>(schema.createPath({ ...values, parentVnet: parent ?? "" }), body);
+      setCreating(null);
+      await load();
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : `Failed to create ${schema.singular}`);
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function updateObject(kind: SdnKindKey, id: string, values: Readonly<Record<string, string>>, parent?: string) {
+    const schema = sdnSchemas[kind];
+    const body = bodyFromValues(schema.editFields, values, { includeEmptyBooleans: false });
+    setBusyKey(makeBusyKey(kind, id, parent));
+    setMutationError("");
+    try {
+      await patchJson<Record<string, unknown>>(schema.editPath(id, parent), body);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : `Failed to update ${schema.singular}`);
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function deleteObject(kind: SdnKindKey, id: string, parent?: string) {
+    const schema = sdnSchemas[kind];
+    const label = parent ? `${schema.singular} ${id} (under ${parent})` : `${schema.singular} ${id}`;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${label}? Pending changes still need Apply SDN to take effect.`)) {
+      return;
+    }
+    setBusyKey(makeBusyKey(kind, id, parent));
+    setMutationError("");
+    try {
+      await deleteJson<Record<string, unknown>>(schema.deletePath(id, parent));
+      if (editing && editing.kind === kind && editing.id === id && editing.parent === parent) {
+        setEditing(null);
+      }
+      await load();
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : `Failed to delete ${schema.singular}`);
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  function buildActions(kind: SdnKindKey, canEdit: boolean): RowActions {
+    return {
+      kind,
+      canEdit,
+      editingId: editing && editing.kind === kind ? editing.id : undefined,
+      editingParent: editing && editing.kind === kind ? editing.parent : undefined,
+      busy: busyKey,
+      mutationError,
+      onEdit: (id, parent) => {
+        setMutationError("");
+        setEditing({ kind, id, parent });
+      },
+      onCancelEdit: () => {
+        setMutationError("");
+        setEditing(null);
+      },
+      onDelete: (id, parent) => {
+        void deleteObject(kind, id, parent);
+      },
+      onSubmitEdit: (id, values, parent) => {
+        void updateObject(kind, id, values, parent);
+      }
+    };
+  }
+
+  function toggleCreate(kind: SdnKindKey) {
+    setMutationError("");
+    setCreating((current) => (current === kind ? null : kind));
+  }
 
   async function applySdn() {
     const token = lockToken.trim();
@@ -330,37 +644,110 @@ export function NetworksPage({
       <section className="networks-layout">
         {(activeTab === "overview" || activeTab === "zones") ? (
           <Panel title="Zones">
-            <ObjectTable rows={zoneRows} kind="zones" />
+            <ObjectTable rows={zoneRows} kind="zones" actions={buildActions("zone", true)} />
+            <CreatePanelAffordance
+              schema={zoneSchema}
+              open={creating === "zone"}
+              busy={Boolean(busyKey) && busyKey.startsWith("zone:")}
+              error={creating === "zone" ? mutationError : undefined}
+              onToggle={() => {
+                toggleCreate("zone");
+              }}
+              onSubmit={(values) => {
+                void createObject("zone", values);
+              }}
+            />
           </Panel>
         ) : null}
 
         {(activeTab === "overview" || activeTab === "vnets") ? (
           <Panel title="VNets">
-            <ObjectTable rows={vnetRows} kind="vnets" />
+            <ObjectTable rows={vnetRows} kind="vnets" actions={buildActions("vnet", true)} />
+            <CreatePanelAffordance
+              schema={vnetSchema}
+              open={creating === "vnet"}
+              busy={Boolean(busyKey) && busyKey.startsWith("vnet:")}
+              error={creating === "vnet" ? mutationError : undefined}
+              onToggle={() => {
+                toggleCreate("vnet");
+              }}
+              onSubmit={(values) => {
+                void createObject("vnet", values);
+              }}
+            />
           </Panel>
         ) : null}
 
         {(activeTab === "overview" || activeTab === "subnets") ? (
           <Panel title="Subnets">
-            <SubnetTable rows={subnetRows} />
+            <SubnetTable rows={subnetRows} actions={buildActions("subnet", true)} />
+            <CreatePanelAffordance
+              schema={subnetSchema}
+              open={creating === "subnet"}
+              busy={Boolean(busyKey) && busyKey.startsWith("subnet:")}
+              error={creating === "subnet" ? mutationError : undefined}
+              parentOptions={vnetRows.map((row) => formObjectId(row, "vnet")).filter(Boolean)}
+              onToggle={() => {
+                toggleCreate("subnet");
+              }}
+              onSubmit={(values) => {
+                void createObject("subnet", values);
+              }}
+            />
           </Panel>
         ) : null}
 
         {activeTab === "controllers" ? (
           <Panel title="Controllers">
-            <ObjectTable rows={controllerRows} kind="controllers" />
+            <ObjectTable rows={controllerRows} kind="controllers" actions={buildActions("controller", true)} />
+            <CreatePanelAffordance
+              schema={controllerSchema}
+              open={creating === "controller"}
+              busy={Boolean(busyKey) && busyKey.startsWith("controller:")}
+              error={creating === "controller" ? mutationError : undefined}
+              onToggle={() => {
+                toggleCreate("controller");
+              }}
+              onSubmit={(values) => {
+                void createObject("controller", values);
+              }}
+            />
           </Panel>
         ) : null}
 
         {activeTab === "ipam" ? (
           <Panel title="IPAM">
-            <ObjectTable rows={ipamRows} kind="ipam" />
+            <ObjectTable rows={ipamRows} kind="ipam" actions={buildActions("ipam", false)} />
+            <CreatePanelAffordance
+              schema={ipamSchema}
+              open={creating === "ipam"}
+              busy={Boolean(busyKey) && busyKey.startsWith("ipam:")}
+              error={creating === "ipam" ? mutationError : undefined}
+              onToggle={() => {
+                toggleCreate("ipam");
+              }}
+              onSubmit={(values) => {
+                void createObject("ipam", values);
+              }}
+            />
           </Panel>
         ) : null}
 
         {activeTab === "dns" ? (
           <Panel title="DNS">
-            <ObjectTable rows={dnsRows} kind="dns" />
+            <ObjectTable rows={dnsRows} kind="dns" actions={buildActions("dns", false)} />
+            <CreatePanelAffordance
+              schema={dnsSchema}
+              open={creating === "dns"}
+              busy={Boolean(busyKey) && busyKey.startsWith("dns:")}
+              error={creating === "dns" ? mutationError : undefined}
+              onToggle={() => {
+                toggleCreate("dns");
+              }}
+              onSubmit={(values) => {
+                void createObject("dns", values);
+              }}
+            />
           </Panel>
         ) : null}
 
