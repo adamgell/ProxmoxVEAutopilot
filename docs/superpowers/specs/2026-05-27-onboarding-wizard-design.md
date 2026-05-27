@@ -87,7 +87,9 @@ Persistence (NEW table: onboarding_state)
   current_step    text         wizard-step pointer; frozen once status flips
                                to 'launched'
   answers         jsonb        every field collected so far
-  launched_run_id uuid         null until launch; fk to install_tracking
+  launched_run_id text         null until launch; references install_tracking.run_id
+                               (text slug, e.g. "onboarding-<owner_sub>-<ts>";
+                                matches install_tracking_pg's existing DEFAULT_RUN_ID style)
   persona         text         'lab' | 'msp' | 'corp'
   created_at      timestamptz
   updated_at      timestamptz  used as ETag for If-Match concurrency
@@ -182,13 +184,13 @@ Phases are projected from wizard answers. Skipped phases appear in the rail with
 ### Data source
 
 - `GET /api/onboarding/setup-status` polled every 2s while the tab is foreground, every 10s when backgrounded (Page Visibility API).
-- Returns: phase list with status (`waiting` | `running` | `ok` | `failed` | `skipped`), durations, current_job_id, last N log lines.
-- Implementation reads `install_tracking` rows + recent `jobs` rows + tails the job log file. The phase model is a thin projection over those tables. The operator never sees the install_tracking nomenclature directly.
+- Returns: phase list with status drawn from `install_tracking_pg.VALID_STATUSES` (`pending` | `running` | `ready` | `blocked` | `failed` | `skipped`), durations, current_job_id, last N log lines. Using the existing enum avoids a translation layer that would rot; the wizard UI maps these to operator-facing labels ("Done" for `ready`, "Waiting" for `pending`, etc.) at render time.
+- Implementation reads `install_tracking` rows + recent `jobs` rows + tails the job log file. The phase model is a thin projection over those tables.
 - Log stream is server-side filtered by job-tag to match the active phase.
 
 ### Terminal states
 
-- All phases ok: completion card with the VM's IP, RDP shortcut, "Open VM detail" deep link to `/react/vms/<vmid>` (Proxmox VMID, matching the existing route pattern `/^\/react\/vms\/\d+$/`). Wizard status set to `complete`; ShellIndexPage hero CTA disappears.
+- All phases reach `ready` (install_tracking's success value): completion card with the VM's IP, RDP shortcut, "Open VM detail" deep link to `/react/vms/<vmid>` (Proxmox VMID, matching the existing route pattern `/^\/react\/vms\/\d+$/`). Wizard status set to `complete`; ShellIndexPage hero CTA disappears.
 - Any phase failed: phase rail shows the failure inline. The "What if it fails" expander for that phase auto-expands with the actual failure summary and three concrete next steps.
   - "Retry phase" button is shown only when the phase's job kind is idempotent. Idempotent phases at launch: Validate, Build artifact, Watch OOBE. Non-idempotent phases (Clone template, Inject Autopilot, Provision) get a "Back to wizard" button only, plus a manual-cleanup hint pointing at the VM in `/react/vms/<id>` so the operator can destroy it before retrying.
   - "Back to wizard" always present; returns the operator to the step that produced the bad answer and flips wizard status back to `in_progress`.
@@ -223,7 +225,13 @@ the wizard row):
 
 - Forward transitions require the current step's gate to pass. Identity step gate: "either workgroup, or (AD + bind probe succeeded)." Backward transitions are always allowed.
 - Each transition emits an `IntentToPersist` event. Page middleware commits it via `PUT /api/onboarding/state`.
-- Launch is a one-shot atomic operation: `POST /api/onboarding/launch` returns the new `install_tracking` run id and flips wizard status to `launched` in a single transaction. No duplicate-runs if the operator double-clicks.
+- Launch is a one-shot atomic operation. `POST /api/onboarding/launch` does the following in a single transaction:
+  1. Creates a new `install_tracking` run via `install_tracking_pg.create_run` with `run_id = "onboarding-<owner_sub>-<ts>"`.
+  2. Seeds the phase items (Validate, Build artifact if needed, Clone template, Inject Autopilot if AD, Provision, Watch OOBE) via `install_tracking_pg.upsert_item`.
+  3. Kicks the artifact-bound provision endpoint based on `answers.artifact.kind`: `POST /api/cloudosd/runs/{run_id}/provision` for `kind=cloudosd` or `POST /api/osdeploy/runs/{run_id}/provision` for `kind=osdeploy`. The run id passed is the install_tracking run id from step 1.
+  4. Flips wizard `status` to `launched` and stores the run id in `launched_run_id`.
+
+  All four steps share one DB transaction. If step 3 fails (e.g. provision endpoint refuses), the whole launch is rolled back and wizard status stays `in_progress`. No duplicate-runs if the operator double-clicks (the transaction's per-row lock on the onboarding row serializes concurrent POSTs).
 
 ### Backend `answers` jsonb schema
 
