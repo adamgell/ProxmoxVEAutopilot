@@ -44,6 +44,13 @@ describe("TenantStep runProbe error handling", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: /Test this now/i })).toBeEnabled());
     expect(screen.getByText(/Tenant invalid:.*HTTP 429/)).toBeInTheDocument();
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        probeResults: expect.objectContaining({
+          tenant: expect.objectContaining({ ok: false }),
+        }),
+      })
+    );
   });
 
   it("fetch rejection surfaces an error without leaving the button locked", async () => {
@@ -55,6 +62,13 @@ describe("TenantStep runProbe error handling", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: /Test this now/i })).toBeEnabled());
     expect(screen.getByText(/Tenant invalid:.*network down/)).toBeInTheDocument();
+    expect(onPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        probeResults: expect.objectContaining({
+          tenant: expect.objectContaining({ ok: false }),
+        }),
+      })
+    );
   });
 });
 

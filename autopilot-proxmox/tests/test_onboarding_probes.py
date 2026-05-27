@@ -83,3 +83,12 @@ def test_probe_tenant_accepts_valid_uuid_when_graph_skipped():
         "12345678-1234-1234-1234-123456789abc", "contoso.onmicrosoft.com", graph_check=False
     )
     assert result["ok"] is True
+
+
+def test_probe_tenant_rejects_trailing_whitespace():
+    """Pasting from the Entra portal can drag a trailing newline."""
+    result = onboarding_probes.probe_tenant(
+        "12345678-1234-1234-1234-123456789abc\n", "contoso.onmicrosoft.com", graph_check=False
+    )
+    assert result["ok"] is False
+    assert "Tenant id format" in result["detail"]
