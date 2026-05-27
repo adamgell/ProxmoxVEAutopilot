@@ -143,10 +143,34 @@ def test_probe_ad_returns_probe_helper_result(monkeypatch):
     assert r.json() == expected
 
 
-def test_launch_endpoint_stubbed_to_501():
+def test_launch_endpoint_returns_run_id_from_onboarding_launch(monkeypatch):
+    from web import onboarding_endpoints, onboarding_launch
+
+    def fake_launch(conn, *, owner_sub):
+        assert owner_sub == "tester@example.com"
+        return {"run_id": "test-run-1"}
+
+    monkeypatch.setattr(onboarding_endpoints.onboarding_launch, "launch", fake_launch)
+    # Belt-and-suspenders: also patch the source module in case any caller
+    # reaches it via web.onboarding_launch directly.
+    monkeypatch.setattr(onboarding_launch, "launch", fake_launch)
     client = TestClient(app)
-    r = client.post("/api/onboarding/launch", json={})
-    assert r.status_code == 501
+    r = client.post("/api/onboarding/launch")
+    assert r.status_code == 200
+    assert r.json() == {"run_id": "test-run-1"}
+
+
+def test_launch_endpoint_returns_400_when_launch_raises_value_error(monkeypatch):
+    from web import onboarding_endpoints
+
+    def raise_value_error(conn, *, owner_sub):
+        raise ValueError("no onboarding row to launch")
+
+    monkeypatch.setattr(onboarding_endpoints.onboarding_launch, "launch", raise_value_error)
+    client = TestClient(app)
+    r = client.post("/api/onboarding/launch")
+    assert r.status_code == 400
+    assert r.json()["detail"] == "no onboarding row to launch"
 
 
 def test_setup_status_stubbed_to_501():

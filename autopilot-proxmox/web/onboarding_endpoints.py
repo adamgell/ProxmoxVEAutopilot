@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from web import auth, db_pg, onboarding_pg
+from web import auth, db_pg, onboarding_launch, onboarding_pg
 
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
@@ -213,9 +213,13 @@ def probe_artifact(owner_sub: str = Depends(_owner_sub)):
         return onboarding_probes.probe_artifact()
 
 
-@router.post("/launch", status_code=501)
-def launch():
-    raise HTTPException(status_code=501, detail="launch not yet implemented")
+@router.post("/launch")
+def launch(owner_sub: str = Depends(_owner_sub)):
+    with db_pg.connection() as conn:
+        try:
+            return onboarding_launch.launch(conn, owner_sub=owner_sub)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/setup-status", status_code=501)
