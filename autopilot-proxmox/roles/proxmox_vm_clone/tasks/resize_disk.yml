@@ -27,7 +27,27 @@
     headers:
       Authorization: "{{ proxmox_api_auth_header }}"
     validate_certs: "{{ proxmox_validate_certs }}"
+  register: _resize_result
   when: vm_disk_size_gb | int > _template_disk_size_gb | int
+
+# PVE's resize endpoint returns a task UPID immediately and runs the actual
+# resize in the background. The background task holds lock-{vmid}.conf for
+# its entire duration (4-5 minutes seen on a busy ZFS pool under parallel
+# fan-out load). Without waiting here, the next config-modifying tasks
+# (Attach CloudOSD ISO, Attach VirtIO ISO, Set boot order) race against the
+# still-held lock and exhaust their 12 x 5s retry budget with
+# HTTP 500 "can't lock file ... got timeout" errors.
+- name: Wait for Proxmox resize task to complete
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_task.yml"
+  vars:
+    _task_upid: "{{ _resize_result.json.data }}"
+    task_poll_retries: "{{ resize_task_poll_retries | default(1800) }}"
+    task_poll_delay_seconds: "{{ resize_task_poll_delay_seconds | default(1) }}"
+    task_fail_on_error: true
+  when:
+    - _resize_result is defined
+    - _resize_result.status | default(0) | int == 200
+    - (_resize_result.json.data | default('')) | string | length > 0
 
 - name: Warn if requested disk is smaller than template
   ansible.builtin.debug:
