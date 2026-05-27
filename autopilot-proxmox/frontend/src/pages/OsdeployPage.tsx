@@ -5,6 +5,7 @@ import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import type { AppBootstrap } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
+import { networkTargetOptions, type NetworkTargetOption } from "../networkTargets";
 import { textValue } from "../utilityModels";
 import { formatShortDateTime } from "../viewModels";
 
@@ -127,6 +128,7 @@ interface CredentialOption {
 interface ProxmoxOptionsPayload {
   readonly nodes?: readonly string[];
   readonly bridges?: readonly string[];
+  readonly network_targets?: readonly NetworkTargetOption[];
   readonly storages?: {
     readonly iso?: readonly string[];
     readonly disk?: readonly string[];
@@ -270,6 +272,25 @@ function SelectField({
     <Field label={label}>
       <select name={name} aria-label={label} defaultValue={defaultValue ?? options[0] ?? ""}>
         {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </Field>
+  );
+}
+
+function NetworkTargetField({
+  options,
+  defaultValue
+}: {
+  readonly options: ProxmoxOptionsPayload;
+  readonly defaultValue?: string;
+}) {
+  const targets = networkTargetOptions(options);
+  return (
+    <Field label="Network target">
+      <select name="network_bridge" aria-label="Network target" defaultValue={defaultValue ?? targets[0]?.value ?? ""}>
+        {targets.map((target) => (
+          <option key={`${target.value}-${target.label}`} value={target.value}>{target.label}</option>
+        ))}
       </select>
     </Field>
   );
@@ -690,7 +711,7 @@ function Builder({ payload }: { readonly payload: OsdeployPayload }) {
             <SelectField label="Node" name="node" defaultValue={target.defaults?.node ?? ""} options={optionsFrom(target.nodes, target.defaults?.node)} />
             <SelectField label="ISO storage" name="iso_storage" defaultValue={target.defaults?.iso_storage ?? ""} options={optionsFrom(target.storages?.iso, target.defaults?.iso_storage)} />
             <SelectField label="VM disk storage" name="storage" defaultValue={target.defaults?.disk_storage ?? ""} options={optionsFrom(target.storages?.disk, target.defaults?.disk_storage)} />
-            <SelectField label="Network bridge" name="network_bridge" defaultValue={target.defaults?.bridge ?? ""} options={optionsFrom(target.bridges, target.defaults?.bridge)} />
+            <NetworkTargetField options={target} defaultValue={target.defaults?.bridge ?? ""} />
           </div>
           <h3>Image</h3>
           <div className="cloudosd-dense-grid">

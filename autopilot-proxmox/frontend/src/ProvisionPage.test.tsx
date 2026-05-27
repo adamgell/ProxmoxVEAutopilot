@@ -45,6 +45,10 @@ const provisionPayload = {
   cloudosd_options: {
     nodes: ["pve2"],
     bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
     storages: {
       iso: ["local"],
       disk: ["local-lvm"]
@@ -75,6 +79,10 @@ const provisionPayload = {
   osdeploy_options: {
     nodes: ["pve2"],
     bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
     storages: {
       iso: ["local"],
       disk: ["local-lvm"]
@@ -183,6 +191,8 @@ describe("ProvisionPage", () => {
     expect(await screen.findByRole("heading", { name: "Provision" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Boot mode" })).toHaveValue("cloudosd");
     expect(screen.getByRole("combobox", { name: "OSDCloud artifact" })).toHaveValue("cloud-artifact");
+    expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("vmbr0");
+    expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Task sequence" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(2);
     expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");
@@ -204,6 +214,7 @@ describe("ProvisionPage", () => {
     expect(screen.queryByRole("combobox", { name: "OSDCloud artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "OSDeploy artifact" })).toHaveValue("server-artifact");
     expect(screen.getByRole("combobox", { name: "Server role" })).toHaveValue("base");
+    expect(screen.getByRole("combobox", { name: "OSDeploy network target" })).toHaveValue("vmbr0");
     expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");
 
     fireEvent.change(bootMode, { target: { value: "ubuntu" } });

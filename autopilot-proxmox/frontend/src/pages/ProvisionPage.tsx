@@ -5,6 +5,7 @@ import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import type { AppBootstrap } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
+import { networkTargetOptions, type NetworkTargetOption } from "../networkTargets";
 import { textValue } from "../utilityModels";
 
 type BootMode = "cloudosd" | "osdeploy" | "ubuntu" | "winpe" | "clone";
@@ -65,6 +66,7 @@ interface OsdeployCatalogPayload {
 interface ProxmoxOptionsPayload {
   readonly nodes?: readonly string[];
   readonly bridges?: readonly string[];
+  readonly network_targets?: readonly NetworkTargetOption[];
   readonly storages?: {
     readonly iso?: readonly string[];
     readonly disk?: readonly string[];
@@ -330,7 +332,7 @@ function targetOptions(options: ProxmoxOptionsPayload) {
     nodes: optionsFrom(options.nodes, options.defaults?.node),
     isoStorages: optionsFrom(options.storages?.iso, options.defaults?.iso_storage),
     diskStorages: optionsFrom(options.storages?.disk, options.defaults?.disk_storage),
-    bridges: optionsFrom(options.bridges, options.defaults?.bridge)
+    networkTargets: networkTargetOptions(options)
   };
 }
 
@@ -369,7 +371,7 @@ function CloudosdSection({ payload }: { readonly payload: ProvisionPagePayload }
         <SelectField label="Node" name="node" defaultValue={payload.cloudosd_options.defaults?.node} options={target.nodes} />
         <SelectField label="ISO storage" name="iso_storage" defaultValue={payload.cloudosd_options.defaults?.iso_storage} options={target.isoStorages} />
         <SelectField label="Disk storage" name="storage" defaultValue={payload.cloudosd_options.defaults?.disk_storage} options={target.diskStorages} />
-        <SelectField label="Network bridge" name="network_bridge" defaultValue={payload.cloudosd_options.defaults?.bridge} options={target.bridges} />
+        <SelectField label="Network target" name="network_bridge" defaultValue={payload.cloudosd_options.defaults?.bridge} options={target.networkTargets} />
         <SelectField label="OS version" name="os_version" defaultValue={textValue(catalogDefaults.os_version, "")} options={optionsFrom(payload.cloudosd_catalog.os_versions, textValue(catalogDefaults.os_version, ""))} />
         <SelectField label="OS edition" name="os_edition" defaultValue={textValue(catalogDefaults.os_edition, "")} options={optionsFrom(payload.cloudosd_catalog.os_editions, textValue(catalogDefaults.os_edition, ""))} />
         <SelectField label="OS activation" name="os_activation" defaultValue={textValue(catalogDefaults.os_activation, "")} options={optionsFrom(payload.cloudosd_catalog.os_activations, textValue(catalogDefaults.os_activation, ""))} />
@@ -426,7 +428,7 @@ function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }
         <SelectField label="OSDeploy node" name="osdeploy_node" defaultValue={payload.osdeploy_options.defaults?.node} options={target.nodes} />
         <SelectField label="OSDeploy ISO storage" name="osdeploy_iso_storage" defaultValue={payload.osdeploy_options.defaults?.iso_storage} options={target.isoStorages} />
         <SelectField label="OSDeploy disk storage" name="osdeploy_storage" defaultValue={payload.osdeploy_options.defaults?.disk_storage} options={target.diskStorages} />
-        <SelectField label="OSDeploy network bridge" name="osdeploy_network_bridge" defaultValue={payload.osdeploy_options.defaults?.bridge} options={target.bridges} />
+        <SelectField label="OSDeploy network target" name="osdeploy_network_bridge" defaultValue={payload.osdeploy_options.defaults?.bridge} options={target.networkTargets} />
         <SelectField label="OSDeploy OS version" name="osdeploy_os_version" defaultValue={textValue(catalogDefaults.os_version, "")} options={optionsFrom(payload.osdeploy_catalog.os_versions, textValue(catalogDefaults.os_version, ""))} />
         <SelectField label="OSDeploy OS edition" name="osdeploy_os_edition" defaultValue={textValue(catalogDefaults.os_edition, "")} options={optionsFrom(payload.osdeploy_catalog.os_editions, textValue(catalogDefaults.os_edition, ""))} />
         <SelectField label="OSDeploy OS language" name="osdeploy_os_language" defaultValue={textValue(catalogDefaults.os_language, "")} options={optionsFrom(payload.osdeploy_catalog.os_languages, textValue(catalogDefaults.os_language, ""))} />

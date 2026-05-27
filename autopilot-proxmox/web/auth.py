@@ -90,13 +90,41 @@ def _is_cloudosd_exempt(path: str) -> bool:
 def _is_osdeploy_exempt(path: str) -> bool:
     if path.startswith("/api/osdeploy/v1/pe/"):
         return True
-    if path.startswith("/api/osdeploy/v1/runs/") and len(path.rstrip("/").split("/")) == 6:
-        return True
     if path.startswith("/api/osdeploy/v1/runs/") and path.endswith("/identity"):
         return True
     if path.startswith("/api/osdeploy/v1/runs/") and path.endswith("/events"):
         return True
     return False
+
+
+def _host_from_authority(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return (urlparse(f"//{text}").hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _request_is_from_target_host(request: Request) -> bool:
+    client_host = str(getattr(getattr(request, "client", None), "host", "") or "").lower()
+    if client_host in {"127.0.0.1", "::1", "localhost"}:
+        return True
+    headers = getattr(request, "headers", {}) or {}
+    request_host = _host_from_authority(
+        headers.get("x-forwarded-host")
+        or headers.get("host")
+        or getattr(getattr(request, "url", None), "netloc", "")
+    )
+    return bool(client_host and request_host and client_host == request_host)
+
+
+def _is_osdeploy_controller_poll_request(request: Request) -> bool:
+    path = str(getattr(getattr(request, "url", None), "path", "") or "")
+    if not (path.startswith("/api/osdeploy/v1/runs/") and len(path.rstrip("/").split("/")) == 6):
+        return False
+    return _request_is_from_target_host(request)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +201,10 @@ def is_exempt_path(path: str) -> bool:
         or _is_cloudosd_exempt(path)
         or _is_osdeploy_exempt(path)
     )
+
+
+def is_exempt_request(request: Request) -> bool:
+    return is_exempt_path(request.url.path) or _is_osdeploy_controller_poll_request(request)
 
 
 def current_user(request: Request) -> dict:

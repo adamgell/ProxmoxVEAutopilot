@@ -96,7 +96,7 @@ def _should_skip(path: Path, repo_root: Path) -> bool:
         "node_modules",
     }:
         return True
-    if rel.parts and rel.parts[0] in {"jobs", "output"}:
+    if rel.parts and rel.parts[0] in {"cache", "jobs", "output", "secrets"}:
         return True
     return False
 

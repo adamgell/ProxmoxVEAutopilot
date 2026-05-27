@@ -514,6 +514,9 @@ def _create_sequence_for_run(
         ("Bake Windows boot entry", "bake_boot_entry", "pe"),
         ("Stage OSD client", "stage_osd_client", "pe"),
         ("Stage AutopilotAgent", "stage_autopilot_agent", "pe"),
+        ("Install QEMU Guest Agent", "install_qga", "full_os"),
+        ("Verify QEMU Guest Agent", "verify_qga", "full_os"),
+        ("Install QGA watchdog", "install_qga_watchdog", "full_os"),
         ("Install AutopilotAgent", "install_autopilot_agent", "full_os"),
         ("Wait for AutopilotAgent heartbeat", "wait_agent_heartbeat", "full_os"),
     ]
@@ -530,6 +533,8 @@ def _create_sequence_for_run(
         steps.insert(-1, (role_step_names.get(role_kind, role_kind), role_kind, "full_os"))
     for position, (step_name, kind, phase) in enumerate(steps):
         params = {}
+        if kind == "install_qga":
+            params = {"required": True}
         if kind in {"join_domain_role", "verify_ad_domain_join"}:
             params = dict(domain_join)
         if kind in ROLE_STEP_KINDS:

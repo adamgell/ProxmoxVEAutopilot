@@ -154,7 +154,12 @@ function Invoke-InstallQga {
     }
 
     $msi = $null
+    $stagedCandidate = Join-Path $OsdRoot 'guest-agent\qemu-ga-x86_64.msi'
+    if (Test-Path -LiteralPath $stagedCandidate) {
+        $msi = $stagedCandidate
+    }
     foreach ($drive in @('D','E','F','G','H','I')) {
+        if ($msi) { break }
         $candidate = "$($drive):\guest-agent\qemu-ga-x86_64.msi"
         if (Test-Path -LiteralPath $candidate) {
             $msi = $candidate
@@ -174,6 +179,16 @@ function Invoke-InstallQga {
         -ArgumentList @('/i', $msi, '/qn', '/norestart', '/L*v', $log) `
         -Wait -PassThru
     if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+        Write-OsdLog "QEMU Guest Agent installer exited $($proc.ExitCode); checking for a usable service before failing."
+        try {
+            if (Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue) {
+                Invoke-VerifyQga
+                Write-OsdLog "QEMU Guest Agent recovered after installer exit $($proc.ExitCode)."
+                return
+            }
+        } catch {
+            Write-OsdLog "QEMU Guest Agent recovery after installer exit $($proc.ExitCode) failed: $($_.Exception.Message)"
+        }
         throw "QEMU Guest Agent installer failed with exit $($proc.ExitCode)"
     }
     Invoke-VerifyQga
@@ -973,7 +988,14 @@ function Invoke-OsdAction {
 
     $kind = [string] $Action.kind
     switch ($kind) {
-        'install_qga' { Invoke-InstallQga }
+        'install_qga' {
+            $required = [bool] (Get-OsdObjectProperty -Value $Action.params -Name 'required')
+            if ($required) {
+                Invoke-InstallQga -Required
+            } else {
+                Invoke-InstallQga
+            }
+        }
         'fix_recovery_partition' { Invoke-RecoveryFix }
         'verify_qga' { Invoke-VerifyQga }
         'install_qga_watchdog' { Invoke-InstallQgaWatchdog -Action $Action }

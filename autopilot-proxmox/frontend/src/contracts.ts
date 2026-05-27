@@ -12,7 +12,7 @@ export interface MigratedRoute {
   readonly phase: "foundation" | "read-only" | "operational";
 }
 
-export type OperatorGroupLabel = "Observe" | "Deploy" | "Build" | "Fleet" | "Settings";
+export type OperatorGroupLabel = "Observe" | "Deploy" | "Build" | "Infrastructure" | "Fleet" | "Settings";
 
 export interface OperatorRoute {
   readonly path: string;

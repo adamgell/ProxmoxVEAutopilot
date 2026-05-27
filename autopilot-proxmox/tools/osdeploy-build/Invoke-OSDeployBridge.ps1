@@ -935,6 +935,15 @@ function Invoke-OSDeployImageApply {
     if ($result.ExitCode -ne 0) {
         throw "DISM image apply failed with exit code $($result.ExitCode): $($result.Stderr) $($result.Stdout)"
     }
+    $windowsRoot = Join-Path $WindowsDrive 'Windows'
+    $kernelPath = Join-Path $windowsRoot 'System32\ntoskrnl.exe'
+    $systemHive = Join-Path $windowsRoot 'System32\Config\SYSTEM'
+    $missing = @()
+    if (-not (Test-Path -LiteralPath $kernelPath -PathType Leaf)) { $missing += $kernelPath }
+    if (-not (Test-Path -LiteralPath $systemHive -PathType Leaf)) { $missing += $systemHive }
+    if ($missing) {
+        throw "DISM image apply reported success but Windows image validation failed; missing: $($missing -join ', '). stdout: $($result.Stdout) stderr: $($result.Stderr)"
+    }
 }
 
 function Find-OSDeployVirtIODriverRoot {

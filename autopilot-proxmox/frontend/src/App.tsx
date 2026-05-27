@@ -14,6 +14,7 @@ import { JobDetailPage, RunDetailPage, RunsPage } from "./pages/JobAndRunsPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
+import { NetworksPage } from "./pages/NetworksPage";
 import { OsdeployPage } from "./pages/OsdeployPage";
 import { ProvisionPage } from "./pages/ProvisionPage";
 import { LoginPage, SetupPage } from "./pages/PublicPages";
@@ -62,6 +63,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/install-tracking") {
     return <InstallTrackingPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/networks") {
+    return <NetworksPage bootstrap={bootstrap} />;
   }
   if (path === "/react/vms" || /^\/react\/vms\/\d+$/.test(path)) {
     return <VmsPage bootstrap={bootstrap} />;

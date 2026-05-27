@@ -557,6 +557,10 @@ h3 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.metric-strip--networks {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .metric-strip > div,
 .metric-strip > a {
   min-width: 0;
@@ -3140,6 +3144,89 @@ h3 {
   background: var(--surface-2);
 }
 
+.networks-tabs {
+  margin-bottom: 18px;
+}
+
+.networks-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.networks-layout .panel:first-child,
+.networks-layout .panel:last-child {
+  grid-column: 1 / -1;
+}
+
+.networks-table td,
+.networks-table th {
+  white-space: nowrap;
+}
+
+.networks-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.networks-scope {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.networks-scope strong,
+.networks-lab-default strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.networks-scope span,
+.networks-lab-default span,
+.networks-note {
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.networks-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.networks-apply {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) max-content;
+  gap: 12px;
+  align-items: end;
+}
+
+.networks-lab-form {
+  display: grid;
+  gap: 14px;
+}
+
+.networks-lab-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.networks-lab-default {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--good) 48%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--good) 10%, var(--surface));
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -3249,6 +3336,7 @@ h3 {
   .metric-strip,
   .metric-strip--signals,
   .metric-strip--workspace,
+  .metric-strip--networks,
   .metric-strip--fleet,
   .section-grid,
   .section-grid--wide,
@@ -3263,7 +3351,11 @@ h3 {
   .fleet-grid--six,
   .agent-download-grid,
   .agent-url-row,
-  .link-grid {
+  .link-grid,
+  .networks-layout,
+  .networks-scope-grid,
+  .networks-apply,
+  .networks-lab-grid {
     grid-template-columns: 1fr;
   }
 

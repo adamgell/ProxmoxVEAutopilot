@@ -64,6 +64,19 @@ def test_ssh_options_are_non_interactive_and_use_persistent_known_hosts(tmp_path
     assert any(str(tmp_path / "cloudosd_known_hosts") in item for item in options)
 
 
+def test_source_bundle_skips_runtime_cache_output_and_secret_dirs(tmp_path):
+    from scripts import cloudosd_remote_build as remote_build
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    assert remote_build._should_skip(repo_root / "cache" / "cloudosd" / "image.esd", repo_root) is True
+    assert remote_build._should_skip(repo_root / "output" / "cloudosd" / "image.iso", repo_root) is True
+    assert remote_build._should_skip(repo_root / "jobs" / "job.log", repo_root) is True
+    assert remote_build._should_skip(repo_root / "secrets" / "token", repo_root) is True
+    assert remote_build._should_skip(repo_root / "tools" / "cloudosd-build" / "build-cloudosd.ps1", repo_root) is False
+
+
 def test_app_cloudosd_tool_copy_stays_in_sync():
     from pathlib import Path
 

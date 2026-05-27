@@ -189,6 +189,14 @@ def test_proxmox_bootstrap_script_repairs_role_storage_and_chassis_seed():
     assert "AUTOPILOT_BOOTSTRAP_OK" in script
 
 
+def test_autopilot_role_includes_sdn_admin_privileges():
+    from web import proxmox_permissions
+
+    assert "SDN.Use" in proxmox_permissions.AUTOPILOT_PRIVILEGES
+    assert "SDN.Audit" in proxmox_permissions.AUTOPILOT_PRIVILEGES
+    assert "SDN.Allocate" in proxmox_permissions.AUTOPILOT_PRIVILEGES
+
+
 def test_proxmox_bootstrap_endpoint_runs_ssh_and_saves_root_credentials(
     app_client, tmp_path, monkeypatch,
 ):

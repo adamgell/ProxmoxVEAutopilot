@@ -393,9 +393,34 @@ def test_osd_client_posts_osdeploy_full_os_heartbeat_when_bootstrap_is_present()
     assert "osdeploy_full_os_heartbeat" in client
     assert "Invoke-OsdeployFirstBootReadiness" in client
     assert "Invoke-InstallQga -Required" in client
+    assert "QEMU Guest Agent installer exited" in client
+    assert "checking for a usable service before failing" in client
+    assert "QEMU Guest Agent recovered after installer exit" in client
     assert client.index("Invoke-OsdeployFirstBootReadiness -Config $cfg") < client.index(
         "Invoke-OsdeployAgentBootstrapHeartbeat -Config $cfg"
     )
+    assert "guest-agent\\qemu-ga-x86_64.msi" in client
+    assert "Get-OsdObjectProperty -Value $Action.params -Name 'required'" in client
+
+
+def test_osd_client_package_includes_staged_qga_msi_when_available(tmp_path):
+    from web import osd_package
+
+    files = [
+        tmp_path / "SetupComplete.cmd",
+        tmp_path / "osd-client" / "OsdClient.ps1",
+        tmp_path / "FixRecoveryPartition.ps1",
+        tmp_path / "Get-WindowsAutopilotInfo.ps1",
+        tmp_path / "guest-agent" / "qemu-ga-x86_64.msi",
+    ]
+    for path in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"payload")
+
+    package_files = osd_package.osd_client_files(tmp_path)
+    targets = {item["path"] for item in package_files}
+
+    assert r"V:\ProgramData\ProxmoxVEAutopilot\OSD\guest-agent\qemu-ga-x86_64.msi" in targets
 
 
 def test_osdeploy_bridge_injects_virtio_drivers_before_first_boot():

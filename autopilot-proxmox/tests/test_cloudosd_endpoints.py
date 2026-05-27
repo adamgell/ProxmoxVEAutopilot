@@ -327,6 +327,20 @@ def test_cloudosd_base_url_honors_forwarded_https_headers(monkeypatch):
     assert cloudosd_endpoints._base_url(RequestStub()) == "https://autopilot.gell.one"
 
 
+def test_cloudosd_provision_base_url_uses_guest_reachable_url(monkeypatch):
+    from web import app as web_app
+    from web import cloudosd_endpoints
+
+    monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://127.0.0.1:5000")
+    monkeypatch.setattr(
+        web_app,
+        "_derive_guest_reachable_base_url",
+        lambda config: "http://controller:5000",
+    )
+
+    assert cloudosd_endpoints._base_url(None) == "http://controller:5000"
+
+
 def test_cloudosd_name_comparison_treats_windows_name_case_as_aligned():
     from web import cloudosd_pg
 
@@ -2065,6 +2079,63 @@ def test_cloudosd_error_event_marks_run_failed(cloudosd_client, pg_conn):
     assert row["last_error"] == "Deploy-OSDCloud failed"
 
 
+def test_cloudosd_warning_failed_suffix_event_does_not_mark_run_failed(cloudosd_client, pg_conn):
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json={
+            "artifact_id": artifact["id"],
+            "vm_name": "CLOUDOSD-WARN",
+            "architecture": "amd64",
+            "vm_memory_mb": 8192,
+        },
+    )
+    assert run.status_code == 201, run.text
+    run_id = run.json()["run_id"]
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/identity",
+        json={
+            "vmid": 224,
+            "vm_uuid": "33333333-4444-5555-6666-777777777777",
+            "mac": "52:54:00:aa:bb:ee",
+            "node": "pve",
+        },
+    ).status_code == 200
+    registered = cloudosd_client.post(
+        "/api/cloudosd/pe/register",
+        json={
+            "vm_uuid": "33333333-4444-5555-6666-777777777777",
+            "mac": "52:54:00:aa:bb:ee",
+            "architecture": "amd64",
+            "build_sha": "cloudosdtest",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+
+    event = cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/events",
+        headers=_bearer(registered.json()["bearer_token"]),
+        json={
+            "phase": "first_boot",
+            "event_type": "firstboot_oobe_bootstrap_session_logoff_failed",
+            "severity": "warning",
+            "message": "No User exists for *",
+        },
+    )
+    assert event.status_code == 200, event.text
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["run"]["state"] != "failed"
+
+    row = pg_conn.execute(
+        "SELECT state, last_error FROM ts_provisioning_runs WHERE id = %s",
+        (run_id,),
+    ).fetchone()
+    assert row["state"] != "failed"
+    assert row["last_error"] is None
+
+
 def test_cloudosd_run_rejects_too_little_memory(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
 
@@ -2572,7 +2643,58 @@ def test_cloudosd_proxmox_options_fallback_to_configured_defaults(
     assert body["storages"]["iso"] == ["local"]
     assert body["storages"]["disk"] == ["local-lvm"]
     assert body["bridges"] == ["vmbr0"]
+    assert body["network_targets"][0]["value"] == "vmbr0"
+    assert body["network_targets"][0]["kind"] == "bridge"
     assert body["source"] == "configured"
+
+
+def test_cloudosd_proxmox_options_include_sdn_vnet_targets(
+    cloudosd_client,
+    monkeypatch,
+):
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app, "_load_vars", lambda: {
+        "proxmox_node": "pve",
+        "proxmox_iso_storage": "local",
+        "proxmox_storage": "local-lvm",
+        "proxmox_bridge": "vmbr0",
+    })
+
+    def fake_proxmox_api(path, *args, **kwargs):
+        values = {
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+            "/cluster/sdn/vnets": [
+                {"vnet": "lab101", "zone": "lab-simple", "alias": "Lab 101"}
+            ],
+        }
+        if path not in values:
+            raise AssertionError(path)
+        return values[path]
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+
+    response = cloudosd_client.get("/api/cloudosd/proxmox/options")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["bridges"] == ["vmbr0"]
+    assert any(
+        target["kind"] == "bridge" and target["value"] == "vmbr0"
+        for target in body["network_targets"]
+    )
+    assert any(
+        target["kind"] == "sdn_vnet"
+        and target["value"] == "lab101"
+        and target["zone"] == "lab-simple"
+        for target in body["network_targets"]
+    )
 
 
 def test_cloudosd_proxmox_options_exposes_windows_catalog_choices(
@@ -3526,6 +3648,63 @@ def test_cloudosd_provision_endpoint_enqueues_dedicated_playbook(
     assert job["args"]["proxmox_storage"] == "local-lvm"
     assert job["args"]["proxmox_bridge"] == "vmbr0"
     assert job["args"]["vm_name"] == "CLOUDOSD-PROVISION"
+
+
+def test_cloudosd_run_accepts_sdn_vnet_network_target(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import cloudosd_endpoints, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        cloudosd_endpoints,
+        "proxmox_options_payload",
+        lambda: {
+            "schema_version": 1,
+            "source": "live",
+            "defaults": {
+                "node": "pve",
+                "iso_storage": "local",
+                "disk_storage": "local-lvm",
+                "bridge": "vmbr0",
+            },
+            "catalog": cloudosd_endpoints.catalog_payload(),
+            "nodes": ["pve"],
+            "storages": {"iso": ["local"], "disk": ["local-lvm"]},
+            "bridges": ["vmbr0"],
+            "network_targets": [
+                {"kind": "bridge", "value": "vmbr0", "label": "vmbr0"},
+                {
+                    "kind": "sdn_vnet",
+                    "value": "lab101",
+                    "label": "Lab 101",
+                    "zone": "lab-simple",
+                },
+            ],
+            "vms": [],
+        },
+    )
+
+    run_response = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="CLOUDOSD-SDN",
+            network_bridge="lab101",
+        ),
+    )
+
+    assert run_response.status_code == 201, run_response.text
+    run = run_response.json()
+    assert run["network_bridge"] == "lab101"
+
+    response = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/provision")
+
+    assert response.status_code == 202, response.text
+    job = jobs_pg.get_job(response.json()["job_id"])
+    assert job["args"]["proxmox_bridge"] == "lab101"
 
 
 def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_conn):

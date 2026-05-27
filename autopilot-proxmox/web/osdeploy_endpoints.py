@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import logging
 import shutil
 import socket
 import sys
@@ -18,9 +19,11 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, osdeploy_cache, osdeploy_pg, osdeploy_roles, ts_engine_pg, winpe_token
+from web.proxmox_network_targets import network_target_values, normalize_network_targets
 
 
 router = APIRouter(prefix="/api/osdeploy/v1", tags=["osdeploy"])
+logger = logging.getLogger(__name__)
 _PE_TOKEN_TTL_SECONDS = 6 * 60 * 60
 _AGENT_BOOTSTRAP_TOKEN_TTL_SECONDS = 48 * 60 * 60
 
@@ -565,6 +568,7 @@ def proxmox_options_payload() -> dict:
         "disk_storage": cfg.get("proxmox_storage", "local-lvm"),
         "bridge": cfg.get("proxmox_bridge", "vmbr0"),
     }
+    configured_bridges = [defaults["bridge"]]
     try:
         nodes = [item["node"] for item in web_app._proxmox_api("/nodes")]
         storages = web_app._proxmox_api("/storage")
@@ -572,11 +576,18 @@ def proxmox_options_payload() -> dict:
         iso = [item["storage"] for item in storages if "iso" in str(item.get("content") or "")]
         disk = [item["storage"] for item in storages if "images" in str(item.get("content") or "")]
         bridges = [item["iface"] for item in networks if item.get("type") == "bridge"]
+        try:
+            sdn_vnets = web_app._proxmox_api("/cluster/sdn/vnets") or []
+        except Exception:
+            logger.warning("Failed to fetch Proxmox SDN VNets; falling back to bridge-only network targets", exc_info=True)
+            sdn_vnets = []
     except Exception:
         nodes = [defaults["node"]]
         iso = [defaults["iso_storage"]]
         disk = [defaults["disk_storage"]]
-        bridges = [defaults["bridge"]]
+        bridges = configured_bridges
+        sdn_vnets = []
+    bridges = bridges or configured_bridges
     return {
         "schema_version": 1,
         "nodes": nodes or [defaults["node"]],
@@ -584,7 +595,12 @@ def proxmox_options_payload() -> dict:
             "iso": iso or [defaults["iso_storage"]],
             "disk": disk or [defaults["disk_storage"]],
         },
-        "bridges": bridges or [defaults["bridge"]],
+        "bridges": bridges,
+        "network_targets": normalize_network_targets(
+            node=defaults["node"],
+            bridges=bridges,
+            vnets=sdn_vnets,
+        ),
         "defaults": defaults,
     }
 
@@ -1393,6 +1409,12 @@ def preflight_payload(body: RunCreateBody) -> dict:
     blocking.extend(role_checks)
     selected_iso_storage = body.iso_storage or cfg.get("proxmox_iso_storage", "local")
     selected_disk_storage = body.storage or cfg.get("proxmox_storage", "local-lvm")
+    options = proxmox_options_payload()
+    selected_network = (
+        body.network_bridge
+        or (options.get("defaults") or {}).get("bridge")
+        or cfg.get("proxmox_bridge", "vmbr0")
+    )
     storage_names = _storage_names_by_content(web_app)
     if storage_names is not None:
         if selected_iso_storage not in storage_names["iso"]:
@@ -1409,6 +1431,11 @@ def preflight_payload(body: RunCreateBody) -> dict:
                     f"for images. Available image storage: {available}."
                 ),
             ))
+    if selected_network not in network_target_values(options):
+        blocking.append(_blocking_check(
+            "proxmox_bridge_unavailable",
+            f"Network target '{selected_network}' is not available on this Proxmox node.",
+        ))
     selected_node = body.node or cfg.get("proxmox_node") or ""
     virtio_iso = _resolve_virtio_iso_volid(web_app, cfg, str(selected_node))
     if not virtio_iso:

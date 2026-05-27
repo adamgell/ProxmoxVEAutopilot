@@ -101,6 +101,12 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     ]
   },
   {
+    label: "Infrastructure",
+    items: [
+      { path: "/react/networks", label: "Networks", group: "Infrastructure", phase: "operational", active: true }
+    ]
+  },
+  {
     label: "Fleet",
     items: [
       { path: "/react/vms", label: "VMs", group: "Fleet", phase: "operational", active: true },
@@ -165,6 +171,15 @@ export const operatorFlows: readonly OperatorFlow[] = [
       { label: "Task Sequences", href: "/react/task-engine", group: "Build", state: "React" },
       { label: "Template", href: "/react/template", group: "Build", state: "React" },
       { label: "Answer ISOs", href: "/react/answer-isos", group: "Build", state: "React" }
+    ]
+  },
+  {
+    id: "infrastructure",
+    label: "Infrastructure",
+    group: "Infrastructure",
+    summary: "Manage Proxmox SDN, firewall scopes, and isolated lab networks.",
+    steps: [
+      { label: "Networks", href: "/react/networks", group: "Infrastructure", state: "React" }
     ]
   },
   {

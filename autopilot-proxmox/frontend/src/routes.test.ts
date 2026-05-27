@@ -22,6 +22,7 @@ describe("operator route registry", () => {
         "/react/monitoring",
         "/react/runs",
         "/react/runs/:runId",
+        "/react/networks",
         "/react/provision",
         "/react/cloudosd",
         "/react/cloudosd/runs/:runId",
@@ -49,6 +50,7 @@ describe("operator route registry", () => {
       "Observe",
       "Deploy",
       "Build",
+      "Infrastructure",
       "Fleet",
       "Settings"
     ]);
@@ -112,6 +114,7 @@ describe("operator route registry", () => {
       "Observe",
       "Deploy",
       "Build",
+      "Infrastructure",
       "Fleet",
       "Settings"
     ]);
@@ -123,6 +126,7 @@ describe("operator route registry", () => {
         expect.objectContaining({ label: "Signals Hub", href: "/react/monitoring" }),
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
         expect.objectContaining({ label: "Runs", href: "/react/runs" }),
+        expect.objectContaining({ label: "Networks", href: "/react/networks" }),
         expect.objectContaining({ label: "OSDeploy Server", href: "/react/osdeploy" }),
         expect.objectContaining({ label: "OSDCloud Desktop", href: "/react/cloudosd" }),
         expect.objectContaining({ label: "Provision", href: "/react/provision" }),

@@ -27,6 +27,10 @@ const cloudosdPayload = {
   proxmox_options: {
     nodes: ["pve2"],
     bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
     storages: {
       iso: ["isos"],
       disk: ["ssdpool"]
@@ -212,6 +216,8 @@ describe("CloudosdPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Single-VM Deployment" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Ready artifact" })).toHaveValue("artifact-1");
+    expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("vmbr0");
+    expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Memory MB" })).toHaveValue(8192);
     expect(screen.getByRole("button", { name: "Launch OSDCloud VM" })).toBeDisabled();
 

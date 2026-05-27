@@ -617,6 +617,7 @@ from web.osd_v2_endpoints import (
 )
 from web.agent_v1_endpoints import router as _agent_v1_router
 from web.cloudosd_endpoints import router as _cloudosd_router
+from web.sdn_endpoints import router as _sdn_router
 try:
     from web.osdeploy_endpoints import router as _osdeploy_router
 except ModuleNotFoundError:
@@ -630,6 +631,7 @@ app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
 app.include_router(_cloudosd_router)
+app.include_router(_sdn_router)
 if _osdeploy_router is not None:
     app.include_router(_osdeploy_router)
 
@@ -712,7 +714,7 @@ async def _require_auth(request: Request, call_next):
     /auth/login (for HTML) or returns 401 (for JSON/API)."""
     if _AUTH_BYPASS:
         return await call_next(request)
-    if _auth.is_exempt_path(request.url.path):
+    if _auth.is_exempt_request(request):
         return await call_next(request)
     if request.session.get("user"):
         return await call_next(request)
@@ -2125,6 +2127,7 @@ def _init_app_database() -> None:
         machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
+        sdn_labs_pg,
         ts_engine_pg,
     )
 
@@ -2140,6 +2143,7 @@ def _init_app_database() -> None:
         osdeploy_cache.init(conn)
         deployment_health_pg.init(conn)
         lab_bubbles_pg.init(conn)
+        sdn_labs_pg.init(conn)
 
 
 class _BubbleCreate(BaseModel):
@@ -6804,7 +6808,7 @@ def _agent_inventory_rows() -> list[dict]:
             "domain_joined": row.get("domain_joined"),
             "entra_joined": row.get("entra_joined"),
             "current_phase": row.get("current_phase") or "",
-            "current_run_id": row.get("current_run_id") or "",
+            "current_run_id": row.get("current_run_id") or row.get("created_from_run_id") or "",
             "agent_version": agent_version,
             **_agent_update_fields(agent_version, latest_release),
             "hash_capture_supported": _agent_supports_work_queue(agent_version),
@@ -6932,6 +6936,9 @@ def _filter_and_purge_agents_without_current_vm(
             (expected_build_host_agent and agent_id == expected_build_host_agent)
             or (expected_build_host_vmid and agent_vmid == expected_build_host_vmid)
         ):
+            kept.append(agent)
+            continue
+        if agent.get("current_run_id"):
             kept.append(agent)
             continue
         if agent_vmid is not None and agent_vmid in current_vmids:

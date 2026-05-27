@@ -441,6 +441,7 @@ def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatc
 
     monkeypatch.setattr(web_app, "SETUP_STATE_PATH", setup_state_path)
     monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_proxmox_cluster_vm_rows", lambda: [])
     monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
     monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
     monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_vmids", lambda _vmids: {})
@@ -520,6 +521,77 @@ def test_react_vms_fleet_keeps_pending_approval_without_current_vm(web_client, m
     body = response.json()
     assert [agent["agent_id"] for agent in body["agents"]] == ["agent-vm-110"]
     assert deleted == []
+
+
+def test_react_vms_fleet_keeps_run_scoped_agent_during_vm_cache_lag(web_client, monkeypatch, tmp_path):
+    from web import app as web_app
+
+    deleted: list[str] = []
+    setup_state_path = tmp_path / "foundation_state.json"
+    setup_state_path.write_text("{}", encoding="utf-8")
+
+    async def fake_vms_payload():
+        return ({
+            "data": [{
+                "vmid": 108,
+                "name": "WRKGRP-525570B6",
+                "hostname": "WRKGRP-525570B6",
+                "serial": "WRKGRP-525570B6",
+                "status": "running",
+                "ip_address": "192.168.2.49",
+            }],
+            "devices": ([], ""),
+            "hash_serials": set(),
+            "fetched_at": 1.0,
+            "refreshing": False,
+        }, 0.0)
+
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", setup_state_path)
+    monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_proxmox_cluster_vm_rows", lambda: [])
+    monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
+    monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
+    monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_vmids", lambda _vmids: {})
+    monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
+    monkeypatch.setattr(web_app, "_agent_inventory_rows", lambda: [
+        {
+            "agent_id": "agent-e2e40-wk-04",
+            "approval_status": "active",
+            "vmid": 128,
+            "computer_name": "E2E40-WK-04",
+            "current_run_id": "490dbcb1-cd33-4b0c-b4e3-3a6fa5c0f8de",
+            "last_seen_at": "2026-05-26T09:00:00+00:00",
+        },
+    ])
+
+    response = web_client.get("/api/vms/fleet")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [agent["agent_id"] for agent in body["agents"]] == ["agent-e2e40-wk-04"]
+    assert deleted == []
+
+
+def test_agent_inventory_uses_device_run_id_before_first_heartbeat(monkeypatch):
+    from web import app as web_app
+
+    monkeypatch.setitem(web_app._VMS_CACHE, "data", [])
+    monkeypatch.setattr(web_app, "_latest_agent_release_for_inventory", lambda: None)
+    monkeypatch.setattr(web_app.agent_telemetry_pg, "latest_agents", lambda: [
+        {
+            "agent_id": "agent-e2e40-wk-04",
+            "created_from_run_id": "490dbcb1-cd33-4b0c-b4e3-3a6fa5c0f8de",
+            "device_vmid": 128,
+            "device_computer_name": "E2E40-WK-04",
+            "device_agent_version": "1.0.0",
+        },
+    ])
+    monkeypatch.setattr(web_app.agent_telemetry_pg, "pending_bootstrap_approvals", lambda: [])
+    monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_agents", lambda _agent_ids: {})
+
+    rows = web_app._agent_inventory_rows()
+
+    assert rows[0]["current_run_id"] == "490dbcb1-cd33-4b0c-b4e3-3a6fa5c0f8de"
 
 
 def test_vm_power_endpoint_returns_json_for_react_callers(web_client, monkeypatch):

@@ -44,11 +44,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Get-BuildSha {
-    param(
-        [Parameter(Mandatory)] [string] $Arch,
-        [Parameter(Mandatory)] [string] $OSDCloudVersion
-    )
+function Get-CloudOSDComponentHashes {
     $files = @(
         'build-cloudosd.ps1',
         'Invoke-CloudOSDBridge.ps1',
@@ -56,15 +52,27 @@ function Get-BuildSha {
         'config.json',
         'startnet.cmd'
     )
-    $inputs = @($PSScriptRoot, $Arch, $OSDCloudVersion)
+    $hashes = [ordered]@{}
     foreach ($file in $files) {
         $path = Join-Path $PSScriptRoot $file
         if (Test-Path -LiteralPath $path) {
-            $item = Get-Item -LiteralPath $path
-            $inputs += "${file}:$($item.LastWriteTimeUtc.Ticks)"
+            $hashes[$file] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         } else {
-            $inputs += "${file}:missing"
+            $hashes[$file] = 'missing'
         }
+    }
+    return $hashes
+}
+
+function Get-BuildSha {
+    param(
+        [Parameter(Mandatory)] [string] $Arch,
+        [Parameter(Mandatory)] [string] $OSDCloudVersion,
+        [Parameter(Mandatory)] [System.Collections.IDictionary] $ComponentHashes
+    )
+    $inputs = @($PSScriptRoot, $Arch, $OSDCloudVersion)
+    foreach ($file in @($ComponentHashes.Keys | Sort-Object)) {
+        $inputs += "${file}:$($componentHashes[$file])"
     }
     $bytes = [System.Text.Encoding]::UTF8.GetBytes(($inputs -join '|'))
     $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
@@ -257,7 +265,8 @@ function Resolve-CurlPath {
     }
 }
 
-$sha = Get-BuildSha -Arch $Arch -OSDCloudVersion $OSDCloudVersion
+$componentHashes = Get-CloudOSDComponentHashes
+$sha = Get-BuildSha -Arch $Arch -OSDCloudVersion $OSDCloudVersion -ComponentHashes $componentHashes
 $base = "cloudosd-autopilot-$Arch-$sha"
 $wimPath = [System.IO.Path]::Combine($OutputDir, "$base.wim")
 $isoPath = [System.IO.Path]::Combine($OutputDir, "$base.iso")
@@ -400,6 +409,7 @@ $manifest = [pscustomobject]@{
     architecture = $Arch
     osdcloud_module_version = $OSDCloudVersion
     build_sha = $sha
+    component_sha256 = $componentHashes
     output_wim = $wimPath
     output_iso = $isoPath
     output_manifest = $manifestPath

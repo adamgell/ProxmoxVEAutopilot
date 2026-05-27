@@ -41,6 +41,10 @@ const osdeployPayload = {
   proxmox_options: {
     nodes: ["pve2"],
     bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
     storages: {
       iso: ["isos"],
       disk: ["ssdpool"]
@@ -251,6 +255,8 @@ describe("OsdeployPage", () => {
     expect(await screen.findByRole("heading", { name: "Server Deployment" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Deployable OS" })).toHaveValue("artifact-server");
     expect(screen.getByRole("combobox", { name: "Server role" })).toHaveValue("base");
+    expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("vmbr0");
+    expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Launch OSDeploy VM" })).toBeDisabled();
 
     fireEvent.change(screen.getByRole("combobox", { name: "Server role" }), { target: { value: "isolated_domain_controller" } });

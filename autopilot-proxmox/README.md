@@ -64,11 +64,13 @@ VM.Config.Options, VM.Audit, VM.PowerMgmt, VM.Console,
 VM.Snapshot, VM.Snapshot.Rollback,
 VM.GuestAgent.Audit, VM.GuestAgent.FileRead, VM.GuestAgent.FileWrite,
 VM.GuestAgent.FileSystemMgmt, VM.GuestAgent.Unrestricted,
-Datastore.AllocateSpace, Datastore.Audit,
-Sys.Audit, Sys.Modify, SDN.Use
+Datastore.Allocate, Datastore.AllocateSpace, Datastore.AllocateTemplate,
+Datastore.Audit, Sys.Audit, Sys.Modify,
+SDN.Audit, SDN.Allocate, SDN.Use
 ```
 
 ACLs must be applied to `/`, storage paths, and SDN zones.
+`SDN.Audit`, `SDN.Allocate`, and `SDN.Use` are required for the Networks page to read, create, edit, delete, and apply Proxmox SDN objects. Existing installations should rerun Settings -> Proxmox Permission Bootstrap before using Networks.
 
 ## Testing
 
