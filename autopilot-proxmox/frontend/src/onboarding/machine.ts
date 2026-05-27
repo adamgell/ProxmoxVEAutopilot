@@ -41,14 +41,12 @@ export function canAdvance(state: WizardState): boolean {
       return state.answers.probeResults.ad?.ok === true;
     case "tenant":
       return state.answers.tenant.skipped || state.answers.tenant.tenantId !== null;
-    case "artifact": {
-      const { source, existingArtifactId, buildJobId } = state.answers.artifact;
-      // If neither ID is set yet, treat as not-yet-visited - allow advance.
-      if (existingArtifactId === null && buildJobId === null) return true;
-      return source === "existing"
-        ? existingArtifactId !== null
-        : buildJobId !== null;
-    }
+    case "artifact":
+      return (
+        state.answers.artifact.source === "existing"
+          ? state.answers.artifact.existingArtifactId !== null
+          : state.answers.artifact.buildJobId !== null
+      );
     case "review":
       return false;
     default:

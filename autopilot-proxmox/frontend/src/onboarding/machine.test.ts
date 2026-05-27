@@ -20,20 +20,47 @@ describe("onboarding reducer", () => {
     expect(canAdvance(withPersona)).toBe(true);
   });
 
-  it("advance progresses through STEP_ORDER", () => {
+  it("advance progresses through STEP_ORDER (gates satisfied step by step)", () => {
     let s = reduce(initialState(), { type: "pickPersona", persona: "lab" });
-    for (let i = 0; i < STEP_ORDER.length - 1; i++) {
-      s = reduce(s, { type: "advance" });
-      expect(s.currentStep).toBe(STEP_ORDER[i + 1]);
-    }
+    // welcome -> identity (gate: persona set)
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("identity");
+    // identity default mode=workgroup, so its gate passes immediately
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("tenant");
+    // skip tenant so its gate passes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    s = reduce(s, { type: "patchAnswers", patch: { tenant: { ...s.answers.tenant, skipped: true } } as any });
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("artifact");
+    // pick an artifact so its gate passes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    s = reduce(s, { type: "patchAnswers", patch: { artifact: { ...s.answers.artifact, existingArtifactId: "x-1" } } as any });
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("review");
   });
 
   it("advance on the last step is a no-op (launch is a separate event)", () => {
     let s = reduce(initialState(), { type: "pickPersona", persona: "msp" });
-    for (let i = 0; i < STEP_ORDER.length - 1; i++) {
-      s = reduce(s, { type: "advance" });
-    }
+    // welcome -> identity
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("identity");
+    // identity -> tenant (workgroup mode passes immediately)
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("tenant");
+    // skip tenant so its gate passes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    s = reduce(s, { type: "patchAnswers", patch: { tenant: { ...s.answers.tenant, skipped: true } } as any });
+    // tenant -> artifact
+    s = reduce(s, { type: "advance" });
+    expect(s.currentStep).toBe("artifact");
+    // pick an artifact so its gate passes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    s = reduce(s, { type: "patchAnswers", patch: { artifact: { ...s.answers.artifact, existingArtifactId: "x-2" } } as any });
+    // artifact -> review
+    s = reduce(s, { type: "advance" });
     expect(s.currentStep).toBe("review");
+    // review advance is a no-op
     s = reduce(s, { type: "advance" });
     expect(s.currentStep).toBe("review");
   });

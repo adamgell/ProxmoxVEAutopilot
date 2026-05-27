@@ -97,7 +97,7 @@ export function initialState(): WizardState {
         adJoinPasswordRef: { ref: null, isSet: false },
         localAdminPasswordRef: { ref: null, isSet: false },
       },
-      tenant: { skipped: true, tenantId: null, tenantDomain: null, commentFile: null },
+      tenant: { skipped: false, tenantId: null, tenantDomain: null, commentFile: null },
       artifact: {
         kind: "cloudosd",
         source: "existing",
