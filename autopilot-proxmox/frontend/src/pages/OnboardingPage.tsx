@@ -1,13 +1,13 @@
 import { useEffect, useReducer, useState } from "react";
 import type { AppBootstrap } from "../contracts";
-import { reduce } from "../onboarding/machine";
+import { reduce, canAdvance } from "../onboarding/machine";
 import {
   initialState,
   STEP_ORDER,
-  type WizardEvent,
-  type WizardState,
   type WizardStep,
   type Persona,
+  type PersistedStatus,
+  type Answers,
 } from "../onboarding/types";
 import { StepRail } from "../onboarding/StepRail";
 import { AlreadyConfiguredCard } from "../onboarding/AlreadyConfiguredCard";
@@ -20,16 +20,20 @@ import {
   PreconditionRequiredError,
 } from "../onboarding/persistence";
 
-function reducer(state: WizardState, event: WizardEvent): WizardState {
-  return reduce(state, event);
-}
+type WireRow = {
+  readonly status: PersistedStatus;
+  readonly current_step: WizardStep;
+  readonly persona: Persona | null;
+  readonly launched_run_id: string | null;
+  readonly answers: Partial<Answers>;
+};
 
 interface Props {
   readonly bootstrap: AppBootstrap;
 }
 
-export function OnboardingPage({ bootstrap: _bootstrap }: Props) {
-  const [state, dispatch] = useReducer(reducer, initialState());
+export function OnboardingPage(_props: Props) {
+  const [state, dispatch] = useReducer(reduce, initialState());
   const [hydrated, setHydrated] = useState(false);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
 
@@ -58,39 +62,42 @@ export function OnboardingPage({ bootstrap: _bootstrap }: Props) {
     if (!hydrated) return;
     if (state.status === "launched") {
       window.location.href = "/react/onboarding/setup";
-    }
-    if (state.status === "complete") {
+    } else if (state.status === "complete") {
       window.location.href = "/react-shell";
     }
   }, [hydrated, state.status]);
 
   const optionalSteps: ReadonlySet<WizardStep> = new Set(
-    state.answers.persona === "lab" && state.answers.identity.mode === "workgroup" ? ["tenant" as WizardStep] : [],
+    state.answers.persona === "lab" && state.answers.identity.mode === "workgroup" ? ["tenant"] : [],
   );
 
   async function persist(patch: Record<string, unknown>) {
     try {
       const result = await putState({ patch }, state.etag);
+      const row = result.row as WireRow;
       dispatch({
         type: "hydrate",
         state: {
-          ...state,
-          ...(result.row as Partial<WizardState>),
+          status: row.status,
+          currentStep: row.current_step,
+          answers: { ...state.answers, ...row.answers, persona: row.persona },
+          launchedRunId: row.launched_run_id,
           etag: result.etag,
-          answers: { ...state.answers, ...(result.row.answers as object) },
         },
       });
     } catch (e) {
       if (e instanceof PreconditionFailedError || e instanceof PreconditionRequiredError) {
         const fresh = await fetchState();
         if (fresh) {
+          const row = fresh.row as WireRow;
           dispatch({
             type: "hydrate",
             state: {
-              ...state,
-              ...(fresh.row as Partial<WizardState>),
+              status: row.status,
+              currentStep: row.current_step,
+              answers: { ...state.answers, ...row.answers, persona: row.persona },
+              launchedRunId: row.launched_run_id,
               etag: fresh.etag,
-              answers: { ...state.answers, ...(fresh.row.answers as object) },
             },
           });
         }
@@ -139,7 +146,7 @@ export function OnboardingPage({ bootstrap: _bootstrap }: Props) {
         <section><p>Step {state.currentStep} pending implementation.</p></section>
       )}
       <footer className="onboarding-footer">
-        <button type="button" onClick={onAdvance} disabled={!canAdvanceLocal(state)}>
+        <button type="button" onClick={onAdvance} disabled={!canAdvance(state)}>
           Next
         </button>
         <button
@@ -162,12 +169,4 @@ export function OnboardingPage({ bootstrap: _bootstrap }: Props) {
       ) : null}
     </main>
   );
-}
-
-function canAdvanceLocal(state: WizardState): boolean {
-  // Inlined import to avoid circular-name concerns; same logic as machine.canAdvance.
-  if (state.currentStep === "welcome") {
-    return state.answers.persona !== null;
-  }
-  return true;
 }

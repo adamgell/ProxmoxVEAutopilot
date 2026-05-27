@@ -16,9 +16,13 @@ interface AlreadyConfiguredResponse {
 export function AlreadyConfiguredCard() {
   const [rows, setRows] = useState<CardRow[]>([]);
   useEffect(() => {
+    const controller = new AbortController();
     void (async () => {
       try {
-        const r = await fetch("/api/onboarding/already-configured", { credentials: "include" });
+        const r = await fetch("/api/onboarding/already-configured", {
+          credentials: "include",
+          signal: controller.signal,
+        });
         if (!r.ok) {
           setRows([{ label: "Status", ok: false, summary: `Couldn't reach controller (HTTP ${r.status})` }]);
           return;
@@ -31,9 +35,11 @@ export function AlreadyConfiguredCard() {
         if (body.ad_vault) next.push({ label: "AD vault", ok: body.ad_vault.ok, summary: body.ad_vault.summary });
         setRows(next);
       } catch (e) {
+        if ((e as Error).name === "AbortError") return;
         setRows([{ label: "Status", ok: false, summary: (e as Error).message }]);
       }
     })();
+    return () => controller.abort();
   }, []);
   return (
     <aside className="already-configured" aria-label="Already configured">
