@@ -17,7 +17,7 @@ In scope:
 - A new live setup-monitor page at `/react/onboarding/setup` that streams progress as the operator's choices materialize.
 - Backend persistence so the wizard survives browser refresh, log out, multi-tab, and re-login.
 - Probe endpoints so each step can validate against the live cluster ("Test this now").
-- A "Get started" hero CTA on ShellIndexPage when wizard status is `pending` or `in_progress`.
+- A "Get started" hero CTA on ShellIndexPage whose visibility rules are spelled out in the Backward compatibility section below.
 
 Out of scope:
 - Controller bootstrap (`/setup` + `/api/setup/v1/*` already exist for this).
@@ -117,9 +117,14 @@ Reused (untouched)
 
 Five steps. Each carries the same shape: explainer copy, field(s), inline validation, "Test this now" probe button, "What if it fails" expander.
 
+Steps marked "Optional" for the operator's persona still appear in the step rail at full visibility, with a small "optional" badge next to the step number. The operator can enter the step, see what would have been asked, and either fill it in or click "Skip this step" to advance. They are never hidden (the "no hiding anything" rule).
+
+A persistent "Discard onboarding" link sits in the wizard footer on every step. It is enabled while `status` is `pending` or `in_progress`, disabled (with a tooltip "Cannot discard mid-launch. Abort the run from /react/jobs first.") while `status='launched'`, and replaced by a "Start over" button on the completion card after `status='complete'`. Either action issues `DELETE /api/onboarding/state` after a confirm modal.
+
 ### 1. Welcome + Persona
 
 - Top of page: read-only "Already configured" card showing what the controller knows (Proxmox host + node + version, default storage pools, default bridge, AD vault status). Calls existing health surfaces on render. The operator does not enter any of this.
+- "Already configured" card failure handling: each row in the card renders independently. If the Proxmox health surface times out, that row shows a yellow "Couldn't reach Proxmox - check `/react/settings`" warning but the wizard still proceeds. The wizard never blocks itself on infra the operator did not configure inside the wizard; they will discover unreachable infra at probe time on later steps with actionable remediation.
 - Asks: lane pick (Lab / MSP / Corp).
 - Probe: none.
 
@@ -145,6 +150,7 @@ Five steps. Each carries the same shape: explainer copy, field(s), inline valida
 - Asks: use existing CloudOSD or OSDeploy artifact (picker shows what is on disk with timestamps), or build a new one now.
 - Probe: `POST /api/onboarding/probe/artifact`. Returns inventory from `cloudosd_cache` + `osdeploy_cache`.
 - Build-while-you-fill: if the operator kicks a build here, the wizard does not block. The build job appears in the monitor page's phase rail once the operator reaches step 5.
+- Resume on reload: on every page load, if `answers.artifact.build_job_id` is non-null the wizard re-attaches to that job by polling its status alongside the regular state hydration. If the job has already failed or has been pruned, the picker re-renders with the build banner cleared and an inline note: "The build kicked earlier could not be found. Pick again or rebuild." No silent state.
 - Failure remediations:
   - "Build host unreachable. Open `/react/settings` and check the `build_host` field (Windows build host SSH target, e.g. `user@192.168.2.50`)." (link to `/react/settings` scrolled to the `build_host` field anchor)
   - "Source media missing. Upload media at /react/files." (link)
@@ -290,6 +296,31 @@ the wizard row):
 - No PowerShell expected. If a PS helper appears mid-build, Pester suite mirrors `tools/cloudosd-build/tests/*.Tests.ps1` style.
 - Manual end-to-end gate: walk the wizard against the live controller at autopilot.gell.one and watch a trial provision reach `complete` against pve2. UI work is not done because tests pass; it is done because the user flow works.
 
+## Backward compatibility
+
+The controller has been in use before this wizard ships. Every operator who has logged in previously has no `onboarding_state` row. Naively reading "no row" as `status='pending'` would shove a hero CTA at every existing operator on their next login. Wrong default.
+
+Rule: absence of a row is interpreted as "not started, do not show the hero CTA." The CTA appears only after the operator deliberately clicks "Start the onboarding wizard" from the Settings nav group. Once they click that, an `onboarding_state` row is created with `status='in_progress'` and the hero CTA from that point forward serves as a "resume" affordance.
+
+Discoverability for new operators is solved by adding a permanent "Onboarding wizard" entry to the Settings nav group. New operators find it deliberately; existing operators ignore it. No automatic mass-marking of existing operators as `complete` is needed.
+
+ShellIndexPage CTA visibility table:
+
+| Row state                  | Hero CTA on ShellIndexPage                     |
+| -------------------------- | ---------------------------------------------- |
+| No row                     | Nothing                                        |
+| `pending`                  | Nothing (transient state; rows are created already in_progress) |
+| `in_progress`              | Hero "Resume onboarding"                       |
+| `launched`                 | Small "Resume setup monitor" link              |
+| `complete`                 | Nothing                                        |
+| `aborted`                  | Nothing                                        |
+
+## Authorization
+
+`web/auth.py`'s `current_user` (line 178) verifies a valid session and returns the user claims. There is no role-based check; all logged-in operators are equal. The wizard follows this convention: any logged-in operator can start an onboarding run, can edit its own row, can launch, and can discard. The wizard does not introduce admin-only operations.
+
+This is a deliberate accepted-risk choice that matches the rest of the autopilot UI (settings save, credential edit, provision launch are all available to any logged-in operator today). If the project later grows a role system, the wizard endpoints will adopt it alongside the existing endpoints, not in isolation.
+
 ## Security posture
 
 - The new endpoints follow the existing project convention: session-cookie authentication via the shared `Depends(current_user)` and no CSRF token on autopilot UI calls. The project's existing PUT/POST/DELETE endpoints (settings save, credential create, provision launch, files upload) do not use CSRF tokens either; adding them on the new endpoints alone would create a confusing posture without raising the bar. This is named here as an accepted risk so a reviewer does not have to discover the gap themselves. The only CSRF tokens in the codebase belong to the Proxmox API client (`CSRFPreventionToken`); those continue to be used as before.
@@ -330,6 +361,21 @@ Modified files (small, additive):
 - `autopilot-proxmox/frontend/src/pages/ShellIndexPage.tsx` (CTA based on bootstrap.onboarding)
 - `autopilot-proxmox/frontend/src/contracts.ts` (bootstrap shape gains onboarding status)
 - `autopilot-proxmox/web/app.py` (register the new router; inject onboarding status into bootstrap)
+
+## Suggested build order
+
+The implementation plan will refine this, but the natural sequence that lets each piece be testable on landing is:
+
+1. **`web/onboarding_pg.py`** with `init(conn)`, plus a unit-tested CRUD surface (`get_state`, `put_state`, `delete_state`, `set_launched_run`). Tests run against an ephemeral postgres fixture.
+2. **`web/onboarding_endpoints.py`** with `/api/onboarding/state` GET/PUT/DELETE and the `If-Match` ETag plumbing. Probe endpoints are stubbed to return 501 here; real probes land in step 4.
+3. **`frontend/src/onboarding/machine.ts`** + vitest. Pure reducer, no UI, no I/O. Drives every forward gate, backward jump, and launch one-shot.
+4. **Probe endpoints, one at a time**: AD (reuse python-ldap helper), tenant (Graph or shape-only), artifact (read cloudosd/osdeploy caches). Each lands with happy + sad pytest cases.
+5. **Step components** + the wizard page shell. Each step pulls its data from the state machine and posts back via the persistence layer. Accessibility checks land alongside each step.
+6. **Launch transaction** + setup-status projection. This is where install_tracking_pg.create_run and the artifact-bound provision endpoints get wired up. Pytest fixtures cover happy + sad.
+7. **Setup monitor page** with polling + phase rail rendering. End-to-end smoke against a recorded fixture; then against the live controller as the final acceptance gate.
+8. **ShellIndexPage CTA and contracts.ts bootstrap shape**. Smallest change, lands last so it does not gate earlier pieces.
+
+Each step ends in a commit and a green test suite. No step depends on a future step's work.
 
 ## Open questions resolved during brainstorming
 
