@@ -31,3 +31,42 @@ def test_probe_ad_reports_first_failing_check_in_detail(monkeypatch):
     result = onboarding_probes.probe_ad("nope.example.com", "x", "x")
     assert result["ok"] is False
     assert "NXDOMAIN" in result["detail"]
+
+
+def test_probe_ad_handles_missing_ping_binary(monkeypatch):
+    """ICMP failure must not crash the probe."""
+    monkeypatch.setattr(onboarding_probes, "_dns_resolve", lambda d: (True, "resolved"))
+
+    import subprocess as _sp
+    def fake_subprocess_run(*a, **kw):
+        raise FileNotFoundError("ping not on PATH")
+    monkeypatch.setattr(_sp, "run", fake_subprocess_run)
+    ok, detail = onboarding_probes._icmp_ping("home.gell.one")
+    assert ok is False
+    assert "ping binary not found" in detail
+
+
+def test_ldap_bind_unbinds_on_failure(monkeypatch):
+    """A failed bind must still close the connection."""
+    closed = []
+
+    class FakeLDAPError(Exception):
+        pass
+
+    class FakeConn:
+        def set_option(self, *a, **kw): pass
+        def simple_bind_s(self, *a, **kw): raise FakeLDAPError("forced failure")
+        def unbind_s(self): closed.append(True)
+
+    class FakeLdapModule:
+        OPT_REFERRALS = 1
+        OPT_NETWORK_TIMEOUT = 2
+        LDAPError = FakeLDAPError
+        class INVALID_CREDENTIALS(FakeLDAPError): pass
+        def initialize(self, url): return FakeConn()
+
+    import sys
+    monkeypatch.setitem(sys.modules, "ldap", FakeLdapModule())
+    ok, detail = onboarding_probes._ldap_bind("home.gell.one", "x", "y")
+    assert ok is False
+    assert closed == [True], "unbind_s must be called even when bind raises"

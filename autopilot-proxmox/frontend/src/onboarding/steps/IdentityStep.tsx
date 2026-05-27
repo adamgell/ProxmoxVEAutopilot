@@ -26,22 +26,39 @@ export function IdentityStep({ state, onPatch }: Props) {
       return;
     }
     setProbing(true);
-    const r = await fetch("/api/onboarding/probe/ad", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        domain: identity.adDomain,
-        account: identity.adJoinAccount,
-        password: adPassword,
-      }),
-    });
-    const body = await r.json();
-    setProbing(false);
-    setProbeResult({ ok: body.ok, detail: body.detail });
-    onPatch({
-      probeResults: { ...state.answers.probeResults, ad: { at: new Date().toISOString(), ok: body.ok, detail: body.detail } },
-    });
+    try {
+      const r = await fetch("/api/onboarding/probe/ad", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domain: identity.adDomain,
+          account: identity.adJoinAccount,
+          password: adPassword,
+        }),
+      });
+      if (!r.ok) {
+        const detail = `Probe request failed (HTTP ${r.status})`;
+        setProbeResult({ ok: false, detail });
+        onPatch({
+          probeResults: { ...state.answers.probeResults, ad: { at: new Date().toISOString(), ok: false, detail } },
+        });
+        return;
+      }
+      const body = await r.json();
+      setProbeResult({ ok: body.ok, detail: body.detail });
+      onPatch({
+        probeResults: { ...state.answers.probeResults, ad: { at: new Date().toISOString(), ok: body.ok, detail: body.detail } },
+      });
+    } catch (e) {
+      const detail = `Probe request failed: ${(e as Error).message}`;
+      setProbeResult({ ok: false, detail });
+      onPatch({
+        probeResults: { ...state.answers.probeResults, ad: { at: new Date().toISOString(), ok: false, detail } },
+      });
+    } finally {
+      setProbing(false);
+    }
   }
 
   function flushPasswordsBeforeAdvance() {

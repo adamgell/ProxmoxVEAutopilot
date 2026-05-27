@@ -31,6 +31,10 @@ def _icmp_ping(host: str) -> tuple[bool, str]:
         return False, "no reply (ICMP may be blocked; ignore if LDAP succeeds)"
     except subprocess.TimeoutExpired:
         return False, "timeout"
+    except FileNotFoundError:
+        return False, "ping binary not found"
+    except OSError as e:
+        return False, f"ping failed: {e}"
 
 
 def _ldap_bind(domain: str, account: str, password: str) -> tuple[bool, str]:
@@ -48,13 +52,20 @@ def _ldap_bind(domain: str, account: str, password: str) -> tuple[bool, str]:
         conn = ldap.initialize(f"ldap://{domain}")
         conn.set_option(ldap.OPT_REFERRALS, 0)
         conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
+    except ldap.LDAPError as e:
+        return False, f"LDAPError: {e}"
+    try:
         conn.simple_bind_s(f"{account}@{domain}", password)
-        conn.unbind_s()
         return True, f"bound as {account}@{domain}"
     except ldap.INVALID_CREDENTIALS:
         return False, "invalid credentials"
     except ldap.LDAPError as e:
         return False, f"LDAPError: {e}"
+    finally:
+        try:
+            conn.unbind_s()
+        except Exception:
+            pass
 
 
 def probe_ad(domain: str, account: str, password: str) -> dict:
