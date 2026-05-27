@@ -180,9 +180,17 @@ def already_configured():
 
 
 # Probe + launch + setup-status: stubs for now (Tasks 7-12 will implement).
-@router.post("/probe/ad", status_code=501)
-def probe_ad():
-    raise HTTPException(status_code=501, detail="ad probe not yet implemented")
+class ProbeAdRequest(BaseModel):
+    domain: str
+    account: str
+    password: str
+
+
+@router.post("/probe/ad")
+def probe_ad(body: ProbeAdRequest, owner_sub: str = Depends(_owner_sub)):
+    from web import onboarding_probes
+    with _probe_lock(owner_sub, "ad"):
+        return onboarding_probes.probe_ad(body.domain, body.account, body.password)
 
 
 @router.post("/probe/tenant", status_code=501)

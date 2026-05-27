@@ -72,9 +72,35 @@ def test_delete_state_clears_row():
 
 def test_probe_endpoints_stubbed_to_501():
     client = TestClient(app)
-    for path in ("ad", "tenant", "artifact"):
+    for path in ("tenant", "artifact"):
         r = client.post(f"/api/onboarding/probe/{path}", json={})
         assert r.status_code == 501
+
+
+def test_probe_ad_returns_probe_helper_result(monkeypatch):
+    from web import onboarding_probes
+
+    expected = {
+        "ok": True,
+        "detail": "bound as svc-autopilot@home.gell.one",
+        "checks": {
+            "dns": {"ok": True, "detail": "resolved 192.168.2.10"},
+            "icmp": {"ok": True, "detail": "1 round-trip 2ms"},
+            "ldap": {"ok": True, "detail": "bound as svc-autopilot@home.gell.one"},
+        },
+    }
+    monkeypatch.setattr(
+        onboarding_probes,
+        "probe_ad",
+        lambda domain, account, password: expected,
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/onboarding/probe/ad",
+        json={"domain": "home.gell.one", "account": "svc-autopilot", "password": "pw"},
+    )
+    assert r.status_code == 200
+    assert r.json() == expected
 
 
 def test_launch_endpoint_stubbed_to_501():
