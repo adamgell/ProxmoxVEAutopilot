@@ -62,6 +62,20 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
   });
 
+  test("includes onboarding wizard in Settings nav", () => {
+    const settings = operatorNavGroups.find((g) => g.label === "Settings");
+    expect(settings).toBeDefined();
+    const onboarding = settings!.items.find((i) => i.path === "/react/onboarding");
+    expect(onboarding).toBeDefined();
+    expect(onboarding!.label).toBe("Onboarding wizard");
+  });
+
+  test("hides the onboarding setup monitor from the nav", () => {
+    const route = reactRouteForPath("/react/onboarding/setup");
+    expect(route).toBeDefined();
+    expect(route!.showInNav).toBe(false);
+  });
+
   test("maps refined operator flows to React starts without Jinja steps", () => {
     expect(operatorFlows.map((flow) => flow.label)).toEqual([
       "Observe",

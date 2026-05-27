@@ -5105,24 +5105,46 @@ async def legacy_dashboard(request: Request):
     return _primary_ui_redirect("/react/dashboard")
 
 
+def _build_bootstrap_payload(user: dict | None) -> dict:
+    from web import db_pg
+    payload: dict = {
+        "buildSha": (_APP_VERSION.get("sha_short") or "unknown"),
+        "buildTime": _APP_VERSION.get("build_time", ""),
+        "userName": str((user or {}).get("name") or (user or {}).get("email") or (user or {}).get("upn") or ""),
+        "userEmail": str((user or {}).get("email") or (user or {}).get("upn") or ""),
+    }
+    sub = str((user or {}).get("sub") or "local-operator")
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            row = _onboarding_pg.get_state(conn, sub)
+    except Exception:
+        row = None
+    if row is None:
+        payload["onboarding"] = {"status": "absent"}
+    else:
+        payload["onboarding"] = {
+            "status": row["status"],
+            "currentStep": row.get("current_step"),
+        }
+    return payload
+
+
 def _render_react_shell(request: Request, *, shell_kind: str = "protected"):
-    build_sha = (_APP_VERSION.get("sha_short") or "unknown")
-    build_time = _APP_VERSION.get("build_time", "")
-    assets = _react_asset_tags(f"{build_sha}-{build_time}")
     user = request.session.get("user") if request and request.session else {}
-    user_name = ""
-    user_email = ""
-    if isinstance(user, dict):
-        user_name = str(user.get("name") or user.get("email") or user.get("upn") or "")
-        user_email = str(user.get("email") or user.get("upn") or "")
+    user_dict = user if isinstance(user, dict) else {}
+    bootstrap = _build_bootstrap_payload(user_dict)
+    build_sha = str(bootstrap.get("buildSha") or "unknown")
+    build_time = str(bootstrap.get("buildTime") or "")
+    assets = _react_asset_tags(f"{build_sha}-{build_time}")
     response = templates.TemplateResponse("react_shell.html", {
         "request": request,
         "asset_scripts": assets["scripts"],
         "asset_styles": assets["styles"],
         "build_sha": build_sha,
         "build_time": build_time,
-        "user_name": user_name,
-        "user_email": user_email,
+        "user_name": str(bootstrap.get("userName") or ""),
+        "user_email": str(bootstrap.get("userEmail") or ""),
+        "onboarding_json": json.dumps(bootstrap.get("onboarding") or {"status": "absent"}),
         "shell_kind": shell_kind,
     })
     response.headers["Cache-Control"] = "no-store"

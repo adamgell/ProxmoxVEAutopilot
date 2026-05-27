@@ -3,6 +3,30 @@ import { OperatorShell } from "../components/Shell";
 import { Panel } from "../components/ui";
 import { migratedRoutes, operatorFlows, operatorNavGroups } from "../routes";
 
+function OnboardingHero({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
+  const status = bootstrap.onboarding?.status ?? "absent";
+  if (status === "absent" || status === "complete" || status === "aborted") {
+    return null;
+  }
+  if (status === "launched") {
+    return (
+      <a className="onboarding-resume-link" href="/react/onboarding/setup">
+        Resume setup monitor
+      </a>
+    );
+  }
+  // status === 'pending' | 'in_progress'
+  return (
+    <section className="onboarding-hero" aria-label="Onboarding">
+      <h2>Resume onboarding</h2>
+      <p>You started the onboarding wizard but did not finish. Pick up where you left off.</p>
+      <a className="onboarding-hero-cta" href="/react/onboarding">
+        Resume onboarding
+      </a>
+    </section>
+  );
+}
+
 function routeCount(label: string): string {
   const group = operatorNavGroups.find((item) => item.label === label);
   if (!group) {
@@ -38,6 +62,7 @@ function FlowCard({ flow }: { readonly flow: OperatorFlow }) {
 export function ShellIndexPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   return (
     <OperatorShell bootstrap={bootstrap} path="/react-shell">
+      <OnboardingHero bootstrap={bootstrap} />
       <section className="page-head" aria-labelledby="shell-title">
         <div>
           <p>Operator map</p>
