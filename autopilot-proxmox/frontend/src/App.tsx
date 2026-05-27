@@ -9,6 +9,7 @@ import { HashesPage } from "./pages/HashesPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 import { LoginPage, SetupPage } from "./pages/PublicPages";
 import { RetiredJinjaPage, retiredConfigForPath } from "./pages/RetiredJinjaPages";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -62,6 +63,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/onboarding") {
+    return <OnboardingPage bootstrap={bootstrap} />;
   }
   const retiredConfig = retiredConfigForPath(path);
   if (retiredConfig) {
