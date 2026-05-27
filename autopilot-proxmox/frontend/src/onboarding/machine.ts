@@ -12,7 +12,7 @@ function nextStep(current: WizardStep): WizardStep {
   if (idx < 0 || idx >= STEP_ORDER.length - 1) {
     return current;
   }
-  return STEP_ORDER[idx + 1];
+  return STEP_ORDER[idx + 1]!;
 }
 
 function mergeAnswers(prev: Answers, patch: Partial<Answers>): Answers {
