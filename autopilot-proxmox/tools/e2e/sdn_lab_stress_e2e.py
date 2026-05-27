@@ -1981,6 +1981,37 @@ $auth = [ordered]@{{ ok = $false; share_write_read_ok = $false; bad_password_rej
 try {{
   $work = 'C:\\ProgramData\\ProxmoxVEAutopilot\\E2EProof'
   New-Item -ItemType Directory -Force -Path $work | Out-Null
+  # Grant SeBatchLogonRight to the proof user before Register-ScheduledTask.
+  # Domain-joined workstations do not give ordinary domain users the right
+  # to be logged on as a batch job, which makes Task Scheduler refuse to
+  # start the task with ERROR_LOGON_NOT_GRANTED (0x80070569 / 2147943785,
+  # Task Scheduler Operational event 101). Use secedit /areas USER_RIGHTS
+  # so we only touch user-rights policy, not the rest of the local SECPOL.
+  try {{
+    $proofSid = (New-Object System.Security.Principal.NTAccount($proofUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    $auth.proof_user_sid = $proofSid
+    $secInf = Join-Path $work 'batch-logon.inf'
+    $secDb  = Join-Path $work 'batch-logon.sdb'
+    & secedit.exe /export /cfg $secInf /areas USER_RIGHTS /quiet | Out-Null
+    $inf = Get-Content -LiteralPath $secInf -Raw
+    if ($inf -match '(?m)^SeBatchLogonRight\\s*=\\s*([^\\r\\n]*)') {{
+      $existing = $Matches[1].Trim()
+      if ($existing -notmatch [regex]::Escape($proofSid)) {{
+        $newLine = "SeBatchLogonRight = " + $existing.TrimEnd(',') + ",*" + $proofSid
+        $inf = [regex]::Replace($inf, '(?m)^SeBatchLogonRight\\s*=\\s*[^\\r\\n]*', $newLine)
+      }}
+    }} else {{
+      $inf = $inf -replace '(?m)^\\[Privilege Rights\\]\\s*$', "[Privilege Rights]`r`nSeBatchLogonRight = *$proofSid"
+    }}
+    # secedit /configure needs UTF-16 LE w/ BOM (Unicode).
+    [System.IO.File]::WriteAllText($secInf, $inf, [System.Text.UnicodeEncoding]::new($false, $true))
+    & secedit.exe /configure /db $secDb /cfg $secInf /areas USER_RIGHTS /quiet | Out-Null
+    $auth.batch_logon_grant_ok = ($LASTEXITCODE -eq 0)
+    Remove-Item -LiteralPath $secInf, $secDb -Force -ErrorAction SilentlyContinue
+  }} catch {{
+    $auth.batch_logon_grant_ok = $false
+    $auth.batch_logon_grant_error = $_.Exception.Message
+  }}
   $scriptPath = Join-Path $work 'user-auth-proof.ps1'
   $outPath = Join-Path $work 'user-auth-proof.json'
   $share = "\\\\$dcFqdn\\E2EAuthProof"

@@ -250,6 +250,64 @@ def test_workstation_user_auth_proof_uses_limited_triggered_task_with_diagnostic
     assert "$auth.task" in script
 
 
+def test_workstation_user_auth_proof_grants_batch_logon_right_before_scheduling():
+    """Domain workstations don't grant SeBatchLogonRight to ordinary domain
+    users by default. Without the grant, Task Scheduler refuses to start
+    the proof task with ERROR_LOGON_NOT_GRANTED (0x80070569, observed as
+    Task Scheduler Operational event 101 'Additional Data: Error Value:
+    2147943785' and last_result=267011 / SCHED_S_TASK_HAS_NOT_RUN). The
+    proof script must grant SeBatchLogonRight to the proof user before
+    calling Register-ScheduledTask, otherwise every workstation proof
+    fails with user_auth_failed / user_share_write_read_failed.
+
+    Observed in sdn-lab-stress-20260527T123846Z E2E30-WK-01_domain_auth_proof.json.
+    """
+    e2e = _load_module()
+    harness = object.__new__(e2e.StressHarness)
+    spec = e2e.LabSpec(
+        name="E2E Lab 30",
+        zone="e2ez30",
+        vnet="e2ev30",
+        cidr="10.77.30.0/24",
+        gateway="10.77.30.1",
+        domain="e2e30.lab",
+        netbios="E2E30",
+        dc_name="E2E30-DC01",
+        dc_ip="10.77.30.100",
+        workstation_prefix="E2E30-WK",
+    )
+
+    script = harness.workstation_proof_script(spec, "proof-password")
+
+    # Marker comment / function presence proves the grant step exists.
+    assert "Grant SeBatchLogonRight" in script, (
+        "proof script must grant batch logon right to the proof user before "
+        "registering the scheduled task"
+    )
+
+    # secedit-based grant for minimum-privilege approach (don't add user
+    # to powerful local groups like Backup Operators).
+    assert "secedit.exe /export" in script
+    assert "secedit.exe /configure" in script
+    assert "SeBatchLogonRight" in script
+
+    # /areas USER_RIGHTS restricts the import so we don't accidentally
+    # rewrite unrelated policy when re-applying the modified .inf.
+    assert "/areas USER_RIGHTS" in script
+
+    # secedit /configure expects the .inf in UTF-16 LE (Unicode); writing
+    # it as ASCII or UTF-8 silently breaks the import.
+    assert "UnicodeEncoding" in script
+
+    # The grant must precede Register-ScheduledTask in the script body so
+    # the user already has the right when the task is registered.
+    grant_idx = script.index("Grant SeBatchLogonRight")
+    register_idx = script.index("Register-ScheduledTask -TaskName $taskName")
+    assert grant_idx < register_idx, (
+        "SeBatchLogonRight grant must run BEFORE Register-ScheduledTask"
+    )
+
+
 def test_cloudosd_domain_join_config_carries_credential_sequence_and_dc_ip():
     e2e = _load_module()
     spec = e2e.LabSpec(
