@@ -126,7 +126,7 @@ Five steps. Each carries the same shape: explainer copy, field(s), inline valida
 ### 2. Identity
 
 - Asks: Workgroup or AD-joined. AD branch asks domain (default `home.gell.one` if vault has a home.gell.one-shaped service account, else blank), join account, join password, local admin password.
-- Probe: `POST /api/onboarding/probe/ad`. Runs DNS resolution, ICMP, LDAP bind. Surfaces which check failed.
+- Probe: `POST /api/onboarding/probe/ad`. Runs DNS resolution, ICMP, LDAP bind. Reuses the existing python-ldap + SASL/GSSAPI helper in `app.py` (around line 3044) rather than introducing a new client library; the requirements.txt comment is explicit that python-ldap is preferred over ldap3 because ldap3 2.x's SASL signing fails against AD. Surfaces which check failed.
 - Failure remediations (verbatim copy in the expander):
   - "DNS does not resolve the domain. Open Settings > DNS and confirm your forwarder includes a domain controller."
   - "LDAP bind refused. The join account exists but cannot read the directory. Grant it 'Account Operators' or an equivalent group in AD Users and Computers."
@@ -146,7 +146,7 @@ Five steps. Each carries the same shape: explainer copy, field(s), inline valida
 - Probe: `POST /api/onboarding/probe/artifact`. Returns inventory from `cloudosd_cache` + `osdeploy_cache`.
 - Build-while-you-fill: if the operator kicks a build here, the wizard does not block. The build job appears in the monitor page's phase rail once the operator reaches step 5.
 - Failure remediations:
-  - "Build host unreachable. Settings > Build host." (link)
+  - "Build host unreachable. Open `/react/settings` and check the `build_host` field (Windows build host SSH target, e.g. `user@192.168.2.50`)." (link to `/react/settings` scrolled to the `build_host` field anchor)
   - "Source media missing. Upload media at /react/files." (link)
 
 ### 5. Review + Launch
@@ -183,7 +183,7 @@ Phases are projected from wizard answers. Skipped phases appear in the rail with
 
 ### Data source
 
-- `GET /api/onboarding/setup-status` polled every 2s while the tab is foreground, every 10s when backgrounded (Page Visibility API).
+- `GET /api/onboarding/setup-status` polled every 2s while the tab is foreground, every 10s when backgrounded (Page Visibility API). Polling was chosen over the existing `web/live.py` WebSocket hub because (a) the monitor page is short-lived (a few minutes to tens of minutes per onboarding run), (b) the data is small and easy to cache, and (c) adding a new WS subscription type would couple two surfaces that otherwise stay independent. Revisit if pageload latency becomes a problem at scale.
 - Returns: phase list with status drawn from `install_tracking_pg.VALID_STATUSES` (`pending` | `running` | `ready` | `blocked` | `failed` | `skipped`), durations, current_job_id, last N log lines. Using the existing enum avoids a translation layer that would rot; the wizard UI maps these to operator-facing labels ("Done" for `ready`, "Waiting" for `pending`, etc.) at render time.
 - Implementation reads `install_tracking` rows + recent `jobs` rows + tails the job log file. The phase model is a thin projection over those tables.
 - Log stream is server-side filtered by job-tag to match the active phase.
@@ -290,6 +290,13 @@ the wizard row):
 - No PowerShell expected. If a PS helper appears mid-build, Pester suite mirrors `tools/cloudosd-build/tests/*.Tests.ps1` style.
 - Manual end-to-end gate: walk the wizard against the live controller at autopilot.gell.one and watch a trial provision reach `complete` against pve2. UI work is not done because tests pass; it is done because the user flow works.
 
+## Security posture
+
+- The new endpoints follow the existing project convention: session-cookie authentication via the shared `Depends(current_user)` and no CSRF token on autopilot UI calls. The project's existing PUT/POST/DELETE endpoints (settings save, credential create, provision launch, files upload) do not use CSRF tokens either; adding them on the new endpoints alone would create a confusing posture without raising the bar. This is named here as an accepted risk so a reviewer does not have to discover the gap themselves. The only CSRF tokens in the codebase belong to the Proxmox API client (`CSRFPreventionToken`); those continue to be used as before.
+- Secret values are never round-tripped to the browser. The wizard PUTs a password once; the controller writes it to `vault.yml` and replaces the in-row value with the sentinel ref shape described above. On GET the slot returns `{ref, is_set}` only. This matches the existing settings-vault behavior.
+- The `owner_sub` column is derived server-side from the session (Entra `sub` claim, or hardcoded `local-operator` in local-auth mode). The wizard JSON payload never carries an `owner_sub` value; any client-supplied value is ignored.
+- Probe endpoints are rate-limited to one in-flight call per (owner_sub, probe-name) pair via an in-process lock. This prevents an over-eager UI or a held-down keyboard from hammering AD, Graph, or Proxmox.
+
 ## Accessibility
 
 - Each wizard step is a `<form>` with one `<h1>` and `<fieldset>`-grouped controls. Tab order matches visual order.
@@ -315,7 +322,7 @@ New files:
 - `autopilot-proxmox/web/onboarding_phases.py` (the install_tracking projection)
 - `autopilot-proxmox/tests/test_onboarding_endpoints.py`
 - `autopilot-proxmox/tests/test_onboarding_phases.py`
-- Postgres migration adding the `onboarding_state` table
+- Schema bootstrap follows the existing project pattern: `web/onboarding_pg.py` exposes an idempotent `init(conn: Connection | None = None) -> None` function (matching `install_tracking_pg.init` at line 327 and `sequences_pg.init` at line 144). It is called from app startup alongside the other module inits. No dedicated migration tool is added; the `init` function creates the table with `CREATE TABLE IF NOT EXISTS` and applies any column additions defensively.
 
 Modified files (small, additive):
 - `autopilot-proxmox/frontend/src/App.tsx` (route additions)
