@@ -615,6 +615,7 @@ from web.osd_v2_endpoints import (
 )
 from web.agent_v1_endpoints import router as _agent_v1_router
 from web.cloudosd_endpoints import router as _cloudosd_router
+from web import onboarding_endpoints as _onboarding_endpoints, onboarding_pg as _onboarding_pg
 try:
     from web.osdeploy_endpoints import router as _osdeploy_router
 except ModuleNotFoundError:
@@ -628,6 +629,7 @@ app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
 app.include_router(_cloudosd_router)
+app.include_router(_onboarding_endpoints.router)
 if _osdeploy_router is not None:
     app.include_router(_osdeploy_router)
 
@@ -2121,6 +2123,7 @@ def _init_app_database() -> None:
         devices_pg,
         lab_bubbles_pg,
         machine_lifecycle_pg,
+        onboarding_pg,
         osdeploy_cache,
         osdeploy_pg,
         ts_engine_pg,
@@ -2138,6 +2141,7 @@ def _init_app_database() -> None:
         osdeploy_cache.init(conn)
         deployment_health_pg.init(conn)
         lab_bubbles_pg.init(conn)
+        onboarding_pg.init(conn)
 
 
 class _BubbleCreate(BaseModel):
