@@ -147,8 +147,10 @@ export function OnboardingPage(_props: Props) {
       throw new Error(`Launch failed (HTTP ${r.status})`);
     }
     const body = await r.json();
+    if (typeof body.run_id !== "string" || !body.run_id) {
+      throw new Error("Launch endpoint returned no run_id");
+    }
     dispatch({ type: "markLaunched", runId: body.run_id });
-    window.location.href = "/react/onboarding/setup";
   }
 
   return (
