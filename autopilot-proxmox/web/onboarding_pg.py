@@ -1,7 +1,7 @@
 """PostgreSQL state store for the operator onboarding wizard."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from psycopg import Connection
@@ -174,5 +174,7 @@ def set_launched_run(conn: Connection, owner_sub: str, *, run_id: str) -> dict:
         """,
         (run_id, owner_sub),
     ).fetchone()
+    if row is None:
+        raise KeyError(owner_sub)
     conn.commit()
     return _row_to_dict(row)
