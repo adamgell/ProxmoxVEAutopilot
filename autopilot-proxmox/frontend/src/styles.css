@@ -1960,6 +1960,44 @@ h3 {
   line-height: 1.2;
 }
 
+.credential-inventory__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.credential-chip__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.credential-chip__action {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.credential-chip__action:hover {
+  border-color: var(--active);
+  color: var(--active);
+}
+
+.credential-chip__action--danger:hover {
+  border-color: #e25a5a;
+  color: #ff8b8b;
+}
+
 .credential-list {
   display: grid;
   gap: 8px;

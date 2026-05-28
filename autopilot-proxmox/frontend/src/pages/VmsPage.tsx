@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { fetchJson, postJson } from "../apiClient";
+import { fetchJson, patchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import { VmEvidencePanels } from "../components/VmEvidencePanels";
@@ -251,6 +251,41 @@ type AgentFormDraft = {
   agentVersion: string;
 };
 
+type CredentialDraftType = "domain_join" | "local_admin";
+
+type CredentialDraft = {
+  mode: "create" | "edit";
+  id: number | null;
+  name: string;
+  type: CredentialDraftType;
+  domain_fqdn: string;
+  username: string;
+  password: string;
+  ou_hint: string;
+  passwordPlaceholder: boolean;
+};
+
+const CREDENTIAL_TYPE_OPTIONS: readonly { readonly value: CredentialDraftType; readonly label: string }[] = [
+  { value: "domain_join", label: "Domain join (forest admin)" },
+  { value: "local_admin", label: "Local admin" }
+];
+
+function blankCredentialDraft(mode: "create" | "edit", existing?: CredentialSummary): CredentialDraft {
+  const seedType: CredentialDraftType =
+    existing?.type === "local_admin" ? "local_admin" : "domain_join";
+  return {
+    mode,
+    id: existing?.id ?? null,
+    name: existing?.name ?? "",
+    type: seedType,
+    domain_fqdn: "",
+    username: "",
+    password: "",
+    ou_hint: "",
+    passwordPlaceholder: mode === "edit"
+  };
+}
+
 type MachineTagDraft = {
   readonly rowId: string;
   readonly bubbleId: string;
@@ -423,6 +458,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [detailError, setDetailError] = useState("");
   const [credentialSummaries, setCredentialSummaries] = useState<readonly CredentialSummary[]>([]);
   const [credentialsError, setCredentialsError] = useState("");
+  const [credentialDraft, setCredentialDraft] = useState<CredentialDraft | null>(null);
   const [bubbleDraftMode, setBubbleDraftMode] = useState<BubbleDraftMode | null>(null);
   const [bubbleDraftId, setBubbleDraftId] = useState<string | null>(null);
   const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
@@ -1207,6 +1243,146 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setAgentFormDraft(null);
   }, []);
 
+  const reloadCredentials = useCallback(async () => {
+    try {
+      const credentials = await fetchJson<CredentialSummary[]>("/api/credentials");
+      setCredentialSummaries(credentials);
+      setCredentialsError("");
+    } catch (err) {
+      setCredentialsError(err instanceof Error ? err.message : "Failed to reload credentials");
+    }
+  }, []);
+
+  const beginCreateCredential = useCallback(() => {
+    setCredentialDraft(blankCredentialDraft("create"));
+  }, []);
+
+  const beginEditCredential = useCallback(async (cred: CredentialSummary) => {
+    if (cred.type !== "domain_join" && cred.type !== "local_admin") {
+      window.location.href = `/credentials/${String(cred.id)}/edit`;
+      return;
+    }
+    try {
+      const full = await fetchJson<{
+        readonly id: number;
+        readonly name: string;
+        readonly type: string;
+        readonly payload?: Readonly<Record<string, unknown>>;
+      }>(`/api/credentials/${String(cred.id)}`);
+      const payload = full.payload ?? {};
+      const draft: CredentialDraft = {
+        mode: "edit",
+        id: full.id,
+        name: full.name,
+        type: full.type === "local_admin" ? "local_admin" : "domain_join",
+        domain_fqdn: String(payload.domain_fqdn ?? ""),
+        username: String(payload.username ?? ""),
+        password: "",
+        ou_hint: String(payload.ou_hint ?? ""),
+        passwordPlaceholder: true
+      };
+      setCredentialDraft(draft);
+    } catch (err) {
+      setActionStatus(err instanceof Error ? err.message : "Failed to load credential");
+    }
+  }, []);
+
+  const updateCredentialDraft = useCallback(
+    <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => {
+      setCredentialDraft((current) => (current ? { ...current, [field]: value } : current));
+    },
+    []
+  );
+
+  const cancelCredentialDraft = useCallback(() => {
+    setCredentialDraft(null);
+  }, []);
+
+  const submitCredentialDraft = useCallback(async () => {
+    const draft = credentialDraft;
+    if (!draft) {
+      return;
+    }
+    const name = draft.name.trim();
+    if (!name) {
+      setActionStatus("Credential name is required");
+      return;
+    }
+    if (draft.mode === "create" && !draft.password) {
+      setActionStatus("Password is required for new credentials");
+      return;
+    }
+    const buildPayload = (): Record<string, unknown> | null => {
+      if (draft.type === "domain_join") {
+        const payload: Record<string, unknown> = {
+          domain_fqdn: draft.domain_fqdn.trim(),
+          username: draft.username.trim(),
+          ou_hint: draft.ou_hint.trim()
+        };
+        if (draft.password) {
+          payload.password = draft.password;
+        }
+        return payload;
+      }
+      const payload: Record<string, unknown> = {
+        username: draft.username.trim()
+      };
+      if (draft.password) {
+        payload.password = draft.password;
+      }
+      return payload;
+    };
+    const payload = buildPayload();
+    if (!payload) {
+      return;
+    }
+    if (draft.mode === "create") {
+      // POST requires password; we already enforced that above.
+      const ok = await runAction(`Add credential ${name}`, () =>
+        postJson("/api/credentials", {
+          name,
+          type: draft.type,
+          payload: { ...payload, password: draft.password }
+        })
+      );
+      if (ok) {
+        setCredentialDraft(null);
+        await reloadCredentials();
+      }
+      return;
+    }
+    // edit: PATCH; omit password when the user didn't enter a new one so
+    // the existing encrypted value stays put.
+    if (draft.id === null) {
+      setActionStatus("Cannot edit credential without an id");
+      return;
+    }
+    const patchBody: Record<string, unknown> = { name };
+    if (Object.keys(payload).length > 0 || draft.password) {
+      patchBody.payload = payload;
+    }
+    const ok = await runAction(`Update credential ${name}`, () =>
+      patchJson(`/api/credentials/${String(draft.id)}`, patchBody)
+    );
+    if (ok) {
+      setCredentialDraft(null);
+      await reloadCredentials();
+    }
+  }, [credentialDraft, reloadCredentials, runAction]);
+
+  const deleteCredential = useCallback(async (cred: CredentialSummary) => {
+    const confirmMessage = `Delete credential ${cred.name}? This cannot be undone.`;
+    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) {
+      return;
+    }
+    const ok = await runAction(`Delete credential ${cred.name}`, () =>
+      deleteJson(`/api/credentials/${String(cred.id)}`)
+    );
+    if (ok) {
+      await reloadCredentials();
+    }
+  }, [reloadCredentials, runAction]);
+
   const bulkDeleteSelected = useCallback(async () => {
     if (!selectedAgentIds.size) {
       return;
@@ -1342,6 +1518,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         infraVmCandidates={infraVmCandidates}
         credentials={credentialSummaries}
         credentialsError={credentialsError}
+        onCreateCredential={beginCreateCredential}
+        onEditCredential={(cred) => { void beginEditCredential(cred); }}
+        onDeleteCredential={(cred) => { void deleteCredential(cred); }}
         onCreateBubble={createBubble}
         onEditBubble={editBubble}
         onRequestDeleteBubble={requestDeleteBubble}
@@ -1421,6 +1600,15 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           }}
           onSubmit={() => { void submitAgentForm(); }}
           onCancel={cancelAgentForm}
+        />
+      ) : null}
+
+      {credentialDraft ? (
+        <CredentialFormModal
+          draft={credentialDraft}
+          onChange={updateCredentialDraft}
+          onSubmit={() => { void submitCredentialDraft(); }}
+          onCancel={cancelCredentialDraft}
         />
       ) : null}
     </PageFrame>
@@ -1649,6 +1837,124 @@ function FleetAgentFormModal({
             </button>
             <button type="submit" className="utility-button">
               {draft.mode === "create" ? "Add agent" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CredentialFormModal({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel
+}: {
+  readonly draft: CredentialDraft;
+  readonly onChange: <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => void;
+  readonly onSubmit: () => void;
+  readonly onCancel: () => void;
+}) {
+  const title =
+    draft.mode === "create"
+      ? "New credential"
+      : `Edit credential ${draft.name}`;
+  const isDomainJoin = draft.type === "domain_join";
+  return (
+    <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="credential-form-title"
+        className="fleet-modal"
+        onClick={(event) => { event.stopPropagation(); }}
+      >
+        <header className="fleet-modal__header">
+          <h3 id="credential-form-title">{title}</h3>
+          <button type="button" className="fleet-modal__close" onClick={onCancel} aria-label="Close">
+            x
+          </button>
+        </header>
+        <form
+          className="fleet-modal__body"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label className="cloudosd-field">
+            <span>Name *</span>
+            <input
+              value={draft.name}
+              onChange={(event) => { onChange("name", event.currentTarget.value); }}
+              placeholder="acme-domain-join"
+              required
+              aria-label="Credential name"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Type *</span>
+            <select
+              value={draft.type}
+              onChange={(event) => { onChange("type", event.currentTarget.value as CredentialDraftType); }}
+              disabled={draft.mode === "edit"}
+              aria-label="Credential type"
+            >
+              {CREDENTIAL_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          {isDomainJoin ? (
+            <label className="cloudosd-field">
+              <span>Domain FQDN</span>
+              <input
+                value={draft.domain_fqdn}
+                onChange={(event) => { onChange("domain_fqdn", event.currentTarget.value); }}
+                placeholder="corp.example.com"
+                aria-label="Domain FQDN"
+              />
+            </label>
+          ) : null}
+          <label className="cloudosd-field">
+            <span>Username</span>
+            <input
+              value={draft.username}
+              onChange={(event) => { onChange("username", event.currentTarget.value); }}
+              placeholder={isDomainJoin ? "CORP\\joinuser" : "Administrator"}
+              aria-label="Username"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Password {draft.mode === "create" ? "*" : "(leave blank to keep current)"}</span>
+            <input
+              type="password"
+              value={draft.password}
+              onChange={(event) => { onChange("password", event.currentTarget.value); }}
+              placeholder={draft.passwordPlaceholder ? "Unchanged" : ""}
+              autoComplete="new-password"
+              required={draft.mode === "create"}
+              aria-label="Password"
+            />
+          </label>
+          {isDomainJoin ? (
+            <label className="cloudosd-field">
+              <span>OU hint</span>
+              <input
+                value={draft.ou_hint}
+                onChange={(event) => { onChange("ou_hint", event.currentTarget.value); }}
+                placeholder="OU=Workstations,DC=corp,DC=example,DC=com"
+                aria-label="OU hint"
+              />
+            </label>
+          ) : null}
+          <div className="fleet-modal__actions">
+            <button type="button" className="fleet-modal__secondary" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit" className="utility-button">
+              {draft.mode === "create" ? "Create credential" : "Save changes"}
             </button>
           </div>
         </form>
@@ -2104,6 +2410,9 @@ function BubbleTopologyOverview({
   infraVmCandidates,
   credentials,
   credentialsError,
+  onCreateCredential,
+  onEditCredential,
+  onDeleteCredential,
   onCreateBubble,
   onEditBubble,
   onRequestDeleteBubble,
@@ -2154,6 +2463,9 @@ function BubbleTopologyOverview({
   readonly infraVmCandidates: readonly VmFleetRow[];
   readonly credentials: readonly CredentialSummary[];
   readonly credentialsError: string;
+  readonly onCreateCredential: () => void;
+  readonly onEditCredential: (cred: CredentialSummary) => void;
+  readonly onDeleteCredential: (cred: CredentialSummary) => void;
   readonly onCreateBubble: () => void;
   readonly onEditBubble: (bubble: LabBubble) => void;
   readonly onRequestDeleteBubble: (bubble: LabBubble) => void;
@@ -2486,7 +2798,13 @@ function BubbleTopologyOverview({
               })}
             </div>
           ) : <p className="empty">No connected services linked yet.</p>}
-          <CredentialInventory credentials={credentials} error={credentialsError} />
+          <CredentialInventory
+            credentials={credentials}
+            error={credentialsError}
+            onCreate={onCreateCredential}
+            onEdit={onEditCredential}
+            onDelete={onDeleteCredential}
+          />
         </Panel>
       </div>
     </section>
@@ -2742,24 +3060,60 @@ function ServiceEditor({
 
 function CredentialInventory({
   credentials,
-  error
+  error,
+  onCreate,
+  onEdit,
+  onDelete
 }: {
   readonly credentials: readonly CredentialSummary[];
   readonly error: string;
+  readonly onCreate: () => void;
+  readonly onEdit: (cred: CredentialSummary) => void;
+  readonly onDelete: (cred: CredentialSummary) => void;
 }) {
   return (
     <section className="credential-inventory" aria-label="Credential inventory">
-      <h3>Credential inventory</h3>
+      <header className="credential-inventory__header">
+        <h3>Credential inventory</h3>
+        <button
+          type="button"
+          className="fleet-action fleet-action--command"
+          onClick={onCreate}
+        >
+          <span>New credential</span>
+        </button>
+      </header>
       {error ? <p className="notice" role="status">{error}</p> : null}
       {credentials.length ? (
         <div className="credential-list">
-          {credentials.map((credential) => (
-            <article key={credential.id} className="credential-chip">
-              <strong>{credential.name}</strong>
-              <span>{roleLabel(credential.type)}</span>
-              <small>{formatShortDateTime(credential.updated_at ?? credential.created_at)}</small>
-            </article>
-          ))}
+          {credentials.map((credential) => {
+            const fileBased = credential.type === "odj_blob" || credential.type === "mde_onboarding";
+            return (
+              <article key={credential.id} className="credential-chip">
+                <strong>{credential.name}</strong>
+                <span>{roleLabel(credential.type)}</span>
+                <small>{formatShortDateTime(credential.updated_at ?? credential.created_at)}</small>
+                <div className="credential-chip__actions">
+                  <button
+                    type="button"
+                    className="credential-chip__action"
+                    onClick={() => { onEdit(credential); }}
+                    aria-label={`Edit credential ${credential.name}`}
+                  >
+                    {fileBased ? "Edit (file)" : "Edit"}
+                  </button>
+                  <button
+                    type="button"
+                    className="credential-chip__action credential-chip__action--danger"
+                    onClick={() => { onDelete(credential); }}
+                    aria-label={`Delete credential ${credential.name}`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : error ? null : <p className="empty">No credential summaries found.</p>}
     </section>
