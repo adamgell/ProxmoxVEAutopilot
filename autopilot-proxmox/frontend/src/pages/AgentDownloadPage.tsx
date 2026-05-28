@@ -227,6 +227,21 @@ function BuildHostPanel() {
     }
   }, [load]);
 
+  const repairAgent = useCallback(async () => {
+    setBusy(true);
+    setActionResult("");
+    setError("");
+    try {
+      await postJson<Record<string, unknown>>("/api/setup/v1/build-host/repair-agent", {});
+      setActionResult("AutopilotAgent install/repair completed on the build host. Heartbeat should arrive within a minute.");
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to install AutopilotAgent on the build host");
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
   const stateLabel = buildHostStateLabel(status);
   const vmidLabel = status?.vmid ? String(status.vmid) : "-";
   const heartbeat = status?.last_heartbeat_age_seconds ?? null;
@@ -264,7 +279,25 @@ function BuildHostPanel() {
                 {busy ? "Provisioning..." : "Build build host"}
               </button>
             </div>
-          ) : null}
+          ) : status.agent_ready ? null : (
+            <div className="build-host-actions">
+              <p className="build-host-hint">
+                Build host VM <code>{String(status.vmid)}</code> exists on
+                {" "}<code>{status.node ?? "?"}</code> but the AutopilotAgent is{" "}
+                <strong>{status.agent_state || "missing"}</strong>. Install or repair the
+                agent over QEMU Guest Agent so the build host can pick up MSI / ISO /
+                WIM build jobs.
+              </p>
+              <button
+                type="button"
+                className="utility-button"
+                onClick={() => { void repairAgent(); }}
+                disabled={busy}
+              >
+                {busy ? "Installing..." : "Install AutopilotAgent on build host"}
+              </button>
+            </div>
+          )}
         </>
       )}
     </Panel>
