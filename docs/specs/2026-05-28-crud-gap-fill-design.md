@@ -74,26 +74,21 @@ Rules:
 
 ### Backend
 
-Add `POST /api/files/delete` (body: `{filenames: [string]}`, response: `{deleted: int, blocked: [{filename, reason, blocking_resource}]}`). The endpoint matches the existing `/api/hashes/delete` shape so the React page can reuse the bulk-delete idiom.
+Add `POST /api/files/delete` mirroring the existing `/api/hashes/delete` shape exactly: `Form(files: list[str])` request body, response `{ok, deleted}` for JSON clients, `303` redirect to `/react/files` for HTML form posts. Uses the existing `_safe_path(FILE_SHELF_DIR, filename)` helper to reject path traversal silently (matching how the hashes endpoint handles bad input). Hard delete on disk; only files with the `.msi` suffix are deleted.
 
-Behavior:
-
-- Reject any filename whose resolved path escapes the files root, via the existing `_safe_path` helper. Return `400` on traversal attempt.
-- Before deleting, scan `sequences` and `ts_engine` Postgres tables for any reference to the filename. If referenced, do not delete that file; include it in `blocked` with the referencing resource id. Return `207` Multi-Status semantics inside a `200` body (matches the rest of the app's bulk operations).
-- Hard delete on disk. No audit row. MSIs are upload artifacts; the upload row in storage stays as the source of provenance.
+No reference check against sequences or ts_engine: MSI references inside sequences live in unstructured `run_script` PowerShell strings, so a structured reference check would produce false negatives. Operator confirmation in the UI is the safety boundary.
 
 ### Frontend
 
 Update `FilesPage.tsx`:
 
 - Add a checkbox column, a selection set in component state, and a Delete button mirroring `HashesPage.tsx` lines 62-76.
-- After delete, surface the `blocked` array as a non-blocking warning panel listing each blocked filename and its blocking resource.
+- Confirm dialog before deletion (`window.confirm`) showing the count.
 
 ### Tests
 
-- `tests/test_files_delete.py`: success, traversal rejected, blocked by sequence, blocked by ts_engine, missing file.
-- `frontend/src/pages/FilesPage.test.tsx`: extend existing tests with selection + delete.
-- Playwright: upload, select, delete, verify removal and reference warning.
+- `tests/test_file_shelf_delete.py`: success, traversal rejected, missing file counts as zero, non-`.msi` extensions skipped, HTML form post returns 303.
+- `frontend/src/pages/FilesPage.test.tsx`: selection state + delete posts the expected FormData.
 
 ## Surface 2: Install Tracking soft delete
 
@@ -261,9 +256,7 @@ and commits the resulting `src/generated/` diff. The existing CI flow already ru
 
 ### Reference checks
 
-Files DELETE needs to inspect sequences and ts_engine tables. Add `web/reference_checks.py` with one function for this surface:
-
-- `references_to_msi_filename(conn, filename) -> list[ReferenceRow]` where `ReferenceRow` is a Pydantic model carrying `resource_kind` (`"sequence" | "ts_engine"`), `resource_id`, and `resource_label`.
+None for Surface 1 (see Surface 1 backend note). If a future surface needs structured reference tracking, it gets its own helper at that point.
 
 ### Audit trail conventions
 
