@@ -40,18 +40,66 @@ def _with_id(row: dict, key: str) -> dict:
     return clean
 
 
+def _surface_pve_error(exc: Exception, path: str) -> None:
+    """Translate an upstream Proxmox HTTPError into a FastAPI HTTPException.
+
+    The PVE API returns 400 "Parameter verification failed." (often with a
+    detail like 'zone: ... does not exist') for user-input mistakes. The
+    raw requests.HTTPError bubbles up as a generic 500 in FastAPI's
+    handler, which means the React form shows "Internal Server Error"
+    instead of the actual PVE reason. Catch the upstream status + body
+    and rethrow with the same code so the UI surfaces what's wrong.
+    """
+    from fastapi import HTTPException
+
+    response = getattr(exc, "response", None)
+    if response is None:
+        raise HTTPException(status_code=502, detail=f"upstream PVE call failed at {path}: {exc}")
+    status = int(getattr(response, "status_code", 502) or 502)
+    if status < 400 or status >= 600:
+        status = 502
+    body_text = ""
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            errors = payload.get("errors") or {}
+            if isinstance(errors, dict) and errors:
+                body_text = "; ".join(f"{k}: {v}" for k, v in errors.items())
+            else:
+                body_text = str(payload.get("message") or payload.get("data") or "")
+    except Exception:
+        body_text = ""
+    if not body_text:
+        try:
+            body_text = response.text or ""
+        except Exception:
+            body_text = ""
+    body_text = body_text.strip()
+    detail = body_text or f"upstream PVE error at {path}"
+    raise HTTPException(status_code=status, detail=detail) from exc
+
+
 def _call(pve_api, path: str, *, method: str = "POST", data: dict | None = None) -> dict:
-    result = pve_api(path, method=method, data=_clean(data or {}))
+    try:
+        result = pve_api(path, method=method, data=_clean(data or {}))
+    except Exception as exc:
+        _surface_pve_error(exc, path)
     return _clean(result or {})
 
 
 def _delete(pve_delete, path: str) -> dict:
-    result = pve_delete(path)
+    try:
+        result = pve_delete(path)
+    except Exception as exc:
+        _surface_pve_error(exc, path)
     return _clean(result or {})
 
 
 def _put(pve_put, path: str, data: dict | None = None) -> dict:
-    result = pve_put(path, data=_clean(data or {}))
+    try:
+        result = pve_put(path, data=_clean(data or {}))
+    except Exception as exc:
+        _surface_pve_error(exc, path)
     return _clean(result or {})
 
 

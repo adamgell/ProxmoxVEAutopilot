@@ -378,6 +378,21 @@ function CreatePanelAffordance({
       },
       ...fields
     ];
+  } else if (schema.key === "vnet") {
+    // Replace the free-text zone input with a select of existing zones so
+    // operators can't fat-finger a non-existent zone id and trigger an
+    // upstream "zone does not exist" 400. parentOptions carries the zone
+    // ids the caller already fetched into the inventory.
+    const zoneOptions = parentOptions ?? [];
+    fields = fields.map((field) =>
+      field.name === "zone"
+        ? {
+            ...field,
+            kind: "select" as const,
+            options: zoneOptions.map((value) => ({ value, label: value }))
+          }
+        : field
+    );
   }
   return (
     <SdnInlineForm
@@ -688,6 +703,7 @@ export function NetworksPage({
               open={creating === "vnet"}
               busy={Boolean(busyKey) && busyKey.startsWith("vnet:")}
               error={creating === "vnet" ? mutationError : undefined}
+              parentOptions={zoneRows.map((row) => formObjectId(row, "zone")).filter(Boolean)}
               onToggle={() => {
                 toggleCreate("vnet");
               }}
