@@ -502,3 +502,59 @@ def get_lab_network(bubble_id: str):
     if not binding:
         raise HTTPException(status_code=404, detail="Lab SDN binding not found")
     return {"binding": binding}
+
+
+@router.get("/labs/orphan-vnets")
+def list_orphan_vnets():
+    """Return SDN vnets that aren't bound to any lab bubble.
+
+    Surfaced in the bubble create flow so an operator can adopt an
+    existing isolated network (and its subnet's CIDR / gateway / DHCP
+    range) instead of typing the same numbers a second time. Each entry
+    carries the parent zone + the first usable subnet's details for
+    UI pre-fill; the operator can still override anything before saving.
+    """
+    from web import sdn_labs_pg
+
+    inventory = proxmox_sdn.inventory(_api())
+    vnets = [
+        {
+            "vnet": str(item.get("vnet") or item.get("id") or ""),
+            "zone": str(item.get("zone") or ""),
+            "alias": str(item.get("alias") or ""),
+            "type": str(item.get("type") or ""),
+        }
+        for item in inventory.get("vnets") or []
+        if (item.get("vnet") or item.get("id"))
+    ]
+    subnets_by_vnet = inventory.get("subnets_by_vnet") or {}
+    with _conn() as conn:
+        sdn_labs_pg.init(conn)
+        rows = conn.execute("SELECT vnet FROM lab_sdn_bindings WHERE vnet IS NOT NULL AND vnet <> ''").fetchall()
+        bound_vnets = {str(row[0]) for row in rows}
+    orphans: list[dict] = []
+    for vnet in vnets:
+        if vnet["vnet"] in bound_vnets:
+            continue
+        subnets = subnets_by_vnet.get(vnet["vnet"]) or []
+        # Prefer subnets with an explicit gateway (the harness sets one on
+        # SNAT-enabled labs) but fall through to whatever's first.
+        primary_subnet: dict | None = None
+        for candidate in subnets:
+            if isinstance(candidate, dict) and candidate.get("gateway"):
+                primary_subnet = candidate
+                break
+        if primary_subnet is None and subnets:
+            primary_subnet = subnets[0] if isinstance(subnets[0], dict) else {}
+        subnet_info = {}
+        if primary_subnet:
+            cidr = str(primary_subnet.get("subnet") or primary_subnet.get("id") or "")
+            subnet_info = {
+                "subnet": cidr,
+                "gateway": str(primary_subnet.get("gateway") or ""),
+                "snat": bool(primary_subnet.get("snat")),
+                "dhcp_dns_server": str(primary_subnet.get("dhcp-dns-server") or ""),
+                "dhcp_range": str(primary_subnet.get("dhcp-range") or ""),
+            }
+        orphans.append({**vnet, "subnet": subnet_info})
+    return {"orphan_vnets": orphans, "total_vnets": len(vnets), "bound_vnets": sorted(bound_vnets)}

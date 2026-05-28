@@ -1847,6 +1847,31 @@ h3 {
   min-width: 0;
 }
 
+.bubble-form-adoption {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.bubble-form-help {
+  color: var(--muted-2);
+  font-size: 12px;
+  text-transform: none !important;
+  font-weight: 400 !important;
+}
+
+.bubble-form-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
 .bubble-form-field span {
   color: var(--muted);
   font-size: 10px;

@@ -242,6 +242,53 @@ function bubbleFormPayload(values: BubbleFormValues): Readonly<Record<string, un
   };
 }
 
+interface OrphanVnetSubnet {
+  readonly subnet?: string;
+  readonly gateway?: string;
+  readonly snat?: boolean;
+  readonly dhcp_dns_server?: string;
+  readonly dhcp_range?: string;
+}
+
+interface OrphanVnet {
+  readonly vnet: string;
+  readonly zone: string;
+  readonly alias?: string;
+  readonly type?: string;
+  readonly subnet?: OrphanVnetSubnet | undefined;
+}
+
+interface BubbleSdnAdoption {
+  readonly vnet: string;
+  readonly zone: string;
+  readonly subnet: string;
+}
+
+// Parse a PVE-formatted dhcp-range string
+// ("start-address=192.168.55.100,end-address=192.168.55.199")
+// into separate start/end IPs for pre-filling the bubble form's
+// dhcp_pool_start / dhcp_pool_end inputs.
+function parseDhcpRange(value: string | undefined): { start: string; end: string } {
+  if (!value) {
+    return { start: "", end: "" };
+  }
+  let start = "";
+  let end = "";
+  for (const part of value.split(",")) {
+    const [key, raw] = part.split("=", 2);
+    if (!key || !raw) {
+      continue;
+    }
+    const trimmed = raw.trim();
+    if (key.trim().toLowerCase() === "start-address") {
+      start = trimmed;
+    } else if (key.trim().toLowerCase() === "end-address") {
+      end = trimmed;
+    }
+  }
+  return { start, end };
+}
+
 type AgentFormDraft = {
   mode: "create" | "edit";
   agentId: string;
@@ -462,6 +509,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [bubbleDraftMode, setBubbleDraftMode] = useState<BubbleDraftMode | null>(null);
   const [bubbleDraftId, setBubbleDraftId] = useState<string | null>(null);
   const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
+  const [orphanVnets, setOrphanVnets] = useState<readonly OrphanVnet[]>([]);
+  const [bubbleAdoptedVnet, setBubbleAdoptedVnet] = useState<BubbleSdnAdoption | null>(null);
   const [deleteBubbleId, setDeleteBubbleId] = useState<string | null>(null);
   const [machineTagDraft, setMachineTagDraft] = useState<MachineTagDraft | null>(null);
   const [infraDraftOpen, setInfraDraftOpen] = useState(false);
@@ -802,6 +851,16 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftMode("create");
     setBubbleDraftId(null);
     setBubbleDraft(blankBubbleForm);
+    setBubbleAdoptedVnet(null);
+    // Lazily fetch the orphan-vnet inventory so the operator can adopt an
+    // existing isolated network instead of typing CIDR/gateway/DHCP by hand.
+    void fetchJson<{ readonly orphan_vnets?: readonly OrphanVnet[] }>("/api/sdn/labs/orphan-vnets")
+      .then((data) => {
+        setOrphanVnets(data.orphan_vnets ?? []);
+      })
+      .catch(() => {
+        setOrphanVnets([]);
+      });
   }, []);
 
   const editBubble = useCallback((bubble: LabBubble) => {
@@ -809,7 +868,32 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftMode("edit");
     setBubbleDraftId(bubble.id);
     setBubbleDraft(bubbleFormFromBubble(bubble));
+    setBubbleAdoptedVnet(null);
   }, []);
+
+  const adoptOrphanVnet = useCallback((vnetId: string) => {
+    if (!vnetId) {
+      setBubbleAdoptedVnet(null);
+      return;
+    }
+    const match = orphanVnets.find((entry) => entry.vnet === vnetId);
+    if (!match) {
+      return;
+    }
+    const subnetCidr = match.subnet?.subnet ?? "";
+    const gateway = match.subnet?.gateway ?? "";
+    const range = parseDhcpRange(match.subnet?.dhcp_range);
+    setBubbleAdoptedVnet({ vnet: match.vnet, zone: match.zone, subnet: subnetCidr });
+    setBubbleDraft((current) => ({
+      ...current,
+      cidr: subnetCidr || current.cidr,
+      gateway_ip: gateway || current.gateway_ip,
+      dhcp_scope: match.alias || match.vnet || current.dhcp_scope,
+      dhcp_pool_start: range.start || current.dhcp_pool_start,
+      dhcp_pool_end: range.end || current.dhcp_pool_end,
+      isolation_status: current.isolation_status === "planned" ? "ready" : current.isolation_status
+    }));
+  }, [orphanVnets]);
 
   const updateBubbleDraft = useCallback((field: BubbleFormField, value: string) => {
     setBubbleDraft((current) => ({ ...current, [field]: value }));
@@ -819,6 +903,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftMode(null);
     setBubbleDraftId(null);
     setBubbleDraft(blankBubbleForm);
+    setBubbleAdoptedVnet(null);
   }, []);
 
   const saveBubbleDraft = useCallback(() => {
@@ -828,6 +913,28 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       return;
     }
     if (bubbleDraftMode === "create") {
+      // Route through /api/sdn/labs when the operator adopted an existing
+      // unbound vnet. That endpoint creates BOTH the bubble row and the
+      // lab_sdn_bindings entry in one transaction so the bubble is
+      // network-isolated from the moment it exists. Plain bubbles (no
+      // adoption) still use /api/bubbles to skip the SDN side.
+      if (bubbleAdoptedVnet) {
+        const labPayload = {
+          name: bubbleName,
+          zone: bubbleAdoptedVnet.zone,
+          vnet: bubbleAdoptedVnet.vnet,
+          subnet: bubbleAdoptedVnet.subnet,
+          domain_name: bubbleDraft.domain_name.trim(),
+          cidr: bubbleDraft.cidr.trim(),
+          gateway_ip: bubbleDraft.gateway_ip.trim()
+        };
+        void runAction(`Create bubble ${bubbleName}`, () => postJson("/api/sdn/labs", labPayload)).then((ok) => {
+          if (ok) {
+            cancelBubbleDraft();
+          }
+        });
+        return;
+      }
       void runAction(`Create bubble ${bubbleName}`, () => postJson("/api/bubbles", payload)).then((ok) => {
         if (ok) {
           cancelBubbleDraft();
@@ -847,7 +954,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         cancelBubbleDraft();
       }
     });
-  }, [bubbleDraft, bubbleDraftId, bubbleDraftMode, cancelBubbleDraft, runAction]);
+  }, [bubbleAdoptedVnet, bubbleDraft, bubbleDraftId, bubbleDraftMode, cancelBubbleDraft, runAction]);
 
   const requestDeleteBubble = useCallback((bubble: LabBubble) => {
     setBubbleDraftMode(null);
@@ -1529,6 +1636,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         bubbleDraftMode={bubbleDraftMode}
         bubbleDraftId={bubbleDraftId}
         bubbleDraft={bubbleDraft}
+        orphanVnets={orphanVnets}
+        adoptedVnetId={bubbleAdoptedVnet?.vnet}
+        onAdoptVnet={adoptOrphanVnet}
         onBubbleDraftChange={updateBubbleDraft}
         onSaveBubbleDraft={saveBubbleDraft}
         onCancelBubbleDraft={cancelBubbleDraft}
@@ -2336,7 +2446,10 @@ function BubbleEditor({
   values,
   onChange,
   onSave,
-  onCancel
+  onCancel,
+  orphanVnets,
+  adoptedVnetId,
+  onAdoptVnet
 }: {
   readonly mode: BubbleDraftMode;
   readonly bubbleName?: string;
@@ -2344,8 +2457,13 @@ function BubbleEditor({
   readonly onChange: (field: BubbleFormField, value: string) => void;
   readonly onSave: () => void;
   readonly onCancel: () => void;
+  readonly orphanVnets?: readonly OrphanVnet[];
+  readonly adoptedVnetId?: string | undefined;
+  readonly onAdoptVnet?: (vnetId: string) => void;
 }) {
   const saveLabel = mode === "create" ? "Create bubble" : `Save bubble ${bubbleName ?? values.name}`;
+  const showAdoption = mode === "create" && orphanVnets !== undefined && onAdoptVnet !== undefined;
+  const hasOrphans = (orphanVnets?.length ?? 0) > 0;
   return (
     <form
       className="bubble-form"
@@ -2355,6 +2473,40 @@ function BubbleEditor({
         onSave();
       }}
     >
+      {showAdoption ? (
+        hasOrphans ? (
+          <label className="bubble-form-field bubble-form-adoption">
+            <span>Adopt existing isolated network</span>
+            <select
+              aria-label="Adopt existing isolated network"
+              value={adoptedVnetId ?? ""}
+              onChange={(event) => { onAdoptVnet?.(event.currentTarget.value); }}
+            >
+              <option value="">- create a new bubble without SDN binding -</option>
+              {(orphanVnets ?? []).map((vnet) => {
+                const cidrLabel = vnet.subnet?.subnet ? ` (${vnet.subnet.subnet})` : "";
+                const zoneLabel = vnet.zone ? ` / zone ${vnet.zone}` : "";
+                const aliasLabel = vnet.alias && vnet.alias !== vnet.vnet ? ` - ${vnet.alias}` : "";
+                return (
+                  <option key={vnet.vnet} value={vnet.vnet}>
+                    {vnet.vnet}{zoneLabel}{cidrLabel}{aliasLabel}
+                  </option>
+                );
+              })}
+            </select>
+            <span className="bubble-form-help">
+              Found {orphanVnets?.length ?? 0} vnet{(orphanVnets?.length ?? 0) === 1 ? "" : "s"} not yet
+              bound to a bubble. Picking one pre-fills the CIDR/gateway/DHCP fields and binds the new
+              bubble to its SDN isolation on save.
+            </span>
+          </label>
+        ) : (
+          <p className="bubble-form-note">
+            No unbound SDN vnets available. Create a vnet + subnet under the Networks page first if you
+            want to adopt an existing isolated network for this bubble.
+          </p>
+        )
+      ) : null}
       <div className="bubble-form-grid">
         <BubbleTextField label="Bubble name" field="name" value={values.name} onChange={onChange} required />
         <BubbleTextField label="Domain name" field="domain_name" value={values.domain_name} onChange={onChange} />
@@ -2421,6 +2573,9 @@ function BubbleTopologyOverview({
   bubbleDraftMode,
   bubbleDraftId,
   bubbleDraft,
+  orphanVnets,
+  adoptedVnetId,
+  onAdoptVnet,
   onBubbleDraftChange,
   onSaveBubbleDraft,
   onCancelBubbleDraft,
@@ -2474,6 +2629,9 @@ function BubbleTopologyOverview({
   readonly bubbleDraftMode: BubbleDraftMode | null;
   readonly bubbleDraftId: string | null;
   readonly bubbleDraft: BubbleFormValues;
+  readonly orphanVnets: readonly OrphanVnet[];
+  readonly adoptedVnetId: string | undefined;
+  readonly onAdoptVnet: (vnetId: string) => void;
   readonly onBubbleDraftChange: (field: BubbleFormField, value: string) => void;
   readonly onSaveBubbleDraft: () => void;
   readonly onCancelBubbleDraft: () => void;
@@ -2538,6 +2696,9 @@ function BubbleTopologyOverview({
               onChange={onBubbleDraftChange}
               onSave={onSaveBubbleDraft}
               onCancel={onCancelBubbleDraft}
+              orphanVnets={orphanVnets}
+              adoptedVnetId={adoptedVnetId}
+              onAdoptVnet={onAdoptVnet}
             />
           ) : null}
           {topology.warnings.length ? (
