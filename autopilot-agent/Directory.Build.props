@@ -1,5 +1,5 @@
 <Project>
   <PropertyGroup>
-    <AutopilotAgentVersion Condition="'$(AutopilotAgentVersion)' == ''">0.1.2</AutopilotAgentVersion>
+    <AutopilotAgentVersion Condition="'$(AutopilotAgentVersion)' == ''">0.1.4</AutopilotAgentVersion>
   </PropertyGroup>
 </Project>
