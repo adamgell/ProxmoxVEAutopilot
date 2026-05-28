@@ -1036,6 +1036,38 @@ def _source_bundle_root() -> Path:
     return BASE_DIR.parent.resolve()
 
 
+def _autopilot_agent_source_version() -> str:
+    """Read the canonical agent version from autopilot-agent/Directory.Build.props.
+
+    Used in the build-host work queue request so the .NET BuildHostWorkService
+    doesn't fall through to its hardcoded "0.1.2" default. Falls back to
+    "0.1.2" only when the props file can't be read; warns in the controller
+    log so an operator can investigate.
+    """
+    import re
+
+    props_path = _source_bundle_root() / "autopilot-agent" / "Directory.Build.props"
+    try:
+        text = props_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        import logging
+
+        logging.getLogger("web.app").warning(
+            "could not read AutopilotAgentVersion from %s (%s); falling back to 0.1.2",
+            props_path, exc,
+        )
+        return "0.1.2"
+    match = re.search(r"<AutopilotAgentVersion[^>]*>([^<]+)</AutopilotAgentVersion>", text)
+    if not match:
+        import logging
+
+        logging.getLogger("web.app").warning(
+            "AutopilotAgentVersion not found in %s; falling back to 0.1.2", props_path,
+        )
+        return "0.1.2"
+    return match.group(1).strip()
+
+
 def _source_bundle_controller_url() -> str:
     state = _read_json_file(SETUP_STATE_PATH)
     candidates = [
@@ -1821,6 +1853,11 @@ async def setup_queue_build_host_workloads(body: _BuildHostWorkloadsBody | None 
         "source_bundle_url": f"{controller_url}/api/setup/v1/source-bundle.zip",
         "work_root": r"C:\BuildRoot\ProxmoxVEAutopilot",
         "runtime_identifiers": ["win-x64", "win-arm64"],
+        # Read the canonical agent version from Directory.Build.props on the
+        # controller so the build-host doesn't fall through to BuildHostWorkService's
+        # hardcoded "0.1.2" default. Without this the MSI shipped at 0.1.2 even
+        # after the source bumped to 0.1.4.
+        "agent_version": _autopilot_agent_source_version(),
         "install_adk": body.install_adk,
         "adk_url": "https://go.microsoft.com/fwlink/?linkid=2289980",
         "winpe_addon_url": "https://go.microsoft.com/fwlink/?linkid=2289981",
