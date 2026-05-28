@@ -2112,17 +2112,23 @@ h3 {
   border-bottom: 0;
 }
 
-.fleet-machine-table th:nth-child(1) { width: 17%; }
-.fleet-machine-table th:nth-child(2) { width: 9%; }
-.fleet-machine-table th:nth-child(3) { width: 9%; }
-.fleet-machine-table th:nth-child(4) { width: 8%; }
-.fleet-machine-table th:nth-child(5) { width: 12%; }
-.fleet-machine-table th:nth-child(6) { width: 6%; }
-.fleet-machine-table th:nth-child(7) { width: 11%; }
-.fleet-machine-table th:nth-child(8) { width: 8%; }
-.fleet-machine-table th:nth-child(9) { width: 8%; }
-.fleet-machine-table th:nth-child(10) { width: 8%; }
-.fleet-machine-table th:nth-child(11) { width: 4%; }
+/* Column layout now has 13 columns:
+   1 checkbox | 2 Device Name | 3 Heartbeat | 4 Managed By | 5 OS
+   6 OS Version | 7 VMID | 8 IP | 9 Runtime | 10 Agent | 11 Bubble
+   12 Tag | 13 Row actions */
+.fleet-machine-table th:nth-child(1)  { width: 36px; }
+.fleet-machine-table th:nth-child(2)  { width: 16%; }
+.fleet-machine-table th:nth-child(3)  { width: 8%; }
+.fleet-machine-table th:nth-child(4)  { width: 8%; }
+.fleet-machine-table th:nth-child(5)  { width: 8%; }
+.fleet-machine-table th:nth-child(6)  { width: 11%; }
+.fleet-machine-table th:nth-child(7)  { width: 6%; }
+.fleet-machine-table th:nth-child(8)  { width: 10%; }
+.fleet-machine-table th:nth-child(9)  { width: 7%; }
+.fleet-machine-table th:nth-child(10) { width: 7%; }
+.fleet-machine-table th:nth-child(11) { width: 7%; }
+.fleet-machine-table th:nth-child(12) { width: 4%; }
+.fleet-machine-table th:nth-child(13) { width: 70px; }
 
 .machine-name {
   display: block;
