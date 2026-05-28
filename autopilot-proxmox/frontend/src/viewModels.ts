@@ -500,6 +500,19 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     addDeviceIndexes(device, devicesByIdentity);
   }
 
+  // Cluster-wide proxmox_vms entry indexed by VMID. fleet.vms only contains
+  // VMs from the configured proxmox_node that also carry the "autopilot"
+  // tag, so an agent registered on another node (e.g. DNS3 on pve1 when
+  // proxmox_node=pve2) or on an untagged VM (e.g. autopilot-buildhost-01)
+  // wouldn't get its VMID + status reflected. proxmox_vms is the
+  // cluster-wide enumeration and we fall back to it for orphan agents.
+  const proxmoxVmsByVmid = new Map<number, VmFleetRow>();
+  for (const vm of fleet.proxmox_vms ?? []) {
+    if (typeof vm.vmid === "number") {
+      proxmoxVmsByVmid.set(vm.vmid, vm);
+    }
+  }
+
   const rows: FleetMachineRow[] = fleet.vms.map((vm) => {
     const agent = findAgentForVm(vm, agentsByVmid, agentsByIdentity);
     const device = findDeviceForMachine(
@@ -533,22 +546,34 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     if (matchedAgentIds.has(agent.agent_id)) {
       continue;
     }
+    // If the agent has a VMID and that VMID exists somewhere in the cluster
+    // (even if outside fleet.vms), borrow its identity so the row shows
+    // VMID + Runtime + node-aware name instead of a bare agent stub.
+    const agentVmid = typeof agent.vmid === "number" ? agent.vmid : undefined;
+    const proxmoxVm = agentVmid !== undefined ? proxmoxVmsByVmid.get(agentVmid) : undefined;
+    const device = findDeviceForMachine(
+      [proxmoxVm?.serial, proxmoxVm?.hostname, proxmoxVm?.name, agent.serial_number, agent.computer_name],
+      devicesByIdentity
+    );
+    const rowId = proxmoxVm ? `vm-${String(proxmoxVm.vmid)}` : `agent-${agent.agent_id}`;
     rows.push({
-      id: `agent-${agent.agent_id}`,
-      name: fallbackText(agent.computer_name || agent.agent_id),
+      id: rowId,
+      name: proxmoxVm ? vmDisplayName(proxmoxVm) : fallbackText(agent.computer_name || agent.agent_id),
+      ...(proxmoxVm ? { vmid: proxmoxVm.vmid, vm: proxmoxVm } : {}),
       agent,
       agentId: agent.agent_id,
-      status: undefined,
-      serial: agent.serial_number,
-      ipAddress: agent.primary_ipv4,
-      os: agent.os_name ?? agent.os_build,
-      qga: agent.qga_state,
+      ...(device ? { autopilotDevice: device } : {}),
+      status: proxmoxVm?.status,
+      serial: proxmoxVm?.serial ?? agent.serial_number,
+      ipAddress: proxmoxVm?.ip_address ?? agent.primary_ipv4,
+      os: proxmoxVm?.os_caption ?? proxmoxVm?.os_build ?? agent.os_name ?? agent.os_build,
+      qga: proxmoxVm?.qga ?? agent.qga_state,
       phase: agent.current_phase,
-      heartbeat: agent.last_heartbeat_at ?? agent.last_seen_at,
+      heartbeat: agent.last_heartbeat_at ?? agent.last_seen_at ?? proxmoxVm?.monitor_checked_at ?? proxmoxVm?.monitor_probed_at,
       version: agent.agent_version,
-      method: machineMethod(undefined, agent),
-      mdmEnrollment: "-",
-      lifecycleLabels: machineLabels(undefined, agent, undefined),
+      method: machineMethod(proxmoxVm, agent),
+      mdmEnrollment: device?.enrollment_state ?? (proxmoxVm?.in_intune ? "Intune" : "-"),
+      lifecycleLabels: machineLabels(proxmoxVm, agent, device),
       stale: agentIsStale(agent)
     });
   }
