@@ -4445,13 +4445,45 @@ def get_autopilot_devices():
     return devices, None
 
 
-def load_oem_profiles():
+def _load_builtin_oem_profiles() -> dict:
     profiles_path = FILES_DIR / "oem_profiles.yml"
     if not profiles_path.exists():
         return {}
     with open(profiles_path) as f:
         data = yaml.safe_load(f)
     return (data or {}).get("oem_profiles", {})
+
+
+def _load_custom_oem_profiles() -> dict:
+    try:
+        from web import db_pg, oem_profiles_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            rows = oem_profiles_pg.list_profiles(conn)
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for row in rows:
+        key = row.get("key")
+        if not key:
+            continue
+        out[key] = {
+            "manufacturer": row.get("manufacturer", ""),
+            "product": row.get("product", ""),
+            "family": row.get("family", ""),
+            "sku": row.get("sku", ""),
+            "chassis_type": row.get("chassis_type"),
+        }
+        if row.get("serial_prefix"):
+            out[key]["serial_prefix"] = row["serial_prefix"]
+    return out
+
+
+def load_oem_profiles() -> dict:
+    """Merged view: built-in YAML profiles overlaid by any custom PG rows."""
+    merged = dict(_load_builtin_oem_profiles())
+    merged.update(_load_custom_oem_profiles())
+    return merged
 
 
 def _serial_to_oem(serial):
@@ -14832,12 +14864,7 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
 
 
 def _load_oem_profiles_dict() -> dict:
-    path = FILES_DIR / "oem_profiles.yml"
-    if not path.exists():
-        return {}
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-    return data.get("oem_profiles", {})
+    return load_oem_profiles()
 
 
 @app.post("/api/vm-provisioning")
