@@ -3349,6 +3349,32 @@ h3 {
   margin: 0;
 }
 
+.sdn-inline-form__octet {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.sdn-inline-form__octet-prefix {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  background: var(--surface-2);
+  color: var(--muted-2);
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.sdn-inline-form__octet input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 0 4px 4px 0;
+}
+
 .networks-loading-bar {
   position: relative;
   height: 2px;

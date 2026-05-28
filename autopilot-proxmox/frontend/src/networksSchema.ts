@@ -23,6 +23,20 @@ export interface FieldDef {
   readonly showWhen?: (values: Readonly<Record<string, string>>) => boolean;
   /** When false, the field is omitted from edit forms (immutable id, etc). */
   readonly editable?: boolean;
+  /**
+   * Name of another field whose value supplies a derived prefix. Used by
+   * the CIDR-octet inputs on the Subnet form: setting prefixFrom: "subnet"
+   * renders the first three octets of values["subnet"] as a static label
+   * before the input, so the operator only types the last octet.
+   */
+  readonly prefixFrom?: string;
+  /**
+   * Marks a field as a synthetic helper that doesn't map directly to the
+   * PVE API. bodyFromValues skips it so post-processing in the page layer
+   * is responsible for combining it into a real PVE field
+   * (e.g. dhcp_range_start + dhcp_range_end -> "dhcp-range").
+   */
+  readonly synthetic?: boolean;
 }
 
 export interface SdnKindSchema {
@@ -35,6 +49,11 @@ export interface SdnKindSchema {
   readonly editPath: (id: string, parent?: string) => string;
   readonly deletePath: (id: string, parent?: string) => string;
   readonly idField: string;
+  /**
+   * Fields the PVE API requires that aren't editable by the operator.
+   * Merged into the body before POST/PATCH (e.g. type: "subnet").
+   */
+  readonly defaultBody?: Readonly<Record<string, unknown>>;
 }
 
 export type SdnKindKey = "zone" | "vnet" | "subnet" | "controller" | "ipam" | "dns";
@@ -101,20 +120,53 @@ export const subnetSchema: SdnKindSchema = {
   singular: "Subnet",
   plural: "Subnets",
   idField: "subnet",
+  // PVE's /cluster/sdn/vnets/{vnet}/subnets POST requires type=subnet.
+  // Keeping it out of createFields so the operator can't change it but
+  // injecting it from defaultBody.
+  defaultBody: { type: "subnet" },
   createFields: [
     { name: "subnet", label: "CIDR", kind: "text", required: true, placeholder: "10.60.10.0/24" },
     { name: "gateway", label: "Gateway", kind: "text", placeholder: "10.60.10.1" },
     { name: "snat", label: "SNAT enabled", kind: "checkbox" },
     { name: "dnszoneprefix", label: "DNS zone prefix", kind: "text", placeholder: "optional" },
     { name: "dhcp-dns-server", label: "DHCP DNS server", kind: "text" },
-    { name: "dhcp-range", label: "DHCP range", kind: "text", placeholder: "start-address=...,end-address=..." }
+    {
+      name: "dhcp_range_start",
+      label: "DHCP range start (last octet)",
+      kind: "number",
+      placeholder: "100",
+      prefixFrom: "subnet",
+      synthetic: true,
+      help: "Last octet only; first three come from the CIDR."
+    },
+    {
+      name: "dhcp_range_end",
+      label: "DHCP range end (last octet)",
+      kind: "number",
+      placeholder: "199",
+      prefixFrom: "subnet",
+      synthetic: true
+    }
   ],
   editFields: [
     { name: "gateway", label: "Gateway", kind: "text" },
     { name: "snat", label: "SNAT enabled", kind: "checkbox" },
     { name: "dnszoneprefix", label: "DNS zone prefix", kind: "text" },
     { name: "dhcp-dns-server", label: "DHCP DNS server", kind: "text" },
-    { name: "dhcp-range", label: "DHCP range", kind: "text" }
+    {
+      name: "dhcp_range_start",
+      label: "DHCP range start (last octet)",
+      kind: "number",
+      prefixFrom: "subnet",
+      synthetic: true
+    },
+    {
+      name: "dhcp_range_end",
+      label: "DHCP range end (last octet)",
+      kind: "number",
+      prefixFrom: "subnet",
+      synthetic: true
+    }
   ],
   createPath: (values) => `/api/sdn/vnets/${encodeURIComponent(values.parentVnet ?? "")}/subnets`,
   editPath: (id, parent) => `/api/sdn/vnets/${encodeURIComponent(parent ?? "")}/subnets/${encodeURIComponent(id)}`,
@@ -203,6 +255,31 @@ export const sdnSchemas: Readonly<Record<SdnKindKey, SdnKindSchema>> = {
  * the backend expects. Drops empty / unset fields so PATCH calls don't
  * accidentally clear unrelated config.
  */
+/**
+ * Return the first three octets of a CIDR address, e.g.
+ * "192.168.55.0/24" -> "192.168.55". Returns "" when the value doesn't
+ * look like a dotted-quad IPv4 address.
+ */
+export function cidrHostPrefix(cidr: string | undefined): string {
+  if (!cidr) {
+    return "";
+  }
+  const trimmed = cidr.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const addr = trimmed.split("/", 1)[0] ?? trimmed;
+  const octets = addr.split(".");
+  if (octets.length < 4) {
+    return "";
+  }
+  const [a, b, c] = octets;
+  if (!a || !b || !c) {
+    return "";
+  }
+  return `${a}.${b}.${c}`;
+}
+
 export function bodyFromValues(
   fields: readonly FieldDef[],
   values: Readonly<Record<string, string>>,
@@ -211,6 +288,9 @@ export function bodyFromValues(
   const body: Record<string, unknown> = {};
   for (const field of fields) {
     if (field.showWhen && !field.showWhen(values)) {
+      continue;
+    }
+    if (field.synthetic) {
       continue;
     }
     const raw = values[field.name];

@@ -8,6 +8,7 @@ import type { AppBootstrap } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
 import {
   bodyFromValues,
+  cidrHostPrefix,
   controllerSchema,
   dnsSchema,
   ipamSchema,
@@ -488,6 +489,30 @@ export function NetworksPage({
     return parent ? `${kind}:${parent}/${id}` : `${kind}:${id}`;
   }
 
+  /**
+   * Apply schema-level defaults (e.g. type=subnet) plus subnet-specific
+   * dhcp range octet combination. Called by both createObject and
+   * updateObject so the same fields land in POST and PATCH.
+   */
+  function finalizeBody(
+    kind: SdnKindKey,
+    body: Record<string, unknown>,
+    values: Readonly<Record<string, string>>
+  ): Record<string, unknown> {
+    const schema = sdnSchemas[kind];
+    const merged: Record<string, unknown> = { ...(schema.defaultBody ?? {}), ...body };
+    if (kind === "subnet") {
+      const cidr = values["subnet"] ?? "";
+      const prefix = cidrHostPrefix(cidr);
+      const start = (values["dhcp_range_start"] ?? "").trim();
+      const end = (values["dhcp_range_end"] ?? "").trim();
+      if (prefix && start && end) {
+        merged["dhcp-range"] = `start-address=${prefix}.${start},end-address=${prefix}.${end}`;
+      }
+    }
+    return merged;
+  }
+
   async function createObject(kind: SdnKindKey, values: Readonly<Record<string, string>>) {
     const schema = sdnSchemas[kind];
     const id = (values[schema.idField] ?? "").trim();
@@ -500,7 +525,7 @@ export function NetworksPage({
       setMutationError("Parent VNet is required for a subnet");
       return;
     }
-    const body = bodyFromValues(schema.createFields, values, { includeEmptyBooleans: true });
+    const body = finalizeBody(kind, bodyFromValues(schema.createFields, values, { includeEmptyBooleans: true }), values);
     setBusyKey(makeBusyKey(kind, id, parent));
     setMutationError("");
     try {
@@ -516,7 +541,7 @@ export function NetworksPage({
 
   async function updateObject(kind: SdnKindKey, id: string, values: Readonly<Record<string, string>>, parent?: string) {
     const schema = sdnSchemas[kind];
-    const body = bodyFromValues(schema.editFields, values, { includeEmptyBooleans: false });
+    const body = finalizeBody(kind, bodyFromValues(schema.editFields, values, { includeEmptyBooleans: false }), values);
     setBusyKey(makeBusyKey(kind, id, parent));
     setMutationError("");
     try {

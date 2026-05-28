@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import type { FieldDef } from "../networksSchema";
+import { cidrHostPrefix, type FieldDef } from "../networksSchema";
 
 interface SdnInlineFormProps {
   readonly mode: "create" | "edit";
@@ -122,20 +122,41 @@ export function SdnInlineForm({
               </label>
             );
           }
+          const derivedPrefix = field.prefixFrom ? cidrHostPrefix(values[field.prefixFrom]) : "";
           return (
             <label key={field.name} className="cloudosd-field">
               <span>{field.label}{field.required ? " *" : ""}</span>
-              <input
-                type={field.kind === "number" ? "number" : "text"}
-                value={value}
-                placeholder={field.placeholder}
-                onChange={(event) => {
-                  update(field.name, event.currentTarget.value);
-                }}
-                required={Boolean(field.required) && mode === "create"}
-                disabled={busy || (mode === "edit" && field.editable === false)}
-                aria-label={field.label}
-              />
+              {derivedPrefix ? (
+                <div className="sdn-inline-form__octet">
+                  <span className="sdn-inline-form__octet-prefix">{derivedPrefix}.</span>
+                  <input
+                    type={field.kind === "number" ? "number" : "text"}
+                    inputMode={field.kind === "number" ? "numeric" : undefined}
+                    min={field.kind === "number" ? 1 : undefined}
+                    max={field.kind === "number" ? 254 : undefined}
+                    value={value}
+                    placeholder={field.placeholder}
+                    onChange={(event) => {
+                      update(field.name, event.currentTarget.value);
+                    }}
+                    required={Boolean(field.required) && mode === "create"}
+                    disabled={busy || (mode === "edit" && field.editable === false)}
+                    aria-label={field.label}
+                  />
+                </div>
+              ) : (
+                <input
+                  type={field.kind === "number" ? "number" : "text"}
+                  value={value}
+                  placeholder={field.placeholder}
+                  onChange={(event) => {
+                    update(field.name, event.currentTarget.value);
+                  }}
+                  required={Boolean(field.required) && mode === "create"}
+                  disabled={busy || (mode === "edit" && field.editable === false)}
+                  aria-label={field.label}
+                />
+              )}
               {field.help ? <span className="sdn-inline-form__help">{field.help}</span> : null}
             </label>
           );
