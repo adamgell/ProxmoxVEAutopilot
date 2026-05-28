@@ -242,6 +242,15 @@ function bubbleFormPayload(values: BubbleFormValues): Readonly<Record<string, un
   };
 }
 
+type AgentFormDraft = {
+  mode: "create" | "edit";
+  agentId: string;
+  vmid: string;
+  computerName: string;
+  serialNumber: string;
+  agentVersion: string;
+};
+
 type MachineTagDraft = {
   readonly rowId: string;
   readonly bubbleId: string;
@@ -575,6 +584,65 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   );
   const filteredMachines = useMemo(() => machineRows.filter((row) => machineMatchesFilter(row, filter)), [filter, machineRows]);
   const stale = typeof fleet.cache_age_seconds === "number" && fleet.cache_age_seconds > 60;
+  const [selectedAgentIds, setSelectedAgentIds] = useState<ReadonlySet<string>>(new Set());
+  const [agentFormDraft, setAgentFormDraft] = useState<AgentFormDraft | null>(null);
+
+  // Drop selections when the underlying row set changes (filter, refresh).
+  // Avoid keeping stale ids that no longer match a visible row.
+  useEffect(() => {
+    setSelectedAgentIds((current) => {
+      if (!current.size) {
+        return current;
+      }
+      const visibleAgentIds = new Set(
+        filteredMachines
+          .map((row) => row.agentId)
+          .filter((id): id is string => Boolean(id))
+      );
+      let dropped = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visibleAgentIds.has(id)) {
+          next.add(id);
+        } else {
+          dropped = true;
+        }
+      }
+      return dropped ? next : current;
+    });
+  }, [filteredMachines]);
+
+  const selectableAgentIds = useMemo(
+    () => filteredMachines.map((row) => row.agentId).filter((id): id is string => Boolean(id)),
+    [filteredMachines]
+  );
+  const allSelected = selectableAgentIds.length > 0 && selectableAgentIds.every((id) => selectedAgentIds.has(id));
+  const someSelected = selectedAgentIds.size > 0 && !allSelected;
+
+  const toggleRowSelected = useCallback((agentId: string) => {
+    setSelectedAgentIds((current) => {
+      const next = new Set(current);
+      if (next.has(agentId)) {
+        next.delete(agentId);
+      } else {
+        next.add(agentId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedAgentIds((current) => {
+      if (current.size && selectableAgentIds.every((id) => current.has(id))) {
+        return new Set();
+      }
+      return new Set(selectableAgentIds);
+    });
+  }, [selectableAgentIds]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedAgentIds(new Set());
+  }, []);
 
   const runAction = useCallback(async (label: string, action: () => Promise<unknown>) => {
     setActionStatusLink(null);
@@ -1084,32 +1152,76 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   }, [runAction]);
 
   const createAgent = useCallback(() => {
-    const agentId = window.prompt("Agent ID");
-    if (!agentId) {
-      return;
-    }
-    const vmid = window.prompt("VMID");
-    const computerName = window.prompt("Computer name") || "";
-    void runAction(`Add ${agentId}`, () => postJson("/api/agents", {
-      agent_id: agentId,
-      vmid: vmid || "",
-      computer_name: computerName
-    }));
-  }, [runAction]);
+    setAgentFormDraft({
+      mode: "create",
+      agentId: "",
+      vmid: "",
+      computerName: "",
+      serialNumber: "",
+      agentVersion: ""
+    });
+  }, []);
 
   const updateAgent = useCallback((agent: AgentFleetRow) => {
-    const vmid = window.prompt(`VMID for ${agent.agent_id}`, agent.vmid ? String(agent.vmid) : "");
-    if (vmid === null) {
+    setAgentFormDraft({
+      mode: "edit",
+      agentId: agent.agent_id,
+      vmid: agent.vmid ? String(agent.vmid) : "",
+      computerName: agent.computer_name || "",
+      serialNumber: agent.serial_number || "",
+      agentVersion: agent.agent_version || ""
+    });
+  }, []);
+
+  const submitAgentForm = useCallback(async () => {
+    const draft = agentFormDraft;
+    if (!draft) {
       return;
     }
-    const computerName = window.prompt(`Computer name for ${agent.agent_id}`, agent.computer_name || "") ?? agent.computer_name ?? "";
-    void runAction(`Update ${agent.agent_id}`, () => postJson(`/api/agents/${encodeURIComponent(agent.agent_id)}/update`, {
-      vmid,
-      computer_name: computerName,
-      serial_number: agent.serial_number || "",
-      agent_version: agent.agent_version || ""
-    }));
-  }, [runAction]);
+    const trimmedId = draft.agentId.trim();
+    if (!trimmedId) {
+      setActionStatus("Agent ID is required");
+      return;
+    }
+    const body = {
+      vmid: draft.vmid.trim(),
+      computer_name: draft.computerName.trim(),
+      serial_number: draft.serialNumber.trim(),
+      agent_version: draft.agentVersion.trim()
+    };
+    if (draft.mode === "create") {
+      await runAction(`Add ${trimmedId}`, () => postJson("/api/agents", {
+        agent_id: trimmedId,
+        ...body
+      }));
+    } else {
+      await runAction(`Update ${trimmedId}`, () => postJson(
+        `/api/agents/${encodeURIComponent(trimmedId)}/update`,
+        body
+      ));
+    }
+    setAgentFormDraft(null);
+  }, [agentFormDraft, runAction]);
+
+  const cancelAgentForm = useCallback(() => {
+    setAgentFormDraft(null);
+  }, []);
+
+  const bulkDeleteSelected = useCallback(async () => {
+    if (!selectedAgentIds.size) {
+      return;
+    }
+    const ids = [...selectedAgentIds];
+    const confirmText = `Delete ${ids.length} agent${ids.length === 1 ? "" : "s"}? This cannot be undone.`;
+    if (typeof window !== "undefined" && !window.confirm(confirmText)) {
+      return;
+    }
+    await runAction(
+      `Delete ${ids.length} agent${ids.length === 1 ? "" : "s"}`,
+      () => postJson("/api/agents/bulk-delete", { agent_ids: ids })
+    );
+    clearSelection();
+  }, [clearSelection, runAction, selectedAgentIds]);
 
   const approveAgent = useCallback((agent: AgentFleetRow) => {
     const approvalId = agent.approval_id;
@@ -1289,9 +1401,28 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             onSaveTag={saveMachineTag}
             onCancelTag={cancelMachineTagDraft}
             assignmentsByVmid={assignmentsByVmid}
+            selectedAgentIds={selectedAgentIds}
+            onToggleRow={toggleRowSelected}
+            onToggleSelectAll={toggleSelectAll}
+            allSelected={allSelected}
+            someSelected={someSelected}
+            onBulkDelete={() => { void bulkDeleteSelected(); }}
+            onClearSelection={clearSelection}
+            onEditAgent={updateAgent}
           />
         </div>
       </section>
+
+      {agentFormDraft ? (
+        <FleetAgentFormModal
+          draft={agentFormDraft}
+          onChange={(field, value) => {
+            setAgentFormDraft((current) => (current ? { ...current, [field]: value } : current));
+          }}
+          onSubmit={() => { void submitAgentForm(); }}
+          onCancel={cancelAgentForm}
+        />
+      ) : null}
     </PageFrame>
   );
 }
@@ -1305,7 +1436,15 @@ function FleetMachineTable({
   onTagDraftChange,
   onSaveTag,
   onCancelTag,
-  assignmentsByVmid
+  assignmentsByVmid,
+  selectedAgentIds,
+  onToggleRow,
+  onToggleSelectAll,
+  allSelected,
+  someSelected,
+  onBulkDelete,
+  onClearSelection,
+  onEditAgent
 }: {
   readonly rows: readonly FleetMachineRow[];
   readonly onCreateAgent: () => void;
@@ -1316,7 +1455,16 @@ function FleetMachineTable({
   readonly onSaveTag: (row: FleetMachineRow) => void;
   readonly onCancelTag: () => void;
   readonly assignmentsByVmid: ReadonlyMap<number, BubbleAssignment>;
+  readonly selectedAgentIds: ReadonlySet<string>;
+  readonly onToggleRow: (agentId: string) => void;
+  readonly onToggleSelectAll: () => void;
+  readonly allSelected: boolean;
+  readonly someSelected: boolean;
+  readonly onBulkDelete: () => void;
+  readonly onClearSelection: () => void;
+  readonly onEditAgent: (agent: AgentFleetRow) => void;
 }) {
+  const selectionCount = selectedAgentIds.size;
   return (
     <Panel title="Fleet machines">
       <div className="fleet-lane-command">
@@ -1325,11 +1473,43 @@ function FleetMachineTable({
           <span>Add agent</span>
         </button>
       </div>
+      {selectionCount > 0 ? (
+        <div className="fleet-bulk-bar" role="region" aria-label="Bulk fleet actions">
+          <span className="fleet-bulk-bar__count">
+            {selectionCount} agent{selectionCount === 1 ? "" : "s"} selected
+          </span>
+          <div className="fleet-bulk-bar__actions">
+            <button
+              type="button"
+              className="fleet-bulk-bar__action fleet-bulk-bar__action--danger"
+              onClick={onBulkDelete}
+            >
+              Delete selected
+            </button>
+            <button type="button" className="fleet-bulk-bar__action" onClick={onClearSelection}>
+              Clear selection
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="fleet-machine-table-wrap">
         {rows.length ? (
           <table className="fleet-machine-table" aria-label="Fleet machines">
             <thead>
               <tr>
+                <th scope="col" className="fleet-machine-table__check">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible agents"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) {
+                        el.indeterminate = someSelected;
+                      }
+                    }}
+                    onChange={onToggleSelectAll}
+                  />
+                </th>
                 <th scope="col">Device Name</th>
                 <th scope="col">Heartbeat</th>
                 <th scope="col">Managed By</th>
@@ -1341,37 +1521,139 @@ function FleetMachineTable({
                 <th scope="col">Agent</th>
                 <th scope="col">Bubble</th>
                 <th scope="col">Tag</th>
+                <th scope="col" className="fleet-machine-table__row-actions" aria-label="Row actions" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <Fragment key={row.id}>
-                  <MachineRow
-                    row={row}
-                    assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
-                    onTag={onTagMachine}
-                  />
-                  {tagDraft?.rowId === row.id && row.vmid !== undefined ? (
-                    <tr className="machine-tag-row">
-                      <td colSpan={11}>
-                        <MachineTagEditor
-                          row={row}
-                          values={tagDraft}
-                          bubbleOptions={bubbleOptions}
-                          onChange={onTagDraftChange}
-                          onSave={() => { onSaveTag(row); }}
-                          onCancel={onCancelTag}
-                        />
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
-              ))}
+              {rows.map((row) => {
+                const agentId = row.agentId;
+                const selected = agentId ? selectedAgentIds.has(agentId) : false;
+                return (
+                  <Fragment key={row.id}>
+                    <MachineRow
+                      row={row}
+                      assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
+                      onTag={onTagMachine}
+                      selected={selected}
+                      onToggleSelect={agentId ? () => { onToggleRow(agentId); } : undefined}
+                      onEditAgent={agentId ? onEditAgent : undefined}
+                    />
+                    {tagDraft?.rowId === row.id && row.vmid !== undefined ? (
+                      <tr className="machine-tag-row">
+                        <td colSpan={13}>
+                          <MachineTagEditor
+                            row={row}
+                            values={tagDraft}
+                            bubbleOptions={bubbleOptions}
+                            onChange={onTagDraftChange}
+                            onSave={() => { onSaveTag(row); }}
+                            onCancel={onCancelTag}
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         ) : <p className="empty">No fleet machines found.</p>}
       </div>
     </Panel>
+  );
+}
+
+function FleetAgentFormModal({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel
+}: {
+  readonly draft: AgentFormDraft;
+  readonly onChange: (field: keyof AgentFormDraft, value: string) => void;
+  readonly onSubmit: () => void;
+  readonly onCancel: () => void;
+}) {
+  const title = draft.mode === "create" ? "Add fleet agent" : `Edit agent ${draft.agentId}`;
+  return (
+    <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fleet-agent-form-title"
+        className="fleet-modal"
+        onClick={(event) => { event.stopPropagation(); }}
+      >
+        <header className="fleet-modal__header">
+          <h3 id="fleet-agent-form-title">{title}</h3>
+          <button type="button" className="fleet-modal__close" onClick={onCancel} aria-label="Close">
+            x
+          </button>
+        </header>
+        <form
+          className="fleet-modal__body"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label className="cloudosd-field">
+            <span>Agent ID *</span>
+            <input
+              value={draft.agentId}
+              onChange={(event) => { onChange("agentId", event.currentTarget.value); }}
+              disabled={draft.mode === "edit"}
+              placeholder="agent-id"
+              required
+              aria-label="Agent ID"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>VMID</span>
+            <input
+              value={draft.vmid}
+              onChange={(event) => { onChange("vmid", event.currentTarget.value); }}
+              placeholder="113"
+              aria-label="VMID"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Computer name</span>
+            <input
+              value={draft.computerName}
+              onChange={(event) => { onChange("computerName", event.currentTarget.value); }}
+              placeholder="DESKTOP-XYZ"
+              aria-label="Computer name"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Serial number</span>
+            <input
+              value={draft.serialNumber}
+              onChange={(event) => { onChange("serialNumber", event.currentTarget.value); }}
+              aria-label="Serial number"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Agent version</span>
+            <input
+              value={draft.agentVersion}
+              onChange={(event) => { onChange("agentVersion", event.currentTarget.value); }}
+              placeholder="1.0.0"
+              aria-label="Agent version"
+            />
+          </label>
+          <div className="fleet-modal__actions">
+            <button type="button" className="fleet-modal__secondary" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit" className="utility-button">
+              {draft.mode === "create" ? "Add agent" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -1437,16 +1719,33 @@ function MachineTagEditor({
 function MachineRow({
   row,
   assignment,
-  onTag
+  onTag,
+  selected,
+  onToggleSelect,
+  onEditAgent
 }: {
   readonly row: FleetMachineRow;
   readonly assignment: BubbleAssignment | undefined;
   readonly onTag: (row: FleetMachineRow) => void;
+  readonly selected?: boolean | undefined;
+  readonly onToggleSelect?: (() => void) | undefined;
+  readonly onEditAgent?: ((agent: AgentFleetRow) => void) | undefined;
 }) {
   const runtimeLabel = fleetRuntimeLabel(row);
   const agentLabel = fleetAgentLabel(row);
+  const editableAgent: AgentFleetRow | null = row.agent ?? null;
   return (
-    <tr>
+    <tr className={selected ? "is-selected" : undefined}>
+      <td className="fleet-machine-table__check">
+        {onToggleSelect ? (
+          <input
+            type="checkbox"
+            checked={Boolean(selected)}
+            onChange={onToggleSelect}
+            aria-label={`Select agent ${row.agentId ?? row.name}`}
+          />
+        ) : null}
+      </td>
       <th scope="row">
         {row.vmid !== undefined ? (
           <a className="machine-name machine-name--link" href={`/react/vms/${String(row.vmid)}`}>{row.name}</a>
@@ -1504,6 +1803,18 @@ function MachineRow({
             Tag
           </button>
         ) : <span className="machine-primary-value">-</span>}
+      </td>
+      <td className="fleet-machine-table__row-actions">
+        {editableAgent && onEditAgent ? (
+          <button
+            type="button"
+            className="fleet-action"
+            aria-label={`Edit agent ${editableAgent.agent_id}`}
+            onClick={() => { onEditAgent(editableAgent); }}
+          >
+            Edit
+          </button>
+        ) : null}
       </td>
     </tr>
   );

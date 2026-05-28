@@ -7990,6 +7990,61 @@ async def delete_agent_record(agent_id: str, request: Request):
     )
 
 
+@app.post("/api/agents/bulk-delete")
+async def bulk_delete_agent_records(request: Request):
+    """Hard-delete multiple agent records in one call.
+
+    Body: { "agent_ids": ["<id>", "<id>", ...] }
+
+    Reports per-id outcome so the UI can flag missing/failed deletes
+    without aborting the whole batch. The fleet checkbox bar uses this.
+    """
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
+        else:
+            body = {}
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        raw_ids = body.get("agent_ids")
+        if not isinstance(raw_ids, list):
+            raise ValueError("agent_ids must be a list")
+        agent_ids: list[str] = []
+        for value in raw_ids:
+            sanitized = _sanitize_input(_optional_text(value))
+            if sanitized:
+                agent_ids.append(sanitized)
+        agent_ids = list(dict.fromkeys(agent_ids))
+        if not agent_ids:
+            raise ValueError("agent_ids must include at least one non-empty id")
+        from web import db_pg
+
+        results: list[dict[str, object]] = []
+        deleted_count = 0
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            for agent_id in agent_ids:
+                try:
+                    ok = bool(agent_telemetry_pg.hard_delete_agent(conn, agent_id))
+                    results.append({"agent_id": agent_id, "deleted": ok})
+                    if ok:
+                        deleted_count += 1
+                except Exception as inner_exc:
+                    results.append({"agent_id": agent_id, "deleted": False, "error": str(inner_exc)})
+    except Exception as exc:
+        return _action_error_response(request, message=f"Bulk delete failed: {exc}")
+    return _action_response(
+        request,
+        payload={
+            "ok": True,
+            "action": "bulk-delete",
+            "deleted": deleted_count,
+            "requested": len(agent_ids),
+            "results": results,
+        },
+    )
+
+
 @app.post("/api/agent-approvals/{approval_id}/approve")
 async def approve_agent_bootstrap(approval_id: str, request: Request):
     agent_token = None
