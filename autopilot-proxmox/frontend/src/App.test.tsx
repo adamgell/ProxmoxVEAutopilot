@@ -748,6 +748,50 @@ describe("App", () => {
     expect((await screen.findAllByText(content)).length).toBeGreaterThan(0);
   });
 
+  test("deletes selected MSI files from the React files page", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/files/delete": { ok: true, deleted: 1 }
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderRoute("/react/files");
+
+    const fileRow = await screen.findByText("AutopilotAgent.msi");
+    expect(fileRow).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select AutopilotAgent.msi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith("Delete 1 MSI file(s)? This cannot be undone.");
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/delete",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    const deleteCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/files/delete"
+      && init && typeof init !== "function" && (init as RequestInit).method === "POST"
+    ));
+    expect(deleteCall).toBeDefined();
+    const init = deleteCall?.[1] as RequestInit;
+    expect(init.body).toBeInstanceOf(FormData);
+    const sentForm = init.body as FormData;
+    expect(sentForm.getAll("files")).toEqual(["AutopilotAgent.msi"]);
+  });
+
+  test("Delete button is disabled when no MSI files are selected", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/files");
+
+    await screen.findByText("AutopilotAgent.msi");
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
   test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {
     mockFetch(dashboardResponses);
 

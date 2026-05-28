@@ -13,6 +13,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [filter, setFilter] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<readonly string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -27,8 +28,22 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   usePolling(load);
 
   const query = filter.trim().toLowerCase();
-  const filtered = useMemo(() => rows.filter((row) => lowerText(row.filename).includes(query)), [query, rows]);
-  const totalBytes = rows.reduce((sum, row) => sum + (typeof row.size === "number" ? row.size : 0), 0);
+  const filtered = useMemo(
+    () => rows.filter((row) => lowerText(row.filename).includes(query)),
+    [query, rows],
+  );
+  const totalBytes = rows.reduce(
+    (sum, row) => sum + (typeof row.size === "number" ? row.size : 0),
+    0,
+  );
+
+  const toggleSelected = (filename: string) => {
+    setSelected((current) =>
+      current.includes(filename)
+        ? current.filter((name) => name !== filename)
+        : [...current, filename],
+    );
+  };
 
   const uploadFiles = async () => {
     const files = fileInput.current?.files;
@@ -51,6 +66,27 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     }
   };
 
+  const deleteSelected = async () => {
+    if (!selected.length) {
+      return;
+    }
+    if (!window.confirm(`Delete ${String(selected.length)} MSI file(s)? This cannot be undone.`)) {
+      return;
+    }
+    const form = new FormData();
+    selected.forEach((name) => {
+      form.append("files", name);
+    });
+    try {
+      const result = await postForm<{ readonly deleted?: number }>("/api/files/delete", form);
+      setMessage(`Deleted ${String(result.deleted ?? selected.length)} MSI file(s)`);
+      setSelected([]);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "File delete failed");
+    }
+  };
+
   return (
     <PageFrame
       bootstrap={bootstrap}
@@ -64,7 +100,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <Metric label="Files" value={String(rows.length)} />
         <Metric label="Storage" value={bytesLabel(totalBytes)} />
         <Metric label="Visible" value={String(filtered.length)} />
-        <Metric label="Type" value="MSI" />
+        <Metric label="Selected" value={String(selected.length)} />
       </section>
       <section className="filter-row" aria-label="File shelf controls">
         <div className="filter-row__top">
@@ -77,6 +113,14 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <div className="utility-upload-row">
           <input ref={fileInput} type="file" accept=".msi,application/octet-stream" multiple aria-label="Upload MSI files" />
           <button className="utility-button" type="button" onClick={() => { void uploadFiles(); }}>Upload MSI</button>
+          <button
+            className="utility-button utility-button--danger"
+            type="button"
+            onClick={() => { void deleteSelected(); }}
+            disabled={!selected.length}
+          >
+            Delete
+          </button>
         </div>
       </section>
       <Panel title="MSI files">
@@ -84,6 +128,7 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           <table className="jobs-table utility-table">
             <thead>
               <tr>
+                <th scope="col" aria-label="Select" />
                 <th scope="col">File</th>
                 <th scope="col">Size</th>
                 <th scope="col">Modified</th>
@@ -92,6 +137,14 @@ export function FilesPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             <tbody>
               {filtered.map((row) => (
                 <tr key={row.filename}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${row.filename}`}
+                      checked={selected.includes(row.filename)}
+                      onChange={() => { toggleSelected(row.filename); }}
+                    />
+                  </td>
                   <td><a href={`/files/${encodeURIComponent(row.filename)}`}>{row.filename}</a></td>
                   <td>{bytesLabel(row.size)}</td>
                   <td>{textValue(row.mtime)}</td>
