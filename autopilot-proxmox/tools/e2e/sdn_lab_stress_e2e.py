@@ -140,6 +140,7 @@ class TeardownResources:
     cloudosd_run_ids: list[str] = field(default_factory=list)
     osdeploy_run_ids: list[str] = field(default_factory=list)
     bubble_ids: list[str] = field(default_factory=list)
+    credential_ids: list[int] = field(default_factory=list)
     sdn_objects: list[SdnObject] = field(default_factory=list)
 
 
@@ -392,6 +393,14 @@ def build_teardown_actions(resources: TeardownResources) -> list[TeardownAction]
         actions.append(TeardownAction(name=f"archive_osdeploy_{run_id}", kind="archive_osdeploy", args={"run_id": run_id}))
     for bubble_id in resources.bubble_ids:
         actions.append(TeardownAction(name=f"delete_bubble_{bubble_id}", kind="delete_bubble", args={"bubble_id": bubble_id}))
+    for credential_id in resources.credential_ids:
+        actions.append(
+            TeardownAction(
+                name=f"delete_credential_{credential_id}",
+                kind="delete_credential",
+                args={"credential_id": int(credential_id)},
+            )
+        )
 
     order = {"subnet": 0, "vnet": 1, "zone": 2}
     for obj in sorted(resources.sdn_objects, key=lambda item: order.get(item.kind, 99)):
@@ -694,6 +703,7 @@ class StressHarness:
         self.created_cloudosd_runs: list[str] = []
         self.created_osdeploy_runs: list[str] = []
         self.created_bubbles: list[str] = []
+        self.created_credentials: list[int] = []
         self.created_sdn: list[SdnObject] = []
         self.released_negative_jobs: set[str] = set()
         self.negative_disk_boot_restarts: set[str] = set()
@@ -1328,12 +1338,16 @@ for key, value in extra_vars.items():
 job = web_app.job_manager.start('provision_osdeploy', cmd, args=extra_vars)
 provision_job = {{'ok': True, 'job_id': job['id']}}
 created['run']['provision_job_id'] = job['id']
-print(json.dumps({{'run': created['run'], 'provision_job': provision_job, 'forest_password': {forest_password!r}}}, default=str))
+print(json.dumps({{'run': created['run'], 'provision_job': provision_job, 'forest_password': {forest_password!r}, 'forest_credential_id': forest_cred, 'dsrm_credential_id': dsrm_cred}}, default=str))
 """,
             timeout=120,
         )
         run = payload["run"]
         self.created_osdeploy_runs.append(run["run_id"])
+        for key in ("forest_credential_id", "dsrm_credential_id"):
+            cred_id = payload.get(key)
+            if cred_id is not None and int(cred_id) not in self.created_credentials:
+                self.created_credentials.append(int(cred_id))
         self.remember_vmid(run.get("vmid"))
         self.lab_contexts[spec.domain] = {
             "bubble_id": bubble_id,
@@ -1389,9 +1403,12 @@ with db_pg.connect() as conn:
 print(json.dumps({{'sequence_id': sequence_id, 'credential_id': cred_id}}))
 """
         )
+        credential_id = int(payload["credential_id"])
+        if credential_id not in self.created_credentials:
+            self.created_credentials.append(credential_id)
         return CloudOsdJoinSequence(
             sequence_id=int(payload["sequence_id"]),
-            credential_id=int(payload["credential_id"]),
+            credential_id=credential_id,
         )
 
     def create_cloudosd_run(
@@ -2303,6 +2320,17 @@ with db_pg.connect() as conn:
 print(json.dumps({{'ok': ok}}))
 """
             )
+        elif kind == "delete_credential":
+            self.controller_python(
+                f"""
+import json
+from web import db_pg, sequences_pg
+with db_pg.connect() as conn:
+    sequences_pg.delete_credential(conn, {int(args['credential_id'])!r})
+    conn.commit()
+print(json.dumps({{'ok': True}}))
+"""
+            )
 
     def pve_teardown_scope_vms(self, *, include_cxw: bool) -> list[dict[str, Any]]:
         vm_list = self.pvesh_json(f"pvesh get /nodes/{shlex.quote(self.node)}/qemu", check=False) or []
@@ -2372,6 +2400,7 @@ print(json.dumps({{'ok': ok}}))
             cloudosd_run_ids=list(dict.fromkeys(self.created_cloudosd_runs)),
             osdeploy_run_ids=list(dict.fromkeys(self.created_osdeploy_runs)),
             bubble_ids=list(dict.fromkeys(self.created_bubbles)),
+            credential_ids=list(dict.fromkeys(int(cred_id) for cred_id in self.created_credentials)),
             sdn_objects=list(dict.fromkeys(self.created_sdn + ([
                 SdnObject(kind="subnet", vnet="cxwlab1", name="10.77.20.0/24"),
                 SdnObject(kind="vnet", name="cxwlab1"),
@@ -2387,7 +2416,7 @@ print(json.dumps({{'ok': ok}}))
                     self.pve_cmd(f"qm stop {int(action.args['vmid'])} --timeout 120", timeout=180, check=False)
                 elif action.kind == "qm_destroy":
                     self.destroy_vm(int(action.args["vmid"]))
-                elif action.kind in {"archive_cloudosd", "archive_osdeploy", "delete_bubble"}:
+                elif action.kind in {"archive_cloudosd", "archive_osdeploy", "delete_bubble", "delete_credential"}:
                     self.archive_and_delete_records(action)
                 elif action.kind.startswith("delete_"):
                     if action.kind == "delete_subnet":
@@ -2459,7 +2488,12 @@ with db_pg.connect() as conn:
         select id::text as id from lab_bubbles where name like any (array[{bubble_filter}])
         \"\"\"
     ).fetchall()]
-print(json.dumps({{'cloudosd': cloudosd, 'osdeploy': osdeploy, 'bubbles': bubbles}}, default=str))
+    credentials = [int(row['id']) for row in conn.execute(
+        \"\"\"
+        select id from credentials where name like 'e2e-%'
+        \"\"\"
+    ).fetchall()]
+print(json.dumps({{'cloudosd': cloudosd, 'osdeploy': osdeploy, 'bubbles': bubbles, 'credentials': credentials}}, default=str))
 """,
             timeout=120,
         )
@@ -2512,6 +2546,13 @@ print(json.dumps({{'cloudosd': cloudosd, 'osdeploy': osdeploy, 'bubbles': bubble
         for bubble_id in orphans.get("bubbles") or []:
             if bubble_id and bubble_id not in self.created_bubbles:
                 self.created_bubbles.append(bubble_id)
+        for cred_id in orphans.get("credentials") or []:
+            try:
+                cred_int = int(cred_id)
+            except (TypeError, ValueError):
+                continue
+            if cred_int not in self.created_credentials:
+                self.created_credentials.append(cred_int)
         self.record("teardown_only_db_discovered", orphans)
 
         self.created_sdn.extend(

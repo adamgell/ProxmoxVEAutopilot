@@ -612,6 +612,30 @@ def test_create_cloudosd_run_uses_pg_domain_join_config_not_sequence_id_only():
     assert records["E2E30-WK-01_cloudosd_domain_join_plan"]["failures"] == []
 
 
+def test_build_teardown_actions_includes_delete_credential_for_each_tracked_credential():
+    """Ephemeral e2e credentials accumulated 264 rows in production because
+    the harness never deleted them on teardown. Confirm the action plan
+    now emits a delete_credential entry for every tracked credential ID
+    so a fresh run cleans up its own credentials.
+    """
+    e2e = _load_module()
+    resources = e2e.TeardownResources(
+        vmids=[],
+        cloudosd_run_ids=[],
+        osdeploy_run_ids=[],
+        bubble_ids=[],
+        credential_ids=[101, 102, 103],
+        sdn_objects=[],
+    )
+    actions = e2e.build_teardown_actions(resources)
+    names = [action.name for action in actions]
+    kinds = [action.kind for action in actions]
+    assert "delete_credential_101" in names
+    assert "delete_credential_102" in names
+    assert "delete_credential_103" in names
+    assert kinds.count("delete_credential") == 3
+
+
 def test_build_teardown_actions_stops_and_destroys_vms_before_sdn_delete_and_apply():
     e2e = _load_module()
     resources = e2e.TeardownResources(
