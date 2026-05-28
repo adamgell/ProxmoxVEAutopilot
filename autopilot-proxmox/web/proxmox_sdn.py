@@ -30,6 +30,15 @@ def _clean(value):
         return {str(k): _clean(v) for k, v in value.items() if str(k).lower() not in SECRET_FIELD_NAMES}
     if isinstance(value, list):
         return [_clean(item) for item in value]
+    # PVE's API expects booleans as 0/1 (or sometimes lowercase "true"/"false")
+    # over the wire; Python's `False`/`True` get stringified by `requests` to
+    # "False"/"True" (capitalized), which PVE rejects with
+    # "vlanaware: type check ('boolean') failed - got 'False'". Coerce here so
+    # every SDN body gets a wire-friendly form.
+    # Note: isinstance(True, int) is True in Python, so the bool check must
+    # come first.
+    if isinstance(value, bool):
+        return 1 if value else 0
     return value
 
 
