@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, Download } from "lucide-react";
 
-import { fetchJson } from "../apiClient";
+import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Panel } from "../components/ui";
 import type {
@@ -11,6 +11,34 @@ import type {
   VmsFleetResponse
 } from "../contracts";
 import { fallbackText, vmDisplayName } from "../viewModels";
+
+interface BuildHostStatus {
+  readonly vmid: string | number | null;
+  readonly name: string;
+  readonly node: string | null;
+  readonly expected_agent_id: string;
+  readonly expected_computer_name: string;
+  readonly agent_ready: boolean;
+  readonly agent_state: string;
+  readonly last_heartbeat_at: string | null;
+  readonly last_heartbeat_age_seconds: number | null;
+  readonly agent_version: string | null;
+  readonly primary_ipv4: string | null;
+}
+
+interface BuildHostResponse {
+  readonly schema_version: number;
+  readonly build_host: BuildHostStatus;
+  readonly artifacts?: {
+    readonly ready?: boolean;
+    readonly agent_msi_ready?: boolean;
+    readonly iso_ready?: boolean;
+  };
+  readonly media?: {
+    readonly windows_iso_volid?: string | null;
+    readonly virtio_iso_volid?: string | null;
+  };
+}
 
 interface AgentDownloadPageProps {
   readonly bootstrap: AppBootstrap;
@@ -117,6 +145,130 @@ function buildInstallCommand(
 
 async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value);
+}
+
+function buildHostStateLabel(status: BuildHostStatus | null): string {
+  if (!status) {
+    return "Loading...";
+  }
+  if (!status.vmid) {
+    return "Not provisioned";
+  }
+  if (status.agent_ready) {
+    return "Ready";
+  }
+  if (status.agent_state === "missing") {
+    return "VM exists, agent missing";
+  }
+  if (status.agent_state === "stale") {
+    return "Agent stale";
+  }
+  return status.agent_state || "Unknown";
+}
+
+function formatAge(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) {
+    return "never";
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s ago`;
+  }
+  if (seconds < 3600) {
+    return `${Math.round(seconds / 60)}m ago`;
+  }
+  if (seconds < 86400) {
+    return `${Math.round(seconds / 3600)}h ago`;
+  }
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function BuildHostPanel() {
+  const [status, setStatus] = useState<BuildHostStatus | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [actionResult, setActionResult] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchJson<BuildHostResponse>("/api/setup/v1/build-host");
+      setStatus(data.build_host);
+      setError("");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to load build host status");
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 30000);
+    return () => { window.clearInterval(timer); };
+  }, [load]);
+
+  const provision = useCallback(async () => {
+    setBusy(true);
+    setActionResult("");
+    setError("");
+    try {
+      const result = await postJson<{ readonly vmid?: number; readonly name?: string; readonly node?: string }>(
+        "/api/setup/v1/build-host/vm",
+        {}
+      );
+      const vmid = result.vmid ?? "?";
+      const name = result.name ?? "build host";
+      setActionResult(`Provisioned ${name} as VM ${String(vmid)}. The VM is booting; the agent will register once Windows Setup completes.`);
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to provision build host");
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
+  const stateLabel = buildHostStateLabel(status);
+  const vmidLabel = status?.vmid ? String(status.vmid) : "-";
+  const heartbeat = status?.last_heartbeat_age_seconds ?? null;
+
+  return (
+    <Panel title="Build host">
+      {!loaded ? (
+        <p className="empty">Checking build host status...</p>
+      ) : (
+        <>
+          <dl className="fleet-detail-grid">
+            <div><dt>Status</dt><dd>{stateLabel}</dd></div>
+            <div><dt>VMID</dt><dd>{vmidLabel}</dd></div>
+            <div><dt>Node</dt><dd>{status?.node ?? "-"}</dd></div>
+            <div><dt>Agent ID</dt><dd>{status?.expected_agent_id || "-"}</dd></div>
+            <div><dt>Agent version</dt><dd>{status?.agent_version ?? "-"}</dd></div>
+            <div><dt>Last heartbeat</dt><dd>{formatAge(heartbeat)}</dd></div>
+          </dl>
+          {error ? <p className="notice" role="status">{error}</p> : null}
+          {actionResult ? <p className="notice" role="status">{actionResult}</p> : null}
+          {!status?.vmid ? (
+            <div className="build-host-actions">
+              <p className="build-host-hint">
+                No build host VM is provisioned on the cluster yet. Click below to create
+                an unattended Windows Server VM with the AutopilotAgent pre-seeded; it
+                will register as <code>{status?.expected_agent_id || "buildhost-<vmid>"}</code> once Windows
+                Setup completes.
+              </p>
+              <button
+                type="button"
+                className="utility-button"
+                onClick={() => { void provision(); }}
+                disabled={busy}
+              >
+                {busy ? "Provisioning..." : "Build build host"}
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </Panel>
+  );
 }
 
 function CopyButton({ value, label }: { readonly value: string; readonly label: string }) {
@@ -278,6 +430,8 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
           <CopyButton value={installCommand} label="Copy command" />
         </div>
       </Panel>
+
+      <BuildHostPanel />
     </PageFrame>
   );
 }
