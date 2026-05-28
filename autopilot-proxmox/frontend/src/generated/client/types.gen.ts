@@ -1003,6 +1003,16 @@ export type HeartbeatBody = {
 };
 
 /**
+ * InstallTrackingDeleteBody
+ */
+export type InstallTrackingDeleteBody = {
+    /**
+     * Reason
+     */
+    reason: string;
+};
+
+/**
  * InstallTrackingRunCreate
  */
 export type InstallTrackingRunCreate = {
@@ -6333,9 +6343,23 @@ export type InstallTrackingPageApiApiInstallTrackingPageGetResponses = {
 export type InstallTrackingRunsApiApiInstallTrackingRunsGetData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Include Deleted
+         */
+        include_deleted?: boolean;
+    };
     url: '/api/install-tracking/runs';
 };
+
+export type InstallTrackingRunsApiApiInstallTrackingRunsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingRunsApiApiInstallTrackingRunsGetError = InstallTrackingRunsApiApiInstallTrackingRunsGetErrors[keyof InstallTrackingRunsApiApiInstallTrackingRunsGetErrors];
 
 export type InstallTrackingRunsApiApiInstallTrackingRunsGetResponses = {
     /**
@@ -6367,6 +6391,34 @@ export type InstallTrackingCreateRunApiInstallTrackingRunsPostResponses = {
     200: unknown;
 };
 
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteData = {
+    body: InstallTrackingDeleteBody;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+    };
+    query?: never;
+    url: '/api/install-tracking/runs/{run_id}';
+};
+
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteError = InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteErrors[keyof InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteErrors];
+
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetData = {
     body?: never;
     path: {
@@ -6389,6 +6441,38 @@ export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetErrors = {
 export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetError = InstallTrackingRunApiApiInstallTrackingRunsRunIdGetErrors[keyof InstallTrackingRunApiApiInstallTrackingRunsRunIdGetErrors];
 
 export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteData = {
+    body: InstallTrackingDeleteBody;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+        /**
+         * Item Id
+         */
+        item_id: string;
+    };
+    query?: never;
+    url: '/api/install-tracking/runs/{run_id}/items/{item_id}';
+};
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteError = InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteErrors[keyof InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteErrors];
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteResponses = {
     /**
      * Successful Response
      */

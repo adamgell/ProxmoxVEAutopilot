@@ -1558,6 +1558,21 @@
         "title": "HeartbeatBody",
         "type": "object"
       },
+      "InstallTrackingDeleteBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "InstallTrackingDeleteBody",
+        "type": "object"
+      },
       "InstallTrackingRunCreate": {
         "properties": {
           "name": {
@@ -9876,6 +9891,18 @@
     "/api/install-tracking/runs": {
       "get": {
         "operationId": "install_tracking_runs_api_api_install_tracking_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -9884,6 +9911,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Install Tracking Runs Api"
@@ -9924,6 +9961,51 @@
       }
     },
     "/api/install-tracking/runs/{run_id}": {
+      "delete": {
+        "operationId": "install_tracking_delete_run_api_install_tracking_runs__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallTrackingDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Tracking Delete Run"
+      },
       "get": {
         "operationId": "install_tracking_run_api_api_install_tracking_runs__run_id__get",
         "parameters": [
@@ -9961,6 +10043,60 @@
       }
     },
     "/api/install-tracking/runs/{run_id}/items/{item_id}": {
+      "delete": {
+        "operationId": "install_tracking_delete_item_api_install_tracking_runs__run_id__items__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallTrackingDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Tracking Delete Item"
+      },
       "post": {
         "operationId": "install_tracking_run_item_update_api_install_tracking_runs__run_id__items__item_id__post",
         "parameters": [
