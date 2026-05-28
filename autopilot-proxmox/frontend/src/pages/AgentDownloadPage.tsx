@@ -154,7 +154,16 @@ function buildHostStateLabel(status: BuildHostStatus | null): string {
   if (!status.vmid) {
     return "Not provisioned";
   }
+  const heartbeatFresh =
+    status.last_heartbeat_age_seconds !== null &&
+    status.last_heartbeat_age_seconds <= 300;
   if (status.agent_ready) {
+    return "Ready";
+  }
+  // Treat a recent heartbeat as effectively ready even when the backend
+  // sets agent_ready=false (e.g. device row present without a telemetry
+  // row, or expected computer-name match still syncing).
+  if (heartbeatFresh) {
     return "Ready";
   }
   if (status.agent_state === "missing") {
@@ -162,6 +171,9 @@ function buildHostStateLabel(status: BuildHostStatus | null): string {
   }
   if (status.agent_state === "stale") {
     return "Agent stale";
+  }
+  if (status.agent_state === "registered") {
+    return "Registered, waiting for heartbeat";
   }
   return status.agent_state || "Unknown";
 }
@@ -245,6 +257,14 @@ function BuildHostPanel() {
   const stateLabel = buildHostStateLabel(status);
   const vmidLabel = status?.vmid ? String(status.vmid) : "-";
   const heartbeat = status?.last_heartbeat_age_seconds ?? null;
+  // Treat the agent as healthy if either the backend says agent_ready,
+  // OR we have a recent heartbeat (within 5 min). The backend's
+  // agent_ready is stricter than a fresh heartbeat -- it also requires
+  // the row to come from agent_telemetry and the vmid/computer name to
+  // match an expectation, which can leave a recently-checked-in device
+  // looking "registered but unready" until those sync up.
+  const heartbeatFresh = heartbeat !== null && heartbeat <= 300;
+  const agentHealthy = Boolean(status?.agent_ready) || heartbeatFresh;
 
   return (
     <Panel title="Build host">
@@ -279,7 +299,7 @@ function BuildHostPanel() {
                 {busy ? "Provisioning..." : "Build build host"}
               </button>
             </div>
-          ) : status.agent_ready ? null : (
+          ) : agentHealthy ? null : (
             <div className="build-host-actions">
               <p className="build-host-hint">
                 Build host VM <code>{String(status.vmid)}</code> exists on
