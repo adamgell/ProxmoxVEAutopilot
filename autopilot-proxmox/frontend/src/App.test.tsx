@@ -774,7 +774,7 @@ describe("App", () => {
 
     const deleteCall = fetchMock.mock.calls.find(([input, init]) => (
       input === "/api/files/delete"
-      && init && typeof init !== "function" && (init as RequestInit).method === "POST"
+      && init && typeof init !== "function" && init.method === "POST"
     ));
     expect(deleteCall).toBeDefined();
     const init = deleteCall?.[1] as RequestInit;
