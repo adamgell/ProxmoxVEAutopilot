@@ -246,8 +246,18 @@ def release_lock(pve_delete, lock_token: str, force: bool = False) -> dict:
     return _clean(result or {})
 
 
-def apply_sdn(pve_put, lock_token: str) -> dict:
-    return _put(pve_put, "/cluster/sdn", {"lock-token": lock_token})
+def apply_sdn(pve_put, lock_token: str, *, release_lock: bool = True) -> dict:
+    """Apply pending SDN changes and (by default) release the lock.
+
+    PVE's PUT /cluster/sdn accepts release-lock=1 alongside the lock-token
+    so the apply + release happens atomically. Without it the lock lingers
+    until the API client explicitly releases it, which leaves the SDN
+    effectively-locked from any other operator until cleanup.
+    """
+    body: dict = {"lock-token": lock_token}
+    if release_lock:
+        body["release-lock"] = 1
+    return _put(pve_put, "/cluster/sdn", body)
 
 
 def firewall_scope_path(scope: dict, leaf: str) -> str:

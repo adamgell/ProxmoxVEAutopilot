@@ -223,6 +223,43 @@ def apply_sdn(body: SdnApplyBody):
     return proxmox_sdn.apply_sdn(_put(), body.lock_token.strip())
 
 
+@router.post("/apply-pending")
+def apply_pending_sdn():
+    """Acquire a lock, apply pending SDN changes, and release the lock.
+
+    Convenience endpoint so the UI can offer a one-click commit without
+    exposing PVE's two-phase lock-token plumbing. On any failure we make
+    a best-effort attempt to force-release the lock so a partial apply
+    doesn't leave the SDN tree wedged.
+    """
+    api = _api()
+    lock_response = proxmox_sdn.acquire_lock(api, allow_pending=True)
+    token = ""
+    if isinstance(lock_response, str):
+        token = lock_response.strip()
+    elif isinstance(lock_response, dict):
+        token = str(
+            lock_response.get("lock-token")
+            or lock_response.get("lock_token")
+            or lock_response.get("token")
+            or ""
+        ).strip()
+    if not token:
+        raise HTTPException(
+            status_code=502,
+            detail=f"PVE acquire-lock did not return a token: {lock_response}",
+        )
+    try:
+        apply_result = proxmox_sdn.apply_sdn(_put(), token, release_lock=True)
+    except Exception:
+        try:
+            proxmox_sdn.release_lock(_delete(), token, force=True)
+        except Exception:
+            pass
+        raise
+    return {"ok": True, "lock_token_used": token, "apply": apply_result}
+
+
 @router.get("/firewall")
 def firewall_inventory(
     node: str | None = Query(default=None),

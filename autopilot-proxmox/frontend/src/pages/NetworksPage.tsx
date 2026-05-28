@@ -441,6 +441,8 @@ export function NetworksPage({
   const [error, setError] = useState("");
   const [lockToken, setLockToken] = useState("");
   const [applyStatus, setApplyStatus] = useState("");
+  const [applyAdvancedOpen, setApplyAdvancedOpen] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [labStatus, setLabStatus] = useState("");
   const [labForm, setLabForm] = useState<SdnLabForm>({
     name: "",
@@ -606,19 +608,46 @@ export function NetworksPage({
     setCreating((current) => (current === kind ? null : kind));
   }
 
-  async function applySdn() {
+  /**
+   * One-click apply: acquire a PVE SDN lock, commit pending changes,
+   * release the lock. Hides the token plumbing from operators who just
+   * want their pending CRUD to take effect.
+   */
+  async function applyPendingSdn() {
+    setApplyStatus("Acquiring SDN lock and applying pending changes...");
+    setApplying(true);
+    try {
+      await postJson<Record<string, unknown>>("/api/sdn/apply-pending", {});
+      setApplyStatus("SDN apply complete. Inventory is refreshing.");
+      await load();
+    } catch (err) {
+      setApplyStatus(err instanceof Error ? err.message : "Failed to apply SDN changes");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  /**
+   * Advanced flow: apply with an externally-acquired lock token (e.g.
+   * when an operator wants to coordinate with a manual change made via
+   * pvesh). Kept behind a disclosure so the default UI stays simple.
+   */
+  async function applySdnWithToken() {
     const token = lockToken.trim();
     if (!token) {
       return;
     }
-    setApplyStatus("Applying SDN changes...");
+    setApplyStatus("Applying SDN changes with supplied token...");
+    setApplying(true);
     try {
       await postJson<Record<string, unknown>>("/api/sdn/apply", { lock_token: token });
       setLockToken("");
-      setApplyStatus("SDN apply requested. Inventory is refreshing.");
+      setApplyStatus("SDN apply complete. Inventory is refreshing.");
       await load();
     } catch (err) {
       setApplyStatus(err instanceof Error ? err.message : "Failed to apply SDN changes");
+    } finally {
+      setApplying(false);
     }
   }
 
@@ -819,29 +848,59 @@ export function NetworksPage({
         ) : null}
 
         {(activeTab === "overview" || activeTab === "pending") ? (
-          <Panel title="Apply Gate">
+          <Panel title="Apply pending SDN changes">
             <div className="networks-apply">
-              <label className="cloudosd-field">
-                <span>Lock token</span>
-                <input
-                  value={lockToken}
-                  onChange={(event) => {
-                    setLockToken(event.currentTarget.value);
-                  }}
-                  placeholder="digest from SDN lock"
-                />
-              </label>
+              <p className="networks-note">
+                CRUD changes you make above (zones, vnets, subnets, etc.) land
+                in PVE's pending overlay until you commit them. Clicking below
+                acquires a lock, applies the pending config, and releases the
+                lock in one step.
+              </p>
               <button
                 className="utility-button"
                 type="button"
-                disabled={!lockToken.trim()}
+                disabled={applying}
                 onClick={() => {
-                  void applySdn();
+                  void applyPendingSdn();
                 }}
               >
-                Apply SDN
+                {applying ? "Applying..." : "Apply pending SDN changes"}
               </button>
               {applyStatus ? <p className="networks-note" role="status">{applyStatus}</p> : null}
+              <details
+                className="networks-apply__advanced"
+                open={applyAdvancedOpen}
+                onToggle={(event) => {
+                  setApplyAdvancedOpen(event.currentTarget.open);
+                }}
+              >
+                <summary>Advanced: apply with an external lock token</summary>
+                <p className="networks-note">
+                  Use this when you've acquired the SDN lock out-of-band
+                  (e.g. <code>pvesh create /cluster/sdn/lock --allow-pending 1</code>)
+                  and want to apply against that specific digest.
+                </p>
+                <label className="cloudosd-field">
+                  <span>Lock token</span>
+                  <input
+                    value={lockToken}
+                    onChange={(event) => {
+                      setLockToken(event.currentTarget.value);
+                    }}
+                    placeholder="digest from SDN lock"
+                  />
+                </label>
+                <button
+                  className="utility-button"
+                  type="button"
+                  disabled={applying || !lockToken.trim()}
+                  onClick={() => {
+                    void applySdnWithToken();
+                  }}
+                >
+                  Apply with token
+                </button>
+              </details>
             </div>
           </Panel>
         ) : null}

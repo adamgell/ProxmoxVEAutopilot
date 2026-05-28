@@ -88,7 +88,22 @@ def test_apply_uses_proxmox_lock_token_field():
     result = proxmox_sdn.apply_sdn(fake_put, "lock-token")
 
     assert result == {"ok": True}
-    assert calls == [("/cluster/sdn", {"lock-token": "lock-token"})]
+    # release-lock=1 is included by default so the apply also drops the lock
+    # in one round trip; without it, the lock lingers and blocks other
+    # operators until someone explicitly releases it.
+    assert calls == [("/cluster/sdn", {"lock-token": "lock-token", "release-lock": 1})]
+
+
+def test_apply_can_skip_release_lock_for_advanced_callers():
+    calls = []
+
+    def fake_put(path, data=None):
+        calls.append((path, data))
+        return {"ok": True}
+
+    proxmox_sdn.apply_sdn(fake_put, "tok", release_lock=False)
+
+    assert calls == [("/cluster/sdn", {"lock-token": "tok"})]
 
 
 def test_release_lock_uses_query_params_because_proxmox_rejects_delete_bodies():

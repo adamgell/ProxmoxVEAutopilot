@@ -39,11 +39,10 @@ describe("NetworksPage", () => {
     expect(screen.getByText("Firewall")).toBeInTheDocument();
   });
 
-  test("posts explicit SDN apply with the operator lock token", async () => {
+  test("one-click apply hits /api/sdn/apply-pending without exposing a lock token", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
-      if (input === "/api/sdn/apply") {
+      if (input === "/api/sdn/apply-pending") {
         expect(init?.method).toBe("POST");
-        expect(JSON.parse(String(init?.body))).toEqual({ lock_token: "digest-123" });
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       return new Response(
@@ -58,13 +57,13 @@ describe("NetworksPage", () => {
 
     render(<NetworksPage bootstrap={{ buildSha: "test" }} path="/react/networks" />);
 
-    fireEvent.change(await screen.findByLabelText("Lock token"), { target: { value: "digest-123" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply SDN" }));
+    // Default flow: no token field, just one button.
+    fireEvent.click(await screen.findByRole("button", { name: "Apply pending SDN changes" }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/sdn/apply", expect.objectContaining({ method: "POST" }));
+      expect(fetchMock).toHaveBeenCalledWith("/api/sdn/apply-pending", expect.objectContaining({ method: "POST" }));
     });
-    expect(await screen.findByText("SDN apply requested. Inventory is refreshing.")).toBeInTheDocument();
+    expect(await screen.findByText("SDN apply complete. Inventory is refreshing.")).toBeInTheDocument();
   });
 
   test("creates an isolated lab with open outbound egress defaults", async () => {

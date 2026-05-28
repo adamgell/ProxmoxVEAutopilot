@@ -3375,6 +3375,42 @@ h3 {
   border-radius: 0 4px 4px 0;
 }
 
+.networks-apply__advanced {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+.networks-apply__advanced > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  list-style: none;
+}
+
+.networks-apply__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.networks-apply__advanced > summary::before {
+  content: "+ ";
+  color: var(--muted-2);
+}
+
+.networks-apply__advanced[open] > summary::before {
+  content: "- ";
+}
+
+.networks-apply__advanced > * + * {
+  margin-top: 8px;
+}
+
 .networks-loading-bar {
   position: relative;
   height: 2px;
