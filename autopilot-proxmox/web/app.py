@@ -5020,6 +5020,10 @@ class InstallTrackingRunCreate(BaseModel):
     source: str = Field("", max_length=240)
 
 
+class InstallTrackingDeleteBody(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
 def _install_tracking_payload(run_id: str | None = None) -> dict:
     from web import db_pg, install_tracking_pg
 
@@ -5233,11 +5237,14 @@ async def install_tracking_page_api(run_id: str | None = None):
 
 
 @app.get("/api/install-tracking/runs")
-async def install_tracking_runs_api():
+async def install_tracking_runs_api(include_deleted: bool = False):
     from web import db_pg, install_tracking_pg
 
     with db_pg.connection(_database_url()) as conn:
-        return {"schema_version": 1, "runs": install_tracking_pg.list_runs(conn)}
+        return {
+            "schema_version": 1,
+            "runs": install_tracking_pg.list_runs(conn, include_deleted=include_deleted),
+        }
 
 
 @app.post("/api/install-tracking/runs")
@@ -5303,6 +5310,61 @@ async def install_tracking_refresh_evidence(run_id: str):
             run_id,
             _install_tracking_refresh_snapshot(),
         )
+
+
+def _install_tracking_session_user(request: Request) -> str | None:
+    session = getattr(request.state, "session", None)
+    email = None
+    if isinstance(session, dict):
+        email = session.get("user_email") or session.get("email")
+    if not isinstance(email, str):
+        return None
+    email = email.strip()
+    return email or None
+
+
+@app.delete("/api/install-tracking/runs/{run_id}")
+async def install_tracking_delete_run(request: Request, run_id: str, body: InstallTrackingDeleteBody):
+    from web import db_pg, install_tracking_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            row = install_tracking_pg.delete_run(
+                conn,
+                run_id,
+                reason=body.reason,
+                deleted_by=_install_tracking_session_user(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "install tracking run not found")
+    return row
+
+
+@app.delete("/api/install-tracking/runs/{run_id}/items/{item_id}")
+async def install_tracking_delete_item(
+    request: Request,
+    run_id: str,
+    item_id: str,
+    body: InstallTrackingDeleteBody,
+):
+    from web import db_pg, install_tracking_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            row = install_tracking_pg.delete_item(
+                conn,
+                run_id,
+                item_id,
+                reason=body.reason,
+                deleted_by=_install_tracking_session_user(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "install tracking item not found")
+    return row
 
 
 @app.get("/provision", response_class=HTMLResponse)

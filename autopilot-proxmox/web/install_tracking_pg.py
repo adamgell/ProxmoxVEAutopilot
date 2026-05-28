@@ -782,6 +782,7 @@ def delete_run(
     deleted_by: str | None = None,
     commit: bool = True,
 ) -> dict | None:
+    init(conn)
     reason_clean = (reason or "").strip()
     if not reason_clean:
         raise ValueError("delete reason is required")
@@ -827,6 +828,7 @@ def delete_item(
     deleted_by: str | None = None,
     commit: bool = True,
 ) -> dict | None:
+    init(conn)
     reason_clean = (reason or "").strip()
     if not reason_clean:
         raise ValueError("delete reason is required")
