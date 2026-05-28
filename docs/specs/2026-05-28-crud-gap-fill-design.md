@@ -114,17 +114,11 @@ A reason is required. Empty or whitespace-only returns `422`.
 
 ### Frontend
 
-Update the install tracking page (currently `RetiredJinjaPages` for the legacy surface, or its successor if already React) to:
-
-- Show a Delete button per row.
-- Open a small modal that takes a required reason string.
-- Show a "Show deleted" toggle in the list header. When on, deleted rows render with a strikethrough class and a tooltip showing `deleted_by`, `deleted_at`, and `delete_reason`.
+The `/react/install-tracking` route currently renders the retired-Jinja snapshot via `RetiredJinjaPages`. A real React port belongs alongside the Answer ISOs port (same shape, same wrapper) and ships there. Surface 2 delivers the API and storage only; the Delete button and Show-deleted toggle are added in the React port that accompanies Surface 4.
 
 ### Tests
 
 - `tests/test_install_tracking_delete.py`: success run delete with cascade, item delete, missing reason returns `422`, deleted row hidden by default, deleted row visible with `include_deleted=true`.
-- Vitest for modal + toggle.
-- Playwright happy-path delete.
 
 ## Surface 3: Answer ISOs React port plus CRUD
 
