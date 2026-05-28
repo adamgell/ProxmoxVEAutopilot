@@ -251,6 +251,16 @@ export type BodyCloudDeleteApiCloudDeletePost = {
 };
 
 /**
+ * Body_delete_file_shelf_items_api_files_delete_post
+ */
+export type BodyDeleteFileShelfItemsApiFilesDeletePost = {
+    /**
+     * Files
+     */
+    files: Array<string>;
+};
+
+/**
  * Body_delete_hashes_api_hashes_delete_post
  */
 export type BodyDeleteHashesApiHashesDeletePost = {
@@ -6080,6 +6090,29 @@ export type ApiFilesListApiFilesGetData = {
 };
 
 export type ApiFilesListApiFilesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteFileShelfItemsApiFilesDeletePostData = {
+    body: BodyDeleteFileShelfItemsApiFilesDeletePost;
+    path?: never;
+    query?: never;
+    url: '/api/files/delete';
+};
+
+export type DeleteFileShelfItemsApiFilesDeletePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteFileShelfItemsApiFilesDeletePostError = DeleteFileShelfItemsApiFilesDeletePostErrors[keyof DeleteFileShelfItemsApiFilesDeletePostErrors];
+
+export type DeleteFileShelfItemsApiFilesDeletePostResponses = {
     /**
      * Successful Response
      */

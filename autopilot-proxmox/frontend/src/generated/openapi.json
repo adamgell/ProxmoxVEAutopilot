@@ -357,6 +357,22 @@
         "title": "Body_cloud_delete_api_cloud_delete_post",
         "type": "object"
       },
+      "Body_delete_file_shelf_items_api_files_delete_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "Body_delete_file_shelf_items_api_files_delete_post",
+        "type": "object"
+      },
       "Body_delete_hashes_api_hashes_delete_post": {
         "properties": {
           "files": {
@@ -9504,6 +9520,42 @@
           }
         },
         "summary": "Api Files List"
+      }
+    },
+    "/api/files/delete": {
+      "post": {
+        "operationId": "delete_file_shelf_items_api_files_delete_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_delete_file_shelf_items_api_files_delete_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete File Shelf Items"
       }
     },
     "/api/files/upload": {
