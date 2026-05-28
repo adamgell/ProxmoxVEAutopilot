@@ -883,19 +883,26 @@ describe("App", () => {
     });
   });
 
-  test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {
+  test("AutopilotAgent download page keeps the autopilot controller URL distinct from the install-target VM", async () => {
     mockFetch(dashboardResponses);
 
     renderRoute("/react/agent-download");
 
     expect(await screen.findByRole("heading", { name: "AutopilotAgent Download" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Controller infrastructure")).toHaveDisplayValue("ACME Lab / ACME-DC01 / VM 130");
-    expect(screen.getByLabelText("Controller URL")).toHaveValue("http://10.42.12.10:5000");
-    expect(screen.getByText("http://10.42.12.10:5000/api/cloudosd/assets/autopilotagent.msi")).toBeInTheDocument();
-    expect(screen.getByText(/Invoke-WebRequest -UseBasicParsing -Uri "http:\/\/10\.42\.12\.10:5000\/api\/cloudosd\/assets\/autopilotagent\.msi"/)).toBeInTheDocument();
+
+    // Critical infrastructure VMs are install targets, not the autopilot
+    // controller. Selecting one (e.g. a domain controller VM like
+    // ACME-DC01) must NOT overwrite the autopilot controller URL with
+    // that VM's IP -- the agent must keep reporting back to this Flask
+    // server, not to the DC.
+    expect(screen.getByLabelText("Install target VM")).toHaveDisplayValue("ACME Lab / ACME-DC01 / VM 130");
+    const expectedControllerUrl = window.location.origin;
+    expect(screen.getByLabelText("Autopilot controller URL")).toHaveValue(expectedControllerUrl);
+    expect(screen.getByText(`${expectedControllerUrl}/api/cloudosd/assets/autopilotagent.msi`)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Invoke-WebRequest -UseBasicParsing -Uri "${expectedControllerUrl.replace(/\//gu, "\\/")}\\/api\\/cloudosd\\/assets\\/autopilotagent\\.msi"`))).toBeInTheDocument();
     expect(screen.queryByText(/<bootstrap-token>/)).not.toBeInTheDocument();
     expect(screen.getByText(/-BootstrapToken "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"/)).toBeInTheDocument();
-    expect(screen.getByText(/-ServerUrl "http:\/\/10\.42\.12\.10:5000"/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`-ServerUrl "${expectedControllerUrl.replace(/\//gu, "\\/")}"`))).toBeInTheDocument();
     expect(screen.getByText(/-Vmid 130/)).toBeInTheDocument();
     expect(screen.getByText("dc01-agent")).toBeInTheDocument();
   });

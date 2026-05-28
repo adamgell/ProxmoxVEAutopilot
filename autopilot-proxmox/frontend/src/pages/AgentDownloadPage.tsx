@@ -54,9 +54,14 @@ function controllerAddress(node: LabBubbleInfrastructureNode): string {
   return node.agent?.primary_ipv4 || node.vm?.ip_address || "";
 }
 
-function suggestedControllerUrl(node: LabBubbleInfrastructureNode | undefined): string {
-  const address = node ? controllerAddress(node) : "";
-  return address ? `http://${address}:5000` : window.location.origin;
+/**
+ * The autopilot controller URL is the address the AutopilotAgent reports
+ * back to (the Flask server running this page). It is NOT the IP of any
+ * Critical Infrastructure VM. window.location.origin is correct here --
+ * picking an install-target VM must not overwrite the controller URL.
+ */
+function defaultControllerUrl(): string {
+  return window.location.origin;
 }
 
 function controllerLabel(node: LabBubbleInfrastructureNode): string {
@@ -154,8 +159,9 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
           const first = controllerCandidates(payload).at(0);
           if (first !== undefined) {
             setSelectedId(first.id);
-            setControllerUrl(suggestedControllerUrl(first.node));
           }
+          // Do NOT overwrite controllerUrl with an infra node's address;
+          // the controller is this Flask server, not any target VM.
         }
       })
       .catch((exc: unknown) => {
@@ -194,18 +200,16 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
       {error ? <p className="notice" role="status">{error}</p> : null}
 
       <section className="agent-download-grid" aria-label="Agent download builder">
-        <Panel title="Controller target">
+        <Panel title="Install target">
           <div className="bubble-form">
             <div className="bubble-form-grid">
               <label className="bubble-form-field">
-                <span>Controller infrastructure</span>
+                <span>Install target VM</span>
                 <select
-                  aria-label="Controller infrastructure"
+                  aria-label="Install target VM"
                   value={selected?.id ?? ""}
                   onChange={(event) => {
-                    const next = candidates.find((candidate) => candidate.id === event.target.value);
                     setSelectedId(event.target.value);
-                    setControllerUrl(suggestedControllerUrl(next?.node));
                   }}
                 >
                   {candidates.length ? candidates.map((candidate) => (
@@ -214,13 +218,19 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
                 </select>
               </label>
               <label className="bubble-form-field">
-                <span>Controller URL</span>
+                <span>Autopilot controller URL</span>
                 <input
-                  aria-label="Controller URL"
+                  aria-label="Autopilot controller URL"
                   value={controllerUrl}
                   onChange={(event) => { setControllerUrl(event.target.value); }}
-                  placeholder="https://controller.example"
+                  placeholder="https://autopilot.example"
                 />
+                <small className="bubble-form-help">
+                  Where the agent reports back to (this autopilot Flask
+                  server). Defaults to the URL you opened this page on;
+                  override only if installing on a host that resolves it
+                  differently.
+                </small>
               </label>
             </div>
             {selected ? (
@@ -231,7 +241,7 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
                 <div><dt>Agent</dt><dd>{fallbackText(selected.node.asset.agent_id || selected.node.agent?.agent_id)}</dd></div>
                 <div><dt>Bootstrap</dt><dd>{bootstrapToken ? "sha256 proof ready" : "loading"}</dd></div>
               </dl>
-            ) : <p className="empty">Attach a domain controller or other controller VM in Critical Infrastructure first.</p>}
+            ) : <p className="empty">Attach a Windows VM (domain controller, build host, etc.) in Critical Infrastructure to install the AutopilotAgent on it.</p>}
           </div>
         </Panel>
 
