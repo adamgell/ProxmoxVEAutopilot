@@ -6914,6 +6914,27 @@ def _filter_and_purge_agents_without_current_vm(
         except (TypeError, ValueError):
             continue
 
+    # The `vms` arg only enumerates the configured proxmox_node. In a
+    # multi-node cluster (e.g. pve1 + pve2) an agent installed on a VM
+    # that lives on a non-configured node was getting hard-deleted on
+    # every poll: vmid not in current_vmids -> purge_agent_ids -> 401
+    # next time the agent calls /api/agent/v1/config. Add every cluster
+    # VMID so we only purge when the VM is truly gone from the cluster.
+    try:
+        cluster_rows = _proxmox_api("/cluster/resources?type=vm") or []
+        for row in cluster_rows:
+            vmid_raw = row.get("vmid")
+            if vmid_raw is None or vmid_raw == "":
+                continue
+            try:
+                current_vmids.add(int(vmid_raw))
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        # Cluster lookup failed; fall back to the configured-node vmids
+        # rather than blowing up the whole fleet view.
+        pass
+
     state = _read_json_file(SETUP_STATE_PATH)
     expected_build_host_agent = str(
         state.get("build_host_expected_agent_id") or ""
