@@ -11342,6 +11342,22 @@ async def upload_file_shelf_items(request: Request, files: list[UploadFile] = Fi
     return _redirect_with_query("/react/files", uploaded=saved)
 
 
+@app.post("/api/files/delete")
+async def delete_file_shelf_items(request: Request, files: list[str] = Form(...)):
+    deleted = 0
+    for filename in files:
+        try:
+            file_path = _safe_path(FILE_SHELF_DIR, filename)
+        except ValueError:
+            continue
+        if file_path.exists() and file_path.suffix.lower() == ".msi":
+            file_path.unlink()
+            deleted += 1
+    if _request_wants_json(request):
+        return {"ok": True, "deleted": deleted}
+    return RedirectResponse("/react/files", status_code=303)
+
+
 # --- Answer ISO rebuild ----------------------------------------------------
 
 
