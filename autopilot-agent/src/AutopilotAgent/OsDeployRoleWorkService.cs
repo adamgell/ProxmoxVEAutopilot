@@ -113,11 +113,44 @@ if ($existing) {
 
     public static string BuildIsolatedDomainControllerScript(IReadOnlyDictionary<string, JsonElement> parameters)
     {
+        var dcMode = (ReadOptionalString(parameters, "dc_mode") ?? "new_forest").Trim().ToLowerInvariant();
+        if (dcMode != "additional_dc")
+        {
+            dcMode = "new_forest";
+        }
         var forestFqdn = RequiredString(parameters, "forest_fqdn");
-        var netbiosName = RequiredString(parameters, "netbios_name");
+        var netbiosName = ReadOptionalString(parameters, "netbios_name") ?? "";
         var forestAdminUsername = ReadOptionalString(parameters, "forest_admin_username") ?? "Administrator";
         var forestAdminPassword = ReadOptionalString(parameters, "forest_admin_password") ?? "";
         var dsrmPassword = ReadOptionalString(parameters, "dsrm_password") ?? "";
+
+        if (dcMode == "additional_dc")
+        {
+            // Promote a replica/additional DC into an EXISTING domain. forest_admin
+            // credentials must be a domain admin in that domain (used as -Credential).
+            // The VM must already resolve the domain's DNS (set via the bubble network).
+            return $$"""
+$ErrorActionPreference = 'Stop'
+Install-WindowsFeature -Name AD-Domain-Services,DNS -IncludeManagementTools | Out-Null
+$domainFqdn = {{PsString(forestFqdn)}}
+$joinUsername = {{PsString(forestAdminUsername)}}
+$joinPassword = {{PsString(forestAdminPassword)}}
+$dsrmPassword = {{PsString(dsrmPassword)}}
+if ([string]::IsNullOrWhiteSpace($joinPassword)) {
+  throw 'forest_admin_password (existing-domain admin) was not provided for the additional domain controller step.'
+}
+if ([string]::IsNullOrWhiteSpace($dsrmPassword)) {
+  throw 'dsrm_password was not provided to the additional domain controller step.'
+}
+$secureJoin = ConvertTo-SecureString $joinPassword -AsPlainText -Force
+$joinCredential = New-Object System.Management.Automation.PSCredential($joinUsername, $secureJoin)
+$secureDsrm = ConvertTo-SecureString $dsrmPassword -AsPlainText -Force
+Install-ADDSDomainController -DomainName $domainFqdn -Credential $joinCredential -SafeModeAdministratorPassword $secureDsrm -InstallDns -Force -NoRebootOnCompletion
+@{ role = 'isolated_domain_controller'; dc_mode = 'additional_dc'; domain_fqdn = $domainFqdn; reboot_required = $true } | ConvertTo-Json -Compress
+""";
+        }
+
+        // new_forest: stand up a fresh isolated forest via Install-ADDSForest.
         return $$"""
 $ErrorActionPreference = 'Stop'
 Install-WindowsFeature -Name AD-Domain-Services,DNS -IncludeManagementTools | Out-Null
@@ -126,6 +159,9 @@ $netbiosName = {{PsString(netbiosName)}}
 $forestAdminUsername = {{PsString(forestAdminUsername)}}
 $forestAdminPassword = {{PsString(forestAdminPassword)}}
 $dsrmPassword = {{PsString(dsrmPassword)}}
+if ([string]::IsNullOrWhiteSpace($netbiosName)) {
+  throw 'netbios_name was not provided for new forest promotion.'
+}
 if ([string]::IsNullOrWhiteSpace($forestAdminPassword)) {
   throw 'forest_admin_password was not provided to the isolated domain controller role step.'
 }

@@ -5411,7 +5411,7 @@ async def provision_page(request: Request):
 
 
 def _provision_page_payload() -> dict:
-    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
+    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, db_pg, lab_bubbles_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, sequences_pg, ts_engine_pg
 
     cfg = _load_vars()
     # Best-effort: look up template disk size so the UI can show the minimum.
@@ -5446,6 +5446,8 @@ def _provision_page_payload() -> dict:
     cloudosd_artifacts = []
     osdeploy_artifacts = []
     ubuntu_v2_sequences = []
+    osdeploy_credentials = []
+    bubbles = []
     cloudosd_batch_progress = {"schema_version": 1, "runs": []}
     cloudosd_cache_payload = {"schema_version": 1, "storage": {}, "entries": [], "summary": {}}
     osdeploy_cache_payload = {"schema_version": 1, "storage": {}, "entries": [], "summary": {}}
@@ -5455,6 +5457,9 @@ def _provision_page_payload() -> dict:
             cloudosd_cache.init(conn)
             osdeploy_pg.init(conn)
             osdeploy_cache.init(conn)
+            lab_bubbles_pg.init(conn)
+            osdeploy_credentials = sequences_pg.list_credentials(conn)
+            bubbles = lab_bubbles_pg.list_bubbles(conn)
             cloudosd_artifacts = [
                 cloudosd_endpoints.enrich_artifact(artifact)
                 for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
@@ -5473,6 +5478,8 @@ def _provision_page_payload() -> dict:
         cloudosd_artifacts = []
         osdeploy_artifacts = []
         ubuntu_v2_sequences = []
+        osdeploy_credentials = []
+        bubbles = []
     try:
         cloudosd_batch_progress = cloudosd_endpoints.provision_progress_payload(limit=25)
     except Exception:
@@ -5496,6 +5503,8 @@ def _provision_page_payload() -> dict:
         "osdeploy_ready_artifacts": [
             artifact for artifact in osdeploy_artifacts if artifact.get("ready")
         ],
+        "osdeploy_credentials": osdeploy_credentials,
+        "bubbles": bubbles,
         "cloudosd_batch_progress": cloudosd_batch_progress,
         "cloudosd_cache": cloudosd_cache_payload,
         "osdeploy_cache": osdeploy_cache_payload,
@@ -8959,6 +8968,7 @@ def _start_osdeploy_provision_batch(
     os_language: str,
     secure_boot: bool,
     outbound_policy_mode: str,
+    role_options: dict | None = None,
 ) -> RedirectResponse:
     from web import db_pg, osdeploy_endpoints, osdeploy_pg
 
@@ -9004,6 +9014,7 @@ def _start_osdeploy_provision_batch(
                 network_bridge=network_bridge or None,
                 architecture=osdeploy_pg.DEFAULT_ARCHITECTURE,
                 server_role=server_role or "base",
+                role_options=role_options or {},
                 os_version=os_version or osdeploy_pg.DEFAULT_OS_VERSION,
                 os_edition=os_edition or osdeploy_pg.DEFAULT_OS_EDITION,
                 os_language=os_language or osdeploy_pg.DEFAULT_OS_LANGUAGE,
@@ -9100,6 +9111,11 @@ async def start_provision(
     osdeploy_os_version: str = Form(""),
     osdeploy_os_edition: str = Form(""),
     osdeploy_os_language: str = Form(""),
+    osdeploy_dc_mode: str = Form("new_forest"),
+    osdeploy_role_forest_fqdn: str = Form(""),
+    osdeploy_role_netbios_name: str = Form(""),
+    osdeploy_role_forest_admin_credential_id: int = Form(0),
+    osdeploy_role_dsrm_credential_id: int = Form(0),
     node: str = Form(""),
     iso_storage: str = Form(""),
     storage: str = Form(""),
@@ -9189,6 +9205,16 @@ async def start_provision(
             outbound_policy_mode=outbound_policy_mode.strip() or "blocked",
         )
     if boot_mode == "osdeploy":
+        osdeploy_role = osdeploy_server_role.strip() or "base"
+        osdeploy_role_options: dict = {}
+        if osdeploy_role == "isolated_domain_controller":
+            osdeploy_role_options = {
+                "dc_mode": (osdeploy_dc_mode or "new_forest").strip(),
+                "forest_fqdn": osdeploy_role_forest_fqdn.strip(),
+                "netbios_name": osdeploy_role_netbios_name.strip(),
+                "forest_admin_credential_id": int(osdeploy_role_forest_admin_credential_id or 0),
+                "dsrm_credential_id": int(osdeploy_role_dsrm_credential_id or 0),
+            }
         return _start_osdeploy_provision_batch(
             request=request,
             artifact_id=osdeploy_artifact_id.strip(),
@@ -9202,12 +9228,13 @@ async def start_provision(
             iso_storage=osdeploy_iso_storage.strip(),
             storage=osdeploy_storage.strip(),
             network_bridge=osdeploy_network_bridge.strip(),
-            server_role=osdeploy_server_role.strip() or "base",
+            server_role=osdeploy_role,
             os_version=osdeploy_os_version.strip(),
             os_edition=osdeploy_os_edition.strip(),
             os_language=osdeploy_os_language.strip(),
             secure_boot=_form_flag(secure_boot),
             outbound_policy_mode=outbound_policy_mode.strip() or "blocked",
+            role_options=osdeploy_role_options,
         )
     if boot_mode == "ubuntu":
         sequence_id_v2 = (ubuntu_v2_sequence_id or "").strip()

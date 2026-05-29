@@ -111,6 +111,21 @@ def _create_osdeploy_artifact(pg_conn, **overrides):
     return osdeploy_pg.create_artifact(pg_conn, **values)
 
 
+def test_osdeploy_dc_role_options_carry_dc_mode():
+    from web import osdeploy_roles
+
+    base = {"forest_fqdn": "lab.gell.one", "netbios_name": "LAB", "forest_admin_credential_id": 1, "dsrm_credential_id": 2}
+    new_forest = osdeploy_roles.sanitize_role_options("isolated_domain_controller", base)
+    assert new_forest["dc_mode"] == "new_forest"
+    additional = osdeploy_roles.sanitize_role_options(
+        "isolated_domain_controller", {**base, "dc_mode": "additional_dc"}
+    )
+    assert additional["dc_mode"] == "additional_dc"
+    # Unknown modes fall back to the safe new_forest default.
+    bogus = osdeploy_roles.sanitize_role_options("isolated_domain_controller", {**base, "dc_mode": "garbage"})
+    assert bogus["dc_mode"] == "new_forest"
+
+
 def test_auto_select_osdeploy_artifact_matches_requested_os(pg_conn):
     from fastapi import HTTPException
     from web import app as web_app, osdeploy_pg

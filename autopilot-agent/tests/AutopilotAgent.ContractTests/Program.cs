@@ -215,6 +215,19 @@ static void VerifyOsDeployRoleAutomationContracts()
     Assert(dcScript.Contains("Install-ADDSForest", StringComparison.Ordinal), "DC role must promote a new isolated forest");
     Assert(!dcScript.Contains("Add-Computer", StringComparison.Ordinal), "DC role must not join or mutate an existing domain");
 
+    var replicaScript = OsDeployRoleWorkService.BuildIsolatedDomainControllerScript(
+        new Dictionary<string, JsonElement>
+        {
+            ["dc_mode"] = JsonSerializer.SerializeToElement("additional_dc"),
+            ["forest_fqdn"] = JsonSerializer.SerializeToElement("home.gell.one"),
+            ["forest_admin_username"] = JsonSerializer.SerializeToElement(@"HOME\Administrator"),
+            ["forest_admin_password"] = JsonSerializer.SerializeToElement("secret"),
+            ["dsrm_password"] = JsonSerializer.SerializeToElement("secret"),
+        });
+    Assert(replicaScript.Contains("Install-ADDSDomainController", StringComparison.Ordinal), "additional_dc mode must promote a replica DC into the existing domain");
+    Assert(!replicaScript.Contains("Install-ADDSForest", StringComparison.Ordinal), "additional_dc mode must not create a new forest");
+    Assert(!replicaScript.Contains("SetPassword", StringComparison.Ordinal), "additional_dc mode must not reset the local Administrator");
+
     var mecmScript = OsDeployRoleWorkService.BuildMecmPrereqScript(
         new Dictionary<string, JsonElement>
         {

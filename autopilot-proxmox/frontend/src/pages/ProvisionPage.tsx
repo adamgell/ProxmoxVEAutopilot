@@ -27,6 +27,21 @@ interface ProvisionPagePayload {
   readonly cloudosd_cache: CachePayload;
   readonly osdeploy_cache: CachePayload;
   readonly ubuntu_v2_sequences: readonly UbuntuSequence[];
+  readonly osdeploy_credentials: readonly OsdeployCredential[];
+  readonly bubbles: readonly BubbleOption[];
+}
+
+interface OsdeployCredential {
+  readonly id?: string | number;
+  readonly name?: string;
+  readonly type?: string;
+}
+
+interface BubbleOption {
+  readonly id?: string | number;
+  readonly name?: string;
+  readonly domain_name?: string;
+  readonly netbios_name?: string;
 }
 
 interface OemProfile {
@@ -157,7 +172,9 @@ const EMPTY_PAYLOAD: ProvisionPagePayload = {
   cloudosd_batch_progress: {},
   cloudosd_cache: {},
   osdeploy_cache: {},
-  ubuntu_v2_sequences: []
+  ubuntu_v2_sequences: [],
+  osdeploy_credentials: [],
+  bubbles: []
 };
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> {
@@ -192,7 +209,9 @@ function provisionPayloadFromUnknown(value: unknown): ProvisionPagePayload {
     cloudosd_batch_progress: asRecord(record.cloudosd_batch_progress),
     cloudosd_cache: asRecord(record.cloudosd_cache),
     osdeploy_cache: asRecord(record.osdeploy_cache),
-    ubuntu_v2_sequences: Array.isArray(record.ubuntu_v2_sequences) ? record.ubuntu_v2_sequences as readonly UbuntuSequence[] : []
+    ubuntu_v2_sequences: Array.isArray(record.ubuntu_v2_sequences) ? record.ubuntu_v2_sequences as readonly UbuntuSequence[] : [],
+    osdeploy_credentials: Array.isArray(record.osdeploy_credentials) ? record.osdeploy_credentials as readonly OsdeployCredential[] : [],
+    bubbles: Array.isArray(record.bubbles) ? record.bubbles as readonly BubbleOption[] : []
   };
 }
 
@@ -385,10 +404,39 @@ function CloudosdSection({ payload }: { readonly payload: ProvisionPagePayload }
 function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }) {
   const target = targetOptions(payload.osdeploy_options);
   const catalogDefaults = payload.osdeploy_catalog.defaults ?? {};
+  const [role, setRole] = useState("base");
+  const [dcMode, setDcMode] = useState("new_forest");
+  const [forestFqdn, setForestFqdn] = useState("");
+  const [netbios, setNetbios] = useState("");
+  const forestId = useId();
+  const netbiosId = useId();
+  const isDc = role === "isolated_domain_controller";
+  const existing = dcMode === "additional_dc";
+  const credentialOptions = [
+    { value: "", label: "select credential" },
+    ...payload.osdeploy_credentials.map((cred) => ({
+      value: textValue(cred.id, ""),
+      label: [cred.name, cred.type].filter(Boolean).join(" / ") || textValue(cred.id)
+    }))
+  ];
+  const bubbleOptions = [
+    { value: "", label: "(none)" },
+    ...payload.bubbles.map((bubble) => ({
+      value: textValue(bubble.id, ""),
+      label: textValue(bubble.name, textValue(bubble.domain_name, "bubble"))
+    }))
+  ];
+  const applyBubble = (bubbleId: string) => {
+    const bubble = payload.bubbles.find((item) => textValue(item.id, "") === bubbleId);
+    if (bubble) {
+      setForestFqdn(textValue(bubble.domain_name, ""));
+      setNetbios(textValue(bubble.netbios_name, ""));
+    }
+  };
   return (
     <Panel title="OSDeploy Server">
       <div className="utility-field-grid">
-        <SelectField label="Server role" name="osdeploy_server_role" defaultValue="base" options={optionsFrom(payload.osdeploy_catalog.server_roles, "base")} />
+        <SelectField label="Server role" name="osdeploy_server_role" value={role} onChange={setRole} options={optionsFrom(payload.osdeploy_catalog.server_roles, "base")} />
         <SelectField label="OSDeploy node" name="osdeploy_node" defaultValue={payload.osdeploy_options.defaults?.node} options={target.nodes} />
         <SelectField label="OSDeploy ISO storage" name="osdeploy_iso_storage" defaultValue={payload.osdeploy_options.defaults?.iso_storage} options={target.isoStorages} />
         <SelectField label="OSDeploy disk storage" name="osdeploy_storage" defaultValue={payload.osdeploy_options.defaults?.disk_storage} options={target.diskStorages} />
@@ -396,6 +444,41 @@ function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }
         <SelectField label="OSDeploy OS version" name="osdeploy_os_version" defaultValue={textValue(catalogDefaults.os_version, "")} options={optionsFrom(payload.osdeploy_catalog.os_versions, textValue(catalogDefaults.os_version, ""))} />
         <SelectField label="OSDeploy OS edition" name="osdeploy_os_edition" defaultValue={textValue(catalogDefaults.os_edition, "")} options={optionsFrom(payload.osdeploy_catalog.os_editions, textValue(catalogDefaults.os_edition, ""))} />
         <SelectField label="OSDeploy OS language" name="osdeploy_os_language" defaultValue={textValue(catalogDefaults.os_language, "")} options={optionsFrom(payload.osdeploy_catalog.os_languages, textValue(catalogDefaults.os_language, ""))} />
+        {isDc ? (
+          <>
+            <SelectField
+              label="Domain mode"
+              name="osdeploy_dc_mode"
+              value={dcMode}
+              onChange={setDcMode}
+              options={[
+                { value: "new_forest", label: "New forest / domain" },
+                { value: "additional_dc", label: "Additional DC (existing domain)" }
+              ]}
+              help={existing ? "Replica DC joined to an existing domain (needs DNS to that domain)." : "Stands up a fresh isolated forest."}
+            />
+            {payload.bubbles.length ? (
+              <SelectField
+                label="Prefill from bubble"
+                name="osdeploy_bubble_prefill"
+                defaultValue=""
+                onChange={applyBubble}
+                options={bubbleOptions}
+                help="Fills domain FQDN + NetBIOS from the selected bubble."
+              />
+            ) : null}
+            <div className="utility-field">
+              <label htmlFor={forestId}>{existing ? "Existing domain FQDN" : "Forest FQDN"}</label>
+              <input id={forestId} name="osdeploy_role_forest_fqdn" value={forestFqdn} onChange={(event) => { setForestFqdn(event.currentTarget.value); }} placeholder="lab.gell.one" />
+            </div>
+            <div className="utility-field">
+              <label htmlFor={netbiosId}>NetBIOS name</label>
+              <input id={netbiosId} name="osdeploy_role_netbios_name" value={netbios} onChange={(event) => { setNetbios(event.currentTarget.value); }} placeholder="LAB" />
+            </div>
+            <SelectField label={existing ? "Domain admin credential" : "Forest admin credential"} name="osdeploy_role_forest_admin_credential_id" defaultValue="" options={credentialOptions} />
+            <SelectField label="DSRM credential" name="osdeploy_role_dsrm_credential_id" defaultValue="" options={credentialOptions} />
+          </>
+        ) : null}
         <SelectField
           label="Outbound policy"
           name="outbound_policy_mode"
