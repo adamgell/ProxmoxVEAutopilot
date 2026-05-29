@@ -10,6 +10,7 @@ VerifyDomainJoinMatcher();
 VerifyOsDeployRoleAutomationContracts();
 VerifyBuildHostContracts();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
+VerifyOsDeployResolvesStagedSourceMedia();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -455,6 +456,40 @@ static TelemetrySnapshot Snapshot(string? domainName, bool? domainJoined) => new
     domainJoined,
     false,
     null);
+
+static void VerifyOsDeployResolvesStagedSourceMedia()
+{
+    var root = Path.Combine(Path.GetTempPath(), $"osdeploy-media-{Guid.NewGuid():N}");
+    var mediaDir = Path.Combine(root, "inputs", "media");
+    Directory.CreateDirectory(mediaDir);
+    try
+    {
+        Assert(
+            BuildHostWorkService.ResolveStagedSourceMediaIso([mediaDir]) is null,
+            "no staged ISO should resolve to null");
+
+        var older = Path.Combine(mediaDir, "old-server.iso");
+        var newer = Path.Combine(mediaDir, "en-us_windows_server_2022.iso");
+        File.WriteAllText(older, "old");
+        File.WriteAllText(newer, "new");
+        File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(newer, DateTime.UtcNow);
+
+        Assert(
+            BuildHostWorkService.ResolveStagedSourceMediaIso([mediaDir]) == newer,
+            "staged source media should resolve to the newest ISO");
+
+        Assert(
+            BuildHostWorkService
+                .OsDeploySourceMediaDirectories(@"C:\BuildRoot\ProxmoxVEAutopilot")
+                .Contains(@"C:\BuildRoot\ProxmoxVEAutopilot\inputs\media"),
+            "source media search dirs must include inputs\\media under the work root");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
 
 static void Assert(bool condition, string message)
 {
