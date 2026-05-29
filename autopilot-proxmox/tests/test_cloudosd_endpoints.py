@@ -105,6 +105,25 @@ def _create_artifact(pg_conn, **overrides):
     return cloudosd_pg.create_artifact(pg_conn, **values)
 
 
+def test_auto_select_cloudosd_artifact_picks_ready_or_409(pg_conn):
+    from fastapi import HTTPException
+    from web import app as web_app, cloudosd_pg
+
+    cloudosd_pg.reset_for_tests(pg_conn)
+    cloudosd_pg.init(pg_conn)
+
+    # Operators no longer choose the OSDCloud artifact. With nothing ready,
+    # provisioning fails clearly instead of guessing.
+    with pytest.raises(HTTPException) as exc_info:
+        web_app._auto_select_cloudosd_artifact_id(pg_conn)
+    assert exc_info.value.status_code == 409
+
+    artifact = _create_artifact(pg_conn)
+    pg_conn.commit()
+
+    assert web_app._auto_select_cloudosd_artifact_id(pg_conn) == str(artifact["id"])
+
+
 def _run_payload(artifact_id: str, **overrides):
     values = {
         "artifact_id": artifact_id,

@@ -351,23 +351,9 @@ function CacheStatus({ cache, fallbackRoot }: { readonly cache: CachePayload; re
 function CloudosdSection({ payload }: { readonly payload: ProvisionPagePayload }) {
   const target = targetOptions(payload.cloudosd_options);
   const catalogDefaults = payload.cloudosd_catalog.defaults ?? {};
-  const artifactOptions = [
-    { value: "", label: "Select ready artifact" },
-    ...payload.cloudosd_artifacts.map((artifact) => ({
-      value: textValue(artifact.id, ""),
-      label: optionLabel([artifact.build_sha, artifact.osdcloud_module_version, artifact.readiness, artifact.proxmox_volid])
-    }))
-  ];
   return (
     <Panel title="OSDCloud Desktop">
       <div className="utility-field-grid">
-        <SelectField
-          label="OSDCloud artifact"
-          name="artifact_id"
-          defaultValue={firstReadyArtifact(payload.cloudosd_artifacts)}
-          options={artifactOptions}
-          help="Ready artifacts include hashes and a Proxmox ISO volid."
-        />
         <SelectField label="Node" name="node" defaultValue={payload.cloudosd_options.defaults?.node} options={target.nodes} />
         <SelectField label="ISO storage" name="iso_storage" defaultValue={payload.cloudosd_options.defaults?.iso_storage} options={target.isoStorages} />
         <SelectField label="Disk storage" name="storage" defaultValue={payload.cloudosd_options.defaults?.disk_storage} options={target.diskStorages} />

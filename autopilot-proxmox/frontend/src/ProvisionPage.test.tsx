@@ -190,7 +190,8 @@ describe("ProvisionPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Provision" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Boot mode" })).toHaveValue("cloudosd");
-    expect(screen.getByRole("combobox", { name: "OSDCloud artifact" })).toHaveValue("cloud-artifact");
+    // Operators no longer pick the OSDCloud artifact; the backend auto-selects it.
+    expect(screen.queryByRole("combobox", { name: "OSDCloud artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("vmbr0");
     expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Task sequence" })).not.toBeInTheDocument();
