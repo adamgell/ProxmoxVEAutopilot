@@ -199,6 +199,32 @@ type BubbleFormValues = {
 
 type BubbleFormField = keyof BubbleFormValues;
 
+/**
+ * The lab_bubbles schema stores lifecycle_state and isolation_status as
+ * free text so values can grow over time, but in practice operators move
+ * a bubble through a small set of well-known states. Surface those as the
+ * primary dropdown options so the edit form is a focused choice instead
+ * of a blank text box.
+ */
+const BUBBLE_LIFECYCLE_OPTIONS = [
+  { value: "planned", label: "Planned" },
+  { value: "building", label: "Building" },
+  { value: "ready", label: "Ready" },
+  { value: "active", label: "Active" },
+  { value: "draining", label: "Draining" },
+  { value: "retired", label: "Retired" }
+] as const;
+
+const BUBBLE_ISOLATION_OPTIONS = [
+  { value: "planned", label: "Planned" },
+  { value: "provisioning", label: "Provisioning" },
+  { value: "ready", label: "Ready" },
+  { value: "isolated", label: "Isolated" },
+  { value: "verified", label: "Verified" },
+  { value: "breached", label: "Breached" },
+  { value: "open", label: "Open" }
+] as const;
+
 const blankBubbleForm: BubbleFormValues = {
   name: "",
   domain_name: "",
@@ -2507,17 +2533,44 @@ function BubbleEditor({
           </p>
         )
       ) : null}
-      <div className="bubble-form-grid">
-        <BubbleTextField label="Bubble name" field="name" value={values.name} onChange={onChange} required />
-        <BubbleTextField label="Domain name" field="domain_name" value={values.domain_name} onChange={onChange} />
-        <BubbleTextField label="NetBIOS name" field="netbios_name" value={values.netbios_name} onChange={onChange} />
-        <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} />
-        <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} />
-        <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} />
-        <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} />
-        <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} />
-        <BubbleTextField label="Lifecycle state" field="lifecycle_state" value={values.lifecycle_state} onChange={onChange} />
-        <BubbleTextField label="Isolation status" field="isolation_status" value={values.isolation_status} onChange={onChange} />
+      <div className="bubble-form-section">
+        <h4 className="bubble-form-section__title">Identity</h4>
+        <div className="bubble-form-grid">
+          <BubbleTextField label="Bubble name" field="name" value={values.name} onChange={onChange} required placeholder="e.g. lab30" />
+          <BubbleTextField label="Domain name" field="domain_name" value={values.domain_name} onChange={onChange} placeholder="lab30.example.test" />
+          <BubbleTextField label="NetBIOS name" field="netbios_name" value={values.netbios_name} onChange={onChange} placeholder="LAB30" />
+        </div>
+      </div>
+
+      <div className="bubble-form-section">
+        <h4 className="bubble-form-section__title">Network</h4>
+        <div className="bubble-form-grid">
+          <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} placeholder="10.77.30.0/24" />
+          <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} placeholder="10.77.30.1" />
+          <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} placeholder="vnet alias / scope" />
+          <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} placeholder="10.77.30.100" />
+          <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} placeholder="10.77.30.199" />
+        </div>
+      </div>
+
+      <div className="bubble-form-section">
+        <h4 className="bubble-form-section__title">Lifecycle</h4>
+        <div className="bubble-form-grid">
+          <BubbleSelectField
+            label="Lifecycle state"
+            field="lifecycle_state"
+            value={values.lifecycle_state}
+            onChange={onChange}
+            options={BUBBLE_LIFECYCLE_OPTIONS}
+          />
+          <BubbleSelectField
+            label="Isolation status"
+            field="isolation_status"
+            value={values.isolation_status}
+            onChange={onChange}
+            options={BUBBLE_ISOLATION_OPTIONS}
+          />
+        </div>
       </div>
       <div className="bubble-form-actions">
         <button type="submit" className="fleet-action fleet-action--command" aria-label={saveLabel}>
@@ -2536,13 +2589,15 @@ function BubbleTextField({
   field,
   value,
   onChange,
-  required = false
+  required = false,
+  placeholder
 }: {
   readonly label: string;
   readonly field: BubbleFormField;
   readonly value: string;
   readonly onChange: (field: BubbleFormField, value: string) => void;
   readonly required?: boolean;
+  readonly placeholder?: string | undefined;
 }) {
   return (
     <label className="bubble-form-field">
@@ -2551,8 +2606,44 @@ function BubbleTextField({
         aria-label={label}
         value={value}
         required={required}
+        placeholder={placeholder}
         onChange={(event) => { onChange(field, event.target.value); }}
       />
+    </label>
+  );
+}
+
+function BubbleSelectField({
+  label,
+  field,
+  value,
+  onChange,
+  options
+}: {
+  readonly label: string;
+  readonly field: BubbleFormField;
+  readonly value: string;
+  readonly onChange: (field: BubbleFormField, value: string) => void;
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+}) {
+  // If the saved value isn't one of the canonical options (free-text from
+  // an older bubble or an external tool), keep it visible at the top of the
+  // list so editing doesn't silently rewrite history.
+  const knownValues = new Set(options.map((opt) => opt.value));
+  const showCustomFirst = value && !knownValues.has(value);
+  return (
+    <label className="bubble-form-field">
+      <span>{label}</span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => { onChange(field, event.target.value); }}
+      >
+        {showCustomFirst ? <option value={value}>{value} (custom)</option> : null}
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
     </label>
   );
 }

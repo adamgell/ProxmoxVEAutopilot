@@ -1855,6 +1855,21 @@ h3 {
   background: var(--surface-2);
 }
 
+.bubble-form-section + .bubble-form-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.bubble-form-section__title {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .bubble-form-help {
   color: var(--muted-2);
   font-size: 12px;
