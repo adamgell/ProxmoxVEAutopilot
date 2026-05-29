@@ -327,6 +327,47 @@ def mark_build_dispatched(
     return _entry_row(row)
 
 
+def finalize_from_build(
+    conn: Connection,
+    entry_id: str,
+    *,
+    local_path: str,
+    size_bytes: int,
+    sha256_value: str,
+    file_name: str | None = None,
+) -> dict | None:
+    """Mark a warming entry 'ready' from a build artifact the agent uploaded."""
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE osdeploy_cache_entries
+        SET status = 'ready',
+            error = NULL,
+            local_path = %s,
+            size_bytes = %s,
+            sha256 = %s,
+            file_name = COALESCE(%s, file_name),
+            verified_at = %s,
+            updated_at = %s
+        WHERE id = %s
+        RETURNING *
+        """,
+        (local_path, size_bytes, sha256_value, file_name, now, now, entry_id),
+    ).fetchone()
+    conn.commit()
+    return _entry_row(row)
+
+
+def warming_build_entries(conn: Connection) -> list[dict]:
+    """Entries currently warming via a dispatched build_osdeploy work item."""
+    return [
+        entry
+        for entry in list_entries(conn)
+        if entry.get("status") == "warming"
+        and (entry.get("metadata") or {}).get("build_work_item_id")
+    ]
+
+
 def _ensure_cache_root(min_required_bytes: int = MIN_FREE_BYTES) -> Path:
     root = cache_root()
     root.mkdir(parents=True, exist_ok=True)

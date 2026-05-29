@@ -1678,9 +1678,56 @@ def _queue_cache_job(job_type: str, action: str, args: dict) -> dict:
     return {"ok": True, "job_id": job["id"], "job_type": job_type}
 
 
+def _finalize_warming_cache_builds(conn) -> list[str]:
+    """Flip warming server_image entries to ready once their build ISO is uploaded.
+
+    The build-host agent uploads the built osdeploy-iso to setup_artifacts tagged
+    with the build_osdeploy work item id. We match that to the warming cache entry
+    (which recorded the same id) and finalize it. If the work item failed, the
+    entry is marked failed with the agent's error.
+    """
+    from pathlib import Path as _Path
+    from web import setup_artifacts
+
+    finalized: list[str] = []
+    warming = osdeploy_cache.warming_build_entries(conn)
+    if not warming:
+        return finalized
+    by_work_item: dict[str, dict] = {}
+    for art in setup_artifacts.list_artifacts(kind="osdeploy-iso"):
+        work_item = str(art.get("work_item_id") or "")
+        if work_item and work_item not in by_work_item:
+            by_work_item[work_item] = art  # list_artifacts is newest-first
+    for entry in warming:
+        work_item_id = str((entry.get("metadata") or {}).get("build_work_item_id") or "")
+        artifact = by_work_item.get(work_item_id)
+        if artifact and _Path(str(artifact.get("path") or "")).is_file():
+            path = _Path(artifact["path"])
+            osdeploy_cache.finalize_from_build(
+                conn,
+                entry["id"],
+                local_path=str(path),
+                size_bytes=int(artifact.get("size_bytes") or path.stat().st_size),
+                sha256_value=str(artifact.get("sha256") or ""),
+                file_name=path.name,
+            )
+            finalized.append(entry["id"])
+            continue
+        work_item = agent_telemetry_pg.get_work_item(conn, work_item_id)
+        if work_item and work_item.get("status") == "failed":
+            osdeploy_cache.mark_status(
+                conn,
+                entry["id"],
+                status="failed",
+                error=str(work_item.get("error") or "build_osdeploy work item failed"),
+            )
+    return finalized
+
+
 @router.get("/cache")
 def cache_status():
     with _conn() as conn:
+        _finalize_warming_cache_builds(conn)
         return osdeploy_cache.payload(conn)
 
 

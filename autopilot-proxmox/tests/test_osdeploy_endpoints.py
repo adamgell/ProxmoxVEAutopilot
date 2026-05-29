@@ -1039,6 +1039,68 @@ def test_osdeploy_cache_warm_server_image_dispatches_agent_build(
     assert work_item["request_json"]["os_edition"] == "Datacenter"
 
 
+def test_osdeploy_cache_warm_finalizes_when_build_iso_arrives(
+    osdeploy_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg, osdeploy_cache, setup_artifacts
+
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", tmp_path / "artifacts")
+    monkeypatch.setattr(setup_artifacts, "REGISTRY_PATH", tmp_path / "artifacts" / "registry.json")
+
+    entry = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "server_image",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-en-us.iso",
+        "source_url": "manual://microsoft-volume-licensing-or-eval-center",
+        "metadata": {"factory": "OSDeploy/OSDBuilder", "content_role": "source_media"},
+    })
+    agent_telemetry_pg.upsert_device(
+        pg_conn, agent_id="buildhost-100", token="t", vmid=100,
+    )
+    work_item = agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="buildhost-100",
+        kind="build_osdeploy",
+        request={"kind": "build_osdeploy"},
+    )
+    osdeploy_cache.mark_build_dispatched(pg_conn, entry["id"], work_item_id=work_item["id"])
+    pg_conn.commit()
+
+    # Before the ISO is uploaded the entry stays warming.
+    before = osdeploy_client.get("/api/osdeploy/v1/cache").json()
+    before_entry = next(e for e in before["entries"] if e["id"] == entry["id"])
+    assert before_entry["status"] == "warming"
+
+    # Agent uploads the built ISO tagged with the build work item id.
+    built = tmp_path / "osdeploy-server-amd64-deadbeef.iso"
+    built.write_bytes(b"built-server-iso-bytes")
+    setup_artifacts.register_existing_artifact(
+        kind="osdeploy-iso",
+        path=built,
+        metadata={"os_version": "Windows Server 2022"},
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item["id"],
+    )
+
+    # Viewing the cache reconciles the warming entry to ready.
+    after = osdeploy_client.get("/api/osdeploy/v1/cache").json()
+    after_entry = next(e for e in after["entries"] if e["id"] == entry["id"])
+    assert after_entry["status"] == "ready"
+
+    updated = osdeploy_cache.get_entry(pg_conn, entry["id"])
+    assert updated["local_path"] == str(built)
+    assert updated["file_name"] == built.name
+    assert updated["sha256"]
+    assert updated["size_bytes"] == built.stat().st_size
+
+
 def test_osdeploy_cache_refresh_no_longer_seeds_quality_updates(pg_conn, monkeypatch, tmp_path):
     from web import osdeploy_cache
 
