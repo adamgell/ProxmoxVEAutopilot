@@ -8907,22 +8907,32 @@ def _start_cloudosd_provision_batch(
     )
 
 
-def _auto_select_osdeploy_artifact_id(conn) -> str:
+def _auto_select_osdeploy_artifact_id(conn, *, os_version: str = "", os_edition: str = "") -> str:
     """Backend-chosen OSDeploy Server artifact so operators don't pick one.
 
-    Returns the newest ready artifact id (osdeploy_pg.list_artifacts is ordered
-    built_at DESC), matching what the Provision form used to default to.
+    Returns the newest ready artifact (osdeploy_pg.list_artifacts is built_at DESC)
+    whose OS version and edition match the request, so the chosen artifact passes
+    the preflight artifact_os_mismatch check. OSDeploy media is OS-specific (unlike
+    the OS-agnostic OSDCloud boot ISO), so "newest ready overall" is not enough.
     """
     from web import osdeploy_endpoints, osdeploy_pg
 
     for artifact in osdeploy_pg.list_artifacts(conn, architecture="amd64"):
         enriched = osdeploy_endpoints.enrich_artifact(artifact)
-        if enriched and enriched.get("ready") and enriched.get("id"):
-            return str(enriched["id"])
-    raise HTTPException(
-        status_code=409,
-        detail="No ready OSDeploy Server artifact is available to provision. Build and publish one first.",
+        if not (enriched and enriched.get("ready") and enriched.get("id")):
+            continue
+        if os_version and enriched.get("os_version") != os_version:
+            continue
+        if os_edition and enriched.get("os_edition") != os_edition:
+            continue
+        return str(enriched["id"])
+    requested = " ".join(part for part in (os_version, os_edition) if part)
+    detail = (
+        f"No ready OSDeploy Server artifact matches {requested}. Build and publish one first."
+        if requested
+        else "No ready OSDeploy Server artifact is available. Build and publish one first."
     )
+    raise HTTPException(status_code=409, detail=detail)
 
 
 def _start_osdeploy_provision_batch(
@@ -8964,8 +8974,13 @@ def _start_osdeploy_provision_batch(
         osdeploy_pg.init(conn)
         if not artifact_id:
             # Operators no longer choose the OSDeploy Server artifact; pick the
-            # newest ready one (list_artifacts is built_at DESC).
-            artifact_id = _auto_select_osdeploy_artifact_id(conn)
+            # newest ready one matching the requested OS (built_at DESC) so it
+            # passes the artifact_os_mismatch preflight.
+            artifact_id = _auto_select_osdeploy_artifact_id(
+                conn,
+                os_version=os_version or osdeploy_pg.DEFAULT_OS_VERSION,
+                os_edition=os_edition or osdeploy_pg.DEFAULT_OS_EDITION,
+            )
         artifact = osdeploy_pg.get_artifact(conn, artifact_id)
         if not artifact:
             raise HTTPException(status_code=400, detail="OSDeploy artifact was not found")

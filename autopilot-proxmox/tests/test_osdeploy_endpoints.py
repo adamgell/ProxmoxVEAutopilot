@@ -111,23 +111,36 @@ def _create_osdeploy_artifact(pg_conn, **overrides):
     return osdeploy_pg.create_artifact(pg_conn, **values)
 
 
-def test_auto_select_osdeploy_artifact_picks_ready_or_409(pg_conn):
+def test_auto_select_osdeploy_artifact_matches_requested_os(pg_conn):
     from fastapi import HTTPException
     from web import app as web_app, osdeploy_pg
 
     osdeploy_pg.reset_for_tests(pg_conn)
     osdeploy_pg.init(pg_conn)
 
-    # Operators no longer choose the OSDeploy Server artifact. With nothing ready,
-    # provisioning fails clearly instead of guessing.
+    # Nothing ready -> clear 409 instead of guessing.
     with pytest.raises(HTTPException) as exc_info:
-        web_app._auto_select_osdeploy_artifact_id(pg_conn)
+        web_app._auto_select_osdeploy_artifact_id(
+            pg_conn, os_version="Windows Server 2025", os_edition="Datacenter"
+        )
     assert exc_info.value.status_code == 409
 
+    # _create_osdeploy_artifact builds a ready Windows Server 2025 / Datacenter artifact.
     artifact = _create_osdeploy_artifact(pg_conn)
     pg_conn.commit()
 
-    assert web_app._auto_select_osdeploy_artifact_id(pg_conn) == str(artifact["id"])
+    # Matching OS -> that artifact.
+    assert web_app._auto_select_osdeploy_artifact_id(
+        pg_conn, os_version="Windows Server 2025", os_edition="Datacenter"
+    ) == str(artifact["id"])
+
+    # A different requested OS with no ready artifact must 409, never silently
+    # return the 2025 artifact (which would fail the artifact_os_mismatch preflight).
+    with pytest.raises(HTTPException) as exc_info2:
+        web_app._auto_select_osdeploy_artifact_id(
+            pg_conn, os_version="Windows Server 2022", os_edition="Datacenter"
+        )
+    assert exc_info2.value.status_code == 409
 
 
 def _run_payload(artifact_id: str, **overrides):
