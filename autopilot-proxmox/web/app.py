@@ -981,13 +981,17 @@ class _ReactAgentDownloadBootstrapToken(BaseModel):
 
 
 def _setup_promote_api_upload_max_bytes() -> int:
+    # Default 16 GiB: the upload streams from disk (_StreamingMultipartBody), so
+    # full Windows Server media ISOs (~5-6 GB) publish via the streaming multipart
+    # path instead of deferring. Override with AUTOPILOT_SETUP_PROMOTE_API_MAX_BYTES.
+    default_max = 16 * 1024 * 1024 * 1024
     raw = os.environ.get("AUTOPILOT_SETUP_PROMOTE_API_MAX_BYTES", "").strip()
     if not raw:
-        return 1024 * 1024 * 1024
+        return default_max
     try:
         return max(0, int(raw))
     except ValueError:
-        return 1024 * 1024 * 1024
+        return default_max
 
 
 def _ps_quote(value: str) -> str:
