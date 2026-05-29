@@ -1224,6 +1224,33 @@ def test_osdeploy_cache_warm_finalizes_when_build_iso_arrives(
     assert updated["size_bytes"] == built.stat().st_size
 
 
+def test_publish_warmed_osdeploy_artifact_registers_and_enqueues(osdeploy_client, monkeypatch):
+    from web import osdeploy_endpoints
+    from web import app as web_app
+    from web import jobs_pg
+
+    # The register from setup artifacts is exercised elsewhere; here we verify the
+    # warm auto-publish wiring: register the build, then enqueue the publish job.
+    monkeypatch.setattr(
+        web_app,
+        "_register_promoted_setup_osdeploy_artifact",
+        lambda *, artifact, volid, rows: {"id": "artifact-xyz"},
+    )
+    enqueued: list[dict] = []
+    monkeypatch.setattr(jobs_pg, "enqueue", lambda **kw: enqueued.append(kw) or {"id": kw.get("job_id")})
+
+    result = osdeploy_endpoints._publish_warmed_osdeploy_artifact(
+        iso_artifact={"kind": "osdeploy-iso", "work_item_id": "wi-1", "path": "/tmp/x.iso"},
+        all_artifacts=[],
+    )
+
+    assert result and result["artifact_id"] == "artifact-xyz"
+    assert any(
+        job.get("job_type") == "osdeploy_publish_iso" and "artifact-xyz" in (job.get("cmd") or [])
+        for job in enqueued
+    ), enqueued
+
+
 def test_osdeploy_cache_refresh_no_longer_seeds_quality_updates(pg_conn, monkeypatch, tmp_path):
     from web import osdeploy_cache
 

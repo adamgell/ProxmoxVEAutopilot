@@ -1705,6 +1705,56 @@ def _queue_cache_job(job_type: str, action: str, args: dict) -> dict:
     return {"ok": True, "job_id": job["id"], "job_type": job_type}
 
 
+def _publish_warmed_osdeploy_artifact(*, iso_artifact: dict, all_artifacts: list[dict]) -> dict | None:
+    """Register a freshly warmed build as a deployable OSDeploy artifact and
+    enqueue its publish to Proxmox ISO storage, so warming a server image makes
+    it deployable with no manual publish step.
+
+    Best-effort and cheap on the request path: the registration is a DB insert
+    and the heavy ISO upload runs in the osdeploy_publish_job (builder-side).
+    Returns {artifact_id, job_id} or None; never raises into the cache view.
+    """
+    from web import app as web_app
+    from web import jobs_pg
+
+    try:
+        registered = web_app._register_promoted_setup_osdeploy_artifact(
+            artifact=iso_artifact,
+            volid=None,  # register only; the publish job uploads + sets the volid
+            rows=all_artifacts,
+        )
+    except Exception:
+        return None
+    artifact_id = str((registered or {}).get("id") or "")
+    if not artifact_id:
+        return None
+    try:
+        options = proxmox_options_payload()
+        node = options.get("defaults", {}).get("node") or ""
+        storage = options.get("defaults", {}).get("iso_storage") or ""
+        if node not in options.get("nodes", []) or storage not in options.get("storages", {}).get("iso", []):
+            return {"artifact_id": artifact_id, "job_id": None}
+        job_id = web_app.job_manager._generate_id()
+        script = _APP_ROOT / "scripts" / "osdeploy_publish_job.py"
+        cmd = [
+            sys.executable, str(script), "publish",
+            "--job-id", job_id,
+            "--artifact-id", artifact_id,
+            "--node", node,
+            "--storage", storage,
+        ]
+        jobs_pg.enqueue(
+            job_id=job_id,
+            job_type="osdeploy_publish_iso",
+            playbook="osdeploy_publish_job",
+            cmd=cmd,
+            args={"artifact_id": artifact_id, "node": node, "storage": storage},
+        )
+        return {"artifact_id": artifact_id, "job_id": job_id}
+    except Exception:
+        return {"artifact_id": artifact_id, "job_id": None}
+
+
 def _finalize_warming_cache_builds(conn) -> list[str]:
     """Flip warming server_image entries to ready once their build ISO is uploaded.
 
@@ -1737,6 +1787,13 @@ def _finalize_warming_cache_builds(conn) -> list[str]:
                 size_bytes=int(artifact.get("size_bytes") or path.stat().st_size),
                 sha256_value=str(artifact.get("sha256") or ""),
                 file_name=path.name,
+            )
+            # Warming a server image now also makes it deployable: register the
+            # built ISO as an OSDeploy artifact and publish it to Proxmox. Runs
+            # once, on the warming->ready transition.
+            _publish_warmed_osdeploy_artifact(
+                iso_artifact=artifact,
+                all_artifacts=setup_artifacts.list_artifacts(),
             )
             finalized.append(entry["id"])
             continue
