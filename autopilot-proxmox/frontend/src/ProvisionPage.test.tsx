@@ -213,7 +213,8 @@ describe("ProvisionPage", () => {
     fireEvent.change(bootMode, { target: { value: "osdeploy" } });
 
     expect(screen.queryByRole("combobox", { name: "OSDCloud artifact" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "OSDeploy artifact" })).toHaveValue("server-artifact");
+    // Operators no longer pick the OSDeploy Server artifact; the backend auto-selects it.
+    expect(screen.queryByRole("combobox", { name: "OSDeploy artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Server role" })).toHaveValue("base");
     expect(screen.getByRole("combobox", { name: "OSDeploy network target" })).toHaveValue("vmbr0");
     expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");

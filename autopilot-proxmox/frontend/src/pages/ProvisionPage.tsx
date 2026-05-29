@@ -196,14 +196,6 @@ function provisionPayloadFromUnknown(value: unknown): ProvisionPagePayload {
   };
 }
 
-function firstReadyArtifact(artifacts: readonly { readonly id?: string; readonly ready?: boolean }[]): string {
-  return textValue(artifacts.find((artifact) => artifact.ready)?.id ?? artifacts[0]?.id, "");
-}
-
-function optionLabel(parts: readonly unknown[]): string {
-  return parts.map((part) => textValue(part, "")).filter(Boolean).join(" / ") || "-";
-}
-
 function SelectField({
   label,
   name,
@@ -393,23 +385,9 @@ function CloudosdSection({ payload }: { readonly payload: ProvisionPagePayload }
 function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }) {
   const target = targetOptions(payload.osdeploy_options);
   const catalogDefaults = payload.osdeploy_catalog.defaults ?? {};
-  const artifactOptions = [
-    { value: "", label: "Select ready Server artifact" },
-    ...payload.osdeploy_artifacts.map((artifact) => ({
-      value: textValue(artifact.id, ""),
-      label: optionLabel([artifact.build_sha, artifact.os_version, artifact.os_edition, artifact.readiness, artifact.proxmox_volid])
-    }))
-  ];
   return (
     <Panel title="OSDeploy Server">
       <div className="utility-field-grid">
-        <SelectField
-          label="OSDeploy artifact"
-          name="osdeploy_artifact_id"
-          defaultValue={firstReadyArtifact(payload.osdeploy_artifacts)}
-          options={artifactOptions}
-          help="Ready Server artifacts include media metadata, hashes, manifest, and Proxmox ISO volid."
-        />
         <SelectField label="Server role" name="osdeploy_server_role" defaultValue="base" options={optionsFrom(payload.osdeploy_catalog.server_roles, "base")} />
         <SelectField label="OSDeploy node" name="osdeploy_node" defaultValue={payload.osdeploy_options.defaults?.node} options={target.nodes} />
         <SelectField label="OSDeploy ISO storage" name="osdeploy_iso_storage" defaultValue={payload.osdeploy_options.defaults?.iso_storage} options={target.isoStorages} />

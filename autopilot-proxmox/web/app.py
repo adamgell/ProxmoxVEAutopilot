@@ -8907,6 +8907,24 @@ def _start_cloudosd_provision_batch(
     )
 
 
+def _auto_select_osdeploy_artifact_id(conn) -> str:
+    """Backend-chosen OSDeploy Server artifact so operators don't pick one.
+
+    Returns the newest ready artifact id (osdeploy_pg.list_artifacts is ordered
+    built_at DESC), matching what the Provision form used to default to.
+    """
+    from web import osdeploy_endpoints, osdeploy_pg
+
+    for artifact in osdeploy_pg.list_artifacts(conn, architecture="amd64"):
+        enriched = osdeploy_endpoints.enrich_artifact(artifact)
+        if enriched and enriched.get("ready") and enriched.get("id"):
+            return str(enriched["id"])
+    raise HTTPException(
+        status_code=409,
+        detail="No ready OSDeploy Server artifact is available to provision. Build and publish one first.",
+    )
+
+
 def _start_osdeploy_provision_batch(
     *,
     request: Request,
@@ -8933,8 +8951,6 @@ def _start_osdeploy_provision_batch(
     count = int(count or 1)
     if count < 1 or count > 50:
         raise HTTPException(status_code=400, detail="OSDeploy count must be between 1 and 50")
-    if not artifact_id:
-        raise HTTPException(status_code=400, detail="OSDeploy artifact_id is required")
 
     vm_cores = int(cores or 0) or osdeploy_pg.DEFAULT_VM_CORES
     vm_memory_mb = int(memory_mb or 0) or osdeploy_pg.RECOMMENDED_VM_MEMORY_MB
@@ -8946,6 +8962,10 @@ def _start_osdeploy_provision_batch(
     run_ids: list[str] = []
     with db_pg.connection(_database_url()) as conn:
         osdeploy_pg.init(conn)
+        if not artifact_id:
+            # Operators no longer choose the OSDeploy Server artifact; pick the
+            # newest ready one (list_artifacts is built_at DESC).
+            artifact_id = _auto_select_osdeploy_artifact_id(conn)
         artifact = osdeploy_pg.get_artifact(conn, artifact_id)
         if not artifact:
             raise HTTPException(status_code=400, detail="OSDeploy artifact was not found")
