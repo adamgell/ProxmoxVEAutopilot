@@ -1776,6 +1776,12 @@ h3 {
 
 .bubble-card {
   display: grid;
+  /* Content rows take their natural height; any extra vertical space the
+     card was given by its sibling (e.g. when an inline edit form is open
+     in the other column) collects at the bottom instead of stretching
+     the chip row into tall ovals. */
+  align-content: start;
+  grid-auto-rows: min-content;
   gap: 14px;
   min-width: 0;
   padding: 14px;
@@ -2373,6 +2379,11 @@ h3 {
 .chip-row {
   display: flex;
   flex-wrap: wrap;
+  /* Keep individual chips at their natural pill height when the row is
+     embedded in a stretched grid track (e.g. a bubble card matching the
+     height of its sibling that's mid-edit). Without this they grow into
+     tall ovals. */
+  align-items: center;
   gap: 6px;
   min-width: 0;
 }
