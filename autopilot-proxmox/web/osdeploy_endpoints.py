@@ -1795,6 +1795,19 @@ def warm_cache_entry(entry_id: str):
         raise HTTPException(status_code=404, detail=f"OSDeploy cache entry not found: {entry_id}")
     if _entry_is_factory_built(entry):
         return _warm_factory_entry_via_agent(entry)
+    if str(entry.get("source_url") or "").startswith("manual://"):
+        # A manual:// entry with no factory backing (e.g. a retired quality_update
+        # placeholder) has no automated warm path. Return a clear error instead of
+        # queuing a job that always fails with "manual source must be staged".
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{entry.get('entry_type') or 'entry'} has no automated warm path. "
+                "Cumulative updates are baked into the server image during the build, "
+                "so warm the server_image entry instead. Refresh the catalog to clear "
+                "retired update placeholders."
+            ),
+        )
     return _queue_cache_job("osdeploy_cache_warm", "warm", {"entry_id": entry_id})
 
 

@@ -1108,15 +1108,51 @@ def test_osdeploy_cache_refresh_no_longer_seeds_quality_updates(pg_conn, monkeyp
     osdeploy_cache.reset_for_tests(pg_conn)
     osdeploy_cache.init(pg_conn)
 
+    # A retired quality_update placeholder left by an earlier catalog version.
+    stale = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "quality_update",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-latest-quality.msu",
+        "source_url": "manual://microsoft-update-catalog",
+    })
+    pg_conn.commit()
+
     result = osdeploy_cache.refresh_catalog(pg_conn)
     entries = osdeploy_cache.list_entries(pg_conn)
 
     assert result["quality_updates"] == []
     assert all(entry["entry_type"] == "server_image" for entry in entries)
+    assert stale["id"] not in {entry["id"] for entry in entries}
     assert {entry["windows_version"] for entry in entries} >= {
         "Windows Server 2025",
         "Windows Server 2022",
     }
+
+
+def test_osdeploy_cache_warm_quality_update_returns_clear_error(osdeploy_client, pg_conn):
+    from web import osdeploy_cache
+
+    entry = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "quality_update",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-latest-quality.msu",
+        "source_url": "manual://microsoft-update-catalog",
+    })
+    pg_conn.commit()
+
+    resp = osdeploy_client.post(f"/api/osdeploy/v1/cache/{entry['id']}/warm")
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert "no automated warm path" in detail
+    assert "manual source must be staged" not in detail
 
 
 def test_osdeploy_build_preflight_blocks_missing_key_and_unreachable_remote(

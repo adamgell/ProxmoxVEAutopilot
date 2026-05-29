@@ -253,6 +253,10 @@ def refresh_catalog(conn: Connection) -> dict:
                 },
             )
         )
+    # Remove retired quality_update placeholders seeded by earlier catalog versions.
+    # They were never warmable (no automated source) and nothing consumes a standalone
+    # OSDeploy MSU; the cumulative update is baked into the server image by the factory.
+    conn.execute("DELETE FROM osdeploy_cache_entries WHERE entry_type = 'quality_update'")
     conn.commit()
     return {"server_images": server_images, "quality_updates": quality_updates}
 
