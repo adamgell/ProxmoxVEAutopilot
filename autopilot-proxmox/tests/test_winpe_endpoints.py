@@ -1044,9 +1044,13 @@ def test_provision_page_renders_winpe_option_when_configured(
 ):
     monkeypatch.setenv("AUTOPILOT_WINPE_BLANK_TEMPLATE_VMID", "9001")
     monkeypatch.setenv("AUTOPILOT_WINPE_ISO", "isos:iso/x.iso")
-    r = web_client.get("/provision")
+    r = web_client.get("/provision", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/react/provision"
+
+    r = web_client.get("/api/provision/page")
     assert r.status_code == 200
-    assert b'name="boot_mode"' in r.content
+    assert r.json()["winpe_enabled"] is True
 
 
 def test_run_detail_page_renders(web_client, test_db):
@@ -1060,15 +1064,25 @@ def test_run_detail_page_renders(web_client, test_db):
         "/winpe/register",
         json={"vm_uuid": "u-1", "mac": "aa", "build_sha": "x"},
     )
-    r = web_client.get(f"/runs/{run_id}")
+    r = web_client.get(f"/runs/{run_id}", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == f"/react/runs/{run_id}"
+
+    r = web_client.get(f"/api/runs/{run_id}/page")
     assert r.status_code == 200
-    assert b"partition_disk" in r.content
-    assert b"stage_osd_client" in r.content
-    assert b"awaiting_winpe" in r.content
+    body = r.json()
+    assert {
+        step.get("name") or step.get("step_type") or step.get("kind")
+        for step in body["steps"]
+    } >= {
+        "partition_disk",
+        "stage_osd_client",
+    }
+    assert body["run"]["state"] == "awaiting_winpe"
 
 
 def test_run_detail_404_when_unknown(web_client):
-    r = web_client.get("/runs/99999")
+    r = web_client.get("/api/runs/99999/page")
     assert r.status_code == 404
 
 

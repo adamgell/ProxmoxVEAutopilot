@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { fetchJson, postJson } from "../apiClient";
+import { fetchJson, patchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import { VmEvidencePanels } from "../components/VmEvidencePanels";
@@ -39,6 +39,7 @@ import type {
   VmsFleetResponse
 } from "../contracts";
 import { connectFleetLive } from "../liveSocket";
+import { reactHrefForUiPath } from "../routes";
 import {
   buildFleetMachineRows,
   fleetAgentLabel,
@@ -198,6 +199,32 @@ type BubbleFormValues = {
 
 type BubbleFormField = keyof BubbleFormValues;
 
+/**
+ * The lab_bubbles schema stores lifecycle_state and isolation_status as
+ * free text so values can grow over time, but in practice operators move
+ * a bubble through a small set of well-known states. Surface those as the
+ * primary dropdown options so the edit form is a focused choice instead
+ * of a blank text box.
+ */
+const BUBBLE_LIFECYCLE_OPTIONS = [
+  { value: "planned", label: "Planned" },
+  { value: "building", label: "Building" },
+  { value: "ready", label: "Ready" },
+  { value: "active", label: "Active" },
+  { value: "draining", label: "Draining" },
+  { value: "retired", label: "Retired" }
+] as const;
+
+const BUBBLE_ISOLATION_OPTIONS = [
+  { value: "planned", label: "Planned" },
+  { value: "provisioning", label: "Provisioning" },
+  { value: "ready", label: "Ready" },
+  { value: "isolated", label: "Isolated" },
+  { value: "verified", label: "Verified" },
+  { value: "breached", label: "Breached" },
+  { value: "open", label: "Open" }
+] as const;
+
 const blankBubbleForm: BubbleFormValues = {
   name: "",
   domain_name: "",
@@ -238,6 +265,108 @@ function bubbleFormPayload(values: BubbleFormValues): Readonly<Record<string, un
     dhcp_pool_end: values.dhcp_pool_end.trim(),
     lifecycle_state: values.lifecycle_state.trim() || "planned",
     isolation_status: values.isolation_status.trim() || "planned"
+  };
+}
+
+interface OrphanVnetSubnet {
+  readonly subnet?: string;
+  readonly gateway?: string;
+  readonly snat?: boolean;
+  readonly dhcp_dns_server?: string;
+  readonly dhcp_range?: string;
+}
+
+interface OrphanVnet {
+  readonly vnet: string;
+  readonly zone: string;
+  readonly alias?: string;
+  readonly type?: string;
+  readonly subnet?: OrphanVnetSubnet | undefined;
+}
+
+interface BubbleSdnAdoption {
+  readonly vnet: string;
+  readonly zone: string;
+  readonly subnet: string;
+}
+
+interface BubbleBoundNetwork {
+  readonly vnet: string;
+  readonly zone: string;
+  readonly subnet: string;
+  readonly gateway: string;
+  readonly dhcpStart: string;
+  readonly dhcpEnd: string;
+  readonly dhcpDnsServer: string;
+  readonly subnetSource: "sdn" | "binding";
+}
+
+// Parse a PVE-formatted dhcp-range string
+// ("start-address=192.168.55.100,end-address=192.168.55.199")
+// into separate start/end IPs for pre-filling the bubble form's
+// dhcp_pool_start / dhcp_pool_end inputs.
+function parseDhcpRange(value: string | undefined): { start: string; end: string } {
+  if (!value) {
+    return { start: "", end: "" };
+  }
+  let start = "";
+  let end = "";
+  for (const part of value.split(",")) {
+    const [key, raw] = part.split("=", 2);
+    if (!key || !raw) {
+      continue;
+    }
+    const trimmed = raw.trim();
+    if (key.trim().toLowerCase() === "start-address") {
+      start = trimmed;
+    } else if (key.trim().toLowerCase() === "end-address") {
+      end = trimmed;
+    }
+  }
+  return { start, end };
+}
+
+type AgentFormDraft = {
+  mode: "create" | "edit";
+  agentId: string;
+  vmid: string;
+  computerName: string;
+  serialNumber: string;
+  agentVersion: string;
+};
+
+type CredentialDraftType = "domain_join" | "local_admin";
+
+type CredentialDraft = {
+  mode: "create" | "edit";
+  id: number | null;
+  name: string;
+  type: CredentialDraftType;
+  domain_fqdn: string;
+  username: string;
+  password: string;
+  ou_hint: string;
+  passwordPlaceholder: boolean;
+};
+
+const CREDENTIAL_TYPE_OPTIONS: readonly { readonly value: CredentialDraftType; readonly label: string }[] = [
+  { value: "domain_join", label: "Domain join (forest admin)" },
+  { value: "local_admin", label: "Local admin" }
+];
+
+function blankCredentialDraft(mode: "create" | "edit", existing?: CredentialSummary): CredentialDraft {
+  const seedType: CredentialDraftType =
+    existing?.type === "local_admin" ? "local_admin" : "domain_join";
+  return {
+    mode,
+    id: existing?.id ?? null,
+    name: existing?.name ?? "",
+    type: seedType,
+    domain_fqdn: "",
+    username: "",
+    password: "",
+    ou_hint: "",
+    passwordPlaceholder: mode === "edit"
   };
 }
 
@@ -413,9 +542,13 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [detailError, setDetailError] = useState("");
   const [credentialSummaries, setCredentialSummaries] = useState<readonly CredentialSummary[]>([]);
   const [credentialsError, setCredentialsError] = useState("");
+  const [credentialDraft, setCredentialDraft] = useState<CredentialDraft | null>(null);
   const [bubbleDraftMode, setBubbleDraftMode] = useState<BubbleDraftMode | null>(null);
   const [bubbleDraftId, setBubbleDraftId] = useState<string | null>(null);
   const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
+  const [orphanVnets, setOrphanVnets] = useState<readonly OrphanVnet[]>([]);
+  const [bubbleAdoptedVnet, setBubbleAdoptedVnet] = useState<BubbleSdnAdoption | null>(null);
+  const [bubbleBoundNetwork, setBubbleBoundNetwork] = useState<BubbleBoundNetwork | null>(null);
   const [deleteBubbleId, setDeleteBubbleId] = useState<string | null>(null);
   const [machineTagDraft, setMachineTagDraft] = useState<MachineTagDraft | null>(null);
   const [infraDraftOpen, setInfraDraftOpen] = useState(false);
@@ -574,6 +707,65 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   );
   const filteredMachines = useMemo(() => machineRows.filter((row) => machineMatchesFilter(row, filter)), [filter, machineRows]);
   const stale = typeof fleet.cache_age_seconds === "number" && fleet.cache_age_seconds > 60;
+  const [selectedAgentIds, setSelectedAgentIds] = useState<ReadonlySet<string>>(new Set());
+  const [agentFormDraft, setAgentFormDraft] = useState<AgentFormDraft | null>(null);
+
+  // Drop selections when the underlying row set changes (filter, refresh).
+  // Avoid keeping stale ids that no longer match a visible row.
+  useEffect(() => {
+    setSelectedAgentIds((current) => {
+      if (!current.size) {
+        return current;
+      }
+      const visibleAgentIds = new Set(
+        filteredMachines
+          .map((row) => row.agentId)
+          .filter((id): id is string => Boolean(id))
+      );
+      let dropped = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (visibleAgentIds.has(id)) {
+          next.add(id);
+        } else {
+          dropped = true;
+        }
+      }
+      return dropped ? next : current;
+    });
+  }, [filteredMachines]);
+
+  const selectableAgentIds = useMemo(
+    () => filteredMachines.map((row) => row.agentId).filter((id): id is string => Boolean(id)),
+    [filteredMachines]
+  );
+  const allSelected = selectableAgentIds.length > 0 && selectableAgentIds.every((id) => selectedAgentIds.has(id));
+  const someSelected = selectedAgentIds.size > 0 && !allSelected;
+
+  const toggleRowSelected = useCallback((agentId: string) => {
+    setSelectedAgentIds((current) => {
+      const next = new Set(current);
+      if (next.has(agentId)) {
+        next.delete(agentId);
+      } else {
+        next.add(agentId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedAgentIds((current) => {
+      if (current.size && selectableAgentIds.every((id) => current.has(id))) {
+        return new Set();
+      }
+      return new Set(selectableAgentIds);
+    });
+  }, [selectableAgentIds]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedAgentIds(new Set());
+  }, []);
 
   const runAction = useCallback(async (label: string, action: () => Promise<unknown>) => {
     setActionStatusLink(null);
@@ -643,7 +835,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       try {
         const queued = await postJson<CollectLogsResponse>("/api/jobs/collect-logs", { vmid, vm_name: vmDisplayName(vm) });
         setActionStatus(`Log collection queued for VM ${String(queued.vmid)}`);
-        setActionStatusLink({ href: queued.web_url || `/react/jobs/${queued.job_id}`, label: queued.job_id });
+        setActionStatusLink({ href: reactHrefForUiPath(queued.web_url || `/react/jobs/${queued.job_id}`), label: queued.job_id });
         await load();
       } catch (err) {
         setActionStatusLink(null);
@@ -697,6 +889,16 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftMode("create");
     setBubbleDraftId(null);
     setBubbleDraft(blankBubbleForm);
+    setBubbleAdoptedVnet(null);
+    // Lazily fetch the orphan-vnet inventory so the operator can adopt an
+    // existing isolated network instead of typing CIDR/gateway/DHCP by hand.
+    void fetchJson<{ readonly orphan_vnets?: readonly OrphanVnet[] }>("/api/sdn/labs/orphan-vnets")
+      .then((data) => {
+        setOrphanVnets(data.orphan_vnets ?? []);
+      })
+      .catch(() => {
+        setOrphanVnets([]);
+      });
   }, []);
 
   const editBubble = useCallback((bubble: LabBubble) => {
@@ -704,7 +906,79 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftMode("edit");
     setBubbleDraftId(bubble.id);
     setBubbleDraft(bubbleFormFromBubble(bubble));
+    setBubbleAdoptedVnet(null);
+    setBubbleBoundNetwork(null);
+    // Bubbles store a denormalized copy of cidr / gateway_ip / dhcp_pool_*
+    // that drifts the moment the operator changes the SDN subnet on the
+    // Networks page. When this bubble has an SDN binding, treat the live
+    // PVE subnet config as the source of truth and pre-fill the form
+    // with it (and lock those fields in the UI). 404 just means there's
+    // no binding -- fall back to the bubble's own copy.
+    void fetchJson<{
+      readonly binding?: { readonly vnet: string; readonly zone: string; readonly subnet: string };
+      readonly subnet?: {
+        readonly subnet?: string;
+        readonly gateway?: string;
+        readonly dhcp_dns_server?: string;
+        readonly dhcp_range?: string;
+      } | null;
+    }>(`/api/sdn/labs/${encodeURIComponent(bubble.id)}/network`)
+      .then((data) => {
+        if (!data.binding) {
+          return;
+        }
+        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet ?? "";
+        const range = parseDhcpRange(data.subnet?.dhcp_range);
+        const gateway = data.subnet?.gateway ?? "";
+        const dhcpDns = data.subnet?.dhcp_dns_server ?? "";
+        setBubbleBoundNetwork({
+          vnet: data.binding.vnet,
+          zone: data.binding.zone,
+          subnet: subnetCidr,
+          gateway,
+          dhcpStart: range.start,
+          dhcpEnd: range.end,
+          dhcpDnsServer: dhcpDns,
+          subnetSource: data.subnet ? "sdn" : "binding"
+        });
+        setBubbleDraft((current) => ({
+          ...current,
+          cidr: subnetCidr || current.cidr,
+          gateway_ip: gateway || current.gateway_ip,
+          dhcp_scope: data.binding?.vnet ?? current.dhcp_scope,
+          dhcp_pool_start: range.start || current.dhcp_pool_start,
+          dhcp_pool_end: range.end || current.dhcp_pool_end
+        }));
+      })
+      .catch(() => {
+        // 404 (no binding) or transient failure; keep the bubble's own
+        // copy editable as before.
+      });
   }, []);
+
+  const adoptOrphanVnet = useCallback((vnetId: string) => {
+    if (!vnetId) {
+      setBubbleAdoptedVnet(null);
+      return;
+    }
+    const match = orphanVnets.find((entry) => entry.vnet === vnetId);
+    if (!match) {
+      return;
+    }
+    const subnetCidr = match.subnet?.subnet ?? "";
+    const gateway = match.subnet?.gateway ?? "";
+    const range = parseDhcpRange(match.subnet?.dhcp_range);
+    setBubbleAdoptedVnet({ vnet: match.vnet, zone: match.zone, subnet: subnetCidr });
+    setBubbleDraft((current) => ({
+      ...current,
+      cidr: subnetCidr || current.cidr,
+      gateway_ip: gateway || current.gateway_ip,
+      dhcp_scope: match.alias || match.vnet || current.dhcp_scope,
+      dhcp_pool_start: range.start || current.dhcp_pool_start,
+      dhcp_pool_end: range.end || current.dhcp_pool_end,
+      isolation_status: current.isolation_status === "planned" ? "ready" : current.isolation_status
+    }));
+  }, [orphanVnets]);
 
   const updateBubbleDraft = useCallback((field: BubbleFormField, value: string) => {
     setBubbleDraft((current) => ({ ...current, [field]: value }));
@@ -714,6 +988,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftMode(null);
     setBubbleDraftId(null);
     setBubbleDraft(blankBubbleForm);
+    setBubbleAdoptedVnet(null);
+    setBubbleBoundNetwork(null);
   }, []);
 
   const saveBubbleDraft = useCallback(() => {
@@ -723,6 +999,28 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       return;
     }
     if (bubbleDraftMode === "create") {
+      // Route through /api/sdn/labs when the operator adopted an existing
+      // unbound vnet. That endpoint creates BOTH the bubble row and the
+      // lab_sdn_bindings entry in one transaction so the bubble is
+      // network-isolated from the moment it exists. Plain bubbles (no
+      // adoption) still use /api/bubbles to skip the SDN side.
+      if (bubbleAdoptedVnet) {
+        const labPayload = {
+          name: bubbleName,
+          zone: bubbleAdoptedVnet.zone,
+          vnet: bubbleAdoptedVnet.vnet,
+          subnet: bubbleAdoptedVnet.subnet,
+          domain_name: bubbleDraft.domain_name.trim(),
+          cidr: bubbleDraft.cidr.trim(),
+          gateway_ip: bubbleDraft.gateway_ip.trim()
+        };
+        void runAction(`Create bubble ${bubbleName}`, () => postJson("/api/sdn/labs", labPayload)).then((ok) => {
+          if (ok) {
+            cancelBubbleDraft();
+          }
+        });
+        return;
+      }
       void runAction(`Create bubble ${bubbleName}`, () => postJson("/api/bubbles", payload)).then((ok) => {
         if (ok) {
           cancelBubbleDraft();
@@ -742,7 +1040,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         cancelBubbleDraft();
       }
     });
-  }, [bubbleDraft, bubbleDraftId, bubbleDraftMode, cancelBubbleDraft, runAction]);
+  }, [bubbleAdoptedVnet, bubbleDraft, bubbleDraftId, bubbleDraftMode, cancelBubbleDraft, runAction]);
 
   const requestDeleteBubble = useCallback((bubble: LabBubble) => {
     setBubbleDraftMode(null);
@@ -1083,32 +1381,216 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   }, [runAction]);
 
   const createAgent = useCallback(() => {
-    const agentId = window.prompt("Agent ID");
-    if (!agentId) {
-      return;
-    }
-    const vmid = window.prompt("VMID");
-    const computerName = window.prompt("Computer name") || "";
-    void runAction(`Add ${agentId}`, () => postJson("/api/agents", {
-      agent_id: agentId,
-      vmid: vmid || "",
-      computer_name: computerName
-    }));
-  }, [runAction]);
+    setAgentFormDraft({
+      mode: "create",
+      agentId: "",
+      vmid: "",
+      computerName: "",
+      serialNumber: "",
+      agentVersion: ""
+    });
+  }, []);
 
   const updateAgent = useCallback((agent: AgentFleetRow) => {
-    const vmid = window.prompt(`VMID for ${agent.agent_id}`, agent.vmid ? String(agent.vmid) : "");
-    if (vmid === null) {
+    setAgentFormDraft({
+      mode: "edit",
+      agentId: agent.agent_id,
+      vmid: agent.vmid ? String(agent.vmid) : "",
+      computerName: agent.computer_name || "",
+      serialNumber: agent.serial_number || "",
+      agentVersion: agent.agent_version || ""
+    });
+  }, []);
+
+  const submitAgentForm = useCallback(async () => {
+    const draft = agentFormDraft;
+    if (!draft) {
       return;
     }
-    const computerName = window.prompt(`Computer name for ${agent.agent_id}`, agent.computer_name || "") ?? agent.computer_name ?? "";
-    void runAction(`Update ${agent.agent_id}`, () => postJson(`/api/agents/${encodeURIComponent(agent.agent_id)}/update`, {
-      vmid,
-      computer_name: computerName,
-      serial_number: agent.serial_number || "",
-      agent_version: agent.agent_version || ""
-    }));
-  }, [runAction]);
+    const trimmedId = draft.agentId.trim();
+    if (!trimmedId) {
+      setActionStatus("Agent ID is required");
+      return;
+    }
+    const body = {
+      vmid: draft.vmid.trim(),
+      computer_name: draft.computerName.trim(),
+      serial_number: draft.serialNumber.trim(),
+      agent_version: draft.agentVersion.trim()
+    };
+    if (draft.mode === "create") {
+      await runAction(`Add ${trimmedId}`, () => postJson("/api/agents", {
+        agent_id: trimmedId,
+        ...body
+      }));
+    } else {
+      await runAction(`Update ${trimmedId}`, () => postJson(
+        `/api/agents/${encodeURIComponent(trimmedId)}/update`,
+        body
+      ));
+    }
+    setAgentFormDraft(null);
+  }, [agentFormDraft, runAction]);
+
+  const cancelAgentForm = useCallback(() => {
+    setAgentFormDraft(null);
+  }, []);
+
+  const reloadCredentials = useCallback(async () => {
+    try {
+      const credentials = await fetchJson<CredentialSummary[]>("/api/credentials");
+      setCredentialSummaries(credentials);
+      setCredentialsError("");
+    } catch (err) {
+      setCredentialsError(err instanceof Error ? err.message : "Failed to reload credentials");
+    }
+  }, []);
+
+  const beginCreateCredential = useCallback(() => {
+    setCredentialDraft(blankCredentialDraft("create"));
+  }, []);
+
+  const beginEditCredential = useCallback(async (cred: CredentialSummary) => {
+    if (cred.type !== "domain_join" && cred.type !== "local_admin") {
+      window.location.href = `/credentials/${String(cred.id)}/edit`;
+      return;
+    }
+    try {
+      const full = await fetchJson<{
+        readonly id: number;
+        readonly name: string;
+        readonly type: string;
+        readonly payload?: Readonly<Record<string, unknown>>;
+      }>(`/api/credentials/${String(cred.id)}`);
+      const payload = full.payload ?? {};
+      const draft: CredentialDraft = {
+        mode: "edit",
+        id: full.id,
+        name: full.name,
+        type: full.type === "local_admin" ? "local_admin" : "domain_join",
+        domain_fqdn: String(payload.domain_fqdn ?? ""),
+        username: String(payload.username ?? ""),
+        password: "",
+        ou_hint: String(payload.ou_hint ?? ""),
+        passwordPlaceholder: true
+      };
+      setCredentialDraft(draft);
+    } catch (err) {
+      setActionStatus(err instanceof Error ? err.message : "Failed to load credential");
+    }
+  }, []);
+
+  const updateCredentialDraft = useCallback(
+    <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => {
+      setCredentialDraft((current) => (current ? { ...current, [field]: value } : current));
+    },
+    []
+  );
+
+  const cancelCredentialDraft = useCallback(() => {
+    setCredentialDraft(null);
+  }, []);
+
+  const submitCredentialDraft = useCallback(async () => {
+    const draft = credentialDraft;
+    if (!draft) {
+      return;
+    }
+    const name = draft.name.trim();
+    if (!name) {
+      setActionStatus("Credential name is required");
+      return;
+    }
+    if (draft.mode === "create" && !draft.password) {
+      setActionStatus("Password is required for new credentials");
+      return;
+    }
+    const buildPayload = (): Record<string, unknown> | null => {
+      if (draft.type === "domain_join") {
+        const payload: Record<string, unknown> = {
+          domain_fqdn: draft.domain_fqdn.trim(),
+          username: draft.username.trim(),
+          ou_hint: draft.ou_hint.trim()
+        };
+        if (draft.password) {
+          payload.password = draft.password;
+        }
+        return payload;
+      }
+      const payload: Record<string, unknown> = {
+        username: draft.username.trim()
+      };
+      if (draft.password) {
+        payload.password = draft.password;
+      }
+      return payload;
+    };
+    const payload = buildPayload();
+    if (!payload) {
+      return;
+    }
+    if (draft.mode === "create") {
+      // POST requires password; we already enforced that above.
+      const ok = await runAction(`Add credential ${name}`, () =>
+        postJson("/api/credentials", {
+          name,
+          type: draft.type,
+          payload: { ...payload, password: draft.password }
+        })
+      );
+      if (ok) {
+        setCredentialDraft(null);
+        await reloadCredentials();
+      }
+      return;
+    }
+    // edit: PATCH; omit password when the user didn't enter a new one so
+    // the existing encrypted value stays put.
+    if (draft.id === null) {
+      setActionStatus("Cannot edit credential without an id");
+      return;
+    }
+    const patchBody: Record<string, unknown> = { name };
+    if (Object.keys(payload).length > 0 || draft.password) {
+      patchBody.payload = payload;
+    }
+    const ok = await runAction(`Update credential ${name}`, () =>
+      patchJson(`/api/credentials/${String(draft.id)}`, patchBody)
+    );
+    if (ok) {
+      setCredentialDraft(null);
+      await reloadCredentials();
+    }
+  }, [credentialDraft, reloadCredentials, runAction]);
+
+  const deleteCredential = useCallback(async (cred: CredentialSummary) => {
+    const confirmMessage = `Delete credential ${cred.name}? This cannot be undone.`;
+    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) {
+      return;
+    }
+    const ok = await runAction(`Delete credential ${cred.name}`, () =>
+      deleteJson(`/api/credentials/${String(cred.id)}`)
+    );
+    if (ok) {
+      await reloadCredentials();
+    }
+  }, [reloadCredentials, runAction]);
+
+  const bulkDeleteSelected = useCallback(async () => {
+    if (!selectedAgentIds.size) {
+      return;
+    }
+    const ids = [...selectedAgentIds];
+    const confirmText = `Delete ${ids.length} agent${ids.length === 1 ? "" : "s"}? This cannot be undone.`;
+    if (typeof window !== "undefined" && !window.confirm(confirmText)) {
+      return;
+    }
+    await runAction(
+      `Delete ${ids.length} agent${ids.length === 1 ? "" : "s"}`,
+      () => postJson("/api/agents/bulk-delete", { agent_ids: ids })
+    );
+    clearSelection();
+  }, [clearSelection, runAction, selectedAgentIds]);
 
   const approveAgent = useCallback((agent: AgentFleetRow) => {
     const approvalId = agent.approval_id;
@@ -1229,6 +1711,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         infraVmCandidates={infraVmCandidates}
         credentials={credentialSummaries}
         credentialsError={credentialsError}
+        onCreateCredential={beginCreateCredential}
+        onEditCredential={(cred) => { void beginEditCredential(cred); }}
+        onDeleteCredential={(cred) => { void deleteCredential(cred); }}
         onCreateBubble={createBubble}
         onEditBubble={editBubble}
         onRequestDeleteBubble={requestDeleteBubble}
@@ -1237,6 +1722,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         bubbleDraftMode={bubbleDraftMode}
         bubbleDraftId={bubbleDraftId}
         bubbleDraft={bubbleDraft}
+        orphanVnets={orphanVnets}
+        adoptedVnetId={bubbleAdoptedVnet?.vnet}
+        onAdoptVnet={adoptOrphanVnet}
+        boundNetwork={bubbleBoundNetwork}
         onBubbleDraftChange={updateBubbleDraft}
         onSaveBubbleDraft={saveBubbleDraft}
         onCancelBubbleDraft={cancelBubbleDraft}
@@ -1288,9 +1777,37 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             onSaveTag={saveMachineTag}
             onCancelTag={cancelMachineTagDraft}
             assignmentsByVmid={assignmentsByVmid}
+            selectedAgentIds={selectedAgentIds}
+            onToggleRow={toggleRowSelected}
+            onToggleSelectAll={toggleSelectAll}
+            allSelected={allSelected}
+            someSelected={someSelected}
+            onBulkDelete={() => { void bulkDeleteSelected(); }}
+            onClearSelection={clearSelection}
+            onEditAgent={updateAgent}
           />
         </div>
       </section>
+
+      {agentFormDraft ? (
+        <FleetAgentFormModal
+          draft={agentFormDraft}
+          onChange={(field, value) => {
+            setAgentFormDraft((current) => (current ? { ...current, [field]: value } : current));
+          }}
+          onSubmit={() => { void submitAgentForm(); }}
+          onCancel={cancelAgentForm}
+        />
+      ) : null}
+
+      {credentialDraft ? (
+        <CredentialFormModal
+          draft={credentialDraft}
+          onChange={updateCredentialDraft}
+          onSubmit={() => { void submitCredentialDraft(); }}
+          onCancel={cancelCredentialDraft}
+        />
+      ) : null}
     </PageFrame>
   );
 }
@@ -1304,7 +1821,15 @@ function FleetMachineTable({
   onTagDraftChange,
   onSaveTag,
   onCancelTag,
-  assignmentsByVmid
+  assignmentsByVmid,
+  selectedAgentIds,
+  onToggleRow,
+  onToggleSelectAll,
+  allSelected,
+  someSelected,
+  onBulkDelete,
+  onClearSelection,
+  onEditAgent
 }: {
   readonly rows: readonly FleetMachineRow[];
   readonly onCreateAgent: () => void;
@@ -1315,7 +1840,16 @@ function FleetMachineTable({
   readonly onSaveTag: (row: FleetMachineRow) => void;
   readonly onCancelTag: () => void;
   readonly assignmentsByVmid: ReadonlyMap<number, BubbleAssignment>;
+  readonly selectedAgentIds: ReadonlySet<string>;
+  readonly onToggleRow: (agentId: string) => void;
+  readonly onToggleSelectAll: () => void;
+  readonly allSelected: boolean;
+  readonly someSelected: boolean;
+  readonly onBulkDelete: () => void;
+  readonly onClearSelection: () => void;
+  readonly onEditAgent: (agent: AgentFleetRow) => void;
 }) {
+  const selectionCount = selectedAgentIds.size;
   return (
     <Panel title="Fleet machines">
       <div className="fleet-lane-command">
@@ -1324,11 +1858,43 @@ function FleetMachineTable({
           <span>Add agent</span>
         </button>
       </div>
+      {selectionCount > 0 ? (
+        <div className="fleet-bulk-bar" role="region" aria-label="Bulk fleet actions">
+          <span className="fleet-bulk-bar__count">
+            {selectionCount} agent{selectionCount === 1 ? "" : "s"} selected
+          </span>
+          <div className="fleet-bulk-bar__actions">
+            <button
+              type="button"
+              className="fleet-bulk-bar__action fleet-bulk-bar__action--danger"
+              onClick={onBulkDelete}
+            >
+              Delete selected
+            </button>
+            <button type="button" className="fleet-bulk-bar__action" onClick={onClearSelection}>
+              Clear selection
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="fleet-machine-table-wrap">
         {rows.length ? (
           <table className="fleet-machine-table" aria-label="Fleet machines">
             <thead>
               <tr>
+                <th scope="col" className="fleet-machine-table__check">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible agents"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) {
+                        el.indeterminate = someSelected;
+                      }
+                    }}
+                    onChange={onToggleSelectAll}
+                  />
+                </th>
                 <th scope="col">Device Name</th>
                 <th scope="col">Heartbeat</th>
                 <th scope="col">Managed By</th>
@@ -1340,37 +1906,257 @@ function FleetMachineTable({
                 <th scope="col">Agent</th>
                 <th scope="col">Bubble</th>
                 <th scope="col">Tag</th>
+                <th scope="col" className="fleet-machine-table__row-actions" aria-label="Row actions" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <Fragment key={row.id}>
-                  <MachineRow
-                    row={row}
-                    assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
-                    onTag={onTagMachine}
-                  />
-                  {tagDraft?.rowId === row.id && row.vmid !== undefined ? (
-                    <tr className="machine-tag-row">
-                      <td colSpan={11}>
-                        <MachineTagEditor
-                          row={row}
-                          values={tagDraft}
-                          bubbleOptions={bubbleOptions}
-                          onChange={onTagDraftChange}
-                          onSave={() => { onSaveTag(row); }}
-                          onCancel={onCancelTag}
-                        />
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
-              ))}
+              {rows.map((row) => {
+                const agentId = row.agentId;
+                const selected = agentId ? selectedAgentIds.has(agentId) : false;
+                return (
+                  <Fragment key={row.id}>
+                    <MachineRow
+                      row={row}
+                      assignment={row.vmid === undefined ? undefined : assignmentsByVmid.get(row.vmid)}
+                      onTag={onTagMachine}
+                      selected={selected}
+                      onToggleSelect={agentId ? () => { onToggleRow(agentId); } : undefined}
+                      onEditAgent={agentId ? onEditAgent : undefined}
+                    />
+                    {tagDraft?.rowId === row.id && row.vmid !== undefined ? (
+                      <tr className="machine-tag-row">
+                        <td colSpan={13}>
+                          <MachineTagEditor
+                            row={row}
+                            values={tagDraft}
+                            bubbleOptions={bubbleOptions}
+                            onChange={onTagDraftChange}
+                            onSave={() => { onSaveTag(row); }}
+                            onCancel={onCancelTag}
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         ) : <p className="empty">No fleet machines found.</p>}
       </div>
     </Panel>
+  );
+}
+
+function FleetAgentFormModal({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel
+}: {
+  readonly draft: AgentFormDraft;
+  readonly onChange: (field: keyof AgentFormDraft, value: string) => void;
+  readonly onSubmit: () => void;
+  readonly onCancel: () => void;
+}) {
+  const title = draft.mode === "create" ? "Add fleet agent" : `Edit agent ${draft.agentId}`;
+  return (
+    <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fleet-agent-form-title"
+        className="fleet-modal"
+        onClick={(event) => { event.stopPropagation(); }}
+      >
+        <header className="fleet-modal__header">
+          <h3 id="fleet-agent-form-title">{title}</h3>
+          <button type="button" className="fleet-modal__close" onClick={onCancel} aria-label="Close">
+            x
+          </button>
+        </header>
+        <form
+          className="fleet-modal__body"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label className="cloudosd-field">
+            <span>Agent ID *</span>
+            <input
+              value={draft.agentId}
+              onChange={(event) => { onChange("agentId", event.currentTarget.value); }}
+              disabled={draft.mode === "edit"}
+              placeholder="agent-id"
+              required
+              aria-label="Agent ID"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>VMID</span>
+            <input
+              value={draft.vmid}
+              onChange={(event) => { onChange("vmid", event.currentTarget.value); }}
+              placeholder="113"
+              aria-label="VMID"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Computer name</span>
+            <input
+              value={draft.computerName}
+              onChange={(event) => { onChange("computerName", event.currentTarget.value); }}
+              placeholder="DESKTOP-XYZ"
+              aria-label="Computer name"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Serial number</span>
+            <input
+              value={draft.serialNumber}
+              onChange={(event) => { onChange("serialNumber", event.currentTarget.value); }}
+              aria-label="Serial number"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Agent version</span>
+            <input
+              value={draft.agentVersion}
+              onChange={(event) => { onChange("agentVersion", event.currentTarget.value); }}
+              placeholder="1.0.0"
+              aria-label="Agent version"
+            />
+          </label>
+          <div className="fleet-modal__actions">
+            <button type="button" className="fleet-modal__secondary" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit" className="utility-button">
+              {draft.mode === "create" ? "Add agent" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CredentialFormModal({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel
+}: {
+  readonly draft: CredentialDraft;
+  readonly onChange: <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => void;
+  readonly onSubmit: () => void;
+  readonly onCancel: () => void;
+}) {
+  const title =
+    draft.mode === "create"
+      ? "New credential"
+      : `Edit credential ${draft.name}`;
+  const isDomainJoin = draft.type === "domain_join";
+  return (
+    <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="credential-form-title"
+        className="fleet-modal"
+        onClick={(event) => { event.stopPropagation(); }}
+      >
+        <header className="fleet-modal__header">
+          <h3 id="credential-form-title">{title}</h3>
+          <button type="button" className="fleet-modal__close" onClick={onCancel} aria-label="Close">
+            x
+          </button>
+        </header>
+        <form
+          className="fleet-modal__body"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label className="cloudosd-field">
+            <span>Name *</span>
+            <input
+              value={draft.name}
+              onChange={(event) => { onChange("name", event.currentTarget.value); }}
+              placeholder="acme-domain-join"
+              required
+              aria-label="Credential name"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Type *</span>
+            <select
+              value={draft.type}
+              onChange={(event) => { onChange("type", event.currentTarget.value as CredentialDraftType); }}
+              disabled={draft.mode === "edit"}
+              aria-label="Credential type"
+            >
+              {CREDENTIAL_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          {isDomainJoin ? (
+            <label className="cloudosd-field">
+              <span>Domain FQDN</span>
+              <input
+                value={draft.domain_fqdn}
+                onChange={(event) => { onChange("domain_fqdn", event.currentTarget.value); }}
+                placeholder="corp.example.com"
+                aria-label="Domain FQDN"
+              />
+            </label>
+          ) : null}
+          <label className="cloudosd-field">
+            <span>Username</span>
+            <input
+              value={draft.username}
+              onChange={(event) => { onChange("username", event.currentTarget.value); }}
+              placeholder={isDomainJoin ? "CORP\\joinuser" : "Administrator"}
+              aria-label="Username"
+            />
+          </label>
+          <label className="cloudosd-field">
+            <span>Password {draft.mode === "create" ? "*" : "(leave blank to keep current)"}</span>
+            <input
+              type="password"
+              value={draft.password}
+              onChange={(event) => { onChange("password", event.currentTarget.value); }}
+              placeholder={draft.passwordPlaceholder ? "Unchanged" : ""}
+              autoComplete="new-password"
+              required={draft.mode === "create"}
+              aria-label="Password"
+            />
+          </label>
+          {isDomainJoin ? (
+            <label className="cloudosd-field">
+              <span>OU hint</span>
+              <input
+                value={draft.ou_hint}
+                onChange={(event) => { onChange("ou_hint", event.currentTarget.value); }}
+                placeholder="OU=Workstations,DC=corp,DC=example,DC=com"
+                aria-label="OU hint"
+              />
+            </label>
+          ) : null}
+          <div className="fleet-modal__actions">
+            <button type="button" className="fleet-modal__secondary" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit" className="utility-button">
+              {draft.mode === "create" ? "Create credential" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -1436,16 +2222,33 @@ function MachineTagEditor({
 function MachineRow({
   row,
   assignment,
-  onTag
+  onTag,
+  selected,
+  onToggleSelect,
+  onEditAgent
 }: {
   readonly row: FleetMachineRow;
   readonly assignment: BubbleAssignment | undefined;
   readonly onTag: (row: FleetMachineRow) => void;
+  readonly selected?: boolean | undefined;
+  readonly onToggleSelect?: (() => void) | undefined;
+  readonly onEditAgent?: ((agent: AgentFleetRow) => void) | undefined;
 }) {
   const runtimeLabel = fleetRuntimeLabel(row);
   const agentLabel = fleetAgentLabel(row);
+  const editableAgent: AgentFleetRow | null = row.agent ?? null;
   return (
-    <tr>
+    <tr className={selected ? "is-selected" : undefined}>
+      <td className="fleet-machine-table__check">
+        {onToggleSelect ? (
+          <input
+            type="checkbox"
+            checked={Boolean(selected)}
+            onChange={onToggleSelect}
+            aria-label={`Select agent ${row.agentId ?? row.name}`}
+          />
+        ) : null}
+      </td>
       <th scope="row">
         {row.vmid !== undefined ? (
           <a className="machine-name machine-name--link" href={`/react/vms/${String(row.vmid)}`}>{row.name}</a>
@@ -1470,7 +2273,9 @@ function MachineRow({
         <span className="machine-primary-value">{fleetOsVersion(row)}</span>
       </td>
       <td>
-        {row.vmid !== undefined ? <a className="machine-vmid-link" href={`/devices/${String(row.vmid)}`}>{row.vmid}</a> : <span className="machine-primary-value">-</span>}
+        {row.vmid !== undefined ? (
+          <a className="machine-vmid-link" href={reactHrefForUiPath(`/devices/${String(row.vmid)}`)}>{row.vmid}</a>
+        ) : <span className="machine-primary-value">-</span>}
       </td>
       <td>
         <span className="machine-primary-value">{fallbackText(row.ipAddress)}</span>
@@ -1501,6 +2306,18 @@ function MachineRow({
             Tag
           </button>
         ) : <span className="machine-primary-value">-</span>}
+      </td>
+      <td className="fleet-machine-table__row-actions">
+        {editableAgent && onEditAgent ? (
+          <button
+            type="button"
+            className="fleet-action"
+            aria-label={`Edit agent ${editableAgent.agent_id}`}
+            onClick={() => { onEditAgent(editableAgent); }}
+          >
+            Edit
+          </button>
+        ) : null}
       </td>
     </tr>
   );
@@ -1716,7 +2533,11 @@ function BubbleEditor({
   values,
   onChange,
   onSave,
-  onCancel
+  onCancel,
+  orphanVnets,
+  adoptedVnetId,
+  onAdoptVnet,
+  boundNetwork
 }: {
   readonly mode: BubbleDraftMode;
   readonly bubbleName?: string;
@@ -1724,8 +2545,14 @@ function BubbleEditor({
   readonly onChange: (field: BubbleFormField, value: string) => void;
   readonly onSave: () => void;
   readonly onCancel: () => void;
+  readonly orphanVnets?: readonly OrphanVnet[];
+  readonly adoptedVnetId?: string | undefined;
+  readonly onAdoptVnet?: (vnetId: string) => void;
+  readonly boundNetwork?: BubbleBoundNetwork | null;
 }) {
   const saveLabel = mode === "create" ? "Create bubble" : `Save bubble ${bubbleName ?? values.name}`;
+  const showAdoption = mode === "create" && orphanVnets !== undefined && onAdoptVnet !== undefined;
+  const hasOrphans = (orphanVnets?.length ?? 0) > 0;
   return (
     <form
       className="bubble-form"
@@ -1735,17 +2562,97 @@ function BubbleEditor({
         onSave();
       }}
     >
-      <div className="bubble-form-grid">
-        <BubbleTextField label="Bubble name" field="name" value={values.name} onChange={onChange} required />
-        <BubbleTextField label="Domain name" field="domain_name" value={values.domain_name} onChange={onChange} />
-        <BubbleTextField label="NetBIOS name" field="netbios_name" value={values.netbios_name} onChange={onChange} />
-        <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} />
-        <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} />
-        <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} />
-        <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} />
-        <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} />
-        <BubbleTextField label="Lifecycle state" field="lifecycle_state" value={values.lifecycle_state} onChange={onChange} />
-        <BubbleTextField label="Isolation status" field="isolation_status" value={values.isolation_status} onChange={onChange} />
+      {showAdoption ? (
+        hasOrphans ? (
+          <label className="bubble-form-field bubble-form-adoption">
+            <span>Adopt existing isolated network</span>
+            <select
+              aria-label="Adopt existing isolated network"
+              value={adoptedVnetId ?? ""}
+              onChange={(event) => { onAdoptVnet?.(event.currentTarget.value); }}
+            >
+              <option value="">- create a new bubble without SDN binding -</option>
+              {(orphanVnets ?? []).map((vnet) => {
+                const cidrLabel = vnet.subnet?.subnet ? ` (${vnet.subnet.subnet})` : "";
+                const zoneLabel = vnet.zone ? ` / zone ${vnet.zone}` : "";
+                const aliasLabel = vnet.alias && vnet.alias !== vnet.vnet ? ` - ${vnet.alias}` : "";
+                return (
+                  <option key={vnet.vnet} value={vnet.vnet}>
+                    {vnet.vnet}{zoneLabel}{cidrLabel}{aliasLabel}
+                  </option>
+                );
+              })}
+            </select>
+            <span className="bubble-form-help">
+              Found {orphanVnets?.length ?? 0} vnet{(orphanVnets?.length ?? 0) === 1 ? "" : "s"} not yet
+              bound to a bubble. Picking one pre-fills the CIDR/gateway/DHCP fields and binds the new
+              bubble to its SDN isolation on save.
+            </span>
+          </label>
+        ) : (
+          <p className="bubble-form-note">
+            No unbound SDN vnets available. Create a vnet + subnet under the Networks page first if you
+            want to adopt an existing isolated network for this bubble.
+          </p>
+        )
+      ) : null}
+      <div className="bubble-form-section">
+        <h4 className="bubble-form-section__title">Identity</h4>
+        <div className="bubble-form-grid">
+          <BubbleTextField label="Bubble name" field="name" value={values.name} onChange={onChange} required placeholder="e.g. lab30" />
+          <BubbleTextField label="Domain name" field="domain_name" value={values.domain_name} onChange={onChange} placeholder="lab30.example.test" />
+          <BubbleTextField label="NetBIOS name" field="netbios_name" value={values.netbios_name} onChange={onChange} placeholder="LAB30" />
+        </div>
+      </div>
+
+      <div className="bubble-form-section">
+        <h4 className="bubble-form-section__title">Network</h4>
+        {boundNetwork ? (
+          <>
+            <p className="bubble-form-note">
+              This bubble is bound to SDN vnet <code>{boundNetwork.vnet}</code>{" "}
+              (zone <code>{boundNetwork.zone}</code>). Network details are
+              pulled from the live PVE subnet config; edit them on the
+              Networks page so the rest of the cluster sees the change too.
+            </p>
+            <dl className="bubble-network-readonly">
+              <div><dt>Isolated CIDR</dt><dd>{boundNetwork.subnet || "-"}</dd></div>
+              <div><dt>Gateway IP</dt><dd>{boundNetwork.gateway || "-"}</dd></div>
+              <div><dt>DHCP network ID</dt><dd>{boundNetwork.vnet}</dd></div>
+              <div><dt>DHCP DNS server</dt><dd>{boundNetwork.dhcpDnsServer || "-"}</dd></div>
+              <div><dt>DHCP pool start</dt><dd>{boundNetwork.dhcpStart || "-"}</dd></div>
+              <div><dt>DHCP pool end</dt><dd>{boundNetwork.dhcpEnd || "-"}</dd></div>
+            </dl>
+          </>
+        ) : (
+          <div className="bubble-form-grid">
+            <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} placeholder="10.77.30.0/24" />
+            <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} placeholder="10.77.30.1" />
+            <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} placeholder="vnet alias / scope" />
+            <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} placeholder="10.77.30.100" />
+            <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} placeholder="10.77.30.199" />
+          </div>
+        )}
+      </div>
+
+      <div className="bubble-form-section">
+        <h4 className="bubble-form-section__title">Lifecycle</h4>
+        <div className="bubble-form-grid">
+          <BubbleSelectField
+            label="Lifecycle state"
+            field="lifecycle_state"
+            value={values.lifecycle_state}
+            onChange={onChange}
+            options={BUBBLE_LIFECYCLE_OPTIONS}
+          />
+          <BubbleSelectField
+            label="Isolation status"
+            field="isolation_status"
+            value={values.isolation_status}
+            onChange={onChange}
+            options={BUBBLE_ISOLATION_OPTIONS}
+          />
+        </div>
       </div>
       <div className="bubble-form-actions">
         <button type="submit" className="fleet-action fleet-action--command" aria-label={saveLabel}>
@@ -1764,13 +2671,15 @@ function BubbleTextField({
   field,
   value,
   onChange,
-  required = false
+  required = false,
+  placeholder
 }: {
   readonly label: string;
   readonly field: BubbleFormField;
   readonly value: string;
   readonly onChange: (field: BubbleFormField, value: string) => void;
   readonly required?: boolean;
+  readonly placeholder?: string | undefined;
 }) {
   return (
     <label className="bubble-form-field">
@@ -1779,8 +2688,44 @@ function BubbleTextField({
         aria-label={label}
         value={value}
         required={required}
+        placeholder={placeholder}
         onChange={(event) => { onChange(field, event.target.value); }}
       />
+    </label>
+  );
+}
+
+function BubbleSelectField({
+  label,
+  field,
+  value,
+  onChange,
+  options
+}: {
+  readonly label: string;
+  readonly field: BubbleFormField;
+  readonly value: string;
+  readonly onChange: (field: BubbleFormField, value: string) => void;
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+}) {
+  // If the saved value isn't one of the canonical options (free-text from
+  // an older bubble or an external tool), keep it visible at the top of the
+  // list so editing doesn't silently rewrite history.
+  const knownValues = new Set(options.map((opt) => opt.value));
+  const showCustomFirst = value && !knownValues.has(value);
+  return (
+    <label className="bubble-form-field">
+      <span>{label}</span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => { onChange(field, event.target.value); }}
+      >
+        {showCustomFirst ? <option value={value}>{value} (custom)</option> : null}
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -1790,6 +2735,9 @@ function BubbleTopologyOverview({
   infraVmCandidates,
   credentials,
   credentialsError,
+  onCreateCredential,
+  onEditCredential,
+  onDeleteCredential,
   onCreateBubble,
   onEditBubble,
   onRequestDeleteBubble,
@@ -1798,6 +2746,10 @@ function BubbleTopologyOverview({
   bubbleDraftMode,
   bubbleDraftId,
   bubbleDraft,
+  orphanVnets,
+  adoptedVnetId,
+  onAdoptVnet,
+  boundNetwork,
   onBubbleDraftChange,
   onSaveBubbleDraft,
   onCancelBubbleDraft,
@@ -1840,6 +2792,9 @@ function BubbleTopologyOverview({
   readonly infraVmCandidates: readonly VmFleetRow[];
   readonly credentials: readonly CredentialSummary[];
   readonly credentialsError: string;
+  readonly onCreateCredential: () => void;
+  readonly onEditCredential: (cred: CredentialSummary) => void;
+  readonly onDeleteCredential: (cred: CredentialSummary) => void;
   readonly onCreateBubble: () => void;
   readonly onEditBubble: (bubble: LabBubble) => void;
   readonly onRequestDeleteBubble: (bubble: LabBubble) => void;
@@ -1848,6 +2803,10 @@ function BubbleTopologyOverview({
   readonly bubbleDraftMode: BubbleDraftMode | null;
   readonly bubbleDraftId: string | null;
   readonly bubbleDraft: BubbleFormValues;
+  readonly orphanVnets: readonly OrphanVnet[];
+  readonly adoptedVnetId: string | undefined;
+  readonly onAdoptVnet: (vnetId: string) => void;
+  readonly boundNetwork: BubbleBoundNetwork | null;
   readonly onBubbleDraftChange: (field: BubbleFormField, value: string) => void;
   readonly onSaveBubbleDraft: () => void;
   readonly onCancelBubbleDraft: () => void;
@@ -1912,6 +2871,9 @@ function BubbleTopologyOverview({
               onChange={onBubbleDraftChange}
               onSave={onSaveBubbleDraft}
               onCancel={onCancelBubbleDraft}
+              orphanVnets={orphanVnets}
+              adoptedVnetId={adoptedVnetId}
+              onAdoptVnet={onAdoptVnet}
             />
           ) : null}
           {topology.warnings.length ? (
@@ -1956,6 +2918,7 @@ function BubbleTopologyOverview({
                         onChange={onBubbleDraftChange}
                         onSave={onSaveBubbleDraft}
                         onCancel={onCancelBubbleDraft}
+                        boundNetwork={boundNetwork}
                       />
                     ) : null}
                     {deleteBubbleId === fleet.bubble.id ? (
@@ -2172,7 +3135,13 @@ function BubbleTopologyOverview({
               })}
             </div>
           ) : <p className="empty">No connected services linked yet.</p>}
-          <CredentialInventory credentials={credentials} error={credentialsError} />
+          <CredentialInventory
+            credentials={credentials}
+            error={credentialsError}
+            onCreate={onCreateCredential}
+            onEdit={onEditCredential}
+            onDelete={onDeleteCredential}
+          />
         </Panel>
       </div>
     </section>
@@ -2428,24 +3397,60 @@ function ServiceEditor({
 
 function CredentialInventory({
   credentials,
-  error
+  error,
+  onCreate,
+  onEdit,
+  onDelete
 }: {
   readonly credentials: readonly CredentialSummary[];
   readonly error: string;
+  readonly onCreate: () => void;
+  readonly onEdit: (cred: CredentialSummary) => void;
+  readonly onDelete: (cred: CredentialSummary) => void;
 }) {
   return (
     <section className="credential-inventory" aria-label="Credential inventory">
-      <h3>Credential inventory</h3>
+      <header className="credential-inventory__header">
+        <h3>Credential inventory</h3>
+        <button
+          type="button"
+          className="fleet-action fleet-action--command"
+          onClick={onCreate}
+        >
+          <span>New credential</span>
+        </button>
+      </header>
       {error ? <p className="notice" role="status">{error}</p> : null}
       {credentials.length ? (
         <div className="credential-list">
-          {credentials.map((credential) => (
-            <article key={credential.id} className="credential-chip">
-              <strong>{credential.name}</strong>
-              <span>{roleLabel(credential.type)}</span>
-              <small>{formatShortDateTime(credential.updated_at ?? credential.created_at)}</small>
-            </article>
-          ))}
+          {credentials.map((credential) => {
+            const fileBased = credential.type === "odj_blob" || credential.type === "mde_onboarding";
+            return (
+              <article key={credential.id} className="credential-chip">
+                <strong>{credential.name}</strong>
+                <span>{roleLabel(credential.type)}</span>
+                <small>{formatShortDateTime(credential.updated_at ?? credential.created_at)}</small>
+                <div className="credential-chip__actions">
+                  <button
+                    type="button"
+                    className="credential-chip__action"
+                    onClick={() => { onEdit(credential); }}
+                    aria-label={`Edit credential ${credential.name}`}
+                  >
+                    {fileBased ? "Edit (file)" : "Edit"}
+                  </button>
+                  <button
+                    type="button"
+                    className="credential-chip__action credential-chip__action--danger"
+                    onClick={() => { onDelete(credential); }}
+                    aria-label={`Delete credential ${credential.name}`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : error ? null : <p className="empty">No credential summaries found.</p>}
     </section>

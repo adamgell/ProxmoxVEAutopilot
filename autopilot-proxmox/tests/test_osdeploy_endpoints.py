@@ -20,7 +20,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def osdeploy_client(pg_conn, monkeypatch):
+def osdeploy_client(pg_conn, monkeypatch, tmp_path):
     from web import (
         agent_telemetry_pg,
         jobs_pg,
@@ -46,6 +46,10 @@ def osdeploy_client(pg_conn, monkeypatch):
     lab_bubbles_pg.reset_for_tests(pg_conn)
     lab_bubbles_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
+    agent_msi = tmp_path / "artifacts" / "AutopilotAgent.msi"
+    agent_msi.parent.mkdir(parents=True, exist_ok=True)
+    agent_msi.write_bytes(b"MZ" + (b"\0" * 4094))
+    monkeypatch.setenv("AUTOPILOT_AGENT_MSI_PATH", str(agent_msi))
 
     from web import app as web_app
 
@@ -306,20 +310,62 @@ def test_osdeploy_artifact_list_includes_build_and_publish_job_links(osdeploy_cl
 def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_conn):
     artifact = _create_osdeploy_artifact(pg_conn)
 
-    response = osdeploy_client.get("/osdeploy/builder")
+    response = osdeploy_client.get("/osdeploy/builder", follow_redirects=False)
+
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == "/react/osdeploy?view=builder"
+
+    response = osdeploy_client.get("/api/osdeploy/page?view=builder")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["osdeploy_view"] == "builder"
+    assert any(row["id"] == artifact["id"] for row in body["artifacts"])
+    assert body["proxmox_options"]["nodes"][0] == "pve"
+    assert body["proxmox_options"]["storages"]["iso"][0] == "local"
+    assert body["proxmox_options"]["storages"]["disk"][0] == "local-lvm"
+    assert body["proxmox_options"]["bridges"][0] == "vmbr0"
+    assert body["proxmox_options"]["network_targets"][0]["value"] == "vmbr0"
+
+
+def test_osdeploy_page_options_include_sdn_vnet_targets(
+    osdeploy_client,
+    monkeypatch,
+):
+    from web import app as web_app
+
+    def fake_proxmox_api(path, *args, **kwargs):
+        values = {
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/cluster/sdn/vnets": [
+                {"vnet": "lab101", "zone": "lab-simple", "alias": "Lab 101"}
+            ],
+        }
+        if path not in values:
+            raise AssertionError(path)
+        return values[path]
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+
+    response = osdeploy_client.get("/api/osdeploy/v1/proxmox/options")
 
     assert response.status_code == 200, response.text
-    body = response.text
-    assert 'id="osdeployRunForm"' in body
-    assert artifact["id"] in body
-    assert "/api/osdeploy/v1/preflight" in body
-    assert "/api/osdeploy/v1/runs" in body
-    assert "Launch OSDeploy VM" in body
-    assert '<option value="pve" selected>pve</option>' in body
-    assert '<option value="local" selected>local</option>' in body
-    assert '<option value="local-lvm" selected>local-lvm</option>' in body
-    assert '<option value="vmbr0" selected>vmbr0</option>' in body
-    assert "&#34;" not in body
+    body = response.json()
+    assert body["bridges"] == ["vmbr0"]
+    assert any(
+        target["kind"] == "bridge" and target["value"] == "vmbr0"
+        for target in body["network_targets"]
+    )
+    assert any(
+        target["kind"] == "sdn_vnet"
+        and target["value"] == "lab101"
+        and target["zone"] == "lab-simple"
+        for target in body["network_targets"]
+    )
 
 
 def test_osdeploy_v2_catalog_owns_osdeploy_step_kind():
@@ -453,6 +499,47 @@ def test_osdeploy_preflight_blocks_missing_disk_storage(
         json=_run_payload(artifact["id"], storage="local-lvm"),
     )
     assert created.status_code == 409
+
+
+def test_osdeploy_preflight_blocks_unknown_network_target(
+    osdeploy_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import osdeploy_endpoints
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "proxmox_options_payload",
+        lambda: {
+            "schema_version": 1,
+            "nodes": ["pve"],
+            "storages": {"iso": ["local"], "disk": ["local-lvm"]},
+            "bridges": ["vmbr0"],
+            "network_targets": [
+                {"kind": "bridge", "value": "vmbr0", "label": "vmbr0"},
+            ],
+            "defaults": {
+                "node": "pve",
+                "iso_storage": "local",
+                "disk_storage": "local-lvm",
+                "bridge": "vmbr0",
+            },
+        },
+    )
+
+    preflight = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=_run_payload(artifact["id"], network_bridge="missing-net"),
+    )
+
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["launch_allowed"] is False
+    assert "proxmox_bridge_unavailable" in {
+        check["id"] for check in body["blocking_checks"]
+    }
 
 
 def test_osdeploy_preflight_and_provision_recover_stale_virtio_storage(
@@ -855,7 +942,11 @@ def test_osdeploy_launches_all_role_sequences_with_typed_steps(osdeploy_client, 
         assert created.status_code == 201, created.text
         run = created.json()["run"]
         detail = osdeploy_client.get(f"/api/osdeploy/v1/runs/{run['run_id']}").json()
-        assert [step["kind"] for step in detail["v2_steps"]][-len(expected_tail):] == expected_tail
+        step_kinds = [step["kind"] for step in detail["v2_steps"]]
+        assert step_kinds[-len(expected_tail):] == expected_tail
+        assert step_kinds.index("install_qga") < step_kinds.index("verify_qga")
+        assert step_kinds.index("verify_qga") < step_kinds.index("install_qga_watchdog")
+        assert step_kinds.index("install_qga_watchdog") < step_kinds.index("install_autopilot_agent")
 
 
 def test_osdeploy_cache_catalog_and_entry_lifecycle(osdeploy_client, pg_conn):
@@ -2950,11 +3041,36 @@ def test_osdeploy_public_bridge_routes_are_additive():
     from web import auth
 
     assert auth.is_exempt_path("/api/osdeploy/v1/pe/package/run-1")
-    assert auth.is_exempt_path("/api/osdeploy/v1/runs/run-1")
+    assert not auth.is_exempt_path("/api/osdeploy/v1/runs/run-1")
     assert auth.is_exempt_path("/api/osdeploy/v1/runs/run-1/identity")
     assert auth.is_exempt_path("/api/osdeploy/v1/runs/run-1/events")
     assert not auth.is_exempt_path("/api/osdeploy/v1/runs")
     assert not auth.is_exempt_path("/api/osdeploy/v1/runs/run-1/provision")
+
+
+def test_osdeploy_run_detail_auth_allows_controller_self_poll_only():
+    from web import auth
+
+    class Url:
+        path = "/api/osdeploy/v1/runs/run-1"
+        netloc = "192.168.2.4:5000"
+
+    class Client:
+        host = "192.168.2.4"
+
+    class Request:
+        url = Url()
+        client = Client()
+        headers = {"host": "192.168.2.4:5000"}
+
+    assert auth.is_exempt_request(Request())
+
+    class RemoteClient:
+        host = "192.168.2.50"
+
+    Request.client = RemoteClient()
+
+    assert not auth.is_exempt_request(Request())
 
 
 def test_osdeploy_provision_endpoint_enqueues_dedicated_playbook(osdeploy_client, pg_conn):
@@ -2978,6 +3094,60 @@ def test_osdeploy_provision_endpoint_enqueues_dedicated_playbook(osdeploy_client
     assert job["args"]["proxmox_storage"] == "local-lvm"
     assert job["args"]["proxmox_bridge"] == "vmbr0"
     assert job["args"]["proxmox_virtio_iso"] == "local:iso/virtio-win.iso"
+
+
+def test_osdeploy_run_accepts_sdn_vnet_network_target(
+    osdeploy_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import jobs_pg, osdeploy_endpoints
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "proxmox_options_payload",
+        lambda: {
+            "schema_version": 1,
+            "nodes": ["pve"],
+            "storages": {"iso": ["local"], "disk": ["local-lvm"]},
+            "bridges": ["vmbr0"],
+            "network_targets": [
+                {"kind": "bridge", "value": "vmbr0", "label": "vmbr0"},
+                {
+                    "kind": "sdn_vnet",
+                    "value": "lab101",
+                    "label": "Lab 101",
+                    "zone": "lab-simple",
+                },
+            ],
+            "defaults": {
+                "node": "pve",
+                "iso_storage": "local",
+                "disk_storage": "local-lvm",
+                "bridge": "vmbr0",
+            },
+        },
+    )
+
+    run_response = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="OSDEPLOY-SDN",
+            network_bridge="lab101",
+        ),
+    )
+
+    assert run_response.status_code == 201, run_response.text
+    run = run_response.json()["run"]
+    assert run["network_bridge"] == "lab101"
+
+    response = osdeploy_client.post(f"/api/osdeploy/v1/runs/{run['run_id']}/provision")
+
+    assert response.status_code == 202, response.text
+    job = jobs_pg.get_job(response.json()["job_id"])
+    assert job["args"]["proxmox_bridge"] == "lab101"
 
 
 def test_osdeploy_provision_endpoint_passes_legacy_bios_for_non_secure_boot(

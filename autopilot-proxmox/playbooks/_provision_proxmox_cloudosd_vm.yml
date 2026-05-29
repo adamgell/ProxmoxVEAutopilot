@@ -64,6 +64,10 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_attach_iso
+      until: (_cloudosd_attach_iso.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: Attach VirtIO drivers ISO at ide3
       ansible.builtin.uri:
@@ -77,6 +81,10 @@
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
       when: proxmox_virtio_iso is defined and (proxmox_virtio_iso | length) > 0
+      register: _cloudosd_attach_virtio
+      until: (_cloudosd_attach_virtio.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: Set boot order to CloudOSD ISO first
       ansible.builtin.uri:
@@ -89,6 +97,10 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_set_iso_boot
+      until: (_cloudosd_set_iso_boot.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: POST CloudOSD VM identity to Flask
       ansible.builtin.uri:
@@ -110,6 +122,45 @@
         headers:
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      register: _cloudosd_start_iso_boot
+
+    - name: Fail if CloudOSD ISO boot start returned no Proxmox task
+      ansible.builtin.fail:
+        msg: "CloudOSD VM {{ vm_vmid }} start request returned no Proxmox task."
+      when: ((_cloudosd_start_iso_boot.json.data | default('', true) | string) | length) == 0
+
+    - name: Wait for CloudOSD ISO boot start task
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/tasks/{{ _cloudosd_start_iso_boot.json.data }}/status"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+      register: _cloudosd_start_iso_boot_task
+      until: _cloudosd_start_iso_boot_task.json.data.status == "stopped"
+      retries: "{{ cloudosd_start_task_retries | default(600) }}"
+      delay: "{{ cloudosd_start_task_delay_seconds | default(1) }}"
+
+    - name: Wait for CloudOSD VM to be running after ISO boot start
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/current"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      register: _cloudosd_iso_boot_running
+      until: _cloudosd_iso_boot_running.json.data.status == 'running'
+      retries: 30
+      delay: 2
+
+    - name: Verify CloudOSD ISO boot start task succeeded
+      ansible.builtin.fail:
+        msg: "CloudOSD VM {{ vm_vmid }} start task failed: {{ _cloudosd_start_iso_boot_task.json.data.exitstatus | default('unknown') }}"
+      when:
+        - _cloudosd_start_iso_boot_task.json.data.exitstatus | default('') != "OK"
+        - _cloudosd_iso_boot_running.json.data.status | default('') != 'running'
 
     - name: Wait for CloudOSD PE registration
       ansible.builtin.uri:
@@ -137,6 +188,10 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_detach_iso_after_pe
+      until: (_cloudosd_detach_iso_after_pe.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: Wait for CloudOSD PE phase completion
       ansible.builtin.uri:
@@ -190,6 +245,10 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_detach_iso_before_boot
+      until: (_cloudosd_detach_iso_before_boot.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: Detach VirtIO ISO before disk boot
       ansible.builtin.uri:
@@ -202,6 +261,10 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_detach_virtio_before_boot
+      until: (_cloudosd_detach_virtio_before_boot.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: Set boot order to installed Windows disk
       ansible.builtin.uri:
@@ -214,6 +277,10 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_set_disk_boot
+      until: (_cloudosd_set_disk_boot.status | default(0) | int) == 200
+      retries: "{{ cloudosd_config_lock_retries | default(12) }}"
+      delay: "{{ cloudosd_config_lock_delay_seconds | default(5) }}"
 
     - name: Start installed Windows from disk
       ansible.builtin.uri:
@@ -223,6 +290,44 @@
           Authorization: "{{ proxmox_api_auth_header }}"
         validate_certs: "{{ proxmox_validate_certs }}"
         status_code: [200]
+      register: _cloudosd_start_disk_boot
+
+    - name: Fail if installed Windows start returned no Proxmox task
+      ansible.builtin.fail:
+        msg: "CloudOSD VM {{ vm_vmid }} disk boot start request returned no Proxmox task."
+      when: ((_cloudosd_start_disk_boot.json.data | default('', true) | string) | length) == 0
+
+    - name: Wait for installed Windows start task
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/tasks/{{ _cloudosd_start_disk_boot.json.data }}/status"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+      register: _cloudosd_start_disk_boot_task
+      until: _cloudosd_start_disk_boot_task.json.data.status == "stopped"
+      retries: "{{ cloudosd_start_task_retries | default(600) }}"
+      delay: "{{ cloudosd_start_task_delay_seconds | default(1) }}"
+
+    - name: Wait for CloudOSD VM to be running after disk boot start
+      ansible.builtin.uri:
+        url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}/status/current"
+        method: GET
+        headers:
+          Authorization: "{{ proxmox_api_auth_header }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        status_code: [200]
+      register: _cloudosd_disk_boot_running
+      until: _cloudosd_disk_boot_running.json.data.status == 'running'
+      retries: 30
+      delay: 2
+
+    - name: Verify installed Windows start task succeeded
+      ansible.builtin.fail:
+        msg: "CloudOSD VM {{ vm_vmid }} disk boot start task failed: {{ _cloudosd_start_disk_boot_task.json.data.exitstatus | default('unknown') }}"
+      when:
+        - _cloudosd_start_disk_boot_task.json.data.exitstatus | default('') != "OK"
+        - _cloudosd_disk_boot_running.json.data.status | default('') != 'running'
 
     - name: Wait for installed AutopilotAgent heartbeat completion
       ansible.builtin.uri:

@@ -12,7 +12,7 @@ export interface MigratedRoute {
   readonly phase: "foundation" | "read-only" | "operational";
 }
 
-export type OperatorGroupLabel = "Observe" | "Deploy" | "Build" | "Fleet" | "Settings";
+export type OperatorGroupLabel = "Observe" | "Deploy" | "Build" | "Infrastructure" | "Fleet" | "Settings";
 
 export interface OperatorRoute {
   readonly path: string;
@@ -21,6 +21,8 @@ export interface OperatorRoute {
   readonly phase: MigratedRoute["phase"] | "legacy";
   readonly active: boolean;
   readonly legacy?: boolean;
+  readonly navParentPath?: string;
+  readonly showInNav?: boolean;
 }
 
 export interface OperatorNavGroup {
@@ -656,9 +658,12 @@ export interface HashesResponse {
 }
 
 export interface FileShelfRow {
-  readonly filename: string;
-  readonly size?: number;
-  readonly mtime?: string;
+  readonly name: string;
+  readonly url: string;
+  readonly size?: string;
+  readonly size_bytes?: number;
+  readonly modified?: string;
+  readonly modified_epoch?: number;
   readonly [key: string]: unknown;
 }
 

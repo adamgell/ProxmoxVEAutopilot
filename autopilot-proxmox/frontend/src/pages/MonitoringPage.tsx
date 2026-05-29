@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-import { fetchJson } from "../apiClient";
+import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, MetricTerm, Panel } from "../components/ui";
 import type {
@@ -17,6 +17,7 @@ import type {
   SignalsHubResponse
 } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
+import { reactHrefForUiPath } from "../routes";
 import {
   buildSignalMetrics,
   fallbackText,
@@ -56,6 +57,10 @@ function runLabel(run: DeploymentRunDigest): string {
   return run.deployment_key || run.deployment_type || "deployment";
 }
 
+function secondsLabel(value: number | null | undefined): string {
+  return typeof value === "number" ? `${String(value)}s` : "-";
+}
+
 function serviceLabel(service: ServiceHealth): string {
   return service.service_id || service.service || service.service_type || "service";
 }
@@ -68,6 +73,8 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
   const [logLines, setLogLines] = useState<readonly string[]>([]);
   const [logError, setLogError] = useState("");
   const [logsLoading, setLogsLoading] = useState(false);
+  const [sweepState, setSweepState] = useState<"idle" | "queueing" | "queued" | "failed">("idle");
+  const [sweepMessage, setSweepMessage] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +107,20 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
     }
   }, []);
 
+  const queueSweepNow = useCallback(async () => {
+    setSweepState("queueing");
+    setSweepMessage("");
+    try {
+      await postJson<{ readonly ok?: boolean }>("/api/monitoring/sweep-now");
+      setSweepState("queued");
+      setSweepMessage("Sweep queued.");
+      await load();
+    } catch (err) {
+      setSweepState("failed");
+      setSweepMessage(err instanceof Error ? err.message : "Sweep request failed.");
+    }
+  }, [load]);
+
   const metrics = hub.metrics.length ? hub.metrics : buildSignalMetrics(hub);
   const rankedPaths = rankedSignalPaths(hub.operator_paths);
   const selectedSignal = hub.signals[0];
@@ -113,12 +134,23 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
       path="/react/monitoring"
       action={
         <span className="action-cluster">
+          <button
+            className="action-link"
+            type="button"
+            disabled={sweepState === "queueing"}
+            onClick={() => { void queueSweepNow(); }}
+          >
+            {sweepState === "queueing" ? "Queueing sweep" : "Sweep now"}
+          </button>
           <a className="action-link" href="/react/jobs">Jobs</a>
           <a className="action-link" href="/react/monitoring/settings">Monitoring settings</a>
         </span>
       }
     >
       {error ? <p className="notice" role="status">{error}</p> : null}
+      {sweepMessage ? (
+        <p className={sweepState === "failed" ? "notice notice--bad" : "notice"} role="status">{sweepMessage}</p>
+      ) : null}
       {isLoading ? (
         <div className="load-strip" role="status" aria-live="polite">
           <span>Loading signals</span>
@@ -168,7 +200,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                       <p>{path.summary}</p>
                       <small>{path.source || "Signals Hub"}</small>
                     </div>
-                    <a href={path.href}>{path.action_label}</a>
+                    <a href={reactHrefForUiPath(path.href)}>{path.action_label}</a>
                   </li>
                 ))}
               </ul>
@@ -236,6 +268,24 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                   </ul>
                 ) : (
                   <p className="empty">No active deployment phases.</p>
+                )}
+              </div>
+              <div>
+                <h3>Recent</h3>
+                {hub.deployment_health.recent_completions.length ? (
+                  <ul className="compact-list">
+                    {hub.deployment_health.recent_completions.map((run: DeploymentRunDigest) => (
+                      <li key={`${runLabel(run)}-${String(run.duration_seconds ?? "")}`}>
+                        <span className={signalToneClass(run.health)}>{statusLabel(run.health || run.state)}</span>
+                        <div>
+                          <strong>{runLabel(run)}</strong>
+                          <p>{secondsLabel(run.duration_seconds)} total / {fallbackText(run.slowest_phase)} / {secondsLabel(run.slowest_phase_seconds)}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="empty">No completed deployment timing samples.</p>
                 )}
               </div>
               <div>
@@ -359,7 +409,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                       <p>VMID {row.vmid} / {fallbackText(row.node)} / {fallbackText(row.pve_status)} / {fallbackText(row.windows)}</p>
                       <small>AD {fallbackText(row.ad)} / Entra {fallbackText(row.entra)} / Intune {fallbackText(row.intune)}</small>
                     </div>
-                    <a href={row.href}>Inspect</a>
+                    <a href={reactHrefForUiPath(row.href)}>Inspect</a>
                   </li>
                 ))}
               </ul>

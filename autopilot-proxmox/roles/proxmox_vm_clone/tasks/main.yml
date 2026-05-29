@@ -120,6 +120,26 @@
   ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_task.yml"
   vars:
     _task_upid: "{{ _clone_result.json.data }}"
+    task_poll_retries: "{{ clone_task_poll_retries | default(900) }}"
+    task_poll_delay_seconds: "{{ clone_task_poll_delay_seconds | default(1) }}"
+    task_fail_on_error: false
+
+- name: Retry clone after Proxmox storage lock contention
+  ansible.builtin.include_tasks: clone_storage_lock_retry.yml
+  loop: "{{ range(0, clone_storage_lock_retries | default(12) | int) | list }}"
+  loop_control:
+    loop_var: clone_storage_lock_attempt
+    label: "{{ clone_storage_lock_attempt | int + 1 }}"
+  when:
+    - _task_status.json.data.exitstatus | default('') != "OK"
+    - >-
+      'lock file' in (_task_status.json.data.exitstatus | default('') | lower)
+      or 'got timeout' in (_task_status.json.data.exitstatus | default('') | lower)
+
+- name: Verify clone task completed successfully
+  ansible.builtin.fail:
+    msg: "Proxmox task failed: {{ _task_status.json.data.exitstatus | default('unknown') }}"
+  when: _task_status.json.data.exitstatus | default('') != "OK"
 
 # Decode base64 on the controller, pipe over SSH, write on the
 # Proxmox host. This intentionally runs only after the clone task

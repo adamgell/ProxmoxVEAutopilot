@@ -1181,18 +1181,25 @@ function Test-CloudOSDOfflineWindows {
         $errors += 'CloudOSD run package is not staged in offline OS'
     } else {
         $runJsonText = Get-Content -LiteralPath $runJson -Raw
-        if ($runJsonText -match '"password"\s*:' -or $runJsonText -match '"username"\s*:') {
-            $errors += 'CloudOSD offline run package contains domain join credentials'
-        }
-        if (-not (Test-CloudOSDDomainJoinEnabled -DomainJoin $DomainJoin)) {
-            try {
-                $runConfig = $runJsonText | ConvertFrom-Json
-                if ($runConfig.PSObject.Properties.Match('domain_join').Count -gt 0) {
+        try {
+            $runConfig = $runJsonText | ConvertFrom-Json
+            if ($runConfig.PSObject.Properties.Match('domain_join').Count -gt 0) {
+                foreach ($secretKey in @('username', 'password', 'credential_id')) {
+                    $secretValue = Get-CloudOSDObjectProperty `
+                        -Value $runConfig.domain_join `
+                        -Name $secretKey
+                    if ($null -ne $secretValue -and
+                        -not [string]::IsNullOrWhiteSpace([string] $secretValue)) {
+                        $errors += 'CloudOSD offline run package contains domain join credentials'
+                        break
+                    }
+                }
+                if (-not (Test-CloudOSDDomainJoinEnabled -DomainJoin $DomainJoin)) {
                     $DomainJoin = $runConfig.domain_join
                 }
-            } catch {
-                $errors += "CloudOSD run package JSON is not readable: $($_.Exception.Message)"
             }
+        } catch {
+            $errors += "CloudOSD run package JSON is not readable: $($_.Exception.Message)"
         }
     }
     if (Test-CloudOSDDomainJoinEnabled -DomainJoin $DomainJoin) {

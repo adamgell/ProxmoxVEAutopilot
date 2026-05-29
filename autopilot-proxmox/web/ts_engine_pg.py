@@ -2196,6 +2196,22 @@ def complete_step(
         raise ValueError(f"step not found for run: {step_id}")
 
     now = _now()
+    if status == "failed" and step["state"] == "awaiting_reboot":
+        _append_event(
+            conn,
+            run_id=run_id,
+            step_id=step_id,
+            event_type="step_late_failure_ignored",
+            severity="warning",
+            agent_id=agent_id,
+            phase=step["phase"],
+            attempt=step["attempt"],
+            message=message,
+            data=data or {},
+        )
+        _commit(conn)
+        return _normalize_step(step)
+
     if status == "success" and step["reboot_behavior"] == "required":
         step_state = "awaiting_reboot"
         run_state = "awaiting_reboot"

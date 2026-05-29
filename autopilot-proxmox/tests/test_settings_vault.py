@@ -6,6 +6,7 @@ secret leaves the existing value intact; saving a non-empty value
 rewrites the line in vault.yml via _save_yaml_file, which preserves
 comments and unrelated keys.
 """
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -112,15 +113,19 @@ def test_settings_page_never_echoes_secret_values(app_client, tmp_path, monkeypa
     from unittest.mock import patch
     with patch("web.app._load_vars", return_value={}), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/legacy/settings")
-    body = r.text
+        r = app_client.get("/api/settings")
+    body = r.json()
     assert r.status_code == 200
-    assert "SUPER-SECRET-XYZ" not in body, \
-        "stored secret leaked into settings page HTML"
-    # The presence badge is rendered instead.
-    assert "vault_proxmox_api_token_secret" in body
-    # Unset secrets show 'not set' badge.
-    assert "not set" in body
+    assert "SUPER-SECRET-XYZ" not in json.dumps(body), \
+        "stored secret leaked into settings API"
+    fields = {
+        field["key"]: field
+        for section in body["sections"]
+        for field in section["fields"]
+    }
+    assert fields["vault_proxmox_api_token_secret"]["value"] == ""
+    assert fields["vault_proxmox_api_token_secret"]["is_set"] is True
+    assert fields["vault_proxmox_root_password"]["is_set"] is False
 
 
 def test_settings_save_preserves_secret_when_form_blank(app_client, tmp_path, monkeypatch):
@@ -182,6 +187,14 @@ def test_proxmox_bootstrap_script_repairs_role_storage_and_chassis_seed():
     assert 'pvesm set "$SNIPPETS_STORAGE" --content "$next"' in script
     assert "autopilot-chassis-type-{chassis_type}.bin" in script
     assert "AUTOPILOT_BOOTSTRAP_OK" in script
+
+
+def test_autopilot_role_includes_sdn_admin_privileges():
+    from web import proxmox_permissions
+
+    assert "SDN.Use" in proxmox_permissions.AUTOPILOT_PRIVILEGES
+    assert "SDN.Audit" in proxmox_permissions.AUTOPILOT_PRIVILEGES
+    assert "SDN.Allocate" in proxmox_permissions.AUTOPILOT_PRIVILEGES
 
 
 def test_proxmox_bootstrap_endpoint_runs_ssh_and_saves_root_credentials(
@@ -279,13 +292,13 @@ def test_settings_page_renders_proxmox_permission_bootstrap(
              "proxmox_iso_storage": "isos",
          }), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/legacy/settings")
+        r = app_client.get("/api/settings")
 
     assert r.status_code == 200
-    body = r.text
-    assert "Proxmox Permission Bootstrap" in body
-    assert "Apply Proxmox permissions over SSH" in body
-    assert "ROOT-SECRET" not in body
+    body = r.json()
+    assert body["proxmox_bootstrap"]["enabled"] is True
+    assert body["proxmox_bootstrap"]["root_password_set"] is True
+    assert "ROOT-SECRET" not in json.dumps(body)
 
 
 def test_settings_page_treats_pve_alias_as_proxmox(app_client, monkeypatch):
@@ -299,11 +312,12 @@ def test_settings_page_treats_pve_alias_as_proxmox(app_client, monkeypatch):
              "proxmox_host": "192.168.2.200",
          }), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/legacy/settings")
+        r = app_client.get("/api/settings")
 
     assert r.status_code == 200
-    assert "Proxmox Connection" in r.text
-    assert "Proxmox Permission Bootstrap" in r.text
+    body = r.json()
+    assert body["hypervisor_type"] == "proxmox"
+    assert body["proxmox_bootstrap"]["enabled"] is True
 
 
 def test_settings_page_renders_osdeploy_build_host_fields(app_client):
@@ -317,17 +331,17 @@ def test_settings_page_renders_osdeploy_build_host_fields(app_client):
          patch("web.app._vault_presence", return_value={}), \
          patch("web.app._load_proxmox_config", return_value={"hypervisor_type": "proxmox"}), \
          patch("web.app._fetch_settings_options", return_value={}):
-        r = app_client.get("/legacy/settings")
+        r = app_client.get("/api/settings")
 
     assert r.status_code == 200
-    body = r.text
-    assert "OSDeploy Build Host" in body
-    assert 'name="osdeploy_build_remote"' in body
-    assert 'name="osdeploy_build_remote_root"' in body
-    assert 'name="osdeploy_build_ssh_key_path"' in body
-    assert "builder@example" in body
-    assert "F:\\BuildRoot" in body
-    assert "/app/secrets/osdeploy_key" in body
+    fields = {
+        field["key"]: field
+        for section in r.json()["sections"]
+        for field in section["fields"]
+    }
+    assert fields["osdeploy_build_remote"]["value"] == "builder@example"
+    assert fields["osdeploy_build_remote_root"]["value"] == "F:\\BuildRoot"
+    assert fields["osdeploy_build_ssh_key_path"]["value"] == "/app/secrets/osdeploy_key"
 
 
 def test_settings_save_persists_osdeploy_build_host_fields(app_client):

@@ -209,6 +209,8 @@ SCREENSHOT_STORE_DIR = Path(
 FILE_SHELF_DIR = Path(
     os.environ.get("AUTOPILOT_FILE_SHELF_DIR", str(BASE_DIR / "output" / "files"))
 )
+FILE_SHELF_MAX_BYTES = int(os.environ.get("AUTOPILOT_FILE_SHELF_MAX_BYTES", str(10 * 1024 * 1024 * 1024)))
+FILE_SHELF_UPLOAD_CHUNK_BYTES = 1024 * 1024
 SETUP_STATE_PATH = BASE_DIR / "output" / "setup" / "foundation_state.json"
 AGENT_SEED_MANIFEST_PATH = BASE_DIR / "output" / "setup" / "agent-seed" / "manifest.json"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
@@ -615,6 +617,7 @@ from web.osd_v2_endpoints import (
 )
 from web.agent_v1_endpoints import router as _agent_v1_router
 from web.cloudosd_endpoints import router as _cloudosd_router
+from web.sdn_endpoints import router as _sdn_router
 try:
     from web.osdeploy_endpoints import router as _osdeploy_router
 except ModuleNotFoundError:
@@ -628,6 +631,7 @@ app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
 app.include_router(_cloudosd_router)
+app.include_router(_sdn_router)
 if _osdeploy_router is not None:
     app.include_router(_osdeploy_router)
 
@@ -710,7 +714,7 @@ async def _require_auth(request: Request, call_next):
     /auth/login (for HTML) or returns 401 (for JSON/API)."""
     if _AUTH_BYPASS:
         return await call_next(request)
-    if _auth.is_exempt_path(request.url.path):
+    if _auth.is_exempt_request(request):
         return await call_next(request)
     if request.session.get("user"):
         return await call_next(request)
@@ -1030,6 +1034,38 @@ def _source_bundle_root() -> Path:
     if host_repo.is_dir():
         return host_repo.resolve()
     return BASE_DIR.parent.resolve()
+
+
+def _autopilot_agent_source_version() -> str:
+    """Read the canonical agent version from autopilot-agent/Directory.Build.props.
+
+    Used in the build-host work queue request so the .NET BuildHostWorkService
+    doesn't fall through to its hardcoded "0.1.2" default. Falls back to
+    "0.1.2" only when the props file can't be read; warns in the controller
+    log so an operator can investigate.
+    """
+    import re
+
+    props_path = _source_bundle_root() / "autopilot-agent" / "Directory.Build.props"
+    try:
+        text = props_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        import logging
+
+        logging.getLogger("web.app").warning(
+            "could not read AutopilotAgentVersion from %s (%s); falling back to 0.1.2",
+            props_path, exc,
+        )
+        return "0.1.2"
+    match = re.search(r"<AutopilotAgentVersion[^>]*>([^<]+)</AutopilotAgentVersion>", text)
+    if not match:
+        import logging
+
+        logging.getLogger("web.app").warning(
+            "AutopilotAgentVersion not found in %s; falling back to 0.1.2", props_path,
+        )
+        return "0.1.2"
+    return match.group(1).strip()
 
 
 def _source_bundle_controller_url() -> str:
@@ -1817,6 +1853,11 @@ async def setup_queue_build_host_workloads(body: _BuildHostWorkloadsBody | None 
         "source_bundle_url": f"{controller_url}/api/setup/v1/source-bundle.zip",
         "work_root": r"C:\BuildRoot\ProxmoxVEAutopilot",
         "runtime_identifiers": ["win-x64", "win-arm64"],
+        # Read the canonical agent version from Directory.Build.props on the
+        # controller so the build-host doesn't fall through to BuildHostWorkService's
+        # hardcoded "0.1.2" default. Without this the MSI shipped at 0.1.2 even
+        # after the source bumped to 0.1.4.
+        "agent_version": _autopilot_agent_source_version(),
         "install_adk": body.install_adk,
         "adk_url": "https://go.microsoft.com/fwlink/?linkid=2289980",
         "winpe_addon_url": "https://go.microsoft.com/fwlink/?linkid=2289981",
@@ -2123,6 +2164,7 @@ def _init_app_database() -> None:
         machine_lifecycle_pg,
         osdeploy_cache,
         osdeploy_pg,
+        sdn_labs_pg,
         ts_engine_pg,
     )
 
@@ -2138,6 +2180,7 @@ def _init_app_database() -> None:
         osdeploy_cache.init(conn)
         deployment_health_pg.init(conn)
         lab_bubbles_pg.init(conn)
+        sdn_labs_pg.init(conn)
 
 
 class _BubbleCreate(BaseModel):
@@ -4499,17 +4542,55 @@ def _safe_file_shelf_name(filename: str | None) -> str:
     raw_name = (filename or "").replace("\\", "/").split("/")[-1].strip()
     safe_name = re.sub(r"[^\w\-.]", "_", raw_name)
     safe_name = safe_name.lstrip(".")
-    if not safe_name or Path(safe_name).suffix.lower() != ".msi":
+    if not safe_name:
         return ""
     return safe_name
+
+
+class _FileShelfUploadTooLarge(ValueError):
+    def __init__(self, filename: str, max_bytes: int):
+        super().__init__(f"File {filename} exceeds {max_bytes} bytes")
+        self.filename = filename
+        self.max_bytes = max_bytes
+
+
+async def _write_file_shelf_upload(upload: UploadFile, dest: Path, display_name: str) -> int:
+    tmp_path = dest.with_name(f".{dest.name}.{uuid4().hex}.upload")
+    total = 0
+    try:
+        with tmp_path.open("wb") as fh:
+            while True:
+                chunk = await upload.read(FILE_SHELF_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > FILE_SHELF_MAX_BYTES:
+                    raise _FileShelfUploadTooLarge(display_name, FILE_SHELF_MAX_BYTES)
+                fh.write(chunk)
+        if total == 0:
+            tmp_path.unlink(missing_ok=True)
+            return 0
+        tmp_path.replace(dest)
+        return total
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _file_shelf_size_error_response(request: Request, exc: _FileShelfUploadTooLarge):
+    if _request_wants_json(request):
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=413)
+    return _redirect_with_error("/react/files", str(exc))
 
 
 def get_file_shelf_items():
     if not FILE_SHELF_DIR.exists():
         return []
     files = []
-    for f in sorted(FILE_SHELF_DIR.glob("*.msi"), key=lambda item: item.name.lower()):
+    for f in sorted(FILE_SHELF_DIR.iterdir(), key=lambda item: item.name.lower()):
         if not f.is_file():
+            continue
+        if f.name.startswith(".") and f.name.endswith(".upload"):
             continue
         stat = f.stat()
         files.append({
@@ -5209,6 +5290,21 @@ async def react_monitoring_settings_shell(request: Request):
     return _render_react_shell(request)
 
 
+@app.get("/react/sequences", include_in_schema=False)
+async def react_legacy_sequences_redirect(request: Request):
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
+
+
+@app.get("/react/sequences/new", include_in_schema=False)
+async def react_legacy_sequence_new_redirect(request: Request):
+    return _primary_ui_redirect("/react/task-engine/sequences/new")
+
+
+@app.get("/react/sequences/{seq_id}/edit", include_in_schema=False)
+async def react_legacy_sequence_edit_redirect(request: Request, seq_id: int):
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
+
+
 @app.get("/react/{react_path:path}", response_class=HTMLResponse, include_in_schema=False)
 async def react_operator_shell(request: Request, react_path: str):
     return _render_react_shell(request)
@@ -5311,7 +5407,7 @@ async def provision_page(request: Request):
 
 
 def _provision_page_payload() -> dict:
-    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
+    from web import cloudosd_cache, cloudosd_endpoints, cloudosd_pg, db_pg, osdeploy_cache, osdeploy_endpoints, osdeploy_pg, ts_engine_pg
 
     cfg = _load_vars()
     # Best-effort: look up template disk size so the UI can show the minimum.
@@ -5377,27 +5473,12 @@ def _provision_page_payload() -> dict:
         cloudosd_batch_progress = cloudosd_endpoints.provision_progress_payload(limit=25)
     except Exception:
         cloudosd_batch_progress = {"schema_version": 1, "runs": []}
-    sequences = sequences_db.list_sequences(SEQUENCES_DB)
-    default_sequence_id = ""
-    sequence_rows = []
-    for sequence in sequences:
-        if sequence.get("is_default"):
-            default_sequence_id = str(sequence["id"])
-        row = dict(sequence)
-        full_sequence = sequences_db.get_sequence(SEQUENCES_DB, int(sequence["id"]))
-        unsupported = cloudosd_sequence.unsupported_enabled_steps(full_sequence)
-        cloudosd_supported = _cloudosd_supported_enabled_steps(full_sequence)
-        row["cloudosd_unsupported_steps"] = unsupported
-        row["cloudosd_compatible"] = bool(cloudosd_supported) and not unsupported
-        row["boot_modes"] = _legacy_sequence_boot_modes(full_sequence)
-        if row["boot_modes"]:
-            sequence_rows.append(row)
     return {
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
-        "sequences": sequence_rows,
-        "default_sequence_id": default_sequence_id,
+        "sequences": [],
+        "default_sequence_id": "",
         "winpe_enabled": _winpe_enabled(),
         "cloudosd_catalog": cloudosd_catalog,
         "cloudosd_options": cloudosd_options,
@@ -5558,6 +5639,7 @@ def _osdeploy_page_payload(request: Request | None = None, archived: str = "0", 
         runs = osdeploy_pg.list_runs(conn, limit=25, include_archived=show_archived)
         active_runs = osdeploy_pg.list_runs(conn, limit=10, active_only=True)
         stale_failed_runs = osdeploy_pg.list_runs(conn, limit=10, stale_failed_hours=12)
+        osdeploy_endpoints._finalize_warming_cache_builds(conn)
         cache_payload = osdeploy_cache.payload(conn)
         credentials = sequences_pg.list_credentials(conn)
     catalog = osdeploy_endpoints.catalog_payload()
@@ -6764,7 +6846,7 @@ def _agent_inventory_rows() -> list[dict]:
             "domain_joined": row.get("domain_joined"),
             "entra_joined": row.get("entra_joined"),
             "current_phase": row.get("current_phase") or "",
-            "current_run_id": row.get("current_run_id") or "",
+            "current_run_id": row.get("current_run_id") or row.get("created_from_run_id") or "",
             "agent_version": agent_version,
             **_agent_update_fields(agent_version, latest_release),
             "hash_capture_supported": _agent_supports_work_queue(agent_version),
@@ -6870,6 +6952,27 @@ def _filter_and_purge_agents_without_current_vm(
         except (TypeError, ValueError):
             continue
 
+    # The `vms` arg only enumerates the configured proxmox_node. In a
+    # multi-node cluster (e.g. pve1 + pve2) an agent installed on a VM
+    # that lives on a non-configured node was getting hard-deleted on
+    # every poll: vmid not in current_vmids -> purge_agent_ids -> 401
+    # next time the agent calls /api/agent/v1/config. Add every cluster
+    # VMID so we only purge when the VM is truly gone from the cluster.
+    try:
+        cluster_rows = _proxmox_api("/cluster/resources?type=vm") or []
+        for row in cluster_rows:
+            vmid_raw = row.get("vmid")
+            if vmid_raw is None or vmid_raw == "":
+                continue
+            try:
+                current_vmids.add(int(vmid_raw))
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        # Cluster lookup failed; fall back to the configured-node vmids
+        # rather than blowing up the whole fleet view.
+        pass
+
     state = _read_json_file(SETUP_STATE_PATH)
     expected_build_host_agent = str(
         state.get("build_host_expected_agent_id") or ""
@@ -6892,6 +6995,9 @@ def _filter_and_purge_agents_without_current_vm(
             (expected_build_host_agent and agent_id == expected_build_host_agent)
             or (expected_build_host_vmid and agent_vmid == expected_build_host_vmid)
         ):
+            kept.append(agent)
+            continue
+        if agent.get("current_run_id"):
             kept.append(agent)
             continue
         if agent_vmid is not None and agent_vmid in current_vmids:
@@ -7940,6 +8046,61 @@ async def delete_agent_record(agent_id: str, request: Request):
     return _action_response(
         request,
         payload={"ok": True, "agent_id": agent_id, "action": "delete"},
+    )
+
+
+@app.post("/api/agents/bulk-delete")
+async def bulk_delete_agent_records(request: Request):
+    """Hard-delete multiple agent records in one call.
+
+    Body: { "agent_ids": ["<id>", "<id>", ...] }
+
+    Reports per-id outcome so the UI can flag missing/failed deletes
+    without aborting the whole batch. The fleet checkbox bar uses this.
+    """
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
+        else:
+            body = {}
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        raw_ids = body.get("agent_ids")
+        if not isinstance(raw_ids, list):
+            raise ValueError("agent_ids must be a list")
+        agent_ids: list[str] = []
+        for value in raw_ids:
+            sanitized = _sanitize_input(_optional_text(value))
+            if sanitized:
+                agent_ids.append(sanitized)
+        agent_ids = list(dict.fromkeys(agent_ids))
+        if not agent_ids:
+            raise ValueError("agent_ids must include at least one non-empty id")
+        from web import db_pg
+
+        results: list[dict[str, object]] = []
+        deleted_count = 0
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            for agent_id in agent_ids:
+                try:
+                    ok = bool(agent_telemetry_pg.hard_delete_agent(conn, agent_id))
+                    results.append({"agent_id": agent_id, "deleted": ok})
+                    if ok:
+                        deleted_count += 1
+                except Exception as inner_exc:
+                    results.append({"agent_id": agent_id, "deleted": False, "error": str(inner_exc)})
+    except Exception as exc:
+        return _action_error_response(request, message=f"Bulk delete failed: {exc}")
+    return _action_response(
+        request,
+        payload={
+            "ok": True,
+            "action": "bulk-delete",
+            "deleted": deleted_count,
+            "requested": len(agent_ids),
+            "results": results,
+        },
     )
 
 
@@ -9326,6 +9487,7 @@ async def start_template(
 ):
     if _load_vars().get("hypervisor_type") == "utm":
         return await _enqueue_utm_template_job(
+            request=request,
             vm_os_kind=vm_os_kind,
             vm_name=vm_name,
             utm_iso_name=utm_iso_name,
@@ -9357,11 +9519,14 @@ async def start_template(
         args["pause_enabled"] = True
 
     job = job_manager.start("build_template", cmd, args=args)
+    if _request_wants_json(request):
+        return {"ok": True, "job_id": job["id"]}
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
 async def _enqueue_utm_template_job(
     *,
+    request: Request,
     vm_os_kind: str,
     vm_name: str,
     utm_iso_name: str,
@@ -9424,6 +9589,8 @@ async def _enqueue_utm_template_job(
         "vm_disk_gb": disk_gb,
     }
     job = job_manager.start("build_utm_template", cmd, args=args)
+    if _request_wants_json(request):
+        return {"ok": True, "job_id": job["id"]}
     return RedirectResponse(f"/jobs/{job['id']}", status_code=303)
 
 
@@ -11279,8 +11446,6 @@ async def download_hash(filename: str):
 
 @app.get("/files/{filename}")
 async def download_file_shelf_item(filename: str):
-    if Path(filename).suffix.lower() != ".msi":
-        return HTMLResponse("<h1>File not found</h1>", status_code=404)
     safe_name = _safe_file_shelf_name(filename)
     if not safe_name or safe_name != filename:
         return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
@@ -11288,7 +11453,7 @@ async def download_file_shelf_item(filename: str):
         file_path = _safe_path(FILE_SHELF_DIR, safe_name)
     except ValueError:
         return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
-    if not file_path.exists() or file_path.suffix.lower() != ".msi":
+    if not file_path.exists() or not file_path.is_file():
         return HTMLResponse("<h1>File not found</h1>", status_code=404)
     return FileResponse(file_path, media_type="application/octet-stream", filename=safe_name)
 
@@ -11328,18 +11493,77 @@ async def upload_file_shelf_items(request: Request, files: list[UploadFile] = Fi
         if not safe_name:
             continue
         dest = FILE_SHELF_DIR / safe_name
-        content = await upload.read()
-        if not content:
+        try:
+            size = await _write_file_shelf_upload(upload, dest, safe_name)
+        except _FileShelfUploadTooLarge as exc:
+            return _file_shelf_size_error_response(request, exc)
+        if size == 0:
             continue
-        dest.write_bytes(content)
         saved += 1
     if saved == 0:
         if _request_wants_json(request):
-            return JSONResponse({"ok": False, "error": "No valid MSI files found"}, status_code=400)
-        return _redirect_with_error("/react/files", "No valid MSI files found")
+            return JSONResponse({"ok": False, "error": "No valid files found"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid files found")
     if _request_wants_json(request):
         return {"ok": True, "uploaded": saved}
     return _redirect_with_query("/react/files", uploaded=saved)
+
+
+@app.post("/api/files/delete")
+async def delete_file_shelf_items(request: Request, files: list[str] = Form(...)):
+    deleted = 0
+    valid = 0
+    for filename in files:
+        safe_name = _safe_file_shelf_name(filename)
+        if not safe_name or safe_name != filename:
+            continue
+        valid += 1
+        try:
+            file_path = _safe_path(FILE_SHELF_DIR, safe_name)
+        except ValueError:
+            continue
+        if file_path.exists() and file_path.is_file():
+            file_path.unlink()
+            deleted += 1
+    if valid == 0:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No valid files selected"}, status_code=400)
+        return _redirect_with_error("/react/files", "No valid files selected")
+    if deleted == 0:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "No matching files found"}, status_code=404)
+        return _redirect_with_error("/react/files", "No matching files found")
+    if _request_wants_json(request):
+        return {"ok": True, "deleted": deleted}
+    return _redirect_with_query("/react/files", deleted=deleted)
+
+
+@app.post("/api/files/{filename}/replace")
+async def replace_file_shelf_item(request: Request, filename: str, file: UploadFile = File(...)):
+    safe_name = _safe_file_shelf_name(filename)
+    if not safe_name or safe_name != filename:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Invalid filename"}, status_code=400)
+        return _redirect_with_error("/react/files", "Invalid filename")
+    FILE_SHELF_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        dest = _safe_path(FILE_SHELF_DIR, safe_name)
+    except ValueError:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Invalid filename"}, status_code=400)
+        return _redirect_with_error("/react/files", "Invalid filename")
+    replacement_name = _safe_file_shelf_name(file.filename) or safe_name
+    try:
+        size = await _write_file_shelf_upload(file, dest, replacement_name)
+    except _FileShelfUploadTooLarge as exc:
+        return _file_shelf_size_error_response(request, exc)
+    if size == 0:
+        if _request_wants_json(request):
+            return JSONResponse({"ok": False, "error": "Replacement file is empty"}, status_code=400)
+        return _redirect_with_error("/react/files", "Replacement file is empty")
+    if _request_wants_json(request):
+        return {"ok": True, "replaced": safe_name, "size_bytes": size}
+    return _redirect_with_query("/react/files", replaced=safe_name)
 
 
 # --- Answer ISO rebuild ----------------------------------------------------
@@ -13076,10 +13300,11 @@ class _V2BuilderSequenceIn(BaseModel):
 
 @app.get("/api/sequences/page")
 def api_sequences_page(error: str = ""):
-    seqs = sequences_db.list_sequences(SEQUENCES_DB)
     return {
-        "sequences": _sequence_rows_for_ui(seqs),
+        "sequences": [],
         "error": error,
+        "retired": True,
+        "redirect": "/react/task-engine/sequences/list",
     }
 
 
@@ -13089,6 +13314,8 @@ def api_sequence_new_page():
         "sequence": None,
         "seq": None,
         "oem_profiles": load_oem_profiles(),
+        "retired": True,
+        "redirect": "/react/task-engine/sequences/new",
     }
 
 
@@ -14277,7 +14504,6 @@ def _task_engine_page_payload() -> dict:
             "cloudosd_runs": [],
             "content_items": [],
             "manifest_items": [],
-            "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
             "flow_templates": _v2_flow_templates(),
             "error": str(exc),
         }
@@ -14291,7 +14517,6 @@ def _task_engine_page_payload() -> dict:
         "cloudosd_runs": cloudosd_runs,
         "content_items": content_items,
         "manifest_items": manifest_items,
-        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
         "flow_templates": _v2_flow_templates(),
     }
 
@@ -14340,7 +14565,6 @@ def api_task_engine_sequence_new_page(legacy_id: int | None = None, template_id:
 
 
 def _task_engine_sequence_new_payload(legacy_id: int | None = None, template_id: str | None = None) -> dict:
-    legacy = sequences_db.get_sequence(SEQUENCES_DB, legacy_id) if legacy_id else None
     flow_template = _v2_flow_template(template_id)
     if template_id and not flow_template:
         raise HTTPException(status_code=404, detail="v2 flow template not found")
@@ -14355,21 +14579,10 @@ def _task_engine_sequence_new_payload(legacy_id: int | None = None, template_id:
             "enabled": True,
         }
         nodes = flow_template["nodes"]
-    elif legacy:
-        sequence = {
-            "id": None,
-            "name": f"{legacy['name']} v2",
-            "description": legacy.get("description") or "",
-            "target_os": legacy.get("target_os") or "windows",
-            "enabled": True,
-        }
-        nodes = _legacy_sequence_to_v2_nodes(legacy)
     return {
         "sequence": sequence,
         "nodes": nodes,
         "step_templates": _V2_STEP_TEMPLATES,
-        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
-        "legacy_source_id": legacy_id,
         "flow_templates": _v2_flow_templates(),
         "template_source": flow_template,
     }
@@ -14421,8 +14634,6 @@ def api_task_engine_sequence_edit_page(sequence_id: str):
         "sequence": sequence,
         "nodes": nodes,
         "step_templates": _V2_STEP_TEMPLATES,
-        "legacy_sequences": sequences_db.list_sequences(SEQUENCES_DB),
-        "legacy_source_id": None,
         "flow_templates": _v2_flow_templates(),
         "template_source": None,
     }
@@ -14726,7 +14937,7 @@ def _now_iso() -> str:
 
 @app.get("/sequences", response_class=HTMLResponse)
 def page_sequences(request: Request, error: str = ""):
-    return _primary_ui_redirect("/react/sequences")
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
 
 
 @app.post("/sequences/{seq_id}/delete")
@@ -14845,23 +15056,22 @@ async def check_ubuntu_enrollment(vmid: int):
 
 @app.get("/sequences/new", response_class=HTMLResponse)
 def page_sequence_new(request: Request):
-    return _primary_ui_redirect("/react/sequences/new")
+    return _primary_ui_redirect("/react/task-engine/sequences/new")
 
 
 @app.get("/sequences/{seq_id}/edit", response_class=HTMLResponse)
 def page_sequence_edit(request: Request, seq_id: int):
-    return _primary_ui_redirect(f"/react/sequences/{seq_id}/edit")
+    return _primary_ui_redirect("/react/task-engine/sequences/list")
 
 
 @app.get("/api/sequences/{seq_id}/edit/page")
 def api_sequence_edit_page(seq_id: int):
-    seq = sequences_db.get_sequence(SEQUENCES_DB, seq_id)
-    if seq is None:
-        raise HTTPException(404, "sequence not found")
     return {
-        "sequence": seq,
-        "seq": seq,
+        "sequence": None,
+        "seq": None,
         "oem_profiles": load_oem_profiles(),
+        "retired": True,
+        "redirect": "/react/task-engine/sequences/list",
     }
 
 
@@ -15861,7 +16071,7 @@ def _signals_hub_payload() -> dict:
                 f"{lane_counts['ad_ok']} AD, {lane_counts['entra_ok']} Entra, {lane_counts['intune_ok']} Intune ready"
             ),
             "count": lane_counts["attention"],
-            "source": "/monitoring",
+            "source": "monitoring sweep",
             "href": "/react/monitoring#lifecycle",
         },
         {
@@ -15921,8 +16131,8 @@ def _signals_hub_payload() -> dict:
             "status": "attention",
             "tone": "bad",
             "summary": f"{deployment_attention} deployment timing signals are failed, stuck, or regressed.",
-            "action_label": "Open legacy monitoring",
-            "href": "/monitoring",
+            "action_label": "Open monitoring",
+            "href": "/react/monitoring#deployment-speed",
             "source": "/api/monitoring/deployments/runs",
         })
     if fleet_attention:
@@ -15935,7 +16145,7 @@ def _signals_hub_payload() -> dict:
             "summary": f"{len(fleet_attention)} devices need AD, Entra, Intune, or guest identity review.",
             "action_label": "Open devices",
             "href": "/devices",
-            "source": "/monitoring",
+            "source": "monitoring sweep",
         })
     if build_host_status in {"stale", "missing", "mismatch"}:
         operator_paths.append({

@@ -1,6 +1,7 @@
 import { Camera, Download, ExternalLink, RefreshCw } from "lucide-react";
 
 import type { VmDetailEvidenceResponse, VmKnownCredential, VmLinkageCheck, VmTimelineEvent } from "../contracts";
+import { reactHrefForUiPath } from "../routes";
 import { fallbackText, formatRelativeAge, formatShortDateTime, statusClass } from "../viewModels";
 import { Panel } from "./ui";
 
@@ -45,7 +46,7 @@ function CredentialRow({ credential }: { readonly credential: VmKnownCredential 
       </div>
       <div>
         <span>{formatShortDateTime(credential.updated_at)}</span>
-        {credential.run_url ? <a href={credential.run_url}>Run</a> : <span>-</span>}
+        {credential.run_url ? <a href={reactHrefForUiPath(credential.run_url)}>Run</a> : <span>-</span>}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { JobTableRow } from "../contracts";
+import { reactHrefForUiPath } from "../routes";
 import { fallbackText, jobTarget, statusClass, statusLabel } from "../viewModels";
 
 export function Metric({
@@ -73,7 +74,7 @@ export function JobsTable({ jobs, compact = false }: JobsTableProps) {
           {jobs.map((job) => (
             <tr key={job.id}>
               <td>
-                <a href={`/jobs/${encodeURIComponent(job.id)}`}>{job.id}</a>
+                <a href={reactHrefForUiPath(`/jobs/${encodeURIComponent(job.id)}`)}>{job.id}</a>
               </td>
               <td>
                 <span className={statusClass(job.paused ? "paused" : job.status)}>

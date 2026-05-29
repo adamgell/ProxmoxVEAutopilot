@@ -14,6 +14,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from psycopg.errors import UniqueViolation
+
 from web import jobs_pg as jobs_db
 
 
@@ -27,7 +29,7 @@ class JobManager:
 
     def _generate_id(self) -> str:
         date = datetime.now(timezone.utc).strftime("%Y%m%d")
-        rand = os.urandom(2).hex()
+        rand = os.urandom(4).hex()
         return f"{date}-{rand}"
 
     def start(self, playbook_name, command, args=None):
@@ -36,19 +38,30 @@ class JobManager:
         Returns a dict shaped like the legacy return so call sites that
         read `entry["id"]` keep working.
         """
-        job_id = self._generate_id()
-        # Pre-touch the log file so /jobs/<id> doesn't 500 trying to tail
-        # a nonexistent file before the builder has written anything.
-        log_path = os.path.join(self.jobs_dir, f"{job_id}.log")
-        open(log_path, "a").close()
-
-        row = jobs_db.enqueue(
-            job_id=job_id,
-            job_type=playbook_name,
-            playbook=command[1] if len(command) > 1 else playbook_name,
-            cmd=list(command),
-            args=args or {},
-        )
+        row = None
+        job_id = ""
+        for _ in range(8):
+            job_id = self._generate_id()
+            # Pre-touch the log file so /jobs/<id> doesn't 500 trying to tail
+            # a nonexistent file before the builder has written anything.
+            log_path = os.path.join(self.jobs_dir, f"{job_id}.log")
+            open(log_path, "a").close()
+            try:
+                row = jobs_db.enqueue(
+                    job_id=job_id,
+                    job_type=playbook_name,
+                    playbook=command[1] if len(command) > 1 else playbook_name,
+                    cmd=list(command),
+                    args=args or {},
+                )
+                break
+            except UniqueViolation:
+                logging.getLogger("web.jobs").warning(
+                    "generated duplicate job id %s; retrying",
+                    job_id,
+                )
+        if row is None:
+            raise RuntimeError("failed to allocate a unique job id")
 
         return {
             "id": job_id,

@@ -251,6 +251,16 @@ export type BodyCloudDeleteApiCloudDeletePost = {
 };
 
 /**
+ * Body_delete_file_shelf_items_api_files_delete_post
+ */
+export type BodyDeleteFileShelfItemsApiFilesDeletePost = {
+    /**
+     * Files
+     */
+    files: Array<string>;
+};
+
+/**
  * Body_delete_hashes_api_hashes_delete_post
  */
 export type BodyDeleteHashesApiHashesDeletePost = {
@@ -258,6 +268,16 @@ export type BodyDeleteHashesApiHashesDeletePost = {
      * Files
      */
     files: Array<string>;
+};
+
+/**
+ * Body_replace_file_shelf_item_api_files__filename__replace_post
+ */
+export type BodyReplaceFileShelfItemApiFilesFilenameReplacePost = {
+    /**
+     * File
+     */
+    file: Blob | File;
 };
 
 /**
@@ -1508,6 +1528,76 @@ export type RuntimeServicesResponse = {
      * Error
      */
     error?: string;
+};
+
+/**
+ * SdnApplyBody
+ */
+export type SdnApplyBody = {
+    /**
+     * Lock Token
+     */
+    lock_token?: string;
+};
+
+/**
+ * SdnLabBody
+ */
+export type SdnLabBody = {
+    /**
+     * Cidr
+     */
+    cidr?: string;
+    /**
+     * Domain Name
+     */
+    domain_name?: string;
+    /**
+     * Egress Policy
+     */
+    egress_policy?: string;
+    /**
+     * Firewall Profile
+     */
+    firewall_profile?: string;
+    /**
+     * Gateway Ip
+     */
+    gateway_ip?: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Snat Enabled
+     */
+    snat_enabled?: boolean;
+    /**
+     * Subnet
+     */
+    subnet?: string;
+    /**
+     * Vnet
+     */
+    vnet: string;
+    /**
+     * Zone
+     */
+    zone: string;
+};
+
+/**
+ * SdnLockBody
+ */
+export type SdnLockBody = {
+    /**
+     * Force
+     */
+    force?: boolean;
+    /**
+     * Lock Token
+     */
+    lock_token?: string;
 };
 
 /**
@@ -6086,6 +6176,29 @@ export type ApiFilesListApiFilesGetResponses = {
     200: unknown;
 };
 
+export type DeleteFileShelfItemsApiFilesDeletePostData = {
+    body: BodyDeleteFileShelfItemsApiFilesDeletePost;
+    path?: never;
+    query?: never;
+    url: '/api/files/delete';
+};
+
+export type DeleteFileShelfItemsApiFilesDeletePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteFileShelfItemsApiFilesDeletePostError = DeleteFileShelfItemsApiFilesDeletePostErrors[keyof DeleteFileShelfItemsApiFilesDeletePostErrors];
+
+export type DeleteFileShelfItemsApiFilesDeletePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type UploadFileShelfItemsApiFilesUploadPostData = {
     body: BodyUploadFileShelfItemsApiFilesUploadPost;
     path?: never;
@@ -6103,6 +6216,34 @@ export type UploadFileShelfItemsApiFilesUploadPostErrors = {
 export type UploadFileShelfItemsApiFilesUploadPostError = UploadFileShelfItemsApiFilesUploadPostErrors[keyof UploadFileShelfItemsApiFilesUploadPostErrors];
 
 export type UploadFileShelfItemsApiFilesUploadPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ReplaceFileShelfItemApiFilesFilenameReplacePostData = {
+    body: BodyReplaceFileShelfItemApiFilesFilenameReplacePost;
+    path: {
+        /**
+         * Filename
+         */
+        filename: string;
+    };
+    query?: never;
+    url: '/api/files/{filename}/replace';
+};
+
+export type ReplaceFileShelfItemApiFilesFilenameReplacePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReplaceFileShelfItemApiFilesFilenameReplacePostError = ReplaceFileShelfItemApiFilesFilenameReplacePostErrors[keyof ReplaceFileShelfItemApiFilesFilenameReplacePostErrors];
+
+export type ReplaceFileShelfItemApiFilesFilenameReplacePostResponses = {
     /**
      * Successful Response
      */
@@ -8703,6 +8844,1848 @@ export type ApiRunDetailPageApiRunsRunIdPageGetErrors = {
 export type ApiRunDetailPageApiRunsRunIdPageGetError = ApiRunDetailPageApiRunsRunIdPageGetErrors[keyof ApiRunDetailPageApiRunsRunIdPageGetErrors];
 
 export type ApiRunDetailPageApiRunsRunIdPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ApplySdnApiSdnApplyPostData = {
+    body: SdnApplyBody;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/apply';
+};
+
+export type ApplySdnApiSdnApplyPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ApplySdnApiSdnApplyPostError = ApplySdnApiSdnApplyPostErrors[keyof ApplySdnApiSdnApplyPostErrors];
+
+export type ApplySdnApiSdnApplyPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateControllerApiSdnControllersPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/controllers';
+};
+
+export type CreateControllerApiSdnControllersPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateControllerApiSdnControllersPostError = CreateControllerApiSdnControllersPostErrors[keyof CreateControllerApiSdnControllersPostErrors];
+
+export type CreateControllerApiSdnControllersPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteControllerApiSdnControllersControllerDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Controller
+         */
+        controller: string;
+    };
+    query?: never;
+    url: '/api/sdn/controllers/{controller}';
+};
+
+export type DeleteControllerApiSdnControllersControllerDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteControllerApiSdnControllersControllerDeleteError = DeleteControllerApiSdnControllersControllerDeleteErrors[keyof DeleteControllerApiSdnControllersControllerDeleteErrors];
+
+export type DeleteControllerApiSdnControllersControllerDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateControllerApiSdnControllersControllerPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Controller
+         */
+        controller: string;
+    };
+    query?: never;
+    url: '/api/sdn/controllers/{controller}';
+};
+
+export type UpdateControllerApiSdnControllersControllerPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateControllerApiSdnControllersControllerPatchError = UpdateControllerApiSdnControllersControllerPatchErrors[keyof UpdateControllerApiSdnControllersControllerPatchErrors];
+
+export type UpdateControllerApiSdnControllersControllerPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateDnsApiSdnDnsPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/dns';
+};
+
+export type CreateDnsApiSdnDnsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateDnsApiSdnDnsPostError = CreateDnsApiSdnDnsPostErrors[keyof CreateDnsApiSdnDnsPostErrors];
+
+export type CreateDnsApiSdnDnsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteDnsApiSdnDnsDnsDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Dns
+         */
+        dns: string;
+    };
+    query?: never;
+    url: '/api/sdn/dns/{dns}';
+};
+
+export type DeleteDnsApiSdnDnsDnsDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteDnsApiSdnDnsDnsDeleteError = DeleteDnsApiSdnDnsDnsDeleteErrors[keyof DeleteDnsApiSdnDnsDnsDeleteErrors];
+
+export type DeleteDnsApiSdnDnsDnsDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type FirewallInventoryApiSdnFirewallGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Node
+         */
+        node?: string | null;
+        /**
+         * Vmid
+         */
+        vmid?: number | null;
+        /**
+         * Vnet
+         */
+        vnet?: string | null;
+    };
+    url: '/api/sdn/firewall';
+};
+
+export type FirewallInventoryApiSdnFirewallGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type FirewallInventoryApiSdnFirewallGetError = FirewallInventoryApiSdnFirewallGetErrors[keyof FirewallInventoryApiSdnFirewallGetErrors];
+
+export type FirewallInventoryApiSdnFirewallGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateClusterFirewallAliasApiSdnFirewallClusterAliasesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/aliases';
+};
+
+export type CreateClusterFirewallAliasApiSdnFirewallClusterAliasesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateClusterFirewallAliasApiSdnFirewallClusterAliasesPostError = CreateClusterFirewallAliasApiSdnFirewallClusterAliasesPostErrors[keyof CreateClusterFirewallAliasApiSdnFirewallClusterAliasesPostErrors];
+
+export type CreateClusterFirewallAliasApiSdnFirewallClusterAliasesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteClusterFirewallAliasApiSdnFirewallClusterAliasesNameDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/aliases/{name}';
+};
+
+export type DeleteClusterFirewallAliasApiSdnFirewallClusterAliasesNameDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteClusterFirewallAliasApiSdnFirewallClusterAliasesNameDeleteError = DeleteClusterFirewallAliasApiSdnFirewallClusterAliasesNameDeleteErrors[keyof DeleteClusterFirewallAliasApiSdnFirewallClusterAliasesNameDeleteErrors];
+
+export type DeleteClusterFirewallAliasApiSdnFirewallClusterAliasesNameDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateClusterFirewallAliasApiSdnFirewallClusterAliasesNamePatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/aliases/{name}';
+};
+
+export type UpdateClusterFirewallAliasApiSdnFirewallClusterAliasesNamePatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateClusterFirewallAliasApiSdnFirewallClusterAliasesNamePatchError = UpdateClusterFirewallAliasApiSdnFirewallClusterAliasesNamePatchErrors[keyof UpdateClusterFirewallAliasApiSdnFirewallClusterAliasesNamePatchErrors];
+
+export type UpdateClusterFirewallAliasApiSdnFirewallClusterAliasesNamePatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateClusterFirewallGroupApiSdnFirewallClusterGroupsPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/groups';
+};
+
+export type CreateClusterFirewallGroupApiSdnFirewallClusterGroupsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateClusterFirewallGroupApiSdnFirewallClusterGroupsPostError = CreateClusterFirewallGroupApiSdnFirewallClusterGroupsPostErrors[keyof CreateClusterFirewallGroupApiSdnFirewallClusterGroupsPostErrors];
+
+export type CreateClusterFirewallGroupApiSdnFirewallClusterGroupsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteClusterFirewallGroupApiSdnFirewallClusterGroupsGroupDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Group
+         */
+        group: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/groups/{group}';
+};
+
+export type DeleteClusterFirewallGroupApiSdnFirewallClusterGroupsGroupDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteClusterFirewallGroupApiSdnFirewallClusterGroupsGroupDeleteError = DeleteClusterFirewallGroupApiSdnFirewallClusterGroupsGroupDeleteErrors[keyof DeleteClusterFirewallGroupApiSdnFirewallClusterGroupsGroupDeleteErrors];
+
+export type DeleteClusterFirewallGroupApiSdnFirewallClusterGroupsGroupDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateClusterFirewallGroupApiSdnFirewallClusterGroupsGroupPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Group
+         */
+        group: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/groups/{group}';
+};
+
+export type UpdateClusterFirewallGroupApiSdnFirewallClusterGroupsGroupPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateClusterFirewallGroupApiSdnFirewallClusterGroupsGroupPatchError = UpdateClusterFirewallGroupApiSdnFirewallClusterGroupsGroupPatchErrors[keyof UpdateClusterFirewallGroupApiSdnFirewallClusterGroupsGroupPatchErrors];
+
+export type UpdateClusterFirewallGroupApiSdnFirewallClusterGroupsGroupPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateClusterFirewallIpsetApiSdnFirewallClusterIpsetPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/ipset';
+};
+
+export type CreateClusterFirewallIpsetApiSdnFirewallClusterIpsetPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateClusterFirewallIpsetApiSdnFirewallClusterIpsetPostError = CreateClusterFirewallIpsetApiSdnFirewallClusterIpsetPostErrors[keyof CreateClusterFirewallIpsetApiSdnFirewallClusterIpsetPostErrors];
+
+export type CreateClusterFirewallIpsetApiSdnFirewallClusterIpsetPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteClusterFirewallIpsetApiSdnFirewallClusterIpsetNameDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/ipset/{name}';
+};
+
+export type DeleteClusterFirewallIpsetApiSdnFirewallClusterIpsetNameDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteClusterFirewallIpsetApiSdnFirewallClusterIpsetNameDeleteError = DeleteClusterFirewallIpsetApiSdnFirewallClusterIpsetNameDeleteErrors[keyof DeleteClusterFirewallIpsetApiSdnFirewallClusterIpsetNameDeleteErrors];
+
+export type DeleteClusterFirewallIpsetApiSdnFirewallClusterIpsetNameDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateClusterFirewallIpsetApiSdnFirewallClusterIpsetNamePatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/ipset/{name}';
+};
+
+export type UpdateClusterFirewallIpsetApiSdnFirewallClusterIpsetNamePatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateClusterFirewallIpsetApiSdnFirewallClusterIpsetNamePatchError = UpdateClusterFirewallIpsetApiSdnFirewallClusterIpsetNamePatchErrors[keyof UpdateClusterFirewallIpsetApiSdnFirewallClusterIpsetNamePatchErrors];
+
+export type UpdateClusterFirewallIpsetApiSdnFirewallClusterIpsetNamePatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetClusterFirewallMacrosApiSdnFirewallClusterMacrosGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/macros';
+};
+
+export type GetClusterFirewallMacrosApiSdnFirewallClusterMacrosGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetClusterFirewallOptionsApiSdnFirewallClusterOptionsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/options';
+};
+
+export type GetClusterFirewallOptionsApiSdnFirewallClusterOptionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type SetClusterFirewallOptionsApiSdnFirewallClusterOptionsPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/options';
+};
+
+export type SetClusterFirewallOptionsApiSdnFirewallClusterOptionsPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SetClusterFirewallOptionsApiSdnFirewallClusterOptionsPatchError = SetClusterFirewallOptionsApiSdnFirewallClusterOptionsPatchErrors[keyof SetClusterFirewallOptionsApiSdnFirewallClusterOptionsPatchErrors];
+
+export type SetClusterFirewallOptionsApiSdnFirewallClusterOptionsPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetClusterFirewallRefsApiSdnFirewallClusterRefsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/refs';
+};
+
+export type GetClusterFirewallRefsApiSdnFirewallClusterRefsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateClusterFirewallRuleApiSdnFirewallClusterRulesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/firewall/cluster/rules';
+};
+
+export type CreateClusterFirewallRuleApiSdnFirewallClusterRulesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateClusterFirewallRuleApiSdnFirewallClusterRulesPostError = CreateClusterFirewallRuleApiSdnFirewallClusterRulesPostErrors[keyof CreateClusterFirewallRuleApiSdnFirewallClusterRulesPostErrors];
+
+export type CreateClusterFirewallRuleApiSdnFirewallClusterRulesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteClusterFirewallRuleApiSdnFirewallClusterRulesPosDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/rules/{pos}';
+};
+
+export type DeleteClusterFirewallRuleApiSdnFirewallClusterRulesPosDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteClusterFirewallRuleApiSdnFirewallClusterRulesPosDeleteError = DeleteClusterFirewallRuleApiSdnFirewallClusterRulesPosDeleteErrors[keyof DeleteClusterFirewallRuleApiSdnFirewallClusterRulesPosDeleteErrors];
+
+export type DeleteClusterFirewallRuleApiSdnFirewallClusterRulesPosDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateClusterFirewallRuleApiSdnFirewallClusterRulesPosPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/cluster/rules/{pos}';
+};
+
+export type UpdateClusterFirewallRuleApiSdnFirewallClusterRulesPosPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateClusterFirewallRuleApiSdnFirewallClusterRulesPosPatchError = UpdateClusterFirewallRuleApiSdnFirewallClusterRulesPosPatchErrors[keyof UpdateClusterFirewallRuleApiSdnFirewallClusterRulesPosPatchErrors];
+
+export type UpdateClusterFirewallRuleApiSdnFirewallClusterRulesPosPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/nodes/{node}/options';
+};
+
+export type GetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsGetError = GetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsGetErrors[keyof GetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsGetErrors];
+
+export type GetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type SetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/nodes/{node}/options';
+};
+
+export type SetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsPatchError = SetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsPatchErrors[keyof SetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsPatchErrors];
+
+export type SetNodeFirewallOptionsApiSdnFirewallNodesNodeOptionsPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/nodes/{node}/rules';
+};
+
+export type CreateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPostError = CreateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPostErrors[keyof CreateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPostErrors];
+
+export type CreateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/nodes/{node}/rules/{pos}';
+};
+
+export type DeleteNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosDeleteError = DeleteNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosDeleteErrors[keyof DeleteNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosDeleteErrors];
+
+export type DeleteNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/nodes/{node}/rules/{pos}';
+};
+
+export type UpdateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosPatchError = UpdateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosPatchErrors[keyof UpdateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosPatchErrors];
+
+export type UpdateNodeFirewallRuleApiSdnFirewallNodesNodeRulesPosPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/aliases';
+};
+
+export type CreateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesPostError = CreateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesPostErrors[keyof CreateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesPostErrors];
+
+export type CreateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNameDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/aliases/{name}';
+};
+
+export type DeleteVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNameDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNameDeleteError = DeleteVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNameDeleteErrors[keyof DeleteVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNameDeleteErrors];
+
+export type DeleteVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNameDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNamePatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/aliases/{name}';
+};
+
+export type UpdateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNamePatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNamePatchError = UpdateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNamePatchErrors[keyof UpdateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNamePatchErrors];
+
+export type UpdateVmFirewallAliasApiSdnFirewallVmsNodeVmidAliasesNamePatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/ipset';
+};
+
+export type CreateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetPostError = CreateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetPostErrors[keyof CreateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetPostErrors];
+
+export type CreateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNameDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/ipset/{name}';
+};
+
+export type DeleteVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNameDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNameDeleteError = DeleteVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNameDeleteErrors[keyof DeleteVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNameDeleteErrors];
+
+export type DeleteVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNameDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNamePatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/ipset/{name}';
+};
+
+export type UpdateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNamePatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNamePatchError = UpdateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNamePatchErrors[keyof UpdateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNamePatchErrors];
+
+export type UpdateVmFirewallIpsetApiSdnFirewallVmsNodeVmidIpsetNamePatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/options';
+};
+
+export type GetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsGetError = GetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsGetErrors[keyof GetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsGetErrors];
+
+export type GetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type SetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/options';
+};
+
+export type SetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsPatchError = SetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsPatchErrors[keyof SetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsPatchErrors];
+
+export type SetVmFirewallOptionsApiSdnFirewallVmsNodeVmidOptionsPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/rules';
+};
+
+export type CreateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPostError = CreateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPostErrors[keyof CreateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPostErrors];
+
+export type CreateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/rules/{pos}';
+};
+
+export type DeleteVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosDeleteError = DeleteVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosDeleteErrors[keyof DeleteVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosDeleteErrors];
+
+export type DeleteVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Node
+         */
+        node: string;
+        /**
+         * Vmid
+         */
+        vmid: number;
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vms/{node}/{vmid}/rules/{pos}';
+};
+
+export type UpdateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosPatchError = UpdateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosPatchErrors[keyof UpdateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosPatchErrors];
+
+export type UpdateVmFirewallRuleApiSdnFirewallVmsNodeVmidRulesPosPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vnets/{vnet}/options';
+};
+
+export type GetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsGetError = GetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsGetErrors[keyof GetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsGetErrors];
+
+export type GetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type SetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vnets/{vnet}/options';
+};
+
+export type SetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsPatchError = SetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsPatchErrors[keyof SetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsPatchErrors];
+
+export type SetVnetFirewallOptionsApiSdnFirewallVnetsVnetOptionsPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vnets/{vnet}/rules';
+};
+
+export type CreateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPostError = CreateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPostErrors[keyof CreateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPostErrors];
+
+export type CreateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vnets/{vnet}/rules/{pos}';
+};
+
+export type DeleteVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosDeleteError = DeleteVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosDeleteErrors[keyof DeleteVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosDeleteErrors];
+
+export type DeleteVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+        /**
+         * Pos
+         */
+        pos: number;
+    };
+    query?: never;
+    url: '/api/sdn/firewall/vnets/{vnet}/rules/{pos}';
+};
+
+export type UpdateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosPatchError = UpdateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosPatchErrors[keyof UpdateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosPatchErrors];
+
+export type UpdateVnetFirewallRuleApiSdnFirewallVnetsVnetRulesPosPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type InventoryApiSdnInventoryGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/inventory';
+};
+
+export type InventoryApiSdnInventoryGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateIpamApiSdnIpamsPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/ipams';
+};
+
+export type CreateIpamApiSdnIpamsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateIpamApiSdnIpamsPostError = CreateIpamApiSdnIpamsPostErrors[keyof CreateIpamApiSdnIpamsPostErrors];
+
+export type CreateIpamApiSdnIpamsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteIpamApiSdnIpamsIpamDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Ipam
+         */
+        ipam: string;
+    };
+    query?: never;
+    url: '/api/sdn/ipams/{ipam}';
+};
+
+export type DeleteIpamApiSdnIpamsIpamDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteIpamApiSdnIpamsIpamDeleteError = DeleteIpamApiSdnIpamsIpamDeleteErrors[keyof DeleteIpamApiSdnIpamsIpamDeleteErrors];
+
+export type DeleteIpamApiSdnIpamsIpamDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateLabApiSdnLabsPostData = {
+    body: SdnLabBody;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/labs';
+};
+
+export type CreateLabApiSdnLabsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateLabApiSdnLabsPostError = CreateLabApiSdnLabsPostErrors[keyof CreateLabApiSdnLabsPostErrors];
+
+export type CreateLabApiSdnLabsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
+};
+
+export type LabPreflightApiSdnLabsPreflightPostData = {
+    body: SdnLabBody;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/labs/preflight';
+};
+
+export type LabPreflightApiSdnLabsPreflightPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type LabPreflightApiSdnLabsPreflightPostError = LabPreflightApiSdnLabsPreflightPostErrors[keyof LabPreflightApiSdnLabsPreflightPostErrors];
+
+export type LabPreflightApiSdnLabsPreflightPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetLabNetworkApiSdnLabsBubbleIdNetworkGetData = {
+    body?: never;
+    path: {
+        /**
+         * Bubble Id
+         */
+        bubble_id: string;
+    };
+    query?: never;
+    url: '/api/sdn/labs/{bubble_id}/network';
+};
+
+export type GetLabNetworkApiSdnLabsBubbleIdNetworkGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetLabNetworkApiSdnLabsBubbleIdNetworkGetError = GetLabNetworkApiSdnLabsBubbleIdNetworkGetErrors[keyof GetLabNetworkApiSdnLabsBubbleIdNetworkGetErrors];
+
+export type GetLabNetworkApiSdnLabsBubbleIdNetworkGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ReleaseLockApiSdnLockDeleteData = {
+    body?: SdnLockBody;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/lock';
+};
+
+export type ReleaseLockApiSdnLockDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReleaseLockApiSdnLockDeleteError = ReleaseLockApiSdnLockDeleteErrors[keyof ReleaseLockApiSdnLockDeleteErrors];
+
+export type ReleaseLockApiSdnLockDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type AcquireLockApiSdnLockPostData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Allow Pending
+         */
+        allow_pending?: boolean;
+    };
+    url: '/api/sdn/lock';
+};
+
+export type AcquireLockApiSdnLockPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AcquireLockApiSdnLockPostError = AcquireLockApiSdnLockPostErrors[keyof AcquireLockApiSdnLockPostErrors];
+
+export type AcquireLockApiSdnLockPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateVnetApiSdnVnetsPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/vnets';
+};
+
+export type CreateVnetApiSdnVnetsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateVnetApiSdnVnetsPostError = CreateVnetApiSdnVnetsPostErrors[keyof CreateVnetApiSdnVnetsPostErrors];
+
+export type CreateVnetApiSdnVnetsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteVnetApiSdnVnetsVnetDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/vnets/{vnet}';
+};
+
+export type DeleteVnetApiSdnVnetsVnetDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteVnetApiSdnVnetsVnetDeleteError = DeleteVnetApiSdnVnetsVnetDeleteErrors[keyof DeleteVnetApiSdnVnetsVnetDeleteErrors];
+
+export type DeleteVnetApiSdnVnetsVnetDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateVnetApiSdnVnetsVnetPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/vnets/{vnet}';
+};
+
+export type UpdateVnetApiSdnVnetsVnetPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateVnetApiSdnVnetsVnetPatchError = UpdateVnetApiSdnVnetsVnetPatchErrors[keyof UpdateVnetApiSdnVnetsVnetPatchErrors];
+
+export type UpdateVnetApiSdnVnetsVnetPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateSubnetApiSdnVnetsVnetSubnetsPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/vnets/{vnet}/subnets';
+};
+
+export type CreateSubnetApiSdnVnetsVnetSubnetsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateSubnetApiSdnVnetsVnetSubnetsPostError = CreateSubnetApiSdnVnetsVnetSubnetsPostErrors[keyof CreateSubnetApiSdnVnetsVnetSubnetsPostErrors];
+
+export type CreateSubnetApiSdnVnetsVnetSubnetsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteSubnetApiSdnVnetsVnetSubnetsSubnetDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+        /**
+         * Subnet
+         */
+        subnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/vnets/{vnet}/subnets/{subnet}';
+};
+
+export type DeleteSubnetApiSdnVnetsVnetSubnetsSubnetDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteSubnetApiSdnVnetsVnetSubnetsSubnetDeleteError = DeleteSubnetApiSdnVnetsVnetSubnetsSubnetDeleteErrors[keyof DeleteSubnetApiSdnVnetsVnetSubnetsSubnetDeleteErrors];
+
+export type DeleteSubnetApiSdnVnetsVnetSubnetsSubnetDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateSubnetApiSdnVnetsVnetSubnetsSubnetPatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Vnet
+         */
+        vnet: string;
+        /**
+         * Subnet
+         */
+        subnet: string;
+    };
+    query?: never;
+    url: '/api/sdn/vnets/{vnet}/subnets/{subnet}';
+};
+
+export type UpdateSubnetApiSdnVnetsVnetSubnetsSubnetPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateSubnetApiSdnVnetsVnetSubnetsSubnetPatchError = UpdateSubnetApiSdnVnetsVnetSubnetsSubnetPatchErrors[keyof UpdateSubnetApiSdnVnetsVnetSubnetsSubnetPatchErrors];
+
+export type UpdateSubnetApiSdnVnetsVnetSubnetsSubnetPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateZoneApiSdnZonesPostData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/sdn/zones';
+};
+
+export type CreateZoneApiSdnZonesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateZoneApiSdnZonesPostError = CreateZoneApiSdnZonesPostErrors[keyof CreateZoneApiSdnZonesPostErrors];
+
+export type CreateZoneApiSdnZonesPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteZoneApiSdnZonesZoneDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Zone
+         */
+        zone: string;
+    };
+    query?: never;
+    url: '/api/sdn/zones/{zone}';
+};
+
+export type DeleteZoneApiSdnZonesZoneDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteZoneApiSdnZonesZoneDeleteError = DeleteZoneApiSdnZonesZoneDeleteErrors[keyof DeleteZoneApiSdnZonesZoneDeleteErrors];
+
+export type DeleteZoneApiSdnZonesZoneDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type UpdateZoneApiSdnZonesZonePatchData = {
+    /**
+     * Body
+     */
+    body?: {
+        [key: string]: unknown;
+    };
+    path: {
+        /**
+         * Zone
+         */
+        zone: string;
+    };
+    query?: never;
+    url: '/api/sdn/zones/{zone}';
+};
+
+export type UpdateZoneApiSdnZonesZonePatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateZoneApiSdnZonesZonePatchError = UpdateZoneApiSdnZonesZonePatchErrors[keyof UpdateZoneApiSdnZonesZonePatchErrors];
+
+export type UpdateZoneApiSdnZonesZonePatchResponses = {
     /**
      * Successful Response
      */

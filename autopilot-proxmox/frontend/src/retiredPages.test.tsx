@@ -4,16 +4,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 
 const pageResponses: Record<string, unknown> = {
-  "/api/install-tracking/page": {
-    tracking: {
-      run: { run_id: "install-1", name: "Clean install", target: "pve2" },
-      items: [{ item_id: "media", label: "Media staged", status: "ok", detail: "ready" }],
-      summary: { total: 1, ok: 1, blocked: 0 }
-    }
-  },
   "/api/provision/page": {
     defaults: { cores: 4, memory_mb: 8192, disk_size_gb: 96 },
-    sequences: [{ id: 1, name: "Windows baseline", target_os: "windows" }],
     cloudosd_catalog: { count: 2 },
     osdeploy_catalog: { count: 1 }
   },
@@ -30,40 +22,21 @@ const pageResponses: Record<string, unknown> = {
     osdeploy_cache: { summary: { entries: 2 } }
   },
   "/api/template/page": {
-    profiles: [{ name: "Surface" }],
+    profiles: { surface: { manufacturer: "Microsoft", product: "Surface Pro" } },
     ubuntu_sequences: [{ id: 2, name: "Ubuntu Desktop" }],
     hypervisor_type: "proxmox",
     utm_iso_dir: "/Users/Adam/UTM-ISOs"
   },
-  "/api/jobs/job-1/page": {
-    job: { id: "job-1", status: "running", playbook: "provision.yml", args: { target: "VM 105" } },
-    log: ["started"],
-    stream_url: "/api/jobs/job-1/stream"
-  },
-  "/api/runs/page": {
-    runs: [{ id: 1, vm_name: "WinPE-1", state: "running", provision_path: "winpe" }]
-  },
-  "/api/runs/1/page": {
-    run: { id: 1, vm_name: "WinPE-1", state: "running", sequence_name: "Baseline" },
-    steps: [{ kind: "rename_computer", state: "ok" }],
-    summary: { total: 1, ok: 1 }
-  },
-  "/api/task-engine/page": {
-    sequences: [{ id: "seq-1", name: "CloudOSD deployment", target_os: "windows" }],
-    runs: [{ id: "run-1", state: "running" }],
-    flow_templates: [{ id: "template-1", name: "Windows baseline" }]
-  },
   "/api/answer-isos/page": {
-    rows: [{ id: "answer-1", path: "/var/lib/vz/snippets/autopilot-unattend.img", in_use: true }],
+    rows: [{
+      hash: "answer-1",
+      short_hash: "answer-1",
+      volid: "/var/lib/vz/snippets/autopilot-unattend.img",
+      compiled_at: "2026-05-20T12:00:00-04:00",
+      last_used_at: null,
+      in_use: true
+    }],
     error: ""
-  },
-  "/api/sequences/page": {
-    sequences: [{ id: 1, name: "Legacy baseline", target_os: "windows", steps: [] }]
-  },
-  "/api/utm-vms/page": {
-    vms: [{ name: "Win11-UTM", status: "started", ip: "192.168.64.10" }],
-    host_summary: { running: 1 },
-    isos: [{ name: "Win11.iso" }]
   },
   "/api/setup/v1/state": {
     ready: true,
@@ -97,18 +70,11 @@ afterEach(() => {
 
 describe("retired Jinja React pages", () => {
   test.each([
-    ["/react/install-tracking", "Install Tracking", "Clean install"],
-    ["/react/provision", "Provision", "Windows baseline"],
+    ["/react/provision", "Provision", "Provision VMs"],
     ["/react/cloudosd", "OSDCloud Desktop", "Gell-EC41E7EB"],
     ["/react/osdeploy", "OSDeploy Server", "SRV-01"],
-    ["/react/template", "Template", "Ubuntu Desktop"],
-    ["/react/jobs/job-1", "Job Detail", "provision.yml"],
-    ["/react/runs", "Runs", "WinPE-1"],
-    ["/react/runs/1", "Run Detail", "rename_computer"],
-    ["/react/task-engine", "Task Engine", "CloudOSD deployment"],
-    ["/react/answer-isos", "Answer ISOs", "autopilot-unattend.img"],
-    ["/react/sequences", "Sequences", "Legacy baseline"],
-    ["/react/utm-vms", "UTM VMs", "Win11-UTM"],
+    ["/react/template", "Build Template", "Surface Pro"],
+    ["/react/answer-isos", "Answer ISO Cache", "autopilot-unattend.img"],
     ["/setup", "Setup", "ready"]
   ])("renders %s from page payload", async (path, heading, visibleText) => {
     mockFetch();

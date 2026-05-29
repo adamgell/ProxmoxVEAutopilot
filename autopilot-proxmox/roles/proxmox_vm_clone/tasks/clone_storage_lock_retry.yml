@@ -1,0 +1,39 @@
+---
+- name: "Pause before clone storage-lock retry {{ clone_storage_lock_attempt | int + 1 }}"
+  ansible.builtin.pause:
+    seconds: >-
+      {{
+        (clone_storage_lock_retry_delay_seconds | default(30) | int)
+        + ((clone_storage_lock_attempt | int) * (clone_storage_lock_retry_backoff_seconds | default(10) | int))
+        + (((vm_vmid | int) % 7) * (clone_storage_lock_retry_jitter_seconds | default(3) | int))
+      }}
+  when: _task_status.json.data.exitstatus | default('') != "OK"
+
+- name: "Remove failed clone shell before storage-lock retry {{ clone_storage_lock_attempt | int + 1 }}"
+  ansible.builtin.uri:
+    url: "{{ proxmox_api_base }}/nodes/{{ proxmox_node }}/qemu/{{ vm_vmid }}"
+    method: DELETE
+    body_format: form-urlencoded
+    body:
+      purge: "1"
+      destroy-unreferenced-disks: "1"
+    headers:
+      Authorization: "{{ proxmox_api_auth_header }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    status_code: [200, 500]
+  register: _clone_retry_delete
+  failed_when: false
+  when: _task_status.json.data.exitstatus | default('') != "OK"
+
+- name: "Retry clone after storage lock contention {{ clone_storage_lock_attempt | int + 1 }}"
+  ansible.builtin.include_tasks: clone_vm.yml
+  when: _task_status.json.data.exitstatus | default('') != "OK"
+
+- name: "Wait for retried clone task {{ clone_storage_lock_attempt | int + 1 }}"
+  ansible.builtin.include_tasks: "{{ role_path }}/../common/tasks/wait_task.yml"
+  vars:
+    _task_upid: "{{ _clone_result.json.data }}"
+    task_poll_retries: "{{ clone_task_poll_retries | default(900) }}"
+    task_poll_delay_seconds: "{{ clone_task_poll_delay_seconds | default(1) }}"
+    task_fail_on_error: false
+  when: _task_status.json.data.exitstatus | default('') != "OK"

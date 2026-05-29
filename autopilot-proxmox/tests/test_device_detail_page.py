@@ -1,4 +1,4 @@
-"""GET /legacy/devices/<vmid> renders four columns, linkage strip, timeline."""
+"""VM evidence detail API and retired legacy device route contracts."""
 import json
 from pathlib import Path
 
@@ -78,27 +78,21 @@ def _seed_healthy_vm(db, vmid=116):
 def test_device_detail_happy_path_renders_all_columns(client):
     c, db = client
     _seed_healthy_vm(db, vmid=116)
-    r = c.get("/legacy/devices/116")
+    r = c.get("/legacy/devices/116", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/react/vms/116"
+
+    r = c.get("/api/vms/116/detail")
     assert r.status_code == 200
-    # All four column headings present.
-    assert ">PVE<" in r.text
-    assert "Active Directory" in r.text
-    assert ">Entra" in r.text
-    assert ">Intune" in r.text
-    # Linkage health rows.
-    assert "Linkage health" in r.text
-    assert "SMBIOS.serial → Intune.serialNumber" in r.text
-    assert "AD.objectSid → Entra.onPremSecurityIdentifier" in r.text
-    # Concrete values surfaced.
-    assert "Gell-EC41E7EB" in r.text
-    assert "GELL-EC41E7EB" in r.text
-    assert "ServerAd" in r.text
-    assert "compliant" in r.text
-    # Timeline shows events from more than one source.
-    assert "power-on" in r.text
-    assert "hybrid-synced" in r.text
-    # Breadcrumb back to /monitoring.
-    assert 'href="/monitoring"' in r.text
+    body = r.json()
+    assert body["pve"]["name"] == "Gell-EC41E7EB"
+    assert body["probe"]["win_name"] == "GELL-EC41E7EB"
+    assert body["entra_matches"][0]["trustType"] == "ServerAd"
+    assert body["intune_matches"][0]["complianceState"] == "compliant"
+    linkage = {row["label"]: row for row in body["linkage"]}
+    assert linkage["SMBIOS.serial → Intune.serialNumber"]["ok"] is True
+    assert linkage["AD.objectSid → Entra.onPremSecurityIdentifier"]["ok"] is True
+    assert {event["type"] for event in body["timeline"]} >= {"power-on", "hybrid-synced"}
 
 
 def test_device_detail_shows_known_credentials(client, monkeypatch):
@@ -121,15 +115,22 @@ def test_device_detail_shows_known_credentials(client, monkeypatch):
         }] if vmid == 105 else [],
     )
 
-    r = c.get("/legacy/devices/105")
+    r = c.get("/api/vms/105/detail")
 
     assert r.status_code == 200
-    assert "Known credentials" in r.text
-    assert "CloudOSD" in r.text
-    assert "Local admin" in r.text
-    assert "localadmin" in r.text
-    assert "Mep7!Qav2" in r.text
-    assert "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5" in r.text
+    body = r.json()
+    assert body["known_credentials"] == [{
+        "source": "CloudOSD",
+        "label": "Local admin",
+        "username": "localadmin",
+        "password_available": True,
+        "password_mask": "********",
+        "vm_name": "WrkGrp-8F47E090",
+        "run_id": "",
+        "run_url": "/cloudosd/runs/b5c5f393-82e8-41a1-849d-d5c3636ee5c5",
+        "updated_at": "2026-05-18T17:10:00+00:00",
+        "note": "Visible workgroup credential from the deployment run.",
+    }]
 
 
 def test_vm_detail_api_returns_masked_evidence_and_latest_screenshot(client, monkeypatch, tmp_path):
@@ -270,7 +271,11 @@ def test_known_credentials_includes_osdeploy_local_admin(pg_conn):
 
 def test_device_detail_404_for_unknown_vmid(client):
     c, _ = client
-    r = c.get("/legacy/devices/99999")
+    r = c.get("/legacy/devices/99999", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/react/vms/99999"
+
+    r = c.get("/api/vms/99999/detail")
     assert r.status_code == 404
 
 
@@ -325,11 +330,11 @@ def test_device_detail_shows_link_broken_warning(client):
         "checked_at": "2026-04-20T23:20:00+00:00",
     })
     device_history_pg.finish_sweep(sweep2, vm_count=1)
-    r = c.get("/legacy/devices/42")
+    r = c.get("/api/vms/42/detail")
     assert r.status_code == 200
-    assert "link-broken" in r.text
-    # Linkage strip shows ✗ (the check is False for SID mismatch).
-    assert "lk-bad" in r.text
+    assert any(event["type"] == "link-broken" for event in r.json()["timeline"])
+    linkage = {row["label"]: row for row in r.json()["linkage"]}
+    assert linkage["AD.objectSid → Entra.onPremSecurityIdentifier"]["ok"] is False
 
 
 def test_device_detail_ignores_in_progress_sweep_for_latest_pair(client):
@@ -363,12 +368,13 @@ def test_device_detail_ignores_in_progress_sweep_for_latest_pair(client):
         "checked_at": "2026-05-07T15:10:00+00:00",
     })
 
-    r = c.get("/legacy/devices/77")
+    r = c.get("/api/vms/77/detail")
 
     assert r.status_code == 200
-    assert "COMPLETED-NAME" in r.text
-    assert "COMPLETED-WIN" in r.text
-    assert "IN-PROGRESS-NAME" not in r.text
+    body = r.json()
+    assert body["pve"]["name"] == "COMPLETED-NAME"
+    assert body["probe"]["win_name"] == "COMPLETED-WIN"
+    assert body["pve"]["name"] != "IN-PROGRESS-NAME"
 
 
 # ---------------------------------------------------------------------------
