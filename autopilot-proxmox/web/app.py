@@ -9215,6 +9215,26 @@ async def start_provision(
                 "forest_admin_credential_id": int(osdeploy_role_forest_admin_credential_id or 0),
                 "dsrm_credential_id": int(osdeploy_role_dsrm_credential_id or 0),
             }
+            # Validate DC role options up front so a domain controller cannot be
+            # launched with a blank forest FQDN / NetBIOS / credentials. Without
+            # this the run is created with empty options and forest promotion
+            # fails on the deployed VM (see TestDC1 / vmid 109).
+            from web import osdeploy_roles as _osdeploy_roles
+            _osdeploy_cred_ids = {int(c["id"]) for c in sequences_db.list_credentials(SEQUENCES_DB)}
+            _osdeploy_role_blocks = [
+                check
+                for check in _osdeploy_roles.validate_role_options(
+                    osdeploy_role,
+                    osdeploy_role_options,
+                    credential_exists=lambda cid: int(cid) in _osdeploy_cred_ids,
+                )
+                if check.get("severity") == "block"
+            ]
+            if _osdeploy_role_blocks:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "role_options_invalid", "checks": _osdeploy_role_blocks},
+                )
         return _start_osdeploy_provision_batch(
             request=request,
             artifact_id=osdeploy_artifact_id.strip(),

@@ -222,7 +222,8 @@ function SelectField({
   defaultValue,
   onChange,
   options,
-  help
+  help,
+  required
 }: {
   readonly label: string;
   readonly name: string;
@@ -231,6 +232,7 @@ function SelectField({
   readonly onChange?: (value: string) => void;
   readonly options: readonly { readonly value: string; readonly label: string }[];
   readonly help?: string;
+  readonly required?: boolean;
 }) {
   const id = useId();
   const helpId = `${id}-help`;
@@ -242,6 +244,7 @@ function SelectField({
         name={name}
         value={value}
         defaultValue={value === undefined ? defaultValue : undefined}
+        required={required}
         aria-describedby={help ? helpId : undefined}
         onChange={onChange ? (event) => { onChange(event.currentTarget.value); } : undefined}
       >
@@ -469,14 +472,14 @@ function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }
             ) : null}
             <div className="utility-field">
               <label htmlFor={forestId}>{existing ? "Existing domain FQDN" : "Forest FQDN"}</label>
-              <input id={forestId} name="osdeploy_role_forest_fqdn" value={forestFqdn} onChange={(event) => { setForestFqdn(event.currentTarget.value); }} placeholder="lab.gell.one" />
+              <input id={forestId} name="osdeploy_role_forest_fqdn" required value={forestFqdn} onChange={(event) => { setForestFqdn(event.currentTarget.value); }} placeholder="lab.gell.one" />
             </div>
             <div className="utility-field">
               <label htmlFor={netbiosId}>NetBIOS name</label>
-              <input id={netbiosId} name="osdeploy_role_netbios_name" value={netbios} onChange={(event) => { setNetbios(event.currentTarget.value); }} placeholder="LAB" />
+              <input id={netbiosId} name="osdeploy_role_netbios_name" required value={netbios} onChange={(event) => { setNetbios(event.currentTarget.value); }} placeholder="LAB" />
             </div>
-            <SelectField label={existing ? "Domain admin credential" : "Forest admin credential"} name="osdeploy_role_forest_admin_credential_id" defaultValue="" options={credentialOptions} />
-            <SelectField label="DSRM credential" name="osdeploy_role_dsrm_credential_id" defaultValue="" options={credentialOptions} />
+            <SelectField label={existing ? "Domain admin credential" : "Forest admin credential"} name="osdeploy_role_forest_admin_credential_id" defaultValue="" options={credentialOptions} required />
+            <SelectField label="DSRM credential" name="osdeploy_role_dsrm_credential_id" defaultValue="" options={credentialOptions} required />
           </>
         ) : null}
         <SelectField

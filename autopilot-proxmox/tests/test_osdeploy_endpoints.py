@@ -126,6 +126,28 @@ def test_osdeploy_dc_role_options_carry_dc_mode():
     assert bogus["dc_mode"] == "new_forest"
 
 
+def test_osdeploy_dc_provision_rejects_blank_role_options(osdeploy_client):
+    # Regression for vmid 109 / TestDC1: a domain controller submitted through
+    # /api/jobs/provision with no forest FQDN / NetBIOS / credentials must be
+    # rejected up front, not created as a run with empty role options.
+    resp = osdeploy_client.post(
+        "/api/jobs/provision",
+        data={
+            "profile": "generic-desktop",
+            "boot_mode": "osdeploy",
+            "count": "1",
+            "osdeploy_server_role": "isolated_domain_controller",
+            "osdeploy_dc_mode": "new_forest",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error"] == "role_options_invalid"
+    check_ids = {check["id"] for check in detail["checks"]}
+    assert "role_option_missing_forest_fqdn" in check_ids
+    assert "role_option_missing_netbios_name" in check_ids
+
+
 def test_auto_select_osdeploy_artifact_matches_requested_os(pg_conn):
     from fastapi import HTTPException
     from web import app as web_app, osdeploy_pg
