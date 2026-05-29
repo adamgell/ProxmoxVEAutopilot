@@ -251,6 +251,23 @@ def test_osdeploy_build_script_accepts_mounted_source_media_root():
     assert "source_install_image = $sourceInstallImage" in text
 
 
+def test_osdeploy_build_script_auto_resolves_staged_source_media():
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    text = (app_root / "tools" / "osdeploy-build" / "build-osdeploy.ps1").read_text(
+        encoding="utf-8",
+    )
+
+    # Empty SourceMediaPath falls back to the newest ISO staged under inputs\media,
+    # so warming a server_image cache entry needs no per-build media path.
+    assert "function Resolve-OSDeployStagedMediaPath" in text
+    assert "$SourceMediaPath = Resolve-OSDeployStagedMediaPath" in text
+    assert r"'C:\BuildRoot\ProxmoxVEAutopilot\inputs\media'" in text
+    assert "$env:AUTOPILOT_SOURCE_MEDIA_ROOT" in text
+    assert "Sort-Object LastWriteTimeUtc -Descending" in text
+
+
 def test_osdeploy_build_script_bakes_pe_bridge_assets():
     from pathlib import Path
 
