@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { fetchJson } from "../apiClient";
+import { OsDeployCachePanel } from "../components/OsDeployCachePanel";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import type { AppBootstrap, OperatorGroupLabel } from "../contracts";
@@ -15,6 +16,7 @@ interface RetiredPageConfig {
   readonly path: string;
   readonly endpoint: (path: string) => string;
   readonly primaryKeys: readonly string[];
+  readonly extra?: ReactNode;
 }
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> {
@@ -170,6 +172,7 @@ export function RetiredJinjaPage({
           <PanelList key={key} title={key.replaceAll("_", " ")} value={payload[key]} />
         ))}
       </section>
+      {config.extra ?? null}
     </PageFrame>
   );
 }
@@ -201,7 +204,8 @@ export const retiredPageConfigs = {
     section: "Deploy",
     path: "/react/osdeploy",
     endpoint: () => `/api/osdeploy/page${window.location.search}`,
-    primaryKeys: ["runs", "artifacts", "active_runs", "stale_failed_runs"]
+    primaryKeys: ["runs", "artifacts", "active_runs", "stale_failed_runs"],
+    extra: <OsDeployCachePanel />
   },
   template: {
     title: "Template",
