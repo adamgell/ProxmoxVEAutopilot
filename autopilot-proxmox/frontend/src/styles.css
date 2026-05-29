@@ -1893,6 +1893,43 @@ h3 {
   font-size: 12px;
 }
 
+.bubble-form-note code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.bubble-network-readonly {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.bubble-network-readonly > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bubble-network-readonly dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bubble-network-readonly dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .bubble-form-field span {
   color: var(--muted);
   font-size: 10px;

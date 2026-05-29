@@ -290,6 +290,17 @@ interface BubbleSdnAdoption {
   readonly subnet: string;
 }
 
+interface BubbleBoundNetwork {
+  readonly vnet: string;
+  readonly zone: string;
+  readonly subnet: string;
+  readonly gateway: string;
+  readonly dhcpStart: string;
+  readonly dhcpEnd: string;
+  readonly dhcpDnsServer: string;
+  readonly subnetSource: "sdn" | "binding";
+}
+
 // Parse a PVE-formatted dhcp-range string
 // ("start-address=192.168.55.100,end-address=192.168.55.199")
 // into separate start/end IPs for pre-filling the bubble form's
@@ -537,6 +548,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
   const [orphanVnets, setOrphanVnets] = useState<readonly OrphanVnet[]>([]);
   const [bubbleAdoptedVnet, setBubbleAdoptedVnet] = useState<BubbleSdnAdoption | null>(null);
+  const [bubbleBoundNetwork, setBubbleBoundNetwork] = useState<BubbleBoundNetwork | null>(null);
   const [deleteBubbleId, setDeleteBubbleId] = useState<string | null>(null);
   const [machineTagDraft, setMachineTagDraft] = useState<MachineTagDraft | null>(null);
   const [infraDraftOpen, setInfraDraftOpen] = useState(false);
@@ -895,6 +907,53 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftId(bubble.id);
     setBubbleDraft(bubbleFormFromBubble(bubble));
     setBubbleAdoptedVnet(null);
+    setBubbleBoundNetwork(null);
+    // Bubbles store a denormalized copy of cidr / gateway_ip / dhcp_pool_*
+    // that drifts the moment the operator changes the SDN subnet on the
+    // Networks page. When this bubble has an SDN binding, treat the live
+    // PVE subnet config as the source of truth and pre-fill the form
+    // with it (and lock those fields in the UI). 404 just means there's
+    // no binding -- fall back to the bubble's own copy.
+    void fetchJson<{
+      readonly binding?: { readonly vnet: string; readonly zone: string; readonly subnet: string };
+      readonly subnet?: {
+        readonly subnet?: string;
+        readonly gateway?: string;
+        readonly dhcp_dns_server?: string;
+        readonly dhcp_range?: string;
+      } | null;
+    }>(`/api/sdn/labs/${encodeURIComponent(bubble.id)}/network`)
+      .then((data) => {
+        if (!data.binding) {
+          return;
+        }
+        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet ?? "";
+        const range = parseDhcpRange(data.subnet?.dhcp_range);
+        const gateway = data.subnet?.gateway ?? "";
+        const dhcpDns = data.subnet?.dhcp_dns_server ?? "";
+        setBubbleBoundNetwork({
+          vnet: data.binding.vnet,
+          zone: data.binding.zone,
+          subnet: subnetCidr,
+          gateway,
+          dhcpStart: range.start,
+          dhcpEnd: range.end,
+          dhcpDnsServer: dhcpDns,
+          subnetSource: data.subnet ? "sdn" : "binding"
+        });
+        setBubbleDraft((current) => ({
+          ...current,
+          cidr: subnetCidr || current.cidr,
+          gateway_ip: gateway || current.gateway_ip,
+          dhcp_scope: data.binding?.vnet ?? current.dhcp_scope,
+          dhcp_pool_start: range.start || current.dhcp_pool_start,
+          dhcp_pool_end: range.end || current.dhcp_pool_end
+        }));
+      })
+      .catch(() => {
+        // 404 (no binding) or transient failure; keep the bubble's own
+        // copy editable as before.
+      });
   }, []);
 
   const adoptOrphanVnet = useCallback((vnetId: string) => {
@@ -930,6 +989,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setBubbleDraftId(null);
     setBubbleDraft(blankBubbleForm);
     setBubbleAdoptedVnet(null);
+    setBubbleBoundNetwork(null);
   }, []);
 
   const saveBubbleDraft = useCallback(() => {
@@ -1665,6 +1725,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         orphanVnets={orphanVnets}
         adoptedVnetId={bubbleAdoptedVnet?.vnet}
         onAdoptVnet={adoptOrphanVnet}
+        boundNetwork={bubbleBoundNetwork}
         onBubbleDraftChange={updateBubbleDraft}
         onSaveBubbleDraft={saveBubbleDraft}
         onCancelBubbleDraft={cancelBubbleDraft}
@@ -2475,7 +2536,8 @@ function BubbleEditor({
   onCancel,
   orphanVnets,
   adoptedVnetId,
-  onAdoptVnet
+  onAdoptVnet,
+  boundNetwork
 }: {
   readonly mode: BubbleDraftMode;
   readonly bubbleName?: string;
@@ -2486,6 +2548,7 @@ function BubbleEditor({
   readonly orphanVnets?: readonly OrphanVnet[];
   readonly adoptedVnetId?: string | undefined;
   readonly onAdoptVnet?: (vnetId: string) => void;
+  readonly boundNetwork?: BubbleBoundNetwork | null;
 }) {
   const saveLabel = mode === "create" ? "Create bubble" : `Save bubble ${bubbleName ?? values.name}`;
   const showAdoption = mode === "create" && orphanVnets !== undefined && onAdoptVnet !== undefined;
@@ -2544,13 +2607,32 @@ function BubbleEditor({
 
       <div className="bubble-form-section">
         <h4 className="bubble-form-section__title">Network</h4>
-        <div className="bubble-form-grid">
-          <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} placeholder="10.77.30.0/24" />
-          <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} placeholder="10.77.30.1" />
-          <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} placeholder="vnet alias / scope" />
-          <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} placeholder="10.77.30.100" />
-          <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} placeholder="10.77.30.199" />
-        </div>
+        {boundNetwork ? (
+          <>
+            <p className="bubble-form-note">
+              This bubble is bound to SDN vnet <code>{boundNetwork.vnet}</code>{" "}
+              (zone <code>{boundNetwork.zone}</code>). Network details are
+              pulled from the live PVE subnet config; edit them on the
+              Networks page so the rest of the cluster sees the change too.
+            </p>
+            <dl className="bubble-network-readonly">
+              <div><dt>Isolated CIDR</dt><dd>{boundNetwork.subnet || "-"}</dd></div>
+              <div><dt>Gateway IP</dt><dd>{boundNetwork.gateway || "-"}</dd></div>
+              <div><dt>DHCP network ID</dt><dd>{boundNetwork.vnet}</dd></div>
+              <div><dt>DHCP DNS server</dt><dd>{boundNetwork.dhcpDnsServer || "-"}</dd></div>
+              <div><dt>DHCP pool start</dt><dd>{boundNetwork.dhcpStart || "-"}</dd></div>
+              <div><dt>DHCP pool end</dt><dd>{boundNetwork.dhcpEnd || "-"}</dd></div>
+            </dl>
+          </>
+        ) : (
+          <div className="bubble-form-grid">
+            <BubbleTextField label="Isolated CIDR" field="cidr" value={values.cidr} onChange={onChange} placeholder="10.77.30.0/24" />
+            <BubbleTextField label="Gateway IP" field="gateway_ip" value={values.gateway_ip} onChange={onChange} placeholder="10.77.30.1" />
+            <BubbleTextField label="DHCP network ID" field="dhcp_scope" value={values.dhcp_scope} onChange={onChange} placeholder="vnet alias / scope" />
+            <BubbleTextField label="DHCP pool start" field="dhcp_pool_start" value={values.dhcp_pool_start} onChange={onChange} placeholder="10.77.30.100" />
+            <BubbleTextField label="DHCP pool end" field="dhcp_pool_end" value={values.dhcp_pool_end} onChange={onChange} placeholder="10.77.30.199" />
+          </div>
+        )}
       </div>
 
       <div className="bubble-form-section">
@@ -2667,6 +2749,7 @@ function BubbleTopologyOverview({
   orphanVnets,
   adoptedVnetId,
   onAdoptVnet,
+  boundNetwork,
   onBubbleDraftChange,
   onSaveBubbleDraft,
   onCancelBubbleDraft,
@@ -2723,6 +2806,7 @@ function BubbleTopologyOverview({
   readonly orphanVnets: readonly OrphanVnet[];
   readonly adoptedVnetId: string | undefined;
   readonly onAdoptVnet: (vnetId: string) => void;
+  readonly boundNetwork: BubbleBoundNetwork | null;
   readonly onBubbleDraftChange: (field: BubbleFormField, value: string) => void;
   readonly onSaveBubbleDraft: () => void;
   readonly onCancelBubbleDraft: () => void;
@@ -2834,6 +2918,7 @@ function BubbleTopologyOverview({
                         onChange={onBubbleDraftChange}
                         onSave={onSaveBubbleDraft}
                         onCancel={onCancelBubbleDraft}
+                        boundNetwork={boundNetwork}
                       />
                     ) : null}
                     {deleteBubbleId === fleet.bubble.id ? (

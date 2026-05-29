@@ -494,6 +494,15 @@ def create_lab(body: SdnLabBody):
 
 @router.get("/labs/{bubble_id}/network")
 def get_lab_network(bubble_id: str):
+    """Return the SDN binding + live subnet for a bubble.
+
+    The bubble row carries its own copy of cidr / gateway_ip /
+    dhcp_pool_* but those drift the moment an operator changes the SDN
+    subnet on the Networks page. Bubble UIs should treat THESE values as
+    the source of truth -- pull from the bound subnet's actual PVE
+    config and surface that, instead of editing the bubble's stale
+    copies.
+    """
     from web import sdn_labs_pg
 
     with _conn() as conn:
@@ -501,7 +510,39 @@ def get_lab_network(bubble_id: str):
         binding = sdn_labs_pg.get_binding(conn, bubble_id)
     if not binding:
         raise HTTPException(status_code=404, detail="Lab SDN binding not found")
-    return {"binding": binding}
+    subnet_info: dict | None = None
+    try:
+        inventory = proxmox_sdn.inventory(_api())
+        subnets = (inventory.get("subnets_by_vnet") or {}).get(binding["vnet"]) or []
+        wanted_subnet = str(binding.get("subnet") or "").strip()
+        primary: dict | None = None
+        for candidate in subnets:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = str(candidate.get("subnet") or candidate.get("id") or "").strip()
+            if wanted_subnet and candidate_id == wanted_subnet:
+                primary = candidate
+                break
+            if primary is None and candidate.get("gateway"):
+                primary = candidate
+        if primary is None and subnets and isinstance(subnets[0], dict):
+            primary = subnets[0]
+        if primary is not None:
+            subnet_info = {
+                "subnet": str(primary.get("subnet") or primary.get("id") or ""),
+                "gateway": str(primary.get("gateway") or ""),
+                "snat": bool(primary.get("snat")),
+                "dhcp_dns_server": str(primary.get("dhcp-dns-server") or ""),
+                "dhcp_range": str(primary.get("dhcp-range") or ""),
+                "dnszoneprefix": str(primary.get("dnszoneprefix") or ""),
+            }
+    except HTTPException:
+        raise
+    except Exception:
+        # If the live SDN query fails, the binding row is still useful and
+        # the UI can fall back to the bubble's stored values.
+        subnet_info = None
+    return {"binding": binding, "subnet": subnet_info}
 
 
 @router.get("/labs/orphan-vnets")
