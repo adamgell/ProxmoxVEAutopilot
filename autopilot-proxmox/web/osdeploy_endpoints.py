@@ -1689,8 +1689,65 @@ def refresh_cache_catalog():
     return _queue_cache_job("osdeploy_cache_refresh_catalog", "refresh", {})
 
 
+def _entry_is_factory_built(entry: dict) -> bool:
+    """A server_image whose source is a manual:// placeholder built by OSDeploy/OSDBuilder.
+
+    These cannot be fetched over HTTP; warming them runs the factory on the build host
+    via the agent instead of doing a urllib download.
+    """
+    if str(entry.get("entry_type") or "") != "server_image":
+        return False
+    if not str(entry.get("source_url") or "").startswith("manual://"):
+        return False
+    factory = str((entry.get("metadata") or {}).get("factory") or "").lower()
+    return "osdbuilder" in factory or "osdeploy" in factory
+
+
+def _image_index_for_edition(edition: str) -> int:
+    # Windows Server install.wim "Desktop Experience" image indexes.
+    if (edition or "").strip().lower().startswith("standard"):
+        return 2
+    return 4
+
+
+def _warm_factory_entry_via_agent(entry: dict) -> dict:
+    windows_version = str(entry.get("windows_version") or "").strip()
+    edition = str(entry.get("edition") or osdeploy_pg.DEFAULT_OS_EDITION).strip()
+    body = ArtifactBuildBody(
+        build_mode="build_host_agent",
+        architecture=str(entry.get("architecture") or "amd64"),
+        image_name=f"{windows_version} {edition}".strip(),
+        image_index=_image_index_for_edition(edition),
+        os_version=windows_version,
+        os_edition=edition,
+        os_language=str(entry.get("language") or osdeploy_pg.DEFAULT_OS_LANGUAGE),
+        # Left empty: the factory resolves the staged base media from
+        # C:\BuildRoot\ProxmoxVEAutopilot\inputs\media on the build host.
+        source_media_path="",
+    )
+    dispatched = build_artifact(body)
+    work_item_id = dispatched.get("work_item_id")
+    if work_item_id:
+        with _conn() as conn:
+            osdeploy_cache.init(conn)
+            osdeploy_cache.mark_build_dispatched(conn, entry["id"], work_item_id=work_item_id)
+    return {
+        "ok": True,
+        "job_type": "osdeploy_cache_warm_build",
+        "entry_id": entry["id"],
+        **dispatched,
+    }
+
+
 @router.post("/cache/{entry_id}/warm", status_code=202)
 def warm_cache_entry(entry_id: str):
+    with _conn() as conn:
+        osdeploy_cache.init(conn)
+        entry = osdeploy_cache.get_entry(conn, entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"OSDeploy cache entry not found: {entry_id}")
+    if _entry_is_factory_built(entry):
+        return _warm_factory_entry_via_agent(entry)
     return _queue_cache_job("osdeploy_cache_warm", "warm", {"entry_id": entry_id})
 
 

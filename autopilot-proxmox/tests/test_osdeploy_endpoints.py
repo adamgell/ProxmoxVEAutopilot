@@ -978,6 +978,85 @@ def test_osdeploy_cache_download_serves_ready_entry(osdeploy_client, pg_conn, tm
     assert mismatch.status_code == 404
 
 
+def test_osdeploy_cache_warm_server_image_dispatches_agent_build(
+    osdeploy_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg, osdeploy_cache, osdeploy_endpoints
+    from web import app as web_app
+
+    entry = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "server_image",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-en-us.iso",
+        "source_url": "manual://microsoft-volume-licensing-or-eval-center",
+        "metadata": {"factory": "OSDeploy/OSDBuilder", "content_role": "source_media"},
+    })
+    pg_conn.commit()
+
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="buildhost-100",
+        token="build-host-token",
+        vmid=100,
+    )
+    pg_conn.commit()
+
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "_build_host_agent_target",
+        lambda agent_id_override="": {
+            "available": True,
+            "agent_id": "buildhost-100",
+            "vmid": 100,
+            "controller_url": "http://autopilot.test:5000",
+            "source_bundle_url": "http://autopilot.test:5000/api/setup/v1/source-bundle.zip",
+            "agent_state": "ready",
+            "last_heartbeat_age_seconds": 5,
+            "blocking_checks": [],
+        },
+    )
+    monkeypatch.setattr(web_app, "_repo_git_metadata_for_bundle", lambda: {})
+
+    resp = osdeploy_client.post(f"/api/osdeploy/v1/cache/{entry['id']}/warm")
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["kind"] == "build_osdeploy"
+    work_item_id = body["work_item_id"]
+
+    updated = osdeploy_cache.get_entry(pg_conn, entry["id"])
+    assert updated["status"] == "warming"
+    assert updated["metadata"]["build_work_item_id"] == work_item_id
+
+    work_item = agent_telemetry_pg.get_work_item(pg_conn, work_item_id)
+    assert work_item["kind"] == "build_osdeploy"
+    assert work_item["request_json"]["os_version"] == "Windows Server 2022"
+    assert work_item["request_json"]["os_edition"] == "Datacenter"
+
+
+def test_osdeploy_cache_refresh_no_longer_seeds_quality_updates(pg_conn, monkeypatch, tmp_path):
+    from web import osdeploy_cache
+
+    monkeypatch.setenv("AUTOPILOT_OSDEPLOY_CACHE_ROOT", str(tmp_path))
+    osdeploy_cache.reset_for_tests(pg_conn)
+    osdeploy_cache.init(pg_conn)
+
+    result = osdeploy_cache.refresh_catalog(pg_conn)
+    entries = osdeploy_cache.list_entries(pg_conn)
+
+    assert result["quality_updates"] == []
+    assert all(entry["entry_type"] == "server_image" for entry in entries)
+    assert {entry["windows_version"] for entry in entries} >= {
+        "Windows Server 2025",
+        "Windows Server 2022",
+    }
+
+
 def test_osdeploy_build_preflight_blocks_missing_key_and_unreachable_remote(
     osdeploy_client,
     monkeypatch,
