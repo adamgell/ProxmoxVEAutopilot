@@ -49,6 +49,61 @@ def _with_id(row: dict, key: str) -> dict:
     return clean
 
 
+def _parse_dhcp_range(value) -> tuple[str, str]:
+    """Normalize PVE's dhcp-range field into (start, end) IP strings.
+
+    PVE returns this as a list of {start-address, end-address} dicts in
+    inventory responses, but config dumps elsewhere use the legacy
+    "start-address=X,end-address=Y" comma-separated string. Accept both
+    plus single-dict and array-of-strings forms so the UI sees a stable
+    shape regardless of which PVE endpoint the data came from.
+    """
+    if value is None:
+        return "", ""
+    if isinstance(value, dict):
+        return (
+            str(value.get("start-address") or value.get("start") or "").strip(),
+            str(value.get("end-address") or value.get("end") or "").strip(),
+        )
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                start = str(item.get("start-address") or item.get("start") or "").strip()
+                end = str(item.get("end-address") or item.get("end") or "").strip()
+                if start or end:
+                    return start, end
+            elif isinstance(item, str):
+                start, end = _parse_dhcp_range(item)
+                if start or end:
+                    return start, end
+        return "", ""
+    if isinstance(value, str):
+        start = ""
+        end = ""
+        for part in value.split(","):
+            kv = part.split("=", 1)
+            if len(kv) != 2:
+                continue
+            key, raw = kv[0].strip().lower(), kv[1].strip()
+            if key == "start-address":
+                start = raw
+            elif key == "end-address":
+                end = raw
+        return start, end
+    return "", ""
+
+
+def _normalize_subnet(row: dict) -> dict:
+    """Pre-parse subnet fields the UI consumes so consumers don't have
+    to know that PVE sometimes returns dhcp-range as a list-of-dicts and
+    sometimes as a comma-separated string."""
+    out = _with_id(row, "subnet")
+    start, end = _parse_dhcp_range(out.get("dhcp-range"))
+    out["dhcp_range_start"] = start
+    out["dhcp_range_end"] = end
+    return out
+
+
 def _surface_pve_error(exc: Exception, path: str) -> None:
     """Translate an upstream Proxmox HTTPError into a FastAPI HTTPException.
 
@@ -133,7 +188,7 @@ def inventory(pve_api) -> dict:
             rows = pve_api(f"/cluster/sdn/vnets/{_part(vnet_id)}/subnets") or []
         except Exception:
             rows = []
-        subnets_by_vnet[str(vnet_id)] = [_with_id(row, "subnet") for row in rows]
+        subnets_by_vnet[str(vnet_id)] = [_normalize_subnet(row) for row in rows]
     try:
         controllers = [_with_id(row, "controller") for row in pve_api("/cluster/sdn/controllers") or []]
     except Exception:

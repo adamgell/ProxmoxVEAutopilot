@@ -270,10 +270,12 @@ function bubbleFormPayload(values: BubbleFormValues): Readonly<Record<string, un
 
 interface OrphanVnetSubnet {
   readonly subnet?: string;
+  readonly cidr?: string;
   readonly gateway?: string;
   readonly snat?: boolean;
   readonly dhcp_dns_server?: string;
-  readonly dhcp_range?: string;
+  readonly dhcp_range_start?: string;
+  readonly dhcp_range_end?: string;
 }
 
 interface OrphanVnet {
@@ -299,31 +301,6 @@ interface BubbleBoundNetwork {
   readonly dhcpEnd: string;
   readonly dhcpDnsServer: string;
   readonly subnetSource: "sdn" | "binding";
-}
-
-// Parse a PVE-formatted dhcp-range string
-// ("start-address=192.168.55.100,end-address=192.168.55.199")
-// into separate start/end IPs for pre-filling the bubble form's
-// dhcp_pool_start / dhcp_pool_end inputs.
-function parseDhcpRange(value: string | undefined): { start: string; end: string } {
-  if (!value) {
-    return { start: "", end: "" };
-  }
-  let start = "";
-  let end = "";
-  for (const part of value.split(",")) {
-    const [key, raw] = part.split("=", 2);
-    if (!key || !raw) {
-      continue;
-    }
-    const trimmed = raw.trim();
-    if (key.trim().toLowerCase() === "start-address") {
-      start = trimmed;
-    } else if (key.trim().toLowerCase() === "end-address") {
-      end = trimmed;
-    }
-  }
-  return { start, end };
 }
 
 type AgentFormDraft = {
@@ -918,17 +895,24 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       readonly binding?: { readonly vnet: string; readonly zone: string; readonly subnet: string };
       readonly subnet?: {
         readonly subnet?: string;
+        readonly cidr?: string;
         readonly gateway?: string;
         readonly dhcp_dns_server?: string;
-        readonly dhcp_range?: string;
+        readonly dhcp_range_start?: string;
+        readonly dhcp_range_end?: string;
       } | null;
     }>(`/api/sdn/labs/${encodeURIComponent(bubble.id)}/network`)
       .then((data) => {
         if (!data.binding) {
           return;
         }
-        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet ?? "";
-        const range = parseDhcpRange(data.subnet?.dhcp_range);
+        // The PVE subnet has BOTH a `subnet` (URL id like
+        // "labz1-192.168.16.0-24") AND a `cidr` ("192.168.16.0/24").
+        // Operators expect the CIDR -- the id is an internal detail.
+        const subnetCidr =
+          data.subnet?.cidr ?? data.subnet?.subnet ?? data.binding.subnet ?? "";
+        const dhcpStart = data.subnet?.dhcp_range_start ?? "";
+        const dhcpEnd = data.subnet?.dhcp_range_end ?? "";
         const gateway = data.subnet?.gateway ?? "";
         const dhcpDns = data.subnet?.dhcp_dns_server ?? "";
         setBubbleBoundNetwork({
@@ -936,8 +920,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           zone: data.binding.zone,
           subnet: subnetCidr,
           gateway,
-          dhcpStart: range.start,
-          dhcpEnd: range.end,
+          dhcpStart,
+          dhcpEnd,
           dhcpDnsServer: dhcpDns,
           subnetSource: data.subnet ? "sdn" : "binding"
         });
@@ -946,8 +930,8 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           cidr: subnetCidr || current.cidr,
           gateway_ip: gateway || current.gateway_ip,
           dhcp_scope: data.binding?.vnet ?? current.dhcp_scope,
-          dhcp_pool_start: range.start || current.dhcp_pool_start,
-          dhcp_pool_end: range.end || current.dhcp_pool_end
+          dhcp_pool_start: dhcpStart || current.dhcp_pool_start,
+          dhcp_pool_end: dhcpEnd || current.dhcp_pool_end
         }));
       })
       .catch(() => {
@@ -965,17 +949,18 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     if (!match) {
       return;
     }
-    const subnetCidr = match.subnet?.subnet ?? "";
+    const subnetCidr = match.subnet?.cidr ?? match.subnet?.subnet ?? "";
     const gateway = match.subnet?.gateway ?? "";
-    const range = parseDhcpRange(match.subnet?.dhcp_range);
+    const dhcpStart = match.subnet?.dhcp_range_start ?? "";
+    const dhcpEnd = match.subnet?.dhcp_range_end ?? "";
     setBubbleAdoptedVnet({ vnet: match.vnet, zone: match.zone, subnet: subnetCidr });
     setBubbleDraft((current) => ({
       ...current,
       cidr: subnetCidr || current.cidr,
       gateway_ip: gateway || current.gateway_ip,
       dhcp_scope: match.alias || match.vnet || current.dhcp_scope,
-      dhcp_pool_start: range.start || current.dhcp_pool_start,
-      dhcp_pool_end: range.end || current.dhcp_pool_end,
+      dhcp_pool_start: dhcpStart || current.dhcp_pool_start,
+      dhcp_pool_end: dhcpEnd || current.dhcp_pool_end,
       isolation_status: current.isolation_status === "planned" ? "ready" : current.isolation_status
     }));
   }, [orphanVnets]);

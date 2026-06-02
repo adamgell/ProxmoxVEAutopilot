@@ -24,12 +24,28 @@ function asString(value: unknown): string {
   return String(value);
 }
 
+// PVE returns booleans as 1/0 (numeric or string), some endpoints emit
+// lower-case "true"/"false", and the JSON-encoded version of a real
+// boolean lands as "true"/"false". The <input type=checkbox> in this
+// form compares against the literal "true", so normalize once here so
+// every truthy representation round-trips correctly when pre-filling
+// an edit form from API data.
+function normalizeBoolean(raw: string): "true" | "false" {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === "true" || trimmed === "1" || trimmed === "yes" || trimmed === "on") {
+    return "true";
+  }
+  return "false";
+}
+
 function defaultValuesFor(fields: readonly FieldDef[], initial?: Readonly<Record<string, string>>): Record<string, string> {
   const seed: Record<string, string> = {};
   for (const field of fields) {
     const initialValue = initial?.[field.name];
     if (initialValue !== undefined) {
-      seed[field.name] = asString(initialValue);
+      seed[field.name] = field.kind === "checkbox"
+        ? normalizeBoolean(asString(initialValue))
+        : asString(initialValue);
       continue;
     }
     if (field.kind === "checkbox") {

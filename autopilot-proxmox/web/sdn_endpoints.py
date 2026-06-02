@@ -530,10 +530,12 @@ def get_lab_network(bubble_id: str):
         if primary is not None:
             subnet_info = {
                 "subnet": str(primary.get("subnet") or primary.get("id") or ""),
+                "cidr": str(primary.get("cidr") or ""),
                 "gateway": str(primary.get("gateway") or ""),
                 "snat": bool(primary.get("snat")),
                 "dhcp_dns_server": str(primary.get("dhcp-dns-server") or ""),
-                "dhcp_range": str(primary.get("dhcp-range") or ""),
+                "dhcp_range_start": str(primary.get("dhcp_range_start") or ""),
+                "dhcp_range_end": str(primary.get("dhcp_range_end") or ""),
                 "dnszoneprefix": str(primary.get("dnszoneprefix") or ""),
             }
     except HTTPException:
@@ -589,13 +591,14 @@ def list_orphan_vnets():
             primary_subnet = subnets[0] if isinstance(subnets[0], dict) else {}
         subnet_info = {}
         if primary_subnet:
-            cidr = str(primary_subnet.get("subnet") or primary_subnet.get("id") or "")
             subnet_info = {
-                "subnet": cidr,
+                "subnet": str(primary_subnet.get("subnet") or primary_subnet.get("id") or ""),
+                "cidr": str(primary_subnet.get("cidr") or ""),
                 "gateway": str(primary_subnet.get("gateway") or ""),
                 "snat": bool(primary_subnet.get("snat")),
                 "dhcp_dns_server": str(primary_subnet.get("dhcp-dns-server") or ""),
-                "dhcp_range": str(primary_subnet.get("dhcp-range") or ""),
+                "dhcp_range_start": str(primary_subnet.get("dhcp_range_start") or ""),
+                "dhcp_range_end": str(primary_subnet.get("dhcp_range_end") or ""),
             }
         orphans.append({**vnet, "subnet": subnet_info})
     return {"orphan_vnets": orphans, "total_vnets": len(vnets), "bound_vnets": sorted(bound_vnets)}

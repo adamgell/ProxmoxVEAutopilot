@@ -272,6 +272,44 @@ function ObjectTable({
   );
 }
 
+function lastIpOctet(ip: unknown): string {
+  if (typeof ip !== "string") {
+    return "";
+  }
+  const parts = ip.trim().split(".");
+  if (parts.length !== 4) {
+    return "";
+  }
+  return parts[3] ?? "";
+}
+
+// Build the initialValues for the subnet inline edit form. The raw PVE
+// row carries `cidr` plus the already-parsed `dhcp_range_start` /
+// `dhcp_range_end` from the backend's `_normalize_subnet`, but the form
+// inputs only want the LAST octet (the prefix renders as a static
+// label). Without this transform the inputs show up blank when an
+// operator clicks Edit on a subnet that already has a DHCP range.
+function subnetEditInitialValues(
+  row: SdnObject & { readonly parentVnet: string }
+): Readonly<Record<string, string>> {
+  const seed: Record<string, string> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    seed[key] = typeof value === "boolean" ? (value ? "true" : "false") : String(value);
+  }
+  const start = lastIpOctet(row.dhcp_range_start);
+  const end = lastIpOctet(row.dhcp_range_end);
+  if (start) {
+    seed.dhcp_range_start = start;
+  }
+  if (end) {
+    seed.dhcp_range_end = end;
+  }
+  return seed;
+}
+
 function SubnetTable({
   rows,
   actions
@@ -319,7 +357,7 @@ function SubnetTable({
                         mode="edit"
                         title={`Edit subnet ${id}`}
                         fields={subnetSchema.editFields}
-                        initialValues={row as Readonly<Record<string, string>>}
+                        initialValues={subnetEditInitialValues(row)}
                         busy={actions.busy === `${actions.kind}:${row.parentVnet}/${id}`}
                         error={actions.mutationError}
                         onCancel={actions.onCancelEdit}
@@ -504,7 +542,11 @@ export function NetworksPage({
     const schema = sdnSchemas[kind];
     const merged: Record<string, unknown> = { ...(schema.defaultBody ?? {}), ...body };
     if (kind === "subnet") {
-      const cidr = values["subnet"] ?? "";
+      // On create the operator types the CIDR into a field named
+      // "subnet"; on edit the form is seeded from the row, which
+      // exposes the CIDR as `cidr` (the `subnet` key on the row is the
+      // immutable PVE URL id like "labz1-192.168.16.0-24"). Try both.
+      const cidr = values["cidr"] || values["subnet"] || "";
       const prefix = cidrHostPrefix(cidr);
       const start = (values["dhcp_range_start"] ?? "").trim();
       const end = (values["dhcp_range_end"] ?? "").trim();
