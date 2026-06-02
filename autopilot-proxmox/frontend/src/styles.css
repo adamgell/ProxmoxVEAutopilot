@@ -1901,33 +1901,87 @@ h3 {
   font-size: 11px;
 }
 
+.bubble-network-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.bubble-network-link__badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.bubble-network-link__meta code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.bubble-network-link__edit {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.bubble-network-link__edit::after {
+  content: " \2192";
+}
+
+.bubble-network-link__edit:hover {
+  text-decoration: underline;
+}
+
 .bubble-network-readonly {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px 16px;
+  gap: 10px;
   margin: 0;
 }
 
-.bubble-network-readonly > div {
-  display: grid;
+.bubble-network-tile {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
   min-width: 0;
 }
 
-.bubble-network-readonly dt {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.bubble-network-readonly dd {
+.bubble-network-tile dd {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.bubble-network-tile dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .bubble-form-field span {

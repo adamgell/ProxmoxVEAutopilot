@@ -2609,19 +2609,41 @@ function BubbleEditor({
         <h4 className="bubble-form-section__title">Network</h4>
         {boundNetwork ? (
           <>
-            <p className="bubble-form-note">
-              This bubble is bound to SDN vnet <code>{boundNetwork.vnet}</code>{" "}
-              (zone <code>{boundNetwork.zone}</code>). Network details are
-              pulled from the live PVE subnet config; edit them on the
-              Networks page so the rest of the cluster sees the change too.
-            </p>
+            <div className="bubble-network-link">
+              <span className="bubble-network-link__badge">Linked SDN</span>
+              <span className="bubble-network-link__meta">
+                vnet <code>{boundNetwork.vnet}</code> / zone{" "}
+                <code>{boundNetwork.zone}</code>
+              </span>
+              <a className="bubble-network-link__edit" href="/react/networks">
+                Edit on Networks
+              </a>
+            </div>
             <dl className="bubble-network-readonly">
-              <div><dt>Isolated CIDR</dt><dd>{boundNetwork.subnet || "-"}</dd></div>
-              <div><dt>Gateway IP</dt><dd>{boundNetwork.gateway || "-"}</dd></div>
-              <div><dt>DHCP network ID</dt><dd>{boundNetwork.vnet}</dd></div>
-              <div><dt>DHCP DNS server</dt><dd>{boundNetwork.dhcpDnsServer || "-"}</dd></div>
-              <div><dt>DHCP pool start</dt><dd>{boundNetwork.dhcpStart || "-"}</dd></div>
-              <div><dt>DHCP pool end</dt><dd>{boundNetwork.dhcpEnd || "-"}</dd></div>
+              <div className="bubble-network-tile">
+                <dd>{boundNetwork.subnet || "-"}</dd>
+                <dt>Isolated CIDR</dt>
+              </div>
+              <div className="bubble-network-tile">
+                <dd>{boundNetwork.gateway || "-"}</dd>
+                <dt>Gateway IP</dt>
+              </div>
+              <div className="bubble-network-tile">
+                <dd>{boundNetwork.vnet}</dd>
+                <dt>DHCP network ID</dt>
+              </div>
+              <div className="bubble-network-tile">
+                <dd>{boundNetwork.dhcpDnsServer || "-"}</dd>
+                <dt>DHCP DNS server</dt>
+              </div>
+              <div className="bubble-network-tile">
+                <dd>{boundNetwork.dhcpStart || "-"}</dd>
+                <dt>DHCP pool start</dt>
+              </div>
+              <div className="bubble-network-tile">
+                <dd>{boundNetwork.dhcpEnd || "-"}</dd>
+                <dt>DHCP pool end</dt>
+              </div>
             </dl>
           </>
         ) : (
