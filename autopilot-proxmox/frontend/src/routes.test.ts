@@ -136,7 +136,8 @@ describe("operator route registry", () => {
       actionLabel: "Start desktop run",
       tone: "good"
     });
-    expect(operatorOutcomes.flatMap((outcome) => outcome.relatedRoutes.map((route) => route.href))).toEqual(
+    const relatedRouteHrefs = operatorOutcomes.flatMap((outcome) => outcome.relatedRoutes.map((route) => route.href));
+    expect(relatedRouteHrefs).toEqual(
       expect.arrayContaining([
         "/react/jobs",
         "/react/vms",
@@ -147,9 +148,8 @@ describe("operator route registry", () => {
         "/react/credentials"
       ])
     );
-    expect(operatorOutcomes.flatMap((outcome) => outcome.relatedRoutes.map((route) => route.href))).not.toEqual(
-      expect.arrayContaining(["/react/jobs/:jobId", "/react/cloudosd/runs/:runId"])
-    );
+    expect(relatedRouteHrefs).not.toContain("/react/jobs/:jobId");
+    expect(relatedRouteHrefs).not.toContain("/react/cloudosd/runs/:runId");
   });
 
   test("keeps detail routes searchable without promoting them to primary outcome cards", () => {
