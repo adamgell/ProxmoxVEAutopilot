@@ -1,6 +1,16 @@
 import { describe, expect, test } from "vitest";
 
-import { migratedRoutes, operatorFlows, operatorNavGroups, reactRouteForPath } from "./routes";
+import {
+  migratedRoutes,
+  modeForPath,
+  operatorFlows,
+  operatorModes,
+  operatorNavGroups,
+  operatorOutcomes,
+  operatorQuickRoutes,
+  reactRouteForPath,
+  routeSearchTargets
+} from "./routes";
 
 describe("operator route registry", () => {
   test("registers only active React routes as migrated routes", () => {
@@ -89,5 +99,79 @@ describe("operator route registry", () => {
       ])
     );
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
+  });
+
+  test("defines the compact outcome modes in operator order", () => {
+    expect(operatorModes.map((mode) => [mode.id, mode.label, mode.href])).toEqual([
+      ["home", "Home", "/react-shell"],
+      ["deploy", "Deploy", "/react/cloudosd"],
+      ["build", "Build", "/react/task-engine"],
+      ["fleet", "Fleet", "/react/vms"],
+      ["settings", "Set", "/react/settings"]
+    ]);
+  });
+
+  test("defines quick routes for repeated operator jumps", () => {
+    expect(operatorQuickRoutes.map((route) => [route.label, route.href, route.mode])).toEqual([
+      ["Jobs", "/react/jobs", "home"],
+      ["VMs", "/react/vms", "fleet"],
+      ["Hashes", "/react/hashes", "fleet"],
+      ["Runs", "/react/runs", "home"]
+    ]);
+  });
+
+  test("defines the daily control room outcomes without equal-weight detail routes", () => {
+    expect(operatorOutcomes.map((outcome) => outcome.id)).toEqual([
+      "deploy-desktop",
+      "deploy-server",
+      "prove-ready",
+      "build-media",
+      "watch-health",
+      "fix-configuration"
+    ]);
+    expect(operatorOutcomes.find((outcome) => outcome.id === "deploy-desktop")).toMatchObject({
+      mode: "deploy",
+      title: "Deploy a Windows desktop",
+      primaryHref: "/react/cloudosd",
+      actionLabel: "Start desktop run",
+      tone: "good"
+    });
+    expect(operatorOutcomes.flatMap((outcome) => outcome.relatedRoutes.map((route) => route.href))).toEqual(
+      expect.arrayContaining([
+        "/react/jobs",
+        "/react/vms",
+        "/react/hashes",
+        "/react/devices",
+        "/react/task-engine",
+        "/react/monitoring",
+        "/react/credentials"
+      ])
+    );
+    expect(operatorOutcomes.flatMap((outcome) => outcome.relatedRoutes.map((route) => route.href))).not.toEqual(
+      expect.arrayContaining(["/react/jobs/:jobId", "/react/cloudosd/runs/:runId"])
+    );
+  });
+
+  test("keeps detail routes searchable without promoting them to primary outcome cards", () => {
+    expect(routeSearchTargets.map((route) => route.path)).toEqual(
+      expect.arrayContaining([
+        "/react/jobs/:jobId",
+        "/react/cloudosd/runs/:runId",
+        "/react/osdeploy/runs/:runId",
+        "/react/task-engine/sequences/:sequenceId/edit",
+        "/react/sequences/:sequenceId/edit"
+      ])
+    );
+    expect(routeSearchTargets.find((route) => route.path === "/react/jobs/:jobId")?.label).toBe("Job Detail");
+  });
+
+  test("maps the active path to the correct outcome mode", () => {
+    expect(modeForPath("/react-shell")).toBe("home");
+    expect(modeForPath("/react/cloudosd")).toBe("deploy");
+    expect(modeForPath("/react/cloudosd/runs/run-1")).toBe("deploy");
+    expect(modeForPath("/react/task-engine/sequences/list")).toBe("build");
+    expect(modeForPath("/react/vms/109")).toBe("fleet");
+    expect(modeForPath("/react/monitoring/settings")).toBe("settings");
+    expect(modeForPath("/react/monitoring")).toBe("home");
   });
 });
