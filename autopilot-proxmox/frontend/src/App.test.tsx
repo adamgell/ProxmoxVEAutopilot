@@ -1342,6 +1342,17 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
   });
 
+  test("renders the outcome-map control room at react shell", () => {
+    window.history.pushState({}, "", "/react-shell");
+    render(<App bootstrap={{ userName: "Adam", buildSha: "abc1234" }} />);
+
+    expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("heading", { name: "Prove a machine is ready" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
+  });
+
   test("renders the Signals Hub read-only slice from API data", async () => {
     mockFetch(dashboardResponses);
 
