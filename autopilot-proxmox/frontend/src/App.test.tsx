@@ -705,6 +705,22 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: /winpe/i })).not.toBeInTheDocument();
   });
 
+  test("renders outcome shell chrome and keeps command search routing", async () => {
+    window.history.pushState({}, "", "/react/jobs");
+    render(<App bootstrap={{ userName: "Adam", buildSha: "abc1234" }} />);
+
+    expect(await screen.findByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/react-shell");
+    expect(screen.getByRole("link", { name: "Deploy" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Fleet" })).toHaveAttribute("href", "/react/vms");
+
+    const search = screen.getByRole("searchbox", { name: "Search console" });
+    fireEvent.change(search, { target: { value: "Hashes" } });
+    fireEvent.submit(search.closest("form") as HTMLFormElement);
+
+    expect(window.location.pathname).toBe("/react/hashes");
+  });
+
   test.each([
     "/react/dashboard",
     "/react/jobs",
