@@ -1,28 +1,32 @@
 export const WINDOWS_COMPUTER_NAME_LIMIT = 15;
+export const CLOUDOSD_INDEX_TOKEN = "{index}";
+export const CLOUDOSD_INDEX_PREVIEW = "01";
 
 export interface ProvisionNaming {
+  readonly runTag: string;
   readonly groupTag: string;
   readonly hostnamePattern: string;
   readonly previewName: string;
   readonly previewLength: number;
   readonly limit: number;
   readonly safe: boolean;
-  readonly normalized: string;
+  readonly normalized: boolean;
+  readonly normalizedName: string;
 }
 
-const INDEX_PREVIEW = "01";
 const VMID_PREVIEW = "105";
 const SERIAL_PREVIEW = "SERIAL01";
-const INDEX_SUFFIX_LENGTH = 1 + INDEX_PREVIEW.length;
+const INDEX_SUFFIX_LENGTH = 1 + CLOUDOSD_INDEX_PREVIEW.length;
 const NUMERIC_PREFIX = "pve-";
 const FALLBACK_BASE = "ap";
 
 export function deriveProvisionNaming(runTag: string): ProvisionNaming {
   const base = deriveHostnameBase(runTag);
-  const hostnamePattern = `${base}-{index}`;
+  const hostnamePattern = `${base}-${CLOUDOSD_INDEX_TOKEN}`;
   const preview = previewHostnamePattern(hostnamePattern);
 
   return {
+    runTag,
     groupTag: runTag,
     hostnamePattern,
     ...preview
@@ -31,19 +35,20 @@ export function deriveProvisionNaming(runTag: string): ProvisionNaming {
 
 export function previewHostnamePattern(
   pattern: string
-): Pick<ProvisionNaming, "previewName" | "previewLength" | "limit" | "safe" | "normalized"> {
+): Pick<ProvisionNaming, "previewName" | "previewLength" | "limit" | "safe" | "normalized" | "normalizedName"> {
   const previewName = pattern
-    .replace(/\{index\}/gi, INDEX_PREVIEW)
+    .replace(/\{index\}/gi, CLOUDOSD_INDEX_PREVIEW)
     .replace(/\{vmid\}/gi, VMID_PREVIEW)
     .replace(/\{serial\}/gi, SERIAL_PREVIEW);
-  const normalized = normalizeComputerName(previewName);
+  const normalizedName = normalizeComputerName(previewName);
 
   return {
     previewName,
     previewLength: previewName.length,
     limit: WINDOWS_COMPUTER_NAME_LIMIT,
-    safe: previewName === normalized,
-    normalized
+    safe: previewName === normalizedName,
+    normalized: previewName !== normalizedName,
+    normalizedName
   };
 }
 
@@ -77,7 +82,7 @@ function deriveHostnameBase(runTag: string): string {
   const tenantToken = tokens[0] ?? FALLBACK_BASE;
   const compactTenant = tenantToken.match(/^([A-Za-z]+)(\d+)$/);
 
-  if (compactTenant && tokens.length > 1) {
+  if (compactTenant) {
     const letters = compactTenant[1] ?? "";
     const digits = compactTenant[2] ?? "";
     return normalizeHostnameBase(`${letters.slice(0, 3)}${digits.slice(-2)}`, INDEX_SUFFIX_LENGTH);

@@ -442,6 +442,8 @@ function RunTagComposer({
   previewName,
   previewLength,
   previewLimit,
+  previewSafe,
+  normalizedPreviewName,
   onRunTagChange
 }: {
   readonly runTag: string;
@@ -450,6 +452,8 @@ function RunTagComposer({
   readonly previewName: string;
   readonly previewLength: number;
   readonly previewLimit: number;
+  readonly previewSafe: boolean;
+  readonly normalizedPreviewName: string;
   readonly onRunTagChange: (value: string) => void;
 }) {
   const runTagId = useId();
@@ -470,8 +474,13 @@ function RunTagComposer({
         </div>
         <div className="utility-field">
           <span>Preview name</span>
-          <strong className="provision-hostname-preview">{previewName}</strong>
-          <small>{previewLength} / {previewLimit}</small>
+          <strong className={`provision-hostname-preview${previewSafe ? "" : " provision-hostname-preview--unsafe"}`}>{previewName}</strong>
+          <small className={previewSafe ? undefined : "provision-hostname-warning"}>{previewLength} / {previewLimit}</small>
+          {!previewSafe ? (
+            <small className="provision-hostname-warning" role="alert">
+              Exceeds the Windows/Intune 15-character limit. Normalized preview: {normalizedPreviewName}.
+            </small>
+          ) : null}
         </div>
         <div className="utility-field">
           <span>Group tag preview</span>
@@ -494,6 +503,7 @@ function LaunchEssentials({
   activeDefaults,
   templateMinimum,
   hostnamePattern,
+  hostnamePreview,
   vmCount,
   onHostnamePatternChange,
   onVmCountChange,
@@ -504,12 +514,16 @@ function LaunchEssentials({
   readonly activeDefaults: Readonly<Record<string, string | number | boolean | null | undefined>>;
   readonly templateMinimum: number;
   readonly hostnamePattern: string;
+  readonly hostnamePreview: ReturnType<typeof previewHostnamePattern>;
   readonly vmCount: number;
   readonly onHostnamePatternChange: (value: string) => void;
   readonly onVmCountChange: (value: string) => void;
   readonly onResetHostname: () => void;
 }) {
   const defaults = payload.defaults;
+  const hostnameHelp = hostnamePreview.safe
+    ? "Tokens: {serial}, {vmid}, {index}."
+    : `Exceeds the Windows/Intune 15-character limit. Reset from run tag or shorten the pattern. Normalized preview: ${hostnamePreview.normalizedName}.`;
   return (
     <Panel title="Launch Essentials">
       <div className="utility-field-grid">
@@ -539,11 +553,16 @@ function LaunchEssentials({
             name="hostname_pattern"
             value={hostnamePattern}
             onChange={onHostnamePatternChange}
-            help="Tokens: {serial}, {vmid}, {index}."
+            help={hostnameHelp}
           />
           <button className="utility-button provision-icon-button" type="button" aria-label="Reset hostname from run tag" onClick={onResetHostname}>
             <RefreshCw aria-hidden="true" size={16} />
           </button>
+          {!hostnamePreview.safe ? (
+            <p className="notice notice--warn provision-hostname-warning" role="alert">
+              Provisioning is blocked until the hostname preview is 15 characters or fewer.
+            </p>
+          ) : null}
         </div>
         <NumberField label="CPU cores" name="cores" defaultValue={textValue(defaults.cores ?? activeDefaults.vm_cores, "")} min={1} max={64} />
         <NumberField label="Memory MB" name="memory_mb" defaultValue={textValue(defaults.memory_mb ?? activeDefaults.vm_memory_mb, "")} min={asNumber(activeDefaults.minimum_vm_memory_mb, 512)} step={512} />
@@ -902,6 +921,14 @@ function LaunchReviewRail({
   );
 }
 
+function initialHostnamePattern(defaultGroupTag: string, defaultPattern: string): string {
+  if (defaultPattern && previewHostnamePattern(defaultPattern).safe) {
+    return defaultPattern;
+  }
+
+  return deriveProvisionNaming(defaultGroupTag).hostnamePattern;
+}
+
 export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [payload, setPayload] = useState<ProvisionPagePayload>(EMPTY_PAYLOAD);
   const [bootMode, setBootMode] = useState<BootMode>("cloudosd");
@@ -923,7 +950,8 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
         const defaultGroupTag = textValue(defaults.group_tag, "");
         setRunTag(defaultGroupTag);
         setGroupTag(defaultGroupTag);
-        setHostnamePattern(defaults.hostname_pattern ? defaults.hostname_pattern : deriveProvisionNaming(defaultGroupTag).hostnamePattern);
+        setHostnamePattern(initialHostnamePattern(defaultGroupTag, textValue(defaults.hostname_pattern, "")));
+        setHostnameIsManual(false);
         setVmCount(asNumber(defaults.count, 1));
         setDefaultsApplied(true);
       }
@@ -994,6 +1022,8 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
               previewName={hostnamePreview.previewName}
               previewLength={hostnamePreview.previewLength}
               previewLimit={hostnamePreview.limit}
+              previewSafe={hostnamePreview.safe}
+              normalizedPreviewName={hostnamePreview.normalizedName}
               onRunTagChange={applyRunTag}
             />
             <BootPathRail bootMode={bootMode} onChange={setBootMode} />
@@ -1003,6 +1033,7 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
               activeDefaults={activeDefaults}
               templateMinimum={templateMinimum}
               hostnamePattern={hostnamePattern}
+              hostnamePreview={hostnamePreview}
               vmCount={vmCount}
               onHostnamePatternChange={updateHostnamePattern}
               onVmCountChange={updateVmCount}
@@ -1021,7 +1052,7 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
             <LaunchReviewRail payload={payload} vmCount={vmCount} previewName={hostnamePreview.previewName} />
 
             <div className="utility-form-actions">
-              <button className="utility-button" type="submit">Provision VMs</button>
+              <button className="utility-button" type="submit" disabled={!hostnamePreview.safe}>Provision VMs</button>
               <a className="utility-button" href="/react/cloudosd">OSDCloud</a>
               <a className="utility-button" href="/react/osdeploy">OSDeploy</a>
             </div>

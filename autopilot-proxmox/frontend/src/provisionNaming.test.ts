@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  CLOUDOSD_INDEX_PREVIEW,
+  CLOUDOSD_INDEX_TOKEN,
   deriveProvisionNaming,
   previewHostnamePattern,
   WINDOWS_COMPUTER_NAME_LIMIT
@@ -11,10 +13,12 @@ describe("provision naming", () => {
     const naming = deriveProvisionNaming("NTTENANT01-Desktop");
 
     expect(naming.groupTag).toBe("NTTENANT01-Desktop");
-    expect(naming.hostnamePattern).toBe("ntt01-{index}");
-    expect(naming.previewName).toBe("ntt01-01");
+    expect(naming.runTag).toBe("NTTENANT01-Desktop");
+    expect(naming.hostnamePattern).toBe(`ntt01-${CLOUDOSD_INDEX_TOKEN}`);
+    expect(naming.previewName).toBe(`ntt01-${CLOUDOSD_INDEX_PREVIEW}`);
     expect(naming.previewLength).toBe(8);
     expect(naming.safe).toBe(true);
+    expect(naming.normalized).toBe(false);
   });
 
   test("keeps descriptive non-numeric tags within the Windows computer-name limit", () => {
@@ -58,5 +62,24 @@ describe("provision naming", () => {
 
     expect(preview.previewName).toBe("lab-01");
     expect(preview.safe).toBe(true);
+    expect(preview.normalized).toBe(false);
+  });
+
+  test("flags manual patterns that exceed the Windows computer-name limit", () => {
+    const preview = previewHostnamePattern("autopilot-{serial}");
+
+    expect(preview.previewName).toBe("autopilot-SERIAL01");
+    expect(preview.previewLength).toBe(18);
+    expect(preview.safe).toBe(false);
+    expect(preview.normalized).toBe(true);
+    expect(preview.normalizedName).toBe("autopilot-seria");
+  });
+
+  test("compacts a single mixed tenant token before adding the index suffix", () => {
+    const naming = deriveProvisionNaming("NTTENANT01");
+
+    expect(naming.hostnamePattern).toBe("ntt01-{index}");
+    expect(naming.previewName).toBe("ntt01-01");
+    expect(naming.safe).toBe(true);
   });
 });

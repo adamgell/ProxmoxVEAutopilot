@@ -969,6 +969,10 @@ h3 {
   color: var(--bad);
 }
 
+.notice--warn {
+  color: var(--warn);
+}
+
 .utility-button {
   display: inline-flex;
   align-items: center;
@@ -1570,6 +1574,15 @@ h3 {
   color: var(--text);
   font-size: 18px;
   line-height: 1.25;
+}
+
+.provision-hostname-preview--unsafe,
+.provision-hostname-warning {
+  color: var(--warn);
+}
+
+.provision-hostname-warning {
+  font-weight: 800;
 }
 
 .provision-hash-capture-stack,

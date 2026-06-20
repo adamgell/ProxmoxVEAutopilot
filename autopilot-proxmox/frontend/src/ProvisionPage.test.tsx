@@ -205,7 +205,8 @@ describe("ProvisionPage", () => {
     expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Task sequence" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(2);
-    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");
+    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("pilot-{index}");
+    expect(screen.getAllByText("pilot-01").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Provision VMs" })).toBeInTheDocument();
     expect(screen.getByText("Gell-EC41E7EB")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Advanced OSDCloud Options" })).toBeInTheDocument();
@@ -227,6 +228,27 @@ describe("ProvisionPage", () => {
     expect(namedControl(form, "disk_size_gb")).toBeInTheDocument();
     expect(namedControl(form, "network_bridge")).toBeInTheDocument();
     expect(namedControl(form, "os_version")).toBeInTheDocument();
+  });
+
+  test("blocks unsafe manual hostname patterns and shows the normalized preview", async () => {
+    mockFetch();
+    renderProvision();
+
+    const hostnamePattern = await screen.findByRole("textbox", { name: "Hostname pattern" });
+    expect(hostnamePattern).toHaveValue("pilot-{index}");
+
+    fireEvent.change(hostnamePattern, { target: { value: "autopilot-{serial}" } });
+
+    expect(screen.getByRole("button", { name: "Provision VMs" })).toBeDisabled();
+    expect(screen.getAllByText("autopilot-SERIAL01").length).toBeGreaterThan(0);
+    expect(screen.getByText("18 / 15")).toBeInTheDocument();
+    expect(screen.getAllByText(/Normalized preview: autopilot-seria/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Provisioning is blocked/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset hostname from run tag" }));
+
+    expect(hostnamePattern).toHaveValue("pilot-{index}");
+    expect(screen.getByRole("button", { name: "Provision VMs" })).not.toBeDisabled();
   });
 
   test("fills down run tag to group tag and derives a Windows-safe hostname preview", async () => {
