@@ -70,3 +70,30 @@ Changed only `autopilot-proxmox/frontend/src/styles.css`.
 
 - The local Vite-only run returned `GET /api/provision/page failed: Not Found`, so visual QA used the Provision page's empty-payload fallback state rather than live backend inventory/artifact data.
 - The task brief listed some class names that are not currently emitted by `ProvisionPage.tsx`; I styled those requested selectors and also styled the actual emitted Task 2 selectors, staying within the CSS-only scope.
+
+---
+
+## Review Fix: Provision Run Tag Preview Overflow Guard
+
+## Status
+
+DONE
+
+## Scope
+
+Changed only `autopilot-proxmox/frontend/src/styles.css` for repo code.
+
+## Implementation
+
+- Added a narrow CSS-only overflow guard for direct text children inside `.provision-run-tag-grid .utility-field`.
+- Covered `span`, `strong`, and `small` preview/help content with `min-width: 0`, `max-width: 100%`, and `overflow-wrap: anywhere`.
+- Left React, tests, backend, and unrelated CSS untouched.
+
+## Verification
+
+- `git diff --check` passed.
+- `npm run build` from `autopilot-proxmox/frontend` passed and exercised Vite CSS parsing.
+
+## Concerns
+
+- Vite still emits the pre-existing large chunk advisory during build.

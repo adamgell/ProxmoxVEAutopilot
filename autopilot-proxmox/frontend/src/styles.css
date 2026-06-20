@@ -1502,6 +1502,14 @@ h3 {
   align-items: stretch;
 }
 
+.provision-run-tag-grid .utility-field > span,
+.provision-run-tag-grid .utility-field > strong,
+.provision-run-tag-grid .utility-field > small {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .provision-preview-grid,
 .provision-review-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
