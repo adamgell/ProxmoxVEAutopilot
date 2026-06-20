@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
+import { shellNavigator } from "./components/Shell";
 
 const dashboardResponses: Record<string, unknown> = {
   "/api/services": {
@@ -707,6 +708,7 @@ describe("App", () => {
 
   test("renders outcome shell chrome and keeps command search routing", async () => {
     window.history.pushState({}, "", "/react/jobs");
+    const assignSpy = vi.spyOn(shellNavigator, "assign").mockImplementation(() => {});
     render(<App bootstrap={{ userName: "Adam", buildSha: "abc1234" }} />);
 
     expect(await screen.findByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
@@ -718,7 +720,7 @@ describe("App", () => {
     fireEvent.change(search, { target: { value: "Hashes" } });
     fireEvent.submit(search.closest("form") as HTMLFormElement);
 
-    expect(window.location.pathname).toBe("/react/hashes");
+    expect(assignSpy).toHaveBeenCalledWith("/react/hashes");
   });
 
   test.each([

@@ -5,6 +5,12 @@ import { resolveCommandTarget } from "../navigation";
 import { modeForPath, operatorModes, routeSearchTargets } from "../routes";
 import { OperatorTopBar, OutcomeModeRail, SystemTray } from "./OutcomeNavigation";
 
+export const shellNavigator = {
+  assign(target: string) {
+    window.location.assign(target);
+  }
+};
+
 export function OperatorShell({
   bootstrap,
   path,
@@ -23,11 +29,7 @@ export function OperatorShell({
     event.preventDefault();
     const target = resolveCommandTarget(commandQuery, routeSearchTargets);
     if (target) {
-      if (/jsdom/iu.test(window.navigator.userAgent)) {
-        window.history.pushState({}, "", target);
-        return;
-      }
-      window.location.assign(target);
+      shellNavigator.assign(target);
     }
   }
 
