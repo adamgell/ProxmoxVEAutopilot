@@ -1,4 +1,5 @@
 import { useCallback, useId, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
 import { fetchJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
@@ -6,6 +7,7 @@ import { Metric, Panel } from "../components/ui";
 import type { AppBootstrap } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
 import { networkTargetOptions, type NetworkTargetOption } from "../networkTargets";
+import { deriveProvisionNaming, previewHostnamePattern } from "../provisionNaming";
 import { textValue } from "../utilityModels";
 
 type BootMode = "cloudosd" | "osdeploy" | "ubuntu" | "winpe" | "clone";
@@ -261,11 +263,19 @@ function TextField({
   label,
   name,
   defaultValue,
+  value,
+  onChange,
+  readOnly,
+  maxLength,
   help
 }: {
   readonly label: string;
   readonly name: string;
   readonly defaultValue?: string | number | undefined;
+  readonly value?: string | number | undefined;
+  readonly onChange?: (value: string) => void;
+  readonly readOnly?: boolean;
+  readonly maxLength?: number | undefined;
   readonly help?: string;
 }) {
   const id = useId();
@@ -273,7 +283,17 @@ function TextField({
   return (
     <div className="utility-field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} name={name} type="text" defaultValue={textValue(defaultValue, "")} aria-describedby={help ? helpId : undefined} />
+      <input
+        id={id}
+        name={name}
+        type="text"
+        value={value === undefined ? undefined : textValue(value, "")}
+        defaultValue={value === undefined ? textValue(defaultValue, "") : undefined}
+        readOnly={readOnly}
+        maxLength={maxLength}
+        aria-describedby={help ? helpId : undefined}
+        onChange={onChange ? (event) => { onChange(event.currentTarget.value); } : undefined}
+      />
       {help ? <small id={helpId}>{help}</small> : null}
     </div>
   );
@@ -283,6 +303,10 @@ function NumberField({
   label,
   name,
   defaultValue,
+  value,
+  onChange,
+  readOnly,
+  maxLength,
   min,
   max,
   step,
@@ -291,6 +315,10 @@ function NumberField({
   readonly label: string;
   readonly name: string;
   readonly defaultValue?: string | number | undefined;
+  readonly value?: string | number | undefined;
+  readonly onChange?: (value: string) => void;
+  readonly readOnly?: boolean;
+  readonly maxLength?: number | undefined;
   readonly min?: number | undefined;
   readonly max?: number | undefined;
   readonly step?: number | undefined;
@@ -305,11 +333,15 @@ function NumberField({
         id={id}
         name={name}
         type="number"
-        defaultValue={textValue(defaultValue, "")}
+        value={value === undefined ? undefined : value}
+        defaultValue={value === undefined ? textValue(defaultValue, "") : undefined}
+        readOnly={readOnly}
+        maxLength={maxLength}
         min={min}
         max={max}
         step={step}
         aria-describedby={help ? helpId : undefined}
+        onChange={onChange ? (event) => { onChange(event.currentTarget.value); } : undefined}
       />
       {help ? <small id={helpId}>{help}</small> : null}
     </div>
@@ -362,51 +394,278 @@ function CacheStatus({ cache, fallbackRoot }: { readonly cache: CachePayload; re
   );
 }
 
-function CloudosdSection({ payload }: { readonly payload: ProvisionPagePayload }) {
-  const target = targetOptions(payload.cloudosd_options);
-  const catalogDefaults = payload.cloudosd_catalog.defaults ?? {};
+const BOOT_MODE_OPTIONS: readonly { readonly value: BootMode; readonly label: string; readonly summary: string }[] = [
+  { value: "cloudosd", label: "OSDCloud", summary: "Desktop CloudOSD path" },
+  { value: "osdeploy", label: "OSDeploy v2", summary: "Windows Server path" },
+  { value: "ubuntu", label: "Ubuntu v2", summary: "Linux v2 sequence path" },
+  { value: "winpe", label: "Legacy WinPE", summary: "Classic WinPE path" },
+  { value: "clone", label: "Clone", summary: "Template clone fallback" }
+];
+
+function bootModeLabel(mode: BootMode): string {
+  return BOOT_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode;
+}
+
+function BootPathRail({
+  bootMode,
+  onChange
+}: {
+  readonly bootMode: BootMode;
+  readonly onChange: (mode: BootMode) => void;
+}) {
   return (
-    <Panel title="OSDCloud Desktop">
-      <div className="utility-field-grid">
-        <SelectField label="Node" name="node" defaultValue={payload.cloudosd_options.defaults?.node} options={target.nodes} />
-        <SelectField label="ISO storage" name="iso_storage" defaultValue={payload.cloudosd_options.defaults?.iso_storage} options={target.isoStorages} />
-        <SelectField label="Disk storage" name="storage" defaultValue={payload.cloudosd_options.defaults?.disk_storage} options={target.diskStorages} />
-        <SelectField label="Network target" name="network_bridge" defaultValue={payload.cloudosd_options.defaults?.bridge} options={target.networkTargets} />
-        <SelectField label="OS version" name="os_version" defaultValue={textValue(catalogDefaults.os_version, "")} options={optionsFrom(payload.cloudosd_catalog.os_versions, textValue(catalogDefaults.os_version, ""))} />
-        <SelectField label="OS edition" name="os_edition" defaultValue={textValue(catalogDefaults.os_edition, "")} options={optionsFrom(payload.cloudosd_catalog.os_editions, textValue(catalogDefaults.os_edition, ""))} />
-        <SelectField label="OS activation" name="os_activation" defaultValue={textValue(catalogDefaults.os_activation, "")} options={optionsFrom(payload.cloudosd_catalog.os_activations, textValue(catalogDefaults.os_activation, ""))} />
-        <SelectField label="OS language" name="os_language" defaultValue={textValue(catalogDefaults.os_language, "")} options={optionsFrom(payload.cloudosd_catalog.os_languages, textValue(catalogDefaults.os_language, ""))} />
-        <SelectField label="Driver pack policy" name="driver_pack_policy" defaultValue={textValue(catalogDefaults.driver_pack_policy, "")} options={optionsFrom(payload.cloudosd_catalog.driver_pack_policies, textValue(catalogDefaults.driver_pack_policy, ""))} />
-        <SelectField
-          label="Outbound policy"
-          name="outbound_policy_mode"
-          defaultValue="blocked"
-          options={[
-            { value: "blocked", label: "analytics blocked" },
-            { value: "allowed", label: "analytics allowed" }
-          ]}
-        />
-        <div className="utility-field utility-field--wide">
-          <span>OSDCloud policy</span>
-          <div className="provision-checkbox-row">
-            <CheckboxField label="TPM" name="tpm_enabled" defaultChecked />
-            <CheckboxField label="Secure Boot" name="secure_boot" defaultChecked />
-            <CheckboxField label="Firmware updates" name="firmware_updates_enabled" />
-            <CheckboxField label="Allow analytics" name="analytics_enabled" />
-          </div>
+    <Panel title="Boot Path">
+      <input type="hidden" name="boot_mode" value={bootMode} />
+      <div className="provision-boot-rail" role="radiogroup" aria-label="Boot mode">
+        {BOOT_MODE_OPTIONS.map((option) => (
+          <label key={option.value} className="provision-boot-option">
+            <input
+              type="radio"
+              aria-label={option.label}
+              value={option.value}
+              checked={bootMode === option.value}
+              onChange={() => { onChange(option.value); }}
+            />
+            <span>{option.label}</span>
+            <small>{option.summary}</small>
+          </label>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function RunTagComposer({
+  runTag,
+  groupTag,
+  bootMode,
+  previewName,
+  previewLength,
+  previewLimit,
+  onRunTagChange
+}: {
+  readonly runTag: string;
+  readonly groupTag: string;
+  readonly bootMode: BootMode;
+  readonly previewName: string;
+  readonly previewLength: number;
+  readonly previewLimit: number;
+  readonly onRunTagChange: (value: string) => void;
+}) {
+  const runTagId = useId();
+  const helpId = `${runTagId}-help`;
+  return (
+    <Panel title="Run Tag">
+      <div className="utility-field-grid provision-run-tag-grid">
+        <div className="utility-field">
+          <label htmlFor={runTagId}>Run tag</label>
+          <input
+            id={runTagId}
+            type="text"
+            value={runTag}
+            aria-describedby={helpId}
+            onChange={(event) => { onRunTagChange(event.currentTarget.value); }}
+          />
+          <small id={helpId}>Fills Group tag and, unless manually changed, the hostname pattern.</small>
         </div>
-        <div className="utility-field utility-field--wide">
-          <span>OSDCloud cache</span>
-          <CacheStatus cache={payload.cloudosd_cache} fallbackRoot="/app/cache/cloudosd" />
+        <div className="utility-field">
+          <span>Preview name</span>
+          <strong className="provision-hostname-preview">{previewName}</strong>
+          <small>{previewLength} / {previewLimit}</small>
+        </div>
+        <div className="utility-field">
+          <span>Group tag preview</span>
+          <strong>{groupTag || "none"}</strong>
+          <small>Submitted as group_tag</small>
+        </div>
+        <div className="utility-field">
+          <span>Active boot path</span>
+          <strong>{bootModeLabel(bootMode)}</strong>
+          <small>Submitted as boot_mode</small>
         </div>
       </div>
     </Panel>
   );
 }
 
-function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }) {
+function LaunchEssentials({
+  payload,
+  profileOptions,
+  activeDefaults,
+  templateMinimum,
+  hostnamePattern,
+  vmCount,
+  onHostnamePatternChange,
+  onVmCountChange,
+  onResetHostname
+}: {
+  readonly payload: ProvisionPagePayload;
+  readonly profileOptions: readonly { readonly value: string; readonly label: string }[];
+  readonly activeDefaults: Readonly<Record<string, string | number | boolean | null | undefined>>;
+  readonly templateMinimum: number;
+  readonly hostnamePattern: string;
+  readonly vmCount: number;
+  readonly onHostnamePatternChange: (value: string) => void;
+  readonly onVmCountChange: (value: string) => void;
+  readonly onResetHostname: () => void;
+}) {
+  const defaults = payload.defaults;
+  return (
+    <Panel title="Launch Essentials">
+      <div className="utility-field-grid">
+        <SelectField label="OEM profile" name="profile" defaultValue={textValue(defaults.oem_profile, "")} options={profileOptions} />
+        <SelectField
+          label="Chassis type override"
+          name="chassis_type_override"
+          defaultValue="0"
+          options={[
+            { value: "0", label: "Use profile default" },
+            { value: "3", label: "Desktop" },
+            { value: "8", label: "Portable" },
+            { value: "9", label: "Laptop" },
+            { value: "10", label: "Notebook" },
+            { value: "14", label: "Sub Notebook" },
+            { value: "15", label: "Space-saving" },
+            { value: "30", label: "Tablet" },
+            { value: "31", label: "Convertible" },
+            { value: "32", label: "Detachable" },
+            { value: "35", label: "Mini PC" }
+          ]}
+        />
+        <NumberField label="VM count" name="count" value={vmCount} onChange={onVmCountChange} min={1} max={50} />
+        <div className="utility-field provision-hostname-field">
+          <TextField
+            label="Hostname pattern"
+            name="hostname_pattern"
+            value={hostnamePattern}
+            onChange={onHostnamePatternChange}
+            help="Tokens: {serial}, {vmid}, {index}."
+          />
+          <button className="utility-button provision-icon-button" type="button" aria-label="Reset hostname from run tag" onClick={onResetHostname}>
+            <RefreshCw aria-hidden="true" size={16} />
+          </button>
+        </div>
+        <NumberField label="CPU cores" name="cores" defaultValue={textValue(defaults.cores ?? activeDefaults.vm_cores, "")} min={1} max={64} />
+        <NumberField label="Memory MB" name="memory_mb" defaultValue={textValue(defaults.memory_mb ?? activeDefaults.vm_memory_mb, "")} min={asNumber(activeDefaults.minimum_vm_memory_mb, 512)} step={512} />
+        <NumberField label="Disk GB" name="disk_size_gb" defaultValue={textValue(defaults.disk_size_gb ?? activeDefaults.vm_disk_size_gb, "")} min={Math.max(templateMinimum, asNumber(activeDefaults.minimum_vm_disk_size_gb, 1))} max={2048} />
+        <TextField label="Serial prefix" name="serial_prefix" defaultValue={defaults.serial_prefix} />
+      </div>
+    </Panel>
+  );
+}
+
+function AutopilotEnrollmentPanel({
+  bootMode,
+  groupTag,
+  onGroupTagChange
+}: {
+  readonly bootMode: BootMode;
+  readonly groupTag: string;
+  readonly onGroupTagChange: (value: string) => void;
+}) {
+  const isUbuntu = bootMode === "ubuntu";
+  const status = isUbuntu
+    ? "Not a Windows Autopilot hash capture path"
+    : "Windows Autopilot hash capture path";
+  return (
+    <Panel title="Autopilot Enrollment">
+      <div className="utility-field-grid">
+        <TextField label="Group tag" name="group_tag" value={groupTag} onChange={onGroupTagChange} />
+        <div className="utility-field utility-field--wide">
+          <span>Hash capture</span>
+          <div className="provision-hash-capture-stack">
+            <span className={isUbuntu ? "status-pill status--active" : "status-pill status--good"}>{status}</span>
+            <small>{isUbuntu ? "Ubuntu can keep the submitted group tag for backend compatibility." : "CloudOSD and Windows paths stage hash capture for Autopilot enrollment."}</small>
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function ArtifactReadiness({
+  label,
+  artifact
+}: {
+  readonly label: string;
+  readonly artifact: CloudosdArtifact | OsdeployArtifact | undefined;
+}) {
+  const ready = Boolean(artifact?.ready);
+  const build = textValue(artifact?.build_sha ?? artifact?.id, "none");
+  return (
+    <div className="utility-field utility-field--wide">
+      <span>{label}</span>
+      <div className="provision-artifact-readiness">
+        <span className={ready ? "status-pill status--good" : "status-pill status--active"}>{textValue(artifact?.readiness, ready ? "ready" : "not ready")}</span>
+        <code>{build}</code>
+        {artifact?.proxmox_volid ? <small>{artifact.proxmox_volid}</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function CloudosdDesktopPanel({ payload }: { readonly payload: ProvisionPagePayload }) {
+  const target = targetOptions(payload.cloudosd_options);
+  const catalogDefaults = payload.cloudosd_catalog.defaults ?? {};
+  return (
+    <Panel title="OSDCloud Desktop">
+      <div className="utility-field-grid">
+        <SelectField label="Node" name="node" defaultValue={payload.cloudosd_options.defaults?.node} options={target.nodes} />
+        <SelectField label="Network target" name="network_bridge" defaultValue={payload.cloudosd_options.defaults?.bridge} options={target.networkTargets} />
+        <SelectField label="OS version" name="os_version" defaultValue={textValue(catalogDefaults.os_version, "")} options={optionsFrom(payload.cloudosd_catalog.os_versions, textValue(catalogDefaults.os_version, ""))} />
+        <SelectField label="OS edition" name="os_edition" defaultValue={textValue(catalogDefaults.os_edition, "")} options={optionsFrom(payload.cloudosd_catalog.os_editions, textValue(catalogDefaults.os_edition, ""))} />
+        <SelectField label="OS activation" name="os_activation" defaultValue={textValue(catalogDefaults.os_activation, "")} options={optionsFrom(payload.cloudosd_catalog.os_activations, textValue(catalogDefaults.os_activation, ""))} />
+        <SelectField label="OS language" name="os_language" defaultValue={textValue(catalogDefaults.os_language, "")} options={optionsFrom(payload.cloudosd_catalog.os_languages, textValue(catalogDefaults.os_language, ""))} />
+      </div>
+    </Panel>
+  );
+}
+
+function AdvancedCloudosdOptions({ payload }: { readonly payload: ProvisionPagePayload }) {
+  const target = targetOptions(payload.cloudosd_options);
+  const catalogDefaults = payload.cloudosd_catalog.defaults ?? {};
+  const artifact = payload.cloudosd_ready_artifacts[0] ?? payload.cloudosd_artifacts[0];
+  return (
+    <Panel title="Advanced OSDCloud Options">
+      <details className="provision-advanced-options" open>
+        <summary>Advanced OSDCloud Options</summary>
+        <div className="utility-field-grid">
+          <SelectField label="ISO storage" name="iso_storage" defaultValue={payload.cloudosd_options.defaults?.iso_storage} options={target.isoStorages} />
+          <SelectField label="Disk storage" name="storage" defaultValue={payload.cloudosd_options.defaults?.disk_storage} options={target.diskStorages} />
+          <SelectField label="Driver pack policy" name="driver_pack_policy" defaultValue={textValue(catalogDefaults.driver_pack_policy, "")} options={optionsFrom(payload.cloudosd_catalog.driver_pack_policies, textValue(catalogDefaults.driver_pack_policy, ""))} />
+          <SelectField
+            label="Outbound policy"
+            name="outbound_policy_mode"
+            defaultValue="blocked"
+            options={[
+              { value: "blocked", label: "analytics blocked" },
+              { value: "allowed", label: "analytics allowed" }
+            ]}
+          />
+          <div className="utility-field utility-field--wide">
+            <span>OSDCloud policy</span>
+            <div className="provision-checkbox-row">
+              <CheckboxField label="TPM" name="tpm_enabled" defaultChecked />
+              <CheckboxField label="Secure Boot" name="secure_boot" defaultChecked />
+              <CheckboxField label="Firmware updates" name="firmware_updates_enabled" />
+              <CheckboxField label="Allow analytics" name="analytics_enabled" />
+            </div>
+          </div>
+          <div className="utility-field utility-field--wide">
+            <span>OSDCloud cache</span>
+            <CacheStatus cache={payload.cloudosd_cache} fallbackRoot="/app/cache/cloudosd" />
+          </div>
+          <ArtifactReadiness label="Artifact readiness" artifact={artifact} />
+        </div>
+      </details>
+    </Panel>
+  );
+}
+
+function OsdeployServerPanel({ payload }: { readonly payload: ProvisionPagePayload }) {
   const target = targetOptions(payload.osdeploy_options);
   const catalogDefaults = payload.osdeploy_catalog.defaults ?? {};
+  const artifact = payload.osdeploy_ready_artifacts[0] ?? payload.osdeploy_artifacts[0];
   const [role, setRole] = useState("base");
   const [dcMode, setDcMode] = useState("new_forest");
   const [forestFqdn, setForestFqdn] = useState("");
@@ -482,20 +741,26 @@ function OsdeploySection({ payload }: { readonly payload: ProvisionPagePayload }
             <SelectField label="DSRM credential" name="osdeploy_role_dsrm_credential_id" defaultValue="" options={credentialOptions} required />
           </>
         ) : null}
-        <SelectField
-          label="Outbound policy"
-          name="outbound_policy_mode"
-          defaultValue="blocked"
-          options={[
-            { value: "blocked", label: "analytics blocked" },
-            { value: "allowed", label: "analytics allowed" }
-          ]}
-        />
-        <div className="utility-field utility-field--wide">
-          <span>OSDeploy cache</span>
-          <CacheStatus cache={payload.osdeploy_cache} fallbackRoot="/app/cache/osdeploy" />
-        </div>
       </div>
+      <details className="provision-advanced-options">
+        <summary>Advanced OSDeploy Options</summary>
+        <div className="utility-field-grid">
+          <SelectField
+            label="Outbound policy"
+            name="outbound_policy_mode"
+            defaultValue="blocked"
+            options={[
+              { value: "blocked", label: "analytics blocked" },
+              { value: "allowed", label: "analytics allowed" }
+            ]}
+          />
+          <div className="utility-field utility-field--wide">
+            <span>OSDeploy cache</span>
+            <CacheStatus cache={payload.osdeploy_cache} fallbackRoot="/app/cache/osdeploy" />
+          </div>
+          <ArtifactReadiness label="OSDeploy artifact readiness" artifact={artifact} />
+        </div>
+      </details>
     </Panel>
   );
 }
@@ -616,22 +881,59 @@ function BatchProgress({ progress }: { readonly progress: CloudosdBatchProgress 
   );
 }
 
+function LaunchReviewRail({
+  payload,
+  vmCount,
+  previewName
+}: {
+  readonly payload: ProvisionPagePayload;
+  readonly vmCount: number;
+  readonly previewName: string;
+}) {
+  return (
+    <Panel title="Launch Review">
+      <section className="metric-strip provision-review-metrics" aria-label="Launch review">
+        <Metric label="Template VMID" value={textValue(payload.defaults.template_vmid)} />
+        <Metric label="Count" value={String(vmCount)} />
+        <Metric label="Hostname Preview" value={previewName} />
+        <Metric label="Cloud Artifacts" value={String(payload.cloudosd_artifacts.length)} />
+      </section>
+    </Panel>
+  );
+}
+
 export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [payload, setPayload] = useState<ProvisionPagePayload>(EMPTY_PAYLOAD);
   const [bootMode, setBootMode] = useState<BootMode>("cloudosd");
+  const [runTag, setRunTag] = useState("");
+  const [groupTag, setGroupTag] = useState("");
+  const [hostnamePattern, setHostnamePattern] = useState("ap-{index}");
+  const [hostnameIsManual, setHostnameIsManual] = useState(false);
+  const [vmCount, setVmCount] = useState(1);
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      setPayload(provisionPayloadFromUnknown(await fetchJson<unknown>("/api/provision/page")));
+      const nextPayload = provisionPayloadFromUnknown(await fetchJson<unknown>("/api/provision/page"));
+      setPayload(nextPayload);
+      if (!defaultsApplied) {
+        const defaults = nextPayload.defaults;
+        const defaultGroupTag = textValue(defaults.group_tag, "");
+        setRunTag(defaultGroupTag);
+        setGroupTag(defaultGroupTag);
+        setHostnamePattern(defaults.hostname_pattern ? defaults.hostname_pattern : deriveProvisionNaming(defaultGroupTag).hostnamePattern);
+        setVmCount(asNumber(defaults.count, 1));
+        setDefaultsApplied(true);
+      }
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load provision payload");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [defaultsApplied]);
 
   usePolling(load);
 
@@ -643,11 +945,29 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
     return rows.length ? rows : [{ value: "", label: "No OEM profiles" }];
   }, [payload.profiles]);
 
-  const defaults = payload.defaults;
   const cloudosdDefaults = payload.cloudosd_catalog.defaults ?? {};
   const osdeployDefaults = payload.osdeploy_catalog.defaults ?? {};
   const activeDefaults = bootMode === "osdeploy" ? osdeployDefaults : cloudosdDefaults;
   const templateMinimum = payload.template_disk_gb ?? 1;
+  const hostnamePreview = previewHostnamePattern(hostnamePattern);
+  const applyRunTag = useCallback((value: string) => {
+    setRunTag(value);
+    setGroupTag(value);
+    if (!hostnameIsManual) {
+      setHostnamePattern(deriveProvisionNaming(value).hostnamePattern);
+    }
+  }, [hostnameIsManual]);
+  const updateHostnamePattern = useCallback((value: string) => {
+    setHostnamePattern(value);
+    setHostnameIsManual(true);
+  }, []);
+  const resetHostnameFromRunTag = useCallback(() => {
+    setHostnamePattern(deriveProvisionNaming(runTag).hostnamePattern);
+    setHostnameIsManual(false);
+  }, [runTag]);
+  const updateVmCount = useCallback((value: string) => {
+    setVmCount(asNumber(value, 1));
+  }, []);
 
   return (
     <PageFrame bootstrap={bootstrap} title="Provision" section="Deploy" path="/react/provision">
@@ -658,12 +978,6 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
         </div>
       ) : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
-      <section className="metric-strip" aria-label="Provision readiness">
-        <Metric label="Template VMID" value={textValue(defaults.template_vmid)} />
-        <Metric label="Default count" value={textValue(defaults.count, "1")} />
-        <Metric label="Hostname pattern" value={textValue(defaults.hostname_pattern, "autopilot-{serial}")} />
-        <Metric label="Cloud artifacts" value={String(payload.cloudosd_artifacts.length)} />
-      </section>
 
       {!loading ? (
         <>
@@ -673,55 +987,38 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
             action="/api/jobs/provision"
             data-testid="provision-builder-form"
           >
-            <Panel title="Command Packet">
-              <div className="utility-field-grid">
-                <SelectField
-                  label="Boot mode"
-                  name="boot_mode"
-                  value={bootMode}
-                  onChange={(value) => { setBootMode(value as BootMode); }}
-                  options={[
-                    { value: "cloudosd", label: "OSDCloud" },
-                    { value: "osdeploy", label: "OSDeploy v2" },
-                    { value: "ubuntu", label: "Ubuntu v2" },
-                    { value: "winpe", label: "Legacy WinPE" },
-                    { value: "clone", label: "Clone" }
-                  ]}
-                  help="OSDCloud for desktop clients, OSDeploy for Server, Ubuntu v2 for Linux clients."
-                />
-                <SelectField label="OEM profile" name="profile" defaultValue={textValue(defaults.oem_profile, "")} options={profileOptions} />
-                <SelectField
-                  label="Chassis type override"
-                  name="chassis_type_override"
-                  defaultValue="0"
-                  options={[
-                    { value: "0", label: "Use profile default" },
-                    { value: "3", label: "Desktop" },
-                    { value: "8", label: "Portable" },
-                    { value: "9", label: "Laptop" },
-                    { value: "10", label: "Notebook" },
-                    { value: "14", label: "Sub Notebook" },
-                    { value: "15", label: "Space-saving" },
-                    { value: "30", label: "Tablet" },
-                    { value: "31", label: "Convertible" },
-                    { value: "32", label: "Detachable" },
-                    { value: "35", label: "Mini PC" }
-                  ]}
-                />
-                <NumberField label="VM count" name="count" defaultValue={defaults.count ?? 1} min={1} max={50} />
-                <TextField label="Hostname pattern" name="hostname_pattern" defaultValue={defaults.hostname_pattern ?? "autopilot-{serial}"} help="Tokens: {serial}, {vmid}, {index}." />
-                <NumberField label="CPU cores" name="cores" defaultValue={textValue(defaults.cores ?? activeDefaults.vm_cores, "")} min={1} max={64} />
-                <NumberField label="Memory MB" name="memory_mb" defaultValue={textValue(defaults.memory_mb ?? activeDefaults.vm_memory_mb, "")} min={asNumber(activeDefaults.minimum_vm_memory_mb, 512)} step={512} />
-                <NumberField label="Disk GB" name="disk_size_gb" defaultValue={textValue(defaults.disk_size_gb ?? activeDefaults.vm_disk_size_gb, "")} min={Math.max(templateMinimum, asNumber(activeDefaults.minimum_vm_disk_size_gb, 1))} max={2048} />
-                <TextField label="Serial prefix" name="serial_prefix" defaultValue={defaults.serial_prefix} />
-                <TextField label="Group tag" name="group_tag" defaultValue={defaults.group_tag} />
-              </div>
-              <LegacyNotice mode={bootMode} winpeEnabled={Boolean(payload.winpe_enabled)} />
-            </Panel>
-
-            {bootMode === "cloudosd" ? <CloudosdSection payload={payload} /> : null}
-            {bootMode === "osdeploy" ? <OsdeploySection payload={payload} /> : null}
+            <RunTagComposer
+              runTag={runTag}
+              groupTag={groupTag}
+              bootMode={bootMode}
+              previewName={hostnamePreview.previewName}
+              previewLength={hostnamePreview.previewLength}
+              previewLimit={hostnamePreview.limit}
+              onRunTagChange={applyRunTag}
+            />
+            <BootPathRail bootMode={bootMode} onChange={setBootMode} />
+            <LaunchEssentials
+              payload={payload}
+              profileOptions={profileOptions}
+              activeDefaults={activeDefaults}
+              templateMinimum={templateMinimum}
+              hostnamePattern={hostnamePattern}
+              vmCount={vmCount}
+              onHostnamePatternChange={updateHostnamePattern}
+              onVmCountChange={updateVmCount}
+              onResetHostname={resetHostnameFromRunTag}
+            />
+            <AutopilotEnrollmentPanel bootMode={bootMode} groupTag={groupTag} onGroupTagChange={setGroupTag} />
+            <LegacyNotice mode={bootMode} winpeEnabled={Boolean(payload.winpe_enabled)} />
+            {bootMode === "cloudosd" ? (
+              <>
+                <CloudosdDesktopPanel payload={payload} />
+                <AdvancedCloudosdOptions payload={payload} />
+              </>
+            ) : null}
+            {bootMode === "osdeploy" ? <OsdeployServerPanel payload={payload} /> : null}
             {bootMode === "ubuntu" ? <UbuntuSection payload={payload} /> : null}
+            <LaunchReviewRail payload={payload} vmCount={vmCount} previewName={hostnamePreview.previewName} />
 
             <div className="utility-form-actions">
               <button className="utility-button" type="submit">Provision VMs</button>
