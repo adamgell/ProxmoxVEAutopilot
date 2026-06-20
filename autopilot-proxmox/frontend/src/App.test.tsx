@@ -687,18 +687,18 @@ describe("App", () => {
   test("renders the protected shell status without operational controls", () => {
     renderRoute("/react-shell");
 
-    expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
     expect(screen.getByRole("banner", { name: "Global console status" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Proxmox VE Autopilot dashboard" })[0]).toHaveAttribute("href", "/react/dashboard");
-    expect(screen.getByRole("combobox", { name: "Search console" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Proxmox VE Autopilot home" })).toHaveAttribute("href", "/react-shell");
+    expect(screen.getByRole("searchbox", { name: "Search console" })).toBeInTheDocument();
     expect(screen.getByText("Local Operator")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Log out Local Operator" })).toHaveAttribute("href", "/auth/logout");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
-    expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
-    expect(screen.getAllByRole("link", { name: "OSDCloud Desktop" })[0]).toHaveAttribute("href", "/react/cloudosd");
-    expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
-    expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Open signals" })).toHaveAttribute("href", "/react/monitoring");
+    expect(screen.getByRole("link", { name: "Hashes Capture and upload hardware identity" })).toHaveAttribute("href", "/react/hashes");
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();

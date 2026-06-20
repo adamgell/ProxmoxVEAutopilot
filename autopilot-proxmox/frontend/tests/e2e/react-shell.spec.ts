@@ -337,13 +337,13 @@ async function mockReadApis(page: Page) {
 test("renders the React shell without layout overlap", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Operator workspace" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Start desktop run" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open signals" })).toBeVisible();
   await expect(page.getByText("Jinja")).toHaveCount(0);
 
-  const hero = await page.locator(".workspace__globalbar").boundingBox();
+  const hero = await page.locator(".outcome-topbar").boundingBox();
   const panel = await page.locator(".workspace__content").boundingBox();
 
   expect(hero).not.toBeNull();
