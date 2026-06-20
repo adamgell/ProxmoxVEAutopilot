@@ -460,7 +460,18 @@ async function mockReadApis(page: Page) {
     });
   });
   await page.route("**/api/files", async (route) => {
-    await route.fulfill({ json: { files: [{ filename: "AutopilotAgent.msi", size: 4096, mtime: "2026-05-19T12:00:00+00:00" }] } });
+    await route.fulfill({
+      json: {
+        files: [
+          {
+            name: "AutopilotAgent.msi",
+            url: "/files/AutopilotAgent.msi",
+            size_bytes: 4096,
+            modified: "2026-05-19T12:00:00+00:00"
+          }
+        ]
+      }
+    });
   });
   await page.route("**/api/settings", async (route) => {
     await route.fulfill({

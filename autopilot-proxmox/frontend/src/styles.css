@@ -4125,8 +4125,10 @@ h3 {
   }
 
   .workspace__system-tray {
-    right: 10px;
-    bottom: 10px;
+    position: static;
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    margin: 0 16px 16px;
     max-width: calc(100vw - 20px);
   }
 
