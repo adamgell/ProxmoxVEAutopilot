@@ -46,8 +46,8 @@ export function previewHostnamePattern(
     previewName,
     previewLength: previewName.length,
     limit: WINDOWS_COMPUTER_NAME_LIMIT,
-    safe: previewName === normalizedName,
-    normalized: previewName !== normalizedName,
+    safe: isSafeComputerName(previewName),
+    normalized: previewName.toLowerCase() !== normalizedName,
     normalizedName
   };
 }
@@ -99,6 +99,18 @@ function normalizeComputerName(value: string): string {
   }
 
   return normalized.length > 0 ? normalized : FALLBACK_BASE;
+}
+
+function isSafeComputerName(value: string): boolean {
+  if (value.length < 1 || value.length > WINDOWS_COMPUTER_NAME_LIMIT) {
+    return false;
+  }
+
+  if (/^\d+$/.test(value)) {
+    return false;
+  }
+
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(value);
 }
 
 function normalizeName(value: string, maxLength: number): string {

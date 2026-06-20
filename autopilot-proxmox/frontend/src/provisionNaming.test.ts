@@ -75,6 +75,24 @@ describe("provision naming", () => {
     expect(preview.normalizedName).toBe("autopilot-seria");
   });
 
+  test("allows valid uppercase manual patterns without treating casing as unsafe", () => {
+    const preview = previewHostnamePattern("GELL-OSD-{index}");
+
+    expect(preview.previewName).toBe("GELL-OSD-01");
+    expect(preview.safe).toBe(true);
+    expect(preview.normalized).toBe(false);
+    expect(preview.normalizedName).toBe("gell-osd-01");
+  });
+
+  test("flags invalid manual hostname characters even when length is safe", () => {
+    const preview = previewHostnamePattern("lab_{index}");
+
+    expect(preview.previewName).toBe("lab_01");
+    expect(preview.safe).toBe(false);
+    expect(preview.normalized).toBe(true);
+    expect(preview.normalizedName).toBe("lab-01");
+  });
+
   test("compacts a single mixed tenant token before adding the index suffix", () => {
     const naming = deriveProvisionNaming("NTTENANT01");
 
