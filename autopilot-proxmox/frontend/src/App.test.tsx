@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
@@ -706,6 +706,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Route map" })).toBeInTheDocument();
     expect(screen.getByRole("banner", { name: "Global console status" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Proxmox VE Autopilot home" })).toHaveAttribute("href", "/react-shell");
     expect(screen.getByRole("searchbox", { name: "Search console" })).toBeInTheDocument();
@@ -716,16 +717,24 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Open signals" })).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getByRole("link", { name: "Open networks" })).toHaveAttribute("href", "/react/networks");
     expect(screen.getByRole("link", { name: "Hashes Capture and upload hardware identity" })).toHaveAttribute("href", "/react/hashes");
-    expect(screen.queryByRole("link", { name: "Job Detail" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Run Detail" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "OSDCloud Run" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "OSDeploy Run" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Task Template" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Edit Sequence" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Sequence Library" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "New Sequence" })).not.toBeInTheDocument();
+    const routeMap = screen.getByRole("navigation", { name: "Route map" });
+    const deployRoutes = within(routeMap).getByRole("group", { name: "Deploy" });
+    const buildRoutes = within(routeMap).getByRole("group", { name: "Build" });
+    const fleetRoutes = within(routeMap).getByRole("group", { name: "Fleet" });
+    const settingsRoutes = within(routeMap).getByRole("group", { name: "Settings" });
+    expect(within(deployRoutes).getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
+    expect(within(buildRoutes).getByRole("link", { name: "Sequence Library operational" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
+    expect(within(buildRoutes).getByRole("link", { name: "New Sequence operational" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+    expect(within(fleetRoutes).getByRole("link", { name: "Agent Download operational" })).toHaveAttribute("href", "/react/agent-download");
+    expect(within(settingsRoutes).getByRole("link", { name: "Monitoring settings operational" })).toHaveAttribute("href", "/react/monitoring/settings");
+    expect(within(routeMap).queryByRole("link", { name: "Job Detail operational" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "Run Detail read-only" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "OSDCloud Run operational" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "OSDeploy Run operational" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "Task Template read-only" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "Edit Task Sequence operational" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Sequences" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "UTM VMs" })).not.toBeInTheDocument();
+    expect(within(fleetRoutes).getByRole("link", { name: "UTM VMs operational" })).toHaveAttribute("href", "/react/utm-vms");
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();

@@ -492,11 +492,97 @@ h3 {
   font-size: 12px;
 }
 
+.operator-route-map {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.operator-route-group {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.operator-route-group h2 {
+  margin: 0;
+  color: #d9f2ff;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.operator-route-group__links {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.operator-route-group__links a,
+.operator-route-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  color: #edf5ff;
+  background: rgba(255, 255, 255, 0.055);
+  text-decoration: none;
+}
+
+.operator-route-group__links a:hover,
+.operator-route-group__links a:focus-visible {
+  border-color: rgba(125, 211, 252, 0.58);
+  background: rgba(14, 165, 233, 0.14);
+}
+
+.operator-route-group__links strong,
+.operator-route-detail strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.operator-route-group__links span,
+.operator-route-detail span {
+  justify-self: end;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #d9f2ff;
+  background: rgba(14, 165, 233, 0.16);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.operator-route-detail {
+  color: #b8c7d8;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.operator-route-detail span {
+  color: #c5d2e2;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 @media (max-width: 1180px) {
   .control-room-hero,
   .outcome-card-grid,
   .quick-route-lane {
     grid-template-columns: 1fr;
+  }
+
+  .operator-route-map {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -507,6 +593,20 @@ h3 {
 
   .outcome-card__routes {
     grid-template-columns: 1fr;
+  }
+
+  .operator-route-map {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-route-group__links a,
+  .operator-route-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-route-group__links span,
+  .operator-route-detail span {
+    justify-self: start;
   }
 }
 

@@ -509,25 +509,39 @@ test("renders the React shell without layout overlap", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Start desktop run" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open networks" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open signals" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Job Detail", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Run Detail", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "OSDCloud Run", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "OSDeploy Run", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Task Template", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Edit Sequence", exact: true })).toHaveCount(0);
+  const routeMap = page.getByRole("navigation", { name: "Route map" });
+  const deployRoutes = routeMap.getByRole("group", { name: "Deploy" });
+  const buildRoutes = routeMap.getByRole("group", { name: "Build" });
+  const fleetRoutes = routeMap.getByRole("group", { name: "Fleet" });
+  await expect(deployRoutes.getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
+  await expect(buildRoutes.getByRole("link", { name: "Sequence Library operational" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
+  await expect(buildRoutes.getByRole("link", { name: "New Sequence operational" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+  await expect(fleetRoutes.getByRole("link", { name: "Agent Download operational" })).toHaveAttribute("href", "/react/agent-download");
+  await expect(routeMap.getByRole("link", { name: "Job Detail operational" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "Run Detail read-only" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "OSDCloud Run operational" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "OSDeploy Run operational" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "Task Template read-only" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "Edit Task Sequence operational" })).toHaveCount(0);
   await expect(page.getByText("Jinja")).toHaveCount(0);
 
+  const routeMapBox = await page.locator(".operator-route-map").boundingBox();
+  const viewport = page.viewportSize();
   const hero = await page.locator(".outcome-topbar").boundingBox();
   const panel = await page.locator(".workspace__content").boundingBox();
 
+  expect(routeMapBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
   expect(hero).not.toBeNull();
   expect(panel).not.toBeNull();
-  if (!hero || !panel) {
+  if (!routeMapBox || !viewport || !hero || !panel) {
     throw new Error("React shell layout regions were not measurable.");
   }
+  expect(routeMapBox.y).toBeLessThan(viewport.height);
   expect(hero.y + hero.height).toBeLessThanOrEqual(panel.y + 1);
 });
 
@@ -733,11 +747,14 @@ test("renders outcome shell on desktop and mobile widths", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Quick routes" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" }).getByRole("link", { name: "Provision operational" })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 980 });
   await expect(page.getByRole("link", { name: "Deploy", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Set", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" }).getByRole("link", { name: "Provision operational" })).toBeVisible();
 
   const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(horizontalOverflow).toBe(false);

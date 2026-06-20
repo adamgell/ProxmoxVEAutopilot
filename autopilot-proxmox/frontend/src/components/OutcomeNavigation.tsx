@@ -5,6 +5,7 @@ import type {
   AppBootstrap,
   OperatorMode,
   OperatorModeId,
+  OperatorNavGroup,
   OperatorOutcome,
   OperatorQuickRoute
 } from "../contracts";
@@ -123,6 +124,44 @@ export function QuickRouteLane({ quickRoutes }: { readonly quickRoutes: readonly
           <span>{route.summary}</span>
         </a>
       ))}
+    </nav>
+  );
+}
+
+export function OperatorRouteMap({ groups }: { readonly groups: readonly OperatorNavGroup[] }) {
+  return (
+    <nav className="operator-route-map" aria-label="Route map">
+      {groups.map((group) => {
+        const activeItems = group.items.filter((item) => item.active);
+        if (activeItems.length === 0) {
+          return null;
+        }
+        return (
+          <article key={group.label} className="operator-route-group" role="group" aria-label={group.label}>
+            <h2>{group.label}</h2>
+            <div className="operator-route-group__links">
+              {activeItems.map((route) => {
+                const hasConcretePath = !route.path.includes(":");
+                const phaseLabel = route.phase === "legacy" ? "read-only" : route.phase;
+                if (!hasConcretePath) {
+                  return (
+                    <div key={`${group.label}-${route.path}`} className="operator-route-detail">
+                      <strong>{route.label}</strong>
+                      <span>detail</span>
+                    </div>
+                  );
+                }
+                return (
+                  <a key={`${group.label}-${route.path}`} href={route.path} aria-label={`${route.label} ${phaseLabel}`}>
+                    <strong>{route.label}</strong>
+                    <span>{phaseLabel}</span>
+                  </a>
+                );
+              })}
+            </div>
+          </article>
+        );
+      })}
     </nav>
   );
 }

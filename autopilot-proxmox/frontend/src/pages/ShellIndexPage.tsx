@@ -1,7 +1,7 @@
 import type { AppBootstrap } from "../contracts";
 import { OperatorShell } from "../components/Shell";
-import { OutcomeCardGrid, QuickRouteLane } from "../components/OutcomeNavigation";
-import { operatorOutcomes, operatorQuickRoutes } from "../routes";
+import { OperatorRouteMap, OutcomeCardGrid, QuickRouteLane } from "../components/OutcomeNavigation";
+import { operatorNavGroups, operatorOutcomes, operatorQuickRoutes } from "../routes";
 
 export function ShellIndexPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   return (
@@ -16,11 +16,12 @@ export function ShellIndexPage({ bootstrap }: { readonly bootstrap: AppBootstrap
         </div>
         <aside className="suggested-next" aria-label="Suggested next step">
           <h2>Suggested next step</h2>
-          <a href="/react/cloudosd"><span>Open OSDCloud Desktop run</span><strong>Ready</strong></a>
+          <a href="/react/provision"><span>Open Provision launch</span><strong>Deploy</strong></a>
           <a href="/react/networks"><span>Check lab network scope</span><strong>Infra</strong></a>
           <a href="/react/vms"><span>Check VM evidence</span><strong>Watch</strong></a>
         </aside>
       </section>
+      <OperatorRouteMap groups={operatorNavGroups} />
       <OutcomeCardGrid outcomes={operatorOutcomes} />
       <QuickRouteLane quickRoutes={operatorQuickRoutes} />
     </OperatorShell>

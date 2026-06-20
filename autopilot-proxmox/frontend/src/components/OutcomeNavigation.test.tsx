@@ -1,8 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 
-import type { AppBootstrap, OperatorMode, OperatorOutcome, OperatorQuickRoute } from "../contracts";
-import { OperatorTopBar, OutcomeCardGrid, OutcomeModeRail, QuickRouteLane, SystemTray } from "./OutcomeNavigation";
+import type { AppBootstrap, OperatorMode, OperatorNavGroup, OperatorOutcome, OperatorQuickRoute } from "../contracts";
+import { OperatorRouteMap, OperatorTopBar, OutcomeCardGrid, OutcomeModeRail, QuickRouteLane, SystemTray } from "./OutcomeNavigation";
 
 const modes: readonly OperatorMode[] = [
   { id: "home", label: "Home", longLabel: "Home", href: "/react-shell" },
@@ -26,6 +26,25 @@ const outcomes: readonly OperatorOutcome[] = [
 
 const quickRoutes: readonly OperatorQuickRoute[] = [
   { label: "Jobs", href: "/react/jobs", summary: "Live output and pause gates", mode: "home" }
+];
+
+const routeGroups: readonly OperatorNavGroup[] = [
+  {
+    label: "Deploy",
+    items: [
+      { path: "/react/cloudosd", label: "OSDCloud Desktop", group: "Deploy", phase: "operational", active: true },
+      { path: "/react/cloudosd/runs/:runId", label: "OSDCloud Run", group: "Deploy", phase: "operational", active: true, showInNav: false },
+      { path: "/react/provision", label: "Provision", group: "Deploy", phase: "operational", active: true }
+    ]
+  },
+  {
+    label: "Build",
+    items: [
+      { path: "/react/task-engine", label: "Task Sequences", group: "Build", phase: "operational", active: true },
+      { path: "/react/task-engine/sequences/list", label: "Sequence Library", group: "Build", phase: "operational", active: true, showInNav: false },
+      { path: "/react/task-engine/sequences/new", label: "New Sequence", group: "Build", phase: "operational", active: true, showInNav: false }
+    ]
+  }
 ];
 
 const bootstrap: AppBootstrap = {
@@ -56,6 +75,21 @@ describe("OutcomeNavigation components", () => {
 
     expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Jobs Live output and pause gates" })).toHaveAttribute("href", "/react/jobs");
+  });
+
+  test("renders a grouped route map with primary links and deeper entries", () => {
+    render(<OperatorRouteMap groups={routeGroups} />);
+
+    const routeMap = screen.getByRole("navigation", { name: "Route map" });
+    const deployGroup = within(routeMap).getByRole("group", { name: "Deploy" });
+    const buildGroup = within(routeMap).getByRole("group", { name: "Build" });
+
+    expect(within(deployGroup).getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
+    expect(within(buildGroup).getByRole("link", { name: "Sequence Library operational" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
+    expect(within(buildGroup).getByRole("link", { name: "New Sequence operational" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+    expect(within(deployGroup).queryByRole("link", { name: "OSDCloud Run operational" })).not.toBeInTheDocument();
+    expect(within(deployGroup).getByText("OSDCloud Run")).toBeInTheDocument();
+    expect(within(deployGroup).getByText("detail")).toBeInTheDocument();
   });
 
   test("renders top bar command and operator identity", () => {
