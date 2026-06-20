@@ -1015,46 +1015,55 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
             action="/api/jobs/provision"
             data-testid="provision-builder-form"
           >
-            <RunTagComposer
-              runTag={runTag}
-              groupTag={groupTag}
-              bootMode={bootMode}
-              previewName={hostnamePreview.previewName}
-              previewLength={hostnamePreview.previewLength}
-              previewLimit={hostnamePreview.limit}
-              previewSafe={hostnamePreview.safe}
-              normalizedPreviewName={hostnamePreview.normalizedName}
-              onRunTagChange={applyRunTag}
-            />
-            <BootPathRail bootMode={bootMode} onChange={setBootMode} />
-            <LaunchEssentials
-              payload={payload}
-              profileOptions={profileOptions}
-              activeDefaults={activeDefaults}
-              templateMinimum={templateMinimum}
-              hostnamePattern={hostnamePattern}
-              hostnamePreview={hostnamePreview}
-              vmCount={vmCount}
-              onHostnamePatternChange={updateHostnamePattern}
-              onVmCountChange={updateVmCount}
-              onResetHostname={resetHostnameFromRunTag}
-            />
-            <AutopilotEnrollmentPanel bootMode={bootMode} groupTag={groupTag} onGroupTagChange={setGroupTag} />
-            <LegacyNotice mode={bootMode} winpeEnabled={Boolean(payload.winpe_enabled)} />
-            {bootMode === "cloudosd" ? (
-              <>
-                <CloudosdDesktopPanel payload={payload} />
-                <AdvancedCloudosdOptions payload={payload} />
-              </>
-            ) : null}
-            {bootMode === "osdeploy" ? <OsdeployServerPanel payload={payload} /> : null}
-            {bootMode === "ubuntu" ? <UbuntuSection payload={payload} /> : null}
-            <LaunchReviewRail payload={payload} vmCount={vmCount} previewName={hostnamePreview.previewName} />
+            <div className="provision-launch-grid">
+              <div className="provision-section-stack">
+                <RunTagComposer
+                  runTag={runTag}
+                  groupTag={groupTag}
+                  bootMode={bootMode}
+                  previewName={hostnamePreview.previewName}
+                  previewLength={hostnamePreview.previewLength}
+                  previewLimit={hostnamePreview.limit}
+                  previewSafe={hostnamePreview.safe}
+                  normalizedPreviewName={hostnamePreview.normalizedName}
+                  onRunTagChange={applyRunTag}
+                />
+                <BootPathRail bootMode={bootMode} onChange={setBootMode} />
+              </div>
 
-            <div className="utility-form-actions">
-              <button className="utility-button" type="submit" disabled={!hostnamePreview.safe}>Provision VMs</button>
-              <a className="utility-button" href="/react/cloudosd">OSDCloud</a>
-              <a className="utility-button" href="/react/osdeploy">OSDeploy</a>
+              <div className="provision-enrollment-stack">
+                <LaunchEssentials
+                  payload={payload}
+                  profileOptions={profileOptions}
+                  activeDefaults={activeDefaults}
+                  templateMinimum={templateMinimum}
+                  hostnamePattern={hostnamePattern}
+                  hostnamePreview={hostnamePreview}
+                  vmCount={vmCount}
+                  onHostnamePatternChange={updateHostnamePattern}
+                  onVmCountChange={updateVmCount}
+                  onResetHostname={resetHostnameFromRunTag}
+                />
+                {bootMode === "cloudosd" ? (
+                  <>
+                    <CloudosdDesktopPanel payload={payload} />
+                    <AdvancedCloudosdOptions payload={payload} />
+                  </>
+                ) : null}
+                {bootMode === "osdeploy" ? <OsdeployServerPanel payload={payload} /> : null}
+                {bootMode === "ubuntu" ? <UbuntuSection payload={payload} /> : null}
+              </div>
+
+              <aside className="provision-review-column">
+                <AutopilotEnrollmentPanel bootMode={bootMode} groupTag={groupTag} onGroupTagChange={setGroupTag} />
+                <LegacyNotice mode={bootMode} winpeEnabled={Boolean(payload.winpe_enabled)} />
+                <LaunchReviewRail payload={payload} vmCount={vmCount} previewName={hostnamePreview.previewName} />
+                <div className="utility-form-actions provision-review-actions">
+                  <button className="utility-button" type="submit" disabled={!hostnamePreview.safe}>Provision VMs</button>
+                  <a className="utility-button" href="/react/cloudosd">OSDCloud</a>
+                  <a className="utility-button" href="/react/osdeploy">OSDeploy</a>
+                </div>
+              </aside>
             </div>
           </form>
 

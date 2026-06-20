@@ -215,7 +215,7 @@ describe("ProvisionPage", () => {
     expect(screen.getByRole("heading", { name: "Autopilot Enrollment" })).toBeInTheDocument();
     expect(screen.getByText("Hash capture")).toBeInTheDocument();
 
-    const form = screen.getByTestId("provision-builder-form");
+    const form = await screen.findByTestId("provision-builder-form");
     expect(form).toHaveAttribute("method", "post");
     expect(form).toHaveAttribute("action", "/api/jobs/provision");
     expect(namedControl(form, "boot_mode")).toHaveValue("cloudosd");
@@ -228,6 +228,28 @@ describe("ProvisionPage", () => {
     expect(namedControl(form, "disk_size_gb")).toBeInTheDocument();
     expect(namedControl(form, "network_bridge")).toBeInTheDocument();
     expect(namedControl(form, "os_version")).toBeInTheDocument();
+  });
+
+  test("keeps the launch review in the desktop launch grid instead of the form bottom", async () => {
+    mockFetch();
+    renderProvision();
+
+    await screen.findByRole("heading", { name: "Provision" });
+
+    const form = await screen.findByTestId("provision-builder-form");
+    const launchGrid = form.querySelector(".provision-launch-grid");
+    expect(launchGrid).not.toBeNull();
+    expect(Array.from(launchGrid?.children ?? []).map((element) => element.className)).toEqual([
+      "provision-section-stack",
+      "provision-enrollment-stack",
+      "provision-review-column"
+    ]);
+
+    const reviewColumn = form.querySelector(".provision-review-column");
+    const launchReview = screen.getByLabelText("Launch review");
+    expect(reviewColumn).toContainElement(launchReview);
+    expect(reviewColumn).toContainElement(screen.getByRole("button", { name: "Provision VMs" }));
+    expect(form.lastElementChild).not.toHaveClass("utility-form-actions");
   });
 
   test("blocks unsafe manual hostname patterns and shows the normalized preview", async () => {

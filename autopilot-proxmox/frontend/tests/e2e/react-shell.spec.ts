@@ -532,6 +532,7 @@ test("renders the React shell without layout overlap", async ({ page }) => {
 });
 
 test("provision launch composer keeps hostname previews inside Windows limits", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await mockReadApis(page);
   await page.goto("/react/provision");
 
@@ -542,6 +543,35 @@ test("provision launch composer keeps hostname previews inside Windows limits", 
   await expect(page.getByText("ntt01-01").first()).toBeVisible();
   await expect(page.getByText("8 / 15")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Advanced OSDCloud Options" })).toBeVisible();
+
+  const launchGrid = page.locator(".provision-launch-grid");
+  await expect(launchGrid).toBeVisible();
+  await expect(page.locator(".provision-review-column")).toContainText("Launch Review");
+  const columnCount = await launchGrid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean).length);
+  expect(columnCount).toBe(3);
+});
+
+test("provision route keeps outcome rail from clipping content at in-app browser width", async ({ page }) => {
+  await page.setViewportSize({ width: 952, height: 1026 });
+  await mockReadApis(page);
+  await page.goto("/react/provision");
+
+  await expect(page.getByRole("heading", { name: "Provision" })).toBeVisible();
+  await expect(page.getByTestId("provision-builder-form")).toBeVisible();
+
+  const overflow = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth
+  }));
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 2);
+
+  const content = await page.locator(".workspace__content").boundingBox();
+  expect(content).not.toBeNull();
+  if (!content) {
+    throw new Error("Provision content region was not measurable.");
+  }
+  expect(content.x).toBeGreaterThanOrEqual(0);
+  expect(content.x + content.width).toBeLessThanOrEqual(952 + 2);
 });
 
 for (const viewport of [

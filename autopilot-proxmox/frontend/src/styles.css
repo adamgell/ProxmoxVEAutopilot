@@ -273,8 +273,9 @@ h3 {
   white-space: nowrap;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
   .workspace--outcome {
+    grid-template-rows: auto auto 1fr;
     grid-template-columns: 1fr;
   }
 
@@ -306,6 +307,7 @@ h3 {
 
   .workspace--outcome .workspace__main {
     grid-column: 1;
+    grid-row: 3;
   }
 
   .workspace--outcome .workspace__content {
@@ -1833,16 +1835,23 @@ h3 {
 
 .provision-launch-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: minmax(250px, 0.8fr) minmax(420px, 1.15fr) minmax(280px, 360px);
   gap: 18px;
   align-items: start;
 }
 
 .provision-section-stack,
-.provision-enrollment-stack {
+.provision-enrollment-stack,
+.provision-review-column {
   display: grid;
   gap: 14px;
   min-width: 0;
+}
+
+.provision-review-column {
+  align-self: start;
+  position: sticky;
+  top: 86px;
 }
 
 .provision-path-rail,
@@ -1851,6 +1860,10 @@ h3 {
   grid-template-columns: repeat(5, minmax(128px, 1fr));
   gap: 8px;
   min-width: 0;
+}
+
+.provision-launch-grid .provision-boot-rail {
+  grid-template-columns: 1fr;
 }
 
 .provision-path-option,
@@ -1932,6 +1945,10 @@ h3 {
 .provision-preview-grid,
 .provision-review-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.provision-review-column .provision-review-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .provision-preview-item,
@@ -2047,11 +2064,26 @@ h3 {
   outline-offset: 2px;
 }
 
-@media (max-width: 900px) {
+.provision-review-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.provision-review-actions .utility-button {
+  justify-content: center;
+}
+
+@media (max-width: 1260px) {
   .provision-launch-grid {
     grid-template-columns: 1fr;
   }
 
+  .provision-review-column {
+    position: static;
+  }
+}
+
+@media (max-width: 900px) {
   .provision-path-rail,
   .provision-boot-rail {
     grid-template-columns: 1fr;
