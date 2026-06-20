@@ -498,3 +498,22 @@ for (const viewport of [
     });
   }
 }
+
+test("renders outcome shell on desktop and mobile widths", async ({ page }) => {
+  await mockReadApis(page);
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.goto("/react-shell");
+
+  await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Quick routes" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 980 });
+  await expect(page.getByRole("link", { name: "Deploy", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Set", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeVisible();
+
+  const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(horizontalOverflow).toBe(false);
+});
