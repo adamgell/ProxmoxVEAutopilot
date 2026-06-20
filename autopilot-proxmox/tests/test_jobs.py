@@ -40,6 +40,28 @@ def test_job_manager_start_pretouches_log_file(pg_conn):
         assert log_path.exists()
 
 
+def test_job_manager_start_retries_generated_id_collision(pg_conn, monkeypatch):
+    from web import jobs, jobs_pg as jobs_db
+    with tempfile.TemporaryDirectory() as d:
+        jobs_dir = Path(d)
+        jobs_db.enqueue(
+            job_id="collision",
+            job_type="existing",
+            playbook="existing.yml",
+            cmd=["true"],
+            args={},
+        )
+        mgr = jobs.JobManager(jobs_dir=str(jobs_dir))
+        ids = iter(["collision", "unique"])
+        monkeypatch.setattr(mgr, "_generate_id", lambda: next(ids))
+
+        entry = mgr.start("build_template", ["ansible-playbook", "x.yml"], args={})
+
+        assert entry["id"] == "unique"
+        assert jobs_db.get_job("unique")["status"] == "pending"
+        assert (jobs_dir / "unique.log").exists()
+
+
 def test_job_manager_get_log_returns_empty_for_missing():
     from web import jobs
     with tempfile.TemporaryDirectory() as d:

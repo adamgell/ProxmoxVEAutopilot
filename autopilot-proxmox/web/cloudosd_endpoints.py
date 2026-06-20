@@ -10,6 +10,7 @@ from hashlib import sha256
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
@@ -17,6 +18,7 @@ from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, osd_package, winpe_token
+from web.proxmox_network_targets import network_target_values, normalize_network_targets
 from web.sequence_compiler import _split_domain_user
 
 
@@ -145,10 +147,43 @@ def _conn():
         yield conn
 
 
+def _is_loopback_controller_url(value: str) -> bool:
+    try:
+        host = (urlparse(str(value)).hostname or "").lower()
+    except Exception:
+        return False
+    return host in {"localhost", "::1"} or host.startswith("127.")
+
+
+def _preferred_controller_url(*candidates: str) -> str:
+    normalized = [str(item or "").strip().rstrip("/") for item in candidates]
+    for candidate in normalized:
+        if candidate and not _is_loopback_controller_url(candidate):
+            return candidate
+    for candidate in normalized:
+        if candidate:
+            return candidate
+    return ""
+
+
+def _guest_reachable_controller_url() -> str:
+    from web import app as web_app
+
+    try:
+        return str(
+            web_app._derive_guest_reachable_base_url(
+                web_app._load_proxmox_config(),
+            ) or ""
+        ).strip().rstrip("/")
+    except Exception:
+        return ""
+
+
 def _base_url(request: Request | None = None) -> str:
     configured = os.environ.get("AUTOPILOT_BASE_URL", "").strip().rstrip("/")
-    if configured:
+    if configured and not _is_loopback_controller_url(configured):
         return configured
+    request_url = ""
     if request is not None:
         proto = (
             request.headers.get("x-forwarded-proto")
@@ -162,9 +197,12 @@ def _base_url(request: Request | None = None) -> str:
             or ""
         ).split(",", 1)[0].strip()
         if proto and host and host not in {"127.0.0.1:5000", "localhost:5000"}:
-            return f"{proto}://{host}".rstrip("/")
-        return str(request.base_url).rstrip("/")
-    return "http://127.0.0.1:5000"
+            request_url = f"{proto}://{host}".rstrip("/")
+        else:
+            request_url = str(request.base_url).rstrip("/")
+    else:
+        request_url = "http://127.0.0.1:5000"
+    return _preferred_controller_url(configured, request_url, _guest_reachable_controller_url())
 
 
 def _sign(run_id: str, *, ttl_seconds: int) -> str:
@@ -1662,6 +1700,7 @@ def proxmox_options_payload() -> dict:
     from web import app as web_app
 
     defaults = _configured_proxmox_defaults()
+    configured_bridges = [defaults["bridge"]]
     configured = {
         "schema_version": 1,
         "source": "configured",
@@ -1672,7 +1711,11 @@ def proxmox_options_payload() -> dict:
             "iso": [defaults["iso_storage"]],
             "disk": [defaults["disk_storage"]],
         },
-        "bridges": [defaults["bridge"]],
+        "bridges": configured_bridges,
+        "network_targets": normalize_network_targets(
+            node=defaults["node"],
+            bridges=configured_bridges,
+        ),
         "vms": [],
     }
     try:
@@ -1697,9 +1740,15 @@ def proxmox_options_payload() -> dict:
             if row.get("iface") and row.get("type") in ("bridge", "OVSBridge")
         })
         try:
+            sdn_vnets = web_app._proxmox_api("/cluster/sdn/vnets") or []
+        except Exception:
+            logger.warning("Failed to fetch Proxmox SDN VNets; falling back to bridge-only network targets", exc_info=True)
+            sdn_vnets = []
+        try:
             vms = web_app._proxmox_api(f"/nodes/{node}/qemu") or []
         except Exception:
             vms = []
+        bridges = bridges or configured["bridges"]
         return {
             "schema_version": 1,
             "source": "live",
@@ -1710,7 +1759,12 @@ def proxmox_options_payload() -> dict:
                 "iso": iso_storages or configured["storages"]["iso"],
                 "disk": disk_storages or configured["storages"]["disk"],
             },
-            "bridges": bridges or configured["bridges"],
+            "bridges": bridges,
+            "network_targets": normalize_network_targets(
+                node=node,
+                bridges=bridges,
+                vnets=sdn_vnets,
+            ),
             "vms": [
                 {
                     "vmid": row.get("vmid"),
@@ -1870,10 +1924,10 @@ def preflight_payload(body: RunCreateBody) -> dict:
             "Disk storage unavailable",
             f"{target['storage']} is not an image-capable storage.",
         ))
-    if target["network_bridge"] not in options["bridges"]:
+    if target["network_bridge"] not in network_target_values(options):
         blocking.append(_check(
             "proxmox_bridge_unavailable",
-            "Network bridge unavailable",
+            "Network target unavailable",
             f"{target['network_bridge']} is not available on the selected node.",
         ))
 
@@ -3142,7 +3196,7 @@ def append_event(
             cloudosd_pg.mark_osdcloud_started(conn, run_id=run_id)
         elif body.event_type == "cloudosd_pe_complete":
             cloudosd_pg.mark_osdcloud_finished(conn, run_id=run_id)
-        if body.severity.lower() == "error" or body.event_type.endswith("_failed"):
+        if body.severity.lower() == "error":
             cloudosd_pg.mark_failed(
                 conn,
                 run_id=run_id,

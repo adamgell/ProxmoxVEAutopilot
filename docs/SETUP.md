@@ -40,12 +40,14 @@ VM.Snapshot,VM.Snapshot.Rollback,\
 VM.GuestAgent.Audit,VM.GuestAgent.FileRead,VM.GuestAgent.FileWrite,\
 VM.GuestAgent.FileSystemMgmt,VM.GuestAgent.Unrestricted,\
 Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,\
-Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
+Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Audit,SDN.Allocate,SDN.Use
 ```
 
 > The backslashes keep the command on one logical line. If you remove them, put the whole thing on one line.
 
 > `Datastore.Allocate` is required for OEM profiles / sequences that set a **chassis type** override. Proxmox filters `snippets` volumes out of content listings unless the caller has this privilege (see [TROUBLESHOOTING](TROUBLESHOOTING.md#provision-fails-with-chassis-type-binary--is-not-present)). If you upgraded from an older setup and don't use chassis overrides, you can leave it off — but adding it is harmless.
+
+> `SDN.Audit`, `SDN.Allocate`, and `SDN.Use` are required for the Networks page to read, create, edit, delete, and apply Proxmox SDN objects. Existing installations should rerun **Settings -> Proxmox Permission Bootstrap** before using Networks.
 
 ### 1b. Create the service user and token
 
@@ -210,7 +212,7 @@ The action SSHes to the Proxmox host as root, repairs the `AutopilotProvisioner`
 If the website cannot SSH yet, run the same primitives manually on the Proxmox node:
 
 ```bash
-pveum role add AutopilotProvisioner -privs VM.Allocate,VM.Clone,VM.Config.CPU,VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.Audit,VM.PowerMgmt,VM.Console,VM.Snapshot,VM.Snapshot.Rollback,VM.GuestAgent.Audit,VM.GuestAgent.FileRead,VM.GuestAgent.FileWrite,VM.GuestAgent.FileSystemMgmt,VM.GuestAgent.Unrestricted,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Use
+pveum role add AutopilotProvisioner -privs VM.Allocate,VM.Clone,VM.Config.CPU,VM.Config.CDROM,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.Audit,VM.PowerMgmt,VM.Console,VM.Snapshot,VM.Snapshot.Rollback,VM.GuestAgent.Audit,VM.GuestAgent.FileRead,VM.GuestAgent.FileWrite,VM.GuestAgent.FileSystemMgmt,VM.GuestAgent.Unrestricted,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Sys.Audit,Sys.Modify,SDN.Audit,SDN.Allocate,SDN.Use
 pveum acl modify / -user autopilot@pve -role AutopilotProvisioner
 pveum acl modify /storage/<vm-disk-storage> -user autopilot@pve -role AutopilotProvisioner
 pveum acl modify /storage/<iso-storage> -user autopilot@pve -role AutopilotProvisioner

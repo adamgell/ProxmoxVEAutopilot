@@ -336,27 +336,22 @@ def test_setup_page_and_unconfigured_login_render_first_run_path(tmp_path, monke
     login = client.get("/auth/login")
 
     assert setup.status_code == 200
-    assert "Proxmox VE Autopilot first-run setup" in setup.text
-    assert "Controller VM" in setup.text
-    assert "autopilot-controller-01" in setup.text
-    assert "192.168.2.181" in setup.text
-    assert "http://192.168.2.181:5000" in setup.text
-    assert "local auth active" in setup.text
-    assert "migration restored" in setup.text
-    assert "Windows ISO" in setup.text
-    assert "ErrorSettings.SentinelReject" in setup.text
-    assert "https://www.microsoft.com/en-us/software-download/windows11" in setup.text
-    assert "https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise" in setup.text
-    assert "virtio-win.iso" in setup.text
-    assert "Build Host" in setup.text
-    assert "autopilot-buildhost-01" in setup.text
-    assert "buildhost-100" in setup.text
-    assert "auto for expected identity" in setup.text
-    assert "autopilotbuilder" in setup.text
+    assert 'id="react-root"' in setup.text
+    assert 'data-react-shell="public"' in setup.text
+    state = client.get("/api/setup/v1/state")
+    assert state.status_code == 200
+    body = state.json()
+    assert body["state"]["controller_name"] == "autopilot-controller-01"
+    assert body["state"]["controller_ip"] == "192.168.2.181"
+    assert body["state"]["controller_url"] == "http://192.168.2.181:5000"
+    assert body["state"]["controller_migration_bundle_restored"] is True
+    assert body["state"]["windows_iso_ready"] is False
+    assert body["state"]["windows_iso_download_error"] == "ErrorSettings.SentinelReject"
+    assert body["state"]["build_host_expected_agent_id"] == "buildhost-100"
+    assert body["state"]["build_host_admin_user"] == "autopilotbuilder"
     assert login.status_code == 200
-    assert "Continue locally" in login.text
-    assert "local operator" in login.text
-    assert "Sign in with Microsoft" not in login.text
+    assert 'id="react-root"' in login.text
+    assert 'data-react-shell="public"' in login.text
 
 
 def test_setup_build_host_seed_iso_endpoint_generates_agent_bootstrap_media(
@@ -733,7 +728,8 @@ def test_local_operator_session_unlocks_cockpit_without_entra(monkeypatch):
 
     login = client.get("/auth/login?next=/")
     assert login.status_code == 200
-    assert "Continue locally" in login.text
+    assert 'id="react-root"' in login.text
+    assert 'data-react-shell="public"' in login.text
 
     started = client.post("/auth/local/start?next=/", follow_redirects=False)
     assert started.status_code == 303
@@ -743,7 +739,6 @@ def test_local_operator_session_unlocks_cockpit_without_entra(monkeypatch):
     assert cockpit.status_code == 302
     assert cockpit.headers["location"] == "/react/dashboard"
 
-    legacy = client.get("/legacy/dashboard")
-    assert legacy.status_code == 200
-    assert "Proxmox VE Autopilot" in legacy.text
-    assert "Local Operator" in legacy.text
+    legacy = client.get("/legacy/dashboard", follow_redirects=False)
+    assert legacy.status_code == 302
+    assert legacy.headers["location"] == "/react/dashboard"

@@ -227,7 +227,12 @@ if (-not $heartbeatVerified) {
     throw "AutopilotAgent did not report a heartbeat within $HeartbeatTimeoutSeconds seconds."
 }
 
-Remove-QgaNetworkRpcBlock
+try {
+    Remove-QgaNetworkRpcBlock
+}
+catch {
+    Write-InstallLog "QGA RPC block cleanup failed after AutopilotAgent heartbeat; continuing: $($_.Exception.Message)"
+}
 
 $primaryIp = Get-PrimaryIpv4
 Write-InstallLog "AutopilotAgent postinstall complete. AgentId=$($bootstrap.agent_id) PrimaryIPv4=$primaryIp"

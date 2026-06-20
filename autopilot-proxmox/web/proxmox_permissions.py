@@ -43,6 +43,8 @@ AUTOPILOT_PRIVILEGES = (
     "Datastore.Audit",
     "Sys.Audit",
     "Sys.Modify",
+    "SDN.Audit",
+    "SDN.Allocate",
     "SDN.Use",
 )
 

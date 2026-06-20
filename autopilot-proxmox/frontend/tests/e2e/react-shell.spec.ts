@@ -1,6 +1,165 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const provisionPayloadForE2e = {
+  profiles: {
+    surface: {
+      manufacturer: "Microsoft",
+      product: "Surface Pro"
+    }
+  },
+  defaults: {
+    cores: 4,
+    memory_mb: 8192,
+    disk_size_gb: 96,
+    count: 2,
+    serial_prefix: "Gell",
+    group_tag: "pilot",
+    oem_profile: "surface",
+    template_vmid: "250",
+    hostname_pattern: "autopilot-{serial}"
+  },
+  template_disk_gb: 80,
+  winpe_enabled: false,
+  cloudosd_catalog: {
+    os_versions: ["Windows 11 24H2"],
+    os_editions: ["Enterprise"],
+    os_activations: ["Volume"],
+    os_languages: ["en-US"],
+    driver_pack_policies: ["none", "manufacturer"],
+    defaults: {
+      os_version: "Windows 11 24H2",
+      os_edition: "Enterprise",
+      os_activation: "Volume",
+      os_language: "en-US",
+      driver_pack_policy: "none",
+      vm_cores: 4,
+      vm_memory_mb: 8192,
+      vm_disk_size_gb: 96,
+      minimum_vm_memory_mb: 4096,
+      minimum_vm_disk_size_gb: 64
+    }
+  },
+  cloudosd_options: {
+    nodes: ["pve2"],
+    bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
+    storages: {
+      iso: ["local"],
+      disk: ["local-lvm"]
+    },
+    defaults: {
+      node: "pve2",
+      iso_storage: "local",
+      disk_storage: "local-lvm",
+      bridge: "vmbr0"
+    }
+  },
+  osdeploy_catalog: {
+    server_roles: ["base", "file_server"],
+    os_versions: ["Windows Server 2025"],
+    os_editions: ["Datacenter"],
+    os_languages: ["en-US"],
+    defaults: {
+      os_version: "Windows Server 2025",
+      os_edition: "Datacenter",
+      os_language: "en-US",
+      vm_cores: 4,
+      vm_memory_mb: 8192,
+      vm_disk_size_gb: 128,
+      minimum_vm_memory_mb: 4096,
+      minimum_vm_disk_size_gb: 96
+    }
+  },
+  osdeploy_options: {
+    nodes: ["pve2"],
+    bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
+    storages: {
+      iso: ["local"],
+      disk: ["local-lvm"]
+    },
+    defaults: {
+      node: "pve2",
+      iso_storage: "local",
+      disk_storage: "local-lvm",
+      bridge: "vmbr0"
+    }
+  },
+  cloudosd_artifacts: [
+    {
+      id: "cloud-artifact",
+      build_sha: "cloud123",
+      osdcloud_module_version: "26.4.17.1",
+      readiness: "ready",
+      ready: true,
+      proxmox_volid: "local:iso/cloud.iso"
+    }
+  ],
+  osdeploy_artifacts: [
+    {
+      id: "server-artifact",
+      build_sha: "srv123",
+      os_version: "Windows Server 2025",
+      os_edition: "Datacenter",
+      readiness: "ready",
+      ready: true,
+      proxmox_volid: "local:iso/server.iso"
+    }
+  ],
+  cloudosd_batch_progress: {
+    summary: {
+      total: 1,
+      deployed: 1,
+      uploaded: 1,
+      assigned: 0,
+      contacted_enrolled: 0
+    },
+    runs: [
+      {
+        run_id: "run-cloud-1",
+        vm_name: "Gell-EC41E7EB",
+        vmid: 116,
+        done_count: 4,
+        total_count: 8,
+        failed_count: 0,
+        milestones: {
+          vm_created: { state: "done", label: "created", detail: "VM 116" },
+          pe_registered: { state: "done", label: "registered", detail: "PE" },
+          osdcloud_done: { state: "waiting", label: "waiting", detail: "OSDCloud" },
+          agent_heartbeat: { state: "waiting", label: "waiting", detail: "agent" },
+          v2_steps_done: { state: "waiting", label: "waiting", detail: "steps" },
+          intune_state: { state: "waiting", label: "waiting", detail: "Intune" }
+        }
+      }
+    ]
+  },
+  cloudosd_cache: {
+    storage: { ready: true, root: "/app/cache/cloudosd" },
+    summary: { ready: 2, total: 3 }
+  },
+  osdeploy_cache: {
+    storage: { ready: false, root: "/app/cache/osdeploy" },
+    summary: { ready: 1, total: 4 }
+  },
+  ubuntu_v2_sequences: [
+    {
+      id: "ubuntu-seq",
+      name: "Ubuntu Desktop",
+      step_count: 5
+    }
+  ]
+};
+
 async function mockReadApis(page: Page) {
+  await page.route("**/api/provision/page", async (route) => {
+    await route.fulfill({ json: provisionPayloadForE2e });
+  });
   await page.route("**/api/services", async (route) => {
     await route.fulfill({
       json: {
@@ -301,7 +460,18 @@ async function mockReadApis(page: Page) {
     });
   });
   await page.route("**/api/files", async (route) => {
-    await route.fulfill({ json: { files: [{ filename: "AutopilotAgent.msi", size: 4096, mtime: "2026-05-19T12:00:00+00:00" }] } });
+    await route.fulfill({
+      json: {
+        files: [
+          {
+            name: "AutopilotAgent.msi",
+            url: "/files/AutopilotAgent.msi",
+            size_bytes: 4096,
+            modified: "2026-05-19T12:00:00+00:00"
+          }
+        ]
+      }
+    });
   });
   await page.route("**/api/settings", async (route) => {
     await route.fulfill({
@@ -340,7 +510,14 @@ test("renders the React shell without layout overlap", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Start desktop run" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open networks" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open signals" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Job Detail", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Run Detail", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "OSDCloud Run", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "OSDeploy Run", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Task Template", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Edit Sequence", exact: true })).toHaveCount(0);
   await expect(page.getByText("Jinja")).toHaveCount(0);
 
   const hero = await page.locator(".outcome-topbar").boundingBox();
@@ -352,6 +529,19 @@ test("renders the React shell without layout overlap", async ({ page }) => {
     throw new Error("React shell layout regions were not measurable.");
   }
   expect(hero.y + hero.height).toBeLessThanOrEqual(panel.y + 1);
+});
+
+test("provision launch composer keeps hostname previews inside Windows limits", async ({ page }) => {
+  await mockReadApis(page);
+  await page.goto("/react/provision");
+
+  await expect(page.getByRole("heading", { name: "Provision" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Run tag" }).fill("NTTENANT01-Desktop");
+  await expect(page.getByRole("textbox", { name: "Group tag" })).toHaveValue("NTTENANT01-Desktop");
+  await expect(page.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("ntt01-{index}");
+  await expect(page.getByText("ntt01-01").first()).toBeVisible();
+  await expect(page.getByText("8 / 15")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced OSDCloud Options" })).toBeVisible();
 });
 
 for (const viewport of [
@@ -405,6 +595,7 @@ for (const viewport of [
     await expect(page.getByRole("heading", { name: "Signal families" })).toBeVisible();
     await expect(page.getByText("Build host agent")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open server deploy" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/react/osdeploy");
     await expect(page.locator("main").getByRole("link", { name: "Monitoring settings", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Deployment speed" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Lifecycle lanes" })).toBeVisible();
@@ -413,6 +604,7 @@ for (const viewport of [
     await page.getByRole("button", { name: "Tail" }).click();
     await expect(page.getByText("2026-05-19T00:00:00Z autopilot ready")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Fleet attention" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/react/vms/101");
 
     const header = await page.locator(".page-head").boundingBox();
     const metrics = await page.locator(".metric-strip").first().boundingBox();
@@ -436,6 +628,9 @@ for (const viewport of [
     await page.getByRole("link", { name: "WrkGrp-525570B6" }).click();
     await expect(page).toHaveURL(/\/react\/vms\/108$/);
     await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Outcome modes" }).getByRole("link", { name: "Fleet", exact: true })
+    ).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Console VM 108" })).toBeVisible();
     await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();

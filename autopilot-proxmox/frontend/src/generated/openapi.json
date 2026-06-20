@@ -357,6 +357,22 @@
         "title": "Body_cloud_delete_api_cloud_delete_post",
         "type": "object"
       },
+      "Body_delete_file_shelf_items_api_files_delete_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "Body_delete_file_shelf_items_api_files_delete_post",
+        "type": "object"
+      },
       "Body_delete_hashes_api_hashes_delete_post": {
         "properties": {
           "files": {
@@ -371,6 +387,20 @@
           "files"
         ],
         "title": "Body_delete_hashes_api_hashes_delete_post",
+        "type": "object"
+      },
+      "Body_replace_file_shelf_item_api_files__filename__replace_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_replace_file_shelf_item_api_files__filename__replace_post",
         "type": "object"
       },
       "Body_start_provision_api_jobs_provision_post": {
@@ -2312,6 +2342,91 @@
           }
         },
         "title": "RuntimeServicesResponse",
+        "type": "object"
+      },
+      "SdnApplyBody": {
+        "properties": {
+          "lock_token": {
+            "default": "",
+            "title": "Lock Token",
+            "type": "string"
+          }
+        },
+        "title": "SdnApplyBody",
+        "type": "object"
+      },
+      "SdnLabBody": {
+        "properties": {
+          "cidr": {
+            "default": "",
+            "title": "Cidr",
+            "type": "string"
+          },
+          "domain_name": {
+            "default": "",
+            "title": "Domain Name",
+            "type": "string"
+          },
+          "egress_policy": {
+            "default": "open",
+            "title": "Egress Policy",
+            "type": "string"
+          },
+          "firewall_profile": {
+            "default": "isolated_open_egress",
+            "title": "Firewall Profile",
+            "type": "string"
+          },
+          "gateway_ip": {
+            "default": "",
+            "title": "Gateway Ip",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "snat_enabled": {
+            "default": true,
+            "title": "Snat Enabled",
+            "type": "boolean"
+          },
+          "subnet": {
+            "default": "",
+            "title": "Subnet",
+            "type": "string"
+          },
+          "vnet": {
+            "title": "Vnet",
+            "type": "string"
+          },
+          "zone": {
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "zone",
+          "vnet"
+        ],
+        "title": "SdnLabBody",
+        "type": "object"
+      },
+      "SdnLockBody": {
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "lock_token": {
+            "default": "",
+            "title": "Lock Token",
+            "type": "string"
+          }
+        },
+        "title": "SdnLockBody",
         "type": "object"
       },
       "SequenceCompileBody": {
@@ -9506,6 +9621,42 @@
         "summary": "Api Files List"
       }
     },
+    "/api/files/delete": {
+      "post": {
+        "operationId": "delete_file_shelf_items_api_files_delete_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_delete_file_shelf_items_api_files_delete_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete File Shelf Items"
+      }
+    },
     "/api/files/upload": {
       "post": {
         "operationId": "upload_file_shelf_items_api_files_upload_post",
@@ -9540,6 +9691,53 @@
           }
         },
         "summary": "Upload File Shelf Items"
+      }
+    },
+    "/api/files/{filename}/replace": {
+      "post": {
+        "operationId": "replace_file_shelf_item_api_files__filename__replace_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_replace_file_shelf_item_api_files__filename__replace_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace File Shelf Item"
       }
     },
     "/api/fleet/summary": {
@@ -13416,6 +13614,2810 @@
           }
         },
         "summary": "Api Run Detail Page"
+      }
+    },
+    "/api/sdn/apply": {
+      "post": {
+        "operationId": "apply_sdn_api_sdn_apply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SdnApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Sdn",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/controllers": {
+      "post": {
+        "operationId": "create_controller_api_sdn_controllers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Controller",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/controllers/{controller}": {
+      "delete": {
+        "operationId": "delete_controller_api_sdn_controllers__controller__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "controller",
+            "required": true,
+            "schema": {
+              "title": "Controller",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Controller",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_controller_api_sdn_controllers__controller__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "controller",
+            "required": true,
+            "schema": {
+              "title": "Controller",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Controller",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/dns": {
+      "post": {
+        "operationId": "create_dns_api_sdn_dns_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Dns",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/dns/{dns}": {
+      "delete": {
+        "operationId": "delete_dns_api_sdn_dns__dns__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dns",
+            "required": true,
+            "schema": {
+              "title": "Dns",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Dns",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall": {
+      "get": {
+        "operationId": "firewall_inventory_api_sdn_firewall_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "node",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node"
+            }
+          },
+          {
+            "in": "query",
+            "name": "vmid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vmid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "vnet",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vnet"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Firewall Inventory",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/aliases": {
+      "post": {
+        "operationId": "create_cluster_firewall_alias_api_sdn_firewall_cluster_aliases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Cluster Firewall Alias",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/aliases/{name}": {
+      "delete": {
+        "operationId": "delete_cluster_firewall_alias_api_sdn_firewall_cluster_aliases__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Cluster Firewall Alias",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_cluster_firewall_alias_api_sdn_firewall_cluster_aliases__name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Cluster Firewall Alias",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/groups": {
+      "post": {
+        "operationId": "create_cluster_firewall_group_api_sdn_firewall_cluster_groups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Cluster Firewall Group",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/groups/{group}": {
+      "delete": {
+        "operationId": "delete_cluster_firewall_group_api_sdn_firewall_cluster_groups__group__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group",
+            "required": true,
+            "schema": {
+              "title": "Group",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Cluster Firewall Group",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_cluster_firewall_group_api_sdn_firewall_cluster_groups__group__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group",
+            "required": true,
+            "schema": {
+              "title": "Group",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Cluster Firewall Group",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/ipset": {
+      "post": {
+        "operationId": "create_cluster_firewall_ipset_api_sdn_firewall_cluster_ipset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Cluster Firewall Ipset",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/ipset/{name}": {
+      "delete": {
+        "operationId": "delete_cluster_firewall_ipset_api_sdn_firewall_cluster_ipset__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Cluster Firewall Ipset",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_cluster_firewall_ipset_api_sdn_firewall_cluster_ipset__name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Cluster Firewall Ipset",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/macros": {
+      "get": {
+        "operationId": "get_cluster_firewall_macros_api_sdn_firewall_cluster_macros_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Cluster Firewall Macros",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/options": {
+      "get": {
+        "operationId": "get_cluster_firewall_options_api_sdn_firewall_cluster_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Cluster Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "set_cluster_firewall_options_api_sdn_firewall_cluster_options_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Cluster Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/refs": {
+      "get": {
+        "operationId": "get_cluster_firewall_refs_api_sdn_firewall_cluster_refs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Cluster Firewall Refs",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/rules": {
+      "post": {
+        "operationId": "create_cluster_firewall_rule_api_sdn_firewall_cluster_rules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Cluster Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/cluster/rules/{pos}": {
+      "delete": {
+        "operationId": "delete_cluster_firewall_rule_api_sdn_firewall_cluster_rules__pos__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Cluster Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_cluster_firewall_rule_api_sdn_firewall_cluster_rules__pos__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Cluster Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/nodes/{node}/options": {
+      "get": {
+        "operationId": "get_node_firewall_options_api_sdn_firewall_nodes__node__options_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Node Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "set_node_firewall_options_api_sdn_firewall_nodes__node__options_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Node Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/nodes/{node}/rules": {
+      "post": {
+        "operationId": "create_node_firewall_rule_api_sdn_firewall_nodes__node__rules_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Node Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/nodes/{node}/rules/{pos}": {
+      "delete": {
+        "operationId": "delete_node_firewall_rule_api_sdn_firewall_nodes__node__rules__pos__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Node Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_node_firewall_rule_api_sdn_firewall_nodes__node__rules__pos__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Node Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/aliases": {
+      "post": {
+        "operationId": "create_vm_firewall_alias_api_sdn_firewall_vms__node___vmid__aliases_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Vm Firewall Alias",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/aliases/{name}": {
+      "delete": {
+        "operationId": "delete_vm_firewall_alias_api_sdn_firewall_vms__node___vmid__aliases__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Vm Firewall Alias",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_vm_firewall_alias_api_sdn_firewall_vms__node___vmid__aliases__name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Vm Firewall Alias",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/ipset": {
+      "post": {
+        "operationId": "create_vm_firewall_ipset_api_sdn_firewall_vms__node___vmid__ipset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Vm Firewall Ipset",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/ipset/{name}": {
+      "delete": {
+        "operationId": "delete_vm_firewall_ipset_api_sdn_firewall_vms__node___vmid__ipset__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Vm Firewall Ipset",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_vm_firewall_ipset_api_sdn_firewall_vms__node___vmid__ipset__name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Vm Firewall Ipset",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/options": {
+      "get": {
+        "operationId": "get_vm_firewall_options_api_sdn_firewall_vms__node___vmid__options_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Vm Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "set_vm_firewall_options_api_sdn_firewall_vms__node___vmid__options_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Vm Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/rules": {
+      "post": {
+        "operationId": "create_vm_firewall_rule_api_sdn_firewall_vms__node___vmid__rules_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Vm Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vms/{node}/{vmid}/rules/{pos}": {
+      "delete": {
+        "operationId": "delete_vm_firewall_rule_api_sdn_firewall_vms__node___vmid__rules__pos__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Vm Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_vm_firewall_rule_api_sdn_firewall_vms__node___vmid__rules__pos__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node",
+            "required": true,
+            "schema": {
+              "title": "Node",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "vmid",
+            "required": true,
+            "schema": {
+              "title": "Vmid",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Vm Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vnets/{vnet}/options": {
+      "get": {
+        "operationId": "get_vnet_firewall_options_api_sdn_firewall_vnets__vnet__options_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Vnet Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "set_vnet_firewall_options_api_sdn_firewall_vnets__vnet__options_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Vnet Firewall Options",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vnets/{vnet}/rules": {
+      "post": {
+        "operationId": "create_vnet_firewall_rule_api_sdn_firewall_vnets__vnet__rules_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Vnet Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/firewall/vnets/{vnet}/rules/{pos}": {
+      "delete": {
+        "operationId": "delete_vnet_firewall_rule_api_sdn_firewall_vnets__vnet__rules__pos__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Vnet Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_vnet_firewall_rule_api_sdn_firewall_vnets__vnet__rules__pos__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pos",
+            "required": true,
+            "schema": {
+              "title": "Pos",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Vnet Firewall Rule",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/inventory": {
+      "get": {
+        "operationId": "inventory_api_sdn_inventory_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Inventory",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/ipams": {
+      "post": {
+        "operationId": "create_ipam_api_sdn_ipams_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Ipam",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/ipams/{ipam}": {
+      "delete": {
+        "operationId": "delete_ipam_api_sdn_ipams__ipam__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ipam",
+            "required": true,
+            "schema": {
+              "title": "Ipam",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Ipam",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/labs": {
+      "post": {
+        "operationId": "create_lab_api_sdn_labs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SdnLabBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Lab",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/labs/preflight": {
+      "post": {
+        "operationId": "lab_preflight_api_sdn_labs_preflight_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SdnLabBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lab Preflight",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/labs/{bubble_id}/network": {
+      "get": {
+        "operationId": "get_lab_network_api_sdn_labs__bubble_id__network_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bubble_id",
+            "required": true,
+            "schema": {
+              "title": "Bubble Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lab Network",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/lock": {
+      "delete": {
+        "operationId": "release_lock_api_sdn_lock_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SdnLockBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Lock",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "post": {
+        "operationId": "acquire_lock_api_sdn_lock_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "allow_pending",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Allow Pending",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acquire Lock",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/vnets": {
+      "post": {
+        "operationId": "create_vnet_api_sdn_vnets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Vnet",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/vnets/{vnet}": {
+      "delete": {
+        "operationId": "delete_vnet_api_sdn_vnets__vnet__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Vnet",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_vnet_api_sdn_vnets__vnet__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Vnet",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/vnets/{vnet}/subnets": {
+      "post": {
+        "operationId": "create_subnet_api_sdn_vnets__vnet__subnets_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Subnet",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/vnets/{vnet}/subnets/{subnet}": {
+      "delete": {
+        "operationId": "delete_subnet_api_sdn_vnets__vnet__subnets__subnet__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subnet",
+            "required": true,
+            "schema": {
+              "title": "Subnet",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Subnet",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_subnet_api_sdn_vnets__vnet__subnets__subnet__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vnet",
+            "required": true,
+            "schema": {
+              "title": "Vnet",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subnet",
+            "required": true,
+            "schema": {
+              "title": "Subnet",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Subnet",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/zones": {
+      "post": {
+        "operationId": "create_zone_api_sdn_zones_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Zone",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
+    "/api/sdn/zones/{zone}": {
+      "delete": {
+        "operationId": "delete_zone_api_sdn_zones__zone__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone",
+            "required": true,
+            "schema": {
+              "title": "Zone",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Zone",
+        "tags": [
+          "sdn"
+        ]
+      },
+      "patch": {
+        "operationId": "update_zone_api_sdn_zones__zone__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "zone",
+            "required": true,
+            "schema": {
+              "title": "Zone",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Zone",
+        "tags": [
+          "sdn"
+        ]
       }
     },
     "/api/sequences": {

@@ -52,4 +52,18 @@ describe("fetchJson", () => {
       "GET /api/jobs/collect-logs failed: vmid is required"
     );
   });
+
+  test("summarizes upstream HTML errors instead of rendering the whole error page", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html><head><title>413 Request Entity Too Large</title></head><body><h1>413 Request Entity Too Large</h1><hr><center>nginx</center><!-- padding --></body></html>", {
+        status: 413,
+        statusText: "Request Entity Too Large",
+        headers: { "content-type": "text/html" }
+      })
+    );
+
+    await expect(fetchJson("/api/files/upload", { method: "POST" })).rejects.toThrow(
+      "POST /api/files/upload failed: 413 Request Entity Too Large"
+    );
+  });
 });

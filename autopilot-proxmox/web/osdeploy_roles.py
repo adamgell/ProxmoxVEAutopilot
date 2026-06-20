@@ -189,7 +189,13 @@ def sanitize_role_options(server_role: str, role_options: dict | None) -> dict:
             out["domain_join"] = domain_join
         return out
     if server_role == "isolated_domain_controller":
+        dc_mode = str(raw.get("dc_mode") or "new_forest").strip().lower()
+        if dc_mode not in {"new_forest", "additional_dc"}:
+            dc_mode = "new_forest"
         return {
+            # new_forest = Install-ADDSForest (isolated lab forest);
+            # additional_dc = Install-ADDSDomainController joined to an existing domain.
+            "dc_mode": dc_mode,
             "forest_fqdn": str(raw.get("forest_fqdn") or "").strip().lower(),
             "netbios_name": str(raw.get("netbios_name") or "").strip().upper(),
             "forest_admin_credential_id": _positive_int(raw.get("forest_admin_credential_id")),

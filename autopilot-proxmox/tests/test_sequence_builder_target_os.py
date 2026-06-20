@@ -30,21 +30,14 @@ def app_env(pg_conn):
 
 
 def test_builder_renders_with_target_os_and_ubuntu_options(app_env):
-    r = app_env.get("/sequences/new")
+    r = app_env.get("/sequences/new", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/react/sequences/new"
+
+    r = app_env.get("/react/sequences/new")
     assert r.status_code == 200
-    body = r.text
-    # target_os selector present
-    assert 'id="target_os"' in body
-    # Both OS options present
-    assert 'value="windows"' in body
-    assert 'value="ubuntu"' in body
-    # Ubuntu step options are wired up
-    assert "Install Ubuntu core" in body
-    assert 'data-os="ubuntu"' in body
-    assert 'data-os="windows"' in body
-    assert 'data-os="both"' in body
-    # Windows baseline still present
-    assert "autopilot_entra" in body
+    assert 'id="react-root"' in r.text
+    assert 'data-react-shell="protected"' in r.text
 
 
 def test_list_page_shows_target_os_badge(app_env):
@@ -61,11 +54,15 @@ def test_list_page_shows_target_os_badge(app_env):
     })
     assert cr2.status_code == 201
 
-    r = app_env.get("/sequences")
+    r = app_env.get("/sequences", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/react/sequences"
+
+    r = app_env.get("/api/sequences/page")
     assert r.status_code == 200
-    assert "os-badge" in r.text
-    assert "os-ubuntu" in r.text
-    assert "os-windows" in r.text
+    target_oses = {row["name"]: row["target_os"] for row in r.json()["sequences"]}
+    assert target_oses["Ubuntu test"] == "ubuntu"
+    assert target_oses["Win test"] == "windows"
 
 
 def test_api_create_accepts_target_os_ubuntu(app_env):

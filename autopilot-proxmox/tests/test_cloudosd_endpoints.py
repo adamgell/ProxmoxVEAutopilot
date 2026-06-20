@@ -105,6 +105,25 @@ def _create_artifact(pg_conn, **overrides):
     return cloudosd_pg.create_artifact(pg_conn, **values)
 
 
+def test_auto_select_cloudosd_artifact_picks_ready_or_409(pg_conn):
+    from fastapi import HTTPException
+    from web import app as web_app, cloudosd_pg
+
+    cloudosd_pg.reset_for_tests(pg_conn)
+    cloudosd_pg.init(pg_conn)
+
+    # Operators no longer choose the OSDCloud artifact. With nothing ready,
+    # provisioning fails clearly instead of guessing.
+    with pytest.raises(HTTPException) as exc_info:
+        web_app._auto_select_cloudosd_artifact_id(pg_conn)
+    assert exc_info.value.status_code == 409
+
+    artifact = _create_artifact(pg_conn)
+    pg_conn.commit()
+
+    assert web_app._auto_select_cloudosd_artifact_id(pg_conn) == str(artifact["id"])
+
+
 def _run_payload(artifact_id: str, **overrides):
     values = {
         "artifact_id": artifact_id,
@@ -325,6 +344,20 @@ def test_cloudosd_base_url_honors_forwarded_https_headers(monkeypatch):
     monkeypatch.delenv("AUTOPILOT_BASE_URL", raising=False)
 
     assert cloudosd_endpoints._base_url(RequestStub()) == "https://autopilot.gell.one"
+
+
+def test_cloudosd_provision_base_url_uses_guest_reachable_url(monkeypatch):
+    from web import app as web_app
+    from web import cloudosd_endpoints
+
+    monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://127.0.0.1:5000")
+    monkeypatch.setattr(
+        web_app,
+        "_derive_guest_reachable_base_url",
+        lambda config: "http://controller:5000",
+    )
+
+    assert cloudosd_endpoints._base_url(None) == "http://controller:5000"
 
 
 def test_cloudosd_name_comparison_treats_windows_name_case_as_aligned():
@@ -2065,6 +2098,63 @@ def test_cloudosd_error_event_marks_run_failed(cloudosd_client, pg_conn):
     assert row["last_error"] == "Deploy-OSDCloud failed"
 
 
+def test_cloudosd_warning_failed_suffix_event_does_not_mark_run_failed(cloudosd_client, pg_conn):
+    artifact = _create_artifact(pg_conn)
+    run = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json={
+            "artifact_id": artifact["id"],
+            "vm_name": "CLOUDOSD-WARN",
+            "architecture": "amd64",
+            "vm_memory_mb": 8192,
+        },
+    )
+    assert run.status_code == 201, run.text
+    run_id = run.json()["run_id"]
+    assert cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/identity",
+        json={
+            "vmid": 224,
+            "vm_uuid": "33333333-4444-5555-6666-777777777777",
+            "mac": "52:54:00:aa:bb:ee",
+            "node": "pve",
+        },
+    ).status_code == 200
+    registered = cloudosd_client.post(
+        "/api/cloudosd/pe/register",
+        json={
+            "vm_uuid": "33333333-4444-5555-6666-777777777777",
+            "mac": "52:54:00:aa:bb:ee",
+            "architecture": "amd64",
+            "build_sha": "cloudosdtest",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+
+    event = cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/events",
+        headers=_bearer(registered.json()["bearer_token"]),
+        json={
+            "phase": "first_boot",
+            "event_type": "firstboot_oobe_bootstrap_session_logoff_failed",
+            "severity": "warning",
+            "message": "No User exists for *",
+        },
+    )
+    assert event.status_code == 200, event.text
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["run"]["state"] != "failed"
+
+    row = pg_conn.execute(
+        "SELECT state, last_error FROM ts_provisioning_runs WHERE id = %s",
+        (run_id,),
+    ).fetchone()
+    assert row["state"] != "failed"
+    assert row["last_error"] is None
+
+
 def test_cloudosd_run_rejects_too_little_memory(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
 
@@ -2493,10 +2583,12 @@ def test_cloudosd_lifecycle_events_sync_v2_task_engine_progress(
     assert after["step_count"] == 7
     assert after["state"] == "full_os_waiting_v2"
 
-    task_engine = cloudosd_client.get("/task-engine")
+    task_engine = cloudosd_client.get("/api/task-engine/page")
     assert task_engine.status_code == 200
-    assert "6/7 done" in task_engine.text
-    assert "full_os_waiting_v2" in task_engine.text
+    runs = {row["id"]: row for row in task_engine.json()["runs"]}
+    assert runs[run["run_id"]]["done_count"] == 6
+    assert runs[run["run_id"]]["step_count"] == 7
+    assert runs[run["run_id"]]["state"] == "full_os_waiting_v2"
 
 
 def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
@@ -2525,22 +2617,22 @@ def test_cloudosd_run_detail_page_live_refreshes_run_evidence_and_milestones(
         message="Starting OSDCloud deploy",
     )
 
-    response = cloudosd_client.get(f"/cloudosd/runs/{run['run_id']}")
+    response = cloudosd_client.get(f"/cloudosd/runs/{run['run_id']}", follow_redirects=False)
+
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == f"/react/cloudosd/runs/{run['run_id']}"
+
+    response = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}/page")
 
     assert response.status_code == 200, response.text
-    assert 'id="cloudosdRunDetail"' in response.text
-    assert 'data-cloudosd-field="pe_registered_at"' in response.text
-    assert 'data-cloudosd-field="domain_join_target"' in response.text
-    assert 'data-cloudosd-field="domain_join_verification"' in response.text
-    assert 'data-cloudosd-field="local_admin_username"' in response.text
-    assert 'data-cloudosd-field="local_admin_password"' in response.text
-    assert "localadmin" in response.text
-    assert run["local_admin"]["password"] in response.text
-    assert "Domain join" in response.text
-    assert f"/api/cloudosd/runs/${{encodeURIComponent(runId)}}" in response.text
-    assert "window.setTimeout(refresh, 5000)" in response.text
-    assert "CloudOSD PE bridge registered" in response.text
-    assert "Starting OSDCloud deploy" in response.text
+    body = response.json()
+    assert body["run"]["run_id"] == run["run_id"]
+    assert body["run"]["local_admin"]["username"] == "localadmin"
+    assert body["run"]["local_admin"]["password"] == run["local_admin"]["password"]
+    assert [event["message"] for event in body["events"]][-2:] == [
+        "CloudOSD PE bridge registered",
+        "Starting OSDCloud deploy",
+    ]
 
 
 def test_cloudosd_proxmox_options_fallback_to_configured_defaults(
@@ -2570,7 +2662,58 @@ def test_cloudosd_proxmox_options_fallback_to_configured_defaults(
     assert body["storages"]["iso"] == ["local"]
     assert body["storages"]["disk"] == ["local-lvm"]
     assert body["bridges"] == ["vmbr0"]
+    assert body["network_targets"][0]["value"] == "vmbr0"
+    assert body["network_targets"][0]["kind"] == "bridge"
     assert body["source"] == "configured"
+
+
+def test_cloudosd_proxmox_options_include_sdn_vnet_targets(
+    cloudosd_client,
+    monkeypatch,
+):
+    from web import app as web_app
+
+    monkeypatch.setattr(web_app, "_load_vars", lambda: {
+        "proxmox_node": "pve",
+        "proxmox_iso_storage": "local",
+        "proxmox_storage": "local-lvm",
+        "proxmox_bridge": "vmbr0",
+    })
+
+    def fake_proxmox_api(path, *args, **kwargs):
+        values = {
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+            "/cluster/sdn/vnets": [
+                {"vnet": "lab101", "zone": "lab-simple", "alias": "Lab 101"}
+            ],
+        }
+        if path not in values:
+            raise AssertionError(path)
+        return values[path]
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+
+    response = cloudosd_client.get("/api/cloudosd/proxmox/options")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["bridges"] == ["vmbr0"]
+    assert any(
+        target["kind"] == "bridge" and target["value"] == "vmbr0"
+        for target in body["network_targets"]
+    )
+    assert any(
+        target["kind"] == "sdn_vnet"
+        and target["value"] == "lab101"
+        and target["zone"] == "lab-simple"
+        for target in body["network_targets"]
+    )
 
 
 def test_cloudosd_proxmox_options_exposes_windows_catalog_choices(
@@ -2622,52 +2765,30 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
 ):
     artifact = _create_artifact(pg_conn)
 
-    response = cloudosd_client.get("/provision")
+    response = cloudosd_client.get("/provision", follow_redirects=False)
 
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == "/react/provision"
+
+    response = cloudosd_client.get("/api/provision/page")
     assert response.status_code == 200, response.text
-    body = response.text
-    assert body.index('name="boot_mode"') < body.index('name="sequence_id"')
-    assert (
-        '<option value="cloudosd" selected>OSDCloud (Windows desktop clients)</option>'
-        in body
-    )
-    assert 'value="" selected data-cloudosd-default="1"' in body
-    assert "OSDCloud base deployment (no legacy sequence)" in body
-    assert body.index('<option value="cloudosd" selected>') < body.index(
-        '<option value="winpe">'
-    )
-    assert 'data-boot-section="cloudosd"' in body
-    assert "OSDCloud blank uses a plain generated serial" in body
-    assert f'value="{artifact["id"]}"' in body
-    for required in (
-        'name="artifact_id"',
-        'name="count"',
-        'name="cores"',
-        'name="memory_mb"',
-        'name="disk_size_gb"',
-        'name="group_tag"',
-        'name="profile"',
-        'name="chassis_type_override"',
-        'name="node"',
-        'name="iso_storage"',
-        'name="storage"',
-        'name="network_bridge"',
-        'name="os_version"',
-        'name="os_edition"',
-        'name="os_activation"',
-        'name="os_language"',
-    ):
-        assert required in body
+    body = response.json()
+    assert body["defaults"]["count"] == 1
+    assert body["defaults"]["cores"] >= 1
+    assert any(row["id"] == artifact["id"] for row in body["cloudosd_ready_artifacts"])
+    assert set(body["cloudosd_options"]) >= {"nodes", "storages", "bridges"}
+    assert body["cloudosd_options"]["storages"]["iso"]
+    assert body["cloudosd_options"]["storages"]["disk"]
 
 
-def test_provision_page_filters_legacy_sequences_by_boot_mode(
+def test_provision_page_excludes_legacy_v1_sequences(
     cloudosd_client,
     pg_conn,
 ):
     from web import sequences_pg
 
     _create_artifact(pg_conn)
-    cloudosd_seq = sequences_pg.create_sequence(
+    sequences_pg.create_sequence(
         None,
         name="CloudOSD AD Domain Join UI",
         description="CloudOSD-only domain join intent",
@@ -2680,7 +2801,7 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
             },
         ],
     )
-    windows_seq = sequences_pg.create_sequence(
+    sequences_pg.create_sequence(
         None,
         name="Clone and WinPE Windows UI",
         description="Generic Windows sequence",
@@ -2690,7 +2811,7 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
             {"step_type": "autopilot_entra", "params": {}, "enabled": True},
         ],
     )
-    winpe_seq = sequences_pg.create_sequence(
+    sequences_pg.create_sequence(
         None,
         name="WinPE E2E Smoke UI",
         description="WinPE-only smoke sequence",
@@ -2705,19 +2826,11 @@ def test_provision_page_filters_legacy_sequences_by_boot_mode(
         steps=[],
     )
 
-    response = cloudosd_client.get("/provision")
+    response = cloudosd_client.get("/api/provision/page")
 
     assert response.status_code == 200, response.text
-    body = response.text
-    assert "not OSDCloud-compatible yet" not in body
-    assert "Ubuntu Plain Legacy UI" not in body
-    assert f'value="{cloudosd_seq}"' in body
-    assert f'value="{windows_seq}"' in body
-    assert f'value="{winpe_seq}"' in body
-    assert 'data-boot-modes="cloudosd"' in body
-    assert 'data-boot-modes="clone winpe"' in body
-    assert 'data-boot-modes="winpe"' in body
-    assert "syncSequenceOptions" in body
+    assert response.json()["sequences"] == []
+    assert response.json()["default_sequence_id"] == ""
 
 
 def test_provision_rejects_sequence_for_wrong_boot_mode(
@@ -2850,6 +2963,93 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             assert run["vm_oem_profile"] == "lenovo-t14"
             assert run["chassis_type_override"] == 31
             assert run["source_surface"] == "provision"
+
+
+def test_provision_cloudosd_short_hostname_keeps_full_group_tag(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_api",
+        lambda path, *args, **kwargs: {
+            "/cluster/nextid": 105,
+            "/cluster/resources?type=vm": [],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+        }[path],
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "generic-desktop",
+            "count": "2",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "serial_prefix": "",
+            "group_tag": "NTTENANT01-Desktop",
+            "hostname_pattern": "ntt01-{index}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    jobs = [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ]
+    assert len(jobs) == 2
+    assert {job["args"]["vm_group_tag"] for job in jobs} == {"NTTENANT01-Desktop"}
+    assert {job["args"]["hostname_pattern"] for job in jobs} == {"ntt01-01", "ntt01-02"}
+    assert all(len(job["args"]["hostname_pattern"]) <= 15 for job in jobs)
+
+    runs = cloudosd_pg.list_runs(pg_conn, limit=10)
+    created = [
+        run for run in runs
+        if run["requested_vm_name"] in {"ntt01-01", "ntt01-02"}
+    ]
+    assert len(created) == 2
+    assert {run["vm_group_tag"] for run in created} == {"NTTENANT01-Desktop"}
+    assert {run["expected_computer_name"] for run in created} == {"ntt01-01", "ntt01-02"}
+    assert all(len(run["expected_computer_name"]) <= 15 for run in created)
 
 
 def test_provision_cloudosd_batch_reserves_unique_vmids_without_vmid_token(
@@ -3063,22 +3263,17 @@ def test_provision_page_shows_cloudosd_batch_progress_rows(
     assert row["intune_evidence"]["assignment"]["status"] == "assignedInSync"
     assert row["intune_evidence"]["enrollment"]["status"] == "enrolled"
 
-    page = cloudosd_client.get("/provision")
+    page = cloudosd_client.get("/api/provision/page")
     assert page.status_code == 200, page.text
-    body = page.text
-    assert "OSDCloud Batch Progress" in body
-    assert "VM created" in body
-    assert "PE registered" in body
-    assert "OSDCloud done" in body
-    assert "Agent heartbeat" in body
-    assert "v2 steps done" in body
-    assert "Autopilot readiness" in body
-    assert 'data-cloudosd-summary="deployed"' in body
-    assert 'data-cloudosd-summary="uploaded"' in body
-    assert 'data-cloudosd-summary="assigned"' in body
-    assert 'data-cloudosd-summary="contacted_enrolled"' in body
-    assert "Gell-251-OSD1" in body
-    assert "/api/cloudosd/provision/progress" in body
+    rows = page.json()["cloudosd_batch_progress"]["runs"]
+    row = next(item for item in rows if item["run_id"] == run["run_id"])
+    assert row["vm_name"] == "Gell-251-OSD1"
+    assert row["milestones"]["vm_created"]["state"] == "done"
+    assert row["milestones"]["pe_registered"]["state"] == "done"
+    assert row["milestones"]["osdcloud_done"]["state"] == "done"
+    assert row["milestones"]["agent_heartbeat"]["state"] == "done"
+    assert row["milestones"]["v2_steps_done"]["state"] == "done"
+    assert row["autopilot_readiness"]["state"] == "enrolled"
 
 
 def test_cloudosd_archive_hides_run_from_default_history_but_preserves_detail(
@@ -3561,51 +3756,85 @@ def test_cloudosd_provision_endpoint_enqueues_dedicated_playbook(
     assert job["args"]["vm_name"] == "CLOUDOSD-PROVISION"
 
 
+def test_cloudosd_run_accepts_sdn_vnet_network_target(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import cloudosd_endpoints, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        cloudosd_endpoints,
+        "proxmox_options_payload",
+        lambda: {
+            "schema_version": 1,
+            "source": "live",
+            "defaults": {
+                "node": "pve",
+                "iso_storage": "local",
+                "disk_storage": "local-lvm",
+                "bridge": "vmbr0",
+            },
+            "catalog": cloudosd_endpoints.catalog_payload(),
+            "nodes": ["pve"],
+            "storages": {"iso": ["local"], "disk": ["local-lvm"]},
+            "bridges": ["vmbr0"],
+            "network_targets": [
+                {"kind": "bridge", "value": "vmbr0", "label": "vmbr0"},
+                {
+                    "kind": "sdn_vnet",
+                    "value": "lab101",
+                    "label": "Lab 101",
+                    "zone": "lab-simple",
+                },
+            ],
+            "vms": [],
+        },
+    )
+
+    run_response = cloudosd_client.post(
+        "/api/cloudosd/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="CLOUDOSD-SDN",
+            network_bridge="lab101",
+        ),
+    )
+
+    assert run_response.status_code == 201, run_response.text
+    run = run_response.json()
+    assert run["network_bridge"] == "lab101"
+
+    response = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/provision")
+
+    assert response.status_code == 202, response.text
+    job = jobs_pg.get_job(response.json()["job_id"])
+    assert job["args"]["proxmox_bridge"] == "lab101"
+
+
 def test_cloudosd_wizard_page_lists_artifacts_and_policy(cloudosd_client, pg_conn):
     artifact = _create_artifact(pg_conn)
 
-    response = cloudosd_client.get("/osdcloud")
-    builder_response = cloudosd_client.get("/osdcloud/builder")
-    artifacts_response = cloudosd_client.get("/osdcloud/artifacts")
+    response = cloudosd_client.get("/osdcloud", follow_redirects=False)
+    builder_response = cloudosd_client.get("/osdcloud/builder", follow_redirects=False)
+    artifacts_response = cloudosd_client.get("/osdcloud/artifacts", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert builder_response.status_code == 200
-    assert artifacts_response.status_code == 200
-    assert "OSDCloud" in response.text
-    assert "Operator Flow" in response.text
-    assert 'aria-label="OSDCloud pages"' in response.text
-    assert ">Builder</a>" in response.text
-    assert ">Cache</a>" in response.text
-    assert ">Artifacts</a>" in response.text
-    assert "https://www.osdcloud.com/" in response.text
-    assert "/osdcloud/builder" in response.text
-    assert "/osdcloud/cache" in response.text
-    assert "/osdcloud/artifacts" in response.text
-    assert artifact["iso_sha256"] in artifacts_response.text
-    assert "6144" in builder_response.text
-    assert '<dt>Analytics</dt><dd id="reviewAnalytics">blocked</dd>' in builder_response.text
-    assert "/api/cloudosd/artifacts/build" in artifacts_response.text
-    assert "Windows 11 24H2" in builder_response.text
-    assert "Windows 11 21H2" in builder_response.text
-    assert "Windows 10 22H2" in builder_response.text
-    assert "Home N" in builder_response.text
-    assert "Enterprise N" in builder_response.text
-    assert "Education" in builder_response.text
-    assert "de-de" in builder_response.text
-    assert "Single-VM Deployment" in builder_response.text
-    assert "Review &amp; Launch" in builder_response.text
-    assert "Blocking Checks" in builder_response.text
-    assert "OSDCloud Run History" in response.text
-    assert "Active Runs" in response.text
-    assert "Stale Failed Runs" in response.text
-    assert "Stale failures can be hidden without deleting evidence" in response.text
-    assert "Build a desktop run" in builder_response.text
-    assert "Manage PE artifacts" in builder_response.text
-    assert "cloudosd-toggle-line" in builder_response.text
-    assert "Single-VM Deployment" not in response.text
-    assert "<h2>Artifacts</h2>" not in response.text
-    assert builder_response.text.index("Single-VM Deployment") < builder_response.text.index("Review &amp; Launch")
-    assert builder_response.text.index("Build a desktop run") < builder_response.text.index("Single-VM Deployment")
+    assert response.status_code == 302
+    assert response.headers["location"] == "/react/cloudosd"
+    assert builder_response.status_code == 302
+    assert builder_response.headers["location"] == "/react/cloudosd?view=builder"
+    assert artifacts_response.status_code == 302
+    assert artifacts_response.headers["location"] == "/react/cloudosd?view=artifacts"
+
+    overview = cloudosd_client.get("/api/cloudosd/page").json()
+    builder = cloudosd_client.get("/api/cloudosd/page?view=builder").json()
+    artifacts = cloudosd_client.get("/api/cloudosd/page?view=artifacts").json()
+    assert overview["cloudosd_view"] == "overview"
+    assert builder["cloudosd_view"] == "builder"
+    assert artifacts["cloudosd_view"] == "artifacts"
+    assert any(row["iso_sha256"] == artifact["iso_sha256"] for row in artifacts["artifacts"])
+    assert builder["catalog"]["os_versions"]
 
 
 def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(
@@ -3631,13 +3860,16 @@ def test_cloudosd_run_detail_page_shows_identity_and_heartbeat_evidence(
         },
     ).status_code == 200
 
-    response = cloudosd_client.get(f"/osdcloud/runs/{run['run_id']}")
+    response = cloudosd_client.get(f"/osdcloud/runs/{run['run_id']}", follow_redirects=False)
 
+    assert response.status_code == 302
+    assert response.headers["location"] == f"/react/cloudosd/runs/{run['run_id']}"
+
+    response = cloudosd_client.get(f"/api/cloudosd/runs/{run['run_id']}/page")
     assert response.status_code == 200
-    body = response.text
-    assert "OSDCloud Run" in body
-    assert "Cloud OSD Lab 001" in body
-    assert "CloudOSDLab001" in body
-    assert "Heartbeat gate" in body
-    assert "AutopilotAgent" in body
-    assert "offline validation" in body.lower()
+    body = response.json()
+    assert body["run"]["run_id"] == run["run_id"]
+    assert body["run"]["requested_vm_name"] == "Cloud OSD Lab 001"
+    assert body["run"]["pve_vm_name"] == "Cloud OSD Lab 001"
+    assert body["run"]["expected_computer_name"] == "CloudOSDLab001"
+    assert body["latest_heartbeat"] is None

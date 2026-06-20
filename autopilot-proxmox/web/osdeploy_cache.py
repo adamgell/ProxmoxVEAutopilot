@@ -220,8 +220,14 @@ def get_entry(conn: Connection, entry_id: str) -> dict | None:
 
 
 def refresh_catalog(conn: Connection) -> dict:
+    # Only server images are seeded here. They are produced by the OSDeploy/OSDBuilder
+    # factory on the build host (warming dispatches a build_osdeploy agent work item),
+    # which downloads and bakes the latest cumulative update into the image via
+    # New-OSBuild -Download. Standalone cumulative-update MSUs are owned by the separate
+    # CloudOSD cache (cloudosd_cache.py), which has its own consumers and catalog logic,
+    # so this catalog no longer seeds unconsumed quality_update entries.
     server_images = []
-    quality_updates = []
+    quality_updates: list = []
     for windows_version, edition, language in SERVER_IMAGE_SEEDS:
         safe_version = re.sub(r"[^a-z0-9]+", "-", windows_version.lower()).strip("-")
         safe_edition = re.sub(r"[^a-z0-9]+", "-", edition.lower()).strip("-")
@@ -247,27 +253,10 @@ def refresh_catalog(conn: Connection) -> dict:
                 },
             )
         )
-        quality_updates.append(
-            upsert_entry(
-                conn,
-                {
-                    "id": _stable_id("quality_update", windows_version, "amd64", edition, language),
-                    "entry_type": "quality_update",
-                    "status": "discovered",
-                    "windows_version": windows_version,
-                    "architecture": "amd64",
-                    "edition": edition,
-                    "language": language,
-                    "title": f"Latest cumulative update for {windows_version} {edition}",
-                    "file_name": f"{safe_version}-{safe_edition}-latest-quality.msu",
-                    "source_url": "manual://microsoft-update-catalog",
-                    "metadata": {
-                        "factory": "OSDeploy/OSDBuilder",
-                        "content_role": "offline_servicing_update",
-                    },
-                },
-            )
-        )
+    # Remove retired quality_update placeholders seeded by earlier catalog versions.
+    # They were never warmable (no automated source) and nothing consumes a standalone
+    # OSDeploy MSU; the cumulative update is baked into the server image by the factory.
+    conn.execute("DELETE FROM osdeploy_cache_entries WHERE entry_type = 'quality_update'")
     conn.commit()
     return {"server_images": server_images, "quality_updates": quality_updates}
 
@@ -310,6 +299,77 @@ def mark_status(
     ).fetchone()
     conn.commit()
     return _entry_row(row)
+
+
+def mark_build_dispatched(
+    conn: Connection,
+    entry_id: str,
+    *,
+    work_item_id: str,
+    job_id: str | None = None,
+) -> dict | None:
+    """Record that warming this entry dispatched an OSDeploy build_osdeploy work item.
+
+    The entry moves to 'warming' and remembers the work item so the build-artifact
+    reconciler can finalize it to 'ready' once the agent uploads the built ISO.
+    """
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE osdeploy_cache_entries
+        SET status = 'warming',
+            error = NULL,
+            last_job_id = COALESCE(%s, last_job_id),
+            metadata_json = metadata_json || %s,
+            updated_at = %s
+        WHERE id = %s
+        RETURNING *
+        """,
+        (job_id, _json({"build_work_item_id": work_item_id}), now, entry_id),
+    ).fetchone()
+    conn.commit()
+    return _entry_row(row)
+
+
+def finalize_from_build(
+    conn: Connection,
+    entry_id: str,
+    *,
+    local_path: str,
+    size_bytes: int,
+    sha256_value: str,
+    file_name: str | None = None,
+) -> dict | None:
+    """Mark a warming entry 'ready' from a build artifact the agent uploaded."""
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE osdeploy_cache_entries
+        SET status = 'ready',
+            error = NULL,
+            local_path = %s,
+            size_bytes = %s,
+            sha256 = %s,
+            file_name = COALESCE(%s, file_name),
+            verified_at = %s,
+            updated_at = %s
+        WHERE id = %s
+        RETURNING *
+        """,
+        (local_path, size_bytes, sha256_value, file_name, now, now, entry_id),
+    ).fetchone()
+    conn.commit()
+    return _entry_row(row)
+
+
+def warming_build_entries(conn: Connection) -> list[dict]:
+    """Entries currently warming via a dispatched build_osdeploy work item."""
+    return [
+        entry
+        for entry in list_entries(conn)
+        if entry.get("status") == "warming"
+        and (entry.get("metadata") or {}).get("build_work_item_id")
+    ]
 
 
 def _ensure_cache_root(min_required_bytes: int = MIN_FREE_BYTES) -> Path:

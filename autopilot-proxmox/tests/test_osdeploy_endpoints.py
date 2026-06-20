@@ -20,7 +20,7 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def osdeploy_client(pg_conn, monkeypatch):
+def osdeploy_client(pg_conn, monkeypatch, tmp_path):
     from web import (
         agent_telemetry_pg,
         jobs_pg,
@@ -46,6 +46,10 @@ def osdeploy_client(pg_conn, monkeypatch):
     lab_bubbles_pg.reset_for_tests(pg_conn)
     lab_bubbles_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
+    agent_msi = tmp_path / "artifacts" / "AutopilotAgent.msi"
+    agent_msi.parent.mkdir(parents=True, exist_ok=True)
+    agent_msi.write_bytes(b"MZ" + (b"\0" * 4094))
+    monkeypatch.setenv("AUTOPILOT_AGENT_MSI_PATH", str(agent_msi))
 
     from web import app as web_app
 
@@ -105,6 +109,75 @@ def _create_osdeploy_artifact(pg_conn, **overrides):
     }
     values.update(overrides)
     return osdeploy_pg.create_artifact(pg_conn, **values)
+
+
+def test_osdeploy_dc_role_options_carry_dc_mode():
+    from web import osdeploy_roles
+
+    base = {"forest_fqdn": "lab.gell.one", "netbios_name": "LAB", "forest_admin_credential_id": 1, "dsrm_credential_id": 2}
+    new_forest = osdeploy_roles.sanitize_role_options("isolated_domain_controller", base)
+    assert new_forest["dc_mode"] == "new_forest"
+    additional = osdeploy_roles.sanitize_role_options(
+        "isolated_domain_controller", {**base, "dc_mode": "additional_dc"}
+    )
+    assert additional["dc_mode"] == "additional_dc"
+    # Unknown modes fall back to the safe new_forest default.
+    bogus = osdeploy_roles.sanitize_role_options("isolated_domain_controller", {**base, "dc_mode": "garbage"})
+    assert bogus["dc_mode"] == "new_forest"
+
+
+def test_osdeploy_dc_provision_rejects_blank_role_options(osdeploy_client):
+    # Regression for vmid 109 / TestDC1: a domain controller submitted through
+    # /api/jobs/provision with no forest FQDN / NetBIOS / credentials must be
+    # rejected up front, not created as a run with empty role options.
+    resp = osdeploy_client.post(
+        "/api/jobs/provision",
+        data={
+            "profile": "generic-desktop",
+            "boot_mode": "osdeploy",
+            "count": "1",
+            "osdeploy_server_role": "isolated_domain_controller",
+            "osdeploy_dc_mode": "new_forest",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error"] == "role_options_invalid"
+    check_ids = {check["id"] for check in detail["checks"]}
+    assert "role_option_missing_forest_fqdn" in check_ids
+    assert "role_option_missing_netbios_name" in check_ids
+
+
+def test_auto_select_osdeploy_artifact_matches_requested_os(pg_conn):
+    from fastapi import HTTPException
+    from web import app as web_app, osdeploy_pg
+
+    osdeploy_pg.reset_for_tests(pg_conn)
+    osdeploy_pg.init(pg_conn)
+
+    # Nothing ready -> clear 409 instead of guessing.
+    with pytest.raises(HTTPException) as exc_info:
+        web_app._auto_select_osdeploy_artifact_id(
+            pg_conn, os_version="Windows Server 2025", os_edition="Datacenter"
+        )
+    assert exc_info.value.status_code == 409
+
+    # _create_osdeploy_artifact builds a ready Windows Server 2025 / Datacenter artifact.
+    artifact = _create_osdeploy_artifact(pg_conn)
+    pg_conn.commit()
+
+    # Matching OS -> that artifact.
+    assert web_app._auto_select_osdeploy_artifact_id(
+        pg_conn, os_version="Windows Server 2025", os_edition="Datacenter"
+    ) == str(artifact["id"])
+
+    # A different requested OS with no ready artifact must 409, never silently
+    # return the 2025 artifact (which would fail the artifact_os_mismatch preflight).
+    with pytest.raises(HTTPException) as exc_info2:
+        web_app._auto_select_osdeploy_artifact_id(
+            pg_conn, os_version="Windows Server 2022", os_edition="Datacenter"
+        )
+    assert exc_info2.value.status_code == 409
 
 
 def _run_payload(artifact_id: str, **overrides):
@@ -306,20 +379,62 @@ def test_osdeploy_artifact_list_includes_build_and_publish_job_links(osdeploy_cl
 def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_conn):
     artifact = _create_osdeploy_artifact(pg_conn)
 
-    response = osdeploy_client.get("/osdeploy/builder")
+    response = osdeploy_client.get("/osdeploy/builder", follow_redirects=False)
+
+    assert response.status_code == 302, response.text
+    assert response.headers["location"] == "/react/osdeploy?view=builder"
+
+    response = osdeploy_client.get("/api/osdeploy/page?view=builder")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["osdeploy_view"] == "builder"
+    assert any(row["id"] == artifact["id"] for row in body["artifacts"])
+    assert body["proxmox_options"]["nodes"][0] == "pve"
+    assert body["proxmox_options"]["storages"]["iso"][0] == "local"
+    assert body["proxmox_options"]["storages"]["disk"][0] == "local-lvm"
+    assert body["proxmox_options"]["bridges"][0] == "vmbr0"
+    assert body["proxmox_options"]["network_targets"][0]["value"] == "vmbr0"
+
+
+def test_osdeploy_page_options_include_sdn_vnet_targets(
+    osdeploy_client,
+    monkeypatch,
+):
+    from web import app as web_app
+
+    def fake_proxmox_api(path, *args, **kwargs):
+        values = {
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/cluster/sdn/vnets": [
+                {"vnet": "lab101", "zone": "lab-simple", "alias": "Lab 101"}
+            ],
+        }
+        if path not in values:
+            raise AssertionError(path)
+        return values[path]
+
+    monkeypatch.setattr(web_app, "_proxmox_api", fake_proxmox_api)
+
+    response = osdeploy_client.get("/api/osdeploy/v1/proxmox/options")
 
     assert response.status_code == 200, response.text
-    body = response.text
-    assert 'id="osdeployRunForm"' in body
-    assert artifact["id"] in body
-    assert "/api/osdeploy/v1/preflight" in body
-    assert "/api/osdeploy/v1/runs" in body
-    assert "Launch OSDeploy VM" in body
-    assert '<option value="pve" selected>pve</option>' in body
-    assert '<option value="local" selected>local</option>' in body
-    assert '<option value="local-lvm" selected>local-lvm</option>' in body
-    assert '<option value="vmbr0" selected>vmbr0</option>' in body
-    assert "&#34;" not in body
+    body = response.json()
+    assert body["bridges"] == ["vmbr0"]
+    assert any(
+        target["kind"] == "bridge" and target["value"] == "vmbr0"
+        for target in body["network_targets"]
+    )
+    assert any(
+        target["kind"] == "sdn_vnet"
+        and target["value"] == "lab101"
+        and target["zone"] == "lab-simple"
+        for target in body["network_targets"]
+    )
 
 
 def test_osdeploy_v2_catalog_owns_osdeploy_step_kind():
@@ -453,6 +568,47 @@ def test_osdeploy_preflight_blocks_missing_disk_storage(
         json=_run_payload(artifact["id"], storage="local-lvm"),
     )
     assert created.status_code == 409
+
+
+def test_osdeploy_preflight_blocks_unknown_network_target(
+    osdeploy_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import osdeploy_endpoints
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "proxmox_options_payload",
+        lambda: {
+            "schema_version": 1,
+            "nodes": ["pve"],
+            "storages": {"iso": ["local"], "disk": ["local-lvm"]},
+            "bridges": ["vmbr0"],
+            "network_targets": [
+                {"kind": "bridge", "value": "vmbr0", "label": "vmbr0"},
+            ],
+            "defaults": {
+                "node": "pve",
+                "iso_storage": "local",
+                "disk_storage": "local-lvm",
+                "bridge": "vmbr0",
+            },
+        },
+    )
+
+    preflight = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=_run_payload(artifact["id"], network_bridge="missing-net"),
+    )
+
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["launch_allowed"] is False
+    assert "proxmox_bridge_unavailable" in {
+        check["id"] for check in body["blocking_checks"]
+    }
 
 
 def test_osdeploy_preflight_and_provision_recover_stale_virtio_storage(
@@ -855,7 +1011,11 @@ def test_osdeploy_launches_all_role_sequences_with_typed_steps(osdeploy_client, 
         assert created.status_code == 201, created.text
         run = created.json()["run"]
         detail = osdeploy_client.get(f"/api/osdeploy/v1/runs/{run['run_id']}").json()
-        assert [step["kind"] for step in detail["v2_steps"]][-len(expected_tail):] == expected_tail
+        step_kinds = [step["kind"] for step in detail["v2_steps"]]
+        assert step_kinds[-len(expected_tail):] == expected_tail
+        assert step_kinds.index("install_qga") < step_kinds.index("verify_qga")
+        assert step_kinds.index("verify_qga") < step_kinds.index("install_qga_watchdog")
+        assert step_kinds.index("install_qga_watchdog") < step_kinds.index("install_autopilot_agent")
 
 
 def test_osdeploy_cache_catalog_and_entry_lifecycle(osdeploy_client, pg_conn):
@@ -976,6 +1136,210 @@ def test_osdeploy_cache_download_serves_ready_entry(osdeploy_client, pg_conn, tm
         f"/api/osdeploy/v1/cache/{entry['id']}/download/not-the-file.wim",
     )
     assert mismatch.status_code == 404
+
+
+def test_osdeploy_cache_warm_server_image_dispatches_agent_build(
+    osdeploy_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg, osdeploy_cache, osdeploy_endpoints
+    from web import app as web_app
+
+    entry = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "server_image",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-en-us.iso",
+        "source_url": "manual://microsoft-volume-licensing-or-eval-center",
+        "metadata": {"factory": "OSDeploy/OSDBuilder", "content_role": "source_media"},
+    })
+    pg_conn.commit()
+
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="buildhost-100",
+        token="build-host-token",
+        vmid=100,
+    )
+    pg_conn.commit()
+
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "_build_host_agent_target",
+        lambda agent_id_override="": {
+            "available": True,
+            "agent_id": "buildhost-100",
+            "vmid": 100,
+            "controller_url": "http://autopilot.test:5000",
+            "source_bundle_url": "http://autopilot.test:5000/api/setup/v1/source-bundle.zip",
+            "agent_state": "ready",
+            "last_heartbeat_age_seconds": 5,
+            "blocking_checks": [],
+        },
+    )
+    monkeypatch.setattr(web_app, "_repo_git_metadata_for_bundle", lambda: {})
+
+    resp = osdeploy_client.post(f"/api/osdeploy/v1/cache/{entry['id']}/warm")
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["kind"] == "build_osdeploy"
+    work_item_id = body["work_item_id"]
+
+    updated = osdeploy_cache.get_entry(pg_conn, entry["id"])
+    assert updated["status"] == "warming"
+    assert updated["metadata"]["build_work_item_id"] == work_item_id
+
+    work_item = agent_telemetry_pg.get_work_item(pg_conn, work_item_id)
+    assert work_item["kind"] == "build_osdeploy"
+    assert work_item["request_json"]["os_version"] == "Windows Server 2022"
+    assert work_item["request_json"]["os_edition"] == "Datacenter"
+
+
+def test_osdeploy_cache_warm_finalizes_when_build_iso_arrives(
+    osdeploy_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg, osdeploy_cache, setup_artifacts
+
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", tmp_path / "artifacts")
+    monkeypatch.setattr(setup_artifacts, "REGISTRY_PATH", tmp_path / "artifacts" / "registry.json")
+
+    entry = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "server_image",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-en-us.iso",
+        "source_url": "manual://microsoft-volume-licensing-or-eval-center",
+        "metadata": {"factory": "OSDeploy/OSDBuilder", "content_role": "source_media"},
+    })
+    agent_telemetry_pg.upsert_device(
+        pg_conn, agent_id="buildhost-100", token="t", vmid=100,
+    )
+    work_item = agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="buildhost-100",
+        kind="build_osdeploy",
+        request={"kind": "build_osdeploy"},
+    )
+    osdeploy_cache.mark_build_dispatched(pg_conn, entry["id"], work_item_id=work_item["id"])
+    pg_conn.commit()
+
+    # Before the ISO is uploaded the entry stays warming.
+    before = osdeploy_client.get("/api/osdeploy/v1/cache").json()
+    before_entry = next(e for e in before["entries"] if e["id"] == entry["id"])
+    assert before_entry["status"] == "warming"
+
+    # Agent uploads the built ISO tagged with the build work item id.
+    built = tmp_path / "osdeploy-server-amd64-deadbeef.iso"
+    built.write_bytes(b"built-server-iso-bytes")
+    setup_artifacts.register_existing_artifact(
+        kind="osdeploy-iso",
+        path=built,
+        metadata={"os_version": "Windows Server 2022"},
+        producer_agent_id="buildhost-100",
+        work_item_id=work_item["id"],
+    )
+
+    # Viewing the cache reconciles the warming entry to ready.
+    after = osdeploy_client.get("/api/osdeploy/v1/cache").json()
+    after_entry = next(e for e in after["entries"] if e["id"] == entry["id"])
+    assert after_entry["status"] == "ready"
+
+    updated = osdeploy_cache.get_entry(pg_conn, entry["id"])
+    assert updated["local_path"] == str(built)
+    assert updated["file_name"] == built.name
+    assert updated["sha256"]
+    assert updated["size_bytes"] == built.stat().st_size
+
+
+def test_publish_warmed_osdeploy_artifact_registers_and_enqueues(osdeploy_client, monkeypatch):
+    from web import osdeploy_endpoints
+    from web import app as web_app
+    from web import jobs_pg
+
+    # The register from setup artifacts is exercised elsewhere; here we verify the
+    # warm auto-publish wiring: register the build, then enqueue the publish job.
+    monkeypatch.setattr(
+        web_app,
+        "_register_promoted_setup_osdeploy_artifact",
+        lambda *, artifact, volid, rows: {"id": "artifact-xyz"},
+    )
+    enqueued: list[dict] = []
+    monkeypatch.setattr(jobs_pg, "enqueue", lambda **kw: enqueued.append(kw) or {"id": kw.get("job_id")})
+
+    result = osdeploy_endpoints._publish_warmed_osdeploy_artifact(
+        iso_artifact={"kind": "osdeploy-iso", "work_item_id": "wi-1", "path": "/tmp/x.iso"},
+        all_artifacts=[],
+    )
+
+    assert result and result["artifact_id"] == "artifact-xyz"
+    assert any(
+        job.get("job_type") == "osdeploy_publish_iso" and "artifact-xyz" in (job.get("cmd") or [])
+        for job in enqueued
+    ), enqueued
+
+
+def test_osdeploy_cache_refresh_no_longer_seeds_quality_updates(pg_conn, monkeypatch, tmp_path):
+    from web import osdeploy_cache
+
+    monkeypatch.setenv("AUTOPILOT_OSDEPLOY_CACHE_ROOT", str(tmp_path))
+    osdeploy_cache.reset_for_tests(pg_conn)
+    osdeploy_cache.init(pg_conn)
+
+    # A retired quality_update placeholder left by an earlier catalog version.
+    stale = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "quality_update",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-latest-quality.msu",
+        "source_url": "manual://microsoft-update-catalog",
+    })
+    pg_conn.commit()
+
+    result = osdeploy_cache.refresh_catalog(pg_conn)
+    entries = osdeploy_cache.list_entries(pg_conn)
+
+    assert result["quality_updates"] == []
+    assert all(entry["entry_type"] == "server_image" for entry in entries)
+    assert stale["id"] not in {entry["id"] for entry in entries}
+    assert {entry["windows_version"] for entry in entries} >= {
+        "Windows Server 2025",
+        "Windows Server 2022",
+    }
+
+
+def test_osdeploy_cache_warm_quality_update_returns_clear_error(osdeploy_client, pg_conn):
+    from web import osdeploy_cache
+
+    entry = osdeploy_cache.upsert_entry(pg_conn, {
+        "entry_type": "quality_update",
+        "status": "discovered",
+        "windows_version": "Windows Server 2022",
+        "architecture": "amd64",
+        "edition": "Datacenter",
+        "language": "en-us",
+        "file_name": "windows-server-2022-datacenter-latest-quality.msu",
+        "source_url": "manual://microsoft-update-catalog",
+    })
+    pg_conn.commit()
+
+    resp = osdeploy_client.post(f"/api/osdeploy/v1/cache/{entry['id']}/warm")
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert "no automated warm path" in detail
+    assert "manual source must be staged" not in detail
 
 
 def test_osdeploy_build_preflight_blocks_missing_key_and_unreachable_remote(
@@ -2773,11 +3137,36 @@ def test_osdeploy_public_bridge_routes_are_additive():
     from web import auth
 
     assert auth.is_exempt_path("/api/osdeploy/v1/pe/package/run-1")
-    assert auth.is_exempt_path("/api/osdeploy/v1/runs/run-1")
+    assert not auth.is_exempt_path("/api/osdeploy/v1/runs/run-1")
     assert auth.is_exempt_path("/api/osdeploy/v1/runs/run-1/identity")
     assert auth.is_exempt_path("/api/osdeploy/v1/runs/run-1/events")
     assert not auth.is_exempt_path("/api/osdeploy/v1/runs")
     assert not auth.is_exempt_path("/api/osdeploy/v1/runs/run-1/provision")
+
+
+def test_osdeploy_run_detail_auth_allows_controller_self_poll_only():
+    from web import auth
+
+    class Url:
+        path = "/api/osdeploy/v1/runs/run-1"
+        netloc = "192.168.2.4:5000"
+
+    class Client:
+        host = "192.168.2.4"
+
+    class Request:
+        url = Url()
+        client = Client()
+        headers = {"host": "192.168.2.4:5000"}
+
+    assert auth.is_exempt_request(Request())
+
+    class RemoteClient:
+        host = "192.168.2.50"
+
+    Request.client = RemoteClient()
+
+    assert not auth.is_exempt_request(Request())
 
 
 def test_osdeploy_provision_endpoint_enqueues_dedicated_playbook(osdeploy_client, pg_conn):
@@ -2801,6 +3190,60 @@ def test_osdeploy_provision_endpoint_enqueues_dedicated_playbook(osdeploy_client
     assert job["args"]["proxmox_storage"] == "local-lvm"
     assert job["args"]["proxmox_bridge"] == "vmbr0"
     assert job["args"]["proxmox_virtio_iso"] == "local:iso/virtio-win.iso"
+
+
+def test_osdeploy_run_accepts_sdn_vnet_network_target(
+    osdeploy_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import jobs_pg, osdeploy_endpoints
+
+    artifact = _create_osdeploy_artifact(pg_conn)
+    monkeypatch.setattr(
+        osdeploy_endpoints,
+        "proxmox_options_payload",
+        lambda: {
+            "schema_version": 1,
+            "nodes": ["pve"],
+            "storages": {"iso": ["local"], "disk": ["local-lvm"]},
+            "bridges": ["vmbr0"],
+            "network_targets": [
+                {"kind": "bridge", "value": "vmbr0", "label": "vmbr0"},
+                {
+                    "kind": "sdn_vnet",
+                    "value": "lab101",
+                    "label": "Lab 101",
+                    "zone": "lab-simple",
+                },
+            ],
+            "defaults": {
+                "node": "pve",
+                "iso_storage": "local",
+                "disk_storage": "local-lvm",
+                "bridge": "vmbr0",
+            },
+        },
+    )
+
+    run_response = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="OSDEPLOY-SDN",
+            network_bridge="lab101",
+        ),
+    )
+
+    assert run_response.status_code == 201, run_response.text
+    run = run_response.json()["run"]
+    assert run["network_bridge"] == "lab101"
+
+    response = osdeploy_client.post(f"/api/osdeploy/v1/runs/{run['run_id']}/provision")
+
+    assert response.status_code == 202, response.text
+    job = jobs_pg.get_job(response.json()["job_id"])
+    assert job["args"]["proxmox_bridge"] == "lab101"
 
 
 def test_osdeploy_provision_endpoint_passes_legacy_bios_for_non_secure_boot(

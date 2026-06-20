@@ -27,6 +27,13 @@ PACKAGE_FILES = (
     ),
 )
 
+OPTIONAL_PACKAGE_FILES = (
+    (
+        Path("guest-agent") / "qemu-ga-x86_64.msi",
+        r"V:\ProgramData\ProxmoxVEAutopilot\OSD\guest-agent\qemu-ga-x86_64.msi",
+    ),
+)
+
 
 def files_dir() -> Path:
     from web import app as web_app
@@ -54,6 +61,11 @@ def osd_client_files(root: Path | None = None) -> list[dict[str, str]]:
                if not source_path.is_file()]
     if missing:
         raise FileNotFoundError(", ".join(missing))
+    optional_sources = [
+        (package_root / relative_path, target_path)
+        for relative_path, target_path in OPTIONAL_PACKAGE_FILES
+        if (package_root / relative_path).is_file()
+    ]
     return [
         {
             "path": target_path,
@@ -61,5 +73,5 @@ def osd_client_files(root: Path | None = None) -> list[dict[str, str]]:
             "sha256": sha256_file(source_path),
             "size_bytes": source_path.stat().st_size,
         }
-        for source_path, target_path in sources
+        for source_path, target_path in sources + optional_sources
     ]

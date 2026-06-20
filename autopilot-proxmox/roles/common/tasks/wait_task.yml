@@ -17,4 +17,6 @@
 - name: Verify task completed successfully
   ansible.builtin.fail:
     msg: "Proxmox task failed: {{ _task_status.json.data.exitstatus | default('unknown') }}"
-  when: _task_status.json.data.exitstatus | default('') != "OK"
+  when:
+    - task_fail_on_error | default(true) | bool
+    - _task_status.json.data.exitstatus | default('') != "OK"

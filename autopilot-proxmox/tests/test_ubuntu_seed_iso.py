@@ -158,13 +158,13 @@ def test_rebuild_seed_iso_400_on_windows_sequence(tmp_path, monkeypatch, pg_conn
 
 def test_template_page_renders_ubuntu_panel(tmp_path, monkeypatch, pg_conn):
     client = _setup_client(tmp_path, monkeypatch, pg_conn)
-    resp = client.get("/template")
+    resp = client.get("/template", follow_redirects=False)
+    assert resp.status_code == 302, resp.text
+    assert resp.headers["location"] == "/react/template"
+
+    resp = client.get("/api/template/page")
     assert resp.status_code == 200, resp.text
-    body = resp.text
-    assert 'id="panel-ubuntu"' in body
-    assert 'Rebuild Ubuntu Seed ISO' in body
-    # The Ubuntu Plain default sequence should populate the dropdown.
-    assert 'Ubuntu Plain' in body
+    assert any(seq["name"] == "Ubuntu Plain" for seq in resp.json()["ubuntu_sequences"])
 
 
 def test_build_ubuntu_template_returns_job_id(tmp_path, monkeypatch, pg_conn):

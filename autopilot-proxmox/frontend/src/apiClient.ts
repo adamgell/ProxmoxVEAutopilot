@@ -17,6 +17,12 @@ async function responseDetail(response: Response): Promise<string> {
       return detail;
     }
   }
+  if (contentType.includes("text/html")) {
+    const html = await response.text().catch(() => "");
+    const title = /<title[^>]*>([^<]+)<\/title>/iu.exec(html)?.[1]?.trim();
+    const heading = /<h1[^>]*>([^<]+)<\/h1>/iu.exec(html)?.[1]?.trim();
+    return title || heading || response.statusText || `HTTP ${String(response.status)}`;
+  }
   const text = await response.text().catch(() => "");
   return text.trim() || response.statusText || `HTTP ${String(response.status)}`;
 }
@@ -67,6 +73,21 @@ export async function putJson<T>(path: string, body: Readonly<Record<string, unk
   });
 }
 
-export async function deleteJson<T>(path: string): Promise<T> {
-  return fetchJson<T>(path, { method: "DELETE" });
+export async function patchJson<T>(path: string, body: Readonly<Record<string, unknown>> = {}): Promise<T> {
+  return fetchJson<T>(path, {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+export async function deleteJson<T>(path: string, body?: Readonly<Record<string, unknown>>): Promise<T> {
+  const init: RequestInit = { method: "DELETE" };
+  if (body !== undefined) {
+    init.headers = { "content-type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  return fetchJson<T>(path, init);
 }

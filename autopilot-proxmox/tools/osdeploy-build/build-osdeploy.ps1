@@ -298,10 +298,36 @@ function Find-OSDeployInstallImage {
     throw "Source media root did not contain sources\install.wim or sources\install.esd: $SourceRoot"
 }
 
+function Resolve-OSDeployStagedMediaPath {
+    # When no SourceMediaPath is supplied, find the newest base Windows media ISO
+    # staged on the build host. Operators drop the licensed Server ISO once into
+    # inputs\media; warming a server_image cache entry then resolves it here so the
+    # factory needs no per-build path. Drive candidates mirror the VirtIO lookup.
+    $candidates = @(
+        $env:AUTOPILOT_SOURCE_MEDIA_ROOT,
+        'C:\BuildRoot\ProxmoxVEAutopilot\inputs\media',
+        'C:\BuildRoot\inputs\media',
+        'E:\BuildRoot\inputs\media',
+        'F:\BuildRoot\inputs\media'
+    ) | Where-Object { $_ }
+    foreach ($dir in $candidates) {
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+        $iso = Get-ChildItem -LiteralPath $dir -Filter *.iso -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+        if ($iso) { return $iso.FullName }
+    }
+    return $null
+}
+
 function Resolve-OSDeploySourceMedia {
     param([string]$SourceMediaPath)
     if ([string]::IsNullOrWhiteSpace($SourceMediaPath)) {
-        return $null
+        $SourceMediaPath = Resolve-OSDeployStagedMediaPath
+        if ([string]::IsNullOrWhiteSpace($SourceMediaPath)) {
+            return $null
+        }
+        Write-Host "Resolved staged source media: $SourceMediaPath"
     }
 
     $mountedImage = $null

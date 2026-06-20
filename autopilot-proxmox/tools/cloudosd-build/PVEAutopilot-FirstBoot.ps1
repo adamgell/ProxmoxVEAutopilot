@@ -16,6 +16,49 @@ function Write-CloudOSDFirstBootLog {
     Write-Output $line
 }
 
+function Get-CloudOSDLogTail {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [int] $Lines = 80
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+    try {
+        return @(Get-Content -LiteralPath $Path -Tail $Lines -ErrorAction Stop)
+    } catch {
+        return @("failed to read ${Path}: $($_.Exception.Message)")
+    }
+}
+
+function Get-CloudOSDFirstBootDiagnosticData {
+    param([string] $ErrorMessage = '')
+    $cloudRoot = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\CloudOSD'
+    $agentInstallRoot = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\AutopilotAgent\install'
+    $firstbootLog = Join-Path $cloudRoot 'firstboot.log'
+    $postinstallLog = Join-Path $agentInstallRoot 'postinstall.log'
+    $msiLog = Join-Path $cloudRoot 'AutopilotAgent-msi.log'
+    $setupCompleteLog = Join-Path $env:SystemRoot 'Setup\Scripts\SetupComplete.log'
+    $agentService = $null
+    $qgaService = $null
+    if (Get-Command Get-Service -ErrorAction SilentlyContinue) {
+        $agentService = Get-Service -Name AutopilotAgent -ErrorAction SilentlyContinue
+        $qgaService = Get-Service -Name QEMU-GA -ErrorAction SilentlyContinue
+    }
+    $agentServiceStatus = if ($agentService) { [string] $agentService.Status } else { 'missing' }
+    $qgaServiceStatus = if ($qgaService) { [string] $qgaService.Status } else { 'missing' }
+    return @{
+        error = $ErrorMessage
+        computer_name = $env:COMPUTERNAME
+        firstboot_log_tail = Get-CloudOSDLogTail -Path $firstbootLog -Lines 80
+        postinstall_log_tail = Get-CloudOSDLogTail -Path $postinstallLog -Lines 120
+        agent_msi_log_tail = Get-CloudOSDLogTail -Path $msiLog -Lines 80
+        setupcomplete_log_tail = Get-CloudOSDLogTail -Path $setupCompleteLog -Lines 80
+        autopilot_agent_service_status = $agentServiceStatus
+        qga_service_status = $qgaServiceStatus
+    }
+}
+
 function Write-PVEAutopilotCloudOSDEvent {
     param(
         [Parameter(Mandatory)] [string] $ServerUrl,
@@ -94,6 +137,148 @@ function Test-PVEAutopilotCloudOSDDomainJoinEnabled {
         return $false
     }
     return [bool] $RunConfig.domain_join.enabled
+}
+
+function Get-PVEAutopilotCloudOSDFirstBootStatePath {
+    return Join-Path $env:ProgramData 'ProxmoxVEAutopilot\CloudOSD\firstboot-state.json'
+}
+
+function Read-PVEAutopilotCloudOSDFirstBootState {
+    param([Parameter(Mandatory)] [string] $RunId)
+    $state = @{
+        run_id = $RunId
+        postinstall_failures = 0
+        first_postinstall_failure_utc = ''
+        last_postinstall_failure_utc = ''
+        last_postinstall_error = ''
+    }
+    $path = Get-PVEAutopilotCloudOSDFirstBootStatePath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $state
+    }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return $state
+        }
+        $loaded = $raw | ConvertFrom-Json
+        if ([string] $loaded.run_id -ne $RunId) {
+            return $state
+        }
+        foreach ($key in @(
+            'postinstall_failures',
+            'first_postinstall_failure_utc',
+            'last_postinstall_failure_utc',
+            'last_postinstall_error'
+        )) {
+            if ($loaded.PSObject.Properties.Match($key).Count -gt 0) {
+                $state[$key] = $loaded.$key
+            }
+        }
+    } catch {
+        Write-CloudOSDFirstBootLog "Ignoring unreadable CloudOSD first boot retry state: $($_.Exception.Message)"
+    }
+    return $state
+}
+
+function Save-PVEAutopilotCloudOSDFirstBootState {
+    param([Parameter(Mandatory)] [hashtable] $State)
+    $path = Get-PVEAutopilotCloudOSDFirstBootStatePath
+    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+    $State | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Clear-PVEAutopilotCloudOSDFirstBootState {
+    param([Parameter(Mandatory)] [string] $RunId)
+    $path = Get-PVEAutopilotCloudOSDFirstBootStatePath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return
+    }
+    try {
+        $state = Read-PVEAutopilotCloudOSDFirstBootState -RunId $RunId
+        if ([string] $state['run_id'] -eq $RunId) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-CloudOSDFirstBootLog "Unable to clear CloudOSD first boot retry state: $($_.Exception.Message)"
+    }
+}
+
+function Add-PVEAutopilotCloudOSDPostinstallFailure {
+    param(
+        [Parameter(Mandatory)] [string] $RunId,
+        [string] $ErrorMessage = '',
+        [scriptblock] $NowProvider = { Get-Date }
+    )
+    $state = Read-PVEAutopilotCloudOSDFirstBootState -RunId $RunId
+    $count = 0
+    try { $count = [int] $state['postinstall_failures'] } catch { $count = 0 }
+    $now = & $NowProvider
+    if ($now -isnot [datetime]) {
+        $now = Get-Date
+    }
+    $nowUtc = ([datetime] $now).ToUniversalTime().ToString('o')
+    $state['postinstall_failures'] = $count + 1
+    if ([string]::IsNullOrWhiteSpace([string] $state['first_postinstall_failure_utc'])) {
+        $state['first_postinstall_failure_utc'] = $nowUtc
+    }
+    $state['last_postinstall_failure_utc'] = $nowUtc
+    $state['last_postinstall_error'] = $ErrorMessage
+    Save-PVEAutopilotCloudOSDFirstBootState -State $state
+    return $state
+}
+
+function Test-PVEAutopilotCloudOSDPostinstallRetryAllowed {
+    param(
+        [Parameter(Mandatory)] [hashtable] $State,
+        [int] $MaxRetryableFailures = 12,
+        [int] $WindowMinutes = 45,
+        [scriptblock] $NowProvider = { Get-Date }
+    )
+    $failures = 0
+    try { $failures = [int] $State['postinstall_failures'] } catch { $failures = 0 }
+    if ($failures -le 0) {
+        return $false
+    }
+    if ($failures -gt $MaxRetryableFailures) {
+        return $false
+    }
+    $firstFailure = [string] $State['first_postinstall_failure_utc']
+    if (-not [string]::IsNullOrWhiteSpace($firstFailure)) {
+        try {
+            $firstUtc = ([datetime]::Parse($firstFailure)).ToUniversalTime()
+            $now = & $NowProvider
+            if ($now -isnot [datetime]) {
+                $now = Get-Date
+            }
+            $nowUtc = ([datetime] $now).ToUniversalTime()
+            if ($nowUtc -gt $firstUtc.AddMinutes($WindowMinutes)) {
+                return $false
+            }
+        } catch {
+            Write-CloudOSDFirstBootLog "Unable to evaluate CloudOSD first boot retry window: $($_.Exception.Message)"
+        }
+    }
+    return $true
+}
+
+function New-PVEAutopilotCloudOSDPostinstallRetryData {
+    param(
+        [Parameter(Mandatory)] [hashtable] $State,
+        [string] $ErrorMessage = '',
+        [string] $RecoveryErrorMessage = '',
+        [int] $MaxRetryableFailures = 12,
+        [int] $WindowMinutes = 45
+    )
+    return @{
+        error = $ErrorMessage
+        heartbeat_recovery_error = $RecoveryErrorMessage
+        postinstall_failure_count = [int] $State['postinstall_failures']
+        postinstall_retryable_failure_limit = $MaxRetryableFailures
+        postinstall_retry_window_minutes = $WindowMinutes
+        first_postinstall_failure_utc = [string] $State['first_postinstall_failure_utc']
+        last_postinstall_failure_utc = [string] $State['last_postinstall_failure_utc']
+    }
 }
 
 function Clear-PVEAutopilotDomainJoinSecrets {
@@ -494,6 +679,8 @@ function Invoke-PVEAutopilotFirstBoot {
         [scriptblock] $RunOsdClient = { Invoke-CloudOSDOsdClient },
         [scriptblock] $RemoveScheduledTask = { param($Name) Remove-PVEAutopilotFirstBootTask -Name $Name },
         [scriptblock] $EndBootstrapSession = { param($Name) Invoke-PVEAutopilotBootstrapSessionLogoff -UserName $Name },
+        [int] $PostinstallRetryableFailures = 12,
+        [int] $PostinstallRetryWindowMinutes = 45,
         [scriptblock] $ReportEvent = {
             param(
                 [string] $ServerUrl,
@@ -605,15 +792,85 @@ function Invoke-PVEAutopilotFirstBoot {
         Vmid = $vmid
         Phase = 'cloudosd'
     }
-    & $RunPostinstall $postinstallPath $postinstallArgs
+    $agentToken = $null
+    $postinstallRecovered = $false
+    try {
+        & $RunPostinstall $postinstallPath $postinstallArgs
+    }
+    catch {
+        $postinstallError = $_
+        Write-CloudOSDFirstBootLog "AutopilotAgent postinstall reported failure: $($postinstallError.Exception.Message)"
+        try {
+            $agentToken = Get-AutopilotAgentToken
+            & $ConfirmHeartbeat ($serverUrl.TrimEnd('/') + '/api/agent/v1/config') $agentToken
+            $postinstallRecovered = $true
+            Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+                -EventType 'firstboot_postinstall_recovered' `
+                -Severity 'warning' `
+                -Message 'AutopilotAgent heartbeat was visible after postinstall failure; continuing' `
+                -Data @{ error = $postinstallError.Exception.Message }
+        }
+        catch {
+            $heartbeatRecoveryError = $_
+            Write-CloudOSDFirstBootLog "AutopilotAgent heartbeat recovery after postinstall failure failed: $($_.Exception.Message)"
+            $retryState = Add-PVEAutopilotCloudOSDPostinstallFailure `
+                -RunId $runId `
+                -ErrorMessage $postinstallError.Exception.Message
+            $retryData = New-PVEAutopilotCloudOSDPostinstallRetryData `
+                -State $retryState `
+                -ErrorMessage $postinstallError.Exception.Message `
+                -RecoveryErrorMessage $heartbeatRecoveryError.Exception.Message `
+                -MaxRetryableFailures $PostinstallRetryableFailures `
+                -WindowMinutes $PostinstallRetryWindowMinutes
+            try {
+                $diagnostics = Get-CloudOSDFirstBootDiagnosticData -ErrorMessage $postinstallError.Exception.Message
+            } catch {
+                $diagnostics = @{
+                    error = $postinstallError.Exception.Message
+                    diagnostics_error = $_.Exception.Message
+                }
+            }
+            foreach ($key in $retryData.Keys) {
+                $diagnostics[$key] = $retryData[$key]
+            }
+            if (Test-PVEAutopilotCloudOSDPostinstallRetryAllowed `
+                    -State $retryState `
+                    -MaxRetryableFailures $PostinstallRetryableFailures `
+                    -WindowMinutes $PostinstallRetryWindowMinutes) {
+                Write-CloudOSDFirstBootLog "AutopilotAgent postinstall failure is retryable; leaving scheduled task in place for the next run."
+                Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+                    -EventType 'firstboot_postinstall_retry_scheduled' `
+                    -Severity 'warning' `
+                    -Message 'AutopilotAgent postinstall failed before heartbeat; scheduled task will retry' `
+                    -Data $retryData
+                return
+            }
+            try {
+                Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
+                    -EventType 'firstboot_postinstall_failed' `
+                    -Severity 'error' `
+                    -Message 'AutopilotAgent postinstall failed and heartbeat recovery did not succeed' `
+                    -Data $diagnostics
+            } catch {
+                Write-CloudOSDFirstBootLog "failed to report postinstall diagnostics: $($_.Exception.Message)"
+            }
+            throw $postinstallError
+        }
+    }
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_postinstall_complete' `
-        -Message 'AutopilotAgent postinstall completed'
-    $agentToken = Get-AutopilotAgentToken
-    & $ConfirmHeartbeat ($serverUrl.TrimEnd('/') + '/api/agent/v1/config') $agentToken
+        -Message 'AutopilotAgent postinstall completed' `
+        -Data @{ recovered = $postinstallRecovered }
+    if (-not $agentToken) {
+        $agentToken = Get-AutopilotAgentToken
+    }
+    if (-not $postinstallRecovered) {
+        & $ConfirmHeartbeat ($serverUrl.TrimEnd('/') + '/api/agent/v1/config') $agentToken
+    }
     Send-PVEAutopilotFirstBootEvent -Phase 'AutopilotAgent' `
         -EventType 'autopilotagent_heartbeat_visible' `
         -Message 'AutopilotAgent heartbeat visible from installed OS'
+    Clear-PVEAutopilotCloudOSDFirstBootState -RunId $runId
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_v2_agent_ownership_ready' `
         -Message 'Persistent AutopilotAgent will claim CloudOSD v2 full-OS steps'
@@ -649,21 +906,93 @@ function Invoke-PVEAutopilotFirstBoot {
     }
 }
 
+function Invoke-PVEAutopilotFirstBootWithMutex {
+    $mutexName = 'Global\PVEAutopilotCloudOSDFirstBoot'
+    $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+    $lockTaken = $false
+    try {
+        $lockTaken = $mutex.WaitOne([TimeSpan]::Zero)
+        if (-not $lockTaken) {
+            Write-CloudOSDFirstBootLog 'Another CloudOSD first boot instance is already running; skipping this scheduled-task overlap.'
+            try {
+                $runConfig = Read-PVEAutopilotCloudOSDRunConfig
+                Write-PVEAutopilotCloudOSDEvent -ServerUrl ([string] $runConfig.server_base_url) `
+                    -RunId ([string] $runConfig.run_id) `
+                    -BearerToken ([string] $runConfig.agent.bootstrap_token) `
+                    -Phase 'first_boot' `
+                    -EventType 'firstboot_overlap_skipped' `
+                    -Severity 'warning' `
+                    -Message 'Skipped overlapping CloudOSD first boot scheduled-task invocation' `
+                    -Data (Get-CloudOSDFirstBootDiagnosticData -ErrorMessage 'overlapping first boot instance skipped')
+            } catch {
+                Write-CloudOSDFirstBootLog "failed to report first boot overlap skip: $($_.Exception.Message)"
+            }
+            return
+        }
+        Invoke-PVEAutopilotFirstBoot
+    } finally {
+        if ($lockTaken) {
+            try { $mutex.ReleaseMutex() | Out-Null } catch {}
+        }
+        $mutex.Dispose()
+    }
+}
+
 if ($env:CLOUDOSD_FIRSTBOOT_LIBRARY_ONLY -ne '1') {
     try {
-        Invoke-PVEAutopilotFirstBoot
+        Invoke-PVEAutopilotFirstBootWithMutex
     }
     catch {
-        Write-CloudOSDFirstBootLog "CloudOSD first boot failed: $($_.Exception.Message)"
+        $firstBootError = $_
+        $firstBootErrorMessage = $firstBootError.Exception.Message
+        Write-CloudOSDFirstBootLog "CloudOSD first boot failed: $firstBootErrorMessage"
         try {
             $runConfig = Read-PVEAutopilotCloudOSDRunConfig
+            $retryData = $null
+            if ($firstBootErrorMessage -like 'AutopilotAgent postinstall failed:*') {
+                $retryState = Add-PVEAutopilotCloudOSDPostinstallFailure `
+                    -RunId ([string] $runConfig.run_id) `
+                    -ErrorMessage $firstBootErrorMessage
+                $retryData = New-PVEAutopilotCloudOSDPostinstallRetryData `
+                    -State $retryState `
+                    -ErrorMessage $firstBootErrorMessage `
+                    -RecoveryErrorMessage 'outer first boot catch' `
+                    -MaxRetryableFailures 12 `
+                    -WindowMinutes 45
+                if (Test-PVEAutopilotCloudOSDPostinstallRetryAllowed -State $retryState) {
+                    Write-CloudOSDFirstBootLog "CloudOSD first boot postinstall failure is retryable from outer catch; leaving scheduled task in place."
+                    Write-PVEAutopilotCloudOSDEvent -ServerUrl ([string] $runConfig.server_base_url) `
+                        -RunId ([string] $runConfig.run_id) `
+                        -BearerToken ([string] $runConfig.agent.bootstrap_token) `
+                        -Phase 'first_boot' `
+                        -EventType 'firstboot_postinstall_retry_scheduled' `
+                        -Severity 'warning' `
+                        -Message 'AutopilotAgent postinstall failed before heartbeat; scheduled task will retry' `
+                        -Data $retryData
+                    return
+                }
+            }
+            try {
+                $failureData = Get-CloudOSDFirstBootDiagnosticData -ErrorMessage $firstBootErrorMessage
+            } catch {
+                $failureData = @{
+                    error = $firstBootErrorMessage
+                    diagnostics_error = $_.Exception.Message
+                }
+            }
+            if ($retryData) {
+                foreach ($key in $retryData.Keys) {
+                    $failureData[$key] = $retryData[$key]
+                }
+            }
             Write-PVEAutopilotCloudOSDEvent -ServerUrl ([string] $runConfig.server_base_url) `
                 -RunId ([string] $runConfig.run_id) `
                 -BearerToken ([string] $runConfig.agent.bootstrap_token) `
                 -Phase 'first_boot' `
                 -EventType 'firstboot_failed' `
                 -Severity 'error' `
-                -Message $_.Exception.Message
+                -Message $firstBootErrorMessage `
+                -Data $failureData
         } catch {
             Write-CloudOSDFirstBootLog "failed to report CloudOSD first boot failure: $($_.Exception.Message)"
         }

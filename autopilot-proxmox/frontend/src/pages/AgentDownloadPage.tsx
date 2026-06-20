@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, Download } from "lucide-react";
 
-import { fetchJson } from "../apiClient";
+import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Panel } from "../components/ui";
 import type {
@@ -11,6 +11,34 @@ import type {
   VmsFleetResponse
 } from "../contracts";
 import { fallbackText, vmDisplayName } from "../viewModels";
+
+interface BuildHostStatus {
+  readonly vmid: string | number | null;
+  readonly name: string;
+  readonly node: string | null;
+  readonly expected_agent_id: string;
+  readonly expected_computer_name: string;
+  readonly agent_ready: boolean;
+  readonly agent_state: string;
+  readonly last_heartbeat_at: string | null;
+  readonly last_heartbeat_age_seconds: number | null;
+  readonly agent_version: string | null;
+  readonly primary_ipv4: string | null;
+}
+
+interface BuildHostResponse {
+  readonly schema_version: number;
+  readonly build_host: BuildHostStatus;
+  readonly artifacts?: {
+    readonly ready?: boolean;
+    readonly agent_msi_ready?: boolean;
+    readonly iso_ready?: boolean;
+  };
+  readonly media?: {
+    readonly windows_iso_volid?: string | null;
+    readonly virtio_iso_volid?: string | null;
+  };
+}
 
 interface AgentDownloadPageProps {
   readonly bootstrap: AppBootstrap;
@@ -54,9 +82,14 @@ function controllerAddress(node: LabBubbleInfrastructureNode): string {
   return node.agent?.primary_ipv4 || node.vm?.ip_address || "";
 }
 
-function suggestedControllerUrl(node: LabBubbleInfrastructureNode | undefined): string {
-  const address = node ? controllerAddress(node) : "";
-  return address ? `http://${address}:5000` : window.location.origin;
+/**
+ * The autopilot controller URL is the address the AutopilotAgent reports
+ * back to (the Flask server running this page). It is NOT the IP of any
+ * Critical Infrastructure VM. window.location.origin is correct here --
+ * picking an install-target VM must not overwrite the controller URL.
+ */
+function defaultControllerUrl(): string {
+  return window.location.origin;
 }
 
 function controllerLabel(node: LabBubbleInfrastructureNode): string {
@@ -114,6 +147,183 @@ async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value);
 }
 
+function buildHostStateLabel(status: BuildHostStatus | null): string {
+  if (!status) {
+    return "Loading...";
+  }
+  if (!status.vmid) {
+    return "Not provisioned";
+  }
+  const heartbeatFresh =
+    status.last_heartbeat_age_seconds !== null &&
+    status.last_heartbeat_age_seconds <= 300;
+  if (status.agent_ready) {
+    return "Ready";
+  }
+  // Treat a recent heartbeat as effectively ready even when the backend
+  // sets agent_ready=false (e.g. device row present without a telemetry
+  // row, or expected computer-name match still syncing).
+  if (heartbeatFresh) {
+    return "Ready";
+  }
+  if (status.agent_state === "missing") {
+    return "VM exists, agent missing";
+  }
+  if (status.agent_state === "stale") {
+    return "Agent stale";
+  }
+  if (status.agent_state === "registered") {
+    return "Registered, waiting for heartbeat";
+  }
+  return status.agent_state || "Unknown";
+}
+
+function formatAge(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) {
+    return "never";
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s ago`;
+  }
+  if (seconds < 3600) {
+    return `${Math.round(seconds / 60)}m ago`;
+  }
+  if (seconds < 86400) {
+    return `${Math.round(seconds / 3600)}h ago`;
+  }
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function BuildHostPanel() {
+  const [status, setStatus] = useState<BuildHostStatus | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [actionResult, setActionResult] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchJson<BuildHostResponse>("/api/setup/v1/build-host");
+      setStatus(data.build_host);
+      setError("");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to load build host status");
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 30000);
+    return () => { window.clearInterval(timer); };
+  }, [load]);
+
+  const provision = useCallback(async () => {
+    setBusy(true);
+    setActionResult("");
+    setError("");
+    try {
+      const result = await postJson<{ readonly vmid?: number; readonly name?: string; readonly node?: string }>(
+        "/api/setup/v1/build-host/vm",
+        {}
+      );
+      const vmid = result.vmid ?? "?";
+      const name = result.name ?? "build host";
+      setActionResult(`Provisioned ${name} as VM ${String(vmid)}. The VM is booting; the agent will register once Windows Setup completes.`);
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to provision build host");
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
+  const repairAgent = useCallback(async () => {
+    setBusy(true);
+    setActionResult("");
+    setError("");
+    try {
+      await postJson<Record<string, unknown>>("/api/setup/v1/build-host/repair-agent", {});
+      setActionResult("AutopilotAgent install/repair completed on the build host. Heartbeat should arrive within a minute.");
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to install AutopilotAgent on the build host");
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
+  const stateLabel = buildHostStateLabel(status);
+  const vmidLabel = status?.vmid ? String(status.vmid) : "-";
+  const heartbeat = status?.last_heartbeat_age_seconds ?? null;
+  // Treat the agent as healthy if either the backend says agent_ready,
+  // OR we have a recent heartbeat (within 5 min). The backend's
+  // agent_ready is stricter than a fresh heartbeat -- it also requires
+  // the row to come from agent_telemetry and the vmid/computer name to
+  // match an expectation, which can leave a recently-checked-in device
+  // looking "registered but unready" until those sync up.
+  const heartbeatFresh = heartbeat !== null && heartbeat <= 300;
+  const agentHealthy = Boolean(status?.agent_ready) || heartbeatFresh;
+
+  return (
+    <Panel title="Build host">
+      {!loaded ? (
+        <p className="empty">Checking build host status...</p>
+      ) : (
+        <>
+          <dl className="fleet-detail-grid">
+            <div><dt>Status</dt><dd>{stateLabel}</dd></div>
+            <div><dt>VMID</dt><dd>{vmidLabel}</dd></div>
+            <div><dt>Node</dt><dd>{status?.node ?? "-"}</dd></div>
+            <div><dt>Agent ID</dt><dd>{status?.expected_agent_id || "-"}</dd></div>
+            <div><dt>Agent version</dt><dd>{status?.agent_version ?? "-"}</dd></div>
+            <div><dt>Last heartbeat</dt><dd>{formatAge(heartbeat)}</dd></div>
+          </dl>
+          {error ? <p className="notice" role="status">{error}</p> : null}
+          {actionResult ? <p className="notice" role="status">{actionResult}</p> : null}
+          {!status?.vmid ? (
+            <div className="build-host-actions">
+              <p className="build-host-hint">
+                No build host VM is provisioned on the cluster yet. Click below to create
+                an unattended Windows Server VM with the AutopilotAgent pre-seeded; it
+                will register as <code>{status?.expected_agent_id || "buildhost-<vmid>"}</code> once Windows
+                Setup completes.
+              </p>
+              <button
+                type="button"
+                className="utility-button"
+                onClick={() => { void provision(); }}
+                disabled={busy}
+              >
+                {busy ? "Provisioning..." : "Build build host"}
+              </button>
+            </div>
+          ) : agentHealthy ? null : (
+            <div className="build-host-actions">
+              <p className="build-host-hint">
+                Build host VM <code>{String(status.vmid)}</code> exists on
+                {" "}<code>{status.node ?? "?"}</code> but the AutopilotAgent is{" "}
+                <strong>{status.agent_state || "missing"}</strong>. Install or repair the
+                agent over QEMU Guest Agent so the build host can pick up MSI / ISO /
+                WIM build jobs.
+              </p>
+              <button
+                type="button"
+                className="utility-button"
+                onClick={() => { void repairAgent(); }}
+                disabled={busy}
+              >
+                {busy ? "Installing..." : "Install AutopilotAgent on build host"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 function CopyButton({ value, label }: { readonly value: string; readonly label: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -154,8 +364,9 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
           const first = controllerCandidates(payload).at(0);
           if (first !== undefined) {
             setSelectedId(first.id);
-            setControllerUrl(suggestedControllerUrl(first.node));
           }
+          // Do NOT overwrite controllerUrl with an infra node's address;
+          // the controller is this Flask server, not any target VM.
         }
       })
       .catch((exc: unknown) => {
@@ -194,18 +405,16 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
       {error ? <p className="notice" role="status">{error}</p> : null}
 
       <section className="agent-download-grid" aria-label="Agent download builder">
-        <Panel title="Controller target">
+        <Panel title="Install target">
           <div className="bubble-form">
             <div className="bubble-form-grid">
               <label className="bubble-form-field">
-                <span>Controller infrastructure</span>
+                <span>Install target VM</span>
                 <select
-                  aria-label="Controller infrastructure"
+                  aria-label="Install target VM"
                   value={selected?.id ?? ""}
                   onChange={(event) => {
-                    const next = candidates.find((candidate) => candidate.id === event.target.value);
                     setSelectedId(event.target.value);
-                    setControllerUrl(suggestedControllerUrl(next?.node));
                   }}
                 >
                   {candidates.length ? candidates.map((candidate) => (
@@ -214,13 +423,19 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
                 </select>
               </label>
               <label className="bubble-form-field">
-                <span>Controller URL</span>
+                <span>Autopilot controller URL</span>
                 <input
-                  aria-label="Controller URL"
+                  aria-label="Autopilot controller URL"
                   value={controllerUrl}
                   onChange={(event) => { setControllerUrl(event.target.value); }}
-                  placeholder="https://controller.example"
+                  placeholder="https://autopilot.example"
                 />
+                <small className="bubble-form-help">
+                  Where the agent reports back to (this autopilot Flask
+                  server). Defaults to the URL you opened this page on;
+                  override only if installing on a host that resolves it
+                  differently.
+                </small>
               </label>
             </div>
             {selected ? (
@@ -231,7 +446,7 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
                 <div><dt>Agent</dt><dd>{fallbackText(selected.node.asset.agent_id || selected.node.agent?.agent_id)}</dd></div>
                 <div><dt>Bootstrap</dt><dd>{bootstrapToken ? "sha256 proof ready" : "loading"}</dd></div>
               </dl>
-            ) : <p className="empty">Attach a domain controller or other controller VM in Critical Infrastructure first.</p>}
+            ) : <p className="empty">Attach a Windows VM (domain controller, build host, etc.) in Critical Infrastructure to install the AutopilotAgent on it.</p>}
           </div>
         </Panel>
 
@@ -268,6 +483,8 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
           <CopyButton value={installCommand} label="Copy command" />
         </div>
       </Panel>
+
+      <BuildHostPanel />
     </PageFrame>
   );
 }

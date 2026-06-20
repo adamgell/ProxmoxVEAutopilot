@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import logging
 import shutil
 import socket
 import sys
@@ -18,9 +19,11 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, osdeploy_cache, osdeploy_pg, osdeploy_roles, ts_engine_pg, winpe_token
+from web.proxmox_network_targets import network_target_values, normalize_network_targets
 
 
 router = APIRouter(prefix="/api/osdeploy/v1", tags=["osdeploy"])
+logger = logging.getLogger(__name__)
 _PE_TOKEN_TTL_SECONDS = 6 * 60 * 60
 _AGENT_BOOTSTRAP_TOKEN_TTL_SECONDS = 48 * 60 * 60
 
@@ -565,6 +568,7 @@ def proxmox_options_payload() -> dict:
         "disk_storage": cfg.get("proxmox_storage", "local-lvm"),
         "bridge": cfg.get("proxmox_bridge", "vmbr0"),
     }
+    configured_bridges = [defaults["bridge"]]
     try:
         nodes = [item["node"] for item in web_app._proxmox_api("/nodes")]
         storages = web_app._proxmox_api("/storage")
@@ -572,11 +576,18 @@ def proxmox_options_payload() -> dict:
         iso = [item["storage"] for item in storages if "iso" in str(item.get("content") or "")]
         disk = [item["storage"] for item in storages if "images" in str(item.get("content") or "")]
         bridges = [item["iface"] for item in networks if item.get("type") == "bridge"]
+        try:
+            sdn_vnets = web_app._proxmox_api("/cluster/sdn/vnets") or []
+        except Exception:
+            logger.warning("Failed to fetch Proxmox SDN VNets; falling back to bridge-only network targets", exc_info=True)
+            sdn_vnets = []
     except Exception:
         nodes = [defaults["node"]]
         iso = [defaults["iso_storage"]]
         disk = [defaults["disk_storage"]]
-        bridges = [defaults["bridge"]]
+        bridges = configured_bridges
+        sdn_vnets = []
+    bridges = bridges or configured_bridges
     return {
         "schema_version": 1,
         "nodes": nodes or [defaults["node"]],
@@ -584,7 +595,12 @@ def proxmox_options_payload() -> dict:
             "iso": iso or [defaults["iso_storage"]],
             "disk": disk or [defaults["disk_storage"]],
         },
-        "bridges": bridges or [defaults["bridge"]],
+        "bridges": bridges,
+        "network_targets": normalize_network_targets(
+            node=defaults["node"],
+            bridges=bridges,
+            vnets=sdn_vnets,
+        ),
         "defaults": defaults,
     }
 
@@ -1393,6 +1409,12 @@ def preflight_payload(body: RunCreateBody) -> dict:
     blocking.extend(role_checks)
     selected_iso_storage = body.iso_storage or cfg.get("proxmox_iso_storage", "local")
     selected_disk_storage = body.storage or cfg.get("proxmox_storage", "local-lvm")
+    options = proxmox_options_payload()
+    selected_network = (
+        body.network_bridge
+        or (options.get("defaults") or {}).get("bridge")
+        or cfg.get("proxmox_bridge", "vmbr0")
+    )
     storage_names = _storage_names_by_content(web_app)
     if storage_names is not None:
         if selected_iso_storage not in storage_names["iso"]:
@@ -1409,6 +1431,11 @@ def preflight_payload(body: RunCreateBody) -> dict:
                     f"for images. Available image storage: {available}."
                 ),
             ))
+    if selected_network not in network_target_values(options):
+        blocking.append(_blocking_check(
+            "proxmox_bridge_unavailable",
+            f"Network target '{selected_network}' is not available on this Proxmox node.",
+        ))
     selected_node = body.node or cfg.get("proxmox_node") or ""
     virtio_iso = _resolve_virtio_iso_volid(web_app, cfg, str(selected_node))
     if not virtio_iso:
@@ -1678,9 +1705,113 @@ def _queue_cache_job(job_type: str, action: str, args: dict) -> dict:
     return {"ok": True, "job_id": job["id"], "job_type": job_type}
 
 
+def _publish_warmed_osdeploy_artifact(*, iso_artifact: dict, all_artifacts: list[dict]) -> dict | None:
+    """Register a freshly warmed build as a deployable OSDeploy artifact and
+    enqueue its publish to Proxmox ISO storage, so warming a server image makes
+    it deployable with no manual publish step.
+
+    Best-effort and cheap on the request path: the registration is a DB insert
+    and the heavy ISO upload runs in the osdeploy_publish_job (builder-side).
+    Returns {artifact_id, job_id} or None; never raises into the cache view.
+    """
+    from web import app as web_app
+    from web import jobs_pg
+
+    try:
+        registered = web_app._register_promoted_setup_osdeploy_artifact(
+            artifact=iso_artifact,
+            volid=None,  # register only; the publish job uploads + sets the volid
+            rows=all_artifacts,
+        )
+    except Exception:
+        return None
+    artifact_id = str((registered or {}).get("id") or "")
+    if not artifact_id:
+        return None
+    try:
+        options = proxmox_options_payload()
+        node = options.get("defaults", {}).get("node") or ""
+        storage = options.get("defaults", {}).get("iso_storage") or ""
+        if node not in options.get("nodes", []) or storage not in options.get("storages", {}).get("iso", []):
+            return {"artifact_id": artifact_id, "job_id": None}
+        job_id = web_app.job_manager._generate_id()
+        script = _APP_ROOT / "scripts" / "osdeploy_publish_job.py"
+        cmd = [
+            sys.executable, str(script), "publish",
+            "--job-id", job_id,
+            "--artifact-id", artifact_id,
+            "--node", node,
+            "--storage", storage,
+        ]
+        jobs_pg.enqueue(
+            job_id=job_id,
+            job_type="osdeploy_publish_iso",
+            playbook="osdeploy_publish_job",
+            cmd=cmd,
+            args={"artifact_id": artifact_id, "node": node, "storage": storage},
+        )
+        return {"artifact_id": artifact_id, "job_id": job_id}
+    except Exception:
+        return {"artifact_id": artifact_id, "job_id": None}
+
+
+def _finalize_warming_cache_builds(conn) -> list[str]:
+    """Flip warming server_image entries to ready once their build ISO is uploaded.
+
+    The build-host agent uploads the built osdeploy-iso to setup_artifacts tagged
+    with the build_osdeploy work item id. We match that to the warming cache entry
+    (which recorded the same id) and finalize it. If the work item failed, the
+    entry is marked failed with the agent's error.
+    """
+    from pathlib import Path as _Path
+    from web import setup_artifacts
+
+    finalized: list[str] = []
+    warming = osdeploy_cache.warming_build_entries(conn)
+    if not warming:
+        return finalized
+    by_work_item: dict[str, dict] = {}
+    for art in setup_artifacts.list_artifacts(kind="osdeploy-iso"):
+        work_item = str(art.get("work_item_id") or "")
+        if work_item and work_item not in by_work_item:
+            by_work_item[work_item] = art  # list_artifacts is newest-first
+    for entry in warming:
+        work_item_id = str((entry.get("metadata") or {}).get("build_work_item_id") or "")
+        artifact = by_work_item.get(work_item_id)
+        if artifact and _Path(str(artifact.get("path") or "")).is_file():
+            path = _Path(artifact["path"])
+            osdeploy_cache.finalize_from_build(
+                conn,
+                entry["id"],
+                local_path=str(path),
+                size_bytes=int(artifact.get("size_bytes") or path.stat().st_size),
+                sha256_value=str(artifact.get("sha256") or ""),
+                file_name=path.name,
+            )
+            # Warming a server image now also makes it deployable: register the
+            # built ISO as an OSDeploy artifact and publish it to Proxmox. Runs
+            # once, on the warming->ready transition.
+            _publish_warmed_osdeploy_artifact(
+                iso_artifact=artifact,
+                all_artifacts=setup_artifacts.list_artifacts(),
+            )
+            finalized.append(entry["id"])
+            continue
+        work_item = agent_telemetry_pg.get_work_item(conn, work_item_id)
+        if work_item and work_item.get("status") == "failed":
+            osdeploy_cache.mark_status(
+                conn,
+                entry["id"],
+                status="failed",
+                error=str(work_item.get("error") or "build_osdeploy work item failed"),
+            )
+    return finalized
+
+
 @router.get("/cache")
 def cache_status():
     with _conn() as conn:
+        _finalize_warming_cache_builds(conn)
         return osdeploy_cache.payload(conn)
 
 
@@ -1689,8 +1820,78 @@ def refresh_cache_catalog():
     return _queue_cache_job("osdeploy_cache_refresh_catalog", "refresh", {})
 
 
+def _entry_is_factory_built(entry: dict) -> bool:
+    """A server_image whose source is a manual:// placeholder built by OSDeploy/OSDBuilder.
+
+    These cannot be fetched over HTTP; warming them runs the factory on the build host
+    via the agent instead of doing a urllib download.
+    """
+    if str(entry.get("entry_type") or "") != "server_image":
+        return False
+    if not str(entry.get("source_url") or "").startswith("manual://"):
+        return False
+    factory = str((entry.get("metadata") or {}).get("factory") or "").lower()
+    return "osdbuilder" in factory or "osdeploy" in factory
+
+
+def _image_index_for_edition(edition: str) -> int:
+    # Windows Server install.wim "Desktop Experience" image indexes.
+    if (edition or "").strip().lower().startswith("standard"):
+        return 2
+    return 4
+
+
+def _warm_factory_entry_via_agent(entry: dict) -> dict:
+    windows_version = str(entry.get("windows_version") or "").strip()
+    edition = str(entry.get("edition") or osdeploy_pg.DEFAULT_OS_EDITION).strip()
+    body = ArtifactBuildBody(
+        build_mode="build_host_agent",
+        architecture=str(entry.get("architecture") or "amd64"),
+        image_name=f"{windows_version} {edition}".strip(),
+        image_index=_image_index_for_edition(edition),
+        os_version=windows_version,
+        os_edition=edition,
+        os_language=str(entry.get("language") or osdeploy_pg.DEFAULT_OS_LANGUAGE),
+        # Left empty: the factory resolves the staged base media from
+        # C:\BuildRoot\ProxmoxVEAutopilot\inputs\media on the build host.
+        source_media_path="",
+    )
+    dispatched = build_artifact(body)
+    work_item_id = dispatched.get("work_item_id")
+    if work_item_id:
+        with _conn() as conn:
+            osdeploy_cache.init(conn)
+            osdeploy_cache.mark_build_dispatched(conn, entry["id"], work_item_id=work_item_id)
+    return {
+        "ok": True,
+        "job_type": "osdeploy_cache_warm_build",
+        "entry_id": entry["id"],
+        **dispatched,
+    }
+
+
 @router.post("/cache/{entry_id}/warm", status_code=202)
 def warm_cache_entry(entry_id: str):
+    with _conn() as conn:
+        osdeploy_cache.init(conn)
+        entry = osdeploy_cache.get_entry(conn, entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"OSDeploy cache entry not found: {entry_id}")
+    if _entry_is_factory_built(entry):
+        return _warm_factory_entry_via_agent(entry)
+    if str(entry.get("source_url") or "").startswith("manual://"):
+        # A manual:// entry with no factory backing (e.g. a retired quality_update
+        # placeholder) has no automated warm path. Return a clear error instead of
+        # queuing a job that always fails with "manual source must be staged".
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{entry.get('entry_type') or 'entry'} has no automated warm path. "
+                "Cumulative updates are baked into the server image during the build, "
+                "so warm the server_image entry instead. Refresh the catalog to clear "
+                "retired update placeholders."
+            ),
+        )
     return _queue_cache_job("osdeploy_cache_warm", "warm", {"entry_id": entry_id})
 
 

@@ -10,6 +10,7 @@ VerifyDomainJoinMatcher();
 VerifyOsDeployRoleAutomationContracts();
 VerifyBuildHostContracts();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
+VerifyOsDeployResolvesStagedSourceMedia();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -213,6 +214,19 @@ static void VerifyOsDeployRoleAutomationContracts()
     Assert(dcScript.Contains("SetPassword", StringComparison.Ordinal), "DC role must set the local Administrator password before promotion");
     Assert(dcScript.Contains("Install-ADDSForest", StringComparison.Ordinal), "DC role must promote a new isolated forest");
     Assert(!dcScript.Contains("Add-Computer", StringComparison.Ordinal), "DC role must not join or mutate an existing domain");
+
+    var replicaScript = OsDeployRoleWorkService.BuildIsolatedDomainControllerScript(
+        new Dictionary<string, JsonElement>
+        {
+            ["dc_mode"] = JsonSerializer.SerializeToElement("additional_dc"),
+            ["forest_fqdn"] = JsonSerializer.SerializeToElement("home.gell.one"),
+            ["forest_admin_username"] = JsonSerializer.SerializeToElement(@"HOME\Administrator"),
+            ["forest_admin_password"] = JsonSerializer.SerializeToElement("secret"),
+            ["dsrm_password"] = JsonSerializer.SerializeToElement("secret"),
+        });
+    Assert(replicaScript.Contains("Install-ADDSDomainController", StringComparison.Ordinal), "additional_dc mode must promote a replica DC into the existing domain");
+    Assert(!replicaScript.Contains("Install-ADDSForest", StringComparison.Ordinal), "additional_dc mode must not create a new forest");
+    Assert(!replicaScript.Contains("SetPassword", StringComparison.Ordinal), "additional_dc mode must not reset the local Administrator");
 
     var mecmScript = OsDeployRoleWorkService.BuildMecmPrereqScript(
         new Dictionary<string, JsonElement>
@@ -455,6 +469,40 @@ static TelemetrySnapshot Snapshot(string? domainName, bool? domainJoined) => new
     domainJoined,
     false,
     null);
+
+static void VerifyOsDeployResolvesStagedSourceMedia()
+{
+    var root = Path.Combine(Path.GetTempPath(), $"osdeploy-media-{Guid.NewGuid():N}");
+    var mediaDir = Path.Combine(root, "inputs", "media");
+    Directory.CreateDirectory(mediaDir);
+    try
+    {
+        Assert(
+            BuildHostWorkService.ResolveStagedSourceMediaIso([mediaDir]) is null,
+            "no staged ISO should resolve to null");
+
+        var older = Path.Combine(mediaDir, "old-server.iso");
+        var newer = Path.Combine(mediaDir, "en-us_windows_server_2022.iso");
+        File.WriteAllText(older, "old");
+        File.WriteAllText(newer, "new");
+        File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddHours(-2));
+        File.SetLastWriteTimeUtc(newer, DateTime.UtcNow);
+
+        Assert(
+            BuildHostWorkService.ResolveStagedSourceMediaIso([mediaDir]) == newer,
+            "staged source media should resolve to the newest ISO");
+
+        Assert(
+            BuildHostWorkService
+                .OsDeploySourceMediaDirectories(@"C:\BuildRoot\ProxmoxVEAutopilot")
+                .Contains(@"C:\BuildRoot\ProxmoxVEAutopilot\inputs\media"),
+            "source media search dirs must include inputs\\media under the work root");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
 
 static void Assert(bool condition, string message)
 {

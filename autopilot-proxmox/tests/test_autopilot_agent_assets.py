@@ -166,6 +166,46 @@ def test_ninja_postinstall_unblocks_qga_after_agent_health():
     assert "guest-network-get-interfaces" in post
     assert "Invoke-CimMethod" in post
     assert "Restart-Service -Name QEMU-GA" in post
+    assert "QGA RPC block cleanup failed after AutopilotAgent heartbeat; continuing:" in post
+    assert "AutopilotAgent postinstall complete." in post
+
+
+def test_cloudosd_firstboot_recovers_postinstall_failure_when_agent_heartbeat_visible():
+    firstboot = _read("autopilot-proxmox/tools/cloudosd-build/PVEAutopilot-FirstBoot.ps1")
+
+    assert "AutopilotAgent postinstall reported failure:" in firstboot
+    assert "firstboot_postinstall_recovered" in firstboot
+    assert "AutopilotAgent heartbeat was visible after postinstall failure; continuing" in firstboot
+    assert "AutopilotAgent heartbeat recovery after postinstall failure failed:" in firstboot
+    assert "firstboot_postinstall_retry_scheduled" in firstboot
+    assert "postinstall_failure_count" in firstboot
+    assert "postinstall_retryable_failure_limit" in firstboot
+    assert "[int] $PostinstallRetryableFailures = 12" in firstboot
+    assert "[int] $PostinstallRetryWindowMinutes = 45" in firstboot
+    assert "CloudOSD first boot postinstall failure is retryable from outer catch" in firstboot
+    assert "throw $postinstallError" in firstboot
+    assert "Data @{ recovered = $postinstallRecovered }" in firstboot
+
+
+def test_cloudosd_firstboot_serializes_scheduled_task_overlap_and_reports_diagnostics():
+    firstboot = _read("autopilot-proxmox/tools/cloudosd-build/PVEAutopilot-FirstBoot.ps1")
+
+    assert "Invoke-PVEAutopilotFirstBootWithMutex" in firstboot
+    assert "Global\\PVEAutopilotCloudOSDFirstBoot" in firstboot
+    assert "firstboot_overlap_skipped" in firstboot
+    assert "Get-CloudOSDFirstBootDiagnosticData" in firstboot
+    assert "postinstall_log_tail" in firstboot
+    assert "firstboot_log_tail" in firstboot
+    assert "-Data (Get-CloudOSDFirstBootDiagnosticData" in firstboot
+
+
+def test_cloudosd_build_manifest_records_component_content_hashes():
+    build = _read("autopilot-proxmox/tools/cloudosd-build/build-cloudosd.ps1")
+
+    assert "Get-CloudOSDComponentHashes" in build
+    assert "(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()" in build
+    assert "component_sha256 = $componentHashes" in build
+    assert '$inputs += "${file}:$($componentHashes[$file])"' in build
 
 
 def test_ninja_preinstall_validates_admin_arch_and_reachability():

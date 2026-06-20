@@ -171,7 +171,17 @@ const dashboardResponses: Record<string, unknown> = {
           next_expected_evidence: "agent heartbeat"
         }
       ],
-      recent_completions: [],
+      recent_completions: [
+        {
+          deployment_key: "cloudosd/run-7",
+          deployment_type: "cloudosd",
+          duration_seconds: 480,
+          slowest_phase: "agent_heartbeat",
+          slowest_phase_seconds: 180,
+          health: "healthy",
+          state: "complete"
+        }
+      ],
       bottlenecks: [
         {
           deployment_type: "osdeploy",
@@ -228,6 +238,9 @@ const dashboardResponses: Record<string, unknown> = {
     tail: 180,
     lines: ["2026-05-19T00:00:00Z autopilot ready"]
   },
+  "/api/monitoring/sweep-now": {
+    ok: true
+  },
   "/api/version": {
     sha_short: "abc1234",
     build_time: "2026-05-18T12:00:00Z"
@@ -278,9 +291,12 @@ const dashboardResponses: Record<string, unknown> = {
   "/api/files": {
     files: [
       {
-        filename: "AutopilotAgent.msi",
-        size: 4096,
-        mtime: "2026-05-19T12:00:00+00:00"
+        name: "AutopilotAgent.msi",
+        url: "/files/AutopilotAgent.msi",
+        size: "4,096 bytes",
+        size_bytes: 4096,
+        modified: "2026-05-19 12:00",
+        modified_epoch: 1779192000
       }
     ]
   },
@@ -698,7 +714,18 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
     expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/cloudosd");
     expect(screen.getByRole("link", { name: "Open signals" })).toHaveAttribute("href", "/react/monitoring");
+    expect(screen.getByRole("link", { name: "Open networks" })).toHaveAttribute("href", "/react/networks");
     expect(screen.getByRole("link", { name: "Hashes Capture and upload hardware identity" })).toHaveAttribute("href", "/react/hashes");
+    expect(screen.queryByRole("link", { name: "Job Detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Run Detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "OSDCloud Run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "OSDeploy Run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Task Template" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Edit Sequence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sequence Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New Sequence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sequences" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "UTM VMs" })).not.toBeInTheDocument();
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
@@ -714,6 +741,7 @@ describe("App", () => {
     expect(await screen.findByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/react-shell");
     expect(screen.getByRole("link", { name: "Deploy" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Infra" })).toHaveAttribute("href", "/react/networks");
     expect(screen.getByRole("link", { name: "Fleet" })).toHaveAttribute("href", "/react/vms");
 
     const search = screen.getByRole("searchbox", { name: "Search console" });
@@ -766,19 +794,135 @@ describe("App", () => {
     expect((await screen.findAllByText(content)).length).toBeGreaterThan(0);
   });
 
-  test("renders a controller-scoped AutopilotAgent download page from critical infrastructure domain controllers", async () => {
+  test("renders Files shelf URLs and CRUD actions", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/files/delete": { ok: true, deleted: 1 },
+      "/api/files/AutopilotAgent.msi/replace": { ok: true, replaced: "AutopilotAgent.msi" }
+    });
+
+    renderRoute("/react/files");
+
+    expect(await screen.findByRole("link", { name: "AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
+    expect(screen.getByRole("link", { name: "/files/AutopilotAgent.msi" })).toHaveAttribute("href", "/files/AutopilotAgent.msi");
+    expect(screen.getByText("Up to 10 GiB per file. Any file type.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Choose upload files")).not.toHaveAttribute("accept");
+    expect(screen.getByText("Drop files here")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start upload (0)" })).toBeDisabled();
+    expect(screen.getByText("No files queued")).toBeInTheDocument();
+
+    const replacement = new File(["replacement-zip"], "replacement.zip", { type: "application/zip" });
+    const replacementInput = screen.getByLabelText("Replacement file for AutopilotAgent.msi");
+    expect(replacementInput).not.toHaveAttribute("accept");
+    fireEvent.change(replacementInput, {
+      target: { files: [replacement] }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/AutopilotAgent.msi/replace",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("Delete AutopilotAgent.msi?");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/delete",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+  });
+
+  test("renders a Files upload queue before uploading", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/files");
+
+    const uploadInput = await screen.findByLabelText("Choose upload files");
+    const files = [
+      new File(["setup"], "setup.exe", { type: "application/octet-stream" }),
+      new File(["notes"], "notes.txt", { type: "text/plain" })
+    ];
+    fireEvent.change(uploadInput, { target: { files } });
+
+    expect(screen.getByRole("heading", { name: "Upload queue" })).toBeInTheDocument();
+    expect(screen.getByText("setup.exe")).toBeInTheDocument();
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getAllByText("Queued")).toHaveLength(2);
+    expect(screen.getByRole("progressbar", { name: "Upload progress for setup.exe" })).toHaveValue(0);
+    expect(screen.getByRole("button", { name: "Start upload (2)" })).toBeEnabled();
+  });
+
+  test("bulk deletes selected Files shelf rows", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/files": {
+        files: [
+          {
+            name: "AutopilotAgent.msi",
+            url: "/files/AutopilotAgent.msi",
+            size: "4,096 bytes",
+            size_bytes: 4096,
+            modified: "2026-05-19 12:00",
+            modified_epoch: 1779192000
+          },
+          {
+            name: "VSCodeSetup-x64.exe",
+            url: "/files/VSCodeSetup-x64.exe",
+            size: "88,000,000 bytes",
+            size_bytes: 88000000,
+            modified: "2026-05-21 16:04",
+            modified_epoch: 1779379440
+          }
+        ]
+      },
+      "/api/files/delete": { ok: true, deleted: 2 }
+    });
+
+    renderRoute("/react/files");
+
+    fireEvent.click(await screen.findByLabelText("Select AutopilotAgent.msi"));
+    fireEvent.click(screen.getByLabelText("Select VSCodeSetup-x64.exe"));
+    const bulkDelete = screen.getByRole("button", { name: "Delete selected (2)" });
+    expect(bulkDelete).toBeEnabled();
+
+    fireEvent.click(bulkDelete);
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("Delete 2 selected file(s)?");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/files/delete",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+  });
+
+  test("AutopilotAgent download page keeps the autopilot controller URL distinct from the install-target VM", async () => {
     mockFetch(dashboardResponses);
 
     renderRoute("/react/agent-download");
 
     expect(await screen.findByRole("heading", { name: "AutopilotAgent Download" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Controller infrastructure")).toHaveDisplayValue("ACME Lab / ACME-DC01 / VM 130");
-    expect(screen.getByLabelText("Controller URL")).toHaveValue("http://10.42.12.10:5000");
-    expect(screen.getByText("http://10.42.12.10:5000/api/cloudosd/assets/autopilotagent.msi")).toBeInTheDocument();
-    expect(screen.getByText(/Invoke-WebRequest -UseBasicParsing -Uri "http:\/\/10\.42\.12\.10:5000\/api\/cloudosd\/assets\/autopilotagent\.msi"/)).toBeInTheDocument();
+
+    // Critical infrastructure VMs are install targets, not the autopilot
+    // controller. Selecting one (e.g. a domain controller VM like
+    // ACME-DC01) must NOT overwrite the autopilot controller URL with
+    // that VM's IP -- the agent must keep reporting back to this Flask
+    // server, not to the DC.
+    expect(screen.getByLabelText("Install target VM")).toHaveDisplayValue("ACME Lab / ACME-DC01 / VM 130");
+    const expectedControllerUrl = window.location.origin;
+    expect(screen.getByLabelText("Autopilot controller URL")).toHaveValue(expectedControllerUrl);
+    expect(screen.getByText(`${expectedControllerUrl}/api/cloudosd/assets/autopilotagent.msi`)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Invoke-WebRequest -UseBasicParsing -Uri "${expectedControllerUrl.replace(/\//gu, "\\/")}\\/api\\/cloudosd\\/assets\\/autopilotagent\\.msi"`))).toBeInTheDocument();
     expect(screen.queryByText(/<bootstrap-token>/)).not.toBeInTheDocument();
     expect(screen.getByText(/-BootstrapToken "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"/)).toBeInTheDocument();
-    expect(screen.getByText(/-ServerUrl "http:\/\/10\.42\.12\.10:5000"/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`-ServerUrl "${expectedControllerUrl.replace(/\//gu, "\\/")}"`))).toBeInTheDocument();
     expect(screen.getByText(/-Vmid 130/)).toBeInTheDocument();
     expect(screen.getByText("dc01-agent")).toBeInTheDocument();
   });
@@ -1333,7 +1477,7 @@ describe("App", () => {
     expect(await screen.findByText("PC-001")).toBeInTheDocument();
     expect(screen.getByText("SN-001")).toBeInTheDocument();
     expect(screen.getByText("2 jobs")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "job-running" })).toHaveAttribute("href", "/jobs/job-running");
+    expect(screen.getByRole("link", { name: "job-running" })).toHaveAttribute("href", "/react/jobs/job-running");
     fireEvent.click(screen.getByRole("button", { name: "failed" }));
     expect(screen.getByText("1 of 2 jobs")).toBeInTheDocument();
     expect(screen.queryByText("PC-001")).not.toBeInTheDocument();
@@ -1367,13 +1511,16 @@ describe("App", () => {
     });
     expect(screen.getByText("Build host agent")).toBeInTheDocument();
     expect(screen.getAllByText("Stage Windows ISO and VirtIO media").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/osdeploy");
+    expect(screen.getByRole("link", { name: "Open server deploy" })).toHaveAttribute("href", "/react/osdeploy");
+    expect(screen.queryByRole("link", { name: "Open legacy monitoring" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: "Monitoring settings" }).some((link) =>
       link.getAttribute("href") === "/react/monitoring/settings"
     )).toBe(true);
     expect(screen.queryByText(/May 19 00:00Z/u)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Deployment speed" })).toBeInTheDocument();
     expect(screen.getByText("Windows setup")).toBeInTheDocument();
+    expect(screen.getByText("cloudosd/run-7")).toBeInTheDocument();
+    expect(screen.getByText(/480s total/u)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Lifecycle lanes" })).toBeInTheDocument();
     expect(screen.getByText("Provisioned")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Service health" })).toBeInTheDocument();
@@ -1382,7 +1529,8 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tail" }));
     expect(await screen.findByText("2026-05-19T00:00:00Z autopilot ready")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Fleet attention" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/devices/101");
-    expect(screen.queryByRole("button", { name: /sweep/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/react/vms/101");
+    fireEvent.click(screen.getByRole("button", { name: "Sweep now" }));
+    expect(await screen.findByText("Sweep queued.")).toBeInTheDocument();
   });
 });

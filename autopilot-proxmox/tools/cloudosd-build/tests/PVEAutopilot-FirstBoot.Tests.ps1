@@ -54,6 +54,104 @@ Describe 'Invoke-PVEAutopilotFirstBoot' {
             Should -Be 'network|server:https://autopilot.local|qga|msi:C:\Stage\AutopilotAgent.msi|postinstall:C:\Stage\autopilotagent-postinstall.ps1:cloudosd|heartbeat|cleanup:PVEAutopilot-CloudOSD-FirstBoot|end-session:PVEAutopilot'
     }
 
+    It 'leaves early postinstall failures retryable without reporting an error event' {
+        $script:Events = @()
+        $script:Removed = $false
+        $runConfig = [pscustomobject]@{
+            run_id = 'run-retry-1'
+            vmid = 224
+            server_base_url = 'https://autopilot.local'
+            agent = [pscustomobject]@{
+                bootstrap_token = 'bootstrap-token'
+            }
+            payloads = [pscustomobject]@{
+                autopilotagent_msi = [pscustomobject]@{
+                    local_path = 'C:\Stage\AutopilotAgent.msi'
+                }
+                autopilotagent_postinstall = [pscustomobject]@{
+                    local_path = 'C:\Stage\autopilotagent-postinstall.ps1'
+                }
+            }
+        }
+
+        {
+            Invoke-PVEAutopilotFirstBoot -RunConfig $runConfig `
+                -WaitForNetwork { } `
+                -WaitForServer { param($Url) } `
+                -InstallQga { [pscustomobject]@{ source = 'C:\Stage\qemu-ga-x86_64.msi'; service = 'QEMU-GA'; status = 'Running' } } `
+                -InstallMsi { param($Path) } `
+                -RunPostinstall { throw 'AutopilotAgent postinstall failed: 1' } `
+                -ConfirmHeartbeat { throw 'heartbeat missing' } `
+                -RemoveScheduledTask { param($Name) $script:Removed = $true } `
+                -EndBootstrapSession { param($Name) } `
+                -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data)
+                    $script:Events += [pscustomobject]@{
+                        EventType = $EventType
+                        Severity = $Severity
+                        Data = $Data
+                    }
+                }
+        } | Should -Not -Throw
+
+        ($script:Events | Where-Object { $_.EventType -eq 'firstboot_postinstall_retry_scheduled' }).Count |
+            Should -Be 1
+        ($script:Events | Where-Object { $_.Severity -eq 'error' }).Count |
+            Should -Be 0
+        $script:Removed | Should -BeFalse
+    }
+
+    It 'reports terminal postinstall failure after the retry budget is exhausted' {
+        $script:Events = @()
+        $runConfig = [pscustomobject]@{
+            run_id = 'run-retry-exhausted'
+            vmid = 225
+            server_base_url = 'https://autopilot.local'
+            agent = [pscustomobject]@{
+                bootstrap_token = 'bootstrap-token'
+            }
+            payloads = [pscustomobject]@{
+                autopilotagent_msi = [pscustomobject]@{
+                    local_path = 'C:\Stage\AutopilotAgent.msi'
+                }
+                autopilotagent_postinstall = [pscustomobject]@{
+                    local_path = 'C:\Stage\autopilotagent-postinstall.ps1'
+                }
+            }
+        }
+        Save-PVEAutopilotCloudOSDFirstBootState -State @{
+            run_id = 'run-retry-exhausted'
+            postinstall_failures = 4
+            first_postinstall_failure_utc = (Get-Date).ToUniversalTime().ToString('o')
+            last_postinstall_failure_utc = (Get-Date).ToUniversalTime().ToString('o')
+            last_postinstall_error = 'previous failure'
+        }
+
+        {
+            Invoke-PVEAutopilotFirstBoot -RunConfig $runConfig `
+                -WaitForNetwork { } `
+                -WaitForServer { param($Url) } `
+                -InstallQga { [pscustomobject]@{ source = 'C:\Stage\qemu-ga-x86_64.msi'; service = 'QEMU-GA'; status = 'Running' } } `
+                -InstallMsi { param($Path) } `
+                -RunPostinstall { throw 'AutopilotAgent postinstall failed: 1' } `
+                -ConfirmHeartbeat { throw 'heartbeat missing' } `
+                -RemoveScheduledTask { param($Name) } `
+                -EndBootstrapSession { param($Name) } `
+                -PostinstallRetryableFailures 4 `
+                -ReportEvent { param($ServerUrl,$RunId,$BearerToken,$Phase,$EventType,$Message,$Severity,$Data)
+                    $script:Events += [pscustomobject]@{
+                        EventType = $EventType
+                        Severity = $Severity
+                        Data = $Data
+                    }
+                }
+        } | Should -Throw
+
+        $terminal = $script:Events | Where-Object { $_.EventType -eq 'firstboot_postinstall_failed' }
+        $terminal.Count | Should -Be 1
+        $terminal[0].Severity | Should -Be 'error'
+        $terminal[0].Data.postinstall_failure_count | Should -Be 5
+    }
+
     It 'posts SetupComplete and first-boot milestone events to the controller' {
         $source = Get-Content -LiteralPath $script:FirstBootPath -Raw
 

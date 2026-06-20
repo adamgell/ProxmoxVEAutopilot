@@ -499,6 +499,15 @@ Write-Output $destination
         var osdBuilderVersion = ReadString(work.Request, "osdbuilder_version", "24.10.8.1");
         var adkVersion = ReadString(work.Request, "adk_version", "10.1.26100.1");
         var sourceMediaPath = ReadString(work.Request, "source_media_path", "");
+        if (string.IsNullOrWhiteSpace(sourceMediaPath))
+        {
+            // Operators stage the licensed base ISO once under inputs\media; resolve it
+            // here so warming a server_image cache entry needs no per-build media path.
+            // The factory mounts the ISO itself. The mounted-media fallback below still
+            // applies when nothing is staged.
+            sourceMediaPath = ResolveStagedSourceMediaIso(
+                OsDeploySourceMediaDirectories(WorkRoot(work))) ?? "";
+        }
         var imageName = ReadString(work.Request, "image_name", "Windows Server 2025 Datacenter");
         var imageIndex = ReadInt(work.Request, "image_index", 4);
         var osVersion = ReadString(work.Request, "os_version", "Windows Server 2025");
@@ -718,6 +727,36 @@ $blocking = @($checks | Where-Object { -not $_.ok } | ForEach-Object { $_.name }
         parsed["stdout"] = Truncate(output.Stdout);
         parsed["stderr"] = Truncate(output.Stderr);
         return parsed;
+    }
+
+    internal static IReadOnlyList<string> OsDeploySourceMediaDirectories(string workRoot) =>
+    [
+        Path.Combine(workRoot, "inputs", "media"),
+        @"C:\BuildRoot\ProxmoxVEAutopilot\inputs\media",
+        @"C:\BuildRoot\inputs\media",
+    ];
+
+    internal static string? ResolveStagedSourceMediaIso(IEnumerable<string> searchDirectories)
+    {
+        string? newest = null;
+        var newestWriteUtc = DateTime.MinValue;
+        foreach (var directory in searchDirectories)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                continue;
+            }
+            foreach (var iso in Directory.EnumerateFiles(directory, "*.iso", SearchOption.TopDirectoryOnly))
+            {
+                var writeUtc = File.GetLastWriteTimeUtc(iso);
+                if (newest is null || writeUtc > newestWriteUtc)
+                {
+                    newest = iso;
+                    newestWriteUtc = writeUtc;
+                }
+            }
+        }
+        return newest;
     }
 
     internal static IReadOnlyList<string> SelectOsDeployBuildOutputs(
