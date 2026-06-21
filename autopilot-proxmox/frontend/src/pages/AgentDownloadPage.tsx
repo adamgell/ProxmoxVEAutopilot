@@ -78,20 +78,6 @@ function trimControllerUrl(value: string): string {
   return withScheme.replace(/\/+$/u, "");
 }
 
-function controllerAddress(node: LabBubbleInfrastructureNode): string {
-  return node.agent?.primary_ipv4 || node.vm?.ip_address || "";
-}
-
-/**
- * The autopilot controller URL is the address the AutopilotAgent reports
- * back to (the Flask server running this page). It is NOT the IP of any
- * Critical Infrastructure VM. window.location.origin is correct here --
- * picking an install-target VM must not overwrite the controller URL.
- */
-function defaultControllerUrl(): string {
-  return window.location.origin;
-}
-
 function controllerLabel(node: LabBubbleInfrastructureNode): string {
   const name = node.vm ? vmDisplayName(node.vm) : fallbackText(node.asset.agent_id || node.role);
   const vmid = node.asset.vmid ?? node.vm?.vmid;
@@ -183,15 +169,15 @@ function formatAge(seconds: number | null): string {
     return "never";
   }
   if (seconds < 60) {
-    return `${Math.round(seconds)}s ago`;
+    return `${String(Math.round(seconds))}s ago`;
   }
   if (seconds < 3600) {
-    return `${Math.round(seconds / 60)}m ago`;
+    return `${String(Math.round(seconds / 60))}m ago`;
   }
   if (seconds < 86400) {
-    return `${Math.round(seconds / 3600)}h ago`;
+    return `${String(Math.round(seconds / 3600))}h ago`;
   }
-  return `${Math.round(seconds / 86400)}d ago`;
+  return `${String(Math.round(seconds / 86400))}d ago`;
 }
 
 function BuildHostPanel() {
@@ -214,9 +200,12 @@ function BuildHostPanel() {
   }, []);
 
   useEffect(() => {
-    void load();
+    const initialTimer = window.setTimeout(() => { void load(); }, 0);
     const timer = window.setInterval(() => { void load(); }, 30000);
-    return () => { window.clearInterval(timer); };
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
   }, [load]);
 
   const provision = useCallback(async () => {

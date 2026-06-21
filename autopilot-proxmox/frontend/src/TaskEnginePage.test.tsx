@@ -210,7 +210,7 @@ describe("TaskEnginePage", () => {
     expect(screen.queryByText("Import v1")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create v2 copy" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Read-only Flow Templates" })).toBeInTheDocument();
-    expect(screen.getByText("OSDCloud Desktop Client")).toBeInTheDocument();
+    expect(await screen.findByText("OSDCloud Desktop Client")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "V2 task sequences" })).toHaveTextContent("CloudOSD deployment");
     expect(screen.getByRole("table", { name: "V2 runs" })).toHaveTextContent("run-1");
     expect(screen.getByRole("table", { name: "Content library" })).toHaveTextContent("AutopilotAgent");

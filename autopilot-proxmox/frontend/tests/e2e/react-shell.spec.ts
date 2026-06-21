@@ -156,9 +156,41 @@ const provisionPayloadForE2e = {
   ]
 };
 
+const cloudosdPayloadForE2e = {
+  view: "overview",
+  catalog: { defaults: { minimum_vm_memory_mb: 4096 } },
+  proxmox_options: {},
+  artifacts: [],
+  ready_artifacts: [
+    {
+      id: "cloud-artifact",
+      build_sha: "cloud123",
+      readiness: "ready",
+      ready: true,
+      proxmox_volid: "local:iso/cloud.iso"
+    }
+  ],
+  active_runs: [
+    {
+      run_id: "run-cloud-1",
+      requested_vm_name: "Gell-EC41E7EB",
+      state: "provisioning"
+    }
+  ],
+  stale_failed_runs: [],
+  runs: [],
+  cloudosd_cache: {
+    storage: { ready: true, root: "/app/cache/cloudosd" },
+    summary: { ready: 2, total: 3 }
+  }
+};
+
 async function mockReadApis(page: Page) {
   await page.route("**/api/provision/page", async (route) => {
     await route.fulfill({ json: provisionPayloadForE2e });
+  });
+  await page.route("**/api/cloudosd/page", async (route) => {
+    await route.fulfill({ json: cloudosdPayloadForE2e });
   });
   await page.route("**/api/services", async (route) => {
     await route.fulfill({
@@ -510,7 +542,7 @@ test("renders the React shell without layout overlap", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Route map" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Start desktop run" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
   await expect(page.getByRole("link", { name: "Open networks" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open signals" })).toBeVisible();
   const routeMap = page.getByRole("navigation", { name: "Route map" });
@@ -543,6 +575,36 @@ test("renders the React shell without layout overlap", async ({ page }) => {
   }
   expect(routeMapBox.y).toBeLessThan(viewport.height);
   expect(hero.y + hero.height).toBeLessThanOrEqual(panel.y + 1);
+});
+
+test("renders the guided Deploy journey without layout overlap", async ({ page }) => {
+  await mockReadApis(page);
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.goto("/react/deploy");
+
+  await expect(page.getByRole("heading", { name: "Deploy desktop: guided path" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Deploy outcomes" }).getByRole("link", { name: "Use existing VM Provision" })).toHaveAttribute("href", "/react/provision");
+  await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "OSDCloud Desktop start" })).toHaveAttribute("href", "/react/cloudosd");
+  await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
+  await expect(page.getByRole("link", { name: "Step 4 Verify readiness Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof." })).toHaveAttribute("href", "/react/vms");
+  await expect(page.getByText("CloudOSD media promoted")).toBeVisible();
+
+  const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(desktopOverflow).toBe(false);
+  const journeyBox = await page.locator(".deploy-journey-shell").boundingBox();
+  const headingBox = await page.getByRole("heading", { name: "Deploy desktop: guided path" }).boundingBox();
+  expect(journeyBox).not.toBeNull();
+  expect(headingBox).not.toBeNull();
+  if (!journeyBox || !headingBox) {
+    throw new Error("Deploy journey layout regions were not measurable.");
+  }
+  expect(journeyBox.y).toBeLessThanOrEqual(headingBox.y + 140);
+
+  await page.setViewportSize({ width: 390, height: 980 });
+  await expect(page.getByRole("heading", { name: "Deploy desktop: guided path" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Deploy outcomes" }).getByRole("link", { name: "Deploy desktop OSDCloud" })).toBeVisible();
+  const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(mobileOverflow).toBe(false);
 });
 
 test("provision launch composer keeps hostname previews inside Windows limits", async ({ page }) => {

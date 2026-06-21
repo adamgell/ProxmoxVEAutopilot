@@ -3,6 +3,13 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { NetworksPage } from "./pages/NetworksPage";
 
+function jsonRequestBody(init: RequestInit | undefined): unknown {
+  if (typeof init?.body !== "string") {
+    throw new Error("Expected a JSON request body");
+  }
+  return JSON.parse(init.body) as unknown;
+}
+
 describe("NetworksPage", () => {
   afterEach(() => {
     cleanup();
@@ -40,20 +47,20 @@ describe("NetworksPage", () => {
   });
 
   test("one-click apply hits /api/sdn/apply-pending without exposing a lock token", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       if (input === "/api/sdn/apply-pending") {
         expect(init?.method).toBe("POST");
-        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } }));
       }
-      return new Response(
+      return Promise.resolve(new Response(
         JSON.stringify({
           sdn: { zones: [], vnets: [], subnets_by_vnet: {}, controllers: [], ipams: [], dns: [], fabrics: [] },
           firewall: { cluster: { options: {}, rules: [] }, nodes: {}, vnets: {}, vms: {} },
           labs: []
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }) as typeof fetch);
+      ));
+    });
 
     render(<NetworksPage bootstrap={{ buildSha: "test" }} path="/react/networks" />);
 
@@ -67,9 +74,9 @@ describe("NetworksPage", () => {
   });
 
   test("creates an isolated lab with open outbound egress defaults", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       if (input === "/api/sdn/labs/preflight") {
-        expect(JSON.parse(String(init?.body))).toMatchObject({
+        expect(jsonRequestBody(init)).toMatchObject({
           name: "Lab 101",
           zone: "lab-simple",
           vnet: "lab101",
@@ -78,18 +85,18 @@ describe("NetworksPage", () => {
           snat_enabled: true,
           firewall_profile: "isolated_open_egress"
         });
-        return new Response(JSON.stringify({ ok: true, blocking: [], warnings: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, blocking: [], warnings: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
       }
       if (input === "/api/sdn/labs") {
         expect(init?.method).toBe("POST");
-        expect(JSON.parse(String(init?.body))).toMatchObject({
+        expect(jsonRequestBody(init)).toMatchObject({
           egress_policy: "open",
           snat_enabled: true,
           firewall_profile: "isolated_open_egress"
         });
-        return new Response(JSON.stringify({ bubble: { id: "bubble-1" }, binding: { egress_policy: "open" } }), { status: 201, headers: { "Content-Type": "application/json" } });
+        return Promise.resolve(new Response(JSON.stringify({ bubble: { id: "bubble-1" }, binding: { egress_policy: "open" } }), { status: 201, headers: { "Content-Type": "application/json" } }));
       }
-      return new Response(
+      return Promise.resolve(new Response(
         JSON.stringify({
           sdn: {
             zones: [{ id: "lab-simple", type: "simple" }],
@@ -104,8 +111,8 @@ describe("NetworksPage", () => {
           labs: []
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }) as typeof fetch);
+      ));
+    });
 
     render(<NetworksPage bootstrap={{ buildSha: "test" }} path="/react/networks" />);
 

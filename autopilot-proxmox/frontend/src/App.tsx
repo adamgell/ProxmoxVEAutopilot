@@ -6,6 +6,7 @@ import { CloudDevicesPage } from "./pages/CloudDevicesPage";
 import { CloudosdPage } from "./pages/CloudosdPage";
 import { CredentialsPage } from "./pages/CredentialsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DeployJourneyPage } from "./pages/DeployJourneyPage";
 import { DeploymentRunPage } from "./pages/DeploymentRunPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HashesPage } from "./pages/HashesPage";
@@ -96,6 +97,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/provision") {
     return <ProvisionPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/deploy") {
+    return <DeployJourneyPage bootstrap={bootstrap} />;
   }
   if (path === "/react/cloudosd") {
     return <CloudosdPage bootstrap={bootstrap} />;

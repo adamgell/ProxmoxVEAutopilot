@@ -28,6 +28,7 @@ describe("operator route registry", () => {
         "/react/runs",
         "/react/runs/:runId",
         "/react/networks",
+        "/react/deploy",
         "/react/provision",
         "/react/cloudosd",
         "/react/cloudosd/runs/:runId",
@@ -72,6 +73,7 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/react/agent-download")?.label).toBe("Agent Download");
     expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
     expect(reactRouteForPath("/react/settings")?.label).toBe("General");
+    expect(reactRouteForPath("/react/deploy")?.label).toBe("Deploy Path");
     expect(reactRouteForPath("/react/cloudosd")?.label).toBe("OSDCloud Desktop");
     expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Sequences");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
@@ -133,6 +135,7 @@ describe("operator route registry", () => {
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
         expect.objectContaining({ label: "Runs", href: "/react/runs" }),
         expect.objectContaining({ label: "Networks", href: "/react/networks" }),
+        expect.objectContaining({ label: "Deploy Path", href: "/react/deploy" }),
         expect.objectContaining({ label: "OSDeploy Server", href: "/react/osdeploy" }),
         expect.objectContaining({ label: "OSDCloud Desktop", href: "/react/cloudosd" }),
         expect.objectContaining({ label: "Provision", href: "/react/provision" }),
@@ -151,7 +154,7 @@ describe("operator route registry", () => {
   test("defines the compact outcome modes in operator order", () => {
     expect(operatorModes.map((mode) => [mode.id, mode.label, mode.href])).toEqual([
       ["home", "Home", "/react-shell"],
-      ["deploy", "Deploy", "/react/cloudosd"],
+      ["deploy", "Deploy", "/react/deploy"],
       ["build", "Build", "/react/task-engine"],
       ["infra", "Infra", "/react/networks"],
       ["fleet", "Fleet", "/react/vms"],
@@ -181,7 +184,7 @@ describe("operator route registry", () => {
     expect(operatorOutcomes.find((outcome) => outcome.id === "deploy-desktop")).toMatchObject({
       mode: "deploy",
       title: "Deploy a Windows desktop",
-      primaryHref: "/react/cloudosd",
+      primaryHref: "/react/deploy",
       actionLabel: "Start desktop run",
       tone: "good"
     });
@@ -217,6 +220,8 @@ describe("operator route registry", () => {
 
   test("maps the active path to the correct outcome mode", () => {
     expect(modeForPath("/react-shell")).toBe("home");
+    expect(operatorModes.find((mode) => mode.id === "deploy")?.href).toBe("/react/deploy");
+    expect(modeForPath("/react/deploy")).toBe("deploy");
     expect(modeForPath("/react/cloudosd")).toBe("deploy");
     expect(modeForPath("/react/cloudosd/runs/run-1")).toBe("deploy");
     expect(modeForPath("/react/task-engine/sequences/list")).toBe("build");
@@ -224,5 +229,13 @@ describe("operator route registry", () => {
     expect(modeForPath("/react/vms/109")).toBe("fleet");
     expect(modeForPath("/react/monitoring/settings")).toBe("settings");
     expect(modeForPath("/react/monitoring")).toBe("home");
+  });
+
+  test("makes the guided deploy path discoverable by command search", () => {
+    expect(routeSearchTargets.find((route) => route.path === "/react/deploy")).toMatchObject({
+      label: "Deploy Path",
+      group: "Deploy",
+      phase: "foundation"
+    });
   });
 });

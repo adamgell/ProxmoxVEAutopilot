@@ -31,6 +31,34 @@ const dashboardResponses: Record<string, unknown> = {
     running_count: 1,
     queued_count: 2
   },
+  "/api/cloudosd/page": {
+    view: "overview",
+    catalog: { defaults: { minimum_vm_memory_mb: 4096 } },
+    proxmox_options: {},
+    artifacts: [],
+    ready_artifacts: [
+      {
+        id: "artifact-1",
+        build_sha: "abc123",
+        readiness: "ready",
+        ready: true,
+        proxmox_volid: "isos:iso/cloudosd.iso"
+      }
+    ],
+    active_runs: [
+      {
+        run_id: "run-active",
+        requested_vm_name: "PC-001",
+        state: "provisioning"
+      }
+    ],
+    stale_failed_runs: [],
+    runs: [],
+    cloudosd_cache: {
+      storage: { ready: true, root: "/app/cache/cloudosd" },
+      summary: { ready: 2, total: 3 }
+    }
+  },
   "/api/jobs/recent?limit=5": {
     jobs: [
       {
@@ -713,7 +741,7 @@ describe("App", () => {
     expect(screen.getByText("Local Operator")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Log out Local Operator" })).toHaveAttribute("href", "/auth/logout");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
-    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
     expect(screen.getByRole("link", { name: "Open signals" })).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getByRole("link", { name: "Open networks" })).toHaveAttribute("href", "/react/networks");
     expect(screen.getByRole("link", { name: "Hashes Capture and upload hardware identity" })).toHaveAttribute("href", "/react/hashes");
@@ -749,7 +777,7 @@ describe("App", () => {
 
     expect(await screen.findByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/react-shell");
-    expect(screen.getByRole("link", { name: "Deploy" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Deploy" })).toHaveAttribute("href", "/react/deploy");
     expect(screen.getByRole("link", { name: "Infra" })).toHaveAttribute("href", "/react/networks");
     expect(screen.getByRole("link", { name: "Fleet" })).toHaveAttribute("href", "/react/vms");
 
@@ -1454,6 +1482,30 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /kill/i })).not.toBeInTheDocument();
   });
 
+  test("renders the guided Deploy journey from existing status APIs", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/deploy");
+
+    expect(await screen.findByRole("heading", { name: "Deploy desktop: guided path" })).toBeInTheDocument();
+    const finishMenu = screen.getByRole("navigation", { name: "Deploy outcomes" });
+    expect(within(finishMenu).getByRole("link", { name: "Deploy desktop OSDCloud" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(within(finishMenu).getByRole("link", { name: "Deploy server OSDeploy" })).toHaveAttribute("href", "/react/osdeploy");
+    expect(within(finishMenu).getByRole("link", { name: "Use existing VM Provision" })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "Step 1 Choose deployment path Desktop route is selected. Server and existing VM flows remain one click away." })).toHaveAttribute("href", "/react/deploy");
+    expect(screen.getByRole("link", { name: "Step 2 Configure VM and media Tenant, node, storage, CPU, memory, disk, and promoted ISO." })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "Step 3 Watch Windows handoff Install, first boot, cleanup, Sysprep OOBE return, and agent events." })).toHaveAttribute("href", "/react/jobs");
+    expect(screen.getByRole("link", { name: "Step 4 Verify readiness Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof." })).toHaveAttribute("href", "/react/vms");
+    expect(screen.getByText("Controller and builder ready")).toBeInTheDocument();
+    expect(await screen.findByText("1 running, 2 queued.")).toBeInTheDocument();
+    expect(screen.getByText("CloudOSD media promoted")).toBeInTheDocument();
+    expect(screen.getByText("1 promoted artifact available.")).toBeInTheDocument();
+    expect(screen.getByText("Graph visibility can lag")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Route shortcuts" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "OSDCloud Desktop start" })).toHaveAttribute("href", "/react/cloudosd");
+  });
+
   test("renders the jobs read-only slice from API data", async () => {
     mockFetch({
       "/api/jobs": [
@@ -1501,7 +1553,7 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
     expect(screen.getByRole("heading", { name: "Prove a machine is ready" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
   });

@@ -42,6 +42,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
   {
     label: "Deploy",
     items: [
+      { path: "/react/deploy", label: "Deploy Path", group: "Deploy", phase: "foundation", active: true },
       { path: "/react/cloudosd", label: "OSDCloud Desktop", group: "Deploy", phase: "operational", active: true },
       {
         path: "/react/cloudosd/runs/:runId",
@@ -148,7 +149,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
 
 export const operatorModes: readonly OperatorMode[] = [
   { id: "home", label: "Home", longLabel: "Home", href: "/react-shell" },
-  { id: "deploy", label: "Deploy", longLabel: "Deploy", href: "/react/cloudosd" },
+  { id: "deploy", label: "Deploy", longLabel: "Deploy", href: "/react/deploy" },
   { id: "build", label: "Build", longLabel: "Build", href: "/react/task-engine" },
   { id: "infra", label: "Infra", longLabel: "Infrastructure", href: "/react/networks" },
   { id: "fleet", label: "Fleet", longLabel: "Fleet", href: "/react/vms" },
@@ -162,7 +163,7 @@ export const operatorOutcomes: readonly OperatorOutcome[] = [
     eyebrow: "Recommended",
     title: "Deploy a Windows desktop",
     summary: "Open OSDCloud Desktop, use saved defaults, watch first boot, and verify OOBE handoff.",
-    primaryHref: "/react/cloudosd",
+    primaryHref: "/react/deploy",
     actionLabel: "Start desktop run",
     tone: "good",
     relatedRoutes: [
@@ -294,6 +295,7 @@ export const operatorFlows: readonly OperatorFlow[] = [
     group: "Deploy",
     summary: "Choose the deployment path, then open the guarded execution page.",
     steps: [
+      { label: "Deploy Path", href: "/react/deploy", group: "Deploy", state: "React" },
       { label: "OSDeploy Server", href: "/react/osdeploy", group: "Deploy", state: "React" },
       { label: "OSDCloud Desktop", href: "/react/cloudosd", group: "Deploy", state: "React" },
       { label: "Provision", href: "/react/provision", group: "Deploy", state: "React" }

@@ -574,6 +574,314 @@ h3 {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.page-head__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.deploy-journey-shell {
+  display: grid;
+  grid-template-columns: minmax(194px, 240px) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(186, 203, 221, 0.82);
+  border-radius: 8px;
+  color: #14213d;
+  background: #f3f7fb;
+  box-shadow: 0 16px 46px rgba(5, 13, 26, 0.18);
+}
+
+.deploy-outcome-menu {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #cfdae8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.deploy-outcome-menu h2,
+.deploy-panel-head p,
+.deploy-journey-header p {
+  margin: 0;
+  color: #52677f;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.deploy-outcome-menu > div {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.deploy-outcome-menu a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 46px;
+  padding: 10px;
+  border: 1px solid #d8e2ee;
+  border-radius: 7px;
+  color: #14213d;
+  background: #f8fbfe;
+  text-decoration: none;
+}
+
+.deploy-outcome-menu a:hover,
+.deploy-outcome-menu a:focus-visible,
+.deploy-shortcut-grid a:hover,
+.deploy-shortcut-grid a:focus-visible,
+.deploy-path-step:hover,
+.deploy-path-step:focus-visible {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+.deploy-outcome-menu a.is-active {
+  border-color: #0f766e;
+  background: #e7f6f3;
+}
+
+.deploy-outcome-menu strong,
+.deploy-shortcut-grid strong,
+.deploy-path-step strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.deploy-outcome-menu span,
+.deploy-shortcut-grid span {
+  justify-self: end;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #155e75;
+  background: #e0f2fe;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.deploy-journey-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.deploy-journey-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.52fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #c8d7e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.deploy-journey-header h2 {
+  margin: 6px 0 6px;
+  color: #0f172a;
+  font-size: 30px;
+  line-height: 1.08;
+}
+
+.deploy-journey-header span {
+  display: block;
+  max-width: 720px;
+  color: #41556f;
+}
+
+.deploy-journey-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+
+.deploy-journey-metrics div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d8e2ee;
+  border-radius: 7px;
+  background: #f8fbfe;
+}
+
+.deploy-journey-metrics dt {
+  color: #52677f;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.deploy-journey-metrics dd {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.deploy-path-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.deploy-path-step {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 162px;
+  padding: 13px;
+  border: 1px solid #d5dfeb;
+  border-radius: 8px;
+  color: #14213d;
+  background: #ffffff;
+  text-decoration: none;
+}
+
+.deploy-path-step.is-active {
+  border-color: #2563eb;
+  background: #edf5ff;
+}
+
+.deploy-path-step > span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.deploy-path-step small {
+  color: #41556f;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.deploy-work-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.deploy-checkpoint-panel,
+.deploy-shortcut-panel {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #c8d7e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.deploy-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.deploy-panel-head h2 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.deploy-panel-head > span {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 230px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: #0f766e;
+  background: #e7f6f3;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.deploy-checkpoint-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.deploy-checkpoint {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #d8e2ee;
+  border-left: 4px solid #64748b;
+  border-radius: 7px;
+  background: #f8fbfe;
+}
+
+.deploy-checkpoint--good {
+  border-left-color: #0f766e;
+}
+
+.deploy-checkpoint--active {
+  border-left-color: #2563eb;
+}
+
+.deploy-checkpoint > span {
+  justify-self: start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #1e3a8a;
+  background: #dbeafe;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.deploy-checkpoint--good > span {
+  color: #0f5132;
+  background: #dff6e8;
+}
+
+.deploy-checkpoint strong {
+  color: #0f172a;
+}
+
+.deploy-checkpoint p {
+  margin: 0;
+  color: #41556f;
+  font-size: 13px;
+}
+
+.deploy-shortcut-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.deploy-shortcut-grid a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid #d8e2ee;
+  border-radius: 7px;
+  color: #14213d;
+  background: #f8fbfe;
+  text-decoration: none;
+}
+
 @media (max-width: 1180px) {
   .control-room-hero,
   .outcome-card-grid,
@@ -582,6 +890,16 @@ h3 {
   }
 
   .operator-route-map {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .deploy-journey-shell,
+  .deploy-journey-header,
+  .deploy-work-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .deploy-path-board {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -606,6 +924,47 @@ h3 {
 
   .operator-route-group__links span,
   .operator-route-detail span {
+    justify-self: start;
+  }
+
+  .page-head__actions,
+  .deploy-panel-head {
+    justify-content: flex-start;
+  }
+
+  .deploy-journey-shell,
+  .deploy-journey-header,
+  .deploy-checkpoint-panel,
+  .deploy-shortcut-panel {
+    padding: 10px;
+  }
+
+  .deploy-journey-header h2 {
+    font-size: 24px;
+  }
+
+  .deploy-journey-metrics,
+  .deploy-path-board,
+  .deploy-checkpoint-list {
+    grid-template-columns: 1fr;
+  }
+
+  .deploy-panel-head {
+    display: grid;
+  }
+
+  .deploy-panel-head > span {
+    max-width: none;
+    text-align: left;
+  }
+
+  .deploy-outcome-menu a,
+  .deploy-shortcut-grid a {
+    grid-template-columns: 1fr;
+  }
+
+  .deploy-outcome-menu span,
+  .deploy-shortcut-grid span {
     justify-self: start;
   }
 }

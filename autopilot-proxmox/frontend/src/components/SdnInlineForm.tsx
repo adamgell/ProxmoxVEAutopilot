@@ -18,10 +18,16 @@ function asString(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
   }
+  if (typeof value === "string") {
+    return value;
+  }
   if (typeof value === "boolean") {
     return value ? "true" : "false";
   }
-  return String(value);
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "";
 }
 
 function defaultValuesFor(fields: readonly FieldDef[], initial?: Readonly<Record<string, string>>): Record<string, string> {

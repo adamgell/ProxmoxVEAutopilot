@@ -370,6 +370,19 @@ function blankCredentialDraft(mode: "create" | "edit", existing?: CredentialSumm
   };
 }
 
+function credentialPayloadString(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "";
+}
+
 type MachineTagDraft = {
   readonly rowId: string;
   readonly bubbleId: string;
@@ -713,26 +726,29 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   // Drop selections when the underlying row set changes (filter, refresh).
   // Avoid keeping stale ids that no longer match a visible row.
   useEffect(() => {
-    setSelectedAgentIds((current) => {
-      if (!current.size) {
-        return current;
-      }
-      const visibleAgentIds = new Set(
-        filteredMachines
-          .map((row) => row.agentId)
-          .filter((id): id is string => Boolean(id))
-      );
-      let dropped = false;
-      const next = new Set<string>();
-      for (const id of current) {
-        if (visibleAgentIds.has(id)) {
-          next.add(id);
-        } else {
-          dropped = true;
+    const timer = window.setTimeout(() => {
+      setSelectedAgentIds((current) => {
+        if (!current.size) {
+          return current;
         }
-      }
-      return dropped ? next : current;
-    });
+        const visibleAgentIds = new Set(
+          filteredMachines
+            .map((row) => row.agentId)
+            .filter((id): id is string => Boolean(id))
+        );
+        let dropped = false;
+        const next = new Set<string>();
+        for (const id of current) {
+          if (visibleAgentIds.has(id)) {
+            next.add(id);
+          } else {
+            dropped = true;
+          }
+        }
+        return dropped ? next : current;
+      });
+    }, 0);
+    return () => { window.clearTimeout(timer); };
   }, [filteredMachines]);
 
   const selectableAgentIds = useMemo(
@@ -927,7 +943,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         if (!data.binding) {
           return;
         }
-        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet ?? "";
+        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet;
         const range = parseDhcpRange(data.subnet?.dhcp_range);
         const gateway = data.subnet?.gateway ?? "";
         const dhcpDns = data.subnet?.dhcp_dns_server ?? "";
@@ -1468,10 +1484,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         id: full.id,
         name: full.name,
         type: full.type === "local_admin" ? "local_admin" : "domain_join",
-        domain_fqdn: String(payload.domain_fqdn ?? ""),
-        username: String(payload.username ?? ""),
+        domain_fqdn: credentialPayloadString(payload.domain_fqdn),
+        username: credentialPayloadString(payload.username),
         password: "",
-        ou_hint: String(payload.ou_hint ?? ""),
+        ou_hint: credentialPayloadString(payload.ou_hint),
         passwordPlaceholder: true
       };
       setCredentialDraft(draft);
@@ -1581,12 +1597,13 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       return;
     }
     const ids = [...selectedAgentIds];
-    const confirmText = `Delete ${ids.length} agent${ids.length === 1 ? "" : "s"}? This cannot be undone.`;
+    const selectedCount = ids.length;
+    const confirmText = `Delete ${String(selectedCount)} agent${selectedCount === 1 ? "" : "s"}? This cannot be undone.`;
     if (typeof window !== "undefined" && !window.confirm(confirmText)) {
       return;
     }
     await runAction(
-      `Delete ${ids.length} agent${ids.length === 1 ? "" : "s"}`,
+      `Delete ${String(selectedCount)} agent${selectedCount === 1 ? "" : "s"}`,
       () => postJson("/api/agents/bulk-delete", { agent_ids: ids })
     );
     clearSelection();
@@ -2552,7 +2569,8 @@ function BubbleEditor({
 }) {
   const saveLabel = mode === "create" ? "Create bubble" : `Save bubble ${bubbleName ?? values.name}`;
   const showAdoption = mode === "create" && orphanVnets !== undefined && onAdoptVnet !== undefined;
-  const hasOrphans = (orphanVnets?.length ?? 0) > 0;
+  const adoptionVnets = orphanVnets ?? [];
+  const hasOrphans = adoptionVnets.length > 0;
   return (
     <form
       className="bubble-form"
@@ -2569,10 +2587,10 @@ function BubbleEditor({
             <select
               aria-label="Adopt existing isolated network"
               value={adoptedVnetId ?? ""}
-              onChange={(event) => { onAdoptVnet?.(event.currentTarget.value); }}
+              onChange={(event) => { onAdoptVnet(event.currentTarget.value); }}
             >
               <option value="">- create a new bubble without SDN binding -</option>
-              {(orphanVnets ?? []).map((vnet) => {
+              {adoptionVnets.map((vnet) => {
                 const cidrLabel = vnet.subnet?.subnet ? ` (${vnet.subnet.subnet})` : "";
                 const zoneLabel = vnet.zone ? ` / zone ${vnet.zone}` : "";
                 const aliasLabel = vnet.alias && vnet.alias !== vnet.vnet ? ` - ${vnet.alias}` : "";
@@ -2584,7 +2602,7 @@ function BubbleEditor({
               })}
             </select>
             <span className="bubble-form-help">
-              Found {orphanVnets?.length ?? 0} vnet{(orphanVnets?.length ?? 0) === 1 ? "" : "s"} not yet
+              Found {String(adoptionVnets.length)} vnet{adoptionVnets.length === 1 ? "" : "s"} not yet
               bound to a bubble. Picking one pre-fills the CIDR/gateway/DHCP fields and binds the new
               bubble to its SDN isolation on save.
             </span>
