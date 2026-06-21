@@ -1,5 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
+function rgbBrightness(value: string): number {
+  const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length < 3) {
+    throw new Error(`Cannot parse color value: ${value}`);
+  }
+  return channels.reduce((sum, channel) => sum + channel, 0) / channels.length;
+}
+
 const provisionPayloadForE2e = {
   profiles: {
     surface: {
@@ -588,6 +596,25 @@ test("renders the guided Deploy journey without layout overlap", async ({ page }
   await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
   await expect(page.getByRole("link", { name: "Step 4 Verify readiness Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof." })).toHaveAttribute("href", "/react/vms");
   await expect(page.getByText("CloudOSD media promoted")).toBeVisible();
+
+  const theme = await page.locator(".deploy-journey-shell").evaluate((shell) => {
+    const header = document.querySelector(".deploy-journey-header");
+    const menu = document.querySelector(".deploy-outcome-menu");
+    const title = document.querySelector("#deploy-journey-title");
+    if (!(header instanceof HTMLElement) || !(menu instanceof HTMLElement) || !(title instanceof HTMLElement)) {
+      throw new Error("Deploy journey theme regions were not measurable.");
+    }
+    return {
+      headerBackground: getComputedStyle(header).backgroundColor,
+      menuBackground: getComputedStyle(menu).backgroundColor,
+      shellBackground: getComputedStyle(shell).backgroundColor,
+      titleColor: getComputedStyle(title).color
+    };
+  });
+  expect(rgbBrightness(theme.shellBackground)).toBeLessThan(44);
+  expect(rgbBrightness(theme.headerBackground)).toBeLessThan(46);
+  expect(rgbBrightness(theme.menuBackground)).toBeLessThan(48);
+  expect(rgbBrightness(theme.titleColor)).toBeGreaterThan(230);
 
   const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(desktopOverflow).toBe(false);
