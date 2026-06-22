@@ -82,7 +82,7 @@ def test_create_lab_then_reconcile_plans_sdn_fixes(monkeypatch, pg_dsn):
     ]
 
 
-def test_create_lab_rolls_back_visible_state_when_reservation_fails(monkeypatch, pg_dsn):
+def test_create_lab_rolls_back_visible_state_when_database_reservation_fails(monkeypatch, pg_dsn):
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
     from web import app as web_app
     from web import managed_labs_pg
@@ -92,21 +92,22 @@ def test_create_lab_rolls_back_visible_state_when_reservation_fails(monkeypatch,
     original_reserve_value = managed_labs_pg.reserve_value
     reservation_calls = []
 
-    def fail_on_cidr(conn, *, lab_id, reservation_type, value, metadata=None):
+    def fail_on_cidr(conn, *, lab_id, reservation_type, value, metadata=None, commit=True):
         reservation_calls.append((reservation_type, value))
         if reservation_type == "cidr":
-            raise ValueError("cidr reservation exploded")
+            conn.execute("SELECT 1 / 0")
         return original_reserve_value(
             conn,
             lab_id=lab_id,
             reservation_type=reservation_type,
             value=value,
             metadata=metadata,
+            commit=commit,
         )
 
     monkeypatch.setattr(managed_labs_pg, "reserve_value", fail_on_cidr)
 
-    client = TestClient(web_app.app)
+    client = TestClient(web_app.app, raise_server_exceptions=False)
     response = client.post(
         "/api/labs",
         json={

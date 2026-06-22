@@ -314,6 +314,7 @@ def create_lab(
     sdn_zone: str = "",
     sdn_vnet: str = "",
     sdn_subnet: str = "",
+    commit: bool = True,
 ) -> dict:
     now = _now()
     lab_id = _new_id()
@@ -363,8 +364,16 @@ def create_lab(
             "updated_at": now,
         },
     ).fetchone()
-    record_event(conn, lab_id=lab_id, event_type="lab_created", actor="system", detail=f"Created lab {name}")
-    conn.commit()
+    record_event(
+        conn,
+        lab_id=lab_id,
+        event_type="lab_created",
+        actor="system",
+        detail=f"Created lab {name}",
+        commit=False,
+    )
+    if commit:
+        conn.commit()
     mapped = _map_json_fields(row, "desired_state")
     assert mapped is not None
     return mapped
@@ -411,6 +420,7 @@ def reserve_value(
     reservation_type: str,
     value: str,
     metadata: dict | None = None,
+    commit: bool = True,
 ) -> dict:
     normalized_value = value.strip()
     existing_row = conn.execute(
@@ -443,7 +453,8 @@ def reserve_value(
             """,
             (_new_id(), lab_id, reservation_type, normalized_value, Jsonb(metadata or {}), now, now),
         ).fetchone()
-    conn.commit()
+    if commit:
+        conn.commit()
     mapped = _map_json_fields(row, "metadata")
     assert mapped is not None
     return mapped
@@ -871,6 +882,7 @@ def record_event(
     actor: str,
     detail: str = "",
     payload: dict | None = None,
+    commit: bool = True,
 ) -> dict:
     row = conn.execute(
         """
@@ -880,7 +892,8 @@ def record_event(
         """,
         (lab_id, event_type, actor, detail, Jsonb(payload or {}), _now()),
     ).fetchone()
-    conn.commit()
+    if commit:
+        conn.commit()
     mapped = _map_json_fields(row, "payload")
     assert mapped is not None
     return mapped

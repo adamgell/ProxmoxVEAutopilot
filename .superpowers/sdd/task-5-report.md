@@ -166,3 +166,61 @@ Observed result:
 
 ### Concerns
 - The router now cleans up durable state after reservation failures, but `create_lab()` still commits before the reservation phase begins. This follow-up keeps scope narrow by compensating in the router rather than refactoring the transaction boundaries across existing helpers.
+
+## Task 5 Fix Implementer Follow-up (2026-06-22, transactional create path)
+
+### Scope handled
+- Replaced the `POST /api/labs` compensating delete flow with a single transaction that creates the lab, records `lab_created`, reserves `group_tag`, and reserves `cidr` before committing.
+- Added optional `commit: bool = True` parameters to `managed_labs_pg.create_lab()`, `managed_labs_pg.reserve_value()`, and `managed_labs_pg.record_event()` so existing call sites keep current behavior while the router can compose them transactionally.
+- Kept the new endpoint regression focused on a database-aborted reservation path instead of a plain Python exception.
+
+### Root cause
+- `managed_labs_pg.create_lab()` committed the lab row and `lab_created` audit event before either reservation ran.
+- When a later reservation failed at the database level, the transaction became aborted.
+- The router then tried to reuse that aborted transaction for `delete_lab()`, so the partial lab could survive and the cleanup path also conflicted with append-only audit intent.
+
+### TDD evidence
+#### RED
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_endpoints.py -q
+```
+Observed failure:
+```text
+FAILED tests/test_managed_labs_endpoints.py::test_create_lab_rolls_back_visible_state_when_database_reservation_fails
+E   AssertionError: assert [{'created_at': ... 'group_tag': 'RBK-Lab', ...}] == []
+```
+Meaning:
+- The test forced a database-side failure during CIDR reservation with `SELECT 1 / 0` inside the reservation path.
+- `/api/labs/page` still showed the committed lab afterward, proving the old create flow was not atomic.
+
+#### GREEN
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_endpoints.py -q
+```
+Observed result:
+```text
+6 passed, 7 warnings in 2.18s
+```
+Meaning:
+- The router now rolls the transaction back instead of deleting after commit.
+- `/api/labs/page` stays empty after the forced database failure.
+
+### Regression coverage
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_pg.py tests/test_managed_labs_reconciler.py tests/test_managed_labs_network.py tests/test_managed_labs_endpoints.py -q
+```
+Observed result:
+```text
+31 passed, 7 warnings in 3.87s
+```
+
+### Files changed
+- `autopilot-proxmox/web/managed_labs_pg.py`
+- `autopilot-proxmox/web/managed_labs_endpoints.py`
+- `autopilot-proxmox/tests/test_managed_labs_endpoints.py`
+
+### Concerns
+- None beyond the existing FastAPI/authlib deprecation warnings already present in the suite.

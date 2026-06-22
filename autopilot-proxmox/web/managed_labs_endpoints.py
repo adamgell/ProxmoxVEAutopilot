@@ -86,23 +86,37 @@ def list_labs():
 @router.post("", status_code=201)
 def create_lab(body: LabCreateBody):
     with _conn() as conn:
-        lab = managed_labs_pg.create_lab(
-            conn,
-            name=body.name,
-            short_code=body.short_code,
-            group_tag=body.group_tag,
-            network_cidr=body.network_cidr,
-            gateway_ip=body.gateway_ip,
-            network_mode=body.network_mode,
-            sdn_zone=body.sdn_zone,
-            sdn_vnet=body.sdn_vnet,
-            sdn_subnet=body.sdn_subnet,
-        )
         try:
-            managed_labs_pg.reserve_value(conn, lab_id=lab["id"], reservation_type="group_tag", value=lab["group_tag"])
-            managed_labs_pg.reserve_value(conn, lab_id=lab["id"], reservation_type="cidr", value=lab["network_cidr"])
+            lab = managed_labs_pg.create_lab(
+                conn,
+                name=body.name,
+                short_code=body.short_code,
+                group_tag=body.group_tag,
+                network_cidr=body.network_cidr,
+                gateway_ip=body.gateway_ip,
+                network_mode=body.network_mode,
+                sdn_zone=body.sdn_zone,
+                sdn_vnet=body.sdn_vnet,
+                sdn_subnet=body.sdn_subnet,
+                commit=False,
+            )
+            managed_labs_pg.reserve_value(
+                conn,
+                lab_id=lab["id"],
+                reservation_type="group_tag",
+                value=lab["group_tag"],
+                commit=False,
+            )
+            managed_labs_pg.reserve_value(
+                conn,
+                lab_id=lab["id"],
+                reservation_type="cidr",
+                value=lab["network_cidr"],
+                commit=False,
+            )
+            conn.commit()
         except Exception as exc:
-            managed_labs_pg.delete_lab(conn, lab["id"])
+            conn.rollback()
             raise HTTPException(status_code=500, detail="managed lab create failed") from exc
         return lab
 
