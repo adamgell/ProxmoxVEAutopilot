@@ -367,14 +367,15 @@ def test_reconcile_findings_fix_actions_and_snapshots_are_queryable(pg_conn):
 
 
 @pytest.mark.parametrize(
-    ("run_status", "expected_lab_status"),
+    ("run_status", "attempt", "expected_lab_status"),
     [
-        ("ready", "ready"),
-        ("blocked", "blocked"),
-        ("failed", "blocked"),
+        ("ready", 3, "ready"),
+        ("blocked", 3, "blocked"),
+        ("failed", 1, "validating"),
+        ("failed", 5, "blocked"),
     ],
 )
-def test_finish_reconcile_run_updates_lab_current_state(pg_conn, run_status, expected_lab_status):
+def test_finish_reconcile_run_updates_lab_current_state(pg_conn, run_status, attempt, expected_lab_status):
     managed_labs_pg.reset_for_tests(pg_conn)
     managed_labs_pg.init(pg_conn)
     lab = managed_labs_pg.create_lab(
@@ -385,7 +386,7 @@ def test_finish_reconcile_run_updates_lab_current_state(pg_conn, run_status, exp
         network_cidr="10.90.10.0/24",
     )
 
-    run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=3)
+    run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=attempt)
     finished = managed_labs_pg.finish_reconcile_run(
         pg_conn,
         run_id=run["id"],
@@ -397,7 +398,7 @@ def test_finish_reconcile_run_updates_lab_current_state(pg_conn, run_status, exp
     assert finished["status"] == run_status
     assert updated_lab is not None
     assert updated_lab["status"] == expected_lab_status
-    assert updated_lab["retry_count"] == 3
+    assert updated_lab["retry_count"] == attempt
     assert updated_lab["last_reconcile_run_id"] == run["id"]
 
 

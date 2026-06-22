@@ -224,3 +224,62 @@ Observed result:
 
 ### Concerns
 - None beyond the existing FastAPI/authlib deprecation warnings already present in the suite.
+
+
+## Task 5 Fix Implementer Follow-up (2026-06-22, retry threshold)
+
+### Scope handled
+- Updated managed-labs reconcile completion mapping so failed runs remain retryable through attempt 4 and only move the lab to `blocked` on attempt 5.
+- Tightened PostgreSQL coverage around `finish_reconcile_run()` so attempt-aware state transitions are pinned directly.
+- Tightened endpoint coverage so a first reconcile failure still returns HTTP 500, closes the run as `failed`, and leaves the lab in `validating`, while the fifth failure blocks it.
+
+### Root cause
+- `managed_labs_pg._lab_status_from_reconcile_status()` mapped every `failed` reconcile run straight to `blocked`.
+- `finish_reconcile_run()` persisted that unconditional mapping for every failed attempt, so the first inventory/planning failure exhausted the lab immediately instead of honoring the bounded retry plan.
+
+### TDD evidence
+#### RED
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_pg.py tests/test_managed_labs_endpoints.py -q
+```
+Observed failures:
+```text
+FAILED tests/test_managed_labs_pg.py::test_finish_reconcile_run_updates_lab_current_state[failed-1-validating]
+FAILED tests/test_managed_labs_endpoints.py::test_reconcile_failure_finishes_run_and_leaves_lab_retryable
+E   AssertionError: assert 'blocked' == 'validating'
+```
+Meaning:
+- A first failed reconcile attempt still pushed the lab into `blocked` in both the store-level and API-level flows.
+- The new fifth-attempt coverage did not fail, which confirmed the bug was the missing retry threshold rather than run closure or HTTP behavior.
+
+#### GREEN
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_pg.py tests/test_managed_labs_endpoints.py -q
+```
+Observed result:
+```text
+20 passed, 7 warnings in 3.07s
+```
+Meaning:
+- First failed reconcile attempts now leave labs in `validating` with `retry_count` set to the finished run attempt.
+- Fifth failed attempts still transition labs to `blocked`, while failed runs are closed and no reconcile remains `running`.
+
+### Regression coverage
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_pg.py tests/test_managed_labs_reconciler.py tests/test_managed_labs_network.py tests/test_managed_labs_endpoints.py -q
+```
+Observed result:
+```text
+33 passed, 7 warnings in 3.92s
+```
+
+### Files changed
+- `autopilot-proxmox/web/managed_labs_pg.py`
+- `autopilot-proxmox/tests/test_managed_labs_pg.py`
+- `autopilot-proxmox/tests/test_managed_labs_endpoints.py`
+
+### Concerns
+- None beyond the existing FastAPI/authlib deprecation warnings already present in the suite.

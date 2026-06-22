@@ -540,9 +540,9 @@ def start_reconcile_run(conn: Connection, *, lab_id: str, attempt: int) -> dict:
     return mapped
 
 
-def _lab_status_from_reconcile_status(status: str) -> str:
+def _lab_status_from_reconcile_status(status: str, *, attempt: int) -> str:
     if status == "failed":
-        return "blocked"
+        return "blocked" if attempt >= 5 else "validating"
     if status in LAB_STATUSES:
         return status
     return "validating"
@@ -572,7 +572,7 @@ def finish_reconcile_run(conn: Connection, *, run_id: str, status: str, summary:
         WHERE id = %s
         """,
         (
-            _lab_status_from_reconcile_status(status),
+            _lab_status_from_reconcile_status(status, attempt=int(mapped["attempt"])),
             mapped["attempt"],
             mapped["id"],
             now,

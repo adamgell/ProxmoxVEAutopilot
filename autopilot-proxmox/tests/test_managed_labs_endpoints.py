@@ -247,7 +247,7 @@ def test_run_fix_rejects_fix_from_another_lab(monkeypatch, pg_dsn):
 
 
 
-def test_reconcile_failure_finishes_run_and_blocks_lab(monkeypatch, pg_dsn):
+def test_reconcile_failure_finishes_run_and_leaves_lab_retryable(monkeypatch, pg_dsn):
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
     from web import app as web_app
     from web import db_pg, managed_labs_pg
@@ -269,13 +269,48 @@ def test_reconcile_failure_finishes_run_and_blocks_lab(monkeypatch, pg_dsn):
     page = client.get(f"/api/labs/page?selected_lab_id={created['id']}")
     assert page.status_code == 200
     payload = page.json()
-    assert payload["selected_lab"]["status"] == "blocked"
+    assert payload["selected_lab"]["status"] == "validating"
+    assert payload["selected_lab"]["retry_count"] == 1
     assert payload["reconcile_runs"][0]["status"] == "failed"
+    assert payload["reconcile_runs"][0]["attempt"] == 1
 
     with db_pg.connection(pg_dsn) as conn:
         lab = managed_labs_pg.get_lab(conn, created["id"])
         runs = managed_labs_pg.page_payload(conn, selected_lab_id=created["id"])["reconcile_runs"]
 
     assert lab is not None
-    assert lab["status"] == "blocked"
+    assert lab["status"] == "validating"
+    assert lab["retry_count"] == 1
     assert runs[0]["status"] == "failed"
+
+
+def test_reconcile_failure_on_fifth_attempt_blocks_lab(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+    from web import db_pg
+
+    _init_managed_labs_db(pg_dsn)
+
+    client = TestClient(web_app.app)
+    created = _create_lab(client)
+
+    with db_pg.connection(pg_dsn) as conn:
+        conn.execute("UPDATE labs SET retry_count = 4 WHERE id = %s", (created["id"],))
+        conn.commit()
+
+    def failing_api(path, method="GET", data=None, files=None):
+        raise RuntimeError("inventory exploded")
+
+    monkeypatch.setattr(web_app, "_proxmox_api", failing_api)
+
+    response = client.post(f"/api/labs/{created['id']}/reconcile")
+
+    assert response.status_code == 500
+
+    page = client.get(f"/api/labs/page?selected_lab_id={created['id']}")
+    assert page.status_code == 200
+    payload = page.json()
+    assert payload["selected_lab"]["status"] == "blocked"
+    assert payload["selected_lab"]["retry_count"] == 5
+    assert payload["reconcile_runs"][0]["status"] == "failed"
+    assert payload["reconcile_runs"][0]["attempt"] == 5
