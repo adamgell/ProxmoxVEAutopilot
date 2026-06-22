@@ -118,8 +118,8 @@ describe("LabsPage", () => {
               group_tag: "LAB01-Managed",
               network_cidr: "10.50.20.0/24",
               gateway_ip: "10.50.20.1",
-              sdn_zone: "lab-lab01",
-              sdn_vnet: "lab01-vnet",
+              sdn_zone: "lab_lab01",
+              sdn_vnet: "lab01_vnet",
               desktop_count: 2,
               server_count: 1
             }
@@ -148,6 +148,8 @@ describe("LabsPage", () => {
     expect(screen.getByLabelText("Short code")).toHaveValue("lab01");
     expect(screen.getByLabelText("Desktop count")).toHaveValue(2);
     expect(screen.getByLabelText("Server count")).toHaveValue(1);
+    expect(screen.getByLabelText("SDN zone")).toHaveValue("lab_lab01");
+    expect(screen.getByLabelText("SDN VNet")).toHaveValue("lab01_vnet");
 
     fireEvent.click(screen.getByRole("button", { name: "Create lab" }));
 
@@ -161,6 +163,8 @@ describe("LabsPage", () => {
       group_tag: "LAB01-Managed",
       network_cidr: "10.50.20.0/24",
       gateway_ip: "10.50.20.1",
+      sdn_zone: "lab_lab01",
+      sdn_vnet: "lab01_vnet",
       desktop_count: 2,
       server_count: 1
     });
@@ -205,7 +209,9 @@ describe("LabsPage", () => {
       short_code: "ntt01",
       group_tag: "NTT-Lab",
       network_cidr: "10.50.20.0/24",
-      gateway_ip: "10.50.20.1"
+      gateway_ip: "10.50.20.1",
+      sdn_zone: "lab_ntt01",
+      sdn_vnet: "ntt01_vnet"
     });
   });
 

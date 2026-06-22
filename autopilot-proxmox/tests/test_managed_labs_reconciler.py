@@ -39,6 +39,37 @@ def test_plan_network_reconcile_creates_ordered_sdn_fix_actions(pg_conn):
     assert result["fix_actions"][0]["request"] == {"zone": "lab-ntt01", "type": "simple"}
 
 
+def test_plan_network_reconcile_uses_proxmox_safe_generated_ids_when_sdn_ids_are_omitted(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Generated Network Lab",
+        short_code="ntt01",
+        group_tag="NTT-Lab",
+        network_cidr="10.50.20.0/24",
+        gateway_ip="10.50.20.1",
+    )
+    run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=1)
+
+    result = managed_labs_reconciler.plan_network_reconcile(
+        pg_conn,
+        lab_id=lab["id"],
+        reconcile_run_id=run["id"],
+        inventory={"zones": [], "vnets": [], "subnets_by_vnet": {}},
+    )
+
+    assert result["status"] == "fixing"
+    assert result["fix_actions"][0]["request"] == {"zone": "lab_ntt01", "type": "simple"}
+    assert result["fix_actions"][1]["request"] == {"vnet": "ntt01_vnet", "zone": "lab_ntt01", "alias": "Generated Network Lab"}
+    assert result["fix_actions"][2]["request"] == {
+        "vnet": "ntt01_vnet",
+        "subnet": "10.50.20.0/24",
+        "gateway": "10.50.20.1",
+        "snat": True,
+    }
+
+
 def test_plan_network_reconcile_marks_ready_when_sdn_state_exists(pg_conn):
     lab = _lab(pg_conn)
     run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=1)

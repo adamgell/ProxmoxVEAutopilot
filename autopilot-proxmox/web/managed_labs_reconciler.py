@@ -121,8 +121,8 @@ def plan_network_reconcile(
         )
         return {"status": "blocked", "findings": findings, "fix_actions": fixes}
 
-    zone = lab["sdn_zone"] or f"lab-{lab['short_code']}"
-    vnet = lab["sdn_vnet"] or f"{lab['short_code']}-vnet"
+    zone = lab["sdn_zone"] or managed_labs_pg.proxmox_sdn_zone_id(str(lab["short_code"]))
+    vnet = lab["sdn_vnet"] or managed_labs_pg.proxmox_sdn_vnet_id(str(lab["short_code"]))
     subnet = lab["sdn_subnet"] or lab["network_cidr"]
     zone_rows = inventory.get("zones", []) or []
     vnet_rows = inventory.get("vnets", []) or []

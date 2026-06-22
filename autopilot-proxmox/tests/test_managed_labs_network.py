@@ -12,6 +12,9 @@ def _seed_fix(pg_conn, action_type, request):
         short_code="net01",
         group_tag="Network",
         network_cidr="10.91.0.0/24",
+        sdn_zone="lab-net01",
+        sdn_vnet="net01-vnet",
+        sdn_subnet="10.91.0.0/24",
     )
     fix = managed_labs_pg.create_fix_action(
         pg_conn,
@@ -140,6 +143,79 @@ def test_execute_apply_sdn_releases_lock_after_apply(pg_conn):
         call[0] == "GET" and call[1] in {"/cluster/sdn/zones", "/cluster/sdn/vnets"} and index > put_index
         for index, call in enumerate(calls)
     )
+
+
+def test_execute_create_subnet_adds_required_pve_subnet_type(pg_conn):
+    _lab, fix = _seed_fix(
+        pg_conn,
+        "create_sdn_subnet",
+        {"vnet": "net01_vnet", "subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True},
+    )
+    calls = []
+    state = {"subnet_present": False}
+
+    def fake_api(path, method="GET", data=None):
+        calls.append((method, path, data))
+        if path == "/cluster/sdn/zones" and method == "GET":
+            return [{"zone": "lab_net01", "type": "simple"}]
+        if path == "/cluster/sdn/vnets" and method == "GET":
+            return [{"vnet": "net01_vnet", "zone": "lab_net01"}]
+        if path == "/cluster/sdn/vnets/net01_vnet/subnets" and method == "GET":
+            return [{"subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True}] if state["subnet_present"] else []
+        if path == "/cluster/sdn/vnets/net01_vnet/subnets" and method == "POST":
+            state["subnet_present"] = True
+            return {"ok": True}
+        return []
+
+    result = managed_labs_network.execute_fix_action(
+        pg_conn,
+        fix_action_id=fix["id"],
+        pve_api=fake_api,
+        pve_put=lambda path, data=None: {},
+        pve_delete=lambda path: {},
+    )
+
+    assert result["status"] == "fixed"
+    assert (
+        "POST",
+        "/cluster/sdn/vnets/net01_vnet/subnets",
+        {"subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True, "type": "subnet"},
+    ) in calls
+
+
+def test_execute_apply_sdn_accepts_raw_lock_token_response(pg_conn):
+    _lab, fix = _seed_fix(pg_conn, "apply_sdn", {"allow_pending": True})
+    calls = []
+
+    def fake_api(path, method="GET", data=None):
+        calls.append((method, path, data))
+        if path == "/cluster/sdn/lock":
+            return "token-1"
+        if path == "/cluster/sdn/zones":
+            return []
+        if path == "/cluster/sdn/vnets":
+            return []
+        return []
+
+    def fake_put(path, data=None):
+        calls.append(("PUT", path, data))
+        return {"applied": True}
+
+    def fake_delete(path):
+        calls.append(("DELETE", path, None))
+        return {"released": True}
+
+    result = managed_labs_network.execute_fix_action(
+        pg_conn,
+        fix_action_id=fix["id"],
+        pve_api=fake_api,
+        pve_put=fake_put,
+        pve_delete=fake_delete,
+    )
+
+    assert result["status"] == "fixed"
+    assert any(call[0] == "PUT" and call[2]["lock-token"] == "token-1" for call in calls)
+    assert any(call[0] == "DELETE" and call[1].endswith("token-1") for call in calls)
 
 
 def test_execute_pending_network_fixes_processes_pending_actions_in_priority_order(pg_conn):

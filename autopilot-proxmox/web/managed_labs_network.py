@@ -50,6 +50,14 @@ def _subnet_exists(inventory: dict[str, Any], vnet: str, subnet: str) -> bool:
     return subnet in _ids(rows, "subnet")
 
 
+def _lock_token_from_response(lock: Any) -> str:
+    if isinstance(lock, str):
+        return lock.strip()
+    if isinstance(lock, dict):
+        return str(lock.get("lock") or lock.get("lock_token") or lock.get("data") or "").strip()
+    return ""
+
+
 def _record_snapshot(conn: Connection, *, lab_id: str, action_type: str, pve_api) -> dict[str, Any]:
     snapshot = proxmox_sdn.inventory(pve_api)
     return managed_labs_pg.record_provider_snapshot(
@@ -159,8 +167,8 @@ def _verification_rows(action_type: str, request: dict[str, Any], inventory: dic
             },
         }
 
-    zone = str(lab.get("sdn_zone") or f"lab-{lab['short_code']}").strip()
-    vnet = str(lab.get("sdn_vnet") or f"{lab['short_code']}-vnet").strip()
+    zone = str(lab.get("sdn_zone") or managed_labs_pg.proxmox_sdn_zone_id(str(lab["short_code"]))).strip()
+    vnet = str(lab.get("sdn_vnet") or managed_labs_pg.proxmox_sdn_vnet_id(str(lab["short_code"]))).strip()
     subnet = str(lab.get("sdn_subnet") or lab["network_cidr"]).strip()
     zone_row = next((item for item in inventory.get("zones", []) if str(item.get("zone") or item.get("id") or "").strip() == zone), {})
     vnet_row = next((item for item in inventory.get("vnets", []) if str(item.get("vnet") or item.get("id") or "").strip() == vnet), {})
@@ -274,13 +282,11 @@ def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put
             vnet = str(request.get("vnet") or "").strip()
             if not vnet:
                 raise ValueError("create_sdn_subnet requires vnet")
-            body = {key: value for key, value in request.items() if key != "vnet"}
+            body = {"type": "subnet", **{key: value for key, value in request.items() if key != "vnet"}}
             mutation_result = proxmox_sdn.create_subnet(pve_api, vnet, body)
         else:
             lock = proxmox_sdn.acquire_lock(pve_api, allow_pending=bool(request.get("allow_pending", True)))
-            lock_token = str(
-                lock.get("lock") or lock.get("lock_token") or lock.get("data") or ""
-            ).strip()
+            lock_token = _lock_token_from_response(lock)
             if not lock_token:
                 raise ValueError("failed to acquire SDN lock token")
             mutation_result = proxmox_sdn.apply_sdn(pve_put, lock_token, release_lock=False)

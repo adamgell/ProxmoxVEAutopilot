@@ -30,8 +30,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "LAB01-Managed",
             "network_cidr": "10.50.20.0/24",
             "gateway_ip": "10.50.20.1",
-            "sdn_zone": "lab-lab01",
-            "sdn_vnet": "lab01-vnet",
+            "sdn_zone": "lab_lab01",
+            "sdn_vnet": "lab01_vnet",
             "desktop_count": 2,
             "server_count": 1,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -53,8 +53,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "CLD01-Managed",
             "network_cidr": "10.50.30.0/24",
             "gateway_ip": "10.50.30.1",
-            "sdn_zone": "lab-cld01",
-            "sdn_vnet": "cld01-vnet",
+            "sdn_zone": "lab_cld01",
+            "sdn_vnet": "cld01_vnet",
             "desktop_count": 3,
             "server_count": 0,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -76,8 +76,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "SRV01-Managed",
             "network_cidr": "10.50.40.0/24",
             "gateway_ip": "10.50.40.1",
-            "sdn_zone": "lab-srv01",
-            "sdn_vnet": "srv01-vnet",
+            "sdn_zone": "lab_srv01",
+            "sdn_vnet": "srv01_vnet",
             "desktop_count": 1,
             "server_count": 2,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -305,6 +305,19 @@ def _slug(value: str) -> str:
     return cleaned or f"lab-{uuid.uuid4().hex[:8]}"
 
 
+def _proxmox_sdn_id_part(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9_]+", "_", value.strip().lower()).strip("_")
+    return cleaned or uuid.uuid4().hex[:8]
+
+
+def proxmox_sdn_zone_id(short_code: str) -> str:
+    return f"lab_{_proxmox_sdn_id_part(short_code)}"
+
+
+def proxmox_sdn_vnet_id(short_code: str) -> str:
+    return f"{_proxmox_sdn_id_part(short_code)}_vnet"
+
+
 def _json_value(value: Any) -> Any:
     if isinstance(value, Jsonb):
         return value.obj
@@ -390,8 +403,9 @@ def reset_for_tests(conn: Connection) -> None:
 
 
 def _lab_network_shape(lab: dict[str, Any]) -> dict[str, str]:
-    zone = str(lab.get("sdn_zone") or "").strip() or f"lab-{str(lab.get('short_code') or '').strip().lower()}"
-    vnet = str(lab.get("sdn_vnet") or "").strip() or f"{str(lab.get('short_code') or '').strip().lower()}-vnet"
+    short_code = str(lab.get("short_code") or "").strip().lower()
+    zone = str(lab.get("sdn_zone") or "").strip() or proxmox_sdn_zone_id(short_code)
+    vnet = str(lab.get("sdn_vnet") or "").strip() or proxmox_sdn_vnet_id(short_code)
     subnet = str(lab.get("sdn_subnet") or "").strip() or str(lab.get("network_cidr") or "").strip()
     return {"zone": zone, "vnet": vnet, "subnet": subnet}
 
@@ -1031,6 +1045,10 @@ def create_lab(
     template = get_lab_template(template_id)
     template_defaults = dict((template or {}).get("defaults") or {})
     template_intent = dict((template or {}).get("intent") or {})
+    normalized_short_code = short_code.strip().lower()
+    resolved_sdn_zone = sdn_zone.strip() or proxmox_sdn_zone_id(normalized_short_code)
+    resolved_sdn_vnet = sdn_vnet.strip() or proxmox_sdn_vnet_id(normalized_short_code)
+    resolved_sdn_subnet = (sdn_subnet or network_cidr).strip()
     resolved_desktop_count = int(desktop_count if desktop_count is not None else template_defaults.get("desktop_count") or 0)
     resolved_server_count = int(server_count if server_count is not None else template_defaults.get("server_count") or 0)
     if resolved_desktop_count < 0 or resolved_server_count < 0:
@@ -1048,9 +1066,9 @@ def create_lab(
             "mode": network_mode,
             "cidr": network_cidr,
             "gateway_ip": gateway_ip,
-            "sdn_zone": sdn_zone,
-            "sdn_vnet": sdn_vnet,
-            "sdn_subnet": sdn_subnet or network_cidr,
+            "sdn_zone": resolved_sdn_zone,
+            "sdn_vnet": resolved_sdn_vnet,
+            "sdn_subnet": resolved_sdn_subnet,
         },
         "deployment": {
             "model": template_intent.get("deployment_model", "custom"),
@@ -1087,14 +1105,14 @@ def create_lab(
             "id": lab_id,
             "name": name.strip(),
             "slug": _slug(name),
-            "short_code": short_code.strip().lower(),
+            "short_code": normalized_short_code,
             "group_tag": group_tag.strip(),
             "network_cidr": network_cidr.strip(),
             "gateway_ip": gateway_ip.strip(),
             "network_mode": network_mode.strip() or "sdn",
-            "sdn_zone": sdn_zone.strip(),
-            "sdn_vnet": sdn_vnet.strip(),
-            "sdn_subnet": (sdn_subnet or network_cidr).strip(),
+            "sdn_zone": resolved_sdn_zone,
+            "sdn_vnet": resolved_sdn_vnet,
+            "sdn_subnet": resolved_sdn_subnet,
             "desired_state": Jsonb(desired_state),
             "created_at": now,
             "updated_at": now,
