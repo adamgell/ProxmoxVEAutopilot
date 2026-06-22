@@ -22,6 +22,21 @@ def _get_fix(conn: Connection, fix_action_id: str) -> dict[str, Any]:
     return row
 
 
+def _ids(rows: list[dict[str, Any]] | tuple[dict[str, Any], ...], *keys: str) -> set[str]:
+    out: set[str] = set()
+    for row in rows or []:
+        for key in ("id", *keys):
+            value = row.get(key)
+            if value is not None and str(value).strip():
+                out.add(str(value).strip())
+    return out
+
+
+def _subnet_exists(inventory: dict[str, Any], vnet: str, subnet: str) -> bool:
+    rows = (inventory.get("subnets_by_vnet") or {}).get(vnet, []) or []
+    return subnet in _ids(rows, "subnet")
+
+
 def _record_snapshot(conn: Connection, *, lab_id: str, action_type: str, pve_api) -> dict[str, Any]:
     snapshot = proxmox_sdn.inventory(pve_api)
     return managed_labs_pg.record_provider_snapshot(
@@ -34,19 +49,84 @@ def _record_snapshot(conn: Connection, *, lab_id: str, action_type: str, pve_api
     )
 
 
+def _validate_fix_scope(fix: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    provider = str(fix.get("provider") or "").strip()
+    if provider != "proxmox":
+        raise ValueError(f"unsupported provider: {provider or '<empty>'}")
+
+    status = str(fix.get("status") or "").strip()
+    if status != "pending":
+        raise ValueError(f"unsupported status: {status or '<empty>'}")
+
+    action_type = str(fix.get("action_type") or "").strip()
+    if action_type not in SUPPORTED_ACTIONS:
+        raise ValueError(f"unsupported action type: {action_type or '<empty>'}")
+
+    return str(fix["lab_id"]), action_type, dict(fix.get("request") or {})
+
+
+def _already_present_result(action_type: str, request: dict[str, Any]) -> dict[str, Any] | None:
+    if action_type == "create_sdn_zone":
+        return {
+            "already_present": True,
+            "action": action_type,
+            "object": {"zone": request.get("zone")},
+            "detail": f"SDN zone {request.get('zone')} already present in snapshot.",
+        }
+    if action_type == "create_sdn_vnet":
+        return {
+            "already_present": True,
+            "action": action_type,
+            "object": {"vnet": request.get("vnet")},
+            "detail": f"SDN VNet {request.get('vnet')} already present in snapshot.",
+        }
+    if action_type == "create_sdn_subnet":
+        return {
+            "already_present": True,
+            "action": action_type,
+            "object": {"vnet": request.get("vnet"), "subnet": request.get("subnet")},
+            "detail": f"SDN subnet {request.get('subnet')} already present in snapshot.",
+        }
+    return None
+
+
+def _existing_create_result(
+    action_type: str, request: dict[str, Any], inventory: dict[str, Any]
+) -> dict[str, Any] | None:
+    if action_type == "create_sdn_zone":
+        zone = str(request.get("zone") or "").strip()
+        if zone and zone in _ids(inventory.get("zones", []), "zone"):
+            return _already_present_result(action_type, request)
+        return None
+
+    if action_type == "create_sdn_vnet":
+        vnet = str(request.get("vnet") or "").strip()
+        if vnet and vnet in _ids(inventory.get("vnets", []), "vnet"):
+            return _already_present_result(action_type, request)
+        return None
+
+    if action_type == "create_sdn_subnet":
+        vnet = str(request.get("vnet") or "").strip()
+        subnet = str(request.get("subnet") or "").strip()
+        if vnet and subnet and _subnet_exists(inventory, vnet, subnet):
+            return _already_present_result(action_type, request)
+        return None
+
+    return None
+
+
 def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put, pve_delete) -> dict:
     fix = _get_fix(conn, fix_action_id)
-    lab_id = str(fix["lab_id"])
-    action_type = str(fix["action_type"])
-    request = dict(fix.get("request") or {})
+    lab_id, action_type, request = _validate_fix_scope(fix)
     snapshot = _record_snapshot(conn, lab_id=lab_id, action_type=action_type, pve_api=pve_api)
-
-    if action_type not in SUPPORTED_ACTIONS:
+    inventory = dict(snapshot.get("snapshot") or {})
+    existing = _existing_create_result(action_type, request, inventory)
+    if existing is not None:
         return managed_labs_pg.update_fix_action(
             conn,
             fix_action_id,
-            status="blocked",
-            result={"ok": False, "error": f"unsupported action type: {action_type}"},
+            status="fixed",
+            result={"ok": True, **existing},
             snapshot_id=snapshot["id"],
         )
 
@@ -110,7 +190,14 @@ def execute_pending_network_fixes(
     blocked: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
 
-    for fix in managed_labs_pg.list_pending_fix_actions(conn, lab_id)[:limit]:
+    pending = [
+        fix
+        for fix in managed_labs_pg.list_pending_fix_actions(conn, lab_id)
+        if str(fix.get("provider") or "").strip() == "proxmox"
+        and str(fix.get("action_type") or "").strip() in SUPPORTED_ACTIONS
+    ]
+
+    for fix in pending[:limit]:
         result = execute_fix_action(
             conn,
             fix_action_id=str(fix["id"]),
