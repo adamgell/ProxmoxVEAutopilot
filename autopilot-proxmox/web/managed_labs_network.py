@@ -47,7 +47,7 @@ def _ids(rows: list[dict[str, Any]] | tuple[dict[str, Any], ...], *keys: str) ->
 
 def _subnet_exists(inventory: dict[str, Any], vnet: str, subnet: str) -> bool:
     rows = (inventory.get("subnets_by_vnet") or {}).get(vnet, []) or []
-    return subnet in _ids(rows, "subnet")
+    return subnet in _ids(rows, "subnet", "cidr")
 
 
 def _lock_token_from_response(lock: Any) -> str:
@@ -152,7 +152,7 @@ def _verification_rows(action_type: str, request: dict[str, Any], inventory: dic
             (
                 item
                 for item in (inventory.get("subnets_by_vnet", {}) or {}).get(vnet, [])
-                if str(item.get("subnet") or item.get("id") or "").strip() == subnet
+                if subnet in _ids([item], "subnet", "cidr")
             ),
             {},
         )
@@ -176,7 +176,7 @@ def _verification_rows(action_type: str, request: dict[str, Any], inventory: dic
         (
             item
             for item in (inventory.get("subnets_by_vnet", {}) or {}).get(vnet, [])
-            if str(item.get("subnet") or item.get("id") or "").strip() == subnet
+            if subnet in _ids([item], "subnet", "cidr")
         ),
         {},
     )

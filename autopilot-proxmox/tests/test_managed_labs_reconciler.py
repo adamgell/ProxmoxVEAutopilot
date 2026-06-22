@@ -82,7 +82,14 @@ def test_plan_network_reconcile_marks_ready_when_sdn_state_exists(pg_conn):
             "zones": [{"id": "lab-ntt01", "zone": "lab-ntt01", "type": "simple"}],
             "vnets": [{"id": "ntt01-vnet", "vnet": "ntt01-vnet", "zone": "lab-ntt01"}],
             "subnets_by_vnet": {
-                "ntt01-vnet": [{"id": "10.50.20.0/24", "subnet": "10.50.20.0/24", "gateway": "10.50.20.1"}]
+                "ntt01-vnet": [
+                    {
+                        "id": "lab-ntt01-10.50.20.0-24",
+                        "subnet": "lab-ntt01-10.50.20.0-24",
+                        "cidr": "10.50.20.0/24",
+                        "gateway": "10.50.20.1",
+                    }
+                ]
             },
         },
     )
@@ -113,7 +120,15 @@ def test_plan_network_reconcile_marks_ready_state_and_clears_stale_work(pg_conn)
             "zones": [{"id": "lab-ntt01", "zone": "lab-ntt01", "type": "simple"}],
             "vnets": [{"id": "ntt01-vnet", "vnet": "ntt01-vnet", "zone": "lab-ntt01", "alias": "NTT Lab"}],
             "subnets_by_vnet": {
-                "ntt01-vnet": [{"id": "10.50.20.0/24", "subnet": "10.50.20.0/24", "gateway": "10.50.20.1", "snat": True}]
+                "ntt01-vnet": [
+                    {
+                        "id": "lab-ntt01-10.50.20.0-24",
+                        "subnet": "lab-ntt01-10.50.20.0-24",
+                        "cidr": "10.50.20.0/24",
+                        "gateway": "10.50.20.1",
+                        "snat": True,
+                    }
+                ]
             },
         },
     )
@@ -131,8 +146,9 @@ def test_plan_network_reconcile_marks_ready_state_and_clears_stale_work(pg_conn)
         "alias": "NTT Lab",
     }
     assert objects[("sdn_subnet", "10.50.20.0/24")]["actual_state"] == {
-        "id": "10.50.20.0/24",
-        "subnet": "10.50.20.0/24",
+        "id": "lab-ntt01-10.50.20.0-24",
+        "subnet": "lab-ntt01-10.50.20.0-24",
+        "cidr": "10.50.20.0/24",
         "gateway": "10.50.20.1",
         "snat": True,
     }
@@ -192,7 +208,14 @@ def test_reconcile_ready_updates_boundary_state_and_clears_stale_current_rows(pg
             "zones": [{"id": "lab-ntt01", "zone": "lab-ntt01", "type": "simple"}],
             "vnets": [{"id": "ntt01-vnet", "vnet": "ntt01-vnet", "zone": "lab-ntt01"}],
             "subnets_by_vnet": {
-                "ntt01-vnet": [{"id": "10.50.20.0/24", "subnet": "10.50.20.0/24", "gateway": "10.50.20.1"}]
+                "ntt01-vnet": [
+                    {
+                        "id": "lab-ntt01-10.50.20.0-24",
+                        "subnet": "lab-ntt01-10.50.20.0-24",
+                        "cidr": "10.50.20.0/24",
+                        "gateway": "10.50.20.1",
+                    }
+                ]
             },
         },
     )
@@ -207,10 +230,10 @@ def test_reconcile_ready_updates_boundary_state_and_clears_stale_current_rows(pg
     assert proxmox_boundary["last_reconcile_status"] == "ready"
     assert proxmox_boundary["actual_state"]["zone"]["zone"] == "lab-ntt01"
     assert proxmox_boundary["actual_state"]["vnet"]["vnet"] == "ntt01-vnet"
-    assert proxmox_boundary["actual_state"]["subnet"]["subnet"] == "10.50.20.0/24"
+    assert proxmox_boundary["actual_state"]["subnet"]["cidr"] == "10.50.20.0/24"
     assert boundary_objects["sdn_zone"]["actual_state"]["zone"] == "lab-ntt01"
     assert boundary_objects["sdn_vnet"]["actual_state"]["vnet"] == "ntt01-vnet"
-    assert boundary_objects["sdn_subnet"]["actual_state"]["subnet"] == "10.50.20.0/24"
+    assert boundary_objects["sdn_subnet"]["actual_state"]["cidr"] == "10.50.20.0/24"
 
 
 def test_reconcile_rerun_replaces_current_findings_and_pending_fixes_without_duplicates(pg_conn):

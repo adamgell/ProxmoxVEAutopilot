@@ -19,7 +19,7 @@ def _ids(rows: list[dict[str, Any]] | tuple[dict[str, Any], ...], *keys: str) ->
 
 def _subnet_exists(inventory: dict[str, Any], vnet: str, subnet: str) -> bool:
     rows = inventory.get("subnets_by_vnet", {}).get(vnet, []) or []
-    return subnet in _ids(rows, "subnet")
+    return subnet in _ids(rows, "subnet", "cidr")
 
 
 def _record_fixable(
@@ -131,7 +131,7 @@ def plan_network_reconcile(
     vnet_ids = _ids(vnet_rows, "vnet")
     zone_row = next((row for row in zone_rows if str(row.get("zone") or row.get("id") or "").strip() == zone), {})
     vnet_row = next((row for row in vnet_rows if str(row.get("vnet") or row.get("id") or "").strip() == vnet), {})
-    subnet_row = next((row for row in subnet_rows if str(row.get("subnet") or row.get("id") or "").strip() == subnet), {})
+    subnet_row = next((row for row in subnet_rows if subnet in _ids([row], "subnet", "cidr")), {})
 
     if zone not in zone_ids:
         finding, fix = _record_fixable(

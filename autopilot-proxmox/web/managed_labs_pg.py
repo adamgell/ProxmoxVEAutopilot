@@ -893,7 +893,11 @@ def sync_lab_network_current_state(
         (
             row
             for row in (inventory.get("subnets_by_vnet", {}) or {}).get(network["vnet"], [])
-            if str(row.get("subnet") or row.get("id") or "").strip() == network["subnet"]
+            if network["subnet"] in {
+                str(row.get("id") or "").strip(),
+                str(row.get("subnet") or "").strip(),
+                str(row.get("cidr") or "").strip(),
+            }
         ),
         {},
     )

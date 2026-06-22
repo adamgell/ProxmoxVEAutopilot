@@ -161,7 +161,17 @@ def test_execute_create_subnet_adds_required_pve_subnet_type(pg_conn):
         if path == "/cluster/sdn/vnets" and method == "GET":
             return [{"vnet": "net01vn", "zone": "net01z"}]
         if path == "/cluster/sdn/vnets/net01vn/subnets" and method == "GET":
-            return [{"subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True}] if state["subnet_present"] else []
+            if state["subnet_present"]:
+                return [
+                    {
+                        "id": "net01z-10.91.0.0-24",
+                        "subnet": "net01z-10.91.0.0-24",
+                        "cidr": "10.91.0.0/24",
+                        "gateway": "10.91.0.1",
+                        "snat": True,
+                    }
+                ]
+            return []
         if path == "/cluster/sdn/vnets/net01vn/subnets" and method == "POST":
             state["subnet_present"] = True
             return {"ok": True}
@@ -402,7 +412,15 @@ def test_execute_fix_action_rejects_rows_outside_executor_scope(
             {
                 "zones": [],
                 "vnets": [{"vnet": "net01-vnet"}],
-                "subnets_by_vnet": {"net01-vnet": [{"subnet": "10.91.0.0/24"}]},
+                "subnets_by_vnet": {
+                    "net01-vnet": [
+                        {
+                            "id": "lab-net01-10.91.0.0-24",
+                            "subnet": "lab-net01-10.91.0.0-24",
+                            "cidr": "10.91.0.0/24",
+                        }
+                    ]
+                },
             },
             ("POST", "/cluster/sdn/vnets/net01-vnet/subnets"),
         ),
