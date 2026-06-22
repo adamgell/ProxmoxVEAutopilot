@@ -57,6 +57,20 @@ def _delete():
     return _web_app()._proxmox_api_delete
 
 
+def _get_lab_or_404(conn, lab_id: str) -> dict:
+    lab = managed_labs_pg.get_lab(conn, lab_id)
+    if not lab:
+        raise HTTPException(status_code=404, detail="lab not found")
+    return lab
+
+
+def _get_fix_for_lab_or_404(conn, *, lab_id: str, fix_id: str) -> dict:
+    fix = managed_labs_pg.get_fix_action(conn, fix_id)
+    if not fix or str(fix.get("lab_id") or "") != lab_id:
+        raise HTTPException(status_code=404, detail="fix not found")
+    return fix
+
+
 @router.get("/page")
 def page(selected_lab_id: str | None = None):
     with _conn() as conn:
@@ -101,17 +115,24 @@ def get_lab(lab_id: str):
 @router.post("/{lab_id}/reconcile")
 def reconcile_lab(lab_id: str):
     with _conn() as conn:
-        lab = managed_labs_pg.get_lab(conn, lab_id)
-        if not lab:
-            raise HTTPException(status_code=404, detail="lab not found")
+        lab = _get_lab_or_404(conn, lab_id)
         run = managed_labs_pg.start_reconcile_run(conn, lab_id=lab_id, attempt=int(lab.get("retry_count") or 0) + 1)
-        inventory = proxmox_sdn.inventory(_api())
-        result = managed_labs_reconciler.plan_network_reconcile(
-            conn,
-            lab_id=lab_id,
-            reconcile_run_id=run["id"],
-            inventory=inventory,
-        )
+        try:
+            inventory = proxmox_sdn.inventory(_api())
+            result = managed_labs_reconciler.plan_network_reconcile(
+                conn,
+                lab_id=lab_id,
+                reconcile_run_id=run["id"],
+                inventory=inventory,
+            )
+        except Exception as exc:
+            managed_labs_pg.finish_reconcile_run(
+                conn,
+                run_id=run["id"],
+                status="failed",
+                summary=f"Managed labs network reconcile failed: {exc}",
+            )
+            raise HTTPException(status_code=500, detail="managed lab reconcile failed") from exc
         managed_labs_pg.finish_reconcile_run(
             conn,
             run_id=run["id"],
@@ -124,8 +145,7 @@ def reconcile_lab(lab_id: str):
 @router.post("/{lab_id}/fixes/run-pending")
 def run_pending_fixes(lab_id: str):
     with _conn() as conn:
-        if not managed_labs_pg.get_lab(conn, lab_id):
-            raise HTTPException(status_code=404, detail="lab not found")
+        _get_lab_or_404(conn, lab_id)
         return managed_labs_network.execute_pending_network_fixes(
             conn,
             lab_id=lab_id,
@@ -138,8 +158,8 @@ def run_pending_fixes(lab_id: str):
 @router.post("/{lab_id}/fixes/{fix_id}/run")
 def run_fix(lab_id: str, fix_id: str):
     with _conn() as conn:
-        if not managed_labs_pg.get_lab(conn, lab_id):
-            raise HTTPException(status_code=404, detail="lab not found")
+        _get_lab_or_404(conn, lab_id)
+        _get_fix_for_lab_or_404(conn, lab_id=lab_id, fix_id=fix_id)
         return managed_labs_network.execute_fix_action(
             conn,
             fix_action_id=fix_id,
