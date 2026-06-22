@@ -1,6 +1,7 @@
 """PostgreSQL store for managed lab profiles and reconciliation state."""
 from __future__ import annotations
 
+import ipaddress
 import re
 import uuid
 from datetime import datetime, timezone
@@ -394,6 +395,319 @@ def _list_lab_rows(
     return [mapped for row in rows if (mapped := _map_json_fields(row, *json_fields)) is not None]
 
 
+def reserve_value(
+    conn: Connection,
+    *,
+    lab_id: str,
+    reservation_type: str,
+    value: str,
+    metadata: dict | None = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO lab_reservations (id, lab_id, reservation_type, value, metadata_json, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (reservation_type, value) DO UPDATE
+        SET updated_at = EXCLUDED.updated_at
+        RETURNING *
+        """,
+        (_new_id(), lab_id, reservation_type, value.strip(), Jsonb(metadata or {}), now, now),
+    ).fetchone()
+    conn.commit()
+    mapped = _map_json_fields(row, "metadata")
+    assert mapped is not None
+    return mapped
+
+
+def reserve_default_names(
+    conn: Connection,
+    *,
+    lab_id: str,
+    short_code: str,
+    role: str,
+    count: int,
+) -> list[dict]:
+    rows: list[dict] = []
+    prefix = f"{short_code.strip().lower()}-{role.strip().lower()}"
+    for index in range(1, count + 1):
+        value = f"{prefix}-{index:03d}"
+        if len(value) > 15:
+            raise ValueError(f"generated Windows hostname exceeds 15 characters: {value}")
+        rows.append(
+            reserve_value(
+                conn,
+                lab_id=lab_id,
+                reservation_type="hostname",
+                value=value,
+                metadata={"role": role, "index": index},
+            )
+        )
+    return rows
+
+
+def find_overlapping_cidr_reservations(
+    conn: Connection,
+    cidr: str,
+    exclude_lab_id: str | None = None,
+) -> list[dict]:
+    requested = ipaddress.ip_network(cidr, strict=False)
+    rows = conn.execute(
+        """
+        SELECT * FROM lab_reservations
+        WHERE reservation_type = 'cidr' AND status = 'active'
+        ORDER BY created_at ASC
+        """
+    ).fetchall()
+    overlaps: list[dict] = []
+    for row in rows:
+        mapped = _map_json_fields(row, "metadata")
+        if mapped is None:
+            continue
+        if exclude_lab_id and mapped["lab_id"] == exclude_lab_id:
+            continue
+        existing = ipaddress.ip_network(mapped["value"], strict=False)
+        if requested.overlaps(existing):
+            overlaps.append(mapped)
+    return overlaps
+
+
+def start_reconcile_run(conn: Connection, *, lab_id: str, attempt: int) -> dict:
+    now = _now()
+    run_id = _new_id()
+    row = conn.execute(
+        """
+        INSERT INTO lab_reconcile_runs (id, lab_id, status, attempt, started_at)
+        VALUES (%s, %s, 'running', %s, %s)
+        RETURNING *
+        """,
+        (run_id, lab_id, attempt, now),
+    ).fetchone()
+    conn.execute(
+        "UPDATE labs SET status = 'validating', last_reconcile_run_id = %s, updated_at = %s WHERE id = %s",
+        (run_id, now, lab_id),
+    )
+    record_event(
+        conn,
+        lab_id=lab_id,
+        event_type="reconcile_started",
+        actor="reconciler",
+        payload={"run_id": run_id, "attempt": attempt},
+    )
+    conn.commit()
+    mapped = _map_json_fields(row)
+    assert mapped is not None
+    return mapped
+
+
+def finish_reconcile_run(conn: Connection, *, run_id: str, status: str, summary: str = "") -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE lab_reconcile_runs
+        SET status = %s, summary = %s, finished_at = %s
+        WHERE id = %s
+        RETURNING *
+        """,
+        (status, summary, now, run_id),
+    ).fetchone()
+    mapped = _map_json_fields(row)
+    assert mapped is not None
+    record_event(
+        conn,
+        lab_id=mapped["lab_id"],
+        event_type="reconcile_finished",
+        actor="reconciler",
+        detail=summary,
+        payload={"run_id": run_id, "status": status},
+    )
+    conn.commit()
+    return mapped
+
+
+def record_finding(
+    conn: Connection,
+    *,
+    lab_id: str,
+    reconcile_run_id: str | None,
+    provider: str,
+    finding_type: str,
+    severity: str,
+    detail: str,
+    object_ref: dict | None = None,
+    desired_state: dict | None = None,
+    actual_state: dict | None = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO lab_reconcile_findings (
+            id, lab_id, reconcile_run_id, provider, finding_type, severity, detail,
+            object_ref_json, desired_state_json, actual_state_json, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            _new_id(),
+            lab_id,
+            reconcile_run_id,
+            provider,
+            finding_type,
+            severity,
+            detail,
+            Jsonb(object_ref or {}),
+            Jsonb(desired_state or {}),
+            Jsonb(actual_state or {}),
+            now,
+            now,
+        ),
+    ).fetchone()
+    record_event(
+        conn,
+        lab_id=lab_id,
+        event_type="finding_recorded",
+        actor="reconciler",
+        detail=detail,
+        payload={"finding_type": finding_type, "severity": severity},
+    )
+    conn.commit()
+    mapped = _map_json_fields(row, "object_ref", "desired_state", "actual_state")
+    assert mapped is not None
+    return mapped
+
+
+def create_fix_action(
+    conn: Connection,
+    *,
+    lab_id: str,
+    reconcile_run_id: str | None,
+    provider: str,
+    action_type: str,
+    priority: int,
+    detail: str,
+    request: dict,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO lab_fix_actions (
+            id, lab_id, reconcile_run_id, provider, action_type, priority, detail, request_json, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (_new_id(), lab_id, reconcile_run_id, provider, action_type, priority, detail, Jsonb(request), now, now),
+    ).fetchone()
+    record_event(
+        conn,
+        lab_id=lab_id,
+        event_type="fix_action_created",
+        actor="reconciler",
+        detail=detail,
+        payload={"action_type": action_type},
+    )
+    conn.commit()
+    mapped = _map_json_fields(row, "request", "result")
+    assert mapped is not None
+    return mapped
+
+
+def get_fix_action(conn: Connection, fix_action_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM lab_fix_actions WHERE id = %s",
+        (fix_action_id,),
+    ).fetchone()
+    return _map_json_fields(row, "request", "result")
+
+
+def update_fix_action(
+    conn: Connection,
+    fix_action_id: str,
+    *,
+    status: str,
+    result: dict | None = None,
+    snapshot_id: str | None = None,
+) -> dict:
+    now = _now()
+    row = conn.execute(
+        """
+        UPDATE lab_fix_actions
+        SET status = %s,
+            result_json = COALESCE(%s, result_json),
+            snapshot_id = COALESCE(%s, snapshot_id),
+            updated_at = %s,
+            completed_at = CASE WHEN %s IN ('fixed', 'failed', 'blocked') THEN %s ELSE completed_at END
+        WHERE id = %s
+        RETURNING *
+        """,
+        (status, Jsonb(result) if result is not None else None, snapshot_id, now, status, now, fix_action_id),
+    ).fetchone()
+    mapped = _map_json_fields(row, "request", "result")
+    assert mapped is not None
+    record_event(
+        conn,
+        lab_id=mapped["lab_id"],
+        event_type="fix_action_updated",
+        actor="reconciler",
+        detail=str(mapped["detail"]),
+        payload={"action_type": mapped["action_type"], "status": status},
+    )
+    conn.commit()
+    return mapped
+
+
+def record_provider_snapshot(
+    conn: Connection,
+    *,
+    lab_id: str,
+    provider: str,
+    snapshot_type: str,
+    object_ref: dict,
+    snapshot: dict,
+) -> dict:
+    row = conn.execute(
+        """
+        INSERT INTO lab_provider_snapshots (id, lab_id, provider, snapshot_type, object_ref_json, snapshot_json, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (_new_id(), lab_id, provider, snapshot_type, Jsonb(object_ref), Jsonb(snapshot), _now()),
+    ).fetchone()
+    conn.commit()
+    mapped = _map_json_fields(row, "object_ref", "snapshot")
+    assert mapped is not None
+    return mapped
+
+
+def list_open_findings(conn: Connection, lab_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM lab_reconcile_findings WHERE lab_id = %s AND status = 'open' ORDER BY created_at DESC",
+        (lab_id,),
+    ).fetchall()
+    return [
+        mapped
+        for row in rows
+        if (mapped := _map_json_fields(row, "object_ref", "desired_state", "actual_state")) is not None
+    ]
+
+
+def list_pending_fix_actions(conn: Connection, lab_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT * FROM lab_fix_actions
+        WHERE lab_id = %s AND status = 'pending'
+        ORDER BY priority ASC, created_at ASC
+        """,
+        (lab_id,),
+    ).fetchall()
+    return [
+        mapped
+        for row in rows
+        if (mapped := _map_json_fields(row, "request", "result")) is not None
+    ]
+
+
 def create_boundary(
     conn: Connection,
     *,
@@ -547,18 +861,12 @@ def page_payload(conn: Connection, selected_lab_id: str | None = None) -> dict:
         lab_id=lab_id,
         order_by="started_at DESC, id DESC",
     ) if lab_id else []
-    findings = _list_lab_rows(
-        conn,
-        table="lab_reconcile_findings",
-        lab_id=lab_id,
-        order_by="created_at DESC, id DESC",
-        json_fields=("object_ref", "desired_state", "actual_state"),
-    ) if lab_id else []
+    findings = list_open_findings(conn, lab_id) if lab_id else []
     fix_actions = _list_lab_rows(
         conn,
         table="lab_fix_actions",
         lab_id=lab_id,
-        order_by="created_at DESC, priority ASC, id DESC",
+        order_by="priority ASC, created_at ASC",
         json_fields=("request", "result"),
     ) if lab_id else []
     return {

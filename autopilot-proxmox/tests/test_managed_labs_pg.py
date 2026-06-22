@@ -195,3 +195,130 @@ def test_boundary_object_provider_identity_must_be_unique_across_labs(pg_conn):
             provider_ids={"zone": "shared-zone"},
             desired_state={"type": "simple", "zone": "shared-zone"},
         )
+
+def test_reservations_enforce_unique_values_and_generate_safe_names(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="NTT Lab",
+        short_code="ntt01",
+        group_tag="NTT-Lab",
+        network_cidr="10.50.20.0/24",
+    )
+
+    names = managed_labs_pg.reserve_default_names(
+        pg_conn,
+        lab_id=lab["id"],
+        short_code="ntt01",
+        role="wks",
+        count=2,
+    )
+
+    assert [row["value"] for row in names] == ["ntt01-wks-001", "ntt01-wks-002"]
+    assert all(len(row["value"]) <= 15 for row in names)
+
+    duplicate = managed_labs_pg.reserve_value(
+        pg_conn,
+        lab_id=lab["id"],
+        reservation_type="hostname",
+        value="ntt01-wks-001",
+    )
+    assert duplicate["status"] == "active"
+    assert duplicate["value"] == "ntt01-wks-001"
+
+
+def test_cidr_overlap_detection_finds_existing_lab_reservation(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Lab One",
+        short_code="lab01",
+        group_tag="LabOne",
+        network_cidr="10.80.0.0/24",
+    )
+    managed_labs_pg.reserve_value(
+        pg_conn,
+        lab_id=lab["id"],
+        reservation_type="cidr",
+        value="10.80.0.0/24",
+    )
+
+    overlaps = managed_labs_pg.find_overlapping_cidr_reservations(pg_conn, "10.80.0.128/25")
+
+    assert overlaps[0]["lab_id"] == lab["id"]
+    assert overlaps[0]["value"] == "10.80.0.0/24"
+
+
+def test_reconcile_findings_fix_actions_and_snapshots_are_queryable(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Fix Lab",
+        short_code="fix01",
+        group_tag="Fix",
+        network_cidr="10.90.0.0/24",
+    )
+    run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=1)
+    finding = managed_labs_pg.record_finding(
+        pg_conn,
+        lab_id=lab["id"],
+        reconcile_run_id=run["id"],
+        provider="proxmox",
+        finding_type="sdn_zone_missing",
+        severity="fixable",
+        detail="SDN zone lab-fix01 is missing.",
+        object_ref={"zone": "lab-fix01"},
+        desired_state={"zone": "lab-fix01", "type": "simple"},
+    )
+    fix = managed_labs_pg.create_fix_action(
+        pg_conn,
+        lab_id=lab["id"],
+        reconcile_run_id=run["id"],
+        provider="proxmox",
+        action_type="create_sdn_zone",
+        priority=10,
+        detail="Create SDN zone lab-fix01.",
+        request={"zone": "lab-fix01", "type": "simple"},
+    )
+    snapshot = managed_labs_pg.record_provider_snapshot(
+        pg_conn,
+        lab_id=lab["id"],
+        provider="proxmox",
+        snapshot_type="pre_fix",
+        object_ref={"action_type": "create_sdn_zone"},
+        snapshot={"zones": []},
+    )
+    pending = managed_labs_pg.list_pending_fix_actions(pg_conn, lab["id"])
+    loaded_fix = managed_labs_pg.get_fix_action(pg_conn, fix["id"])
+    updated = managed_labs_pg.update_fix_action(
+        pg_conn,
+        fix["id"],
+        status="fixed",
+        result={"ok": True},
+        snapshot_id=snapshot["id"],
+    )
+    finished = managed_labs_pg.finish_reconcile_run(
+        pg_conn,
+        run_id=run["id"],
+        status="ready",
+        summary="Reconciliation completed.",
+    )
+    payload = managed_labs_pg.page_payload(pg_conn, selected_lab_id=lab["id"])
+
+    assert finding["status"] == "open"
+    assert managed_labs_pg.list_open_findings(pg_conn, lab["id"])[0]["finding_type"] == "sdn_zone_missing"
+    assert [row["id"] for row in pending] == [fix["id"]]
+    assert loaded_fix is not None
+    assert loaded_fix["id"] == fix["id"]
+    assert updated["status"] == "fixed"
+    assert updated["snapshot_id"] == snapshot["id"]
+    assert finished["status"] == "ready"
+    assert finished["finished_at"] is not None
+    assert managed_labs_pg.list_pending_fix_actions(pg_conn, lab["id"]) == []
+    assert payload["selected_lab"]["last_reconcile_run_id"] == run["id"]
+    assert [row["id"] for row in payload["reconcile_runs"]] == [run["id"]]
+    assert [row["id"] for row in payload["findings"]] == [finding["id"]]
+    assert [row["id"] for row in payload["fix_actions"]] == [fix["id"]]
