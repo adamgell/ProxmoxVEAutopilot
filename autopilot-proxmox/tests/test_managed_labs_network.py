@@ -149,7 +149,7 @@ def test_execute_create_subnet_adds_required_pve_subnet_type(pg_conn):
     _lab, fix = _seed_fix(
         pg_conn,
         "create_sdn_subnet",
-        {"vnet": "net01vnet", "subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True},
+        {"vnet": "net01vn", "subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True},
     )
     calls = []
     state = {"subnet_present": False}
@@ -157,12 +157,12 @@ def test_execute_create_subnet_adds_required_pve_subnet_type(pg_conn):
     def fake_api(path, method="GET", data=None):
         calls.append((method, path, data))
         if path == "/cluster/sdn/zones" and method == "GET":
-            return [{"zone": "labnet01", "type": "simple"}]
+            return [{"zone": "net01z", "type": "simple"}]
         if path == "/cluster/sdn/vnets" and method == "GET":
-            return [{"vnet": "net01vnet", "zone": "labnet01"}]
-        if path == "/cluster/sdn/vnets/net01vnet/subnets" and method == "GET":
+            return [{"vnet": "net01vn", "zone": "net01z"}]
+        if path == "/cluster/sdn/vnets/net01vn/subnets" and method == "GET":
             return [{"subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True}] if state["subnet_present"] else []
-        if path == "/cluster/sdn/vnets/net01vnet/subnets" and method == "POST":
+        if path == "/cluster/sdn/vnets/net01vn/subnets" and method == "POST":
             state["subnet_present"] = True
             return {"ok": True}
         return []
@@ -178,7 +178,7 @@ def test_execute_create_subnet_adds_required_pve_subnet_type(pg_conn):
     assert result["status"] == "fixed"
     assert (
         "POST",
-        "/cluster/sdn/vnets/net01vnet/subnets",
+        "/cluster/sdn/vnets/net01vn/subnets",
         {"subnet": "10.91.0.0/24", "gateway": "10.91.0.1", "snat": True, "type": "subnet"},
     ) in calls
 

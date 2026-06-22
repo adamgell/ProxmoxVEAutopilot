@@ -51,8 +51,8 @@ def test_labs_page_starts_empty(monkeypatch, pg_dsn):
     body = response.json()
     assert body["labs"] == []
     assert body["templates"][0]["id"] == "standard-hybrid-lab"
-    assert body["templates"][0]["defaults"]["sdn_zone"] == "lablab01"
-    assert body["templates"][0]["defaults"]["sdn_vnet"] == "lab01vnet"
+    assert body["templates"][0]["defaults"]["sdn_zone"] == "lab01z"
+    assert body["templates"][0]["defaults"]["sdn_vnet"] == "lab01vn"
 
 
 def test_create_lab_from_template_tracks_intent_and_reserves_default_names(monkeypatch, pg_dsn):

@@ -30,8 +30,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "LAB01-Managed",
             "network_cidr": "10.50.20.0/24",
             "gateway_ip": "10.50.20.1",
-            "sdn_zone": "lablab01",
-            "sdn_vnet": "lab01vnet",
+            "sdn_zone": "lab01z",
+            "sdn_vnet": "lab01vn",
             "desktop_count": 2,
             "server_count": 1,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -53,8 +53,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "CLD01-Managed",
             "network_cidr": "10.50.30.0/24",
             "gateway_ip": "10.50.30.1",
-            "sdn_zone": "labcld01",
-            "sdn_vnet": "cld01vnet",
+            "sdn_zone": "cld01z",
+            "sdn_vnet": "cld01vn",
             "desktop_count": 3,
             "server_count": 0,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -76,8 +76,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "SRV01-Managed",
             "network_cidr": "10.50.40.0/24",
             "gateway_ip": "10.50.40.1",
-            "sdn_zone": "labsrv01",
-            "sdn_vnet": "srv01vnet",
+            "sdn_zone": "srv01z",
+            "sdn_vnet": "srv01vn",
             "desktop_count": 1,
             "server_count": 2,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -311,11 +311,13 @@ def _proxmox_sdn_id_part(value: str) -> str:
 
 
 def proxmox_sdn_zone_id(short_code: str) -> str:
-    return f"lab{_proxmox_sdn_id_part(short_code)}"
+    part = _proxmox_sdn_id_part(short_code)[:6]
+    return f"{part}z"
 
 
 def proxmox_sdn_vnet_id(short_code: str) -> str:
-    return f"{_proxmox_sdn_id_part(short_code)}vnet"
+    part = _proxmox_sdn_id_part(short_code)[:6]
+    return f"{part}vn"
 
 
 def _json_value(value: Any) -> Any:

@@ -193,13 +193,13 @@ function sdnIdPart(shortCode: string): string {
 }
 
 function derivedZone(shortCode: string): string {
-  const part = sdnIdPart(shortCode);
-  return part ? `lab${part}` : "";
+  const part = sdnIdPart(shortCode).slice(0, 6);
+  return part ? `${part}z` : "";
 }
 
 function derivedVnet(shortCode: string): string {
-  const part = sdnIdPart(shortCode);
-  return part ? `${part}vnet` : "";
+  const part = sdnIdPart(shortCode).slice(0, 6);
+  return part ? `${part}vn` : "";
 }
 
 function labStatusTone(status: string | undefined): StatusTone {
@@ -577,7 +577,7 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                   aria-label="SDN zone"
                   value={draft.sdnZone}
                   onChange={(event) => { updateDraft("sdnZone", event.target.value); }}
-                  placeholder="labntt01"
+                  placeholder="ntt01z"
                 />
               </label>
               <label className="utility-field">
@@ -587,7 +587,7 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                   aria-label="SDN VNet"
                   value={draft.sdnVnet}
                   onChange={(event) => { updateDraft("sdnVnet", event.target.value); }}
-                  placeholder="ntt01vnet"
+                  placeholder="ntt01vn"
                 />
               </label>
             </div>
