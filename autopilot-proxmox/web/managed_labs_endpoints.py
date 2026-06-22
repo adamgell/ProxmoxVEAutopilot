@@ -4,7 +4,7 @@ import ipaddress
 from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from web import managed_labs_network, managed_labs_pg, managed_labs_reconciler, proxmox_sdn
 
@@ -22,6 +22,9 @@ class LabCreateBody(BaseModel):
     sdn_zone: str = ""
     sdn_vnet: str = ""
     sdn_subnet: str = ""
+    template_id: str = ""
+    desktop_count: int = Field(default=0, ge=0, le=500)
+    server_count: int = Field(default=0, ge=0, le=500)
 
     @field_validator("network_cidr")
     @classmethod
@@ -121,6 +124,9 @@ def create_lab(body: LabCreateBody):
                 sdn_zone=body.sdn_zone,
                 sdn_vnet=body.sdn_vnet,
                 sdn_subnet=body.sdn_subnet,
+                template_id=body.template_id,
+                desktop_count=body.desktop_count,
+                server_count=body.server_count,
                 commit=False,
             )
             managed_labs_pg.reserve_value(
@@ -137,6 +143,27 @@ def create_lab(body: LabCreateBody):
                 value=lab["network_cidr"],
                 commit=False,
             )
+            device_counts = lab.get("desired_state", {}).get("device_counts", {})
+            desktop_count = int(device_counts.get("desktop") or 0)
+            server_count = int(device_counts.get("server") or 0)
+            if desktop_count:
+                managed_labs_pg.reserve_default_names(
+                    conn,
+                    lab_id=lab["id"],
+                    short_code=lab["short_code"],
+                    role="wks",
+                    count=desktop_count,
+                    commit=False,
+                )
+            if server_count:
+                managed_labs_pg.reserve_default_names(
+                    conn,
+                    lab_id=lab["id"],
+                    short_code=lab["short_code"],
+                    role="srv",
+                    count=server_count,
+                    commit=False,
+                )
             conn.commit()
         except ValueError as exc:
             conn.rollback()

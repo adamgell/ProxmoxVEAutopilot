@@ -59,7 +59,7 @@ describe("LabsPage", () => {
     render(<LabsPage bootstrap={bootstrap} />);
 
     expect(await screen.findByRole("heading", { name: "Labs" })).toBeVisible();
-    expect(screen.getAllByText("NTT Lab").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("NTT Lab")).length).toBeGreaterThan(0);
     expect(screen.getByText("SDN zone lab-ntt01 is missing.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Run pending fixes" })).toBeVisible();
     expect(screen.getByText("Created lab NTT Lab")).toBeVisible();
@@ -98,6 +98,72 @@ describe("LabsPage", () => {
       expect(calls.some((call) => call.endsWith("/api/labs/page?selected_lab_id=lab-2"))).toBe(true);
     });
     expect(screen.getAllByText("OTH-Lab").length).toBeGreaterThan(0);
+  });
+
+
+  it("applies a managed lab template to the create form", async () => {
+    const calls: Array<{ url: string; body?: unknown }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url, body: typeof init?.body === "string" ? JSON.parse(init.body) as unknown : undefined });
+      if (url.includes("/api/labs/page")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          templates: [{
+            id: "standard-hybrid-lab",
+            name: "Standard hybrid lab",
+            summary: "Desktop and server lab with managed Proxmox network, AD, Entra, and Intune intent.",
+            defaults: {
+              name: "Standard Hybrid Lab",
+              short_code: "lab01",
+              group_tag: "LAB01-Managed",
+              network_cidr: "10.50.20.0/24",
+              gateway_ip: "10.50.20.1",
+              sdn_zone: "lab-lab01",
+              sdn_vnet: "lab01-vnet",
+              desktop_count: 2,
+              server_count: 1
+            }
+          }],
+          labs: [],
+          selected_lab: null,
+          findings: [],
+          fix_actions: [],
+          events: [],
+          boundaries: [],
+          boundary_objects: [],
+          reservations: [],
+          reconcile_runs: []
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ id: "lab-1", name: "Standard Hybrid Lab" }), { status: 201, headers: { "content-type": "application/json" } }));
+    });
+
+    render(<LabsPage bootstrap={bootstrap} />);
+
+    await screen.findByLabelText("Lab template");
+    await waitFor(() => {
+      expect(screen.getByLabelText("Lab template")).toHaveValue("standard-hybrid-lab");
+    });
+    expect(screen.getByLabelText("Lab name")).toHaveValue("Standard Hybrid Lab");
+    expect(screen.getByLabelText("Short code")).toHaveValue("lab01");
+    expect(screen.getByLabelText("Desktop count")).toHaveValue(2);
+    expect(screen.getByLabelText("Server count")).toHaveValue(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create lab" }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.url.endsWith("/api/labs"))).toBe(true);
+    });
+    expect(calls.find((call) => call.url.endsWith("/api/labs"))?.body).toMatchObject({
+      template_id: "standard-hybrid-lab",
+      name: "Standard Hybrid Lab",
+      short_code: "lab01",
+      group_tag: "LAB01-Managed",
+      network_cidr: "10.50.20.0/24",
+      gateway_ip: "10.50.20.1",
+      desktop_count: 2,
+      server_count: 1
+    });
   });
 
 

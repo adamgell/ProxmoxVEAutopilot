@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
@@ -17,6 +17,38 @@ interface LabRow {
   readonly network_cidr?: string;
   readonly gateway_ip?: string;
   readonly retry_count?: number;
+}
+
+interface LabTemplateDefaults {
+  readonly name?: string;
+  readonly short_code?: string;
+  readonly group_tag?: string;
+  readonly network_cidr?: string;
+  readonly gateway_ip?: string;
+  readonly sdn_zone?: string;
+  readonly sdn_vnet?: string;
+  readonly desktop_count?: number;
+  readonly server_count?: number;
+}
+
+interface LabTemplate {
+  readonly id: string;
+  readonly name: string;
+  readonly summary?: string;
+  readonly defaults?: LabTemplateDefaults;
+}
+
+interface LabDraft {
+  readonly templateId: string;
+  readonly name: string;
+  readonly shortCode: string;
+  readonly groupTag: string;
+  readonly networkCidr: string;
+  readonly gatewayIp: string;
+  readonly sdnZone: string;
+  readonly sdnVnet: string;
+  readonly desktopCount: string;
+  readonly serverCount: string;
 }
 
 interface FindingRow {
@@ -69,6 +101,7 @@ interface ReconcileRunRow {
 }
 
 interface LabsPayload {
+  readonly templates?: readonly LabTemplate[];
   readonly labs?: readonly LabRow[];
   readonly selected_lab?: LabRow | null;
   readonly findings?: readonly FindingRow[];
@@ -81,6 +114,7 @@ interface LabsPayload {
 }
 
 interface NormalizedLabsPayload {
+  readonly templates: readonly LabTemplate[];
   readonly labs: readonly LabRow[];
   readonly selected_lab: LabRow | null;
   readonly findings: readonly FindingRow[];
@@ -93,6 +127,7 @@ interface NormalizedLabsPayload {
 }
 
 const emptyPayload: NormalizedLabsPayload = {
+  templates: [],
   labs: [],
   selected_lab: null,
   findings: [],
@@ -106,6 +141,7 @@ const emptyPayload: NormalizedLabsPayload = {
 
 function normalizePayload(payload: LabsPayload | null | undefined): NormalizedLabsPayload {
   return {
+    templates: payload?.templates ?? [],
     labs: payload?.labs ?? [],
     selected_lab: payload?.selected_lab ?? null,
     findings: payload?.findings ?? [],
@@ -116,6 +152,48 @@ function normalizePayload(payload: LabsPayload | null | undefined): NormalizedLa
     reservations: payload?.reservations ?? [],
     reconcile_runs: payload?.reconcile_runs ?? []
   };
+}
+
+const blankDraft: LabDraft = {
+  templateId: "",
+  name: "",
+  shortCode: "",
+  groupTag: "",
+  networkCidr: "",
+  gatewayIp: "",
+  sdnZone: "",
+  sdnVnet: "",
+  desktopCount: "0",
+  serverCount: "0"
+};
+
+function draftFromTemplate(template: LabTemplate): LabDraft {
+  const defaults = template.defaults ?? {};
+  return {
+    templateId: template.id,
+    name: textValue(defaults.name, ""),
+    shortCode: textValue(defaults.short_code, ""),
+    groupTag: textValue(defaults.group_tag, ""),
+    networkCidr: textValue(defaults.network_cidr, ""),
+    gatewayIp: textValue(defaults.gateway_ip, ""),
+    sdnZone: textValue(defaults.sdn_zone, ""),
+    sdnVnet: textValue(defaults.sdn_vnet, ""),
+    desktopCount: String(defaults.desktop_count ?? 0),
+    serverCount: String(defaults.server_count ?? 0)
+  };
+}
+
+function countValue(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function derivedZone(shortCode: string): string {
+  return shortCode ? `lab-${shortCode}` : "";
+}
+
+function derivedVnet(shortCode: string): string {
+  return shortCode ? `${shortCode}-vnet` : "";
 }
 
 function labStatusTone(status: string | undefined): StatusTone {
@@ -231,12 +309,19 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [messageTone, setMessageTone] = useState<"bad" | "neutral">("neutral");
   const [busyAction, setBusyAction] = useState<"create" | "reconcile" | "fixes" | null>(null);
   const [selectedLabId, setSelectedLabId] = useState(() => new URLSearchParams(window.location.search).get("selected_lab_id") ?? "");
+  const [draft, setDraft] = useState<LabDraft>(blankDraft);
+  const initialTemplateApplied = useRef(false);
 
   const load = useCallback(async (labId = selectedLabId) => {
     try {
       const url = labId ? `/api/labs/page?selected_lab_id=${encodeURIComponent(labId)}` : "/api/labs/page";
       const next = normalizePayload(await fetchJson<LabsPayload>(url));
       setPayload(next);
+      const firstTemplate = next.templates[0];
+      if (!initialTemplateApplied.current && firstTemplate) {
+        initialTemplateApplied.current = true;
+        setDraft(draftFromTemplate(firstTemplate));
+      }
       setSelectedLabId(textValue(next.selected_lab?.id, labId));
       setError("");
     } catch (err) {
@@ -249,26 +334,57 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   usePolling(load);
 
   const selected = payload.selected_lab;
+  const selectedTemplate = payload.templates.find((template) => template.id === draft.templateId) ?? null;
   const pendingFixCount = payload.fix_actions.filter((fix) => textValue(fix.status, "").toLowerCase() === "pending").length;
 
-  async function createLab(form: FormData) {
-    const shortCode = textValue(form.get("short_code"), "").trim().toLowerCase();
-    const networkCidr = textValue(form.get("network_cidr"), "").trim();
-    const zone = textValue(form.get("sdn_zone"), `lab-${shortCode}`).trim() || `lab-${shortCode}`;
-    const vnet = textValue(form.get("sdn_vnet"), `${shortCode}-vnet`).trim() || `${shortCode}-vnet`;
+  function applyTemplate(templateId: string) {
+    const template = payload.templates.find((item) => item.id === templateId);
+    setDraft(template ? draftFromTemplate(template) : { ...blankDraft, templateId: "" });
+  }
+
+  function updateDraft(field: keyof LabDraft, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateShortCode(value: string) {
+    const normalized = value.trim().toLowerCase();
+    setDraft((current) => {
+      const previous = current.shortCode.trim().toLowerCase();
+      const nextZone = !current.sdnZone || current.sdnZone === derivedZone(previous) ? derivedZone(normalized) : current.sdnZone;
+      const nextVnet = !current.sdnVnet || current.sdnVnet === derivedVnet(previous) ? derivedVnet(normalized) : current.sdnVnet;
+      const previousManagedTag = `${previous.toUpperCase()}-Managed`;
+      const nextGroupTag = !current.groupTag || current.groupTag === previousManagedTag ? `${normalized.toUpperCase()}-Managed` : current.groupTag;
+      return {
+        ...current,
+        shortCode: normalized,
+        groupTag: nextGroupTag,
+        sdnZone: nextZone,
+        sdnVnet: nextVnet
+      };
+    });
+  }
+
+  async function createLab() {
+    const shortCode = draft.shortCode.trim().toLowerCase();
+    const networkCidr = draft.networkCidr.trim();
+    const zone = draft.sdnZone.trim() || derivedZone(shortCode);
+    const vnet = draft.sdnVnet.trim() || derivedVnet(shortCode);
     setBusyAction("create");
     setMessage("");
     try {
       await postJson("/api/labs", {
-        name: textValue(form.get("name"), "").trim(),
+        template_id: draft.templateId,
+        name: draft.name.trim(),
         short_code: shortCode,
-        group_tag: textValue(form.get("group_tag"), "").trim(),
+        group_tag: draft.groupTag.trim(),
         network_cidr: networkCidr,
-        gateway_ip: textValue(form.get("gateway_ip"), "").trim(),
+        gateway_ip: draft.gatewayIp.trim(),
         network_mode: "sdn",
         sdn_zone: zone,
         sdn_vnet: vnet,
-        sdn_subnet: networkCidr
+        sdn_subnet: networkCidr,
+        desktop_count: countValue(draft.desktopCount),
+        server_count: countValue(draft.serverCount)
       });
       setMessage("Lab created.");
       setMessageTone("neutral");
@@ -354,7 +470,7 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             className="labs-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void createLab(new FormData(event.currentTarget));
+              void createLab();
             }}
           >
             <p className="labs-form__hint">
@@ -362,32 +478,111 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             </p>
             <div className="utility-field-grid">
               <label className="utility-field utility-field--wide">
+                <span>Lab template</span>
+                <select
+                  aria-label="Lab template"
+                  value={draft.templateId}
+                  onChange={(event) => { applyTemplate(event.target.value); }}
+                >
+                  {payload.templates.length ? null : <option value="">Custom lab</option>}
+                  {payload.templates.map((template) => (
+                    <option key={template.id} value={template.id}>{template.name}</option>
+                  ))}
+                </select>
+                {selectedTemplate?.summary ? <small>{selectedTemplate.summary}</small> : null}
+              </label>
+              <label className="utility-field utility-field--wide">
                 <span>Lab name</span>
-                <input name="name" aria-label="Lab name" required />
+                <input
+                  name="name"
+                  aria-label="Lab name"
+                  value={draft.name}
+                  onChange={(event) => { updateDraft("name", event.target.value); }}
+                  required
+                />
               </label>
               <label className="utility-field">
                 <span>Short code</span>
-                <input name="short_code" aria-label="Short code" required />
+                <input
+                  name="short_code"
+                  aria-label="Short code"
+                  value={draft.shortCode}
+                  onChange={(event) => { updateShortCode(event.target.value); }}
+                  required
+                />
               </label>
               <label className="utility-field">
                 <span>Group tag</span>
-                <input name="group_tag" aria-label="Group tag" required />
+                <input
+                  name="group_tag"
+                  aria-label="Group tag"
+                  value={draft.groupTag}
+                  onChange={(event) => { updateDraft("groupTag", event.target.value); }}
+                  required
+                />
               </label>
               <label className="utility-field">
                 <span>Subnet CIDR</span>
-                <input name="network_cidr" aria-label="Subnet CIDR" required />
+                <input
+                  name="network_cidr"
+                  aria-label="Subnet CIDR"
+                  value={draft.networkCidr}
+                  onChange={(event) => { updateDraft("networkCidr", event.target.value); }}
+                  required
+                />
               </label>
               <label className="utility-field">
                 <span>Gateway IP</span>
-                <input name="gateway_ip" aria-label="Gateway IP" />
+                <input
+                  name="gateway_ip"
+                  aria-label="Gateway IP"
+                  value={draft.gatewayIp}
+                  onChange={(event) => { updateDraft("gatewayIp", event.target.value); }}
+                />
+              </label>
+              <label className="utility-field">
+                <span>Desktop count</span>
+                <input
+                  type="number"
+                  name="desktop_count"
+                  aria-label="Desktop count"
+                  value={draft.desktopCount}
+                  min="0"
+                  max="500"
+                  onChange={(event) => { updateDraft("desktopCount", event.target.value); }}
+                />
+              </label>
+              <label className="utility-field">
+                <span>Server count</span>
+                <input
+                  type="number"
+                  name="server_count"
+                  aria-label="Server count"
+                  value={draft.serverCount}
+                  min="0"
+                  max="500"
+                  onChange={(event) => { updateDraft("serverCount", event.target.value); }}
+                />
               </label>
               <label className="utility-field">
                 <span>SDN zone</span>
-                <input name="sdn_zone" aria-label="SDN zone" placeholder="lab-ntt01" />
+                <input
+                  name="sdn_zone"
+                  aria-label="SDN zone"
+                  value={draft.sdnZone}
+                  onChange={(event) => { updateDraft("sdnZone", event.target.value); }}
+                  placeholder="lab-ntt01"
+                />
               </label>
               <label className="utility-field">
                 <span>SDN VNet</span>
-                <input name="sdn_vnet" aria-label="SDN VNet" placeholder="ntt01-vnet" />
+                <input
+                  name="sdn_vnet"
+                  aria-label="SDN VNet"
+                  value={draft.sdnVnet}
+                  onChange={(event) => { updateDraft("sdnVnet", event.target.value); }}
+                  placeholder="ntt01-vnet"
+                />
               </label>
             </div>
             <div className="labs-form__actions">

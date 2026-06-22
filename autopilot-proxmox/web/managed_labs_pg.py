@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,6 +18,92 @@ LAB_STATUSES = ("draft", "reserving", "validating", "fixing", "ready", "blocked"
 OWNERSHIPS = ("attached", "adopting", "managed")
 SOURCES = ("created", "adopted", "attached")
 PROVIDERS = ("proxmox", "network", "ad", "entra", "intune", "deployment")
+
+LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "standard-hybrid-lab",
+        "name": "Standard hybrid lab",
+        "summary": "Desktop and server lab with managed Proxmox network, AD, Entra, and Intune intent.",
+        "defaults": {
+            "name": "Standard Hybrid Lab",
+            "short_code": "lab01",
+            "group_tag": "LAB01-Managed",
+            "network_cidr": "10.50.20.0/24",
+            "gateway_ip": "10.50.20.1",
+            "sdn_zone": "lab-lab01",
+            "sdn_vnet": "lab01-vnet",
+            "desktop_count": 2,
+            "server_count": 1,
+            "naming_policy": "{lab_short}-{role}-{index}",
+        },
+        "intent": {
+            "deployment_model": "hybrid",
+            "identity": {"m365_mode": "managed", "ad_mode": "managed"},
+            "intune": {"enrollment_status_profile": "managed", "app_assignments": "managed"},
+            "ad": {"ou": "managed", "gpo": "managed", "users_day0": "managed"},
+        },
+    },
+    {
+        "id": "cloud-desktop-lab",
+        "name": "Cloud desktop lab",
+        "summary": "Cloud-first desktop lab with Proxmox networking and managed Entra/Intune intent.",
+        "defaults": {
+            "name": "Cloud Desktop Lab",
+            "short_code": "cld01",
+            "group_tag": "CLD01-Managed",
+            "network_cidr": "10.50.30.0/24",
+            "gateway_ip": "10.50.30.1",
+            "sdn_zone": "lab-cld01",
+            "sdn_vnet": "cld01-vnet",
+            "desktop_count": 3,
+            "server_count": 0,
+            "naming_policy": "{lab_short}-{role}-{index}",
+        },
+        "intent": {
+            "deployment_model": "cloud_only",
+            "identity": {"m365_mode": "managed", "ad_mode": "attached"},
+            "intune": {"enrollment_status_profile": "managed", "app_assignments": "managed"},
+            "ad": {"ou": "left_alone", "gpo": "left_alone", "users_day0": "managed"},
+        },
+    },
+    {
+        "id": "server-validation-lab",
+        "name": "Server validation lab",
+        "summary": "Mixed server and workstation lab for OSDeploy validation with managed network intent.",
+        "defaults": {
+            "name": "Server Validation Lab",
+            "short_code": "srv01",
+            "group_tag": "SRV01-Managed",
+            "network_cidr": "10.50.40.0/24",
+            "gateway_ip": "10.50.40.1",
+            "sdn_zone": "lab-srv01",
+            "sdn_vnet": "srv01-vnet",
+            "desktop_count": 1,
+            "server_count": 2,
+            "naming_policy": "{lab_short}-{role}-{index}",
+        },
+        "intent": {
+            "deployment_model": "hybrid_server",
+            "identity": {"m365_mode": "managed", "ad_mode": "managed"},
+            "intune": {"enrollment_status_profile": "managed", "app_assignments": "managed"},
+            "ad": {"ou": "managed", "gpo": "managed", "users_day0": "managed"},
+        },
+    },
+)
+
+
+def list_lab_templates() -> list[dict[str, Any]]:
+    return deepcopy(list(LAB_TEMPLATES))
+
+
+def get_lab_template(template_id: str | None) -> dict[str, Any] | None:
+    candidate = str(template_id or "").strip()
+    if not candidate:
+        return None
+    for template in LAB_TEMPLATES:
+        if template["id"] == candidate:
+            return deepcopy(template)
+    raise ValueError(f"unknown lab template: {candidate}")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS labs (
@@ -934,12 +1021,29 @@ def create_lab(
     sdn_zone: str = "",
     sdn_vnet: str = "",
     sdn_subnet: str = "",
+    template_id: str = "",
+    desktop_count: int | None = None,
+    server_count: int | None = None,
     commit: bool = True,
 ) -> dict:
     now = _now()
     lab_id = _new_id()
+    template = get_lab_template(template_id)
+    template_defaults = dict((template or {}).get("defaults") or {})
+    template_intent = dict((template or {}).get("intent") or {})
+    resolved_desktop_count = int(desktop_count if desktop_count is not None else template_defaults.get("desktop_count") or 0)
+    resolved_server_count = int(server_count if server_count is not None else template_defaults.get("server_count") or 0)
+    if resolved_desktop_count < 0 or resolved_server_count < 0:
+        raise ValueError("device counts must be zero or greater")
+    naming_policy = str(template_defaults.get("naming_policy") or "{lab_short}-{role}-{index}")
     desired_state = {
-        "naming_policy": "{lab_short}-{role}-{index}",
+        "template_id": template["id"] if template else "",
+        "template_name": template["name"] if template else "Custom lab",
+        "naming_policy": naming_policy,
+        "device_counts": {
+            "desktop": resolved_desktop_count,
+            "server": resolved_server_count,
+        },
         "network": {
             "mode": network_mode,
             "cidr": network_cidr,
@@ -948,9 +1052,21 @@ def create_lab(
             "sdn_vnet": sdn_vnet,
             "sdn_subnet": sdn_subnet or network_cidr,
         },
-        "identity": {
+        "deployment": {
+            "model": template_intent.get("deployment_model", "custom"),
+        },
+        "identity": template_intent.get("identity") or {
             "m365_mode": "modeled",
             "ad_mode": "modeled",
+        },
+        "intune": template_intent.get("intune") or {
+            "enrollment_status_profile": "modeled",
+            "app_assignments": "modeled",
+        },
+        "ad": template_intent.get("ad") or {
+            "ou": "modeled",
+            "gpo": "modeled",
+            "users_day0": "modeled",
         },
     }
     row = conn.execute(
@@ -1096,6 +1212,7 @@ def reserve_default_names(
     short_code: str,
     role: str,
     count: int,
+    commit: bool = True,
 ) -> list[dict]:
     rows: list[dict] = []
     prefix = f"{short_code.strip().lower()}-{role.strip().lower()}"
@@ -1110,8 +1227,11 @@ def reserve_default_names(
                 reservation_type="hostname",
                 value=value,
                 metadata={"role": role, "index": index},
+                commit=False,
             )
         )
+    if commit:
+        conn.commit()
     return rows
 
 
@@ -1629,6 +1749,7 @@ def page_payload(conn: Connection, selected_lab_id: str | None = None) -> dict:
     findings = list_open_findings(conn, lab_id) if lab_id else []
     fix_actions = list_current_fix_actions(conn, lab_id) if lab_id else []
     return {
+        "templates": list_lab_templates(),
         "labs": labs,
         "selected_lab": selected,
         "boundaries": boundaries,

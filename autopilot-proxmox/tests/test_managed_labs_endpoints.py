@@ -49,6 +49,44 @@ def test_labs_page_starts_empty(monkeypatch, pg_dsn):
 
     assert response.status_code == 200
     assert response.json()["labs"] == []
+    assert response.json()["templates"][0]["id"] == "standard-hybrid-lab"
+
+
+def test_create_lab_from_template_tracks_intent_and_reserves_default_names(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+
+    _init_managed_labs_db(pg_dsn)
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/labs",
+        json={
+            "template_id": "standard-hybrid-lab",
+            "name": "NTT Lab",
+            "short_code": "ntt01",
+            "group_tag": "NTT-Lab",
+            "network_cidr": "10.50.20.0/24",
+            "gateway_ip": "10.50.20.1",
+            "desktop_count": 2,
+            "server_count": 1,
+        },
+    )
+
+    assert response.status_code == 201
+    lab = response.json()
+    assert lab["desired_state"]["template_id"] == "standard-hybrid-lab"
+    assert lab["desired_state"]["device_counts"] == {"desktop": 2, "server": 1}
+
+    page = client.get(f"/api/labs/page?selected_lab_id={lab['id']}")
+    assert page.status_code == 200
+    reservations = {
+        (row["reservation_type"], row["value"])
+        for row in page.json()["reservations"]
+    }
+    assert ("hostname", "ntt01-wks-001") in reservations
+    assert ("hostname", "ntt01-wks-002") in reservations
+    assert ("hostname", "ntt01-srv-001") in reservations
 
 
 def test_create_lab_then_reconcile_plans_sdn_fixes(monkeypatch, pg_dsn):
