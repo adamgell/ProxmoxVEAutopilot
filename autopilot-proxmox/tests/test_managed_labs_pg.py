@@ -101,20 +101,20 @@ def test_create_lab_generates_proxmox_safe_sdn_defaults_when_omitted(pg_conn):
         gateway_ip="10.50.20.1",
     )
 
-    assert lab["sdn_zone"] == "lab_ntt01"
-    assert lab["sdn_vnet"] == "ntt01_vnet"
-    assert lab["desired_state"]["network"]["sdn_zone"] == "lab_ntt01"
-    assert lab["desired_state"]["network"]["sdn_vnet"] == "ntt01_vnet"
+    assert lab["sdn_zone"] == "labntt01"
+    assert lab["sdn_vnet"] == "ntt01vnet"
+    assert lab["desired_state"]["network"]["sdn_zone"] == "labntt01"
+    assert lab["desired_state"]["network"]["sdn_vnet"] == "ntt01vnet"
     payload = managed_labs_pg.page_payload(pg_conn, selected_lab_id=lab["id"])
     proxmox_objects = {
         (row["kind"], row["name"]): row
         for row in payload["boundary_objects"]
         if row["provider"] == "proxmox"
     }
-    assert proxmox_objects[("sdn_zone", "lab_ntt01")]["desired_state"] == {"zone": "lab_ntt01", "type": "simple"}
-    assert proxmox_objects[("sdn_vnet", "ntt01_vnet")]["desired_state"] == {
-        "vnet": "ntt01_vnet",
-        "zone": "lab_ntt01",
+    assert proxmox_objects[("sdn_zone", "labntt01")]["desired_state"] == {"zone": "labntt01", "type": "simple"}
+    assert proxmox_objects[("sdn_vnet", "ntt01vnet")]["desired_state"] == {
+        "vnet": "ntt01vnet",
+        "zone": "labntt01",
         "alias": "Generated Network Lab",
     }
 

@@ -189,17 +189,17 @@ function countValue(value: string): number {
 }
 
 function sdnIdPart(shortCode: string): string {
-  return shortCode.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  return shortCode.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function derivedZone(shortCode: string): string {
   const part = sdnIdPart(shortCode);
-  return part ? `lab_${part}` : "";
+  return part ? `lab${part}` : "";
 }
 
 function derivedVnet(shortCode: string): string {
   const part = sdnIdPart(shortCode);
-  return part ? `${part}_vnet` : "";
+  return part ? `${part}vnet` : "";
 }
 
 function labStatusTone(status: string | undefined): StatusTone {
@@ -577,7 +577,7 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                   aria-label="SDN zone"
                   value={draft.sdnZone}
                   onChange={(event) => { updateDraft("sdnZone", event.target.value); }}
-                  placeholder="lab_ntt01"
+                  placeholder="labntt01"
                 />
               </label>
               <label className="utility-field">
@@ -587,7 +587,7 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                   aria-label="SDN VNet"
                   value={draft.sdnVnet}
                   onChange={(event) => { updateDraft("sdnVnet", event.target.value); }}
-                  placeholder="ntt01_vnet"
+                  placeholder="ntt01vnet"
                 />
               </label>
             </div>

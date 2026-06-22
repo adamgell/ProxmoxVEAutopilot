@@ -54,7 +54,7 @@ def _lock_token_from_response(lock: Any) -> str:
     if isinstance(lock, str):
         return lock.strip()
     if isinstance(lock, dict):
-        return str(lock.get("lock") or lock.get("lock_token") or lock.get("data") or "").strip()
+        return str(lock.get("lock-token") or lock.get("lock") or lock.get("lock_token") or lock.get("token") or lock.get("data") or "").strip()
     return ""
 
 

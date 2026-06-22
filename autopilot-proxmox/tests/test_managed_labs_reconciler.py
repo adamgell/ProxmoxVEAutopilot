@@ -60,10 +60,10 @@ def test_plan_network_reconcile_uses_proxmox_safe_generated_ids_when_sdn_ids_are
     )
 
     assert result["status"] == "fixing"
-    assert result["fix_actions"][0]["request"] == {"zone": "lab_ntt01", "type": "simple"}
-    assert result["fix_actions"][1]["request"] == {"vnet": "ntt01_vnet", "zone": "lab_ntt01", "alias": "Generated Network Lab"}
+    assert result["fix_actions"][0]["request"] == {"zone": "labntt01", "type": "simple"}
+    assert result["fix_actions"][1]["request"] == {"vnet": "ntt01vnet", "zone": "labntt01", "alias": "Generated Network Lab"}
     assert result["fix_actions"][2]["request"] == {
-        "vnet": "ntt01_vnet",
+        "vnet": "ntt01vnet",
         "subnet": "10.50.20.0/24",
         "gateway": "10.50.20.1",
         "snat": True,

@@ -30,8 +30,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "LAB01-Managed",
             "network_cidr": "10.50.20.0/24",
             "gateway_ip": "10.50.20.1",
-            "sdn_zone": "lab_lab01",
-            "sdn_vnet": "lab01_vnet",
+            "sdn_zone": "lablab01",
+            "sdn_vnet": "lab01vnet",
             "desktop_count": 2,
             "server_count": 1,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -53,8 +53,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "CLD01-Managed",
             "network_cidr": "10.50.30.0/24",
             "gateway_ip": "10.50.30.1",
-            "sdn_zone": "lab_cld01",
-            "sdn_vnet": "cld01_vnet",
+            "sdn_zone": "labcld01",
+            "sdn_vnet": "cld01vnet",
             "desktop_count": 3,
             "server_count": 0,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -76,8 +76,8 @@ LAB_TEMPLATES: tuple[dict[str, Any], ...] = (
             "group_tag": "SRV01-Managed",
             "network_cidr": "10.50.40.0/24",
             "gateway_ip": "10.50.40.1",
-            "sdn_zone": "lab_srv01",
-            "sdn_vnet": "srv01_vnet",
+            "sdn_zone": "labsrv01",
+            "sdn_vnet": "srv01vnet",
             "desktop_count": 1,
             "server_count": 2,
             "naming_policy": "{lab_short}-{role}-{index}",
@@ -306,16 +306,16 @@ def _slug(value: str) -> str:
 
 
 def _proxmox_sdn_id_part(value: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9_]+", "_", value.strip().lower()).strip("_")
+    cleaned = re.sub(r"[^a-z0-9]+", "", value.strip().lower())
     return cleaned or uuid.uuid4().hex[:8]
 
 
 def proxmox_sdn_zone_id(short_code: str) -> str:
-    return f"lab_{_proxmox_sdn_id_part(short_code)}"
+    return f"lab{_proxmox_sdn_id_part(short_code)}"
 
 
 def proxmox_sdn_vnet_id(short_code: str) -> str:
-    return f"{_proxmox_sdn_id_part(short_code)}_vnet"
+    return f"{_proxmox_sdn_id_part(short_code)}vnet"
 
 
 def _json_value(value: Any) -> Any:
