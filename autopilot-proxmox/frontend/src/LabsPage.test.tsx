@@ -18,10 +18,10 @@ describe("LabsPage", () => {
   });
 
   it("renders lab state, findings, fixes, and timeline", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const path = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (path.endsWith("/api/labs/page")) {
-        return new Response(JSON.stringify({
+        return Promise.resolve(new Response(JSON.stringify({
           labs: [{ id: "lab-1", name: "NTT Lab", short_code: "ntt01", group_tag: "NTT-Lab", status: "blocked", network_cidr: "10.50.20.0/24" }],
           selected_lab: { id: "lab-1", name: "NTT Lab", short_code: "ntt01", group_tag: "NTT-Lab", status: "blocked", network_cidr: "10.50.20.0/24" },
           findings: [{ id: "finding-1", finding_type: "sdn_zone_missing", severity: "fixable", detail: "SDN zone lab-ntt01 is missing." }],
@@ -51,9 +51,9 @@ describe("LabsPage", () => {
           }],
           reservations: [],
           reconcile_runs: []
-        }), { status: 200, headers: { "content-type": "application/json" } });
+        }), { status: 200, headers: { "content-type": "application/json" } }));
       }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      return Promise.resolve(new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
     });
 
     render(<LabsPage bootstrap={bootstrap} />);
@@ -69,11 +69,11 @@ describe("LabsPage", () => {
 
   it("creates a lab with default naming and network fields", async () => {
     const calls: Array<{ url: string; body?: unknown }> = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url, body: typeof init?.body === "string" ? JSON.parse(init.body) as unknown : undefined });
       if (url.endsWith("/api/labs/page")) {
-        return new Response(JSON.stringify({
+        return Promise.resolve(new Response(JSON.stringify({
           labs: [],
           selected_lab: null,
           findings: [],
@@ -83,9 +83,9 @@ describe("LabsPage", () => {
           boundary_objects: [],
           reservations: [],
           reconcile_runs: []
-        }), { status: 200, headers: { "content-type": "application/json" } });
+        }), { status: 200, headers: { "content-type": "application/json" } }));
       }
-      return new Response(JSON.stringify({ id: "lab-1", name: "NTT Lab" }), { status: 201, headers: { "content-type": "application/json" } });
+      return Promise.resolve(new Response(JSON.stringify({ id: "lab-1", name: "NTT Lab" }), { status: 201, headers: { "content-type": "application/json" } }));
     });
 
     render(<LabsPage bootstrap={bootstrap} />);

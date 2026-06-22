@@ -54,7 +54,7 @@ interface BoundarySurfaceRow {
   readonly actual_state?: JsonRecord;
 }
 
-interface BoundaryRow extends BoundarySurfaceRow {}
+type BoundaryRow = BoundarySurfaceRow;
 
 interface BoundaryObjectRow extends BoundarySurfaceRow {
   readonly boundary_id?: string;
