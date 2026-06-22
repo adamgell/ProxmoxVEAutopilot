@@ -403,17 +403,37 @@ def reserve_value(
     value: str,
     metadata: dict | None = None,
 ) -> dict:
-    now = _now()
-    row = conn.execute(
-        """
-        INSERT INTO lab_reservations (id, lab_id, reservation_type, value, metadata_json, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (reservation_type, value) DO UPDATE
-        SET updated_at = EXCLUDED.updated_at
-        RETURNING *
-        """,
-        (_new_id(), lab_id, reservation_type, value.strip(), Jsonb(metadata or {}), now, now),
+    normalized_value = value.strip()
+    existing_row = conn.execute(
+        "SELECT * FROM lab_reservations WHERE reservation_type = %s AND value = %s",
+        (reservation_type, normalized_value),
     ).fetchone()
+    existing = _map_json_fields(existing_row, "metadata")
+    if existing is not None:
+        if existing["lab_id"] != lab_id:
+            raise ValueError(
+                f"reservation {reservation_type}:{normalized_value} is already reserved by another lab"
+            )
+        now = _now()
+        row = conn.execute(
+            """
+            UPDATE lab_reservations
+            SET updated_at = %s
+            WHERE id = %s
+            RETURNING *
+            """,
+            (now, existing["id"]),
+        ).fetchone()
+    else:
+        now = _now()
+        row = conn.execute(
+            """
+            INSERT INTO lab_reservations (id, lab_id, reservation_type, value, metadata_json, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (_new_id(), lab_id, reservation_type, normalized_value, Jsonb(metadata or {}), now, now),
+        ).fetchone()
     conn.commit()
     mapped = _map_json_fields(row, "metadata")
     assert mapped is not None
@@ -500,6 +520,15 @@ def start_reconcile_run(conn: Connection, *, lab_id: str, attempt: int) -> dict:
     return mapped
 
 
+def _lab_status_from_reconcile_status(status: str) -> str:
+    if status == "failed":
+        return "blocked"
+    if status in LAB_STATUSES:
+        return status
+    return "validating"
+
+
+
 def finish_reconcile_run(conn: Connection, *, run_id: str, status: str, summary: str = "") -> dict:
     now = _now()
     row = conn.execute(
@@ -513,6 +542,23 @@ def finish_reconcile_run(conn: Connection, *, run_id: str, status: str, summary:
     ).fetchone()
     mapped = _map_json_fields(row)
     assert mapped is not None
+    conn.execute(
+        """
+        UPDATE labs
+        SET status = %s,
+            retry_count = %s,
+            last_reconcile_run_id = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            _lab_status_from_reconcile_status(status),
+            mapped["attempt"],
+            mapped["id"],
+            now,
+            mapped["lab_id"],
+        ),
+    )
     record_event(
         conn,
         lab_id=mapped["lab_id"],
@@ -629,6 +675,15 @@ def update_fix_action(
     result: dict | None = None,
     snapshot_id: str | None = None,
 ) -> dict:
+    existing = get_fix_action(conn, fix_action_id)
+    if existing is None:
+        raise ValueError(f"fix action not found: {fix_action_id}")
+
+    terminal_statuses = {"fixed", "failed", "blocked"}
+    effective_snapshot_id = snapshot_id or existing.get("snapshot_id")
+    if status in terminal_statuses and not effective_snapshot_id:
+        raise ValueError("snapshot_id is required for terminal status")
+
     now = _now()
     row = conn.execute(
         """

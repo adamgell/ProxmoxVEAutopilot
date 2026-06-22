@@ -228,6 +228,48 @@ def test_reservations_enforce_unique_values_and_generate_safe_names(pg_conn):
     assert duplicate["value"] == "ntt01-wks-001"
 
 
+def test_reserve_value_rejects_cross_lab_hostname_collision(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    first_lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="First Lab",
+        short_code="fst01",
+        group_tag="FIRST-Lab",
+        network_cidr="10.50.30.0/24",
+    )
+    second_lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Second Lab",
+        short_code="snd01",
+        group_tag="SECOND-Lab",
+        network_cidr="10.50.31.0/24",
+    )
+
+    original = managed_labs_pg.reserve_value(
+        pg_conn,
+        lab_id=first_lab["id"],
+        reservation_type="hostname",
+        value="shared-host-01",
+    )
+    duplicate = managed_labs_pg.reserve_value(
+        pg_conn,
+        lab_id=first_lab["id"],
+        reservation_type="hostname",
+        value="shared-host-01",
+    )
+
+    assert duplicate["id"] == original["id"]
+
+    with pytest.raises(ValueError, match="already reserved by another lab"):
+        managed_labs_pg.reserve_value(
+            pg_conn,
+            lab_id=second_lab["id"],
+            reservation_type="hostname",
+            value="shared-host-01",
+        )
+
+
 def test_cidr_overlap_detection_finds_existing_lab_reservation(pg_conn):
     managed_labs_pg.reset_for_tests(pg_conn)
     managed_labs_pg.init(pg_conn)
@@ -322,3 +364,69 @@ def test_reconcile_findings_fix_actions_and_snapshots_are_queryable(pg_conn):
     assert [row["id"] for row in payload["reconcile_runs"]] == [run["id"]]
     assert [row["id"] for row in payload["findings"]] == [finding["id"]]
     assert [row["id"] for row in payload["fix_actions"]] == [fix["id"]]
+
+
+@pytest.mark.parametrize(
+    ("run_status", "expected_lab_status"),
+    [
+        ("ready", "ready"),
+        ("blocked", "blocked"),
+        ("failed", "blocked"),
+    ],
+)
+def test_finish_reconcile_run_updates_lab_current_state(pg_conn, run_status, expected_lab_status):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Current State Lab",
+        short_code="cur01",
+        group_tag="CURRENT-Lab",
+        network_cidr="10.90.10.0/24",
+    )
+
+    run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=3)
+    finished = managed_labs_pg.finish_reconcile_run(
+        pg_conn,
+        run_id=run["id"],
+        status=run_status,
+        summary=f"Run ended with {run_status}.",
+    )
+    updated_lab = managed_labs_pg.get_lab(pg_conn, lab["id"])
+
+    assert finished["status"] == run_status
+    assert updated_lab is not None
+    assert updated_lab["status"] == expected_lab_status
+    assert updated_lab["retry_count"] == 3
+    assert updated_lab["last_reconcile_run_id"] == run["id"]
+
+
+def test_update_fix_action_requires_snapshot_for_terminal_status(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Snapshot Lab",
+        short_code="snp01",
+        group_tag="SNAPSHOT-Lab",
+        network_cidr="10.90.20.0/24",
+    )
+    run = managed_labs_pg.start_reconcile_run(pg_conn, lab_id=lab["id"], attempt=1)
+    fix = managed_labs_pg.create_fix_action(
+        pg_conn,
+        lab_id=lab["id"],
+        reconcile_run_id=run["id"],
+        provider="proxmox",
+        action_type="create_sdn_zone",
+        priority=5,
+        detail="Create SDN zone after snapshot.",
+        request={"zone": "lab-snp01"},
+    )
+
+    with pytest.raises(ValueError, match="snapshot_id is required for terminal status"):
+        managed_labs_pg.update_fix_action(
+            pg_conn,
+            fix["id"],
+            status="fixed",
+            result={"ok": True},
+        )
