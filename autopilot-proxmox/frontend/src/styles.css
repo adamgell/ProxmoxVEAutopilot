@@ -774,6 +774,12 @@ h3 {
   min-width: 0;
 }
 
+.deploy-side-column {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
 .deploy-checkpoint-panel,
 .deploy-shortcut-panel {
   min-width: 0;

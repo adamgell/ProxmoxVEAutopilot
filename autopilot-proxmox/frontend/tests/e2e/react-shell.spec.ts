@@ -200,6 +200,33 @@ async function mockReadApis(page: Page) {
   await page.route("**/api/cloudosd/page", async (route) => {
     await route.fulfill({ json: cloudosdPayloadForE2e });
   });
+  await page.route("**/api/labs/page", async (route) => {
+    await route.fulfill({
+      json: {
+        labs: [
+          {
+            id: "lab-1",
+            name: "NTT Lab",
+            short_code: "ntt01",
+            group_tag: "NTT-Lab",
+            status: "ready",
+            network_cidr: "10.50.20.0/24"
+          }
+        ],
+        selected_lab: {
+          id: "lab-1",
+          name: "NTT Lab",
+          short_code: "ntt01",
+          group_tag: "NTT-Lab",
+          status: "ready",
+          network_cidr: "10.50.20.0/24"
+        },
+        findings: [],
+        fix_actions: [],
+        events: []
+      }
+    });
+  });
   await page.route("**/api/services", async (route) => {
     await route.fulfill({
       json: {
@@ -594,6 +621,9 @@ test("renders the guided Deploy journey without layout overlap", async ({ page }
   await expect(page.getByRole("navigation", { name: "Deploy outcomes" }).getByRole("link", { name: "Use existing VM Provision" })).toHaveAttribute("href", "/react/provision");
   await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "OSDCloud Desktop start" })).toHaveAttribute("href", "/react/cloudosd");
   await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
+  await expect(page.getByRole("heading", { name: "NTT Lab" })).toBeVisible();
+  await expect(page.getByText("Ready to deploy")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Labs" })).toHaveAttribute("href", "/react/labs");
   await expect(page.getByRole("link", { name: "Step 4 Verify readiness Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof." })).toHaveAttribute("href", "/react/vms");
   await expect(page.getByText("CloudOSD media promoted")).toBeVisible();
 

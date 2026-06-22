@@ -66,7 +66,7 @@ const dashboardResponses: Record<string, unknown> = {
         name: "NTT Lab",
         short_code: "ntt01",
         group_tag: "NTT-Lab",
-        status: "blocked",
+        status: "ready",
         network_cidr: "10.50.20.0/24",
         gateway_ip: "10.50.20.1",
         retry_count: 2
@@ -77,7 +77,7 @@ const dashboardResponses: Record<string, unknown> = {
       name: "NTT Lab",
       short_code: "ntt01",
       group_tag: "NTT-Lab",
-      status: "blocked",
+      status: "ready",
       network_cidr: "10.50.20.0/24",
       gateway_ip: "10.50.20.1",
       retry_count: 2
@@ -1559,6 +1559,9 @@ describe("App", () => {
     expect(screen.getByRole("navigation", { name: "Route shortcuts" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
     expect(screen.getByRole("link", { name: "OSDCloud Desktop start" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByText("NTT Lab")).toBeInTheDocument();
+    expect(screen.getByText("Ready to deploy")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Labs" })).toHaveAttribute("href", "/react/labs");
   });
 
   test("renders the jobs read-only slice from API data", async () => {

@@ -4,6 +4,7 @@ import { fetchJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import type { AppBootstrap, RunningJobsResponse, ServicesResponse } from "../contracts";
 import { usePolling } from "../hooks/usePolling";
+import { shortTypeLabel, textValue } from "../utilityModels";
 
 interface CloudosdJourneyPayload {
   readonly ready_artifacts?: readonly unknown[];
@@ -14,6 +15,24 @@ interface CloudosdJourneyPayload {
       readonly total?: number;
     };
   };
+}
+
+interface DeployLabSummary {
+  readonly id?: string;
+  readonly name?: string;
+  readonly status?: string;
+  readonly network_cidr?: string;
+  readonly group_tag?: string;
+}
+
+interface DeployLabFixAction {
+  readonly status?: string;
+}
+
+interface LabsPagePayload {
+  readonly selected_lab?: DeployLabSummary | null;
+  readonly findings?: readonly unknown[];
+  readonly fix_actions?: readonly DeployLabFixAction[];
 }
 
 interface DeployJourneyItem {
@@ -57,6 +76,12 @@ const emptyCloudosd: CloudosdJourneyPayload = {
       total: 0
     }
   }
+};
+
+const emptyLabs: LabsPagePayload = {
+  selected_lab: null,
+  findings: [],
+  fix_actions: []
 };
 
 const finishItems: readonly DeployJourneyItem[] = [
@@ -162,6 +187,51 @@ function buildCheckpoints(
   ];
 }
 
+function formatLabStatus(status: string | undefined): string {
+  const normalized = textValue(status, "needs review").trim().toLowerCase();
+  if (normalized === "ready") {
+    return "Ready to deploy";
+  }
+  return shortTypeLabel(normalized).replace(/(^|\s)\S/g, (match) => match.toUpperCase());
+}
+
+function LabReadinessPanel({ labs }: { readonly labs: LabsPagePayload }) {
+  const selectedLab = labs.selected_lab ?? null;
+  const findingCount = labs.findings?.length ?? 0;
+  const pendingFixCount = labs.fix_actions?.filter((fix) => textValue(fix.status, "").toLowerCase() === "pending").length ?? 0;
+
+  return (
+    <section className="deploy-shortcut-panel" aria-labelledby="deploy-lab-title">
+      <div className="deploy-panel-head">
+        <div>
+          <p>Selected lab</p>
+          <h2 id="deploy-lab-title">{selectedLab?.name ?? "No lab selected"}</h2>
+        </div>
+        <span>{selectedLab ? formatLabStatus(selectedLab.status) : "Create lab"}</span>
+      </div>
+      {selectedLab ? (
+        <div className="deploy-checkpoint-list">
+          <div className={`deploy-checkpoint ${findingCount > 0 ? "deploy-checkpoint--active" : "deploy-checkpoint--good"}`}>
+            <span>{textValue(selectedLab.network_cidr)}</span>
+            <strong>Network scope</strong>
+            <p>{findingCount > 0 ? `${String(findingCount)} open ${plural(findingCount, "finding")} in the lab boundary.` : "No open lab findings."}</p>
+          </div>
+          <div className={`deploy-checkpoint ${pendingFixCount > 0 ? "deploy-checkpoint--active" : "deploy-checkpoint--good"}`}>
+            <span>{textValue(selectedLab.group_tag)}</span>
+            <strong>Group tag</strong>
+            <p>{pendingFixCount > 0 ? `${String(pendingFixCount)} pending ${plural(pendingFixCount, "fix action")} for the lab.` : "No pending fix actions."}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="empty">Create or select a lab before launching managed deployments.</p>
+      )}
+      <div className="button-row">
+        <a className="utility-button utility-button--muted" href="/react/labs">Open Labs</a>
+      </div>
+    </section>
+  );
+}
+
 function FinishMenu() {
   return (
     <nav className="deploy-outcome-menu" aria-label="Deploy outcomes">
@@ -250,18 +320,21 @@ export function DeployJourneyPage({ bootstrap }: { readonly bootstrap: AppBootst
   const [services, setServices] = useState<ServicesResponse>(emptyServices);
   const [running, setRunning] = useState<RunningJobsResponse>(emptyRunning);
   const [cloudosd, setCloudosd] = useState<CloudosdJourneyPayload>(emptyCloudosd);
+  const [labs, setLabs] = useState<LabsPagePayload>(emptyLabs);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [servicesData, runningData, cloudosdData] = await Promise.all([
+      const [servicesData, runningData, cloudosdData, labsData] = await Promise.all([
         fetchJson<ServicesResponse>("/api/services"),
         fetchJson<RunningJobsResponse>("/api/jobs/running"),
-        fetchJson<CloudosdJourneyPayload>("/api/cloudosd/page")
+        fetchJson<CloudosdJourneyPayload>("/api/cloudosd/page"),
+        fetchJson<LabsPagePayload>("/api/labs/page").catch(() => emptyLabs)
       ]);
       setServices(servicesData);
       setRunning(runningData);
       setCloudosd(cloudosdData);
+      setLabs(labsData);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Deploy journey status");
@@ -317,7 +390,10 @@ export function DeployJourneyPage({ bootstrap }: { readonly bootstrap: AppBootst
 
           <div className="deploy-work-grid">
             <CheckpointsPanel checkpoints={checkpoints} serviceDetail={serviceSummary(services)} />
-            <RouteShortcutPanel />
+            <div className="deploy-side-column">
+              <LabReadinessPanel labs={labs} />
+              <RouteShortcutPanel />
+            </div>
           </div>
         </div>
       </section>
