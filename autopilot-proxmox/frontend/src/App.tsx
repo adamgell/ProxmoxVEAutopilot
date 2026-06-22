@@ -11,6 +11,7 @@ import { DeploymentRunPage } from "./pages/DeploymentRunPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HashesPage } from "./pages/HashesPage";
 import { InstallTrackingPage } from "./pages/InstallTrackingPage";
+import { LabsPage } from "./pages/LabsPage";
 import { JobDetailPage, RunDetailPage, RunsPage } from "./pages/JobAndRunsPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -64,6 +65,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/install-tracking") {
     return <InstallTrackingPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/labs") {
+    return <LabsPage bootstrap={bootstrap} />;
   }
   if (path === "/react/networks") {
     return <NetworksPage bootstrap={bootstrap} />;

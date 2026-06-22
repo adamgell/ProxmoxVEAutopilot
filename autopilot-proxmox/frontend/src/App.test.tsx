@@ -59,6 +59,58 @@ const dashboardResponses: Record<string, unknown> = {
       summary: { ready: 2, total: 3 }
     }
   },
+  "/api/labs/page": {
+    labs: [
+      {
+        id: "lab-1",
+        name: "NTT Lab",
+        short_code: "ntt01",
+        group_tag: "NTT-Lab",
+        status: "blocked",
+        network_cidr: "10.50.20.0/24",
+        gateway_ip: "10.50.20.1",
+        retry_count: 2
+      }
+    ],
+    selected_lab: {
+      id: "lab-1",
+      name: "NTT Lab",
+      short_code: "ntt01",
+      group_tag: "NTT-Lab",
+      status: "blocked",
+      network_cidr: "10.50.20.0/24",
+      gateway_ip: "10.50.20.1",
+      retry_count: 2
+    },
+    findings: [
+      {
+        id: "finding-1",
+        finding_type: "sdn_zone_missing",
+        severity: "fixable",
+        detail: "SDN zone lab-ntt01 is missing."
+      }
+    ],
+    fix_actions: [
+      {
+        id: "fix-1",
+        action_type: "create_sdn_zone",
+        status: "pending",
+        detail: "Create SDN zone lab-ntt01."
+      }
+    ],
+    events: [
+      {
+        id: "event-1",
+        event_type: "lab_created",
+        detail: "Created lab NTT Lab",
+        created_at: "2026-06-21T00:00:00Z"
+      }
+    ],
+    boundaries: [],
+    boundary_objects: [],
+    reservations: [],
+    reconcile_runs: []
+  },
   "/api/jobs/recent?limit=5": {
     jobs: [
       {
@@ -750,6 +802,7 @@ describe("App", () => {
     const buildRoutes = within(routeMap).getByRole("group", { name: "Build" });
     const fleetRoutes = within(routeMap).getByRole("group", { name: "Fleet" });
     const settingsRoutes = within(routeMap).getByRole("group", { name: "Settings" });
+    expect(within(deployRoutes).getByRole("link", { name: "Labs operational" })).toHaveAttribute("href", "/react/labs");
     expect(within(deployRoutes).getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
     expect(within(buildRoutes).getByRole("link", { name: "Sequence Library operational" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
     expect(within(buildRoutes).getByRole("link", { name: "New Sequence operational" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
@@ -798,6 +851,7 @@ describe("App", () => {
     "/react/devices",
     "/react/hashes",
     "/react/files",
+    "/react/labs",
     "/react/settings",
     "/react/credentials",
     "/react/credentials/new",
@@ -817,6 +871,7 @@ describe("App", () => {
     ["/react/legacy-vms", "Classic VM Table", "WRKGRP-525570B6"],
     ["/react/hashes", "Hashes", "ACME-101_hwid.csv"],
     ["/react/files", "Files", "AutopilotAgent.msi"],
+    ["/react/labs", "Labs", "Create managed lab"],
     ["/react/settings", "Settings", "Proxmox bootstrap"],
     ["/react/credentials", "Credentials", "ACME Domain Join"],
     ["/react/credentials/new", "New Credential", "Create credential"],

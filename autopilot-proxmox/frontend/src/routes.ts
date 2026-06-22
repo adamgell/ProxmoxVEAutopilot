@@ -43,6 +43,7 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
     label: "Deploy",
     items: [
       { path: "/react/deploy", label: "Deploy Path", group: "Deploy", phase: "foundation", active: true },
+      { path: "/react/labs", label: "Labs", group: "Deploy", phase: "operational", active: true },
       { path: "/react/cloudosd", label: "OSDCloud Desktop", group: "Deploy", phase: "operational", active: true },
       {
         path: "/react/cloudosd/runs/:runId",

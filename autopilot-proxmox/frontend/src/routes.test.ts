@@ -29,6 +29,7 @@ describe("operator route registry", () => {
         "/react/runs/:runId",
         "/react/networks",
         "/react/deploy",
+        "/react/labs",
         "/react/provision",
         "/react/cloudosd",
         "/react/cloudosd/runs/:runId",
@@ -74,6 +75,7 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
     expect(reactRouteForPath("/react/settings")?.label).toBe("General");
     expect(reactRouteForPath("/react/deploy")?.label).toBe("Deploy Path");
+    expect(reactRouteForPath("/react/labs")?.label).toBe("Labs");
     expect(reactRouteForPath("/react/cloudosd")?.label).toBe("OSDCloud Desktop");
     expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Sequences");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
@@ -216,12 +218,14 @@ describe("operator route registry", () => {
       ])
     );
     expect(routeSearchTargets.find((route) => route.path === "/react/jobs/:jobId")?.label).toBe("Job Detail");
+    expect(routeSearchTargets.find((route) => route.path === "/react/labs")?.label).toBe("Labs");
   });
 
   test("maps the active path to the correct outcome mode", () => {
     expect(modeForPath("/react-shell")).toBe("home");
     expect(operatorModes.find((mode) => mode.id === "deploy")?.href).toBe("/react/deploy");
     expect(modeForPath("/react/deploy")).toBe("deploy");
+    expect(modeForPath("/react/labs")).toBe("deploy");
     expect(modeForPath("/react/cloudosd")).toBe("deploy");
     expect(modeForPath("/react/cloudosd/runs/run-1")).toBe("deploy");
     expect(modeForPath("/react/task-engine/sequences/list")).toBe("build");
