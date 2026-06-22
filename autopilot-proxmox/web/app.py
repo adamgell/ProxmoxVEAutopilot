@@ -618,6 +618,7 @@ from web.osd_v2_endpoints import (
 from web.agent_v1_endpoints import router as _agent_v1_router
 from web.cloudosd_endpoints import router as _cloudosd_router
 from web.sdn_endpoints import router as _sdn_router
+from web.managed_labs_endpoints import router as _managed_labs_router
 try:
     from web.osdeploy_endpoints import router as _osdeploy_router
 except ModuleNotFoundError:
@@ -632,6 +633,7 @@ app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
 app.include_router(_cloudosd_router)
 app.include_router(_sdn_router)
+app.include_router(_managed_labs_router)
 if _osdeploy_router is not None:
     app.include_router(_osdeploy_router)
 
@@ -2166,6 +2168,7 @@ def _init_app_database() -> None:
         devices_pg,
         lab_bubbles_pg,
         machine_lifecycle_pg,
+        managed_labs_pg,
         osdeploy_cache,
         osdeploy_pg,
         sdn_labs_pg,
@@ -2185,6 +2188,7 @@ def _init_app_database() -> None:
         deployment_health_pg.init(conn)
         lab_bubbles_pg.init(conn)
         sdn_labs_pg.init(conn)
+        managed_labs_pg.init(conn)
 
 
 class _BubbleCreate(BaseModel):
