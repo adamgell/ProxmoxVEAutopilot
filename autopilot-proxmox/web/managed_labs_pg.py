@@ -375,6 +375,15 @@ def get_lab(conn: Connection, lab_id: str) -> dict | None:
     return _map_json_fields(row, "desired_state")
 
 
+def delete_lab(conn: Connection, lab_id: str) -> bool:
+    row = conn.execute(
+        "DELETE FROM labs WHERE id = %s RETURNING id",
+        (lab_id,),
+    ).fetchone()
+    conn.commit()
+    return row is not None
+
+
 def list_labs(conn: Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM labs ORDER BY created_at DESC, name ASC").fetchall()
     return [mapped for row in rows if (mapped := _map_json_fields(row, "desired_state")) is not None]

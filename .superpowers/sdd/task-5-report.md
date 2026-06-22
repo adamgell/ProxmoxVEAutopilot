@@ -108,3 +108,61 @@ Observed result:
 
 ### Concern
 - `POST /api/labs` can still leave a partially-created lab behind if a reservation step fails after `managed_labs_pg.create_lab()` commits. Fixing that cleanly appears to require either changing `create_lab()` transaction behavior or adding deletion/cleanup support outside the requested file scope, so I did not widen into it here.
+
+## Task 5 Fix Implementer Follow-up (2026-06-22)
+
+### Scope handled
+- Added a regression test that forces `POST /api/labs` to fail after `managed_labs_pg.create_lab()` commits but before CIDR reservation completes.
+- Added `managed_labs_pg.delete_lab(conn, lab_id)` as a narrow cleanup helper that relies on existing `ON DELETE CASCADE` relationships.
+- Updated `web/managed_labs_endpoints.py` so reservation failures during `POST /api/labs` delete the just-created lab before returning an HTTP failure.
+
+### Root cause
+- `managed_labs_pg.create_lab()` commits the lab row and initial event immediately.
+- `POST /api/labs` then reserves `group_tag` and `cidr` in separate calls.
+- If a later reservation raises, the API failed after durable state had already been made visible through `/api/labs/page`.
+
+### TDD evidence
+#### RED
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_endpoints.py -q
+```
+Observed failure:
+```text
+FAILED tests/test_managed_labs_endpoints.py::test_create_lab_rolls_back_visible_state_when_reservation_fails
+E   ValueError: cidr reservation exploded
+```
+Meaning:
+- The test forced the second reservation to fail.
+- The router propagated the exception without cleanup, proving the create flow was not atomic.
+
+#### GREEN
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_endpoints.py -q
+```
+Observed result:
+```text
+6 passed, 7 warnings in 2.14s
+```
+Meaning:
+- The new regression passed.
+- `/api/labs/page` remained empty after the forced reservation failure.
+
+### Regression coverage
+Command:
+```bash
+python3 -m pytest tests/test_managed_labs_pg.py tests/test_managed_labs_reconciler.py tests/test_managed_labs_network.py tests/test_managed_labs_endpoints.py -q
+```
+Observed result:
+```text
+31 passed, 7 warnings in 3.81s
+```
+
+### Files changed
+- `autopilot-proxmox/web/managed_labs_pg.py`
+- `autopilot-proxmox/web/managed_labs_endpoints.py`
+- `autopilot-proxmox/tests/test_managed_labs_endpoints.py`
+
+### Concerns
+- The router now cleans up durable state after reservation failures, but `create_lab()` still commits before the reservation phase begins. This follow-up keeps scope narrow by compensating in the router rather than refactoring the transaction boundaries across existing helpers.

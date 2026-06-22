@@ -98,8 +98,12 @@ def create_lab(body: LabCreateBody):
             sdn_vnet=body.sdn_vnet,
             sdn_subnet=body.sdn_subnet,
         )
-        managed_labs_pg.reserve_value(conn, lab_id=lab["id"], reservation_type="group_tag", value=lab["group_tag"])
-        managed_labs_pg.reserve_value(conn, lab_id=lab["id"], reservation_type="cidr", value=lab["network_cidr"])
+        try:
+            managed_labs_pg.reserve_value(conn, lab_id=lab["id"], reservation_type="group_tag", value=lab["group_tag"])
+            managed_labs_pg.reserve_value(conn, lab_id=lab["id"], reservation_type="cidr", value=lab["network_cidr"])
+        except Exception as exc:
+            managed_labs_pg.delete_lab(conn, lab["id"])
+            raise HTTPException(status_code=500, detail="managed lab create failed") from exc
         return lab
 
 

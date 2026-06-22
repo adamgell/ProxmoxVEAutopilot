@@ -82,6 +82,52 @@ def test_create_lab_then_reconcile_plans_sdn_fixes(monkeypatch, pg_dsn):
     ]
 
 
+def test_create_lab_rolls_back_visible_state_when_reservation_fails(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+    from web import managed_labs_pg
+
+    _init_managed_labs_db(pg_dsn)
+
+    original_reserve_value = managed_labs_pg.reserve_value
+    reservation_calls = []
+
+    def fail_on_cidr(conn, *, lab_id, reservation_type, value, metadata=None):
+        reservation_calls.append((reservation_type, value))
+        if reservation_type == "cidr":
+            raise ValueError("cidr reservation exploded")
+        return original_reserve_value(
+            conn,
+            lab_id=lab_id,
+            reservation_type=reservation_type,
+            value=value,
+            metadata=metadata,
+        )
+
+    monkeypatch.setattr(managed_labs_pg, "reserve_value", fail_on_cidr)
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/labs",
+        json={
+            "name": "Rollback Lab",
+            "short_code": "rbk01",
+            "group_tag": "RBK-Lab",
+            "network_cidr": "10.50.22.0/24",
+            "gateway_ip": "10.50.22.1",
+            "sdn_zone": "lab-rbk01",
+            "sdn_vnet": "rbk01-vnet",
+        },
+    )
+
+    assert response.status_code == 500
+    assert reservation_calls == [("group_tag", "RBK-Lab"), ("cidr", "10.50.22.0/24")]
+
+    page = client.get("/api/labs/page")
+    assert page.status_code == 200
+    assert page.json()["labs"] == []
+
+
 def test_fix_endpoints_delegate_to_managed_labs_network(monkeypatch, pg_dsn):
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
     from web import app as web_app
