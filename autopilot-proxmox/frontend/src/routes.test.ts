@@ -175,6 +175,7 @@ describe("operator route registry", () => {
   test("defines quick routes for repeated operator jumps", () => {
     expect(operatorQuickRoutes.map((route) => [route.label, route.href, route.mode])).toEqual([
       ["Jobs", "/react/jobs", "home"],
+      ["Labs", "/react/labs", "deploy"],
       ["VMs", "/react/vms", "fleet"],
       ["Hashes", "/react/hashes", "fleet"],
       ["Runs", "/react/runs", "home"]

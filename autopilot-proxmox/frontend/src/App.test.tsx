@@ -796,6 +796,8 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
     expect(screen.getByRole("link", { name: "Open signals" })).toHaveAttribute("href", "/react/monitoring");
     expect(screen.getByRole("link", { name: "Open networks" })).toHaveAttribute("href", "/react/networks");
+    expect(screen.getByRole("link", { name: "Create managed lab Labs" })).toHaveAttribute("href", "/react/labs");
+    expect(screen.getByRole("link", { name: "Labs Create managed lab from a template" })).toHaveAttribute("href", "/react/labs");
     expect(screen.getByRole("link", { name: "Hashes Capture and upload hardware identity" })).toHaveAttribute("href", "/react/hashes");
     const routeMap = screen.getByRole("navigation", { name: "Route map" });
     const deployRoutes = within(routeMap).getByRole("group", { name: "Deploy" });

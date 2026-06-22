@@ -17,6 +17,7 @@ export function ShellIndexPage({ bootstrap }: { readonly bootstrap: AppBootstrap
         <aside className="suggested-next" aria-label="Suggested next step">
           <h2>Suggested next step</h2>
           <a href="/react/deploy"><span>Open guided Deploy path</span><strong>Deploy</strong></a>
+          <a href="/react/labs" aria-label="Create managed lab Labs"><span>Create managed lab</span><strong>Labs</strong></a>
           <a href="/react/networks"><span>Check lab network scope</span><strong>Infra</strong></a>
           <a href="/react/vms"><span>Check VM evidence</span><strong>Watch</strong></a>
         </aside>

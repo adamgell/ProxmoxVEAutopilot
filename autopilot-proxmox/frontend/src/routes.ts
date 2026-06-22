@@ -269,6 +269,7 @@ export const operatorOutcomes: readonly OperatorOutcome[] = [
 
 export const operatorQuickRoutes: readonly OperatorQuickRoute[] = [
   { label: "Jobs", href: "/react/jobs", summary: "Live output and pause gates", mode: "home" },
+  { label: "Labs", href: "/react/labs", summary: "Create managed lab from a template", mode: "deploy" },
   { label: "VMs", href: "/react/vms", summary: "Console, agent, and power actions", mode: "fleet" },
   { label: "Hashes", href: "/react/hashes", summary: "Capture and upload hardware identity", mode: "fleet" },
   { label: "Runs", href: "/react/runs", summary: "Deployment timeline and history", mode: "home" }
