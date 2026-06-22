@@ -230,18 +230,21 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"bad" | "neutral">("neutral");
   const [busyAction, setBusyAction] = useState<"create" | "reconcile" | "fixes" | null>(null);
+  const [selectedLabId, setSelectedLabId] = useState(() => new URLSearchParams(window.location.search).get("selected_lab_id") ?? "");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (labId = selectedLabId) => {
     try {
-      const next = normalizePayload(await fetchJson<LabsPayload>("/api/labs/page"));
+      const url = labId ? `/api/labs/page?selected_lab_id=${encodeURIComponent(labId)}` : "/api/labs/page";
+      const next = normalizePayload(await fetchJson<LabsPayload>(url));
       setPayload(next);
+      setSelectedLabId(textValue(next.selected_lab?.id, labId));
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load labs page");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedLabId]);
 
   usePolling(load);
 
@@ -316,6 +319,17 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     }
   }
 
+  async function selectLab(lab: LabRow) {
+    const labId = textValue(lab.id, "").trim();
+    if (!labId || labId === selectedLabId) {
+      return;
+    }
+    setSelectedLabId(labId);
+    window.history.replaceState(null, "", `${window.location.pathname}?selected_lab_id=${encodeURIComponent(labId)}`);
+    setLoading(true);
+    await load(labId);
+  }
+
   return (
     <PageFrame bootstrap={bootstrap} title="Labs" section="Deploy" path="/react/labs">
       {loading ? (
@@ -387,19 +401,30 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <Panel title="Lab roster">
           {payload.labs.length ? (
             <ul className="labs-roster" aria-label="Managed labs roster">
-              {payload.labs.map((lab) => (
-                <li key={textValue(lab.id, textValue(lab.name))}>
-                  <div className="labs-row__head">
-                    <strong>{textValue(lab.name)}</strong>
-                    <span className={toneClass(labStatusTone(lab.status))}>{labStatusLabel(lab.status)}</span>
-                  </div>
-                  <div className="labs-roster__detail">
-                    <code>{textValue(lab.short_code)}</code>
-                    <span>{textValue(lab.network_cidr)}</span>
-                    <span>{textValue(lab.group_tag)}</span>
-                  </div>
-                </li>
-              ))}
+              {payload.labs.map((lab) => {
+                const isSelected = selected?.id === lab.id;
+                return (
+                  <li key={textValue(lab.id, textValue(lab.name))}>
+                    <button
+                      className="labs-roster__button"
+                      type="button"
+                      aria-current={isSelected ? "true" : undefined}
+                      aria-label={`Select ${textValue(lab.name, "lab")}`}
+                      onClick={() => { void selectLab(lab); }}
+                    >
+                      <div className="labs-row__head">
+                        <strong>{textValue(lab.name)}</strong>
+                        <span className={toneClass(labStatusTone(lab.status))}>{labStatusLabel(lab.status)}</span>
+                      </div>
+                      <div className="labs-roster__detail">
+                        <code>{textValue(lab.short_code)}</code>
+                        <span>{textValue(lab.network_cidr)}</span>
+                        <span>{textValue(lab.group_tag)}</span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="empty">No managed labs yet.</p>

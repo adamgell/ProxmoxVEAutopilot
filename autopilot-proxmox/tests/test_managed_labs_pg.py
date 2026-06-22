@@ -36,6 +36,56 @@ def test_create_lab_persists_current_state_and_initial_event(pg_conn):
     assert payload["selected_lab"]["id"] == lab["id"]
     assert payload["labs"][0]["name"] == "NTTENANT01 Lab"
     assert payload["events"][0]["event_type"] == "lab_created"
+    assert any(row["provider"] == "proxmox" for row in payload["boundaries"])
+    assert {
+        row["kind"]
+        for row in payload["boundary_objects"]
+        if row["provider"] == "proxmox"
+    } >= {"sdn_zone", "sdn_vnet", "sdn_subnet"}
+
+
+def test_create_lab_seeds_default_boundary_model(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+
+    lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Managed Lab",
+        short_code="mlb01",
+        group_tag="Managed-Lab",
+        network_cidr="10.52.20.0/24",
+        gateway_ip="10.52.20.1",
+        sdn_zone="lab-mlb01",
+        sdn_vnet="mlb01-vnet",
+        sdn_subnet="10.52.20.0/24",
+    )
+
+    payload = managed_labs_pg.page_payload(pg_conn, selected_lab_id=lab["id"])
+
+    boundary_keys = {(row["provider"], row["kind"]) for row in payload["boundaries"]}
+    assert ("proxmox", "network") in boundary_keys
+    assert ("ad", "directory") in boundary_keys
+    assert ("entra", "identity") in boundary_keys
+    assert ("intune", "endpoint_management") in boundary_keys
+    assert ("deployment", "naming") in boundary_keys
+    proxmox_objects = {
+        (row["kind"], row["name"]): row
+        for row in payload["boundary_objects"]
+        if row["provider"] == "proxmox"
+    }
+    assert proxmox_objects[("sdn_zone", "lab-mlb01")]["desired_state"] == {"zone": "lab-mlb01", "type": "simple"}
+    assert proxmox_objects[("sdn_vnet", "mlb01-vnet")]["desired_state"] == {
+        "vnet": "mlb01-vnet",
+        "zone": "lab-mlb01",
+        "alias": "Managed Lab",
+    }
+    assert proxmox_objects[("sdn_subnet", "10.52.20.0/24")]["desired_state"] == {
+        "vnet": "mlb01-vnet",
+        "subnet": "10.52.20.0/24",
+        "gateway": "10.52.20.1",
+        "snat": True,
+    }
+    assert all(row["actual_state"] == {} for row in payload["boundary_objects"])
 
 
 def test_boundary_objects_track_provider_ids_desired_and_actual_state(pg_conn):
@@ -124,8 +174,8 @@ def test_page_payload_returns_current_state_and_append_only_events(pg_conn):
 
     assert payload["selected_lab"]["short_code"] == "plt01"
     assert [event["event_type"] for event in payload["events"]] == ["manual_note", "lab_created"]
-    assert [item["id"] for item in payload["boundaries"]] == [boundary["id"]]
-    assert [item["id"] for item in payload["boundary_objects"]] == [boundary_object["id"]]
+    assert boundary["id"] in [item["id"] for item in payload["boundaries"]]
+    assert boundary_object["id"] in [item["id"] for item in payload["boundary_objects"]]
     assert payload["findings"] == []
     assert payload["fix_actions"] == []
     assert payload["reconcile_runs"] == []
@@ -363,7 +413,7 @@ def test_reconcile_findings_fix_actions_and_snapshots_are_queryable(pg_conn):
     assert payload["selected_lab"]["last_reconcile_run_id"] == run["id"]
     assert [row["id"] for row in payload["reconcile_runs"]] == [run["id"]]
     assert [row["id"] for row in payload["findings"]] == [finding["id"]]
-    assert [row["id"] for row in payload["fix_actions"]] == [fix["id"]]
+    assert payload["fix_actions"] == []
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -81,6 +82,118 @@ def test_create_lab_then_reconcile_plans_sdn_fixes(monkeypatch, pg_dsn):
         "apply_sdn",
     ]
 
+
+def test_create_lab_page_includes_seeded_boundary_state(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+
+    _init_managed_labs_db(pg_dsn)
+
+    client = TestClient(web_app.app)
+    created = _create_lab(client)
+
+    page = client.get(f"/api/labs/page?selected_lab_id={created['id']}")
+
+    assert page.status_code == 200
+    payload = page.json()
+    assert payload["boundaries"]
+    assert payload["boundary_objects"]
+    assert {row["provider"] for row in payload["boundaries"]} >= {"proxmox", "ad", "entra", "intune", "deployment"}
+    assert {row["kind"] for row in payload["boundary_objects"] if row["provider"] == "proxmox"} >= {
+        "sdn_zone",
+        "sdn_vnet",
+        "sdn_subnet",
+    }
+
+
+def test_create_lab_rejects_invalid_network_inputs(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+
+    _init_managed_labs_db(pg_dsn)
+
+    client = TestClient(web_app.app)
+    invalid_cidr = client.post(
+        "/api/labs",
+        json={
+            "name": "Bad CIDR Lab",
+            "short_code": "bad01",
+            "group_tag": "BAD-Lab",
+            "network_cidr": "10.50.300.0/24",
+            "gateway_ip": "10.50.20.1",
+        },
+    )
+    invalid_gateway = client.post(
+        "/api/labs",
+        json={
+            "name": "Bad Gateway Lab",
+            "short_code": "bad02",
+            "group_tag": "BAD-Gateway",
+            "network_cidr": "10.50.20.0/24",
+            "gateway_ip": "not-an-ip",
+        },
+    )
+
+    assert invalid_cidr.status_code == 422
+    assert "network_cidr" in str(invalid_cidr.json()["detail"])
+    assert invalid_gateway.status_code == 422
+    assert "gateway_ip" in str(invalid_gateway.json()["detail"])
+
+
+
+
+def test_create_lab_populates_boundary_current_state(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+
+    _init_managed_labs_db(pg_dsn)
+    monkeypatch.setattr(web_app, "_proxmox_api", lambda path, method="GET", data=None, files=None: [])
+
+    client = TestClient(web_app.app)
+    created = _create_lab(client)
+    response = client.get(f"/api/labs/page?selected_lab_id={created['id']}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["boundaries"]
+    assert payload["boundary_objects"]
+    assert any(row["provider"] == "proxmox" for row in payload["boundaries"])
+    assert {
+        row["kind"]
+        for row in payload["boundary_objects"]
+        if row["provider"] == "proxmox"
+    } >= {"sdn_zone", "sdn_vnet", "sdn_subnet"}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "detail_snippet"),
+    [
+        ("network_cidr", "10.50.20.999/24", "network_cidr"),
+        ("gateway_ip", "10.50.20.999", "gateway_ip"),
+    ],
+)
+def test_create_lab_rejects_malformed_network_inputs(monkeypatch, pg_dsn, field, value, detail_snippet):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+
+    _init_managed_labs_db(pg_dsn)
+
+    client = TestClient(web_app.app)
+    payload = {
+        "name": "Bad Lab",
+        "short_code": "bad01",
+        "group_tag": "BAD-Lab",
+        "network_cidr": "10.50.20.0/24",
+        "gateway_ip": "10.50.20.1",
+        "sdn_zone": "lab-bad01",
+        "sdn_vnet": "bad01-vnet",
+    }
+    payload[field] = value
+
+    response = client.post("/api/labs", json=payload)
+
+    assert response.status_code == 422
+    assert detail_snippet in response.text
 
 def test_create_lab_rolls_back_visible_state_when_database_reservation_fails(monkeypatch, pg_dsn):
     monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)

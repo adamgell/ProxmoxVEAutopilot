@@ -14,12 +14,25 @@ SUPPORTED_ACTIONS = {
     "apply_sdn",
 }
 
+ACTION_FINDING_TYPES = {
+    "create_sdn_zone": "sdn_zone_missing",
+    "create_sdn_vnet": "sdn_vnet_missing",
+    "create_sdn_subnet": "sdn_subnet_missing",
+}
+
 
 def _get_fix(conn: Connection, fix_action_id: str) -> dict[str, Any]:
     row = managed_labs_pg.get_fix_action(conn, fix_action_id)
     if row is None:
         raise ValueError(f"fix action not found: {fix_action_id}")
     return row
+
+
+def _get_lab(conn: Connection, lab_id: str) -> dict[str, Any]:
+    lab = managed_labs_pg.get_lab(conn, lab_id)
+    if lab is None:
+        raise ValueError(f"lab not found: {lab_id}")
+    return lab
 
 
 def _ids(rows: list[dict[str, Any]] | tuple[dict[str, Any], ...], *keys: str) -> set[str]:
@@ -115,18 +128,137 @@ def _existing_create_result(
     return None
 
 
+def _verification_rows(action_type: str, request: dict[str, Any], inventory: dict[str, Any], lab: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    if action_type == "create_sdn_zone":
+        zone = str(request.get("zone") or "").strip()
+        row = next((item for item in inventory.get("zones", []) if str(item.get("zone") or item.get("id") or "").strip() == zone), {})
+        return bool(row), {"observed": bool(row), "zone": row or {"zone": zone}}
+    if action_type == "create_sdn_vnet":
+        vnet = str(request.get("vnet") or "").strip()
+        row = next((item for item in inventory.get("vnets", []) if str(item.get("vnet") or item.get("id") or "").strip() == vnet), {})
+        return bool(row), {"observed": bool(row), "vnet": row or {"vnet": vnet}}
+    if action_type == "create_sdn_subnet":
+        vnet = str(request.get("vnet") or "").strip()
+        subnet = str(request.get("subnet") or "").strip()
+        row = next(
+            (
+                item
+                for item in (inventory.get("subnets_by_vnet", {}) or {}).get(vnet, [])
+                if str(item.get("subnet") or item.get("id") or "").strip() == subnet
+            ),
+            {},
+        )
+        return bool(row), {"observed": bool(row), "subnet": row or {"vnet": vnet, "subnet": subnet}}
+    if action_type == "apply_sdn":
+        return True, {
+            "observed": True,
+            "inventory_counts": {
+                "zones": len(inventory.get("zones", []) or []),
+                "vnets": len(inventory.get("vnets", []) or []),
+                "subnet_vnets": len((inventory.get("subnets_by_vnet") or {}).keys()),
+            },
+        }
+
+    zone = str(lab.get("sdn_zone") or f"lab-{lab['short_code']}").strip()
+    vnet = str(lab.get("sdn_vnet") or f"{lab['short_code']}-vnet").strip()
+    subnet = str(lab.get("sdn_subnet") or lab["network_cidr"]).strip()
+    zone_row = next((item for item in inventory.get("zones", []) if str(item.get("zone") or item.get("id") or "").strip() == zone), {})
+    vnet_row = next((item for item in inventory.get("vnets", []) if str(item.get("vnet") or item.get("id") or "").strip() == vnet), {})
+    subnet_row = next(
+        (
+            item
+            for item in (inventory.get("subnets_by_vnet", {}) or {}).get(vnet, [])
+            if str(item.get("subnet") or item.get("id") or "").strip() == subnet
+        ),
+        {},
+    )
+    observed = bool(zone_row and vnet_row and subnet_row)
+    return observed, {
+        "observed": observed,
+        "zone": zone_row or {"zone": zone},
+        "vnet": vnet_row or {"vnet": vnet},
+        "subnet": subnet_row or {"subnet": subnet, "vnet": vnet},
+    }
+
+
+def _sync_boundary_state(conn: Connection, *, lab: dict[str, Any], inventory: dict[str, Any], status: str) -> None:
+    managed_labs_pg.sync_lab_network_current_state(conn, lab=lab, inventory=inventory, status=status, commit=False)
+
+
+def _record_verification_event(
+    conn: Connection,
+    *,
+    lab_id: str,
+    fix_action_id: str,
+    action_type: str,
+    observed: bool,
+    verification: dict[str, Any],
+) -> None:
+    managed_labs_pg.record_event(
+        conn,
+        lab_id=lab_id,
+        event_type="fix_action_verified",
+        actor="reconciler",
+        detail=f"Verification {'passed' if observed else 'failed'} for {action_type}.",
+        payload={
+            "fix_action_id": fix_action_id,
+            "action_type": action_type,
+            "observed": observed,
+            "verification": verification,
+        },
+        commit=False,
+    )
+
+
+def _record_verification_failure_finding(
+    conn: Connection,
+    *,
+    lab_id: str,
+    reconcile_run_id: str | None,
+    action_type: str,
+    request: dict[str, Any],
+    verification: dict[str, Any],
+) -> None:
+    managed_labs_pg.record_finding(
+        conn,
+        lab_id=lab_id,
+        reconcile_run_id=reconcile_run_id,
+        provider="proxmox",
+        finding_type=f"{action_type}_verification_failed",
+        severity="blocked",
+        detail=f"Verification did not observe the expected object after {action_type}.",
+        object_ref=request,
+        actual_state=verification,
+        commit=False,
+    )
+
+
 def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put, pve_delete) -> dict:
     fix = _get_fix(conn, fix_action_id)
     lab_id, action_type, request = _validate_fix_scope(fix)
+    lab = _get_lab(conn, lab_id)
     snapshot = _record_snapshot(conn, lab_id=lab_id, action_type=action_type, pve_api=pve_api)
     inventory = dict(snapshot.get("snapshot") or {})
     existing = _existing_create_result(action_type, request, inventory)
     if existing is not None:
+        observed, verification = _verification_rows(action_type, request, inventory, lab)
+        _sync_boundary_state(conn, lab=lab, inventory=inventory, status="fixing")
+        _record_verification_event(
+            conn,
+            lab_id=lab_id,
+            fix_action_id=fix_action_id,
+            action_type=action_type,
+            observed=observed,
+            verification=verification,
+        )
+        finding_type = ACTION_FINDING_TYPES.get(action_type)
+        if finding_type:
+            managed_labs_pg.resolve_open_finding(conn, lab_id=lab_id, provider="proxmox", finding_type=finding_type, commit=False)
         return managed_labs_pg.update_fix_action(
             conn,
             fix_action_id,
             status="fixed",
-            result={"ok": True, **existing},
+            result={"ok": True, **existing, "verification": verification},
             snapshot_id=snapshot["id"],
         )
 
@@ -135,15 +267,15 @@ def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put
 
     try:
         if action_type == "create_sdn_zone":
-            result = proxmox_sdn.create_zone(pve_api, request)
+            mutation_result = proxmox_sdn.create_zone(pve_api, request)
         elif action_type == "create_sdn_vnet":
-            result = proxmox_sdn.create_vnet(pve_api, request)
+            mutation_result = proxmox_sdn.create_vnet(pve_api, request)
         elif action_type == "create_sdn_subnet":
             vnet = str(request.get("vnet") or "").strip()
             if not vnet:
                 raise ValueError("create_sdn_subnet requires vnet")
             body = {key: value for key, value in request.items() if key != "vnet"}
-            result = proxmox_sdn.create_subnet(pve_api, vnet, body)
+            mutation_result = proxmox_sdn.create_subnet(pve_api, vnet, body)
         else:
             lock = proxmox_sdn.acquire_lock(pve_api, allow_pending=bool(request.get("allow_pending", True)))
             lock_token = str(
@@ -151,9 +283,10 @@ def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put
             ).strip()
             if not lock_token:
                 raise ValueError("failed to acquire SDN lock token")
-            result = proxmox_sdn.apply_sdn(pve_put, lock_token, release_lock=False)
+            mutation_result = proxmox_sdn.apply_sdn(pve_put, lock_token, release_lock=False)
             proxmox_sdn.release_lock(pve_delete, lock_token, force=False)
             released = True
+        post_inventory = proxmox_sdn.inventory(pve_api)
     except Exception as exc:
         if lock_token and not released:
             try:
@@ -168,11 +301,48 @@ def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put
             snapshot_id=snapshot["id"],
         )
 
+    observed, verification = _verification_rows(action_type, request, post_inventory, lab)
+    _sync_boundary_state(conn, lab=lab, inventory=post_inventory, status="ready" if action_type == "apply_sdn" and observed else "fixing")
+    _record_verification_event(
+        conn,
+        lab_id=lab_id,
+        fix_action_id=fix_action_id,
+        action_type=action_type,
+        observed=observed,
+        verification=verification,
+    )
+
+    if not observed:
+        _record_verification_failure_finding(
+            conn,
+            lab_id=lab_id,
+            reconcile_run_id=fix.get("reconcile_run_id"),
+            action_type=action_type,
+            request=request,
+            verification=verification,
+        )
+        return managed_labs_pg.update_fix_action(
+            conn,
+            fix_action_id,
+            status="failed",
+            result={
+                "ok": False,
+                "error": f"verification did not observe the expected object after {action_type}",
+                "result": mutation_result,
+                "verification": verification,
+            },
+            snapshot_id=snapshot["id"],
+        )
+
+    finding_type = ACTION_FINDING_TYPES.get(action_type)
+    if finding_type:
+        managed_labs_pg.resolve_open_finding(conn, lab_id=lab_id, provider="proxmox", finding_type=finding_type, commit=False)
+
     return managed_labs_pg.update_fix_action(
         conn,
         fix_action_id,
         status="fixed",
-        result={"ok": True, "result": result},
+        result={"ok": True, "result": mutation_result, "verification": verification},
         snapshot_id=snapshot["id"],
     )
 

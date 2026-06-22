@@ -5047,7 +5047,11 @@ h3 {
   list-style: none;
 }
 
-.labs-roster li,
+.labs-roster li {
+  min-width: 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
 .lab-state-row {
   display: grid;
   gap: 8px;
@@ -5056,15 +5060,46 @@ h3 {
   border-bottom: 1px solid var(--line-soft);
 }
 
-.labs-roster li:first-child,
+.labs-roster li:last-child,
+.lab-state-row:last-child {
+  border-bottom: 0;
+}
+
+.labs-roster li:first-child .labs-roster__button,
 .lab-state-row:first-child {
   padding-top: 0;
 }
 
-.labs-roster li:last-child,
+.labs-roster li:last-child .labs-roster__button,
 .lab-state-row:last-child {
   padding-bottom: 0;
-  border-bottom: 0;
+}
+
+.labs-roster__button {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.labs-roster__button:hover,
+.labs-roster__button:focus-visible,
+.labs-roster__button[aria-current="true"] {
+  margin-inline: -8px;
+  padding-inline: 8px;
+  border-radius: 6px;
+  background: rgba(96, 165, 250, 0.10);
+  outline: none;
+}
+
+.labs-roster__button[aria-current="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .labs-row__head {

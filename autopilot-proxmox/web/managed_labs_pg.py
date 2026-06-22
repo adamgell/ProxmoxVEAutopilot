@@ -302,6 +302,626 @@ def reset_for_tests(conn: Connection) -> None:
     conn.commit()
 
 
+def _lab_network_shape(lab: dict[str, Any]) -> dict[str, str]:
+    zone = str(lab.get("sdn_zone") or "").strip() or f"lab-{str(lab.get('short_code') or '').strip().lower()}"
+    vnet = str(lab.get("sdn_vnet") or "").strip() or f"{str(lab.get('short_code') or '').strip().lower()}-vnet"
+    subnet = str(lab.get("sdn_subnet") or "").strip() or str(lab.get("network_cidr") or "").strip()
+    return {"zone": zone, "vnet": vnet, "subnet": subnet}
+
+
+def _find_boundary(conn: Connection, *, lab_id: str, provider: str, kind: str, name: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT * FROM lab_boundaries
+        WHERE lab_id = %s AND provider = %s AND kind = %s AND name = %s
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (lab_id, provider, kind, name),
+    ).fetchone()
+    return _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
+
+
+def _find_boundary_object(
+    conn: Connection,
+    *,
+    lab_id: str,
+    provider: str,
+    kind: str,
+    name: str,
+) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT * FROM lab_boundary_objects
+        WHERE lab_id = %s AND provider = %s AND kind = %s AND name = %s
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (lab_id, provider, kind, name),
+    ).fetchone()
+    return _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
+
+
+def _replace_boundary_object_provider_identities(
+    conn: Connection,
+    *,
+    boundary_object_id: str,
+    lab_id: str,
+    provider: str,
+    kind: str,
+    provider_ids: dict | None,
+) -> None:
+    conn.execute(
+        "DELETE FROM lab_boundary_object_provider_identities WHERE boundary_object_id = %s",
+        (boundary_object_id,),
+    )
+    for identity_row in _provider_identity_rows(
+        boundary_object_id=boundary_object_id,
+        lab_id=lab_id,
+        provider=provider,
+        kind=kind,
+        provider_ids=provider_ids,
+    ):
+        conn.execute(
+            """
+            INSERT INTO lab_boundary_object_provider_identities (
+                boundary_object_id, lab_id, provider, kind, identity_key, identity_value
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            identity_row,
+        )
+
+
+def upsert_boundary(
+    conn: Connection,
+    *,
+    lab_id: str,
+    provider: str,
+    kind: str,
+    name: str,
+    ownership: str,
+    source: str,
+    desired_state: dict | None = None,
+    actual_state: dict | None = None,
+    provider_ids: dict | None = None,
+    baseline_snapshot_id: str | None = None,
+    last_reconcile_status: str = "unknown",
+    commit: bool = True,
+) -> dict:
+    existing = _find_boundary(conn, lab_id=lab_id, provider=provider, kind=kind, name=name)
+    now = _now()
+    if existing is None:
+        row = conn.execute(
+            """
+            INSERT INTO lab_boundaries (
+                id, lab_id, provider, kind, name, ownership, source,
+                provider_ids_json, desired_state_json, actual_state_json,
+                baseline_snapshot_id, last_reconcile_status, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                _new_id(),
+                lab_id,
+                provider,
+                kind,
+                name,
+                ownership,
+                source,
+                Jsonb(provider_ids or {}),
+                Jsonb(desired_state or {}),
+                Jsonb(actual_state or {}),
+                baseline_snapshot_id,
+                last_reconcile_status,
+                now,
+                now,
+            ),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            UPDATE lab_boundaries
+            SET ownership = %s,
+                source = %s,
+                provider_ids_json = %s,
+                desired_state_json = %s,
+                actual_state_json = %s,
+                baseline_snapshot_id = COALESCE(%s, baseline_snapshot_id),
+                last_reconcile_status = %s,
+                updated_at = %s
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                ownership,
+                source,
+                Jsonb(provider_ids or {}),
+                Jsonb(desired_state or {}),
+                Jsonb(actual_state or {}),
+                baseline_snapshot_id,
+                last_reconcile_status,
+                now,
+                existing["id"],
+            ),
+        ).fetchone()
+    if commit:
+        conn.commit()
+    mapped = _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
+    assert mapped is not None
+    return mapped
+
+
+def upsert_boundary_object(
+    conn: Connection,
+    *,
+    lab_id: str,
+    boundary_id: str,
+    provider: str,
+    kind: str,
+    name: str,
+    ownership: str,
+    source: str,
+    desired_state: dict | None = None,
+    actual_state: dict | None = None,
+    provider_ids: dict | None = None,
+    baseline_snapshot_id: str | None = None,
+    last_reconcile_status: str = "unknown",
+    commit: bool = True,
+) -> dict:
+    existing = _find_boundary_object(conn, lab_id=lab_id, provider=provider, kind=kind, name=name)
+    now = _now()
+    if existing is None:
+        object_id = _new_id()
+        row = conn.execute(
+            """
+            INSERT INTO lab_boundary_objects (
+                id, lab_id, boundary_id, provider, kind, name, ownership, source,
+                provider_ids_json, desired_state_json, actual_state_json,
+                baseline_snapshot_id, last_reconcile_status, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                object_id,
+                lab_id,
+                boundary_id,
+                provider,
+                kind,
+                name,
+                ownership,
+                source,
+                Jsonb(provider_ids or {}),
+                Jsonb(desired_state or {}),
+                Jsonb(actual_state or {}),
+                baseline_snapshot_id,
+                last_reconcile_status,
+                now,
+                now,
+            ),
+        ).fetchone()
+    else:
+        object_id = existing["id"]
+        row = conn.execute(
+            """
+            UPDATE lab_boundary_objects
+            SET boundary_id = %s,
+                ownership = %s,
+                source = %s,
+                provider_ids_json = %s,
+                desired_state_json = %s,
+                actual_state_json = %s,
+                baseline_snapshot_id = COALESCE(%s, baseline_snapshot_id),
+                last_reconcile_status = %s,
+                updated_at = %s
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                boundary_id,
+                ownership,
+                source,
+                Jsonb(provider_ids or {}),
+                Jsonb(desired_state or {}),
+                Jsonb(actual_state or {}),
+                baseline_snapshot_id,
+                last_reconcile_status,
+                now,
+                object_id,
+            ),
+        ).fetchone()
+    _replace_boundary_object_provider_identities(
+        conn,
+        boundary_object_id=object_id,
+        lab_id=lab_id,
+        provider=provider,
+        kind=kind,
+        provider_ids=provider_ids,
+    )
+    if commit:
+        conn.commit()
+    mapped = _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
+    assert mapped is not None
+    return mapped
+
+
+def ensure_lab_boundary_model(conn: Connection, *, lab: dict[str, Any], commit: bool = True) -> None:
+    network = _lab_network_shape(lab)
+    naming_policy = str((lab.get("desired_state") or {}).get("naming_policy") or "{lab_short}-{role}-{index}")
+
+    network_boundary = upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="network",
+        kind="reservation",
+        name=f"{lab['name']} Network",
+        ownership="managed",
+        source="created",
+        desired_state={
+            "cidr": lab["network_cidr"],
+            "gateway_ip": lab["gateway_ip"],
+            "mode": lab["network_mode"],
+        },
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=network_boundary["id"],
+        provider="network",
+        kind="subnet",
+        name=lab["network_cidr"],
+        ownership="managed",
+        source="created",
+        provider_ids={"cidr": lab["network_cidr"]},
+        desired_state={"cidr": lab["network_cidr"], "gateway_ip": lab["gateway_ip"]},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+
+    proxmox_boundary = upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="proxmox",
+        kind="network",
+        name=f"{lab['name']} SDN",
+        ownership="managed",
+        source="created",
+        desired_state={
+            "mode": lab["network_mode"],
+            "zone": network["zone"],
+            "vnet": network["vnet"],
+            "subnet": network["subnet"],
+            "gateway": lab["gateway_ip"],
+        },
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=proxmox_boundary["id"],
+        provider="proxmox",
+        kind="sdn_zone",
+        name=network["zone"],
+        ownership="managed",
+        source="created",
+        provider_ids={"zone": network["zone"]},
+        desired_state={"zone": network["zone"], "type": "simple"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=proxmox_boundary["id"],
+        provider="proxmox",
+        kind="sdn_vnet",
+        name=network["vnet"],
+        ownership="managed",
+        source="created",
+        provider_ids={"vnet": network["vnet"]},
+        desired_state={"vnet": network["vnet"], "zone": network["zone"], "alias": lab["name"]},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=proxmox_boundary["id"],
+        provider="proxmox",
+        kind="sdn_subnet",
+        name=network["subnet"],
+        ownership="managed",
+        source="created",
+        provider_ids={"vnet": network["vnet"], "subnet": network["subnet"]},
+        desired_state={
+            "vnet": network["vnet"],
+            "subnet": network["subnet"],
+            "gateway": lab["gateway_ip"],
+            "snat": True,
+        },
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+
+    ad_boundary = upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="ad",
+        kind="directory",
+        name=f"{lab['name']} AD",
+        ownership="managed",
+        source="created",
+        desired_state={"group_tag": lab["group_tag"], "mode": "modeled"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=ad_boundary["id"],
+        provider="ad",
+        kind="group",
+        name=lab["group_tag"],
+        ownership="managed",
+        source="created",
+        provider_ids={"group_tag": lab["group_tag"]},
+        desired_state={"group_tag": lab["group_tag"], "mode": "modeled"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+
+    entra_boundary = upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="entra",
+        kind="identity",
+        name=f"{lab['name']} Entra",
+        ownership="managed",
+        source="created",
+        desired_state={"group_tag": lab["group_tag"], "mode": "modeled"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=entra_boundary["id"],
+        provider="entra",
+        kind="device_group",
+        name=lab["group_tag"],
+        ownership="managed",
+        source="created",
+        provider_ids={"group_tag": lab["group_tag"]},
+        desired_state={"group_tag": lab["group_tag"], "mode": "modeled"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+
+    intune_boundary = upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="intune",
+        kind="endpoint_management",
+        name=f"{lab['name']} Intune",
+        ownership="managed",
+        source="created",
+        desired_state={"group_tag": lab["group_tag"], "mode": "modeled"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=intune_boundary["id"],
+        provider="intune",
+        kind="autopilot_profile",
+        name=lab["group_tag"],
+        ownership="managed",
+        source="created",
+        provider_ids={"group_tag": lab["group_tag"]},
+        desired_state={"group_tag": lab["group_tag"], "mode": "modeled"},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+
+    deployment_boundary = upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="deployment",
+        kind="naming",
+        name=f"{lab['name']} Naming",
+        ownership="managed",
+        source="created",
+        desired_state={"pattern": naming_policy, "short_code": lab["short_code"]},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=deployment_boundary["id"],
+        provider="deployment",
+        kind="naming_policy",
+        name=f"{lab['short_code']}-naming-policy",
+        ownership="managed",
+        source="created",
+        provider_ids={"short_code": lab["short_code"]},
+        desired_state={"pattern": naming_policy, "short_code": lab["short_code"]},
+        actual_state={},
+        last_reconcile_status="unknown",
+        commit=False,
+    )
+
+    if commit:
+        conn.commit()
+
+
+def sync_lab_network_current_state(
+    conn: Connection,
+    *,
+    lab: dict[str, Any],
+    inventory: dict[str, Any],
+    status: str,
+    commit: bool = True,
+) -> None:
+    ensure_lab_boundary_model(conn, lab=lab, commit=False)
+    network = _lab_network_shape(lab)
+    zone_row = next((row for row in inventory.get("zones", []) if str(row.get("zone") or row.get("id") or "").strip() == network["zone"]), {})
+    vnet_row = next((row for row in inventory.get("vnets", []) if str(row.get("vnet") or row.get("id") or "").strip() == network["vnet"]), {})
+    subnet_row = next(
+        (
+            row
+            for row in (inventory.get("subnets_by_vnet", {}) or {}).get(network["vnet"], [])
+            if str(row.get("subnet") or row.get("id") or "").strip() == network["subnet"]
+        ),
+        {},
+    )
+
+    network_boundary = _find_boundary(conn, lab_id=lab["id"], provider="network", kind="reservation", name=f"{lab['name']} Network")
+    assert network_boundary is not None
+    upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="network",
+        kind="reservation",
+        name=network_boundary["name"],
+        ownership=network_boundary["ownership"],
+        source=network_boundary["source"],
+        desired_state=network_boundary["desired_state"],
+        actual_state={"cidr": lab["network_cidr"], "gateway_ip": lab["gateway_ip"], "status": "active"},
+        provider_ids=network_boundary.get("provider_ids") or {},
+        baseline_snapshot_id=network_boundary.get("baseline_snapshot_id"),
+        last_reconcile_status=status,
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=network_boundary["id"],
+        provider="network",
+        kind="subnet",
+        name=lab["network_cidr"],
+        ownership="managed",
+        source="created",
+        desired_state={"cidr": lab["network_cidr"], "gateway_ip": lab["gateway_ip"]},
+        actual_state={"cidr": lab["network_cidr"], "gateway_ip": lab["gateway_ip"], "status": "active"},
+        provider_ids={"cidr": lab["network_cidr"]},
+        last_reconcile_status=status,
+        commit=False,
+    )
+
+    proxmox_boundary = _find_boundary(conn, lab_id=lab["id"], provider="proxmox", kind="network", name=f"{lab['name']} SDN")
+    assert proxmox_boundary is not None
+    actual_state: dict[str, Any] = {}
+    if zone_row:
+        actual_state["zone"] = zone_row
+    if vnet_row:
+        actual_state["vnet"] = vnet_row
+    if subnet_row:
+        actual_state["subnet"] = subnet_row
+    upsert_boundary(
+        conn,
+        lab_id=lab["id"],
+        provider="proxmox",
+        kind="network",
+        name=proxmox_boundary["name"],
+        ownership=proxmox_boundary["ownership"],
+        source=proxmox_boundary["source"],
+        desired_state=proxmox_boundary["desired_state"],
+        actual_state=actual_state,
+        provider_ids=proxmox_boundary.get("provider_ids") or {},
+        baseline_snapshot_id=proxmox_boundary.get("baseline_snapshot_id"),
+        last_reconcile_status=status,
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=proxmox_boundary["id"],
+        provider="proxmox",
+        kind="sdn_zone",
+        name=network["zone"],
+        ownership="managed",
+        source="created",
+        desired_state={"zone": network["zone"], "type": "simple"},
+        actual_state=zone_row,
+        provider_ids={"zone": network["zone"]},
+        last_reconcile_status=status,
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=proxmox_boundary["id"],
+        provider="proxmox",
+        kind="sdn_vnet",
+        name=network["vnet"],
+        ownership="managed",
+        source="created",
+        desired_state={"vnet": network["vnet"], "zone": network["zone"], "alias": lab["name"]},
+        actual_state=vnet_row,
+        provider_ids={"vnet": network["vnet"]},
+        last_reconcile_status=status,
+        commit=False,
+    )
+    upsert_boundary_object(
+        conn,
+        lab_id=lab["id"],
+        boundary_id=proxmox_boundary["id"],
+        provider="proxmox",
+        kind="sdn_subnet",
+        name=network["subnet"],
+        ownership="managed",
+        source="created",
+        desired_state={"vnet": network["vnet"], "subnet": network["subnet"], "gateway": lab["gateway_ip"], "snat": True},
+        actual_state=subnet_row,
+        provider_ids={"vnet": network["vnet"], "subnet": network["subnet"]},
+        last_reconcile_status=status,
+        commit=False,
+    )
+
+    if commit:
+        conn.commit()
+
+
+
+def sync_proxmox_network_actual_state(
+    conn: Connection,
+    *,
+    lab_id: str,
+    inventory: dict[str, Any],
+    reconcile_status: str,
+    commit: bool = True,
+) -> None:
+    lab = get_lab(conn, lab_id)
+    if lab is None:
+        raise ValueError(f"lab not found: {lab_id}")
+    sync_lab_network_current_state(
+        conn,
+        lab=lab,
+        inventory=inventory,
+        status=reconcile_status,
+        commit=commit,
+    )
+
 def create_lab(
     conn: Connection,
     *,
@@ -364,6 +984,9 @@ def create_lab(
             "updated_at": now,
         },
     ).fetchone()
+    mapped = _map_json_fields(row, "desired_state")
+    assert mapped is not None
+    ensure_lab_boundary_model(conn, lab=mapped, commit=False)
     record_event(
         conn,
         lab_id=lab_id,
@@ -374,8 +997,6 @@ def create_lab(
     )
     if commit:
         conn.commit()
-    mapped = _map_json_fields(row, "desired_state")
-    assert mapped is not None
     return mapped
 
 
@@ -413,6 +1034,8 @@ def _list_lab_rows(
     return [mapped for row in rows if (mapped := _map_json_fields(row, *json_fields)) is not None]
 
 
+
+
 def reserve_value(
     conn: Connection,
     *,
@@ -423,36 +1046,42 @@ def reserve_value(
     commit: bool = True,
 ) -> dict:
     normalized_value = value.strip()
-    existing_row = conn.execute(
-        "SELECT * FROM lab_reservations WHERE reservation_type = %s AND value = %s",
-        (reservation_type, normalized_value),
+    now = _now()
+    row = conn.execute(
+        """
+        INSERT INTO lab_reservations (
+            id, lab_id, reservation_type, value, metadata_json, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (reservation_type, value) DO UPDATE
+        SET status = 'active',
+            metadata_json = COALESCE(%s, lab_reservations.metadata_json),
+            updated_at = EXCLUDED.updated_at
+        WHERE lab_reservations.lab_id = EXCLUDED.lab_id
+        RETURNING *
+        """,
+        (
+            _new_id(),
+            lab_id,
+            reservation_type,
+            normalized_value,
+            Jsonb(metadata or {}),
+            now,
+            now,
+            Jsonb(metadata) if metadata is not None else None,
+        ),
     ).fetchone()
-    existing = _map_json_fields(existing_row, "metadata")
-    if existing is not None:
-        if existing["lab_id"] != lab_id:
+    if row is None:
+        existing_row = conn.execute(
+            "SELECT * FROM lab_reservations WHERE reservation_type = %s AND value = %s",
+            (reservation_type, normalized_value),
+        ).fetchone()
+        existing = _map_json_fields(existing_row, "metadata")
+        if existing is not None and existing["lab_id"] != lab_id:
             raise ValueError(
                 f"reservation {reservation_type}:{normalized_value} is already reserved by another lab"
             )
-        now = _now()
-        row = conn.execute(
-            """
-            UPDATE lab_reservations
-            SET updated_at = %s
-            WHERE id = %s
-            RETURNING *
-            """,
-            (now, existing["id"]),
-        ).fetchone()
-    else:
-        now = _now()
-        row = conn.execute(
-            """
-            INSERT INTO lab_reservations (id, lab_id, reservation_type, value, metadata_json, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
-            """,
-            (_new_id(), lab_id, reservation_type, normalized_value, Jsonb(metadata or {}), now, now),
-        ).fetchone()
+        raise ValueError(f"reservation {reservation_type}:{normalized_value} could not be reserved")
     if commit:
         conn.commit()
     mapped = _map_json_fields(row, "metadata")
@@ -603,15 +1232,17 @@ def record_finding(
     object_ref: dict | None = None,
     desired_state: dict | None = None,
     actual_state: dict | None = None,
+    status: str = "open",
+    commit: bool = True,
 ) -> dict:
     now = _now()
     row = conn.execute(
         """
         INSERT INTO lab_reconcile_findings (
-            id, lab_id, reconcile_run_id, provider, finding_type, severity, detail,
+            id, lab_id, reconcile_run_id, provider, finding_type, severity, status, detail,
             object_ref_json, desired_state_json, actual_state_json, created_at, updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -621,6 +1252,7 @@ def record_finding(
             provider,
             finding_type,
             severity,
+            status,
             detail,
             Jsonb(object_ref or {}),
             Jsonb(desired_state or {}),
@@ -635,9 +1267,11 @@ def record_finding(
         event_type="finding_recorded",
         actor="reconciler",
         detail=detail,
-        payload={"finding_type": finding_type, "severity": severity},
+        payload={"finding_type": finding_type, "severity": severity, "status": status},
+        commit=False,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     mapped = _map_json_fields(row, "object_ref", "desired_state", "actual_state")
     assert mapped is not None
     return mapped
@@ -653,18 +1287,46 @@ def create_fix_action(
     priority: int,
     detail: str,
     request: dict,
+    commit: bool = True,
 ) -> dict:
     now = _now()
-    row = conn.execute(
+    existing = conn.execute(
         """
-        INSERT INTO lab_fix_actions (
-            id, lab_id, reconcile_run_id, provider, action_type, priority, detail, request_json, created_at, updated_at
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING *
+        SELECT * FROM lab_fix_actions
+        WHERE lab_id = %s
+          AND provider = %s
+          AND action_type = %s
+          AND status = 'pending'
+          AND request_json = %s
+        ORDER BY priority ASC, created_at ASC
+        LIMIT 1
         """,
-        (_new_id(), lab_id, reconcile_run_id, provider, action_type, priority, detail, Jsonb(request), now, now),
+        (lab_id, provider, action_type, Jsonb(request)),
     ).fetchone()
+    if existing is None:
+        row = conn.execute(
+            """
+            INSERT INTO lab_fix_actions (
+                id, lab_id, reconcile_run_id, provider, action_type, priority, detail, request_json, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (_new_id(), lab_id, reconcile_run_id, provider, action_type, priority, detail, Jsonb(request), now, now),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            UPDATE lab_fix_actions
+            SET reconcile_run_id = %s,
+                priority = %s,
+                detail = %s,
+                updated_at = %s
+            WHERE id = %s
+            RETURNING *
+            """,
+            (reconcile_run_id, priority, detail, now, existing["id"]),
+        ).fetchone()
     record_event(
         conn,
         lab_id=lab_id,
@@ -672,12 +1334,13 @@ def create_fix_action(
         actor="reconciler",
         detail=detail,
         payload={"action_type": action_type},
+        commit=False,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     mapped = _map_json_fields(row, "request", "result")
     assert mapped is not None
     return mapped
-
 
 def get_fix_action(conn: Connection, fix_action_id: str) -> dict | None:
     row = conn.execute(
@@ -783,6 +1446,72 @@ def list_pending_fix_actions(conn: Connection, lab_id: str) -> list[dict]:
     ]
 
 
+def list_current_fix_actions(conn: Connection, lab_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT * FROM lab_fix_actions
+        WHERE lab_id = %s AND status IN ('pending', 'failed', 'blocked', 'running')
+        ORDER BY priority ASC, created_at ASC
+        """,
+        (lab_id,),
+    ).fetchall()
+    return [
+        mapped
+        for row in rows
+        if (mapped := _map_json_fields(row, "request", "result")) is not None
+    ]
+
+
+def clear_current_reconcile_state(
+    conn: Connection,
+    *,
+    lab_id: str,
+    providers: tuple[str, ...] = ("network", "proxmox"),
+    commit: bool = True,
+) -> None:
+    now = _now()
+    conn.execute(
+        """
+        UPDATE lab_reconcile_findings
+        SET status = 'resolved', updated_at = %s
+        WHERE lab_id = %s AND status = 'open' AND provider = ANY(%s)
+        """,
+        (now, lab_id, list(providers)),
+    )
+    conn.execute(
+        """
+        UPDATE lab_fix_actions
+        SET status = 'superseded', updated_at = %s, completed_at = COALESCE(completed_at, %s)
+        WHERE lab_id = %s
+          AND status IN ('pending', 'failed', 'blocked', 'running')
+          AND provider = ANY(%s)
+        """,
+        (now, now, lab_id, list(providers)),
+    )
+    if commit:
+        conn.commit()
+
+
+def resolve_open_finding(
+    conn: Connection,
+    *,
+    lab_id: str,
+    provider: str,
+    finding_type: str,
+    commit: bool = True,
+) -> None:
+    conn.execute(
+        """
+        UPDATE lab_reconcile_findings
+        SET status = 'resolved', updated_at = %s
+        WHERE lab_id = %s AND provider = %s AND finding_type = %s AND status = 'open'
+        """,
+        (_now(), lab_id, provider, finding_type),
+    )
+    if commit:
+        conn.commit()
+
+
 def create_boundary(
     conn: Connection,
     *,
@@ -794,23 +1523,16 @@ def create_boundary(
     source: str,
     desired_state: dict,
 ) -> dict:
-    now = _now()
-    row = conn.execute(
-        """
-        INSERT INTO lab_boundaries (
-            id, lab_id, provider, kind, name, ownership, source,
-            desired_state_json, created_at, updated_at
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING *
-        """,
-        (_new_id(), lab_id, provider, kind, name, ownership, source, Jsonb(desired_state), now, now),
-    ).fetchone()
-    conn.commit()
-    mapped = _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
-    assert mapped is not None
-    return mapped
-
+    return upsert_boundary(
+        conn,
+        lab_id=lab_id,
+        provider=provider,
+        kind=kind,
+        name=name,
+        ownership=ownership,
+        source=source,
+        desired_state=desired_state,
+    )
 
 def create_boundary_object(
     conn: Connection,
@@ -825,54 +1547,18 @@ def create_boundary_object(
     desired_state: dict,
     provider_ids: dict | None = None,
 ) -> dict:
-    now = _now()
-    object_id = _new_id()
-    row = conn.execute(
-        """
-        INSERT INTO lab_boundary_objects (
-            id, lab_id, boundary_id, provider, kind, name, ownership, source,
-            provider_ids_json, desired_state_json, created_at, updated_at
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING *
-        """,
-        (
-            object_id,
-            lab_id,
-            boundary_id,
-            provider,
-            kind,
-            name,
-            ownership,
-            source,
-            Jsonb(provider_ids or {}),
-            Jsonb(desired_state),
-            now,
-            now,
-        ),
-    ).fetchone()
-    identity_rows = _provider_identity_rows(
-        boundary_object_id=object_id,
+    return upsert_boundary_object(
+        conn,
         lab_id=lab_id,
+        boundary_id=boundary_id,
         provider=provider,
         kind=kind,
+        name=name,
+        ownership=ownership,
+        source=source,
+        desired_state=desired_state,
         provider_ids=provider_ids,
     )
-    for identity_row in identity_rows:
-        conn.execute(
-            """
-            INSERT INTO lab_boundary_object_provider_identities (
-                boundary_object_id, lab_id, provider, kind, identity_key, identity_value
-            )
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            identity_row,
-        )
-    conn.commit()
-    mapped = _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
-    assert mapped is not None
-    return mapped
-
 
 def record_event(
     conn: Connection,
@@ -909,7 +1595,9 @@ def _recent_events(conn: Connection, lab_id: str, limit: int = 20) -> list[dict]
 
 def page_payload(conn: Connection, selected_lab_id: str | None = None) -> dict:
     labs = list_labs(conn)
-    selected = get_lab(conn, selected_lab_id) if selected_lab_id else (labs[0] if labs else None)
+    selected = get_lab(conn, selected_lab_id) if selected_lab_id else None
+    if selected is None and labs:
+        selected = labs[0]
     lab_id = selected["id"] if selected else ""
     boundaries = _list_lab_rows(
         conn,
@@ -939,13 +1627,7 @@ def page_payload(conn: Connection, selected_lab_id: str | None = None) -> dict:
         order_by="started_at DESC, id DESC",
     ) if lab_id else []
     findings = list_open_findings(conn, lab_id) if lab_id else []
-    fix_actions = _list_lab_rows(
-        conn,
-        table="lab_fix_actions",
-        lab_id=lab_id,
-        order_by="priority ASC, created_at ASC",
-        json_fields=("request", "result"),
-    ) if lab_id else []
+    fix_actions = list_current_fix_actions(conn, lab_id) if lab_id else []
     return {
         "labs": labs,
         "selected_lab": selected,

@@ -33,14 +33,16 @@ def _snapshot_count(pg_conn):
 def test_execute_create_zone_snapshots_inventory_before_mutation(pg_conn):
     lab, fix = _seed_fix(pg_conn, "create_sdn_zone", {"zone": "lab-net01", "type": "simple"})
     calls = []
+    state = {"zone_present": False}
 
     def fake_api(path, method="GET", data=None):
         calls.append((method, path, data))
         if path == "/cluster/sdn/zones" and method == "GET":
-            return []
+            return [{"zone": "lab-net01", "type": "simple"}] if state["zone_present"] else []
         if path == "/cluster/sdn/vnets":
             return []
         if path == "/cluster/sdn/zones" and method == "POST":
+            state["zone_present"] = True
             return {"ok": True}
         return []
 
@@ -60,10 +62,44 @@ def test_execute_create_zone_snapshots_inventory_before_mutation(pg_conn):
     ]
     post_index = calls.index(("POST", "/cluster/sdn/zones", {"zone": "lab-net01", "type": "simple"}))
     assert get_indexes
-    assert max(get_indexes) < post_index
+    assert any(index < post_index for index in get_indexes)
+    assert any(index > post_index for index in get_indexes)
     payload = managed_labs_pg.page_payload(pg_conn, selected_lab_id=lab["id"])
-    assert payload["fix_actions"][0]["snapshot_id"]
+    assert payload["fix_actions"] == []
     assert payload["events"][0]["event_type"] == "fix_action_updated"
+    zone_object = next(
+        row for row in payload["boundary_objects"] if row["provider"] == "proxmox" and row["kind"] == "sdn_zone"
+    )
+    assert zone_object["actual_state"]["zone"] == "lab-net01"
+
+
+def test_execute_create_zone_requires_post_mutation_verification(pg_conn):
+    _lab, fix = _seed_fix(pg_conn, "create_sdn_zone", {"zone": "lab-net01", "type": "simple"})
+    calls = []
+
+    def fake_api(path, method="GET", data=None):
+        calls.append((method, path, data))
+        if path == "/cluster/sdn/zones" and method == "GET":
+            return []
+        if path == "/cluster/sdn/vnets":
+            return []
+        if path == "/cluster/sdn/zones" and method == "POST":
+            return {"ok": True}
+        return []
+
+    result = managed_labs_network.execute_fix_action(
+        pg_conn,
+        fix_action_id=fix["id"],
+        pve_api=fake_api,
+        pve_put=lambda path, data=None: {},
+        pve_delete=lambda path: {},
+    )
+
+    assert result["status"] == "failed"
+    assert result["result"]["ok"] is False
+    assert result["result"]["verification"]["observed"] is False
+    post_index = calls.index(("POST", "/cluster/sdn/zones", {"zone": "lab-net01", "type": "simple"}))
+    assert any(index > post_index and call[:2] == ("GET", "/cluster/sdn/zones") for index, call in enumerate(calls))
 
 
 def test_execute_apply_sdn_releases_lock_after_apply(pg_conn):
@@ -99,6 +135,11 @@ def test_execute_apply_sdn_releases_lock_after_apply(pg_conn):
     assert result["status"] == "fixed"
     assert any(call[0] == "PUT" and "/cluster/sdn" in call[1] for call in calls)
     assert any(call[0] == "DELETE" and "/cluster/sdn/lock" in call[1] for call in calls)
+    put_index = next(index for index, call in enumerate(calls) if call[0] == "PUT")
+    assert any(
+        call[0] == "GET" and call[1] in {"/cluster/sdn/zones", "/cluster/sdn/vnets"} and index > put_index
+        for index, call in enumerate(calls)
+    )
 
 
 def test_execute_pending_network_fixes_processes_pending_actions_in_priority_order(pg_conn):
@@ -115,16 +156,19 @@ def test_execute_pending_network_fixes_processes_pending_actions_in_priority_ord
     )
 
     calls = []
+    state = {"zone_present": False, "vnet_present": False}
 
     def fake_api(path, method="GET", data=None):
         calls.append((method, path, data))
         if path == "/cluster/sdn/zones" and method == "GET":
-            return []
+            return [{"zone": "lab-net01", "type": "simple"}] if state["zone_present"] else []
         if path == "/cluster/sdn/vnets" and method == "GET":
-            return []
+            return [{"vnet": "net01-vnet", "zone": "lab-net01"}] if state["vnet_present"] else []
         if path == "/cluster/sdn/zones" and method == "POST":
+            state["zone_present"] = True
             return {"ok": True}
         if path == "/cluster/sdn/vnets" and method == "POST":
+            state["vnet_present"] = True
             return {"ok": True}
         return []
 
@@ -164,14 +208,16 @@ def test_execute_pending_network_fixes_only_processes_supported_proxmox_rows(pg_
         request={"zone": "future-zone"},
     )
     calls = []
+    state = {"zone_present": False}
 
     def fake_api(path, method="GET", data=None):
         calls.append((method, path, data))
         if path == "/cluster/sdn/zones" and method == "GET":
-            return []
+            return [{"zone": "lab-net01", "type": "simple"}] if state["zone_present"] else []
         if path == "/cluster/sdn/vnets" and method == "GET":
             return []
         if path == "/cluster/sdn/zones" and method == "POST":
+            state["zone_present"] = True
             return {"ok": True}
         return []
 

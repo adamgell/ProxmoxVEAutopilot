@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from web import managed_labs_network, managed_labs_pg, managed_labs_reconciler, proxmox_sdn
 
@@ -21,6 +22,28 @@ class LabCreateBody(BaseModel):
     sdn_zone: str = ""
     sdn_vnet: str = ""
     sdn_subnet: str = ""
+
+    @field_validator("network_cidr")
+    @classmethod
+    def validate_network_cidr(cls, value: str) -> str:
+        candidate = value.strip()
+        try:
+            ipaddress.ip_network(candidate, strict=False)
+        except ValueError as exc:
+            raise ValueError("network_cidr must be a valid CIDR") from exc
+        return candidate
+
+    @field_validator("gateway_ip")
+    @classmethod
+    def validate_gateway_ip(cls, value: str) -> str:
+        candidate = value.strip()
+        if not candidate:
+            return ""
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError as exc:
+            raise ValueError("gateway_ip must be a valid IPv4 or IPv6 address") from exc
+        return candidate
 
 
 def _web_app():
@@ -115,6 +138,9 @@ def create_lab(body: LabCreateBody):
                 commit=False,
             )
             conn.commit()
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             conn.rollback()
             raise HTTPException(status_code=500, detail="managed lab create failed") from exc
