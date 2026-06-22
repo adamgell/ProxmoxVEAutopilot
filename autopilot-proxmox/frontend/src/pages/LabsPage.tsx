@@ -40,8 +40,24 @@ interface EventRow {
   readonly created_at?: string;
 }
 
-interface BoundaryRow {
+type JsonRecord = Record<string, unknown>;
+
+interface BoundarySurfaceRow {
   readonly id?: string;
+  readonly provider?: string;
+  readonly kind?: string;
+  readonly name?: string;
+  readonly ownership?: string;
+  readonly source?: string;
+  readonly provider_ids?: JsonRecord;
+  readonly desired_state?: JsonRecord;
+  readonly actual_state?: JsonRecord;
+}
+
+interface BoundaryRow extends BoundarySurfaceRow {}
+
+interface BoundaryObjectRow extends BoundarySurfaceRow {
+  readonly boundary_id?: string;
 }
 
 interface ReservationRow {
@@ -59,6 +75,7 @@ interface LabsPayload {
   readonly fix_actions?: readonly FixActionRow[];
   readonly events?: readonly EventRow[];
   readonly boundaries?: readonly BoundaryRow[];
+  readonly boundary_objects?: readonly BoundaryObjectRow[];
   readonly reservations?: readonly ReservationRow[];
   readonly reconcile_runs?: readonly ReconcileRunRow[];
 }
@@ -70,6 +87,7 @@ interface NormalizedLabsPayload {
   readonly fix_actions: readonly FixActionRow[];
   readonly events: readonly EventRow[];
   readonly boundaries: readonly BoundaryRow[];
+  readonly boundary_objects: readonly BoundaryObjectRow[];
   readonly reservations: readonly ReservationRow[];
   readonly reconcile_runs: readonly ReconcileRunRow[];
 }
@@ -81,6 +99,7 @@ const emptyPayload: NormalizedLabsPayload = {
   fix_actions: [],
   events: [],
   boundaries: [],
+  boundary_objects: [],
   reservations: [],
   reconcile_runs: []
 };
@@ -93,6 +112,7 @@ function normalizePayload(payload: LabsPayload | null | undefined): NormalizedLa
     fix_actions: payload?.fix_actions ?? [],
     events: payload?.events ?? [],
     boundaries: payload?.boundaries ?? [],
+    boundary_objects: payload?.boundary_objects ?? [],
     reservations: payload?.reservations ?? [],
     reconcile_runs: payload?.reconcile_runs ?? []
   };
@@ -118,6 +138,89 @@ function labStatusLabel(status: string | undefined): string {
 
 function toneClass(tone: StatusTone): string {
   return tone === "neutral" ? "labs-chip" : `labs-chip labs-chip--${tone}`;
+}
+
+function formatStructuredValue(value: JsonRecord | null | undefined): string {
+  if (!value || Object.keys(value).length === 0) {
+    return "-";
+  }
+  return JSON.stringify(value);
+}
+
+function BoundaryStateTable({ rows }: { readonly rows: readonly BoundaryRow[] }) {
+  if (!rows.length) {
+    return <p className="empty">No boundary state recorded.</p>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table className="jobs-table utility-table labs-state-table" aria-label="Boundary current state">
+        <thead>
+          <tr>
+            <th scope="col">Boundary</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Kind</th>
+            <th scope="col">Ownership</th>
+            <th scope="col">Source</th>
+            <th scope="col">Desired state</th>
+            <th scope="col">Actual state</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={textValue(row.id, textValue(row.name))}>
+              <td>{textValue(row.name)}</td>
+              <td>{textValue(row.provider)}</td>
+              <td>{shortTypeLabel(textValue(row.kind))}</td>
+              <td>{shortTypeLabel(textValue(row.ownership))}</td>
+              <td>{shortTypeLabel(textValue(row.source))}</td>
+              <td><code className="labs-state-code">{formatStructuredValue(row.desired_state)}</code></td>
+              <td><code className="labs-state-code">{formatStructuredValue(row.actual_state)}</code></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BoundaryObjectStateTable({ rows }: { readonly rows: readonly BoundaryObjectRow[] }) {
+  if (!rows.length) {
+    return <p className="empty">No boundary objects recorded.</p>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table className="jobs-table utility-table labs-state-table" aria-label="Boundary object current state">
+        <thead>
+          <tr>
+            <th scope="col">Object</th>
+            <th scope="col">Boundary</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Kind</th>
+            <th scope="col">Ownership</th>
+            <th scope="col">Provider IDs</th>
+            <th scope="col">Desired state</th>
+            <th scope="col">Actual state</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={textValue(row.id, textValue(row.name))}>
+              <td>{textValue(row.name)}</td>
+              <td>{textValue(row.boundary_id)}</td>
+              <td>{textValue(row.provider)}</td>
+              <td>{shortTypeLabel(textValue(row.kind))}</td>
+              <td>{shortTypeLabel(textValue(row.ownership))}</td>
+              <td><code className="labs-state-code">{formatStructuredValue(row.provider_ids)}</code></td>
+              <td><code className="labs-state-code">{formatStructuredValue(row.desired_state)}</code></td>
+              <td><code className="labs-state-code">{formatStructuredValue(row.actual_state)}</code></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
@@ -332,6 +435,8 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
                 <div><dt>Group tag</dt><dd>{textValue(selected.group_tag)}</dd></div>
                 <div><dt>Subnet</dt><dd>{textValue(selected.network_cidr)}</dd></div>
                 <div><dt>Gateway</dt><dd>{textValue(selected.gateway_ip)}</dd></div>
+                <div><dt>Boundaries</dt><dd>{String(payload.boundaries.length)}</dd></div>
+                <div><dt>Boundary objects</dt><dd>{String(payload.boundary_objects.length)}</dd></div>
                 <div><dt>Reservations</dt><dd>{String(payload.reservations.length)}</dd></div>
                 <div><dt>Runs</dt><dd>{String(payload.reconcile_runs.length)}</dd></div>
               </dl>
@@ -343,6 +448,18 @@ export function LabsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             <p className="empty">Create a lab to start reconciliation.</p>
           )}
         </Panel>
+
+        <div className="labs-grid__wide">
+          <Panel title="Boundary current state">
+            <BoundaryStateTable rows={payload.boundaries} />
+          </Panel>
+        </div>
+
+        <div className="labs-grid__wide">
+          <Panel title="Boundary object current state">
+            <BoundaryObjectStateTable rows={payload.boundary_objects} />
+          </Panel>
+        </div>
 
         <Panel title="Findings">
           {payload.findings.length ? (

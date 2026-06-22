@@ -129,7 +129,15 @@ describe("operator route registry", () => {
       "Settings"
     ]);
     const reactSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "React"));
+    const deployFlow = operatorFlows.find((flow) => flow.id === "deploy");
     const jinjaSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "Jinja"));
+    expect(deployFlow?.steps.map((step) => [step.label, step.href])).toEqual([
+      ["Deploy Path", "/react/deploy"],
+      ["Labs", "/react/labs"],
+      ["OSDeploy Server", "/react/osdeploy"],
+      ["OSDCloud Desktop", "/react/cloudosd"],
+      ["Provision", "/react/provision"]
+    ]);
     expect(jinjaSteps).toEqual([]);
     expect(reactSteps).toEqual(
       expect.arrayContaining([

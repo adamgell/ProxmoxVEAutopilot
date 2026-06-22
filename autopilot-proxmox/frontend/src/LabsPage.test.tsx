@@ -27,8 +27,28 @@ describe("LabsPage", () => {
           findings: [{ id: "finding-1", finding_type: "sdn_zone_missing", severity: "fixable", detail: "SDN zone lab-ntt01 is missing." }],
           fix_actions: [{ id: "fix-1", action_type: "create_sdn_zone", status: "pending", detail: "Create SDN zone lab-ntt01." }],
           events: [{ id: "1", event_type: "lab_created", detail: "Created lab NTT Lab", created_at: "2026-06-21T00:00:00Z" }],
-          boundaries: [],
-          boundary_objects: [],
+          boundaries: [{
+            id: "boundary-1",
+            provider: "proxmox",
+            kind: "network",
+            name: "NTT SDN",
+            ownership: "managed",
+            source: "created",
+            desired_state: { zone: "lab-ntt01", vnet: "ntt01-vnet" },
+            actual_state: { zone: "lab-ntt01", vnet: "ntt01-vnet" }
+          }],
+          boundary_objects: [{
+            id: "boundary-object-1",
+            boundary_id: "boundary-1",
+            provider: "proxmox",
+            kind: "sdn_zone",
+            name: "lab-ntt01",
+            ownership: "managed",
+            source: "created",
+            provider_ids: { zone: "lab-ntt01" },
+            desired_state: { type: "simple", zone: "lab-ntt01" },
+            actual_state: { type: "simple", zone: "lab-ntt01" }
+          }],
           reservations: [],
           reconcile_runs: []
         }), { status: 200, headers: { "content-type": "application/json" } });
@@ -43,6 +63,8 @@ describe("LabsPage", () => {
     expect(screen.getByText("SDN zone lab-ntt01 is missing.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Run pending fixes" })).toBeVisible();
     expect(screen.getByText("Created lab NTT Lab")).toBeVisible();
+    expect(screen.getByRole("table", { name: "Boundary current state" })).toHaveTextContent("NTT SDN");
+    expect(screen.getByRole("table", { name: "Boundary object current state" })).toHaveTextContent("lab-ntt01");
   });
 
   it("creates a lab with default naming and network fields", async () => {

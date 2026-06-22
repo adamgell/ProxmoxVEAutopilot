@@ -4998,6 +4998,15 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.labs-grid__wide {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.labs-grid__wide .panel {
+  height: 100%;
+}
+
 .labs-form {
   display: grid;
   gap: 14px;
@@ -5146,6 +5155,20 @@ h3 {
   margin: 0;
   color: var(--muted-2);
   line-height: 1.5;
+}
+
+.labs-state-table {
+  min-width: 1080px;
+}
+
+.labs-state-code {
+  display: block;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: var(--muted-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
 }
 
 @media (max-width: 900px) {

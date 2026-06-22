@@ -297,6 +297,7 @@ export const operatorFlows: readonly OperatorFlow[] = [
     summary: "Choose the deployment path, then open the guarded execution page.",
     steps: [
       { label: "Deploy Path", href: "/react/deploy", group: "Deploy", state: "React" },
+      { label: "Labs", href: "/react/labs", group: "Deploy", state: "React" },
       { label: "OSDeploy Server", href: "/react/osdeploy", group: "Deploy", state: "React" },
       { label: "OSDCloud Desktop", href: "/react/cloudosd", group: "Deploy", state: "React" },
       { label: "Provision", href: "/react/provision", group: "Deploy", state: "React" }
