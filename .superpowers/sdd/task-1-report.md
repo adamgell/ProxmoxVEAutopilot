@@ -83,3 +83,74 @@ tests/test_managed_labs_pg.py ...                                        [100%]
 ## Concerns, if any
 - `./skill.sh status` could not complete MCP docs discovery in this clone because the tool listing returned `401 Unauthorized`; implementation proceeded from the local approved brief as instructed fallback.
 - The focused Task 1 test file passes, but I did not broaden the run into the known cross-file backend isolation issue involving duplicate `ACME Lab` because the task instructions explicitly said not to expand scope there.
+
+
+## Fix Implementer Follow-up: reviewer findings resolved
+
+### Scope of this fix
+- Updated `page_payload()` to read current-state rows for the selected lab from `lab_boundaries`, `lab_boundary_objects`, `lab_reservations`, `lab_reconcile_runs`, `lab_reconcile_findings`, and `lab_fix_actions` instead of hard-coded empty collections.
+- Added a conservative provider-identity guard with normalized rows in `lab_boundary_object_provider_identities` and a uniqueness constraint on `(provider, kind, identity_key, identity_value)` so the same non-empty concrete provider identity cannot be attached to multiple labs.
+- Brought `record_event()` in line with the other public mutators by committing its insert.
+
+### Additional tests added
+- `test_page_payload_returns_current_state_and_append_only_events` now proves boundary and boundary object rows flow through `page_payload()`.
+- `test_boundary_object_provider_identity_must_be_unique_across_labs` proves duplicate provider identity insertion across labs is rejected.
+
+### RED evidence
+Command:
+```bash
+cd autopilot-proxmox
+python3 -m pytest tests/test_managed_labs_pg.py -q
+```
+Output:
+```text
+============================= test session starts ==============================
+platform darwin -- Python 3.14.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /private/tmp/ProxmoxVEAutopilot-managed-lab-reconciler/autopilot-proxmox
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collected 4 items
+
+tests/test_managed_labs_pg.py ..FF                                       [100%]
+
+=================================== FAILURES ===================================
+________ test_page_payload_returns_current_state_and_append_only_events ________
+tests/test_managed_labs_pg.py:127: in test_page_payload_returns_current_state_and_append_only_events
+    assert [item["id"] for item in payload["boundaries"]] == [boundary["id"]]
+E   AssertionError: assert [] == ['2b43fb4f-7b18-4a73-929f-bb14ecaed1ba']
+
+______ test_boundary_object_provider_identity_must_be_unique_across_labs _______
+tests/test_managed_labs_pg.py:185: in test_boundary_object_provider_identity_must_be_unique_across_labs
+    with pytest.raises(UniqueViolation):
+E   Failed: DID NOT RAISE <class 'psycopg.errors.UniqueViolation'>
+
+=========================== short test summary info ============================
+FAILED tests/test_managed_labs_pg.py::test_page_payload_returns_current_state_and_append_only_events
+FAILED tests/test_managed_labs_pg.py::test_boundary_object_provider_identity_must_be_unique_across_labs
+=================== 2 failed, 2 passed, 7 warnings in 1.96s ====================
+```
+Expected RED confirmed: the payload still returned boundary stubs and duplicate provider identity insertion was not rejected.
+
+### GREEN evidence
+Command:
+```bash
+cd autopilot-proxmox
+python3 -m pytest tests/test_managed_labs_pg.py -q
+```
+Output:
+```text
+============================= test session starts ==============================
+platform darwin -- Python 3.14.5, pytest-9.0.3, pluggy-1.6.0
+rootdir: /private/tmp/ProxmoxVEAutopilot-managed-lab-reconciler/autopilot-proxmox
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collected 4 items
+
+tests/test_managed_labs_pg.py ....                                       [100%]
+
+======================== 4 passed, 7 warnings in 1.94s =========================
+```
+
+### Files changed in this follow-up
+- `autopilot-proxmox/web/managed_labs_pg.py`
+- `autopilot-proxmox/tests/test_managed_labs_pg.py`

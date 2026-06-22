@@ -1,3 +1,6 @@
+import pytest
+from psycopg.errors import UniqueViolation
+
 from web import managed_labs_pg
 
 
@@ -86,6 +89,28 @@ def test_page_payload_returns_current_state_and_append_only_events(pg_conn):
         group_tag="Pilot",
         network_cidr="10.70.1.0/24",
     )
+    boundary = managed_labs_pg.create_boundary(
+        pg_conn,
+        lab_id=lab["id"],
+        provider="proxmox",
+        kind="network",
+        name="Pilot SDN",
+        ownership="managed",
+        source="created",
+        desired_state={"zone": "lab-plt01", "vnet": "plt01-vnet"},
+    )
+    boundary_object = managed_labs_pg.create_boundary_object(
+        pg_conn,
+        lab_id=lab["id"],
+        boundary_id=boundary["id"],
+        provider="proxmox",
+        kind="sdn_zone",
+        name="lab-plt01",
+        ownership="managed",
+        source="created",
+        provider_ids={"zone": "lab-plt01"},
+        desired_state={"type": "simple", "zone": "lab-plt01"},
+    )
     managed_labs_pg.record_event(
         pg_conn,
         lab_id=lab["id"],
@@ -99,6 +124,74 @@ def test_page_payload_returns_current_state_and_append_only_events(pg_conn):
 
     assert payload["selected_lab"]["short_code"] == "plt01"
     assert [event["event_type"] for event in payload["events"]] == ["manual_note", "lab_created"]
+    assert [item["id"] for item in payload["boundaries"]] == [boundary["id"]]
+    assert [item["id"] for item in payload["boundary_objects"]] == [boundary_object["id"]]
     assert payload["findings"] == []
     assert payload["fix_actions"] == []
     assert payload["reconcile_runs"] == []
+
+
+def test_boundary_object_provider_identity_must_be_unique_across_labs(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    first_lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Alpha Lab",
+        short_code="alp01",
+        group_tag="ALPHA-Lab",
+        network_cidr="10.80.1.0/24",
+    )
+    second_lab = managed_labs_pg.create_lab(
+        pg_conn,
+        name="Bravo Lab",
+        short_code="brv01",
+        group_tag="BRAVO-Lab",
+        network_cidr="10.81.1.0/24",
+    )
+    first_boundary = managed_labs_pg.create_boundary(
+        pg_conn,
+        lab_id=first_lab["id"],
+        provider="proxmox",
+        kind="network",
+        name="Alpha SDN",
+        ownership="managed",
+        source="created",
+        desired_state={"zone": "shared-zone"},
+    )
+    second_boundary = managed_labs_pg.create_boundary(
+        pg_conn,
+        lab_id=second_lab["id"],
+        provider="proxmox",
+        kind="network",
+        name="Bravo SDN",
+        ownership="managed",
+        source="created",
+        desired_state={"zone": "shared-zone"},
+    )
+
+    managed_labs_pg.create_boundary_object(
+        pg_conn,
+        lab_id=first_lab["id"],
+        boundary_id=first_boundary["id"],
+        provider="proxmox",
+        kind="sdn_zone",
+        name="shared-zone",
+        ownership="managed",
+        source="created",
+        provider_ids={"zone": "shared-zone"},
+        desired_state={"type": "simple", "zone": "shared-zone"},
+    )
+
+    with pytest.raises(UniqueViolation):
+        managed_labs_pg.create_boundary_object(
+            pg_conn,
+            lab_id=second_lab["id"],
+            boundary_id=second_boundary["id"],
+            provider="proxmox",
+            kind="sdn_zone",
+            name="shared-zone-copy",
+            ownership="managed",
+            source="created",
+            provider_ids={"zone": "shared-zone"},
+            desired_state={"type": "simple", "zone": "shared-zone"},
+        )

@@ -75,6 +75,19 @@ CREATE TABLE IF NOT EXISTS lab_boundary_objects (
 );
 CREATE INDEX IF NOT EXISTS idx_lab_boundary_objects_lab_provider ON lab_boundary_objects(lab_id, provider, kind);
 
+CREATE TABLE IF NOT EXISTS lab_boundary_object_provider_identities (
+    boundary_object_id uuid NOT NULL REFERENCES lab_boundary_objects(id) ON DELETE CASCADE,
+    lab_id uuid NOT NULL REFERENCES labs(id) ON DELETE CASCADE,
+    provider text NOT NULL,
+    kind text NOT NULL,
+    identity_key text NOT NULL,
+    identity_value text NOT NULL,
+    PRIMARY KEY (boundary_object_id, identity_key),
+    UNIQUE (provider, kind, identity_key, identity_value)
+);
+CREATE INDEX IF NOT EXISTS idx_lab_boundary_object_provider_identities_lab
+    ON lab_boundary_object_provider_identities(lab_id, provider, kind);
+
 CREATE TABLE IF NOT EXISTS lab_reservations (
     id uuid PRIMARY KEY,
     lab_id uuid NOT NULL REFERENCES labs(id) ON DELETE CASCADE,
@@ -184,6 +197,7 @@ DROP TABLE IF EXISTS lab_fix_actions CASCADE;
 DROP TABLE IF EXISTS lab_reconcile_findings CASCADE;
 DROP TABLE IF EXISTS lab_reconcile_runs CASCADE;
 DROP TABLE IF EXISTS lab_reservations CASCADE;
+DROP TABLE IF EXISTS lab_boundary_object_provider_identities CASCADE;
 DROP TABLE IF EXISTS lab_boundary_objects CASCADE;
 DROP TABLE IF EXISTS lab_boundaries CASCADE;
 DROP TABLE IF EXISTS labs CASCADE;
@@ -241,6 +255,34 @@ def _map_json_fields(row: dict | None, *fields: str) -> dict | None:
         if json_key in out:
             out[key] = _json_value(out.pop(json_key)) or {}
     return out
+
+
+def _normalize_provider_identity_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (bool, int, float)):
+        return str(value).strip()
+    return ""
+
+
+def _provider_identity_rows(
+    *,
+    boundary_object_id: str,
+    lab_id: str,
+    provider: str,
+    kind: str,
+    provider_ids: dict | None,
+) -> list[tuple[str, str, str, str, str, str]]:
+    rows: list[tuple[str, str, str, str, str, str]] = []
+    for raw_key, raw_value in (provider_ids or {}).items():
+        identity_key = str(raw_key).strip()
+        identity_value = _normalize_provider_identity_value(raw_value)
+        if not identity_key or not identity_value:
+            continue
+        rows.append((boundary_object_id, lab_id, provider, kind, identity_key, identity_value))
+    return rows
 
 
 def init(conn: Connection | None = None) -> None:
@@ -337,6 +379,21 @@ def list_labs(conn: Connection) -> list[dict]:
     return [mapped for row in rows if (mapped := _map_json_fields(row, "desired_state")) is not None]
 
 
+def _list_lab_rows(
+    conn: Connection,
+    *,
+    table: str,
+    lab_id: str,
+    order_by: str,
+    json_fields: tuple[str, ...] = (),
+) -> list[dict]:
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE lab_id = %s ORDER BY {order_by}",
+        (lab_id,),
+    ).fetchall()
+    return [mapped for row in rows if (mapped := _map_json_fields(row, *json_fields)) is not None]
+
+
 def create_boundary(
     conn: Connection,
     *,
@@ -380,6 +437,7 @@ def create_boundary_object(
     provider_ids: dict | None = None,
 ) -> dict:
     now = _now()
+    object_id = _new_id()
     row = conn.execute(
         """
         INSERT INTO lab_boundary_objects (
@@ -390,7 +448,7 @@ def create_boundary_object(
         RETURNING *
         """,
         (
-            _new_id(),
+            object_id,
             lab_id,
             boundary_id,
             provider,
@@ -404,6 +462,23 @@ def create_boundary_object(
             now,
         ),
     ).fetchone()
+    identity_rows = _provider_identity_rows(
+        boundary_object_id=object_id,
+        lab_id=lab_id,
+        provider=provider,
+        kind=kind,
+        provider_ids=provider_ids,
+    )
+    for identity_row in identity_rows:
+        conn.execute(
+            """
+            INSERT INTO lab_boundary_object_provider_identities (
+                boundary_object_id, lab_id, provider, kind, identity_key, identity_value
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            identity_row,
+        )
     conn.commit()
     mapped = _map_json_fields(row, "provider_ids", "desired_state", "actual_state")
     assert mapped is not None
@@ -427,6 +502,7 @@ def record_event(
         """,
         (lab_id, event_type, actor, detail, Jsonb(payload or {}), _now()),
     ).fetchone()
+    conn.commit()
     mapped = _map_json_fields(row, "payload")
     assert mapped is not None
     return mapped
@@ -444,14 +520,55 @@ def page_payload(conn: Connection, selected_lab_id: str | None = None) -> dict:
     labs = list_labs(conn)
     selected = get_lab(conn, selected_lab_id) if selected_lab_id else (labs[0] if labs else None)
     lab_id = selected["id"] if selected else ""
+    boundaries = _list_lab_rows(
+        conn,
+        table="lab_boundaries",
+        lab_id=lab_id,
+        order_by="created_at DESC, name ASC",
+        json_fields=("provider_ids", "desired_state", "actual_state"),
+    ) if lab_id else []
+    boundary_objects = _list_lab_rows(
+        conn,
+        table="lab_boundary_objects",
+        lab_id=lab_id,
+        order_by="created_at DESC, name ASC",
+        json_fields=("provider_ids", "desired_state", "actual_state"),
+    ) if lab_id else []
+    reservations = _list_lab_rows(
+        conn,
+        table="lab_reservations",
+        lab_id=lab_id,
+        order_by="created_at DESC, reservation_type ASC, value ASC",
+        json_fields=("metadata",),
+    ) if lab_id else []
+    reconcile_runs = _list_lab_rows(
+        conn,
+        table="lab_reconcile_runs",
+        lab_id=lab_id,
+        order_by="started_at DESC, id DESC",
+    ) if lab_id else []
+    findings = _list_lab_rows(
+        conn,
+        table="lab_reconcile_findings",
+        lab_id=lab_id,
+        order_by="created_at DESC, id DESC",
+        json_fields=("object_ref", "desired_state", "actual_state"),
+    ) if lab_id else []
+    fix_actions = _list_lab_rows(
+        conn,
+        table="lab_fix_actions",
+        lab_id=lab_id,
+        order_by="created_at DESC, priority ASC, id DESC",
+        json_fields=("request", "result"),
+    ) if lab_id else []
     return {
         "labs": labs,
         "selected_lab": selected,
-        "boundaries": [],
-        "boundary_objects": [],
-        "reservations": [],
-        "reconcile_runs": [],
-        "findings": [],
-        "fix_actions": [],
+        "boundaries": boundaries,
+        "boundary_objects": boundary_objects,
+        "reservations": reservations,
+        "reconcile_runs": reconcile_runs,
+        "findings": findings,
+        "fix_actions": fix_actions,
         "events": _recent_events(conn, lab_id) if lab_id else [],
     }
