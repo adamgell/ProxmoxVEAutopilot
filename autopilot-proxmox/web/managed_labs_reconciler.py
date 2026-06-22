@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+from typing import Any
+
+from psycopg import Connection
+
+from web import managed_labs_pg
+
+
+def _ids(rows: list[dict[str, Any]] | tuple[dict[str, Any], ...], *keys: str) -> set[str]:
+    out: set[str] = set()
+    for row in rows or []:
+        for key in ("id", *keys):
+            value = row.get(key)
+            if value is not None and str(value).strip():
+                out.add(str(value).strip())
+    return out
+
+
+def _subnet_exists(inventory: dict[str, Any], vnet: str, subnet: str) -> bool:
+    rows = inventory.get("subnets_by_vnet", {}).get(vnet, []) or []
+    return subnet in _ids(rows, "subnet")
+
+
+def _record_fixable(
+    conn: Connection,
+    *,
+    lab: dict[str, Any],
+    reconcile_run_id: str | None,
+    finding_type: str,
+    detail: str,
+    action_type: str,
+    priority: int,
+    request: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    finding = managed_labs_pg.record_finding(
+        conn,
+        lab_id=lab["id"],
+        reconcile_run_id=reconcile_run_id,
+        provider="proxmox",
+        finding_type=finding_type,
+        severity="fixable",
+        detail=detail,
+        object_ref=request,
+        desired_state=request,
+    )
+    fix = managed_labs_pg.create_fix_action(
+        conn,
+        lab_id=lab["id"],
+        reconcile_run_id=reconcile_run_id,
+        provider="proxmox",
+        action_type=action_type,
+        priority=priority,
+        detail=detail,
+        request=request,
+    )
+    return finding, fix
+
+
+def plan_network_reconcile(
+    conn: Connection,
+    *,
+    lab_id: str,
+    inventory: dict[str, Any],
+    reconcile_run_id: str | None = None,
+) -> dict[str, Any]:
+    lab = managed_labs_pg.get_lab(conn, lab_id)
+    if not lab:
+        raise ValueError(f"lab not found: {lab_id}")
+
+    findings: list[dict[str, Any]] = []
+    fixes: list[dict[str, Any]] = []
+    overlaps = managed_labs_pg.find_overlapping_cidr_reservations(
+        conn,
+        lab["network_cidr"],
+        exclude_lab_id=lab["id"],
+    )
+    if overlaps:
+        findings.append(
+            managed_labs_pg.record_finding(
+                conn,
+                lab_id=lab["id"],
+                reconcile_run_id=reconcile_run_id,
+                provider="network",
+                finding_type="subnet_overlaps_existing_lab",
+                severity="blocked",
+                detail=f"Requested subnet overlaps existing reservation {overlaps[0]['value']}.",
+                object_ref={"cidr": lab["network_cidr"], "overlap": overlaps[0]},
+            )
+        )
+        return {"status": "blocked", "findings": findings, "fix_actions": fixes}
+
+    managed_labs_pg.reserve_value(
+        conn,
+        lab_id=lab["id"],
+        reservation_type="cidr",
+        value=lab["network_cidr"],
+    )
+
+    if lab["network_mode"] != "sdn":
+        findings.append(
+            managed_labs_pg.record_finding(
+                conn,
+                lab_id=lab["id"],
+                reconcile_run_id=reconcile_run_id,
+                provider="proxmox",
+                finding_type="bridge_validate_only",
+                severity="blocked",
+                detail="Bridge targets are validate-only in this slice; create or select an existing bridge before proceeding.",
+                object_ref={"network_mode": lab["network_mode"]},
+            )
+        )
+        return {"status": "blocked", "findings": findings, "fix_actions": fixes}
+
+    zone = lab["sdn_zone"] or f"lab-{lab['short_code']}"
+    vnet = lab["sdn_vnet"] or f"{lab['short_code']}-vnet"
+    subnet = lab["sdn_subnet"] or lab["network_cidr"]
+    zone_ids = _ids(inventory.get("zones", []), "zone")
+    vnet_ids = _ids(inventory.get("vnets", []), "vnet")
+
+    if zone not in zone_ids:
+        finding, fix = _record_fixable(
+            conn,
+            lab=lab,
+            reconcile_run_id=reconcile_run_id,
+            finding_type="sdn_zone_missing",
+            detail=f"SDN zone {zone} is missing.",
+            action_type="create_sdn_zone",
+            priority=10,
+            request={"zone": zone, "type": "simple"},
+        )
+        findings.append(finding)
+        fixes.append(fix)
+
+    if vnet not in vnet_ids:
+        finding, fix = _record_fixable(
+            conn,
+            lab=lab,
+            reconcile_run_id=reconcile_run_id,
+            finding_type="sdn_vnet_missing",
+            detail=f"SDN VNet {vnet} is missing.",
+            action_type="create_sdn_vnet",
+            priority=20,
+            request={"vnet": vnet, "zone": zone, "alias": lab["name"]},
+        )
+        findings.append(finding)
+        fixes.append(fix)
+
+    if not _subnet_exists(inventory, vnet, subnet):
+        request = {"vnet": vnet, "subnet": subnet, "gateway": lab["gateway_ip"], "snat": True}
+        finding, fix = _record_fixable(
+            conn,
+            lab=lab,
+            reconcile_run_id=reconcile_run_id,
+            finding_type="sdn_subnet_missing",
+            detail=f"SDN subnet {subnet} is missing on {vnet}.",
+            action_type="create_sdn_subnet",
+            priority=30,
+            request=request,
+        )
+        findings.append(finding)
+        fixes.append(fix)
+
+    if fixes:
+        fixes.append(
+            managed_labs_pg.create_fix_action(
+                conn,
+                lab_id=lab["id"],
+                reconcile_run_id=reconcile_run_id,
+                provider="proxmox",
+                action_type="apply_sdn",
+                priority=90,
+                detail="Apply pending Proxmox SDN changes.",
+                request={"allow_pending": True},
+            )
+        )
+        return {"status": "fixing", "findings": findings, "fix_actions": fixes}
+
+    return {"status": "ready", "findings": [], "fix_actions": []}
