@@ -270,10 +270,14 @@ function bubbleFormPayload(values: BubbleFormValues): Readonly<Record<string, un
 
 interface OrphanVnetSubnet {
   readonly subnet?: string;
+  readonly cidr?: string;
+  readonly network?: string;
   readonly gateway?: string;
   readonly snat?: boolean;
   readonly dhcp_dns_server?: string;
   readonly dhcp_range?: string;
+  readonly dhcp_pool_start?: string;
+  readonly dhcp_pool_end?: string;
 }
 
 interface OrphanVnet {
@@ -295,6 +299,7 @@ interface BubbleBoundNetwork {
   readonly zone: string;
   readonly subnet: string;
   readonly gateway: string;
+  readonly dhcpScope: string;
   readonly dhcpStart: string;
   readonly dhcpEnd: string;
   readonly dhcpDnsServer: string;
@@ -934,26 +939,34 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       readonly binding?: { readonly vnet: string; readonly zone: string; readonly subnet: string };
       readonly subnet?: {
         readonly subnet?: string;
+        readonly cidr?: string;
+        readonly network?: string;
         readonly gateway?: string;
         readonly dhcp_dns_server?: string;
         readonly dhcp_range?: string;
+        readonly dhcp_pool_start?: string;
+        readonly dhcp_pool_end?: string;
       } | null;
     }>(`/api/sdn/labs/${encodeURIComponent(bubble.id)}/network`)
       .then((data) => {
         if (!data.binding) {
           return;
         }
-        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet;
+        const subnetCidr = data.subnet?.cidr ?? data.subnet?.subnet ?? data.binding.subnet;
         const range = parseDhcpRange(data.subnet?.dhcp_range);
         const gateway = data.subnet?.gateway ?? "";
         const dhcpDns = data.subnet?.dhcp_dns_server ?? "";
+        const dhcpScope = data.subnet?.network ?? data.binding.vnet;
+        const dhcpStart = data.subnet?.dhcp_pool_start ?? range.start;
+        const dhcpEnd = data.subnet?.dhcp_pool_end ?? range.end;
         setBubbleBoundNetwork({
           vnet: data.binding.vnet,
           zone: data.binding.zone,
           subnet: subnetCidr,
           gateway,
-          dhcpStart: range.start,
-          dhcpEnd: range.end,
+          dhcpScope,
+          dhcpStart,
+          dhcpEnd,
           dhcpDnsServer: dhcpDns,
           subnetSource: data.subnet ? "sdn" : "binding"
         });
@@ -961,9 +974,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           ...current,
           cidr: subnetCidr || current.cidr,
           gateway_ip: gateway || current.gateway_ip,
-          dhcp_scope: data.binding?.vnet ?? current.dhcp_scope,
-          dhcp_pool_start: range.start || current.dhcp_pool_start,
-          dhcp_pool_end: range.end || current.dhcp_pool_end
+          dhcp_scope: dhcpScope || current.dhcp_scope,
+          dhcp_pool_start: dhcpStart || current.dhcp_pool_start,
+          dhcp_pool_end: dhcpEnd || current.dhcp_pool_end
         }));
       })
       .catch(() => {
@@ -981,18 +994,22 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     if (!match) {
       return;
     }
-    const subnetCidr = match.subnet?.subnet ?? "";
+    const providerSubnet = match.subnet?.subnet ?? match.subnet?.cidr ?? "";
+    const subnetCidr = match.subnet?.cidr ?? match.subnet?.subnet ?? "";
     const gateway = match.subnet?.gateway ?? "";
     const range = parseDhcpRange(match.subnet?.dhcp_range);
-    setBubbleAdoptedVnet({ vnet: match.vnet, zone: match.zone, subnet: subnetCidr });
+    const dhcpStart = match.subnet?.dhcp_pool_start ?? range.start;
+    const dhcpEnd = match.subnet?.dhcp_pool_end ?? range.end;
+    setBubbleAdoptedVnet({ vnet: match.vnet, zone: match.zone, subnet: providerSubnet });
     setBubbleDraft((current) => ({
       ...current,
       cidr: subnetCidr || current.cidr,
       gateway_ip: gateway || current.gateway_ip,
-      dhcp_scope: match.alias || match.vnet || current.dhcp_scope,
-      dhcp_pool_start: range.start || current.dhcp_pool_start,
-      dhcp_pool_end: range.end || current.dhcp_pool_end,
-      isolation_status: current.isolation_status === "planned" ? "ready" : current.isolation_status
+      dhcp_scope: match.subnet?.network || match.alias || match.vnet || current.dhcp_scope,
+      dhcp_pool_start: dhcpStart || current.dhcp_pool_start,
+      dhcp_pool_end: dhcpEnd || current.dhcp_pool_end,
+      lifecycle_state: current.lifecycle_state === "planned" ? "active" : current.lifecycle_state,
+      isolation_status: current.isolation_status === "planned" ? "isolated" : current.isolation_status
     }));
   }, [orphanVnets]);
 
@@ -1027,8 +1044,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           vnet: bubbleAdoptedVnet.vnet,
           subnet: bubbleAdoptedVnet.subnet,
           domain_name: bubbleDraft.domain_name.trim(),
+          netbios_name: bubbleDraft.netbios_name.trim(),
           cidr: bubbleDraft.cidr.trim(),
-          gateway_ip: bubbleDraft.gateway_ip.trim()
+          gateway_ip: bubbleDraft.gateway_ip.trim(),
+          dhcp_scope: bubbleDraft.dhcp_scope.trim(),
+          dhcp_pool_start: bubbleDraft.dhcp_pool_start.trim(),
+          dhcp_pool_end: bubbleDraft.dhcp_pool_end.trim()
         };
         void runAction(`Create bubble ${bubbleName}`, () => postJson("/api/sdn/labs", labPayload)).then((ok) => {
           if (ok) {
@@ -2591,7 +2612,8 @@ function BubbleEditor({
             >
               <option value="">- create a new bubble without SDN binding -</option>
               {adoptionVnets.map((vnet) => {
-                const cidrLabel = vnet.subnet?.subnet ? ` (${vnet.subnet.subnet})` : "";
+                const subnetLabel = vnet.subnet?.cidr ?? vnet.subnet?.subnet;
+                const cidrLabel = subnetLabel ? ` (${subnetLabel})` : "";
                 const zoneLabel = vnet.zone ? ` / zone ${vnet.zone}` : "";
                 const aliasLabel = vnet.alias && vnet.alias !== vnet.vnet ? ` - ${vnet.alias}` : "";
                 return (
@@ -2636,7 +2658,7 @@ function BubbleEditor({
             <dl className="bubble-network-readonly">
               <div><dt>Isolated CIDR</dt><dd>{boundNetwork.subnet || "-"}</dd></div>
               <div><dt>Gateway IP</dt><dd>{boundNetwork.gateway || "-"}</dd></div>
-              <div><dt>DHCP network ID</dt><dd>{boundNetwork.vnet}</dd></div>
+              <div><dt>DHCP network ID</dt><dd>{boundNetwork.dhcpScope || boundNetwork.vnet}</dd></div>
               <div><dt>DHCP DNS server</dt><dd>{boundNetwork.dhcpDnsServer || "-"}</dd></div>
               <div><dt>DHCP pool start</dt><dd>{boundNetwork.dhcpStart || "-"}</dd></div>
               <div><dt>DHCP pool end</dt><dd>{boundNetwork.dhcpEnd || "-"}</dd></div>

@@ -1354,6 +1354,93 @@ describe("App", () => {
     expect(promptSpy).not.toHaveBeenCalled();
   });
 
+
+  test("adopts a PVE subnet by ID while storing the human CIDR on the bubble", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/sdn/labs/orphan-vnets": {
+        orphan_vnets: [
+          {
+            vnet: "lab101",
+            zone: "lab-simple",
+            alias: "Lab 101",
+            subnet: {
+              subnet: "lab-simple-10.60.10.0-24",
+              cidr: "10.60.10.0/24",
+              network: "10.60.10.0",
+              gateway: "10.60.10.1",
+              snat: true,
+              dhcp_range: "start-address=10.60.10.100,end-address=10.60.10.199"
+            }
+          }
+        ]
+      },
+      "/api/sdn/labs": {
+        bubble: {
+          id: "bubble-4",
+          name: "LAB 101",
+          domain_name: "lab101.home.gell.one",
+          cidr: "10.60.10.0/24",
+          gateway_ip: "10.60.10.1",
+          lifecycle_state: "active",
+          isolation_status: "isolated"
+        },
+        binding: {
+          bubble_id: "bubble-4",
+          zone: "lab-simple",
+          vnet: "lab101",
+          subnet: "lab-simple-10.60.10.0-24",
+          snat_enabled: true
+        },
+        preflight: { ok: true }
+      }
+    });
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "New bubble" }));
+    const adoptionSelect = await screen.findByLabelText("Adopt existing isolated network");
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /10\.60\.10\.0\/24/ })).toBeInTheDocument();
+    });
+    fireEvent.change(adoptionSelect, { target: { value: "lab101" } });
+    expect(screen.getByLabelText("Isolated CIDR")).toHaveValue("10.60.10.0/24");
+    expect(screen.getByLabelText("Gateway IP")).toHaveValue("10.60.10.1");
+    expect(screen.getByLabelText("DHCP network ID")).toHaveValue("10.60.10.0");
+    expect(screen.getByLabelText("DHCP pool start")).toHaveValue("10.60.10.100");
+    expect(screen.getByLabelText("DHCP pool end")).toHaveValue("10.60.10.199");
+
+    fireEvent.change(screen.getByLabelText("Bubble name"), { target: { value: "LAB 101" } });
+    fireEvent.change(screen.getByLabelText("Domain name"), { target: { value: "lab101.home.gell.one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create bubble" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/sdn/labs",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const postCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/sdn/labs"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(postCall).toBeDefined();
+    const init = postCall?.[1] as RequestInit;
+    expect(typeof init.body).toBe("string");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      name: "LAB 101",
+      zone: "lab-simple",
+      vnet: "lab101",
+      subnet: "lab-simple-10.60.10.0-24",
+      domain_name: "lab101.home.gell.one",
+      cidr: "10.60.10.0/24",
+      gateway_ip: "10.60.10.1",
+      dhcp_scope: "10.60.10.0",
+      dhcp_pool_start: "10.60.10.100",
+      dhcp_pool_end: "10.60.10.199"
+    });
+  });
+
   test("edits a bubble from inline React fleet fields", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,

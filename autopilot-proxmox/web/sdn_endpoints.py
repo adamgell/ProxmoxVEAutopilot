@@ -27,8 +27,12 @@ class SdnLabBody(BaseModel):
     vnet: str
     subnet: str = ""
     domain_name: str = ""
+    netbios_name: str = ""
     cidr: str = ""
     gateway_ip: str = ""
+    dhcp_scope: str = ""
+    dhcp_pool_start: str = ""
+    dhcp_pool_end: str = ""
     egress_policy: str = "open"
     snat_enabled: bool = True
     firewall_profile: str = "isolated_open_egress"
@@ -81,12 +85,110 @@ def _object_id(row: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _text_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = _text_value(value).lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"", "0", "false", "no", "off", "none"}:
+        return False
+    return bool(value)
+
+
+def _subnet_provider_id(row: dict[str, Any]) -> str:
+    return _text_value(row.get("subnet") or row.get("id") or row.get("cidr"))
+
+
+def _subnet_cidr(row: dict[str, Any]) -> str:
+    return _text_value(row.get("cidr") or row.get("cidr4") or row.get("subnet") or row.get("id"))
+
+
+def _subnet_identity_values(row: dict[str, Any]) -> set[str]:
+    return {
+        value
+        for value in (
+            _text_value(row.get("id")),
+            _text_value(row.get("subnet")),
+            _text_value(row.get("cidr")),
+            _text_value(row.get("cidr4")),
+        )
+        if value
+    }
+
+
+def _dhcp_range_parts(value: Any) -> tuple[str, str]:
+    if isinstance(value, list):
+        for item in value:
+            start, end = _dhcp_range_parts(item)
+            if start or end:
+                return start, end
+        return "", ""
+    if isinstance(value, dict):
+        return (
+            _text_value(value.get("start-address") or value.get("start") or value.get("from")),
+            _text_value(value.get("end-address") or value.get("end") or value.get("to")),
+        )
+    if isinstance(value, str):
+        start = ""
+        end = ""
+        for part in value.split(","):
+            key, sep, raw = part.partition("=")
+            if not sep:
+                continue
+            normalized = key.strip().lower()
+            if normalized == "start-address":
+                start = raw.strip()
+            elif normalized == "end-address":
+                end = raw.strip()
+        return start, end
+    return "", ""
+
+
+def _dhcp_range_value(row: dict[str, Any]) -> str:
+    raw = row.get("dhcp-range")
+    start, end = _dhcp_range_parts(raw)
+    parts = []
+    if start:
+        parts.append(f"start-address={start}")
+    if end:
+        parts.append(f"end-address={end}")
+    if parts:
+        return ",".join(parts)
+    return _text_value(raw)
+
+
+def _subnet_info(row: dict[str, Any]) -> dict[str, Any]:
+    start, end = _dhcp_range_parts(row.get("dhcp-range"))
+    return {
+        "subnet": _subnet_provider_id(row),
+        "cidr": _subnet_cidr(row),
+        "network": _text_value(row.get("network")),
+        "gateway": _text_value(row.get("gateway")),
+        "snat": _truthy(row.get("snat")),
+        "dhcp_dns_server": _text_value(row.get("dhcp-dns-server")),
+        "dhcp_range": _dhcp_range_value(row),
+        "dhcp_pool_start": start,
+        "dhcp_pool_end": end,
+        "dnszoneprefix": _text_value(row.get("dnszoneprefix")),
+    }
+
+
 def _lab_preflight_payload(body: SdnLabBody) -> dict[str, Any]:
     inventory = proxmox_sdn.inventory(_api())
     zones = {_object_id(row, "zone") for row in inventory.get("zones", [])}
     vnets = {_object_id(row, "vnet") for row in inventory.get("vnets", [])}
-    subnet_rows = list(inventory.get("subnets_by_vnet", {}).get(body.vnet, []))
-    subnet = next((row for row in subnet_rows if _object_id(row, "subnet") == body.subnet), None)
+    subnet_rows = [row for row in inventory.get("subnets_by_vnet", {}).get(body.vnet, []) if isinstance(row, dict)]
+    wanted_subnet = body.subnet.strip()
+    subnet = next((row for row in subnet_rows if wanted_subnet in _subnet_identity_values(row)), None)
     blocking = []
     warnings = []
     if body.zone not in zones:
@@ -99,7 +201,7 @@ def _lab_preflight_payload(body: SdnLabBody) -> dict[str, Any]:
         blocking.append({"id": "subnet_missing", "detail": f"SDN subnet is not present on {body.vnet}: {body.subnet}"})
     snat_enabled = bool(body.snat_enabled)
     if subnet is not None and body.egress_policy == "open":
-        snat_enabled = bool(subnet.get("snat", body.snat_enabled))
+        snat_enabled = _truthy(subnet.get("snat", body.snat_enabled))
         if not snat_enabled:
             warnings.append({
                 "id": "snat_not_enabled",
@@ -112,6 +214,7 @@ def _lab_preflight_payload(body: SdnLabBody) -> dict[str, Any]:
         "egress_policy": body.egress_policy or "open",
         "snat_enabled": snat_enabled,
         "firewall_profile": body.firewall_profile or "isolated_open_egress",
+        "subnet": _subnet_info(subnet) if subnet is not None else None,
     }
 
 
@@ -469,14 +572,20 @@ def create_lab(body: SdnLabBody):
     with _conn() as conn:
         lab_bubbles_pg.init(conn)
         sdn_labs_pg.init(conn)
+        subnet_defaults = preflight.get("subnet") or {}
         bubble = lab_bubbles_pg.create_bubble(
             conn,
             name=body.name,
             domain_name=body.domain_name,
-            cidr=body.cidr,
-            gateway_ip=body.gateway_ip,
+            netbios_name=body.netbios_name,
+            cidr=body.cidr or str(subnet_defaults.get("cidr") or ""),
+            gateway_ip=body.gateway_ip or str(subnet_defaults.get("gateway") or ""),
             planned_bridge=body.vnet,
-            isolation_status="planned",
+            lifecycle_state="active",
+            isolation_status="isolated",
+            dhcp_scope=body.dhcp_scope or str(subnet_defaults.get("network") or body.vnet),
+            dhcp_pool_start=body.dhcp_pool_start or str(subnet_defaults.get("dhcp_pool_start") or ""),
+            dhcp_pool_end=body.dhcp_pool_end or str(subnet_defaults.get("dhcp_pool_end") or ""),
         )
         binding = sdn_labs_pg.upsert_binding(
             conn,
@@ -519,8 +628,7 @@ def get_lab_network(bubble_id: str):
         for candidate in subnets:
             if not isinstance(candidate, dict):
                 continue
-            candidate_id = str(candidate.get("subnet") or candidate.get("id") or "").strip()
-            if wanted_subnet and candidate_id == wanted_subnet:
+            if wanted_subnet and wanted_subnet in _subnet_identity_values(candidate):
                 primary = candidate
                 break
             if primary is None and candidate.get("gateway"):
@@ -528,14 +636,7 @@ def get_lab_network(bubble_id: str):
         if primary is None and subnets and isinstance(subnets[0], dict):
             primary = subnets[0]
         if primary is not None:
-            subnet_info = {
-                "subnet": str(primary.get("subnet") or primary.get("id") or ""),
-                "gateway": str(primary.get("gateway") or ""),
-                "snat": bool(primary.get("snat")),
-                "dhcp_dns_server": str(primary.get("dhcp-dns-server") or ""),
-                "dhcp_range": str(primary.get("dhcp-range") or ""),
-                "dnszoneprefix": str(primary.get("dnszoneprefix") or ""),
-            }
+            subnet_info = _subnet_info(primary)
     except HTTPException:
         raise
     except Exception:
@@ -589,13 +690,6 @@ def list_orphan_vnets():
             primary_subnet = subnets[0] if isinstance(subnets[0], dict) else {}
         subnet_info = {}
         if primary_subnet:
-            cidr = str(primary_subnet.get("subnet") or primary_subnet.get("id") or "")
-            subnet_info = {
-                "subnet": cidr,
-                "gateway": str(primary_subnet.get("gateway") or ""),
-                "snat": bool(primary_subnet.get("snat")),
-                "dhcp_dns_server": str(primary_subnet.get("dhcp-dns-server") or ""),
-                "dhcp_range": str(primary_subnet.get("dhcp-range") or ""),
-            }
+            subnet_info = _subnet_info(primary_subnet)
         orphans.append({**vnet, "subnet": subnet_info})
     return {"orphan_vnets": orphans, "total_vnets": len(vnets), "bound_vnets": sorted(bound_vnets)}
