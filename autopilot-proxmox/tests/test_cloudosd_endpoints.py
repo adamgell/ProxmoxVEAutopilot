@@ -2867,6 +2867,79 @@ def test_provision_rejects_sequence_for_wrong_boot_mode(
     assert "not available for OSDCloud boot mode" in response.json()["detail"]
 
 
+def test_provision_cloudosd_batch_auto_selects_ready_artifact_when_form_omits_id(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_api",
+        lambda path, *args, **kwargs: {
+            "/cluster/nextid": 100,
+            "/cluster/resources?type=vm": [],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+        }[path],
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "profile": "lenovo-t14",
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "serial_prefix": "GELL",
+            "group_tag": "GellNative",
+            "hostname_pattern": "GELL-OSD-{index}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    job = next(
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    )
+    assert job["args"]["cloudosd_artifact_volid"] == artifact["proxmox_volid"]
+
+
 def test_provision_cloudosd_batch_creates_runs_and_jobs(
     cloudosd_client,
     pg_conn,

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
@@ -173,7 +173,23 @@ function mockFetch() {
   }));
 }
 
-function renderProvision() {
+function mockStorage(store: Map<string, string>) {
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      removeItem: vi.fn((key: string) => {
+        store.delete(key);
+      }),
+      setItem: vi.fn((key: string, value: string) => {
+        store.set(key, value);
+      })
+    }
+  });
+}
+
+function renderProvision(store = new Map<string, string>()) {
+  mockStorage(store);
   window.history.pushState({}, "", "/react/provision");
   render(<App bootstrap={{ buildSha: "testsha", buildTime: "2026-05-20T12:00:00-04:00" }} />);
 }
@@ -188,6 +204,8 @@ function namedControl(container: HTMLElement, name: string): HTMLElement {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.removeItem("pveautopilot.provision.templates.v1");
+  window.localStorage.removeItem("pveautopilot.provision.draft.v1");
   vi.unstubAllGlobals();
 });
 
@@ -330,5 +348,49 @@ describe("ProvisionPage", () => {
     expect(namedControl(ubuntuForm, "boot_mode")).toHaveValue("ubuntu");
     expect(namedControl(ubuntuForm, "ubuntu_v2_sequence_id")).toBeInTheDocument();
     expect(namedControl(ubuntuForm, "ubuntu_template_vmid")).toBeInTheDocument();
+  });
+
+  test("saves and restores named provision templates from the form", async () => {
+    mockFetch();
+    renderProvision();
+
+    await screen.findByRole("radiogroup", { name: "Boot mode" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "ring0ivy24" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "ring0" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "VM count" }), { target: { value: "4" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Template name" }), { target: { value: "Ring 0 Ivy24" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save template" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "throwaway" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "tmp" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "VM count" }), { target: { value: "1" } });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Saved template" }), { target: { value: "Ring 0 Ivy24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load template" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
+      expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
+      expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
+    });
+  });
+
+  test("restores the last draft after the provision page remounts", async () => {
+    const store = new Map<string, string>();
+    mockFetch();
+    renderProvision(store);
+
+    await screen.findByRole("radiogroup", { name: "Boot mode" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "draft-ring" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "draft" } });
+
+    cleanup();
+    renderProvision(store);
+
+    await screen.findByRole("textbox", { name: "Group tag" });
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("draft-ring");
+      expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("draft");
+    });
   });
 });

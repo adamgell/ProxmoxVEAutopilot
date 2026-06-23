@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
 import { fetchJson } from "../apiClient";
@@ -160,6 +160,16 @@ interface ProgressMilestone {
   readonly at?: string;
 }
 
+type ProvisionFormSnapshot = Readonly<Record<string, string | readonly string[]>>;
+
+interface ProvisionTemplate {
+  readonly name: string;
+  readonly savedAt: string;
+  readonly fields: ProvisionFormSnapshot;
+}
+
+type ProvisionTemplateMap = Readonly<Record<string, ProvisionTemplate>>;
+
 const EMPTY_PAYLOAD: ProvisionPagePayload = {
   profiles: {},
   defaults: {},
@@ -179,6 +189,9 @@ const EMPTY_PAYLOAD: ProvisionPagePayload = {
   bubbles: []
 };
 
+const PROVISION_TEMPLATE_STORAGE_KEY = "pveautopilot.provision.templates.v1";
+const PROVISION_DRAFT_STORAGE_KEY = "pveautopilot.provision.draft.v1";
+
 function asRecord(value: unknown): Readonly<Record<string, unknown>> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
 }
@@ -186,6 +199,90 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> {
 function asNumber(value: unknown, fallback: number): number {
   const numberValue = typeof value === "number" ? value : Number(value);
   return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function readStorageJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      return fallback;
+    }
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStorageJson(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    return;
+  }
+}
+
+function isBootMode(value: string): value is BootMode {
+  return ["cloudosd", "osdeploy", "ubuntu", "winpe", "clone"].includes(value);
+}
+
+function snapshotForm(form: HTMLFormElement): ProvisionFormSnapshot {
+  const snapshot: Record<string, string | string[]> = {};
+  const data = new FormData(form);
+  data.forEach((value, key) => {
+    const text = typeof value === "string" ? value : value.name;
+    const existing = snapshot[key];
+    if (Array.isArray(existing)) {
+      existing.push(text);
+    } else if (existing !== undefined) {
+      snapshot[key] = [existing, text];
+    } else {
+      snapshot[key] = text;
+    }
+  });
+  return snapshot;
+}
+
+function valuesForField(snapshot: ProvisionFormSnapshot, name: string): readonly string[] {
+  const value = snapshot[name];
+  if (Array.isArray(value)) {
+    return value.map(String);
+  }
+  return value === undefined ? [] : [String(value)];
+}
+
+function firstValueForField(snapshot: ProvisionFormSnapshot, name: string): string {
+  return valuesForField(snapshot, name)[0] ?? "";
+}
+
+function applyFormSnapshot(form: HTMLFormElement, snapshot: ProvisionFormSnapshot): void {
+  const controls = form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+    "input[name], select[name], textarea[name]"
+  );
+  controls.forEach((control) => {
+    const name = control.name;
+    const values = valuesForField(snapshot, name);
+    if (control instanceof HTMLInputElement && control.type === "checkbox") {
+      control.checked = values.includes(control.value || "on");
+      return;
+    }
+    if (control instanceof HTMLInputElement && control.type === "radio") {
+      control.checked = values.includes(control.value);
+      return;
+    }
+    if (control instanceof HTMLSelectElement && control.multiple) {
+      Array.from(control.options).forEach((option) => {
+        option.selected = values.includes(option.value);
+      });
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    const next = firstValueForField(snapshot, name);
+    if (next || Object.hasOwn(snapshot, name)) {
+      control.value = next;
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
 }
 
 function provisionPayloadFromUnknown(value: unknown): ProvisionPagePayload {
@@ -465,6 +562,7 @@ function RunTagComposer({
           <label htmlFor={runTagId}>Run tag</label>
           <input
             id={runTagId}
+            name="run_tag"
             type="text"
             value={runTag}
             aria-describedby={helpId}
@@ -931,15 +1029,25 @@ function initialHostnamePattern(defaultGroupTag: string, defaultPattern: string)
 
 export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [payload, setPayload] = useState<ProvisionPagePayload>(EMPTY_PAYLOAD);
-  const [bootMode, setBootMode] = useState<BootMode>("cloudosd");
+  const [initialDraft] = useState(() => readStorageJson<{ readonly fields?: ProvisionFormSnapshot } | null>(PROVISION_DRAFT_STORAGE_KEY, null));
+  const [bootMode, setBootMode] = useState<BootMode>(() => {
+    const draftBootMode = initialDraft?.fields ? firstValueForField(initialDraft.fields, "boot_mode") : "";
+    return isBootMode(draftBootMode) ? draftBootMode : "cloudosd";
+  });
   const [runTag, setRunTag] = useState("");
   const [groupTag, setGroupTag] = useState("");
   const [hostnamePattern, setHostnamePattern] = useState("ap-{index}");
   const [hostnameIsManual, setHostnameIsManual] = useState(false);
   const [vmCount, setVmCount] = useState(1);
   const [defaultsApplied, setDefaultsApplied] = useState(false);
+  const [templates, setTemplates] = useState<ProvisionTemplateMap>(() => readStorageJson<ProvisionTemplateMap>(PROVISION_TEMPLATE_STORAGE_KEY, {}));
+  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [templateName, setTemplateName] = useState("");
+  const [templateMessage, setTemplateMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const draftAppliedRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -964,6 +1072,127 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
   }, [defaultsApplied]);
 
   usePolling(load);
+
+  const templateOptions = useMemo(() => Object.values(templates).sort((a, b) => a.name.localeCompare(b.name)), [templates]);
+
+  const persistDraft = useCallback(() => {
+    if (!formRef.current) {
+      return;
+    }
+    writeStorageJson(PROVISION_DRAFT_STORAGE_KEY, {
+      savedAt: new Date().toISOString(),
+      fields: snapshotForm(formRef.current)
+    });
+  }, []);
+
+  const syncControlledFieldsFromSnapshot = useCallback((fields: ProvisionFormSnapshot) => {
+    const nextRunTag = firstValueForField(fields, "run_tag");
+    const nextGroupTag = firstValueForField(fields, "group_tag");
+    if (Object.hasOwn(fields, "run_tag") || Object.hasOwn(fields, "group_tag")) {
+      setRunTag(nextRunTag || nextGroupTag);
+    }
+    if (Object.hasOwn(fields, "group_tag")) {
+      setGroupTag(nextGroupTag);
+    }
+    if (Object.hasOwn(fields, "hostname_pattern")) {
+      setHostnamePattern(firstValueForField(fields, "hostname_pattern"));
+      setHostnameIsManual(true);
+    }
+    if (Object.hasOwn(fields, "count")) {
+      setVmCount(asNumber(firstValueForField(fields, "count"), 1));
+    }
+    const nextBootMode = firstValueForField(fields, "boot_mode");
+    if (isBootMode(nextBootMode)) {
+      setBootMode(nextBootMode);
+    }
+  }, []);
+
+  const applySavedFields = useCallback((fields: ProvisionFormSnapshot) => {
+    syncControlledFieldsFromSnapshot(fields);
+    window.setTimeout(() => {
+      if (!formRef.current) {
+        return;
+      }
+      applyFormSnapshot(formRef.current, fields);
+      persistDraft();
+    }, 0);
+  }, [persistDraft, syncControlledFieldsFromSnapshot]);
+
+  const applySavedFieldsImmediately = useCallback((fields: ProvisionFormSnapshot) => {
+    syncControlledFieldsFromSnapshot(fields);
+    if (!formRef.current) {
+      return;
+    }
+    applyFormSnapshot(formRef.current, fields);
+    persistDraft();
+  }, [persistDraft, syncControlledFieldsFromSnapshot]);
+
+  const saveTemplate = useCallback(() => {
+    if (!formRef.current) {
+      return;
+    }
+    const name = templateName.trim() || selectedTemplate.trim();
+    if (!name) {
+      setTemplateMessage("Name the template before saving.");
+      return;
+    }
+    const next: ProvisionTemplateMap = {
+      ...templates,
+      [name]: {
+        name,
+        savedAt: new Date().toISOString(),
+        fields: snapshotForm(formRef.current)
+      }
+    };
+    setTemplates(next);
+    setSelectedTemplate(name);
+    setTemplateName(name);
+    setTemplateMessage(`Saved ${name}.`);
+    writeStorageJson(PROVISION_TEMPLATE_STORAGE_KEY, next);
+  }, [selectedTemplate, templateName, templates]);
+
+  const loadTemplate = useCallback(() => {
+    const template = templates[selectedTemplate];
+    if (!template) {
+      setTemplateMessage("Select a template to load.");
+      return;
+    }
+    const nextBootMode = firstValueForField(template.fields, "boot_mode");
+    if (isBootMode(nextBootMode) && nextBootMode !== bootMode) {
+      setBootMode(nextBootMode);
+      applySavedFields(template.fields);
+    } else {
+      applySavedFieldsImmediately(template.fields);
+    }
+    setTemplateName(template.name);
+    setTemplateMessage(`Loaded ${template.name}.`);
+  }, [applySavedFields, applySavedFieldsImmediately, bootMode, selectedTemplate, templates]);
+
+  const deleteTemplate = useCallback(() => {
+    if (!selectedTemplate || !templates[selectedTemplate]) {
+      setTemplateMessage("Select a template to delete.");
+      return;
+    }
+    const next = Object.fromEntries(Object.entries(templates).filter(([name]) => name !== selectedTemplate)) as ProvisionTemplateMap;
+    setTemplates(next);
+    setSelectedTemplate("");
+    setTemplateName("");
+    setTemplateMessage(`Deleted ${selectedTemplate}.`);
+    writeStorageJson(PROVISION_TEMPLATE_STORAGE_KEY, next);
+  }, [selectedTemplate, templates]);
+
+  useEffect(() => {
+    if (loading || draftAppliedRef.current || !formRef.current) {
+      return;
+    }
+    draftAppliedRef.current = true;
+    const fields = initialDraft?.fields;
+    if (fields) {
+      window.setTimeout(() => {
+        applySavedFields(fields);
+      }, 0);
+    }
+  }, [applySavedFields, initialDraft, loading]);
 
   const profileOptions = useMemo(() => {
     const rows = Object.entries(payload.profiles).map(([key, profile]) => ({
@@ -1009,11 +1238,50 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
 
       {!loading ? (
         <>
+          <Panel title="Provision Templates">
+            <div className="utility-field-grid provision-template-grid">
+              <div className="utility-field">
+                <label htmlFor="provision-template-select">Saved template</label>
+                <select
+                  id="provision-template-select"
+                  value={selectedTemplate}
+                  onChange={(event) => {
+                    setSelectedTemplate(event.currentTarget.value);
+                    if (event.currentTarget.value) {
+                      setTemplateName(event.currentTarget.value);
+                    }
+                  }}
+                >
+                  <option value="">Select template</option>
+                  {templateOptions.map((template) => (
+                    <option key={template.name} value={template.name}>{template.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="utility-field">
+                <label htmlFor="provision-template-name">Template name</label>
+                <input
+                  id="provision-template-name"
+                  value={templateName}
+                  onChange={(event) => { setTemplateName(event.currentTarget.value); }}
+                />
+              </div>
+              <div className="utility-row-actions provision-template-actions">
+                <button type="button" className="utility-button" onClick={saveTemplate}>Save template</button>
+                <button type="button" className="utility-button" onClick={loadTemplate}>Load template</button>
+                <button type="button" className="utility-button utility-button--danger" onClick={deleteTemplate}>Delete template</button>
+              </div>
+            </div>
+            {templateMessage ? <p className="muted provision-template-message" role="status">{templateMessage}</p> : null}
+          </Panel>
           <form
+            ref={formRef}
             className="utility-form provision-builder"
             method="post"
             action="/api/jobs/provision"
             data-testid="provision-builder-form"
+            onChange={persistDraft}
+            onSubmit={persistDraft}
           >
             <div className="provision-launch-grid">
               <div className="provision-section-stack">
