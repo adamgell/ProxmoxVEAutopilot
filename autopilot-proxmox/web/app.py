@@ -5449,6 +5449,7 @@ def _provision_page_payload() -> dict:
     osdeploy_options = osdeploy_endpoints.proxmox_options_payload()
     cloudosd_artifacts = []
     osdeploy_artifacts = []
+    provision_sequences = []
     ubuntu_v2_sequences = []
     osdeploy_credentials = []
     bubbles = []
@@ -5462,8 +5463,18 @@ def _provision_page_payload() -> dict:
             osdeploy_pg.init(conn)
             osdeploy_cache.init(conn)
             lab_bubbles_pg.init(conn)
+            sequences_pg.init(conn)
             osdeploy_credentials = sequences_pg.list_credentials(conn)
             bubbles = lab_bubbles_pg.list_bubbles(conn)
+            for summary in sequences_pg.list_sequences(conn):
+                sequence = sequences_pg.get_sequence(conn, int(summary["id"]))
+                boot_modes = _legacy_sequence_boot_modes(sequence)
+                if "cloudosd" not in boot_modes:
+                    continue
+                provision_sequences.append({
+                    **summary,
+                    "boot_modes": ["cloudosd"],
+                })
             cloudosd_artifacts = [
                 cloudosd_endpoints.enrich_artifact(artifact)
                 for artifact in cloudosd_pg.list_artifacts(conn, architecture="amd64")
@@ -5481,6 +5492,7 @@ def _provision_page_payload() -> dict:
     except Exception:
         cloudosd_artifacts = []
         osdeploy_artifacts = []
+        provision_sequences = []
         ubuntu_v2_sequences = []
         osdeploy_credentials = []
         bubbles = []
@@ -5492,7 +5504,7 @@ def _provision_page_payload() -> dict:
         "profiles": load_oem_profiles(),
         "defaults": defaults,
         "template_disk_gb": template_disk,
-        "sequences": [],
+        "sequences": provision_sequences,
         "default_sequence_id": "",
         "winpe_enabled": _winpe_enabled(),
         "cloudosd_catalog": cloudosd_catalog,
@@ -8735,8 +8747,10 @@ def _start_cloudosd_provision_batch(
     driver_pack_policy: str,
     analytics_enabled: bool,
     outbound_policy_mode: str,
+    bubble_id: str = "",
+    asset_role: str = "workstation",
 ) -> RedirectResponse:
-    from web import cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg
+    from web import cloudosd_endpoints, cloudosd_pg, cloudosd_sequence, db_pg, lab_bubbles_pg
 
     count = int(count or 1)
     if count < 1 or count > 50:
@@ -8745,6 +8759,8 @@ def _start_cloudosd_provision_batch(
     vm_cores = int(cores or 0) or cloudosd_pg.DEFAULT_VM_CORES
     vm_memory_mb = int(memory_mb or 0) or cloudosd_pg.DEFAULT_VM_MEMORY_MB
     vm_disk_size_gb = int(disk_size_gb or 0) or cloudosd_pg.DEFAULT_VM_DISK_SIZE_GB
+    bubble_id = (bubble_id or "").strip()
+    asset_role = (asset_role or "workstation").strip() or "workstation"
     if vm_memory_mb < cloudosd_pg.MIN_VM_MEMORY_MB:
         raise HTTPException(
             status_code=400,
@@ -8778,6 +8794,10 @@ def _start_cloudosd_provision_batch(
     run_ids = []
     with db_pg.connection(_database_url()) as conn:
         cloudosd_pg.init(conn)
+        if bubble_id:
+            lab_bubbles_pg.init(conn)
+            if not lab_bubbles_pg.get_bubble(conn, bubble_id):
+                raise HTTPException(status_code=404, detail="Bubble not found")
         if not artifact_id:
             # Operators no longer choose the OSDCloud artifact; the backend picks
             # the newest ready one (list_artifacts is ordered built_at DESC).
@@ -8825,6 +8845,8 @@ def _start_cloudosd_provision_batch(
                     driver_pack_policy=driver_pack_policy or cloudosd_pg.DEFAULT_DRIVER_PACK_POLICY,
                     analytics_enabled=analytics_enabled,
                     outbound_policy={"mode": outbound_policy_mode or "blocked"},
+                    bubble_id=bubble_id or None,
+                    asset_role=asset_role,
                 ))
 
             preflights = [cloudosd_endpoints.preflight_payload(body) for body in bodies]
@@ -8888,6 +8910,17 @@ def _start_cloudosd_provision_batch(
                         outbound_policy=body.outbound_policy,
                         domain_join=domain_join_intent,
                     )
+                    if body.bubble_id:
+                        lab_bubbles_pg.add_asset(
+                            conn,
+                            body.bubble_id,
+                            asset_type="vm",
+                            asset_role=body.asset_role or "workstation",
+                            vmid=run.get("vmid") or run.get("requested_vmid") or body.vmid,
+                            run_id=run["run_id"],
+                            membership_state="provisioning",
+                            actor="cloudosd",
+                        )
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
                 extra_vars = cloudosd_endpoints.cloudosd_provision_extra_vars(
@@ -9134,6 +9167,8 @@ async def start_provision(
     driver_pack_policy: str = Form(""),
     analytics_enabled: str = Form(""),
     outbound_policy_mode: str = Form("blocked"),
+    bubble_id: str = Form(""),
+    asset_role: str = Form("workstation"),
 ):
     profile = _sanitize_input(profile)
     sequence_id = int(str(sequence_id_raw).strip()) if str(sequence_id_raw or "").strip() else None
@@ -9207,6 +9242,8 @@ async def start_provision(
             driver_pack_policy=driver_pack_policy.strip(),
             analytics_enabled=_form_flag(analytics_enabled),
             outbound_policy_mode=outbound_policy_mode.strip() or "blocked",
+            bubble_id=bubble_id.strip(),
+            asset_role=asset_role.strip() or "workstation",
         )
     if boot_mode == "osdeploy":
         osdeploy_role = osdeploy_server_role.strip() or "base"

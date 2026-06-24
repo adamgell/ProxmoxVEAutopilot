@@ -160,6 +160,31 @@ const provisionPayload = {
       name: "Ubuntu Desktop",
       step_count: 5
     }
+  ],
+  sequences: [
+    {
+      id: 42,
+      name: "CloudOSD AD Join",
+      description: "Join LabZ1 workstations to AD",
+      boot_modes: ["cloudosd"],
+      step_count: 1,
+      produces_autopilot_hash: true
+    }
+  ],
+  default_sequence_id: "",
+  osdeploy_credentials: [],
+  bubbles: [
+    {
+      id: "bubble-labz1",
+      name: "labz1",
+      domain_name: "home.gell.one",
+      netbios_name: "HOME",
+      cidr: "192.168.16.0/24",
+      planned_bridge: "lab101",
+      dc_ready: true,
+      dns_ready: true,
+      dhcp_ready: true
+    }
   ]
 };
 
@@ -210,6 +235,7 @@ afterEach(() => {
   cleanup();
   window.localStorage.removeItem("pveautopilot.provision.templates.v1");
   window.localStorage.removeItem("pveautopilot.provision.templates.seeded.v1");
+  window.localStorage.removeItem("pveautopilot.provision.templates.seeded.v2");
   window.localStorage.removeItem("pveautopilot.provision.draft.v1");
   vi.unstubAllGlobals();
 });
@@ -226,6 +252,10 @@ describe("ProvisionPage", () => {
     expect(screen.queryByRole("combobox", { name: "OSDCloud artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("vmbr0");
     expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Lab Bubble & Domain" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Lab bubble" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Domain join sequence" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Bubble asset role" })).toHaveValue("workstation");
     expect(screen.queryByRole("combobox", { name: "Task sequence" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(2);
     expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("pilot-{index}");
@@ -250,7 +280,35 @@ describe("ProvisionPage", () => {
     expect(namedControl(form, "memory_mb")).toBeInTheDocument();
     expect(namedControl(form, "disk_size_gb")).toBeInTheDocument();
     expect(namedControl(form, "network_bridge")).toBeInTheDocument();
+    expect(namedControl(form, "bubble_id")).toBeInTheDocument();
+    expect(namedControl(form, "asset_role")).toBeInTheDocument();
+    expect(namedControl(form, "sequence_id")).toBeInTheDocument();
     expect(namedControl(form, "os_version")).toBeInTheDocument();
+  });
+
+  test("links OSDCloud launches to a lab bubble and domain join sequence", async () => {
+    mockFetch();
+    renderProvision();
+
+    await screen.findByRole("heading", { name: "Lab Bubble & Domain" });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Lab bubble" }), {
+      target: { value: "bubble-labz1" }
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Domain join sequence" }), {
+      target: { value: "42" }
+    });
+
+    expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("lab101");
+    expect(screen.getByText("home.gell.one")).toBeInTheDocument();
+    expect(screen.getByText("192.168.16.0/24")).toBeInTheDocument();
+
+    const form = await screen.findByTestId("provision-builder-form");
+    expect(namedControl(form, "bubble_id")).toHaveValue("bubble-labz1");
+    expect(namedControl(form, "bubble_name")).toHaveValue("labz1");
+    expect(namedControl(form, "asset_role")).toHaveValue("workstation");
+    expect(namedControl(form, "sequence_id")).toHaveValue("42");
+    expect(namedControl(form, "sequence_name")).toHaveValue("CloudOSD AD Join");
   });
 
   test("keeps the launch review in the desktop launch grid instead of the form bottom", async () => {
@@ -363,12 +421,16 @@ describe("ProvisionPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "ring0ivy24" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "ring0" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "VM count" }), { target: { value: "4" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Lab bubble" }), { target: { value: "bubble-labz1" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Domain join sequence" }), { target: { value: "42" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Template name" }), { target: { value: "Ring 0 Ivy24" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Save template" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "throwaway" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "tmp" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "VM count" }), { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Lab bubble" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Domain join sequence" }), { target: { value: "" } });
 
     fireEvent.change(screen.getByRole("combobox", { name: "Saved template" }), { target: { value: "Ring 0 Ivy24" } });
     fireEvent.click(screen.getByRole("button", { name: "Load template" }));
@@ -377,6 +439,8 @@ describe("ProvisionPage", () => {
       expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
       expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
       expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
+      expect(screen.getByRole("combobox", { name: "Lab bubble" })).toHaveValue("bubble-labz1");
+      expect(screen.getByRole("combobox", { name: "Domain join sequence" })).toHaveValue("42");
     });
   });
 
@@ -400,6 +464,9 @@ describe("ProvisionPage", () => {
       expect(screen.getByRole("combobox", { name: "OEM profile" })).toHaveValue("dell-precision-3591");
       expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
       expect(screen.getByRole("combobox", { name: "Disk storage" })).toHaveValue("ssdpool");
+      expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("lab101");
+      expect(screen.getByRole("combobox", { name: "Lab bubble" })).toHaveValue("bubble-labz1");
+      expect(screen.getByRole("combobox", { name: "Domain join sequence" })).toHaveValue("42");
     });
   });
 
@@ -430,6 +497,55 @@ describe("ProvisionPage", () => {
     const savedTemplates = JSON.parse(store.get("pveautopilot.provision.templates.v1") ?? "{}") as Record<string, unknown>;
     expect(savedTemplates["Custom Lab"]).toBeDefined();
     expect(savedTemplates["Ring 0 Ivy24 Dell OSDCloud"]).toBeDefined();
+  });
+
+  test("refreshes old built-in templates while preserving custom templates", async () => {
+    const store = new Map<string, string>([
+      ["pveautopilot.provision.templates.seeded.v1", "1"],
+      [
+        "pveautopilot.provision.templates.v1",
+        JSON.stringify({
+          "Ring 0 Ivy24 Dell OSDCloud": {
+            name: "Ring 0 Ivy24 Dell OSDCloud",
+            savedAt: "built-in",
+            fields: {
+              boot_mode: "cloudosd",
+              run_tag: "ring0ivy24",
+              group_tag: "ring0ivy24",
+              count: "4",
+              hostname_pattern: "ring0ivy24-{index}",
+              network_bridge: "vmbr0"
+            }
+          },
+          "Custom Lab": {
+            name: "Custom Lab",
+            savedAt: "2026-06-23T20:00:00.000Z",
+            fields: {
+              boot_mode: "cloudosd",
+              run_tag: "custom-lab",
+              group_tag: "custom-lab",
+              count: "2",
+              hostname_pattern: "clab-{index}",
+              network_bridge: "vmbr0"
+            }
+          }
+        })
+      ]
+    ]);
+    mockFetch();
+    renderProvision(store);
+
+    await screen.findByRole("combobox", { name: "Saved template" });
+    expect(screen.getByRole("option", { name: "Custom Lab" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Saved template" }), { target: { value: "Ring 0 Ivy24 Dell OSDCloud" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load template" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("lab101");
+      expect(screen.getByRole("combobox", { name: "Lab bubble" })).toHaveValue("bubble-labz1");
+      expect(screen.getByRole("combobox", { name: "Domain join sequence" })).toHaveValue("42");
+    });
   });
 
   test("restores the last draft after the provision page remounts", async () => {
