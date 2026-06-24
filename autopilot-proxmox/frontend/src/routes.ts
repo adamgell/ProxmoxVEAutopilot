@@ -1,4 +1,13 @@
-import type { MigratedRoute, OperatorFlow, OperatorNavGroup, OperatorRoute } from "./contracts";
+import type {
+  MigratedRoute,
+  OperatorFlow,
+  OperatorMode,
+  OperatorModeId,
+  OperatorNavGroup,
+  OperatorOutcome,
+  OperatorQuickRoute,
+  OperatorRoute
+} from "./contracts";
 
 export const operatorNavGroups: readonly OperatorNavGroup[] = [
   {
@@ -33,6 +42,8 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
   {
     label: "Deploy",
     items: [
+      { path: "/react/deploy", label: "Deploy Path", group: "Deploy", phase: "foundation", active: true },
+      { path: "/react/labs", label: "Labs", group: "Deploy", phase: "operational", active: true },
       { path: "/react/cloudosd", label: "OSDCloud Desktop", group: "Deploy", phase: "operational", active: true },
       {
         path: "/react/cloudosd/runs/:runId",
@@ -137,6 +148,135 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
   }
 ];
 
+export const operatorModes: readonly OperatorMode[] = [
+  { id: "home", label: "Home", longLabel: "Home", href: "/react-shell" },
+  { id: "deploy", label: "Deploy", longLabel: "Deploy", href: "/react/deploy" },
+  { id: "build", label: "Build", longLabel: "Build", href: "/react/task-engine" },
+  { id: "infra", label: "Infra", longLabel: "Infrastructure", href: "/react/networks" },
+  { id: "fleet", label: "Fleet", longLabel: "Fleet", href: "/react/vms" },
+  { id: "settings", label: "Set", longLabel: "Settings", href: "/react/settings" }
+];
+
+export const operatorOutcomes: readonly OperatorOutcome[] = [
+  {
+    id: "deploy-desktop",
+    mode: "deploy",
+    eyebrow: "Recommended",
+    title: "Deploy a Windows desktop",
+    summary: "Open OSDCloud Desktop, use saved defaults, watch first boot, and verify OOBE handoff.",
+    primaryHref: "/react/deploy",
+    actionLabel: "Start desktop run",
+    tone: "good",
+    relatedRoutes: [
+      { label: "Jobs", href: "/react/jobs", purpose: "Live output and pause gates" },
+      { label: "VMs", href: "/react/vms", purpose: "Console, agent, and power actions" },
+      { label: "Hashes", href: "/react/hashes", purpose: "Hardware identity proof" },
+      { label: "Cloud Devices", href: "/react/devices", purpose: "Intune and Autopilot visibility" }
+    ]
+  },
+  {
+    id: "deploy-server",
+    mode: "deploy",
+    eyebrow: "Server path",
+    title: "Deploy a Windows server",
+    summary: "Open OSDeploy Server, choose role steps, and track the agent heartbeat gate.",
+    primaryHref: "/react/osdeploy",
+    actionLabel: "Start server run",
+    tone: "blue",
+    relatedRoutes: [
+      { label: "Jobs", href: "/react/jobs", purpose: "Live worker output" },
+      { label: "Runs", href: "/react/runs", purpose: "Deployment timeline" },
+      { label: "Signals Hub", href: "/react/monitoring", purpose: "Service and deployment health" }
+    ]
+  },
+  {
+    id: "prove-ready",
+    mode: "fleet",
+    eyebrow: "Proof path",
+    title: "Prove a machine is ready",
+    summary: "Jump through VMs, Hashes, Cloud Devices, and Jobs as one evidence workflow.",
+    primaryHref: "/react/vms",
+    actionLabel: "Open evidence path",
+    tone: "teal",
+    relatedRoutes: [
+      { label: "VMs", href: "/react/vms", purpose: "Machine state and console" },
+      { label: "Hashes", href: "/react/hashes", purpose: "Hardware hash evidence" },
+      { label: "Cloud Devices", href: "/react/devices", purpose: "Cloud identity evidence" },
+      { label: "Jobs", href: "/react/jobs", purpose: "Run output evidence" }
+    ]
+  },
+  {
+    id: "build-media",
+    mode: "build",
+    eyebrow: "Build path",
+    title: "Build or refresh media",
+    summary: "Open Task Engine, Template, Task Sequences, and Answer ISOs without hunting.",
+    primaryHref: "/react/task-engine",
+    actionLabel: "Open build tools",
+    tone: "purple",
+    relatedRoutes: [
+      { label: "Task Engine", href: "/react/task-engine", purpose: "Build orchestration" },
+      { label: "Template", href: "/react/template", purpose: "Template image workflow" },
+      { label: "Answer ISOs", href: "/react/answer-isos", purpose: "Generated media" }
+    ]
+  },
+  {
+    id: "shape-lab-network",
+    mode: "infra",
+    eyebrow: "Network path",
+    title: "Shape lab infrastructure",
+    summary: "Open Networks to manage Proxmox SDN, firewall scopes, and isolated lab network targets.",
+    primaryHref: "/react/networks",
+    actionLabel: "Open networks",
+    tone: "blue",
+    relatedRoutes: [
+      { label: "Networks", href: "/react/networks", purpose: "SDN and lab scopes" },
+      { label: "Provision", href: "/react/provision", purpose: "Launch into the right network" },
+      { label: "VMs", href: "/react/vms", purpose: "Validate attached machines" }
+    ]
+  },
+  {
+    id: "watch-health",
+    mode: "home",
+    eyebrow: "Observe path",
+    title: "Watch service health",
+    summary: "Open Signals Hub, live Jobs, monitor settings, and service logs together.",
+    primaryHref: "/react/monitoring",
+    actionLabel: "Open signals",
+    tone: "warn",
+    relatedRoutes: [
+      { label: "Signals Hub", href: "/react/monitoring", purpose: "Health signals" },
+      { label: "Jobs", href: "/react/jobs", purpose: "Live worker output" },
+      { label: "Monitoring settings", href: "/react/monitoring/settings", purpose: "Watch configuration" }
+    ]
+  },
+  {
+    id: "fix-configuration",
+    mode: "settings",
+    eyebrow: "Guarded path",
+    title: "Fix configuration",
+    summary: "Open Credentials, General, and Monitoring settings with clear safer labels.",
+    primaryHref: "/react/credentials",
+    actionLabel: "Open settings",
+    tone: "bad",
+    relatedRoutes: [
+      { label: "Credentials", href: "/react/credentials", purpose: "Secrets and identity" },
+      { label: "General", href: "/react/settings", purpose: "Application settings" },
+      { label: "Monitoring settings", href: "/react/monitoring/settings", purpose: "Signals configuration" }
+    ]
+  }
+];
+
+export const operatorQuickRoutes: readonly OperatorQuickRoute[] = [
+  { label: "Jobs", href: "/react/jobs", summary: "Live output and pause gates", mode: "home" },
+  { label: "Labs", href: "/react/labs", summary: "Create managed lab from a template", mode: "deploy" },
+  { label: "VMs", href: "/react/vms", summary: "Console, agent, and power actions", mode: "fleet" },
+  { label: "Hashes", href: "/react/hashes", summary: "Capture and upload hardware identity", mode: "fleet" },
+  { label: "Runs", href: "/react/runs", summary: "Deployment timeline and history", mode: "home" }
+];
+
+export const routeSearchTargets: readonly OperatorRoute[] = operatorNavGroups.flatMap((group) => group.items);
+
 export const operatorFlows: readonly OperatorFlow[] = [
   {
     id: "observe",
@@ -157,6 +297,8 @@ export const operatorFlows: readonly OperatorFlow[] = [
     group: "Deploy",
     summary: "Choose the deployment path, then open the guarded execution page.",
     steps: [
+      { label: "Deploy Path", href: "/react/deploy", group: "Deploy", state: "React" },
+      { label: "Labs", href: "/react/labs", group: "Deploy", state: "React" },
       { label: "OSDeploy Server", href: "/react/osdeploy", group: "Deploy", state: "React" },
       { label: "OSDCloud Desktop", href: "/react/cloudosd", group: "Deploy", state: "React" },
       { label: "Provision", href: "/react/provision", group: "Deploy", state: "React" }
@@ -233,17 +375,52 @@ export function reactRouteForPath(path: string): OperatorRoute | undefined {
     if (!route.active) {
       return false;
     }
-    if (route.path === path) {
-      return true;
-    }
-    const pattern = `^${route.path.replaceAll("/", "\\/").replace(/:[^/]+/gu, "[^/]+")}$`;
-    return new RegExp(pattern, "u").test(path);
+    return routeMatchesPath(route.path, path);
   });
+}
+
+export function routeMatchesPath(routePath: string, path: string): boolean {
+  if (routePath === path) {
+    return true;
+  }
+  const pattern = `^${routePath.replaceAll("/", "\\/").replace(/:[^/]+/gu, "[^/]+")}$`;
+  return new RegExp(pattern, "u").test(path);
 }
 
 export function navPathForPath(path: string): string | undefined {
   const route = reactRouteForPath(path);
   return route?.navParentPath ?? (route && isOperatorNavRoute(route) ? route.path : undefined);
+}
+
+export function modeForPath(path: string): OperatorModeId {
+  if (path === "/react-shell") {
+    return "home";
+  }
+  const route =
+    reactRouteForPath(path) ??
+    operatorNavGroups
+      .flatMap((group) => group.items)
+      .filter((item) => item.active && path.startsWith(`${item.path}/`))
+      .sort((first, second) => second.path.length - first.path.length)[0];
+  if (!route) {
+    return "home";
+  }
+  if (route.group === "Deploy") {
+    return "deploy";
+  }
+  if (route.group === "Build") {
+    return "build";
+  }
+  if (route.group === "Infrastructure") {
+    return "infra";
+  }
+  if (route.group === "Fleet") {
+    return "fleet";
+  }
+  if (route.group === "Settings") {
+    return "settings";
+  }
+  return "home";
 }
 
 export function reactHrefForUiPath(href: string): string {
@@ -283,6 +460,7 @@ export function reactHrefForUiPath(href: string): string {
     "/legacy/vms": "/react/legacy-vms",
     "/monitoring": "/react/monitoring",
     "/monitoring/settings": "/react/monitoring/settings",
+    "/networks": "/react/networks",
     "/osdcloud": "/react/cloudosd",
     "/osdeploy": "/react/osdeploy",
     "/provision": "/react/provision",
