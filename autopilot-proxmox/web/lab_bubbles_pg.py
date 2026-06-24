@@ -431,6 +431,38 @@ def list_assets(conn: Connection, bubble_id: str | None = None) -> list[dict]:
     return [_asset_row(row) for row in rows]
 
 
+def get_asset_for_run(conn: Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM lab_bubble_assets
+        WHERE run_id = %s
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    return _asset_row(row)
+
+
+def get_entra_service_for_bubble(conn: Connection, bubble_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM lab_bubble_services
+        WHERE bubble_id = %s
+          AND service_kind IN ('entra', 'm365', 'intune')
+        ORDER BY
+          CASE readiness_state WHEN 'ready' THEN 0 ELSE 1 END,
+          updated_at DESC,
+          created_at DESC
+        LIMIT 1
+        """,
+        (bubble_id,),
+    ).fetchone()
+    return _service_row(row)
+
+
 def _require_asset_in_bubble(
     conn: Connection,
     *,
