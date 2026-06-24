@@ -95,6 +95,19 @@ h3 {
 
 .workspace--outcome {
   grid-template-columns: 96px minmax(0, 1fr);
+  --bg: #0b0f16;
+  --surface: #101722;
+  --surface-2: #151e2c;
+  --line: #263142;
+  --line-soft: #1e2838;
+  --text: #e8edf4;
+  --muted: #95a3b8;
+  --muted-2: #b7c1cf;
+  --good: #89d957;
+  --active: #65c8f7;
+  --bad: #ff9c92;
+  --warn: #f4c95d;
+  --accent: #e1f56f;
   color: #edf5ff;
   background:
     linear-gradient(135deg, #152034 0, #0c1422 45%, #12252a 100%);
@@ -2039,6 +2052,140 @@ h3 {
 .utility-list small {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.settings-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(320px, 1.2fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.settings-section-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-section-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.settings-section-link:hover,
+.settings-section-link:focus-visible {
+  border-color: var(--active);
+  color: var(--active);
+}
+
+.settings-section-link span,
+.settings-section-link small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-section-link small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.settings-credential-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 12px;
+  background: var(--line-soft);
+}
+
+.settings-credential-summary > div {
+  min-width: 0;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.settings-credential-summary dt {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.settings-credential-summary dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.settings-credential-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.settings-credential-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-credential-list li:last-child {
+  border-bottom: 0;
+}
+
+.settings-credential-list strong,
+.settings-credential-list small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-credential-list small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.settings-form-head {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) max-content;
+  gap: 14px;
+  align-items: end;
+}
+
+.settings-save-actions {
+  justify-content: flex-end;
+}
+
+.settings-save-actions--bottom {
+  padding-top: 2px;
+}
+
+.settings-section-anchor {
+  min-width: 0;
+  scroll-margin-top: 24px;
 }
 
 .utility-form {
@@ -5006,7 +5153,13 @@ h3 {
   .networks-layout,
   .networks-scope-grid,
   .networks-apply,
-  .networks-lab-grid {
+  .networks-lab-grid,
+  .settings-overview-grid,
+  .settings-form-head,
+  .utility-settings-grid,
+  .utility-field-grid,
+  .utility-definition-grid,
+  .settings-credential-summary {
     grid-template-columns: 1fr;
   }
 
@@ -5024,6 +5177,10 @@ h3 {
 
   .result-count {
     text-align: left;
+  }
+
+  .settings-save-actions {
+    justify-content: flex-start;
   }
 
   .row-list li {
