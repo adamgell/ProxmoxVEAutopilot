@@ -164,6 +164,12 @@ For M1, only a `base` run can reach final `complete`. Future roles may reach
 `role_pending` after Server Base is healthy, but they must not be reported as
 complete until the role automation has executed and posted evidence.
 
+## Implemented Notes
+
+- Gen 1 Autopilot hardware-hash upload now resolves lab-scoped M365 credential
+  references, blocks unsafe controller-wide fallback behavior, and records target
+  tenant/app evidence for uploaded hashes.
+
 ## Follow-up TODOs
 
 All follow-up implementation work in this section is subagent-driven. Treat each
@@ -173,14 +179,6 @@ package, fix Critical or Important findings through a subagent, and update
 `.superpowers/sdd/progress.md` only after the review is clean. After the selected
 follow-ups are complete, dispatch one final whole-branch review before deploy or
 PR cleanup.
-
-- Make Gen 1 Autopilot hardware-hash upload resolve an explicit lab M365
-  boundary credential reference instead of always using the controller-wide
-  `vault_entra_*` values from `upload_hashes.yml`. The upload job should record
-  the target tenant ID and Entra app/client ID in `args_json` or equivalent
-  evidence so operators can prove which tenant received the hardware hash. This
-  is required before labs can safely use a different Entra/Intune tenant than
-  the ProxmoxVEAutopilot primary tenant.
 
 ## Live Proxmox E2E gate
 
