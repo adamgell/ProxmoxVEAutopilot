@@ -354,6 +354,44 @@ describe("ProvisionPage", () => {
     expect(screen.getByRole("button", { name: "Provision VMs" })).not.toBeDisabled();
   });
 
+  test("shows provision submit failures without leaving the form", async () => {
+    const store = new Map<string, string>();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+      const url = new URL(path, "http://localhost");
+      if (url.pathname === "/api/provision/page") {
+        return Promise.resolve(new Response(JSON.stringify(provisionPayload), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }));
+      }
+      if (url.pathname === "/api/jobs/provision" && init?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({
+          detail: "OSDCloud domain join credential could not be decrypted. Please re-save the credential in Settings -> Credentials, then try provisioning again."
+        }), {
+          status: 400,
+          headers: { "content-type": "application/json" }
+        }));
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderProvision(store);
+
+    await screen.findByRole("radiogroup", { name: "Boot mode" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "ring0ivy24" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Domain join sequence" }), { target: { value: "42" } });
+    fireEvent.submit(await screen.findByTestId("provision-builder-form"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/re-save the credential/);
+    expect(window.location.pathname).toBe("/react/provision");
+    expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
+    expect(screen.getByRole("combobox", { name: "Domain join sequence" })).toHaveValue("42");
+    const draft = JSON.parse(store.get("pveautopilot.provision.draft.v1") ?? "{}") as { fields?: Record<string, string> };
+    expect(draft.fields?.group_tag).toBe("ring0ivy24");
+    expect(draft.fields?.sequence_id).toBe("42");
+  });
+
   test("fills down run tag to group tag and derives a Windows-safe hostname preview", async () => {
     mockFetch();
     renderProvision();

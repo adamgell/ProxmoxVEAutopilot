@@ -1031,6 +1031,50 @@ def test_cloudosd_provision_rejects_unsupported_enabled_sequence_step(
     ] == []
 
 
+def test_cloudosd_provision_rejects_undecryptable_domain_join_credential(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    old_cipher = _patch_sequence_cipher(monkeypatch, tmp_path)
+    sequence_id = _create_domain_join_sequence(pg_conn, old_cipher)
+    artifact = _create_artifact(pg_conn)
+    web_app.CREDENTIAL_KEY.write_bytes(Fernet.generate_key())
+    web_app._CIPHER = None
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "profile": "",
+            "hostname_pattern": "GELL-BAD-CRED-{index}",
+            "sequence_id": str(sequence_id),
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "OSDCloud domain join credential" in response.json()["detail"]
+    assert "re-save the credential" in response.json()["detail"]
+    assert [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ] == []
+    assert cloudosd_pg.list_runs(pg_conn) == []
+
+
 def test_cloudosd_domain_join_run_waits_for_matching_domain_heartbeat(
     cloudosd_client,
     pg_conn,
