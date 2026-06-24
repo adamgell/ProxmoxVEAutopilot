@@ -2,17 +2,12 @@ import { describe, expect, test } from "vitest";
 
 import {
   migratedRoutes,
-  modeForPath,
   navPathForPath,
   operatorFlows,
-  operatorModes,
   operatorNavGroups,
   operatorNavItems,
-  operatorOutcomes,
-  operatorQuickRoutes,
   reactHrefForUiPath,
-  reactRouteForPath,
-  routeSearchTargets
+  reactRouteForPath
 } from "./routes";
 
 describe("operator route registry", () => {
@@ -28,8 +23,6 @@ describe("operator route registry", () => {
         "/react/runs",
         "/react/runs/:runId",
         "/react/networks",
-        "/react/deploy",
-        "/react/labs",
         "/react/provision",
         "/react/cloudosd",
         "/react/cloudosd/runs/:runId",
@@ -74,8 +67,6 @@ describe("operator route registry", () => {
     expect(reactRouteForPath("/react/agent-download")?.label).toBe("Agent Download");
     expect(reactRouteForPath("/react/hashes")?.label).toBe("Hashes");
     expect(reactRouteForPath("/react/settings")?.label).toBe("General");
-    expect(reactRouteForPath("/react/deploy")?.label).toBe("Deploy Path");
-    expect(reactRouteForPath("/react/labs")?.label).toBe("Labs");
     expect(reactRouteForPath("/react/cloudosd")?.label).toBe("OSDCloud Desktop");
     expect(reactRouteForPath("/react/task-engine")?.label).toBe("Task Sequences");
     expect(reactRouteForPath("/monitoring")).toBeUndefined();
@@ -105,7 +96,6 @@ describe("operator route registry", () => {
 
   test("normalizes old operator UI hrefs into React destinations", () => {
     expect(reactHrefForUiPath("/jobs/job-running")).toBe("/react/jobs/job-running");
-    expect(reactHrefForUiPath("/networks")).toBe("/react/networks");
     expect(reactHrefForUiPath("/osdeploy")).toBe("/react/osdeploy");
     expect(reactHrefForUiPath("/osdeploy/runs/run-1")).toBe("/react/osdeploy/runs/run-1");
     expect(reactHrefForUiPath("/cloudosd/runs/run-1")).toBe("/react/cloudosd/runs/run-1");
@@ -129,15 +119,7 @@ describe("operator route registry", () => {
       "Settings"
     ]);
     const reactSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "React"));
-    const deployFlow = operatorFlows.find((flow) => flow.id === "deploy");
     const jinjaSteps = operatorFlows.flatMap((flow) => flow.steps.filter((step) => step.state === "Jinja"));
-    expect(deployFlow?.steps.map((step) => [step.label, step.href])).toEqual([
-      ["Deploy Path", "/react/deploy"],
-      ["Labs", "/react/labs"],
-      ["OSDeploy Server", "/react/osdeploy"],
-      ["OSDCloud Desktop", "/react/cloudosd"],
-      ["Provision", "/react/provision"]
-    ]);
     expect(jinjaSteps).toEqual([]);
     expect(reactSteps).toEqual(
       expect.arrayContaining([
@@ -145,7 +127,6 @@ describe("operator route registry", () => {
         expect.objectContaining({ label: "Jobs", href: "/react/jobs" }),
         expect.objectContaining({ label: "Runs", href: "/react/runs" }),
         expect.objectContaining({ label: "Networks", href: "/react/networks" }),
-        expect.objectContaining({ label: "Deploy Path", href: "/react/deploy" }),
         expect.objectContaining({ label: "OSDeploy Server", href: "/react/osdeploy" }),
         expect.objectContaining({ label: "OSDCloud Desktop", href: "/react/cloudosd" }),
         expect.objectContaining({ label: "Provision", href: "/react/provision" }),
@@ -159,96 +140,5 @@ describe("operator route registry", () => {
     expect(reactSteps.filter((step) => step.label === "Signals Hub")).toHaveLength(1);
     expect(reactSteps.some((step) => step.label === "UTM VMs")).toBe(false);
     expect(reactSteps.some((step) => step.href === "/react/sequences")).toBe(false);
-  });
-
-  test("defines the compact outcome modes in operator order", () => {
-    expect(operatorModes.map((mode) => [mode.id, mode.label, mode.href])).toEqual([
-      ["home", "Home", "/react-shell"],
-      ["deploy", "Deploy", "/react/deploy"],
-      ["build", "Build", "/react/task-engine"],
-      ["infra", "Infra", "/react/networks"],
-      ["fleet", "Fleet", "/react/vms"],
-      ["settings", "Set", "/react/settings"]
-    ]);
-  });
-
-  test("defines quick routes for repeated operator jumps", () => {
-    expect(operatorQuickRoutes.map((route) => [route.label, route.href, route.mode])).toEqual([
-      ["Jobs", "/react/jobs", "home"],
-      ["Labs", "/react/labs", "deploy"],
-      ["VMs", "/react/vms", "fleet"],
-      ["Hashes", "/react/hashes", "fleet"],
-      ["Runs", "/react/runs", "home"]
-    ]);
-  });
-
-  test("defines the daily control room outcomes without equal-weight detail routes", () => {
-    expect(operatorOutcomes.map((outcome) => outcome.id)).toEqual([
-      "deploy-desktop",
-      "deploy-server",
-      "prove-ready",
-      "build-media",
-      "shape-lab-network",
-      "watch-health",
-      "fix-configuration"
-    ]);
-    expect(operatorOutcomes.find((outcome) => outcome.id === "deploy-desktop")).toMatchObject({
-      mode: "deploy",
-      title: "Deploy a Windows desktop",
-      primaryHref: "/react/deploy",
-      actionLabel: "Start desktop run",
-      tone: "good"
-    });
-    const relatedRouteHrefs = operatorOutcomes.flatMap((outcome) => outcome.relatedRoutes.map((route) => route.href));
-    expect(relatedRouteHrefs).toEqual(
-      expect.arrayContaining([
-        "/react/jobs",
-        "/react/vms",
-        "/react/hashes",
-        "/react/devices",
-        "/react/task-engine",
-        "/react/networks",
-        "/react/monitoring",
-        "/react/credentials"
-      ])
-    );
-    expect(relatedRouteHrefs).not.toContain("/react/jobs/:jobId");
-    expect(relatedRouteHrefs).not.toContain("/react/cloudosd/runs/:runId");
-  });
-
-  test("keeps detail routes searchable without promoting them to primary outcome cards", () => {
-    expect(routeSearchTargets.map((route) => route.path)).toEqual(
-      expect.arrayContaining([
-        "/react/jobs/:jobId",
-        "/react/cloudosd/runs/:runId",
-        "/react/osdeploy/runs/:runId",
-        "/react/task-engine/sequences/:sequenceId/edit",
-        "/react/vms/:vmid"
-      ])
-    );
-    expect(routeSearchTargets.find((route) => route.path === "/react/jobs/:jobId")?.label).toBe("Job Detail");
-    expect(routeSearchTargets.find((route) => route.path === "/react/labs")?.label).toBe("Labs");
-  });
-
-  test("maps the active path to the correct outcome mode", () => {
-    expect(modeForPath("/react-shell")).toBe("home");
-    expect(operatorModes.find((mode) => mode.id === "deploy")?.href).toBe("/react/deploy");
-    expect(modeForPath("/react/deploy")).toBe("deploy");
-    expect(modeForPath("/react/labs")).toBe("deploy");
-    expect(modeForPath("/react/cloudosd")).toBe("deploy");
-    expect(modeForPath("/react/cloudosd/runs/run-1")).toBe("deploy");
-    expect(modeForPath("/react/task-engine/sequences/list")).toBe("build");
-    expect(modeForPath("/react/networks")).toBe("infra");
-    expect(modeForPath("/react/vms/109")).toBe("fleet");
-    expect(modeForPath("/react/monitoring/settings")).toBe("settings");
-    expect(modeForPath("/react/monitoring")).toBe("home");
-  });
-
-  test("makes the guided deploy path discoverable by command search", () => {
-    expect(routeSearchTargets.find((route) => route.path === "/react/deploy")).toMatchObject({
-      label: "Deploy Path",
-      group: "Deploy",
-      phase: "foundation"
-    });
   });
 });

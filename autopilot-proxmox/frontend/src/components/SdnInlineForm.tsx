@@ -21,11 +21,11 @@ function asString(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "";
+  }
   if (typeof value === "boolean") {
     return value ? "true" : "false";
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
   }
   return "";
 }

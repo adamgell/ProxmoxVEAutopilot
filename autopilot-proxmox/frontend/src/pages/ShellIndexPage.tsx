@@ -1,30 +1,74 @@
-import type { AppBootstrap } from "../contracts";
+import type { AppBootstrap, OperatorFlow, OperatorFlowStep } from "../contracts";
 import { OperatorShell } from "../components/Shell";
-import { OperatorRouteMap, OutcomeCardGrid, QuickRouteLane } from "../components/OutcomeNavigation";
-import { operatorNavGroups, operatorOutcomes, operatorQuickRoutes } from "../routes";
+import { Panel } from "../components/ui";
+import { isOperatorNavRoute, operatorFlows, operatorNavGroups, operatorNavItems } from "../routes";
+
+function routeCount(label: string): string {
+  const group = operatorNavGroups.find((item) => item.label === label);
+  if (!group) {
+    return "0";
+  }
+  return String(group.items.filter(isOperatorNavRoute).length);
+}
+
+function stepClass(step: OperatorFlowStep): string {
+  return step.state === "React" ? "flow-step" : "flow-step flow-step--legacy";
+}
+
+function FlowCard({ flow }: { readonly flow: OperatorFlow }) {
+  return (
+    <Panel title={flow.label}>
+      <div className="flow-card">
+        <p>{flow.summary}</p>
+        <ol>
+          {flow.steps.map((step) => (
+            <li key={`${flow.id}-${step.href}-${step.label}`}>
+              <a className={stepClass(step)} href={step.href}>
+                <span>{step.label}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </Panel>
+  );
+}
 
 export function ShellIndexPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   return (
     <OperatorShell bootstrap={bootstrap} path="/react-shell">
-      <section className="control-room-hero" aria-labelledby="control-room-title">
+      <section className="page-head" aria-labelledby="shell-title">
         <div>
-          <h1 id="control-room-title">What are you trying to finish?</h1>
-          <p>
-            Pick the operator outcome first. The menu routes to the right surface after that:
-            deployment runs, lab networks, build tools, fleet proof, live jobs, or settings.
-          </p>
+          <p>Operator map</p>
+          <h1 id="shell-title">Proxmox VE Autopilot</h1>
         </div>
-        <aside className="suggested-next" aria-label="Suggested next step">
-          <h2>Suggested next step</h2>
-          <a href="/react/deploy"><span>Open guided Deploy path</span><strong>Deploy</strong></a>
-          <a href="/react/labs" aria-label="Create managed lab Labs"><span>Create managed lab</span><strong>Labs</strong></a>
-          <a href="/react/networks"><span>Check lab network scope</span><strong>Infra</strong></a>
-          <a href="/react/vms"><span>Check VM evidence</span><strong>Watch</strong></a>
-        </aside>
+        <a className="action-link" href="/react/dashboard">Dashboard</a>
       </section>
-      <OperatorRouteMap groups={operatorNavGroups} />
-      <OutcomeCardGrid outcomes={operatorOutcomes} />
-      <QuickRouteLane quickRoutes={operatorQuickRoutes} />
+
+      <section className="metric-strip metric-strip--workspace" aria-label="Operator map totals">
+        <div>
+          <span>Surfaces</span>
+          <strong>{String(operatorNavItems.length)}</strong>
+        </div>
+        <div>
+          <span>Deploy</span>
+          <strong>{routeCount("Deploy")}</strong>
+        </div>
+        <div>
+          <span>Build</span>
+          <strong>{routeCount("Build")}</strong>
+        </div>
+        <div>
+          <span>Fleet</span>
+          <strong>{routeCount("Fleet")}</strong>
+        </div>
+      </section>
+
+      <section className="flow-board" aria-label="Operator flows">
+        {operatorFlows.map((flow) => (
+          <FlowCard key={flow.id} flow={flow} />
+        ))}
+      </section>
     </OperatorShell>
   );
 }

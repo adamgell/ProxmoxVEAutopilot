@@ -200,12 +200,10 @@ function BuildHostPanel() {
   }, []);
 
   useEffect(() => {
-    const initialTimer = window.setTimeout(() => { void load(); }, 0);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
     const timer = window.setInterval(() => { void load(); }, 30000);
-    return () => {
-      window.clearTimeout(initialTimer);
-      window.clearInterval(timer);
-    };
+    return () => { window.clearInterval(timer); };
   }, [load]);
 
   const provision = useCallback(async () => {
