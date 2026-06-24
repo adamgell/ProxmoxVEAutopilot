@@ -333,12 +333,18 @@ if (-not (Test-VirtioRoot -Root $destination)) {
   $sources = @()
   if ($env:AUTOPILOT_VIRTIO_ROOT) { $sources += $env:AUTOPILOT_VIRTIO_ROOT }
   $sources += @(
-    'D:\virtio',
-    'D:\',
     'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio-win',
     'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio',
     'C:\BuildRoot\inputs\virtio-win',
-    'C:\BuildRoot\inputs\virtio'
+    'C:\BuildRoot\inputs\virtio',
+    'E:\BuildRoot\inputs\virtio-win',
+    'E:\BuildRoot\inputs\virtio',
+    'E:\',
+    'D:\virtio',
+    'D:\',
+    'F:\BuildRoot\inputs\virtio-win',
+    'F:\BuildRoot\inputs\virtio',
+    'F:\'
   )
   $sources += Get-CimInstance Win32_LogicalDisk |
     Where-Object { $_.DriveType -eq 5 -and $_.VolumeName -match 'virtio' } |
@@ -650,12 +656,18 @@ function Test-VirtioInput {
   $roots = @()
   if ($env:AUTOPILOT_VIRTIO_ROOT) { $roots += $env:AUTOPILOT_VIRTIO_ROOT }
   $roots += @(
-    'D:\virtio',
-    'D:\',
     'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio-win',
     'C:\BuildRoot\ProxmoxVEAutopilot\inputs\virtio',
     'C:\BuildRoot\inputs\virtio-win',
-    'C:\BuildRoot\inputs\virtio'
+    'C:\BuildRoot\inputs\virtio',
+    'E:\BuildRoot\inputs\virtio-win',
+    'E:\BuildRoot\inputs\virtio',
+    'E:\',
+    'D:\virtio',
+    'D:\',
+    'F:\BuildRoot\inputs\virtio-win',
+    'F:\BuildRoot\inputs\virtio',
+    'F:\'
   )
   foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
