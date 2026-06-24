@@ -156,6 +156,7 @@ Built-in OEM profiles live in `autopilot-proxmox/files/oem_profiles.yml`. They s
 
 ## More Documentation
 
+- [Roadmap](docs/ROADMAP.md)
 - [Customer guide](docs/customer/README.md)
 - [Setup guide](docs/SETUP.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

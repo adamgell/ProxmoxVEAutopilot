@@ -164,9 +164,34 @@ For M1, only a `base` run can reach final `complete`. Future roles may reach
 `role_pending` after Server Base is healthy, but they must not be reported as
 complete until the role automation has executed and posted evidence.
 
+## Follow-up TODOs
+
+All follow-up implementation work in this section is subagent-driven. Treat each
+bullet as a separate task: create a clean worktree, dispatch one fresh
+implementer subagent, run the task's tests, dispatch a task reviewer with a diff
+package, fix Critical or Important findings through a subagent, and update
+`.superpowers/sdd/progress.md` only after the review is clean. After the selected
+follow-ups are complete, dispatch one final whole-branch review before deploy or
+PR cleanup.
+
+- Make Gen 1 Autopilot hardware-hash upload resolve an explicit lab M365
+  boundary credential reference instead of always using the controller-wide
+  `vault_entra_*` values from `upload_hashes.yml`. The upload job should record
+  the target tenant ID and Entra app/client ID in `args_json` or equivalent
+  evidence so operators can prove which tenant received the hardware hash. This
+  is required before labs can safely use a different Entra/Intune tenant than
+  the ProxmoxVEAutopilot primary tenant.
+
 ## Live Proxmox E2E gate
 
 Feature completion requires a live Proxmox E2E, not only unit tests:
+
+Execute this gate as one subagent-owned validation task so the evidence stays
+coherent. The validation subagent must collect command output, UI/API evidence,
+run IDs, VM identifiers, and regression results in a task report file. If the
+gate exposes a code defect, stop the validation task, open a separate
+subagent-driven implementation task for the fix, review it, deploy it, then
+resume this gate from the last proven step.
 
 1. Confirm `proxmox_virtio_iso` is configured and points to an uploaded
    VirtIO driver ISO.
