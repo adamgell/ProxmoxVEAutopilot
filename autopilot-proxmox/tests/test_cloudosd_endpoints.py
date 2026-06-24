@@ -2781,14 +2781,14 @@ def test_provision_page_exposes_cloudosd_boot_mode_and_batch_fields(
     assert body["cloudosd_options"]["storages"]["disk"]
 
 
-def test_provision_page_excludes_legacy_v1_sequences(
+def test_provision_page_exposes_only_cloudosd_domain_join_sequences(
     cloudosd_client,
     pg_conn,
 ):
     from web import sequences_pg
 
     _create_artifact(pg_conn)
-    sequences_pg.create_sequence(
+    cloudosd_join_id = sequences_pg.create_sequence(
         None,
         name="CloudOSD AD Domain Join UI",
         description="CloudOSD-only domain join intent",
@@ -2829,7 +2829,20 @@ def test_provision_page_excludes_legacy_v1_sequences(
     response = cloudosd_client.get("/api/provision/page")
 
     assert response.status_code == 200, response.text
-    assert response.json()["sequences"] == []
+    body = response.json()
+    assert len(body["sequences"]) == 1
+    assert body["sequences"][0] == {
+        **body["sequences"][0],
+        "id": cloudosd_join_id,
+        "name": "CloudOSD AD Domain Join UI",
+        "description": "CloudOSD-only domain join intent",
+        "is_default": False,
+        "produces_autopilot_hash": False,
+        "target_os": "windows",
+        "hash_capture_phase": "oobe",
+        "step_count": 1,
+        "boot_modes": ["cloudosd"],
+    }
     assert response.json()["default_sequence_id"] == ""
 
 
@@ -2938,6 +2951,93 @@ def test_provision_cloudosd_batch_auto_selects_ready_artifact_when_form_omits_id
         if job["job_type"] == "provision_cloudosd"
     )
     assert job["args"]["cloudosd_artifact_volid"] == artifact["proxmox_volid"]
+
+
+def test_provision_cloudosd_batch_links_runs_to_selected_bubble(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, lab_bubbles_pg
+
+    artifact = _create_artifact(pg_conn)
+    bubble = lab_bubbles_pg.create_bubble(
+        pg_conn,
+        name="labz1",
+        domain_name="home.gell.one",
+        netbios_name="HOME",
+        cidr="192.168.16.0/24",
+        planned_bridge="lab101",
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_api",
+        lambda path, *args, **kwargs: {
+            "/cluster/nextid": 100,
+            "/cluster/resources?type=vm": [],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/cluster/sdn/vnets": [{"vnet": "lab101", "zone": "lab-simple"}],
+            "/nodes/pve/qemu": [],
+        }[path],
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "lenovo-t14",
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "serial_prefix": "LAB",
+            "group_tag": "labz1",
+            "hostname_pattern": "labz1-{index}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "lab101",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+            "bubble_id": bubble["id"],
+            "asset_role": "workstation",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assets = lab_bubbles_pg.list_assets(pg_conn, bubble["id"])
+    assert len(assets) == 1
+    assert assets[0]["asset_type"] == "vm"
+    assert assets[0]["asset_role"] == "workstation"
+    assert assets[0]["membership_state"] == "provisioning"
+    assert assets[0]["vmid"] == 100
+    assert assets[0]["run_id"]
 
 
 def test_provision_cloudosd_batch_creates_runs_and_jobs(

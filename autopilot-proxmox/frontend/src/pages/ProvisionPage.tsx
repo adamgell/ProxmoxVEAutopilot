@@ -28,9 +28,21 @@ interface ProvisionPagePayload {
   readonly cloudosd_batch_progress: CloudosdBatchProgress;
   readonly cloudosd_cache: CachePayload;
   readonly osdeploy_cache: CachePayload;
+  readonly sequences: readonly ProvisionSequence[];
+  readonly default_sequence_id?: string | number;
   readonly ubuntu_v2_sequences: readonly UbuntuSequence[];
   readonly osdeploy_credentials: readonly OsdeployCredential[];
   readonly bubbles: readonly BubbleOption[];
+}
+
+interface ProvisionSequence {
+  readonly id?: string | number;
+  readonly name?: string;
+  readonly description?: string;
+  readonly boot_modes?: readonly string[];
+  readonly step_count?: number;
+  readonly is_default?: boolean;
+  readonly produces_autopilot_hash?: boolean;
 }
 
 interface OsdeployCredential {
@@ -44,6 +56,11 @@ interface BubbleOption {
   readonly name?: string;
   readonly domain_name?: string;
   readonly netbios_name?: string;
+  readonly cidr?: string;
+  readonly planned_bridge?: string;
+  readonly dc_ready?: boolean;
+  readonly dns_ready?: boolean;
+  readonly dhcp_ready?: boolean;
 }
 
 interface OemProfile {
@@ -184,13 +201,14 @@ const EMPTY_PAYLOAD: ProvisionPagePayload = {
   cloudosd_batch_progress: {},
   cloudosd_cache: {},
   osdeploy_cache: {},
+  sequences: [],
   ubuntu_v2_sequences: [],
   osdeploy_credentials: [],
   bubbles: []
 };
 
 const PROVISION_TEMPLATE_STORAGE_KEY = "pveautopilot.provision.templates.v1";
-const PROVISION_TEMPLATE_SEED_STORAGE_KEY = "pveautopilot.provision.templates.seeded.v1";
+const PROVISION_TEMPLATE_SEED_STORAGE_KEY = "pveautopilot.provision.templates.seeded.v2";
 const PROVISION_DRAFT_STORAGE_KEY = "pveautopilot.provision.draft.v1";
 const BUILT_IN_TEMPLATE_SAVED_AT = "built-in";
 const DEFAULT_PROVISION_TEMPLATES: ProvisionTemplateMap = {
@@ -210,7 +228,10 @@ const DEFAULT_PROVISION_TEMPLATES: ProvisionTemplateMap = {
       disk_size_gb: "256",
       serial_prefix: "ring0",
       node: "pve2",
-      network_bridge: "vmbr0",
+      network_bridge: "labz1",
+      bubble_name: "labz1",
+      asset_role: "workstation",
+      sequence_name: "CloudOSD AD Join",
       os_version: "Windows 11 25H2",
       os_edition: "Enterprise",
       os_activation: "Volume",
@@ -238,6 +259,7 @@ const DEFAULT_PROVISION_TEMPLATES: ProvisionTemplateMap = {
       serial_prefix: "test",
       node: "pve2",
       network_bridge: "vmbr0",
+      asset_role: "workstation",
       os_version: "Windows 11 25H2",
       os_edition: "Enterprise",
       os_activation: "Volume",
@@ -297,6 +319,17 @@ function readStorageJson<T>(key: string, fallback: T): T {
   }
 }
 
+function mergeProvisionTemplatesWithBuiltIns(savedTemplates: ProvisionTemplateMap): ProvisionTemplateMap {
+  const merged: Record<string, ProvisionTemplate> = { ...DEFAULT_PROVISION_TEMPLATES };
+  Object.entries(savedTemplates).forEach(([name, template]) => {
+    if (DEFAULT_PROVISION_TEMPLATES[name] && template.savedAt === BUILT_IN_TEMPLATE_SAVED_AT) {
+      return;
+    }
+    merged[name] = template;
+  });
+  return merged;
+}
+
 function readProvisionTemplates(): ProvisionTemplateMap {
   try {
     const raw = window.localStorage.getItem(PROVISION_TEMPLATE_STORAGE_KEY);
@@ -304,7 +337,7 @@ function readProvisionTemplates(): ProvisionTemplateMap {
     if (window.localStorage.getItem(PROVISION_TEMPLATE_SEED_STORAGE_KEY) === "1") {
       return savedTemplates;
     }
-    const seededTemplates = { ...DEFAULT_PROVISION_TEMPLATES, ...savedTemplates };
+    const seededTemplates = mergeProvisionTemplatesWithBuiltIns(savedTemplates);
     writeStorageJson(PROVISION_TEMPLATE_STORAGE_KEY, seededTemplates);
     window.localStorage.setItem(PROVISION_TEMPLATE_SEED_STORAGE_KEY, "1");
     return seededTemplates;
@@ -352,6 +385,61 @@ function valuesForField(snapshot: ProvisionFormSnapshot, name: string): readonly
 
 function firstValueForField(snapshot: ProvisionFormSnapshot, name: string): string {
   return valuesForField(snapshot, name)[0] ?? "";
+}
+
+function lookupKey(value: unknown): string {
+  return textValue(value, "").trim().toLocaleLowerCase();
+}
+
+function findBubbleByIdOrName(payload: ProvisionPagePayload, value: string): BubbleOption | undefined {
+  const key = lookupKey(value);
+  if (!key) {
+    return undefined;
+  }
+  return payload.bubbles.find((bubble) => (
+    lookupKey(bubble.id) === key
+    || lookupKey(bubble.name) === key
+    || lookupKey(bubble.domain_name) === key
+  ));
+}
+
+function findSequenceByIdOrName(payload: ProvisionPagePayload, value: string): ProvisionSequence | undefined {
+  const key = lookupKey(value);
+  if (!key) {
+    return undefined;
+  }
+  return payload.sequences.find((sequence) => (
+    lookupKey(sequence.id) === key
+    || lookupKey(sequence.name) === key
+  ));
+}
+
+function resolveTemplateFields(fields: ProvisionFormSnapshot, payload: ProvisionPagePayload): ProvisionFormSnapshot {
+  const next: Record<string, string | readonly string[]> = { ...fields };
+  const bubbleId = firstValueForField(fields, "bubble_id");
+  const bubbleName = firstValueForField(fields, "bubble_name");
+  const bubble = findBubbleByIdOrName(payload, bubbleId) ?? findBubbleByIdOrName(payload, bubbleName);
+  if (bubble) {
+    next.bubble_id = textValue(bubble.id, "");
+    next.bubble_name = textValue(bubble.name, "");
+    const savedNetwork = firstValueForField(fields, "network_bridge");
+    if (
+      bubble.planned_bridge
+      && (!savedNetwork || lookupKey(savedNetwork) === lookupKey(bubble.name) || lookupKey(savedNetwork) === lookupKey(bubble.id))
+    ) {
+      next.network_bridge = bubble.planned_bridge;
+    }
+  }
+
+  const sequenceId = firstValueForField(fields, "sequence_id");
+  const sequenceName = firstValueForField(fields, "sequence_name");
+  const sequence = findSequenceByIdOrName(payload, sequenceId) ?? findSequenceByIdOrName(payload, sequenceName);
+  if (sequence) {
+    next.sequence_id = textValue(sequence.id, "");
+    next.sequence_name = textValue(sequence.name, "");
+  }
+
+  return next;
 }
 
 function applyFormSnapshot(form: HTMLFormElement, snapshot: ProvisionFormSnapshot): void {
@@ -408,6 +496,8 @@ function provisionPayloadFromUnknown(value: unknown): ProvisionPagePayload {
     cloudosd_batch_progress: asRecord(record.cloudosd_batch_progress),
     cloudosd_cache: asRecord(record.cloudosd_cache),
     osdeploy_cache: asRecord(record.osdeploy_cache),
+    sequences: Array.isArray(record.sequences) ? record.sequences as readonly ProvisionSequence[] : [],
+    default_sequence_id: typeof record.default_sequence_id === "string" || typeof record.default_sequence_id === "number" ? record.default_sequence_id : "",
     ubuntu_v2_sequences: Array.isArray(record.ubuntu_v2_sequences) ? record.ubuntu_v2_sequences as readonly UbuntuSequence[] : [],
     osdeploy_credentials: Array.isArray(record.osdeploy_credentials) ? record.osdeploy_credentials as readonly OsdeployCredential[] : [],
     bubbles: Array.isArray(record.bubbles) ? record.bubbles as readonly BubbleOption[] : []
@@ -821,18 +911,112 @@ function ArtifactReadiness({
   );
 }
 
-function CloudosdDesktopPanel({ payload }: { readonly payload: ProvisionPagePayload }) {
+function CloudosdDesktopPanel({
+  payload,
+  networkTarget,
+  onNetworkTargetChange
+}: {
+  readonly payload: ProvisionPagePayload;
+  readonly networkTarget: string;
+  readonly onNetworkTargetChange: (value: string) => void;
+}) {
   const target = targetOptions(payload.cloudosd_options);
   const catalogDefaults = payload.cloudosd_catalog.defaults ?? {};
+  const selectedNetworkTarget = networkTarget || payload.cloudosd_options.defaults?.bridge || target.networkTargets[0]?.value || "";
   return (
     <Panel title="OSDCloud Desktop">
       <div className="utility-field-grid">
         <SelectField label="Node" name="node" defaultValue={payload.cloudosd_options.defaults?.node} options={target.nodes} />
-        <SelectField label="Network target" name="network_bridge" defaultValue={payload.cloudosd_options.defaults?.bridge} options={target.networkTargets} />
+        <SelectField label="Network target" name="network_bridge" value={selectedNetworkTarget} onChange={onNetworkTargetChange} options={target.networkTargets} />
         <SelectField label="OS version" name="os_version" defaultValue={textValue(catalogDefaults.os_version, "")} options={optionsFrom(payload.cloudosd_catalog.os_versions, textValue(catalogDefaults.os_version, ""))} />
         <SelectField label="OS edition" name="os_edition" defaultValue={textValue(catalogDefaults.os_edition, "")} options={optionsFrom(payload.cloudosd_catalog.os_editions, textValue(catalogDefaults.os_edition, ""))} />
         <SelectField label="OS activation" name="os_activation" defaultValue={textValue(catalogDefaults.os_activation, "")} options={optionsFrom(payload.cloudosd_catalog.os_activations, textValue(catalogDefaults.os_activation, ""))} />
         <SelectField label="OS language" name="os_language" defaultValue={textValue(catalogDefaults.os_language, "")} options={optionsFrom(payload.cloudosd_catalog.os_languages, textValue(catalogDefaults.os_language, ""))} />
+      </div>
+    </Panel>
+  );
+}
+
+function CloudosdLabDomainPanel({
+  payload,
+  bubbleId,
+  sequenceId,
+  assetRole,
+  onBubbleChange,
+  onSequenceChange,
+  onAssetRoleChange,
+  onNetworkTargetChange
+}: {
+  readonly payload: ProvisionPagePayload;
+  readonly bubbleId: string;
+  readonly sequenceId: string;
+  readonly assetRole: string;
+  readonly onBubbleChange: (value: string) => void;
+  readonly onSequenceChange: (value: string) => void;
+  readonly onAssetRoleChange: (value: string) => void;
+  readonly onNetworkTargetChange: (value: string) => void;
+}) {
+  const selectedBubble = findBubbleByIdOrName(payload, bubbleId);
+  const selectedSequence = findSequenceByIdOrName(payload, sequenceId);
+  const sequenceOptions = payload.sequences.filter((sequence) => (sequence.boot_modes ?? []).includes("cloudosd"));
+  const handleBubbleChange = (value: string) => {
+    onBubbleChange(value);
+    const bubble = findBubbleByIdOrName(payload, value);
+    if (bubble?.planned_bridge) {
+      onNetworkTargetChange(bubble.planned_bridge);
+    }
+  };
+  return (
+    <Panel title="Lab Bubble & Domain">
+      <input type="hidden" name="bubble_name" value={textValue(selectedBubble?.name, "")} />
+      <input type="hidden" name="sequence_name" value={textValue(selectedSequence?.name, "")} />
+      <div className="utility-field-grid">
+        <SelectField
+          label="Lab bubble"
+          name="bubble_id"
+          value={bubbleId}
+          onChange={handleBubbleChange}
+          options={[
+            { value: "", label: "No bubble" },
+            ...payload.bubbles.map((bubble) => ({
+              value: textValue(bubble.id, ""),
+              label: textValue(bubble.name, textValue(bubble.domain_name, "bubble"))
+            }))
+          ]}
+        />
+        <SelectField
+          label="Bubble asset role"
+          name="asset_role"
+          value={assetRole}
+          onChange={onAssetRoleChange}
+          options={[
+            { value: "workstation", label: "Workstation" },
+            { value: "server", label: "Server" },
+            { value: "domain_controller", label: "Domain controller" },
+            { value: "utility", label: "Utility" }
+          ]}
+        />
+        <SelectField
+          label="Domain join sequence"
+          name="sequence_id"
+          value={sequenceId}
+          onChange={onSequenceChange}
+          options={[
+            { value: "", label: "No domain join" },
+            ...sequenceOptions.map((sequence) => ({
+              value: textValue(sequence.id, ""),
+              label: textValue(sequence.name, `Sequence ${textValue(sequence.id)}`)
+            }))
+          ]}
+        />
+        <div className="utility-field utility-field--wide">
+          <span>Bubble target</span>
+          <div className="provision-hash-capture-stack">
+            <strong>{textValue(selectedBubble?.name, "none")}</strong>
+            {selectedBubble?.domain_name ? <small>{selectedBubble.domain_name}</small> : null}
+            {selectedBubble?.cidr ? <small>{selectedBubble.cidr}</small> : null}
+          </div>
+        </div>
       </div>
     </Panel>
   );
@@ -1139,6 +1323,10 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
   const [hostnamePattern, setHostnamePattern] = useState("ap-{index}");
   const [hostnameIsManual, setHostnameIsManual] = useState(false);
   const [vmCount, setVmCount] = useState(1);
+  const [cloudosdNetworkTarget, setCloudosdNetworkTarget] = useState("");
+  const [cloudosdBubbleId, setCloudosdBubbleId] = useState("");
+  const [cloudosdSequenceId, setCloudosdSequenceId] = useState("");
+  const [cloudosdAssetRole, setCloudosdAssetRole] = useState("workstation");
   const [defaultsApplied, setDefaultsApplied] = useState(false);
   const [templates, setTemplates] = useState<ProvisionTemplateMap>(readProvisionTemplates);
   const [selectedTemplate, setSelectedTemplate] = useState("");
@@ -1161,6 +1349,8 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
         setHostnamePattern(initialHostnamePattern(defaultGroupTag, textValue(defaults.hostname_pattern, "")));
         setHostnameIsManual(false);
         setVmCount(asNumber(defaults.count, 1));
+        setCloudosdNetworkTarget(textValue(nextPayload.cloudosd_options.defaults?.bridge, ""));
+        setCloudosdAssetRole("workstation");
         setDefaultsApplied(true);
       }
       setError("");
@@ -1201,6 +1391,18 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
     if (Object.hasOwn(fields, "count")) {
       setVmCount(asNumber(firstValueForField(fields, "count"), 1));
     }
+    if (Object.hasOwn(fields, "network_bridge")) {
+      setCloudosdNetworkTarget(firstValueForField(fields, "network_bridge"));
+    }
+    if (Object.hasOwn(fields, "bubble_id") || Object.hasOwn(fields, "bubble_name")) {
+      setCloudosdBubbleId(firstValueForField(fields, "bubble_id"));
+    }
+    if (Object.hasOwn(fields, "sequence_id") || Object.hasOwn(fields, "sequence_name")) {
+      setCloudosdSequenceId(firstValueForField(fields, "sequence_id"));
+    }
+    if (Object.hasOwn(fields, "asset_role")) {
+      setCloudosdAssetRole(firstValueForField(fields, "asset_role") || "workstation");
+    }
     const nextBootMode = firstValueForField(fields, "boot_mode");
     if (isBootMode(nextBootMode)) {
       setBootMode(nextBootMode);
@@ -1208,24 +1410,26 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
   }, []);
 
   const applySavedFields = useCallback((fields: ProvisionFormSnapshot) => {
-    syncControlledFieldsFromSnapshot(fields);
+    const resolvedFields = resolveTemplateFields(fields, payload);
+    syncControlledFieldsFromSnapshot(resolvedFields);
     window.setTimeout(() => {
       if (!formRef.current) {
         return;
       }
-      applyFormSnapshot(formRef.current, fields);
+      applyFormSnapshot(formRef.current, resolvedFields);
       persistDraft();
     }, 0);
-  }, [persistDraft, syncControlledFieldsFromSnapshot]);
+  }, [payload, persistDraft, syncControlledFieldsFromSnapshot]);
 
   const applySavedFieldsImmediately = useCallback((fields: ProvisionFormSnapshot) => {
-    syncControlledFieldsFromSnapshot(fields);
+    const resolvedFields = resolveTemplateFields(fields, payload);
+    syncControlledFieldsFromSnapshot(resolvedFields);
     if (!formRef.current) {
       return;
     }
-    applyFormSnapshot(formRef.current, fields);
+    applyFormSnapshot(formRef.current, resolvedFields);
     persistDraft();
-  }, [persistDraft, syncControlledFieldsFromSnapshot]);
+  }, [payload, persistDraft, syncControlledFieldsFromSnapshot]);
 
   const saveTemplate = useCallback(() => {
     if (!formRef.current) {
@@ -1414,7 +1618,21 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
                 />
                 {bootMode === "cloudosd" ? (
                   <>
-                    <CloudosdDesktopPanel payload={payload} />
+                    <CloudosdDesktopPanel
+                      payload={payload}
+                      networkTarget={cloudosdNetworkTarget}
+                      onNetworkTargetChange={setCloudosdNetworkTarget}
+                    />
+                    <CloudosdLabDomainPanel
+                      payload={payload}
+                      bubbleId={cloudosdBubbleId}
+                      sequenceId={cloudosdSequenceId}
+                      assetRole={cloudosdAssetRole}
+                      onBubbleChange={setCloudosdBubbleId}
+                      onSequenceChange={setCloudosdSequenceId}
+                      onAssetRoleChange={setCloudosdAssetRole}
+                      onNetworkTargetChange={setCloudosdNetworkTarget}
+                    />
                     <AdvancedCloudosdOptions payload={payload} />
                   </>
                 ) : null}
