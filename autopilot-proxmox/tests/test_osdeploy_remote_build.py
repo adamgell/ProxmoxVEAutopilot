@@ -462,6 +462,24 @@ def test_osdeploy_bridge_injects_virtio_drivers_before_first_boot():
     assert "osdeploy_drivers_applied" in bridge
 
 
+def test_osdeploy_bridge_stages_qga_msi_from_virtio_driver_root():
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parents[1]
+    bridge = (
+        app_root / "tools" / "osdeploy-build" / "Invoke-OSDeployBridge.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "Find-OSDeployQemuGuestAgentMsi" in bridge
+    assert "Copy-OSDeployQemuGuestAgentMsi" in bridge
+    assert "guest-agent\\qemu-ga-x86_64.msi" in bridge
+    assert "QEMU Guest Agent MSI not found" in bridge
+    assert "-QgaSearchRoots @($driverResult.DriverRoot)" in bridge
+    assert bridge.index("Add-OSDeployVirtIODrivers") < bridge.index(
+        "-QgaSearchRoots @($driverResult.DriverRoot)"
+    )
+
+
 def test_osdeploy_bridge_stages_offline_unattend_for_server_first_boot():
     from pathlib import Path
 

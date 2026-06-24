@@ -372,7 +372,8 @@ function Save-OSDeployOsdClientPackage {
         [Parameter(Mandatory)] [string] $BearerToken,
         [Parameter(Mandatory)] [string] $BaseUrl,
         [Parameter(Mandatory)] [string] $RunId,
-        [string] $FallbackBaseUrl
+        [string] $FallbackBaseUrl,
+        [string[]] $QgaSearchRoots
     )
     if (-not (Get-OSDeployObjectProperty -Value $Package -Name 'payloads')) {
         throw 'OSDeploy package is missing payloads'
@@ -413,6 +414,12 @@ function Save-OSDeployOsdClientPackage {
         -Root $programDataRoot `
         -RelativePath 'ProxmoxVEAutopilot\OSD'
     New-Item -ItemType Directory -Path $osdRoot -Force | Out-Null
+    $qgaMsi = Copy-OSDeployQemuGuestAgentMsi `
+        -Destination (Join-OSDeployPath -Root $osdRoot -RelativePath 'guest-agent\qemu-ga-x86_64.msi') `
+        -SearchRoots $QgaSearchRoots
+    if (-not $qgaMsi) {
+        throw 'QEMU Guest Agent MSI not found in attached VirtIO media; cannot stage OSDeploy full-OS QGA install.'
+    }
 
     $config = $clientPackage.config | ConvertTo-Json -Depth 30 | ConvertFrom-Json
     Set-OSDeployObjectProperty `
@@ -467,6 +474,43 @@ function Save-OSDeployOsdClientPackage {
     $config | ConvertTo-Json -Depth 30 |
         Set-Content -LiteralPath (Join-Path $osdRoot 'osd-config.json') -Encoding UTF8
     return $osdRoot
+}
+
+function Find-OSDeployQemuGuestAgentMsi {
+    param([string[]] $SearchRoots)
+    $roots = @()
+    if ($SearchRoots) {
+        $roots += @($SearchRoots | Where-Object { $_ })
+    } else {
+        $roots += @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Root })
+    }
+    foreach ($root in @($roots)) {
+        if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($relative in @(
+            'guest-agent\qemu-ga-x86_64.msi',
+            'qemu-ga-x86_64.msi',
+            'qemu\qemu-ga-x86_64.msi'
+        )) {
+            $candidate = Join-Path $root $relative
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+    return $null
+}
+
+function Copy-OSDeployQemuGuestAgentMsi {
+    param(
+        [Parameter(Mandatory)] [string] $Destination,
+        [string[]] $SearchRoots
+    )
+    $source = Find-OSDeployQemuGuestAgentMsi -SearchRoots $SearchRoots
+    if (-not $source) { return $null }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $Destination -Force
+    return $Destination
 }
 
 function New-OSDeployUnattendTextElement {
@@ -1200,7 +1244,8 @@ function Invoke-OSDeployBridge {
             -BearerToken $token `
             -BaseUrl $baseUrl `
             -RunId $runId `
-            -FallbackBaseUrl $fallbackUrl
+            -FallbackBaseUrl $fallbackUrl `
+            -QgaSearchRoots @($driverResult.DriverRoot)
     }
     Write-OSDeployEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
         -RunId $runId -BearerToken $token -Phase 'pe' `
