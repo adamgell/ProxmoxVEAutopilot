@@ -7029,6 +7029,13 @@ def _filter_and_purge_agents_without_current_vm(
     vms: list[dict],
 ) -> list[dict]:
     current_vmids: set[int] = set()
+    current_identity_keys: set[str] = set()
+    current_ip_keys: set[str] = set()
+
+    def add_current_vm_evidence(vm: dict) -> None:
+        current_identity_keys.update(_pve_vm_match_keys(vm))
+        current_ip_keys.update(_pve_vm_ip_match_keys(vm))
+
     for vm in vms:
         try:
             vmid = vm.get("vmid")
@@ -7036,6 +7043,7 @@ def _filter_and_purge_agents_without_current_vm(
                 current_vmids.add(int(vmid))
         except (TypeError, ValueError):
             continue
+        add_current_vm_evidence(vm)
 
     # The `vms` arg only enumerates the configured proxmox_node. In a
     # multi-node cluster (e.g. pve1 + pve2) an agent installed on a VM
@@ -7053,6 +7061,7 @@ def _filter_and_purge_agents_without_current_vm(
                 current_vmids.add(int(vmid_raw))
             except (TypeError, ValueError):
                 continue
+            add_current_vm_evidence(row)
     except Exception:
         # Cluster lookup failed; fall back to the configured-node vmids
         # rather than blowing up the whole fleet view.
@@ -7086,6 +7095,12 @@ def _filter_and_purge_agents_without_current_vm(
             kept.append(agent)
             continue
         if agent_vmid is not None and agent_vmid in current_vmids:
+            kept.append(agent)
+            continue
+        if (
+            _agent_match_keys(agent).intersection(current_identity_keys)
+            or _agent_ip_match_keys(agent).intersection(current_ip_keys)
+        ):
             kept.append(agent)
             continue
         if agent_id:

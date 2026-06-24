@@ -601,10 +601,14 @@ function addRepresentedRow(
 function agentMatchesRepresentedMachine(
   agent: AgentFleetRow,
   representedVmids: ReadonlySet<number>,
-  representedIdentities: ReadonlySet<string>
+  representedIdentities: ReadonlySet<string>,
+  resolvedProxmoxVm?: VmFleetRow
 ): boolean {
   if (typeof agent.vmid === "number" && representedVmids.has(agent.vmid)) {
     return true;
+  }
+  if (resolvedProxmoxVm) {
+    return representedVmids.has(resolvedProxmoxVm.vmid);
   }
   return agentIdentityValues(agent).some((value) => {
     const key = normalizedIdentity(value);
@@ -679,10 +683,10 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     if (matchedAgentIds.has(agent.agent_id)) {
       continue;
     }
-    if (agentMatchesRepresentedMachine(agent, representedVmids, representedIdentities)) {
+    const proxmoxVm = findProxmoxVmForAgent(agent, proxmoxVmsByVmid, proxmoxVmsByIdentity);
+    if (agentMatchesRepresentedMachine(agent, representedVmids, representedIdentities, proxmoxVm)) {
       continue;
     }
-    const proxmoxVm = findProxmoxVmForAgent(agent, proxmoxVmsByVmid, proxmoxVmsByIdentity);
     if (!proxmoxVm) {
       continue;
     }
@@ -697,13 +701,13 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     if (matchedAgentIds.has(agent.agent_id)) {
       continue;
     }
-    if (agentMatchesRepresentedMachine(agent, representedVmids, representedIdentities)) {
-      continue;
-    }
     // If the agent has a VMID and that VMID exists somewhere in the cluster
     // (even if outside fleet.vms), borrow its identity so the row shows
     // VMID + Runtime + node-aware name instead of a bare agent stub.
     const agentProxmoxVm = findProxmoxVmForAgent(agent, proxmoxVmsByVmid, proxmoxVmsByIdentity);
+    if (agentMatchesRepresentedMachine(agent, representedVmids, representedIdentities, agentProxmoxVm)) {
+      continue;
+    }
     const agentForRow = agentProxmoxVm ? borrowedAgentsByVmid.get(agentProxmoxVm.vmid) ?? agent : agent;
     const proxmoxVm = agentProxmoxVm;
     if (proxmoxVm) {

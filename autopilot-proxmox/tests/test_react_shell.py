@@ -646,6 +646,52 @@ def test_react_vms_fleet_warns_when_multiple_agents_map_to_one_live_vm(web_clien
     ]
 
 
+def test_purge_keeps_identity_matched_agent_without_vmid_for_live_vm(monkeypatch, tmp_path):
+    from web import app as web_app
+
+    deleted: list[str] = []
+    setup_state_path = tmp_path / "foundation_state.json"
+    setup_state_path.write_text("{}", encoding="utf-8")
+    live_vms = [{
+        "vmid": 111,
+        "name": "LABZ1-DC01",
+        "hostname": "LABZ1-DC01",
+        "serial": "LABZ1-DC01",
+        "ip_address": "192.168.16.10",
+    }]
+    agents = [
+        {
+            "agent_id": "agent-labz1-current",
+            "approval_status": "active",
+            "vmid": 111,
+            "computer_name": "LABZ1-DC01",
+            "primary_ipv4": "192.168.16.10",
+        },
+        {
+            "agent_id": "agent-labz1-stale-identity",
+            "approval_status": "active",
+            "computer_name": "LABZ1-DC01",
+            "serial_number": "LABZ1-DC01",
+            "primary_ipv4": "192.168.16.10",
+        },
+    ]
+
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", setup_state_path)
+    monkeypatch.setattr(web_app, "_proxmox_api", lambda _path: [])
+    monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
+
+    kept = web_app._filter_and_purge_agents_without_current_vm(agents, live_vms)
+
+    assert [agent["agent_id"] for agent in kept] == [
+        "agent-labz1-current",
+        "agent-labz1-stale-identity",
+    ]
+    assert deleted == []
+    assert web_app._agent_identity_warnings_for_live_vms(kept, live_vms) == [
+        "Multiple agent rows map to VM 111 (LABZ1-DC01): agent-labz1-current, agent-labz1-stale-identity. Cached rows were left intact."
+    ]
+
+
 def test_agent_inventory_uses_device_run_id_before_first_heartbeat(monkeypatch):
     from web import app as web_app
 
