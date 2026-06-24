@@ -5058,6 +5058,22 @@ class VmKnownCredentialResponse(ApiExtraModel):
     note: str = ""
 
 
+class VmRevealedCredentialResponse(ApiExtraModel):
+    source: str = ""
+    label: str = ""
+    username: str = ""
+    password: str = ""
+    vm_name: str = ""
+    run_id: str = ""
+    run_url: str = ""
+    updated_at: str | None = None
+    note: str = ""
+
+
+class VmCredentialsRevealResponse(BaseModel):
+    credentials: list[VmRevealedCredentialResponse] = Field(default_factory=list)
+
+
 class VmTimelineEventResponse(ApiExtraModel):
     at: str = ""
     source: str = ""
@@ -5186,24 +5202,28 @@ async def legacy_dashboard(request: Request):
     return _primary_ui_redirect("/react/dashboard")
 
 
+def _react_shell_user_labels(user: dict | None) -> dict[str, str]:
+    if not isinstance(user, dict):
+        return {"user_name": "", "user_email": ""}
+    email = str(user.get("email") or user.get("upn") or "").strip()
+    name = email or str(user.get("name") or "").strip()
+    return {"user_name": name, "user_email": email}
+
+
 def _render_react_shell(request: Request, *, shell_kind: str = "protected"):
     build_sha = (_APP_VERSION.get("sha_short") or "unknown")
     build_time = _APP_VERSION.get("build_time", "")
     assets = _react_asset_tags(f"{build_sha}-{build_time}")
     user = request.session.get("user") if request and request.session else {}
-    user_name = ""
-    user_email = ""
-    if isinstance(user, dict):
-        user_name = str(user.get("name") or user.get("email") or user.get("upn") or "")
-        user_email = str(user.get("email") or user.get("upn") or "")
+    user_labels = _react_shell_user_labels(user)
     response = templates.TemplateResponse("react_shell.html", {
         "request": request,
         "asset_scripts": assets["scripts"],
         "asset_styles": assets["styles"],
         "build_sha": build_sha,
         "build_time": build_time,
-        "user_name": user_name,
-        "user_email": user_email,
+        "user_name": user_labels["user_name"],
+        "user_email": user_labels["user_email"],
         "shell_kind": shell_kind,
     })
     response.headers["Cache-Control"] = "no-store"
@@ -6944,6 +6964,14 @@ def _agent_row_vmid(agent: dict) -> int | None:
         return None
 
 
+def _agent_row_observed_at(agent: dict) -> datetime:
+    for key in ("last_heartbeat_at", "last_seen_at"):
+        parsed = _parse_iso_datetime(agent.get(key))
+        if parsed is not None:
+            return parsed
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _hard_delete_agent_by_id(agent_id: str) -> bool:
     from web import agent_telemetry_pg, db_pg
 
@@ -6995,34 +7023,56 @@ def _filter_and_purge_agents_without_current_vm(
     except (TypeError, ValueError):
         expected_build_host_vmid = 0
 
-    kept: list[dict] = []
+    kept_special: list[dict] = []
+    current_vm_agents: list[dict] = []
     purge_agent_ids: list[str] = []
     for agent in agents:
         agent_id = agent.get("agent_id") or ""
         approval_status = str(agent.get("approval_status") or "").casefold()
         if agent.get("approval_id") and approval_status in {"pending", "approved"}:
-            kept.append(agent)
+            kept_special.append(agent)
             continue
         agent_vmid = _agent_row_vmid(agent)
         if (
             (expected_build_host_agent and agent_id == expected_build_host_agent)
             or (expected_build_host_vmid and agent_vmid == expected_build_host_vmid)
         ):
-            kept.append(agent)
+            kept_special.append(agent)
             continue
         if agent.get("current_run_id"):
-            kept.append(agent)
+            kept_special.append(agent)
             continue
         if agent_vmid is not None and agent_vmid in current_vmids:
-            kept.append(agent)
+            current_vm_agents.append(agent)
             continue
         if agent_id:
             purge_agent_ids.append(agent_id)
 
+    selected_by_vmid: dict[int, dict] = {}
+    for agent in current_vm_agents:
+        agent_vmid = _agent_row_vmid(agent)
+        if agent_vmid is None:
+            continue
+        existing = selected_by_vmid.get(agent_vmid)
+        if existing is None:
+            selected_by_vmid[agent_vmid] = agent
+            continue
+        if _agent_row_observed_at(agent) > _agent_row_observed_at(existing):
+            stale_id = existing.get("agent_id") or ""
+            selected_by_vmid[agent_vmid] = agent
+        else:
+            stale_id = agent.get("agent_id") or ""
+        if stale_id:
+            purge_agent_ids.append(stale_id)
+
     if purge_agent_ids:
         import logging as _logging
         log = _logging.getLogger("web.vms")
+        seen_purge_agent_ids: set[str] = set()
         for agent_id in purge_agent_ids:
+            if agent_id in seen_purge_agent_ids:
+                continue
+            seen_purge_agent_ids.add(agent_id)
             try:
                 _hard_delete_agent_by_id(agent_id)
             except Exception:
@@ -7030,7 +7080,11 @@ def _filter_and_purge_agents_without_current_vm(
                     "failed to purge agent without current VM",
                     extra={"agent_id": agent_id},
                 )
-    return kept
+    retained_agent_objects = {
+        id(agent)
+        for agent in [*kept_special, *selected_by_vmid.values()]
+    }
+    return [agent for agent in agents if id(agent) in retained_agent_objects]
 
 
 def _agent_inventory_rows_for_current_vms() -> list[dict]:
@@ -15751,6 +15805,28 @@ async def _vm_detail_evidence_payload(vmid: int) -> dict:
 @app.get("/api/vms/{vmid}/detail", response_model=VmDetailEvidenceResponse)
 async def api_vm_detail_evidence(vmid: int):
     return await _vm_detail_evidence_payload(vmid)
+
+
+@app.post("/api/vms/{vmid}/credentials/reveal", response_model=VmCredentialsRevealResponse)
+async def api_vm_credentials_reveal(vmid: int):
+    await _vm_detail_evidence_payload(vmid)
+    credentials = []
+    for item in _known_credentials_for_vmid(vmid):
+        password = str(item.get("password") or "")
+        if not password:
+            continue
+        credentials.append({
+            "source": str(item.get("source") or ""),
+            "label": str(item.get("label") or ""),
+            "username": str(item.get("username") or ""),
+            "password": password,
+            "vm_name": str(item.get("vm_name") or ""),
+            "run_id": str(item.get("run_id") or ""),
+            "run_url": str(item.get("run_url") or ""),
+            "updated_at": item.get("updated_at"),
+            "note": str(item.get("note") or ""),
+        })
+    return {"credentials": credentials}
 
 
 def _render_legacy_device_detail(request: Request, vmid: int):

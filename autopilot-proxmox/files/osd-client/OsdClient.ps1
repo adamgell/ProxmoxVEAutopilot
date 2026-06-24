@@ -979,6 +979,281 @@ function Invoke-OsdeployFirstBootReadiness {
     Invoke-InstallQga -Required
 }
 
+function Convert-OsdIpAddressString {
+    param([AllowNull()] [object] $Value)
+
+    if ($null -eq $Value) { return '' }
+    if ($Value.PSObject.Properties.Match('IPAddressToString').Count -gt 0 -and $Value.IPAddressToString) {
+        return [string] $Value.IPAddressToString
+    }
+    return [string] $Value
+}
+
+function Get-IsolatedDcActionParam {
+    param(
+        [Parameter(Mandatory)] [object] $Action,
+        [Parameter(Mandatory)] [string] $Name
+    )
+    $params = Get-OsdObjectProperty -Value $Action -Name 'params'
+    if (-not $params) { return $null }
+    return Get-OsdObjectProperty -Value $params -Name $Name
+}
+
+function Get-IsolatedDcPrimaryIPv4 {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $explicit = [string] (Get-IsolatedDcActionParam -Action $Action -Name 'dhcp_server_ip')
+    if (-not [string]::IsNullOrWhiteSpace($explicit)) {
+        return $explicit.Trim()
+    }
+    $addresses = @(
+        Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.IPAddress -and
+                $_.IPAddress -ne '127.0.0.1' -and
+                $_.IPAddress -notlike '169.254*'
+            }
+    )
+    if ($addresses.Count -eq 0) {
+        throw 'Unable to determine isolated domain controller IPv4 address'
+    }
+    return [string] $addresses[0].IPAddress
+}
+
+function Get-IsolatedDcForestFqdn {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $explicit = [string] (Get-IsolatedDcActionParam -Action $Action -Name 'forest_fqdn')
+    if (-not [string]::IsNullOrWhiteSpace($explicit)) {
+        return $explicit.Trim().ToLowerInvariant()
+    }
+    $domain = Get-ADDomain -ErrorAction SilentlyContinue
+    if ($domain -and $domain.DNSRoot) {
+        return ([string] $domain.DNSRoot).Trim().ToLowerInvariant()
+    }
+    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    if ($cs -and $cs.Domain) {
+        return ([string] $cs.Domain).Trim().ToLowerInvariant()
+    }
+    throw 'Isolated domain controller action is missing forest_fqdn'
+}
+
+function Get-IsolatedDcServerFqdn {
+    param([Parameter(Mandatory)] [string] $ForestFqdn)
+
+    $computer = $env:COMPUTERNAME
+    if ([string]::IsNullOrWhiteSpace($computer)) {
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($cs -and $cs.Name) { $computer = [string] $cs.Name }
+    }
+    if ([string]::IsNullOrWhiteSpace($computer)) {
+        throw 'Unable to determine domain controller computer name'
+    }
+    if ($computer.Contains('.')) {
+        return $computer
+    }
+    return "$computer.$ForestFqdn"
+}
+
+function Test-OsdServiceRunning {
+    param([Parameter(Mandatory)] [string] $Name)
+
+    $service = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    return ($service -and [string] $service.Status -eq 'Running')
+}
+
+function Enable-OsdRemoteDesktop {
+    Write-OsdLog 'Enabling Remote Desktop access.'
+    Set-ItemProperty `
+        -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+        -Name 'fDenyTSConnections' `
+        -Value 0 `
+        -ErrorAction Stop
+    Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction Stop
+    Set-Service -Name TermService -StartupType Automatic -ErrorAction Stop
+
+    $service = Get-Service -Name TermService -ErrorAction Stop
+    if ([string] $service.Status -ne 'Running') {
+        Start-Service -Name TermService -ErrorAction Stop
+    }
+    Write-OsdLog 'Remote Desktop access enabled.'
+}
+
+function Get-IsolatedDcDhcpSecurityGroupState {
+    $requiredGroups = @('DHCP Administrators', 'DHCP Users')
+    $presentGroups = @()
+    foreach ($groupName in $requiredGroups) {
+        $group = Get-ADGroup -Identity $groupName -ErrorAction SilentlyContinue
+        if ($group) {
+            $presentGroups += $groupName
+        }
+    }
+    return [pscustomobject]@{
+        ready = ($presentGroups.Count -eq $requiredGroups.Count)
+        present_groups = $presentGroups
+        required_groups = $requiredGroups
+    }
+}
+
+function Ensure-IsolatedDcDhcpSecurityGroups {
+    param([Parameter(Mandatory)] [string] $ServerFqdn)
+
+    $before = Get-IsolatedDcDhcpSecurityGroupState
+    if ($before.ready) {
+        return [pscustomobject]@{
+            ready = $true
+            action = 'already_present'
+            groups = $before.present_groups
+        }
+    }
+
+    Add-DhcpServerSecurityGroup -ComputerName $ServerFqdn -ErrorAction Stop
+    $after = Get-IsolatedDcDhcpSecurityGroupState
+    if (-not $after.ready) {
+        $missing = @($after.required_groups | Where-Object { $_ -notin $after.present_groups })
+        throw "DHCP security groups were not present after post-install commit: $($missing -join ', ')"
+    }
+    return [pscustomobject]@{
+        ready = $true
+        action = 'created'
+        groups = $after.present_groups
+    }
+}
+
+function Ensure-IsolatedDcDhcpAuthorization {
+    param(
+        [Parameter(Mandatory)] [string] $ForestFqdn,
+        [Parameter(Mandatory)] [string] $ServerIp
+    )
+
+    $serverFqdn = Get-IsolatedDcServerFqdn -ForestFqdn $ForestFqdn
+    $securityGroups = Ensure-IsolatedDcDhcpSecurityGroups -ServerFqdn $serverFqdn
+    $authorized = @(
+        Get-DhcpServerInDC -ErrorAction SilentlyContinue |
+            Where-Object {
+                (([string] $_.DnsName).Equals($serverFqdn, [System.StringComparison]::OrdinalIgnoreCase)) -or
+                ((Convert-OsdIpAddressString $_.IPAddress) -eq $ServerIp)
+            }
+    )
+    $authAction = 'already_authorized'
+    if ($authorized.Count -gt 0) {
+        if ($securityGroups.action -eq 'created') {
+            Restart-Service -Name DHCPServer -Force -ErrorAction Stop
+        }
+        return [pscustomobject]@{
+            authorized = $true
+            action = $authAction
+            dns_name = $serverFqdn
+            ip_address = $ServerIp
+            security_groups_ready = [bool] $securityGroups.ready
+            security_group_action = [string] $securityGroups.action
+            security_groups = @($securityGroups.groups)
+        }
+    }
+
+    Add-DhcpServerInDC -DnsName $serverFqdn -IPAddress $ServerIp -ErrorAction Stop
+    $authAction = 'authorized'
+    Restart-Service -Name DHCPServer -Force -ErrorAction Stop
+    return [pscustomobject]@{
+        authorized = $true
+        action = $authAction
+        dns_name = $serverFqdn
+        ip_address = $ServerIp
+        security_groups_ready = [bool] $securityGroups.ready
+        security_group_action = [string] $securityGroups.action
+        security_groups = @($securityGroups.groups)
+    }
+}
+
+function Get-IsolatedDcDhcpScopeEvidence {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $scopeId = [string] (Get-IsolatedDcActionParam -Action $Action -Name 'dhcp_scope')
+    if (-not [string]::IsNullOrWhiteSpace($scopeId)) {
+        $scope = Get-DhcpServerv4Scope -ScopeId $scopeId -ErrorAction SilentlyContinue | Select-Object -First 1
+    } else {
+        $scope = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $scope) {
+        return [pscustomobject]@{
+            ready = $false
+            scope = ''
+            pool_start = ''
+            pool_end = ''
+        }
+    }
+    $state = [string] $scope.State
+    return [pscustomobject]@{
+        ready = ($state -eq 'Active')
+        scope = Convert-OsdIpAddressString $scope.ScopeId
+        pool_start = Convert-OsdIpAddressString $scope.StartRange
+        pool_end = Convert-OsdIpAddressString $scope.EndRange
+    }
+}
+
+function Invoke-VerifyIsolatedDomainControllerRole {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $forestFqdn = Get-IsolatedDcForestFqdn -Action $Action
+    $serverIp = Get-IsolatedDcPrimaryIPv4 -Action $Action
+    Enable-OsdRemoteDesktop
+    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $domain = Get-ADDomain -ErrorAction SilentlyContinue
+    $forest = Get-ADForest -ErrorAction SilentlyContinue
+    $dhcpAuth = Ensure-IsolatedDcDhcpAuthorization -ForestFqdn $forestFqdn -ServerIp $serverIp
+    $scope = Get-IsolatedDcDhcpScopeEvidence -Action $Action
+    $zones = @(Get-DnsServerZone -ErrorAction SilentlyContinue)
+
+    $adReady = [bool] (
+        $cs -and
+        $cs.PartOfDomain -and
+        [int] $cs.DomainRole -eq 5 -and
+        $domain -and
+        (([string] $domain.DNSRoot).Equals($forestFqdn, [System.StringComparison]::OrdinalIgnoreCase)) -and
+        $forest -and
+        (Test-OsdServiceRunning -Name 'NTDS') -and
+        (Test-OsdServiceRunning -Name 'Netlogon') -and
+        (Test-OsdServiceRunning -Name 'KDC')
+    )
+    $dnsReady = [bool] (
+        (Test-OsdServiceRunning -Name 'DNS') -and
+        ($zones | Where-Object {
+            ([string] $_.ZoneName).Equals($forestFqdn, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+    )
+    $dhcpReady = [bool] (
+        (Test-OsdServiceRunning -Name 'DHCPServer') -and
+        $dhcpAuth.security_groups_ready -and
+        $dhcpAuth.authorized -and
+        $scope.ready
+    )
+
+    Write-OsdLog "Isolated domain controller readiness forest=$forestFqdn ad=$adReady dns=$dnsReady dhcp=$dhcpReady dhcp_auth=$($dhcpAuth.action) dhcp_security_groups=$($dhcpAuth.security_group_action)"
+    return [pscustomobject]@{
+        dc_readiness = [ordered]@{
+            ad_ds_ready = $adReady
+            dns_ready = $dnsReady
+            dhcp_ready = $dhcpReady
+            dhcp_security_groups_ready = [bool] $dhcpAuth.security_groups_ready
+            dhcp_security_group_action = [string] $dhcpAuth.security_group_action
+            dhcp_authorized = [bool] $dhcpAuth.authorized
+            dhcp_authorization_action = [string] $dhcpAuth.action
+            dhcp_scope = [string] $scope.scope
+            dhcp_pool_start = [string] $scope.pool_start
+            dhcp_pool_end = [string] $scope.pool_end
+            domain_fqdn = $forestFqdn
+            domain_controller_fqdn = [string] $dhcpAuth.dns_name
+            domain_controller_ip = $serverIp
+        }
+    }
+}
+
+function Invoke-ConfigureIsolatedDomainControllerRole {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    return Invoke-VerifyIsolatedDomainControllerRole -Action $Action
+}
+
 function Invoke-OsdAction {
     param(
         [Parameter(Mandatory)] [object] $Action,
@@ -1016,6 +1291,12 @@ function Invoke-OsdAction {
         'install_package' {
             Invoke-InstallPackage -Action $Action -Config $Config -BearerToken $BearerToken
         }
+        'configure_isolated_domain_controller_role' {
+            Invoke-ConfigureIsolatedDomainControllerRole -Action $Action
+        }
+        'verify_isolated_domain_controller_role' {
+            Invoke-VerifyIsolatedDomainControllerRole -Action $Action
+        }
         default { throw "unknown OSD step kind: $kind" }
     }
 }
@@ -1026,7 +1307,8 @@ function Send-V2StepResult {
         [Parameter(Mandatory)] [object] $Action,
         [Parameter(Mandatory)] [ValidateSet('success','failed','skipped','reboot_required')] [string] $Status,
         [string] $Message,
-        [string] $BearerToken
+        [string] $BearerToken,
+        [object] $Data
     )
 
     $phase = [string] $Action.phase
@@ -1041,6 +1323,9 @@ function Send-V2StepResult {
     }
     if (-not [string]::IsNullOrWhiteSpace($Message)) {
         $body.message = $Message
+    }
+    if ($null -ne $Data) {
+        $body.data = $Data
     }
 
     $r = Invoke-OsdRequest -Config $Config `
@@ -1067,7 +1352,8 @@ function Invoke-OsdV2Client {
         'install_qga',
         'install_qga_watchdog',
         'verify_qga',
-        'wait_agent_heartbeat'
+        'wait_agent_heartbeat',
+        'verify_isolated_domain_controller_role'
     )
 
     $reg = Invoke-OsdRequest -Config $Config -Path '/osd/v2/agent/register' `
@@ -1104,9 +1390,9 @@ function Invoke-OsdV2Client {
             $kind = [string] $action.kind
             Write-OsdLog "OSD v2 step starting id=$($action.step_id) kind=$kind"
             try {
-                Invoke-OsdAction -Action $action -Config $Config -BearerToken $token
+                $resultData = Invoke-OsdAction -Action $action -Config $Config -BearerToken $token
                 $token = Send-V2StepResult -Config $Config -Action $action `
-                    -Status success -Message 'ok' -BearerToken $token
+                    -Status success -Message 'ok' -BearerToken $token -Data $resultData
                 Write-OsdLog "OSD v2 step completed id=$($action.step_id) kind=$kind"
             } catch {
                 $token = Send-V2StepResult -Config $Config -Action $action `

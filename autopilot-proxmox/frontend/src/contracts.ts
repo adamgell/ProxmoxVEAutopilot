@@ -568,6 +568,22 @@ export interface VmKnownCredential {
   readonly note: string;
 }
 
+export interface VmRevealedCredential {
+  readonly source: string;
+  readonly label: string;
+  readonly username: string;
+  readonly password: string;
+  readonly vm_name: string;
+  readonly run_id: string;
+  readonly run_url: string;
+  readonly updated_at?: string | null;
+  readonly note: string;
+}
+
+export interface VmCredentialsRevealResponse {
+  readonly credentials: readonly VmRevealedCredential[];
+}
+
 export interface VmTimelineEvent {
   readonly at: string;
   readonly source: string;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 import re
 import shutil
 
@@ -17,6 +18,12 @@ pytestmark = pytest.mark.skipif(
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _write_fake_msi(path: Path, *, size: int = 4096) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"MZ" + (b"\0" * (size - 2)))
+    return path
 
 
 @pytest.fixture
@@ -46,9 +53,7 @@ def osdeploy_client(pg_conn, monkeypatch, tmp_path):
     lab_bubbles_pg.reset_for_tests(pg_conn)
     lab_bubbles_pg.init(pg_conn)
     monkeypatch.setenv("AUTOPILOT_BASE_URL", "http://autopilot.test:5000")
-    agent_msi = tmp_path / "artifacts" / "AutopilotAgent.msi"
-    agent_msi.parent.mkdir(parents=True, exist_ok=True)
-    agent_msi.write_bytes(b"MZ" + (b"\0" * 4094))
+    agent_msi = _write_fake_msi(tmp_path / "artifacts" / "AutopilotAgent.msi")
     monkeypatch.setenv("AUTOPILOT_AGENT_MSI_PATH", str(agent_msi))
 
     from web import app as web_app
@@ -376,7 +381,7 @@ def test_osdeploy_artifact_list_includes_build_and_publish_job_links(osdeploy_cl
     assert artifact["publish_log_url"] == "/api/jobs/job-publish-456/log"
 
 
-def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_conn):
+def test_osdeploy_builder_page_redirects_to_react_launcher(osdeploy_client, pg_conn):
     artifact = _create_osdeploy_artifact(pg_conn)
 
     response = osdeploy_client.get("/osdeploy/builder", follow_redirects=False)
@@ -387,6 +392,7 @@ def test_osdeploy_builder_page_renders_operational_launcher(osdeploy_client, pg_
     response = osdeploy_client.get("/api/osdeploy/page?view=builder")
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["view"] == "builder"
     assert body["osdeploy_view"] == "builder"
     assert any(row["id"] == artifact["id"] for row in body["artifacts"])
     assert body["proxmox_options"]["nodes"][0] == "pve"
@@ -2795,6 +2801,111 @@ def test_osdeploy_role_step_success_marks_role_ready(osdeploy_client, pg_conn):
     readiness = osdeploy_pg.get_readiness(pg_conn, run["run_id"])
     assert readiness["state"] == "complete"
     assert readiness["server_role_status"] == "file_server_ready"
+
+
+def test_osdeploy_isolated_dc_verify_updates_lab_readiness(
+    osdeploy_client,
+    pg_conn,
+):
+    from web import lab_bubbles_pg, osdeploy_pg, ts_engine_pg
+
+    lab_bubbles_pg.reset_for_tests(pg_conn)
+    lab_bubbles_pg.init(pg_conn)
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="LABZ1")
+    artifact = _create_osdeploy_artifact(pg_conn)
+    creds = _create_role_credentials(pg_conn)
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=_run_payload(
+            artifact["id"],
+            vm_name="LABZ1-DC01",
+            server_role="isolated_domain_controller",
+            role_options=_isolated_dc_options(
+                forest_fqdn="test.gell.one",
+                netbios_name="TEST",
+                forest_admin_credential_id=creds["forest_admin"],
+                dsrm_credential_id=creds["dsrm"],
+            ),
+            bubble_id=bubble["id"],
+            asset_role="domain_controller",
+        ),
+    )
+    assert created.status_code == 201, created.text
+    run = created.json()["run"]
+    osdeploy_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        agent_id="agent-labz1-dc01",
+        heartbeat={
+            "computer_name": "LABZ1-DC01",
+            "os_name": "Microsoft Windows Server 2022 Standard",
+            "qga_state": "running",
+            "current_phase": "full_os",
+        },
+    )
+    ts_engine_pg.mark_steps_done_by_kind(
+        pg_conn,
+        run_id=run["run_id"],
+        kinds=["configure_isolated_domain_controller_role"],
+        agent_id="agent-labz1-dc01",
+    )
+
+    registered = osdeploy_client.post(
+        "/osd/v2/agent/register",
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-labz1-dc01",
+            "phase": "full_os",
+            "capabilities": ["verify_isolated_domain_controller_role"],
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    bearer = registered.json()["bearer_token"]
+    next_step = osdeploy_client.post(
+        "/osd/v2/agent/next",
+        headers=_bearer(bearer),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-labz1-dc01",
+            "phase": "full_os",
+            "capabilities": ["verify_isolated_domain_controller_role"],
+        },
+    )
+    assert next_step.status_code == 200, next_step.text
+    action = next_step.json()["actions"][0]
+    assert action["kind"] == "verify_isolated_domain_controller_role"
+
+    result = osdeploy_client.post(
+        f"/osd/v2/agent/step/{action['step_id']}/result",
+        headers=_bearer(bearer),
+        json={
+            "run_id": run["run_id"],
+            "agent_id": "agent-labz1-dc01",
+            "phase": "full_os",
+            "status": "success",
+            "message": "Isolated domain controller verified",
+            "data": {
+                "dc_readiness": {
+                    "ad_ds_ready": True,
+                    "dns_ready": True,
+                    "dhcp_ready": True,
+                    "dhcp_scope": "192.168.16.0",
+                    "dhcp_pool_start": "192.168.16.100",
+                    "dhcp_pool_end": "192.168.16.199",
+                    "dhcp_authorized": True,
+                }
+            },
+        },
+    )
+    assert result.status_code == 200, result.text
+    refreshed = lab_bubbles_pg.get_bubble(pg_conn, bubble["id"])
+    assert refreshed["dc_ready"] is True
+    assert refreshed["dns_ready"] is True
+    assert refreshed["dhcp_ready"] is True
+    assert refreshed["workload_ready"] is True
+    assert refreshed["dhcp_scope"] == "192.168.16.0"
+    assert refreshed["dhcp_pool_start"] == "192.168.16.100"
+    assert refreshed["dhcp_pool_end"] == "192.168.16.199"
 
 
 def test_osdeploy_full_os_client_does_not_claim_role_steps(osdeploy_client, pg_conn):

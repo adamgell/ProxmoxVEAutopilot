@@ -431,6 +431,21 @@ def list_assets(conn: Connection, bubble_id: str | None = None) -> list[dict]:
     return [_asset_row(row) for row in rows]
 
 
+def asset_for_run(conn: Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM lab_bubble_assets
+        WHERE run_id = %s
+          AND membership_state IN ('active', 'provisioning')
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    return _asset_row(row)
+
+
 def _require_asset_in_bubble(
     conn: Connection,
     *,

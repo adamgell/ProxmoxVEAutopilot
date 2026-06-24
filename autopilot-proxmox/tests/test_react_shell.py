@@ -64,6 +64,26 @@ def test_react_shell_auth_boundary_is_narrow():
     assert not auth.is_exempt_path("/openapi.json")
 
 
+def test_react_styles_include_outcome_shell_chrome_contract():
+    css_path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "styles.css"
+    css = css_path.read_text(encoding="utf-8")
+
+    for selector in [
+        ".workspace--outcome",
+        ".outcome-topbar",
+        ".outcome-command",
+        ".outcome-rail",
+        ".workspace--outcome .workspace__content",
+        ".outcome-system-tray",
+        ".control-room-hero",
+        ".outcome-card-grid",
+        ".operator-route-map",
+        ".deploy-journey-shell",
+        ".deploy-checkpoint",
+    ]:
+        assert selector in css
+
+
 @pytest.mark.parametrize("path", [
     "/react-shell",
     "/react/dashboard",
@@ -131,6 +151,21 @@ def test_public_react_shell_routes_render_public_bootstrap(web_client, path):
     assert 'id="react-root"' in response.text
     assert 'data-react-shell="public"' in response.text
     assert "Proxmox VE Autopilot" in response.text
+
+
+def test_react_shell_user_label_prefers_signed_in_upn_over_display_name():
+    from web import app as web_app
+
+    labels = web_app._react_shell_user_labels({
+        "name": "Adam Gell (M365DS329288)",
+        "email": "adamgell@ivy24.gell.one",
+        "upn": "adamgell@ivy24.gell.one",
+    })
+
+    assert labels == {
+        "user_name": "adamgell@ivy24.gell.one",
+        "user_email": "adamgell@ivy24.gell.one",
+    }
 
 
 @pytest.mark.parametrize(
@@ -481,6 +516,63 @@ def test_react_vms_fleet_purges_agents_without_current_vm(web_client, monkeypatc
         "buildhost-100",
     ]
     assert deleted == ["agent-no-vm", "agent-deleted-vm"]
+
+
+def test_react_vms_fleet_purges_duplicate_agents_for_current_vm(web_client, monkeypatch, tmp_path):
+    from web import app as web_app
+
+    deleted: list[str] = []
+    setup_state_path = tmp_path / "foundation_state.json"
+    setup_state_path.write_text("{}", encoding="utf-8")
+
+    async def fake_vms_payload():
+        return ({
+            "data": [{
+                "vmid": 111,
+                "name": "LABZ1-DC01",
+                "hostname": "LABZ1-DC01",
+                "serial": "LABZ1-DC01",
+                "status": "running",
+                "ip_address": "192.168.16.10",
+            }],
+            "devices": ([], ""),
+            "hash_serials": set(),
+            "fetched_at": 1.0,
+            "refreshing": False,
+        }, 0.0)
+
+    monkeypatch.setattr(web_app, "SETUP_STATE_PATH", setup_state_path)
+    monkeypatch.setattr(web_app, "_get_vms_payload", fake_vms_payload)
+    monkeypatch.setattr(web_app, "_proxmox_cluster_vm_rows", lambda: [])
+    monkeypatch.setattr(web_app, "_latest_monitor_sweep_status", lambda: {"running": False, "vm_count": 1})
+    monkeypatch.setattr(web_app, "_hard_delete_agent_by_id", lambda agent_id: deleted.append(agent_id) or True)
+    monkeypatch.setattr(web_app.machine_lifecycle_pg, "current_by_vmids", lambda _vmids: {})
+    monkeypatch.setattr(web_app.sequences_db, "get_vm_provisioning", lambda _path, vmid: None)
+    monkeypatch.setattr(web_app, "_agent_inventory_rows", lambda: [
+        {
+            "agent_id": "osd-fullos-0538b6b9",
+            "approval_status": "active",
+            "vmid": 111,
+            "computer_name": "LABZ1-DC01",
+            "last_heartbeat_at": "2026-06-23T17:52:49+00:00",
+            "last_seen_at": "2026-06-23T17:52:49+00:00",
+        },
+        {
+            "agent_id": "agent-labz1-dc01",
+            "approval_status": "active",
+            "vmid": 111,
+            "computer_name": "LABZ1-DC01",
+            "last_heartbeat_at": "2026-06-23T18:04:14+00:00",
+            "last_seen_at": "2026-06-23T18:04:14+00:00",
+        },
+    ])
+
+    response = web_client.get("/api/vms/fleet")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [agent["agent_id"] for agent in body["agents"]] == ["agent-labz1-dc01"]
+    assert deleted == ["osd-fullos-0538b6b9"]
 
 
 def test_react_vms_fleet_keeps_pending_approval_without_current_vm(web_client, monkeypatch, tmp_path):

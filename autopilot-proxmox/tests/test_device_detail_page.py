@@ -187,6 +187,47 @@ def test_vm_detail_api_returns_masked_evidence_and_latest_screenshot(client, mon
     assert body["identity_sync"]["source"] == "monitoring_sweep"
 
 
+def test_vm_credentials_reveal_api_returns_vm_bound_passwords(client, monkeypatch):
+    from web import app as app_module
+
+    c, db = client
+    _seed_healthy_vm(db, vmid=105)
+    monkeypatch.setattr(
+        app_module,
+        "_known_credentials_for_vmid",
+        lambda vmid: [{
+            "source": "CloudOSD",
+            "label": "Local admin",
+            "username": "localadmin",
+            "password": "Mep7!Qav2",
+            "vm_name": "WrkGrp-8F47E090",
+            "run_id": "run-1",
+            "run_url": "/cloudosd/runs/run-1",
+            "updated_at": "2026-05-18T17:10:00+00:00",
+            "note": "Visible workgroup credential from the deployment run.",
+        }] if vmid == 105 else [],
+    )
+
+    detail = c.get("/api/vms/105/detail")
+    assert detail.status_code == 200
+    assert "password" not in detail.json()["known_credentials"][0]
+
+    revealed = c.post("/api/vms/105/credentials/reveal")
+
+    assert revealed.status_code == 200
+    assert revealed.json()["credentials"] == [{
+        "source": "CloudOSD",
+        "label": "Local admin",
+        "username": "localadmin",
+        "password": "Mep7!Qav2",
+        "vm_name": "WrkGrp-8F47E090",
+        "run_id": "run-1",
+        "run_url": "/cloudosd/runs/run-1",
+        "updated_at": "2026-05-18T17:10:00+00:00",
+        "note": "Visible workgroup credential from the deployment run.",
+    }]
+
+
 def test_vm_latest_screenshot_api_serves_shared_store(client, monkeypatch, tmp_path):
     from web import app as app_module
 

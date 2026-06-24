@@ -292,6 +292,148 @@ Describe 'OsdClient content materialization' {
         Should -Invoke Invoke-InstallAutopilotAgentForOsdeploy -Times 1 -Exactly
     }
 
+    It 'enables Remote Desktop and commits DHCP post-install config to AD while verifying an isolated domain controller role' {
+        $script:DhcpAuthorized = $false
+        $script:DhcpSecurityGroupsCommitted = $false
+        $script:DhcpRestarted = $false
+        $script:RdpRegistryValue = $null
+        $script:RdpFirewallGroup = ''
+        $script:RdpTermServiceStartup = ''
+        $script:RdpTermServiceStarted = $false
+
+        function Get-CimInstance {
+            param([string] $ClassName)
+            if ($ClassName -eq 'Win32_ComputerSystem') {
+                return [pscustomobject]@{
+                    Name = 'LABZ1-DC01'
+                    Domain = 'test.gell.one'
+                    PartOfDomain = $true
+                    DomainRole = 5
+                }
+            }
+            if ($ClassName -eq 'Win32_OperatingSystem') {
+                return [pscustomobject]@{ Caption = 'Microsoft Windows Server 2022 Standard' }
+            }
+            return $null
+        }
+        function Get-Service {
+            param([string] $Name)
+            if ($Name -eq 'TermService') {
+                return [pscustomobject]@{ Name = $Name; Status = 'Stopped' }
+            }
+            return [pscustomobject]@{ Name = $Name; Status = 'Running' }
+        }
+        function Set-ItemProperty {
+            param([string] $Path, [string] $Name, [object] $Value)
+            $Path | Should -Be 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+            $Name | Should -Be 'fDenyTSConnections'
+            $script:RdpRegistryValue = $Value
+        }
+        function Enable-NetFirewallRule {
+            param([string] $DisplayGroup)
+            $script:RdpFirewallGroup = $DisplayGroup
+        }
+        function Set-Service {
+            param([string] $Name, [string] $StartupType)
+            if ($Name -eq 'TermService') {
+                $script:RdpTermServiceStartup = $StartupType
+            }
+        }
+        function Start-Service {
+            param([string] $Name)
+            if ($Name -eq 'TermService') {
+                $script:RdpTermServiceStarted = $true
+            }
+        }
+        function Get-NetIPAddress {
+            return [pscustomobject]@{ IPAddress = '192.168.16.10'; PrefixOrigin = 'Manual' }
+        }
+        function Get-ADDomain {
+            return [pscustomobject]@{
+                DNSRoot = 'test.gell.one'
+                NetBIOSName = 'TEST'
+                PDCEmulator = 'LABZ1-DC01.test.gell.one'
+            }
+        }
+        function Get-ADForest {
+            return [pscustomobject]@{
+                Name = 'test.gell.one'
+                RootDomain = 'test.gell.one'
+                GlobalCatalogs = @('LABZ1-DC01.test.gell.one')
+            }
+        }
+        function Get-DhcpServerInDC {
+            if ($script:DhcpAuthorized) {
+                return [pscustomobject]@{ DnsName = 'labz1-dc01.test.gell.one'; IPAddress = '192.168.16.10' }
+            }
+            return @()
+        }
+        function Get-ADGroup {
+            param([string] $Identity)
+            if ($script:DhcpSecurityGroupsCommitted -and $Identity -in @('DHCP Administrators', 'DHCP Users')) {
+                return [pscustomobject]@{ Name = $Identity }
+            }
+            return $null
+        }
+        function Add-DhcpServerSecurityGroup {
+            param([string] $ComputerName)
+            $ComputerName | Should -Be 'LABZ1-DC01.test.gell.one'
+            $script:DhcpSecurityGroupsCommitted = $true
+        }
+        function Add-DhcpServerInDC {
+            param([string] $DnsName, [string] $IPAddress)
+            $DnsName | Should -Be 'LABZ1-DC01.test.gell.one'
+            $IPAddress | Should -Be '192.168.16.10'
+            $script:DhcpAuthorized = $true
+        }
+        function Restart-Service {
+            param([string] $Name)
+            if ($Name -eq 'DHCPServer') { $script:DhcpRestarted = $true }
+        }
+        function Get-DhcpServerv4Scope {
+            return [pscustomobject]@{
+                ScopeId = [ipaddress] '192.168.16.0'
+                Name = 'LABZ1 Clients'
+                State = 'Active'
+                StartRange = [ipaddress] '192.168.16.100'
+                EndRange = [ipaddress] '192.168.16.199'
+                SubnetMask = [ipaddress] '255.255.255.0'
+            }
+        }
+        function Get-DnsServerZone {
+            return @(
+                [pscustomobject]@{ ZoneName = 'test.gell.one'; IsDsIntegrated = $true },
+                [pscustomobject]@{ ZoneName = '_msdcs.test.gell.one'; IsDsIntegrated = $true }
+            )
+        }
+
+        $action = [pscustomobject]@{
+            kind = 'verify_isolated_domain_controller_role'
+            params = [pscustomobject]@{
+                forest_fqdn = 'test.gell.one'
+                dhcp_scope = '192.168.16.0'
+            }
+        }
+
+        $result = Invoke-OsdAction -Action $action -Config ([pscustomobject]@{}) -BearerToken 'token-1'
+
+        $script:DhcpSecurityGroupsCommitted | Should -BeTrue
+        $script:DhcpAuthorized | Should -BeTrue
+        $script:DhcpRestarted | Should -BeTrue
+        $script:RdpRegistryValue | Should -Be 0
+        $script:RdpFirewallGroup | Should -Be 'Remote Desktop'
+        $script:RdpTermServiceStartup | Should -Be 'Automatic'
+        $script:RdpTermServiceStarted | Should -BeTrue
+        $result.dc_readiness.ad_ds_ready | Should -BeTrue
+        $result.dc_readiness.dns_ready | Should -BeTrue
+        $result.dc_readiness.dhcp_ready | Should -BeTrue
+        $result.dc_readiness.dhcp_security_groups_ready | Should -BeTrue
+        $result.dc_readiness.dhcp_security_group_action | Should -Be 'created'
+        $result.dc_readiness.dhcp_scope | Should -Be '192.168.16.0'
+        $result.dc_readiness.dhcp_pool_start | Should -Be '192.168.16.100'
+        $result.dc_readiness.dhcp_pool_end | Should -Be '192.168.16.199'
+    }
+
     It 'installs the QGA watchdog script and scheduled task' {
         Mock Invoke-VerifyQga {}
         Mock Set-QgaServiceRecovery {}

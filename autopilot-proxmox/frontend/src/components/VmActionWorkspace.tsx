@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Clipboard, Eye, EyeOff, Keyboard, KeyRound, Send, User } from "lucide-react";
 
-import { fetchJson } from "../apiClient";
-import type { VmFleetRow } from "../contracts";
+import { fetchJson, postJson } from "../apiClient";
+import type { VmCredentialsRevealResponse, VmDetailEvidenceResponse, VmFleetRow, VmKnownCredential, VmRevealedCredential } from "../contracts";
 import { fallbackText, statusClass, statusLabel, vmDisplayName } from "../viewModels";
 
 export type VmActionMode = "console" | "screenshot";
@@ -44,8 +45,34 @@ type ConsoleState =
   | { readonly status: "open"; readonly message: string }
   | { readonly status: "failed"; readonly message: string };
 
+type ConsoleControlState =
+  | { readonly status: "idle"; readonly message: string }
+  | { readonly status: "working"; readonly message: string }
+  | { readonly status: "ready"; readonly message: string }
+  | { readonly status: "failed"; readonly message: string };
+
+interface VmTypeResponse {
+  readonly ok?: boolean;
+  readonly sent?: number;
+  readonly skipped?: readonly string[];
+  readonly error?: string;
+}
+
+interface VmKeyResponse {
+  readonly ok?: boolean;
+  readonly key?: string;
+  readonly error?: string;
+}
+
+interface VmPowerResponse {
+  readonly ok?: boolean;
+  readonly action?: string;
+  readonly error?: string;
+}
+
 export function VmActionWorkspace({
   selection,
+  evidence,
   screenshot,
   socketState,
   onModeChange,
@@ -53,6 +80,7 @@ export function VmActionWorkspace({
   onClose
 }: {
   readonly selection: VmActionSelection | null;
+  readonly evidence?: VmDetailEvidenceResponse | null;
   readonly screenshot: ScreenshotWorkspaceState;
   readonly socketState: string;
   readonly onModeChange: (mode: VmActionMode) => void;
@@ -137,7 +165,7 @@ export function VmActionWorkspace({
             </button>
           </div>
 
-          {mode === "console" ? <VmConsolePanel vm={vm} /> : null}
+          {mode === "console" ? <VmConsolePanel vm={vm} evidence={evidence ?? null} /> : null}
           {mode === "screenshot" ? (
             <VmScreenshotPanel
               vm={vm}
@@ -157,14 +185,23 @@ export function VmActionWorkspace({
   );
 }
 
-function VmConsolePanel({ vm }: { readonly vm: VmFleetRow }) {
+function VmConsolePanel({ vm, evidence }: { readonly vm: VmFleetRow; readonly evidence: VmDetailEvidenceResponse | null }) {
   const screenRef = useRef<HTMLDivElement | null>(null);
   const rfbRef = useRef<import("@novnc/novnc").default | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [textToType, setTextToType] = useState("");
+  const [pressEnter, setPressEnter] = useState(false);
+  const [revealedPasswords, setRevealedPasswords] = useState<Readonly<Record<string, string>>>({});
+  const [revealingKey, setRevealingKey] = useState("");
   const [consoleState, setConsoleState] = useState<ConsoleState>({
     status: "idle",
     message: "Console idle"
   });
+  const [controlState, setControlState] = useState<ConsoleControlState>({
+    status: "idle",
+    message: "Console controls ready"
+  });
+  const knownCredentials = evidence?.known_credentials ?? [];
 
   useEffect(() => {
     const target = screenRef.current;
@@ -232,6 +269,142 @@ function VmConsolePanel({ vm }: { readonly vm: VmFleetRow }) {
     setAttempt((current) => current + 1);
   }, []);
 
+  const typeIntoVm = useCallback(async (text: string, includeEnter: boolean, label: string) => {
+    if (!text) {
+      setControlState({ status: "failed", message: "Nothing to type" });
+      return;
+    }
+    setControlState({ status: "working", message: `${label}...` });
+    try {
+      const body: Record<string, unknown> = { text };
+      if (includeEnter) {
+        body.press_enter = "1";
+      }
+      const response = await postJson<VmTypeResponse>(`/api/vms/${String(vm.vmid)}/type`, body);
+      if (response.error || response.ok === false) {
+        throw new Error(response.error || "Type request failed");
+      }
+      const skipped = response.skipped?.length ? `, skipped ${response.skipped.join("")}` : "";
+      setControlState({ status: "ready", message: `${label} sent ${String(response.sent ?? text.length)} key(s)${skipped}` });
+      rfbRef.current?.focus();
+    } catch (error) {
+      setControlState({ status: "failed", message: error instanceof Error ? error.message : `${label} failed` });
+    }
+  }, [vm.vmid]);
+
+  const sendVmKey = useCallback(async (key: string, label: string) => {
+    setControlState({ status: "working", message: `Sending ${label}...` });
+    try {
+      const response = await postJson<VmKeyResponse>(`/api/vms/${String(vm.vmid)}/key`, { key });
+      if (response.error || response.ok === false) {
+        throw new Error(response.error || `Send ${label} failed`);
+      }
+      setControlState({ status: "ready", message: `${label} sent` });
+      rfbRef.current?.focus();
+    } catch (error) {
+      setControlState({ status: "failed", message: error instanceof Error ? error.message : `Send ${label} failed` });
+    }
+  }, [vm.vmid]);
+
+  const sendPowerAction = useCallback(async (action: string) => {
+    setControlState({ status: "working", message: `${action}...` });
+    try {
+      const response = await postJson<VmPowerResponse>(`/api/vms/${String(vm.vmid)}/action/${action}`);
+      if (response.error || response.ok === false) {
+        throw new Error(response.error || `${action} failed`);
+      }
+      setControlState({ status: "ready", message: `${action} sent` });
+    } catch (error) {
+      setControlState({ status: "failed", message: error instanceof Error ? error.message : `${action} failed` });
+    }
+  }, [vm.vmid]);
+
+  const pasteClipboardIntoVm = useCallback(async () => {
+    if (!navigator.clipboard?.readText) {
+      setControlState({ status: "failed", message: "Clipboard read is unavailable in this browser context" });
+      return;
+    }
+    setControlState({ status: "working", message: "Reading clipboard..." });
+    try {
+      const text = await navigator.clipboard.readText();
+      await typeIntoVm(text, false, "Clipboard text");
+    } catch (error) {
+      setControlState({ status: "failed", message: error instanceof Error ? error.message : "Clipboard paste failed" });
+    }
+  }, [typeIntoVm]);
+
+  const copyToClipboard = useCallback(async (value: string, label: string) => {
+    if (!navigator.clipboard?.writeText) {
+      setControlState({ status: "failed", message: "Clipboard write is unavailable in this browser context" });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setControlState({ status: "ready", message: `${label} copied` });
+    } catch (error) {
+      setControlState({ status: "failed", message: error instanceof Error ? error.message : `${label} copy failed` });
+    }
+  }, []);
+
+  const revealCredentialPassword = useCallback(async (credential: VmKnownCredential): Promise<string | null> => {
+    const key = credentialKey(credential);
+    const current = revealedPasswords[key];
+    if (current) {
+      return current;
+    }
+    setRevealingKey(key);
+    setControlState({ status: "working", message: `Revealing ${fallbackText(credential.label)}...` });
+    try {
+      const response = await postJson<VmCredentialsRevealResponse>(`/api/vms/${String(vm.vmid)}/credentials/reveal`);
+      const next: Record<string, string> = {};
+      for (const item of response.credentials) {
+        if (item.password) {
+          next[credentialKey(item)] = item.password;
+        }
+      }
+      setRevealedPasswords((currentPasswords) => ({ ...currentPasswords, ...next }));
+      const password = next[key];
+      if (!password) {
+        throw new Error("Credential password was not returned for this VM");
+      }
+      setControlState({ status: "ready", message: `${fallbackText(credential.label)} revealed` });
+      return password;
+    } catch (error) {
+      setControlState({ status: "failed", message: error instanceof Error ? error.message : "Credential reveal failed" });
+      return null;
+    } finally {
+      setRevealingKey("");
+    }
+  }, [revealedPasswords, vm.vmid]);
+
+  const toggleCredentialReveal = useCallback((credential: VmKnownCredential) => {
+    const key = credentialKey(credential);
+    if (revealedPasswords[key]) {
+      setRevealedPasswords((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setControlState({ status: "ready", message: `${fallbackText(credential.label)} hidden` });
+      return;
+    }
+    void revealCredentialPassword(credential);
+  }, [revealCredentialPassword, revealedPasswords]);
+
+  const typeCredentialPassword = useCallback(async (credential: VmKnownCredential) => {
+    const password = await revealCredentialPassword(credential);
+    if (password) {
+      await typeIntoVm(password, false, `${fallbackText(credential.label)} password`);
+    }
+  }, [revealCredentialPassword, typeIntoVm]);
+
+  const copyCredentialPassword = useCallback(async (credential: VmKnownCredential) => {
+    const password = await revealCredentialPassword(credential);
+    if (password) {
+      await copyToClipboard(password, `${fallbackText(credential.label)} password`);
+    }
+  }, [copyToClipboard, revealCredentialPassword]);
+
   return (
     <section className="vm-console-panel" aria-label={`VM ${String(vm.vmid)} console`}>
       <div className="vm-action-status">
@@ -246,8 +419,179 @@ function VmConsolePanel({ vm }: { readonly vm: VmFleetRow }) {
         <button type="button" className="fleet-action" onClick={reconnect}>Reconnect</button>
         <a className="action-link" href={`/vms/${String(vm.vmid)}/console`}>Open legacy console</a>
       </div>
+      <div className="vm-console-controls" aria-label={`VM ${String(vm.vmid)} console controls`}>
+        <div className="vm-action-status vm-action-status--control">
+          <span className={`status status--${controlState.status === "ready" ? "good" : controlState.status === "failed" ? "bad" : controlState.status === "working" ? "active" : "neutral"}`}>
+            {controlState.status}
+          </span>
+          <span>{controlState.message}</span>
+        </div>
+        <form
+          className="vm-console-type-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void typeIntoVm(textToType, pressEnter, "Text");
+          }}
+        >
+          <label>
+            <span>Type text</span>
+            <input
+              aria-label={`Text to type into VM ${String(vm.vmid)}`}
+              value={textToType}
+              onChange={(event) => { setTextToType(event.target.value); }}
+              placeholder="Text to type into VM"
+            />
+          </label>
+          <label className="vm-console-check">
+            <input
+              type="checkbox"
+              checked={pressEnter}
+              onChange={(event) => { setPressEnter(event.target.checked); }}
+            />
+            <span>Enter after</span>
+          </label>
+          <button type="submit" className="fleet-action" aria-label={`Send text to VM ${String(vm.vmid)}`}>
+            <Send aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            <span>Send</span>
+          </button>
+          <button type="button" className="fleet-action" aria-label={`Paste clipboard text into VM ${String(vm.vmid)}`} onClick={() => { void pasteClipboardIntoVm(); }}>
+            <Clipboard aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            <span>Paste clipboard</span>
+          </button>
+        </form>
+        <div className="vm-console-toolbar" aria-label={`VM ${String(vm.vmid)} send keys`}>
+          <button type="button" className="fleet-action" aria-label={`Send Tab to VM ${String(vm.vmid)}`} onClick={() => { void sendVmKey("tab", "Tab"); }}>
+            <Keyboard aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            <span>Tab</span>
+          </button>
+          <button type="button" className="fleet-action" aria-label={`Send Enter to VM ${String(vm.vmid)}`} onClick={() => { void sendVmKey("ret", "Enter"); }}>
+            <Keyboard aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            <span>Enter</span>
+          </button>
+          <button type="button" className="fleet-action" aria-label={`Send Escape to VM ${String(vm.vmid)}`} onClick={() => { void sendVmKey("esc", "Escape"); }}>
+            <Keyboard aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            <span>Esc</span>
+          </button>
+        </div>
+        <div className="vm-console-toolbar" aria-label={`VM ${String(vm.vmid)} power controls`}>
+          {["start", "shutdown", "reboot", "stop", "reset"].map((action) => (
+            <button
+              key={action}
+              type="button"
+              className={action === "stop" || action === "reset" ? "fleet-action fleet-action--danger" : "fleet-action"}
+              onClick={() => { void sendPowerAction(action); }}
+            >
+              {action}
+            </button>
+          ))}
+        </div>
+        <div className="vm-console-credentials" aria-label={`VM ${String(vm.vmid)} saved credentials`}>
+          <h3>Saved credentials</h3>
+          {knownCredentials.length ? (
+            <div className="vm-console-credential-list">
+              {knownCredentials.map((credential) => (
+                <ConsoleCredentialRow
+                  key={credentialKey(credential)}
+                  vmid={vm.vmid}
+                  credential={credential}
+                  password={revealedPasswords[credentialKey(credential)]}
+                  isRevealing={revealingKey === credentialKey(credential)}
+                  onToggleReveal={() => { toggleCredentialReveal(credential); }}
+                  onTypeUsername={() => { void typeIntoVm(credential.username, false, `${fallbackText(credential.label)} username`); }}
+                  onTypePassword={() => { void typeCredentialPassword(credential); }}
+                  onCopyUsername={() => { void copyToClipboard(credential.username, `${fallbackText(credential.label)} username`); }}
+                  onCopyPassword={() => { void copyCredentialPassword(credential); }}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="empty">No saved credentials for this VM.</p>
+          )}
+        </div>
+      </div>
       <div ref={screenRef} className="vm-console-screen" aria-label={`VM ${String(vm.vmid)} console screen`} />
     </section>
+  );
+}
+
+function ConsoleCredentialRow({
+  vmid,
+  credential,
+  password,
+  isRevealing,
+  onToggleReveal,
+  onTypeUsername,
+  onTypePassword,
+  onCopyUsername,
+  onCopyPassword
+}: {
+  readonly vmid: number;
+  readonly credential: VmKnownCredential;
+  readonly password: string | undefined;
+  readonly isRevealing: boolean;
+  readonly onToggleReveal: () => void;
+  readonly onTypeUsername: () => void;
+  readonly onTypePassword: () => void;
+  readonly onCopyUsername: () => void;
+  readonly onCopyPassword: () => void;
+}) {
+  const label = fallbackText(credential.label);
+  const username = fallbackText(credential.username);
+  const isRevealed = Boolean(password);
+  return (
+    <div className="vm-console-credential">
+      <div>
+        <strong>{label}</strong>
+        <span>{fallbackText(credential.source)} / {username}</span>
+      </div>
+      <code>{credential.password_available ? (password ?? credential.password_mask) : "-"}</code>
+      <div className="vm-console-credential__actions">
+        <button type="button" className="fleet-action" aria-label={`Type ${label} username for ${username} into VM ${String(vmid)}`} onClick={onTypeUsername}>
+          <User aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+          <span>Type user</span>
+        </button>
+        <button
+          type="button"
+          className="fleet-action"
+          aria-label={`Type ${label} password for ${username} into VM ${String(vmid)}`}
+          onClick={onTypePassword}
+          disabled={!credential.password_available || isRevealing}
+        >
+          <KeyRound aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+          <span>Type password</span>
+        </button>
+        <button type="button" className="fleet-action" aria-label={`Copy ${label} username for ${username}`} onClick={onCopyUsername}>
+          <Clipboard aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+          <span>Copy user</span>
+        </button>
+        <button
+          type="button"
+          className="fleet-action"
+          aria-label={`Copy ${label} password for ${username}`}
+          onClick={onCopyPassword}
+          disabled={!credential.password_available || isRevealing}
+        >
+          <Clipboard aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+          <span>Copy password</span>
+        </button>
+        {credential.password_available ? (
+          <button
+            type="button"
+            className="credential-reveal-button"
+            aria-label={`${isRevealed ? "Hide" : "Reveal"} ${label} password for ${username}`}
+            title={`${isRevealed ? "Hide" : "Reveal"} ${label} password for ${username}`}
+            onClick={onToggleReveal}
+            disabled={isRevealing}
+          >
+            {isRevealed ? (
+              <EyeOff aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            ) : (
+              <Eye aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
+            )}
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -314,6 +658,16 @@ function vncWebSocketUrl(vmid: number, ticket: VncTicket): string {
 function eventReason(event: Event): string {
   const detail = (event as CustomEvent<{ readonly reason?: unknown }>).detail;
   return typeof detail.reason === "string" && detail.reason.trim() ? detail.reason : "closed";
+}
+
+function credentialKey(credential: Pick<VmKnownCredential | VmRevealedCredential, "source" | "label" | "username" | "run_id" | "updated_at">): string {
+  return [
+    credential.source,
+    credential.label,
+    credential.username,
+    credential.run_id,
+    credential.updated_at ?? ""
+  ].join("\u001f");
 }
 
 function screenshotTone(status: ScreenshotWorkspaceState["status"]): "good" | "active" | "bad" | "neutral" {

@@ -1355,6 +1355,87 @@ describe("App", () => {
     expect(screen.getAllByText("Live WebSocket is not connected").length).toBeGreaterThan(0);
   });
 
+  test("restores React console typing, key, clipboard, and saved credential controls", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/vms/108/vnc-init": {
+        error: "test console offline"
+      },
+      "/api/vms/108/credentials/reveal": {
+        credentials: [
+          {
+            source: "CloudOSD",
+            label: "Local admin",
+            username: "localadmin",
+            password: "Mep7!Qav2",
+            vm_name: "WrkGrp-525570B6",
+            run_id: "run-1",
+            run_url: "/cloudosd/runs/run-1",
+            updated_at: "2026-05-18T17:10:00Z",
+            note: "Visible workgroup credential from the deployment run."
+          }
+        ]
+      },
+      "/api/vms/108/type": {
+        ok: true,
+        sent: 9,
+        skipped: []
+      },
+      "/api/vms/108/key": {
+        ok: true,
+        key: "tab"
+      }
+    });
+    const promptSpy = vi.spyOn(window, "prompt");
+
+    renderRoute("/react/vms/108");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Console VM 108" }));
+    const typeInput = await screen.findByRole("textbox", { name: "Text to type into VM 108" });
+    fireEvent.change(typeInput, { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send text to VM 108" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/vms/108/type",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const typedCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/vms/108/type"
+      && init && typeof init !== "function" && "body" in init
+      && typeof init.body === "string"
+      && init.body.includes("hello")
+    ));
+    expect(typedCall).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Tab to VM 108" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/vms/108/key",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    expect(screen.getByRole("button", { name: "Paste clipboard text into VM 108" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Type Local admin password for localadmin into VM 108" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/vms/108/credentials/reveal",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const passwordCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/vms/108/type"
+      && init && typeof init !== "function" && "body" in init
+      && typeof init.body === "string"
+      && init.body.includes("Mep7!Qav2")
+    ));
+    expect(passwordCall).toBeDefined();
+    expect(promptSpy).not.toHaveBeenCalled();
+  });
+
   test("queues log collection from the React VM detail action", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,
@@ -1394,7 +1475,24 @@ describe("App", () => {
   });
 
   test("renders VM evidence hub panels from detail API without revealing passwords", async () => {
-    mockFetch(dashboardResponses);
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/vms/108/credentials/reveal": {
+        credentials: [
+          {
+            source: "CloudOSD",
+            label: "Local admin",
+            username: "localadmin",
+            password: "Mep7!Qav2",
+            vm_name: "WrkGrp-525570B6",
+            run_id: "run-1",
+            run_url: "/cloudosd/runs/run-1",
+            updated_at: "2026-05-18T17:10:00Z",
+            note: "Visible workgroup credential from the deployment run."
+          }
+        ]
+      }
+    });
 
     renderRoute("/react/vms/108");
 
@@ -1404,7 +1502,12 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Known credentials" })).toBeInTheDocument();
     expect(screen.getByText("localadmin")).toBeInTheDocument();
     expect(screen.getByText("********")).toBeInTheDocument();
+    const revealButton = screen.getByRole("button", { name: "Reveal Local admin password for localadmin" });
+    expect(revealButton).toBeInTheDocument();
     expect(screen.queryByText("Mep7!Qav2")).not.toBeInTheDocument();
+    fireEvent.click(revealButton);
+    expect(await screen.findByText("Mep7!Qav2")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/vms/108/credentials/reveal", expect.objectContaining({ method: "POST" }));
     expect(screen.getByRole("heading", { name: "Latest screenshot" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Latest VM 108 screenshot" })).toHaveAttribute("src", "/api/vms/108/screenshots/latest-image");
     expect(screen.getByRole("link", { name: "Open screenshot" })).toHaveAttribute("href", "/api/vms/108/screenshots/latest-image");

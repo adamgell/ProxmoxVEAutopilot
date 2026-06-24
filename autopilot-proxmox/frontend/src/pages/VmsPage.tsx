@@ -2430,6 +2430,7 @@ function VmDetailWorkspace({
       <section className="vm-detail-action-zone">
         <VmActionWorkspace
           selection={activeAction}
+          evidence={evidence}
           screenshot={screenshot}
           socketState={socketState}
           onModeChange={onModeChange}

@@ -422,6 +422,12 @@ def _sync_osdeploy_after_step_result(
                 message=body.message,
                 data=body.data or {},
             )
+            _sync_lab_bubble_from_isolated_dc_result(
+                conn,
+                run_id=body.run_id,
+                step_kind=kind,
+                data=body.data or {},
+            )
         elif body.status == "failed" and updated.get("state") == "failed":
             osdeploy_pg.mark_role_step_result(
                 conn,
@@ -434,6 +440,32 @@ def _sync_osdeploy_after_step_result(
             )
     except Exception:
         conn.rollback()
+
+
+def _sync_lab_bubble_from_isolated_dc_result(
+    conn,
+    *,
+    run_id: str,
+    step_kind: str,
+    data: dict,
+) -> None:
+    if step_kind != "verify_isolated_domain_controller_role":
+        return
+    readiness = data.get("dc_readiness") if isinstance(data, dict) else None
+    if not isinstance(readiness, dict):
+        return
+    from web import lab_bubbles_pg
+
+    lab_bubbles_pg.init(conn)
+    asset = lab_bubbles_pg.asset_for_run(conn, run_id)
+    if not asset or asset.get("asset_role") != "domain_controller":
+        return
+    lab_bubbles_pg.update_readiness_from_dc_evidence(
+        conn,
+        asset["bubble_id"],
+        dc_asset_id=asset["id"],
+        evidence=readiness,
+    )
 
 
 def _ubuntu_readiness_from_steps(steps: list[dict], events: list[dict] | None = None) -> dict:
