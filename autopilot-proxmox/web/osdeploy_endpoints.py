@@ -1401,6 +1401,11 @@ def preflight_payload(body: RunCreateBody) -> dict:
         blocking.append(_blocking_check("memory_too_small", f"OSDeploy Server VMs need at least {osdeploy_pg.MIN_VM_MEMORY_MB} MB RAM."))
     if body.vm_disk_size_gb < osdeploy_pg.MIN_VM_DISK_SIZE_GB:
         blocking.append(_blocking_check("disk_too_small", f"OSDeploy Server VMs need at least {osdeploy_pg.MIN_VM_DISK_SIZE_GB} GB disk."))
+    if body.secure_boot:
+        blocking.append(_blocking_check(
+            "secure_boot_unsupported",
+            "OSDeploy Secure Boot is blocked until signed OSDeploy boot media is available.",
+        ))
     role_checks = osdeploy_roles.validate_role_options(
         body.server_role,
         body.role_options,
