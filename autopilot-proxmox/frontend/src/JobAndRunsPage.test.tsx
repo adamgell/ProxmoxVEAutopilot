@@ -97,7 +97,7 @@ describe("job and run React pages", () => {
     renderPath("/react/jobs/job-1");
 
     expect(await screen.findByRole("heading", { name: "Job job-1" })).toBeInTheDocument();
-    expect(await screen.findByText("provision.yml")).toBeInTheDocument();
+    expect(screen.getByText("provision.yml")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Provision VM" })).toBeInTheDocument();
     expect(screen.getByLabelText("Job output")).toHaveTextContent("started");
 

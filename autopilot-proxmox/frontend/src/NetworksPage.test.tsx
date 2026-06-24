@@ -3,14 +3,11 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { NetworksPage } from "./pages/NetworksPage";
 
-function jsonRequestBody(init: RequestInit | undefined): unknown {
-  if (typeof init?.body !== "string") {
-    throw new Error("Expected a JSON request body");
-  }
-  return JSON.parse(init.body) as unknown;
-}
-
 describe("NetworksPage", () => {
+  function requestBody(init: RequestInit | undefined): string {
+    return typeof init?.body === "string" ? init.body : "";
+  }
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -76,7 +73,7 @@ describe("NetworksPage", () => {
   test("creates an isolated lab with open outbound egress defaults", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       if (input === "/api/sdn/labs/preflight") {
-        expect(jsonRequestBody(init)).toMatchObject({
+        expect(JSON.parse(requestBody(init))).toMatchObject({
           name: "Lab 101",
           zone: "lab-simple",
           vnet: "lab101",
@@ -89,7 +86,7 @@ describe("NetworksPage", () => {
       }
       if (input === "/api/sdn/labs") {
         expect(init?.method).toBe("POST");
-        expect(jsonRequestBody(init)).toMatchObject({
+        expect(JSON.parse(requestBody(init))).toMatchObject({
           egress_policy: "open",
           snat_enabled: true,
           firewall_profile: "isolated_open_egress"
