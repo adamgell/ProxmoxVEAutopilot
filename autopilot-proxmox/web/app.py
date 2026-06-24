@@ -17,6 +17,7 @@ from uuid import uuid4
 import requests
 import psycopg
 import yaml
+from cryptography.fernet import InvalidToken
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -8780,7 +8781,14 @@ def _start_cloudosd_provision_batch(
             raise HTTPException(404, f"sequence {source_sequence_id} not found")
 
         def _resolve_cloudosd_credential(cid: int):
-            return sequences_db.get_credential(SEQUENCES_DB, _cipher(), cid)
+            try:
+                return sequences_db.get_credential(SEQUENCES_DB, _cipher(), cid)
+            except InvalidToken as exc:
+                raise cloudosd_sequence.CloudOSDSequenceError(
+                    "OSDCloud domain join credential could not be decrypted. "
+                    "Please re-save the credential in Settings -> Credentials, then "
+                    "try provisioning again."
+                ) from exc
 
         try:
             domain_join_intent = cloudosd_sequence.compile_cloudosd_sequence_intent(

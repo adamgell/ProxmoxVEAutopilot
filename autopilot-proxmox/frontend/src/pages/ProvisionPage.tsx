@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
 import { fetchJson } from "../apiClient";
@@ -352,6 +352,19 @@ function writeStorageJson(key: string, value: unknown): void {
   } catch {
     return;
   }
+}
+
+async function provisionResponseDetail(response: Response): Promise<string> {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const body = (await response.json().catch(() => null)) as { detail?: unknown; message?: unknown; error?: unknown } | null;
+    const detail = body?.detail ?? body?.message ?? body?.error;
+    if (typeof detail === "string" && detail.trim()) {
+      return detail;
+    }
+  }
+  const text = await response.text().catch(() => "");
+  return text.trim() || response.statusText || `HTTP ${String(response.status)}`;
 }
 
 function isBootMode(value: string): value is BootMode {
@@ -1334,6 +1347,8 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
   const [templateMessage, setTemplateMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [provisionSubmitting, setProvisionSubmitting] = useState(false);
   const formRef = useRef<HTMLFormElement | null>(null);
   const draftAppliedRef = useRef(false);
 
@@ -1485,6 +1500,33 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
     writeStorageJson(PROVISION_TEMPLATE_STORAGE_KEY, next);
   }, [selectedTemplate, templates]);
 
+  const submitProvision = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    persistDraft();
+    setSubmitError("");
+    setProvisionSubmitting(true);
+    try {
+      const response = await fetch("/api/jobs/provision", {
+        method: "POST",
+        body: new FormData(form),
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json, text/plain;q=0.9, */*;q=0.8"
+        }
+      });
+      if (!response.ok) {
+        setSubmitError(`Provision failed: ${await provisionResponseDetail(response)}`);
+        return;
+      }
+      window.location.assign(response.url || "/react/cloudosd");
+    } catch (err) {
+      setSubmitError(err instanceof Error ? `Provision failed: ${err.message}` : "Provision failed.");
+    } finally {
+      setProvisionSubmitting(false);
+    }
+  }, [persistDraft]);
+
   useEffect(() => {
     if (loading || draftAppliedRef.current || !formRef.current) {
       return;
@@ -1539,6 +1581,7 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
         </div>
       ) : null}
       {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
+      {submitError ? <p className="notice notice--bad" role="alert">{submitError}</p> : null}
 
       {!loading ? (
         <>
@@ -1585,7 +1628,7 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
             action="/api/jobs/provision"
             data-testid="provision-builder-form"
             onChange={persistDraft}
-            onSubmit={persistDraft}
+            onSubmit={(event) => { void submitProvision(event); }}
           >
             <div className="provision-launch-grid">
               <div className="provision-section-stack">
@@ -1645,7 +1688,9 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
                 <LegacyNotice mode={bootMode} winpeEnabled={Boolean(payload.winpe_enabled)} />
                 <LaunchReviewRail payload={payload} vmCount={vmCount} previewName={hostnamePreview.previewName} />
                 <div className="utility-form-actions provision-review-actions">
-                  <button className="utility-button" type="submit" disabled={!hostnamePreview.safe}>Provision VMs</button>
+                  <button className="utility-button" type="submit" disabled={!hostnamePreview.safe || provisionSubmitting}>
+                    {provisionSubmitting ? "Provisioning..." : "Provision VMs"}
+                  </button>
                   <a className="utility-button" href="/react/cloudosd">OSDCloud</a>
                   <a className="utility-button" href="/react/osdeploy">OSDeploy</a>
                 </div>
