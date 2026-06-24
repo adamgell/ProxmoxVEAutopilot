@@ -5,6 +5,10 @@ import { App } from "./App";
 
 const provisionPayload = {
   profiles: {
+    "dell-precision-3591": {
+      manufacturer: "Dell Inc.",
+      product: "Precision 3591"
+    },
     surface: {
       manufacturer: "Microsoft",
       product: "Surface Pro"
@@ -50,8 +54,8 @@ const provisionPayload = {
       { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
     ],
     storages: {
-      iso: ["local"],
-      disk: ["local-lvm"]
+      iso: ["local", "isos"],
+      disk: ["local-lvm", "ssdpool"]
     },
     defaults: {
       node: "pve2",
@@ -205,6 +209,7 @@ function namedControl(container: HTMLElement, name: string): HTMLElement {
 afterEach(() => {
   cleanup();
   window.localStorage.removeItem("pveautopilot.provision.templates.v1");
+  window.localStorage.removeItem("pveautopilot.provision.templates.seeded.v1");
   window.localStorage.removeItem("pveautopilot.provision.draft.v1");
   vi.unstubAllGlobals();
 });
@@ -373,6 +378,58 @@ describe("ProvisionPage", () => {
       expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
       expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
     });
+  });
+
+  test("seeds a few provision templates when none are saved yet", async () => {
+    mockFetch();
+    renderProvision();
+
+    const templateSelect = await screen.findByRole("combobox", { name: "Saved template" });
+    expect(screen.getByRole("option", { name: "Ring 0 Ivy24 Dell OSDCloud" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Single Desktop OSDCloud Test" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Server 2025 OSDeploy Base" })).toBeInTheDocument();
+
+    fireEvent.change(templateSelect, { target: { value: "Ring 0 Ivy24 Dell OSDCloud" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load template" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Run tag" })).toHaveValue("ring0ivy24");
+      expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
+      expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("ring0ivy24-{index}");
+      expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
+      expect(screen.getByRole("combobox", { name: "OEM profile" })).toHaveValue("dell-precision-3591");
+      expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
+      expect(screen.getByRole("combobox", { name: "Disk storage" })).toHaveValue("ssdpool");
+    });
+  });
+
+  test("adds seeded templates alongside existing saved templates", async () => {
+    const store = new Map<string, string>([[
+      "pveautopilot.provision.templates.v1",
+      JSON.stringify({
+        "Custom Lab": {
+          name: "Custom Lab",
+          savedAt: "2026-06-23T20:00:00.000Z",
+          fields: {
+            boot_mode: "cloudosd",
+            run_tag: "custom-lab",
+            group_tag: "custom-lab",
+            count: "2",
+            hostname_pattern: "clab-{index}"
+          }
+        }
+      })
+    ]]);
+    mockFetch();
+    renderProvision(store);
+
+    await screen.findByRole("combobox", { name: "Saved template" });
+    expect(screen.getByRole("option", { name: "Custom Lab" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ring 0 Ivy24 Dell OSDCloud" })).toBeInTheDocument();
+
+    const savedTemplates = JSON.parse(store.get("pveautopilot.provision.templates.v1") ?? "{}") as Record<string, unknown>;
+    expect(savedTemplates["Custom Lab"]).toBeDefined();
+    expect(savedTemplates["Ring 0 Ivy24 Dell OSDCloud"]).toBeDefined();
   });
 
   test("restores the last draft after the provision page remounts", async () => {

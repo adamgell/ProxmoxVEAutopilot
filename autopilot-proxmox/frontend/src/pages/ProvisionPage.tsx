@@ -190,7 +190,91 @@ const EMPTY_PAYLOAD: ProvisionPagePayload = {
 };
 
 const PROVISION_TEMPLATE_STORAGE_KEY = "pveautopilot.provision.templates.v1";
+const PROVISION_TEMPLATE_SEED_STORAGE_KEY = "pveautopilot.provision.templates.seeded.v1";
 const PROVISION_DRAFT_STORAGE_KEY = "pveautopilot.provision.draft.v1";
+const BUILT_IN_TEMPLATE_SAVED_AT = "built-in";
+const DEFAULT_PROVISION_TEMPLATES: ProvisionTemplateMap = {
+  "Ring 0 Ivy24 Dell OSDCloud": {
+    name: "Ring 0 Ivy24 Dell OSDCloud",
+    savedAt: BUILT_IN_TEMPLATE_SAVED_AT,
+    fields: {
+      boot_mode: "cloudosd",
+      run_tag: "ring0ivy24",
+      group_tag: "ring0ivy24",
+      profile: "dell-precision-3591",
+      chassis_type_override: "0",
+      count: "4",
+      hostname_pattern: "ring0ivy24-{index}",
+      cores: "4",
+      memory_mb: "8192",
+      disk_size_gb: "256",
+      serial_prefix: "ring0",
+      node: "pve2",
+      network_bridge: "vmbr0",
+      os_version: "Windows 11 25H2",
+      os_edition: "Enterprise",
+      os_activation: "Volume",
+      os_language: "en-us",
+      iso_storage: "isos",
+      storage: "ssdpool",
+      driver_pack_policy: "None",
+      outbound_policy_mode: "blocked",
+      tpm_enabled: "on",
+      secure_boot: "on"
+    }
+  },
+  "Single Desktop OSDCloud Test": {
+    name: "Single Desktop OSDCloud Test",
+    savedAt: BUILT_IN_TEMPLATE_SAVED_AT,
+    fields: {
+      boot_mode: "cloudosd",
+      run_tag: "desktop-test",
+      group_tag: "desktop-test",
+      count: "1",
+      hostname_pattern: "dt-{index}",
+      cores: "4",
+      memory_mb: "8192",
+      disk_size_gb: "128",
+      serial_prefix: "test",
+      node: "pve2",
+      network_bridge: "vmbr0",
+      os_version: "Windows 11 25H2",
+      os_edition: "Enterprise",
+      os_activation: "Volume",
+      os_language: "en-us",
+      iso_storage: "isos",
+      storage: "ssdpool",
+      driver_pack_policy: "None",
+      outbound_policy_mode: "blocked",
+      tpm_enabled: "on",
+      secure_boot: "on"
+    }
+  },
+  "Server 2025 OSDeploy Base": {
+    name: "Server 2025 OSDeploy Base",
+    savedAt: BUILT_IN_TEMPLATE_SAVED_AT,
+    fields: {
+      boot_mode: "osdeploy",
+      run_tag: "server2025",
+      group_tag: "server2025",
+      count: "1",
+      hostname_pattern: "srv25-{index}",
+      cores: "4",
+      memory_mb: "8192",
+      disk_size_gb: "160",
+      serial_prefix: "srv",
+      osdeploy_server_role: "base",
+      osdeploy_node: "pve2",
+      osdeploy_iso_storage: "isos",
+      osdeploy_storage: "ssdpool",
+      osdeploy_network_bridge: "vmbr0",
+      osdeploy_os_version: "Windows Server 2025",
+      osdeploy_os_edition: "Datacenter",
+      osdeploy_os_language: "en-us",
+      outbound_policy_mode: "blocked"
+    }
+  }
+};
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
@@ -210,6 +294,22 @@ function readStorageJson<T>(key: string, fallback: T): T {
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
+  }
+}
+
+function readProvisionTemplates(): ProvisionTemplateMap {
+  try {
+    const raw = window.localStorage.getItem(PROVISION_TEMPLATE_STORAGE_KEY);
+    const savedTemplates = raw ? JSON.parse(raw) as ProvisionTemplateMap : {};
+    if (window.localStorage.getItem(PROVISION_TEMPLATE_SEED_STORAGE_KEY) === "1") {
+      return savedTemplates;
+    }
+    const seededTemplates = { ...DEFAULT_PROVISION_TEMPLATES, ...savedTemplates };
+    writeStorageJson(PROVISION_TEMPLATE_STORAGE_KEY, seededTemplates);
+    window.localStorage.setItem(PROVISION_TEMPLATE_SEED_STORAGE_KEY, "1");
+    return seededTemplates;
+  } catch {
+    return DEFAULT_PROVISION_TEMPLATES;
   }
 }
 
@@ -1040,7 +1140,7 @@ export function ProvisionPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
   const [hostnameIsManual, setHostnameIsManual] = useState(false);
   const [vmCount, setVmCount] = useState(1);
   const [defaultsApplied, setDefaultsApplied] = useState(false);
-  const [templates, setTemplates] = useState<ProvisionTemplateMap>(() => readStorageJson<ProvisionTemplateMap>(PROVISION_TEMPLATE_STORAGE_KEY, {}));
+  const [templates, setTemplates] = useState<ProvisionTemplateMap>(readProvisionTemplates);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [templateName, setTemplateName] = useState("");
   const [templateMessage, setTemplateMessage] = useState("");
