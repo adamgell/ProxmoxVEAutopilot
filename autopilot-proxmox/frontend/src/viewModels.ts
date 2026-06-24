@@ -399,18 +399,62 @@ function normalizedIdentity(value: unknown): string {
   return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "";
 }
 
+function parsedDate(value: unknown): number {
+  if (typeof value !== "string" || !value.trim()) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function agentEvidenceScore(agent: AgentFleetRow): readonly [number, number, string] {
+  let score = 0;
+  if (agent.last_heartbeat_at) {
+    score += 8;
+  }
+  if (agent.pairing_status === "paired" || agent.needs_pairing === false) {
+    score += 4;
+  }
+  if (agent.approval_status === "active") {
+    score += 2;
+  }
+  if (agent.qga_state) {
+    score += 1;
+  }
+  return [
+    score,
+    Math.max(parsedDate(agent.last_heartbeat_at), parsedDate(agent.last_seen_at)),
+    agent.agent_id
+  ];
+}
+
+function preferredAgent(current: AgentFleetRow | undefined, candidate: AgentFleetRow): AgentFleetRow {
+  if (!current) {
+    return candidate;
+  }
+  const left = agentEvidenceScore(current);
+  const right = agentEvidenceScore(candidate);
+  if (right[0] !== left[0]) {
+    return right[0] > left[0] ? candidate : current;
+  }
+  if (right[1] !== left[1]) {
+    return right[1] > left[1] ? candidate : current;
+  }
+  return right[2].localeCompare(left[2]) > 0 ? candidate : current;
+}
+
 function addAgentIndexes(
   agent: AgentFleetRow,
   byVmid: Map<number, AgentFleetRow>,
   byIdentity: Map<string, AgentFleetRow>
 ): void {
   if (typeof agent.vmid === "number") {
-    byVmid.set(agent.vmid, agent);
+    byVmid.set(agent.vmid, preferredAgent(byVmid.get(agent.vmid), agent));
   }
   for (const value of [agent.serial_number, agent.computer_name, agent.primary_ipv4]) {
     const key = normalizedIdentity(value);
-    if (key && !byIdentity.has(key)) {
-      byIdentity.set(key, agent);
+    if (key) {
+      byIdentity.set(key, preferredAgent(byIdentity.get(key), agent));
     }
   }
 }
@@ -488,6 +532,53 @@ function machineLabels(
   return uniqueLabels(labels);
 }
 
+function vmIdentityValues(vm: VmFleetRow | undefined): readonly unknown[] {
+  if (!vm) {
+    return [];
+  }
+  return [vm.serial, vm.hostname, vm.name, vm.ip_address];
+}
+
+function agentIdentityValues(agent: AgentFleetRow): readonly unknown[] {
+  return [agent.serial_number, agent.computer_name, agent.primary_ipv4];
+}
+
+function addRepresentedRow(
+  row: FleetMachineRow,
+  representedVmids: Set<number>,
+  representedIdentities: Set<string>
+): void {
+  if (row.vmid !== undefined) {
+    representedVmids.add(row.vmid);
+  }
+  for (const value of [
+    row.name,
+    row.serial,
+    row.ipAddress,
+    ...vmIdentityValues(row.vm),
+    ...(row.agent ? agentIdentityValues(row.agent) : [])
+  ]) {
+    const key = normalizedIdentity(value);
+    if (key) {
+      representedIdentities.add(key);
+    }
+  }
+}
+
+function agentMatchesRepresentedMachine(
+  agent: AgentFleetRow,
+  representedVmids: ReadonlySet<number>,
+  representedIdentities: ReadonlySet<string>
+): boolean {
+  if (typeof agent.vmid === "number" && representedVmids.has(agent.vmid)) {
+    return true;
+  }
+  return agentIdentityValues(agent).some((value) => {
+    const key = normalizedIdentity(value);
+    return Boolean(key && representedIdentities.has(key));
+  });
+}
+
 export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMachineRow[] {
   const agentsByVmid = new Map<number, AgentFleetRow>();
   const agentsByIdentity = new Map<string, AgentFleetRow>();
@@ -541,9 +632,18 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     };
   });
 
+  const representedVmids = new Set<number>();
+  const representedIdentities = new Set<string>();
+  for (const row of rows) {
+    addRepresentedRow(row, representedVmids, representedIdentities);
+  }
+
   const matchedAgentIds = new Set(rows.map((row) => row.agent?.agent_id).filter(Boolean));
   for (const agent of fleet.agents) {
     if (matchedAgentIds.has(agent.agent_id)) {
+      continue;
+    }
+    if (agentMatchesRepresentedMachine(agent, representedVmids, representedIdentities)) {
       continue;
     }
     // If the agent has a VMID and that VMID exists somewhere in the cluster
@@ -556,7 +656,7 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
       devicesByIdentity
     );
     const rowId = proxmoxVm ? `vm-${String(proxmoxVm.vmid)}` : `agent-${agent.agent_id}`;
-    rows.push({
+    const row: FleetMachineRow = {
       id: rowId,
       name: proxmoxVm ? vmDisplayName(proxmoxVm) : fallbackText(agent.computer_name || agent.agent_id),
       ...(proxmoxVm ? { vmid: proxmoxVm.vmid, vm: proxmoxVm } : {}),
@@ -575,7 +675,9 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
       mdmEnrollment: device?.enrollment_state ?? (proxmoxVm?.in_intune ? "Intune" : "-"),
       lifecycleLabels: machineLabels(proxmoxVm, agent, device),
       stale: agentIsStale(agent)
-    });
+    };
+    rows.push(row);
+    addRepresentedRow(row, representedVmids, representedIdentities);
   }
 
   return rows.toSorted((left, right) => {

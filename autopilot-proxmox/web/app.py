@@ -5024,6 +5024,7 @@ class VmsFleetResponse(BaseModel):
     proxmox_vms: list[VmFleetRowResponse] = Field(default_factory=list)
     missing_vms: list[VmFleetRowResponse] = Field(default_factory=list)
     agents: list[AgentFleetRowResponse] = Field(default_factory=list)
+    agent_identity_warnings: list[str] = Field(default_factory=list)
     autopilot_devices: list[AutopilotDeviceFleetRowResponse] = Field(default_factory=list)
     bubble_topology: dict[str, Any] = Field(default_factory=dict)
     ap_error: str = ""
@@ -6961,6 +6962,60 @@ def _agent_row_vmid(agent: dict) -> int | None:
         return None
 
 
+def _vm_identity_label(vm: dict) -> str:
+    vmid = vm.get("vmid")
+    name = str(vm.get("name") or vm.get("hostname") or "").strip()
+    return f"VM {vmid} ({name})" if name else f"VM {vmid}"
+
+
+def _agent_identity_warnings_for_live_vms(agents: list[dict], live_vms: list[dict]) -> list[str]:
+    vm_by_key: dict[str, dict] = {}
+    identity_to_key: dict[str, str] = {}
+
+    for vm in live_vms:
+        vmid = vm.get("vmid")
+        if vmid is None or vmid == "":
+            continue
+        try:
+            key = f"vmid:{int(vmid)}"
+        except (TypeError, ValueError):
+            continue
+        vm_by_key[key] = vm
+        for identity in _pve_vm_match_keys(vm) | _pve_vm_ip_match_keys(vm):
+            identity_to_key.setdefault(identity, key)
+
+    agents_by_vm_key: dict[str, list[str]] = {}
+    for agent in agents:
+        key = None
+        vmid = _agent_row_vmid(agent)
+        if vmid is not None:
+            candidate = f"vmid:{vmid}"
+            if candidate in vm_by_key:
+                key = candidate
+        if key is None:
+            for identity in _agent_match_keys(agent) | _agent_ip_match_keys(agent):
+                key = identity_to_key.get(identity)
+                if key:
+                    break
+        if not key:
+            continue
+        agent_id = str(agent.get("agent_id") or "").strip()
+        if agent_id:
+            agents_by_vm_key.setdefault(key, []).append(agent_id)
+
+    warnings: list[str] = []
+    for key in sorted(agents_by_vm_key):
+        agent_ids = list(dict.fromkeys(agents_by_vm_key[key]))
+        if len(agent_ids) < 2:
+            continue
+        label = _vm_identity_label(vm_by_key[key])
+        warnings.append(
+            f"Multiple agent rows map to {label}: {', '.join(agent_ids)}. "
+            "Cached rows were left intact."
+        )
+    return warnings
+
+
 def _hard_delete_agent_by_id(agent_id: str) -> bool:
     from web import agent_telemetry_pg, db_pg
 
@@ -8247,6 +8302,7 @@ async def _vms_fleet_payload() -> dict:
             topology_vms_by_id[int(vm["vmid"])] = dict(vm)
     topology_vms = [topology_vms_by_id[vmid] for vmid in sorted(topology_vms_by_id)]
     agents = _filter_and_purge_agents_without_current_vm(_agent_inventory_rows(), topology_vms)
+    agent_identity_warnings = _agent_identity_warnings_for_live_vms(agents, topology_vms)
     bubble_topology = {
         "workstation_fleets": [],
         "critical_infrastructure": [],
@@ -8276,6 +8332,7 @@ async def _vms_fleet_payload() -> dict:
         "proxmox_vms": proxmox_vms,
         "missing_vms": missing_vms,
         "agents": agents,
+        "agent_identity_warnings": agent_identity_warnings,
         "autopilot_devices": matched_devices,
         "bubble_topology": bubble_topology,
         "ap_error": ap_error or "",
