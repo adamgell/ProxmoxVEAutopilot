@@ -483,6 +483,39 @@ function findAgentForVm(
     ?? byIdentity.get(normalizedIdentity(vm.ip_address));
 }
 
+function addVmIdentityIndexes(vm: VmFleetRow, byIdentity: Map<string, VmFleetRow>): void {
+  for (const value of vmIdentityValues(vm)) {
+    const key = normalizedIdentity(value);
+    if (key && !byIdentity.has(key)) {
+      byIdentity.set(key, vm);
+    }
+  }
+}
+
+function findProxmoxVmForAgent(
+  agent: AgentFleetRow,
+  byVmid: Map<number, VmFleetRow>,
+  byIdentity: Map<string, VmFleetRow>
+): VmFleetRow | undefined {
+  if (typeof agent.vmid === "number") {
+    const vm = byVmid.get(agent.vmid);
+    if (vm) {
+      return vm;
+    }
+  }
+  for (const value of agentIdentityValues(agent)) {
+    const key = normalizedIdentity(value);
+    if (!key) {
+      continue;
+    }
+    const vm = byIdentity.get(key);
+    if (vm) {
+      return vm;
+    }
+  }
+  return undefined;
+}
+
 function findDeviceForMachine(
   values: readonly unknown[],
   byIdentity: Map<string, AutopilotDeviceFleetRow>
@@ -598,10 +631,12 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
   // wouldn't get its VMID + status reflected. proxmox_vms is the
   // cluster-wide enumeration and we fall back to it for orphan agents.
   const proxmoxVmsByVmid = new Map<number, VmFleetRow>();
+  const proxmoxVmsByIdentity = new Map<string, VmFleetRow>();
   for (const vm of fleet.proxmox_vms ?? []) {
     if (typeof vm.vmid === "number") {
       proxmoxVmsByVmid.set(vm.vmid, vm);
     }
+    addVmIdentityIndexes(vm, proxmoxVmsByIdentity);
   }
 
   const rows: FleetMachineRow[] = fleet.vms.map((vm) => {
@@ -639,6 +674,25 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
   }
 
   const matchedAgentIds = new Set(rows.map((row) => row.agent?.agent_id).filter(Boolean));
+  const borrowedAgentsByVmid = new Map<number, AgentFleetRow>();
+  for (const agent of fleet.agents) {
+    if (matchedAgentIds.has(agent.agent_id)) {
+      continue;
+    }
+    if (agentMatchesRepresentedMachine(agent, representedVmids, representedIdentities)) {
+      continue;
+    }
+    const proxmoxVm = findProxmoxVmForAgent(agent, proxmoxVmsByVmid, proxmoxVmsByIdentity);
+    if (!proxmoxVm) {
+      continue;
+    }
+    borrowedAgentsByVmid.set(
+      proxmoxVm.vmid,
+      preferredAgent(borrowedAgentsByVmid.get(proxmoxVm.vmid), agent)
+    );
+  }
+
+  const renderedBorrowedVmids = new Set<number>();
   for (const agent of fleet.agents) {
     if (matchedAgentIds.has(agent.agent_id)) {
       continue;
@@ -649,32 +703,39 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     // If the agent has a VMID and that VMID exists somewhere in the cluster
     // (even if outside fleet.vms), borrow its identity so the row shows
     // VMID + Runtime + node-aware name instead of a bare agent stub.
-    const agentVmid = typeof agent.vmid === "number" ? agent.vmid : undefined;
-    const proxmoxVm = agentVmid !== undefined ? proxmoxVmsByVmid.get(agentVmid) : undefined;
+    const agentProxmoxVm = findProxmoxVmForAgent(agent, proxmoxVmsByVmid, proxmoxVmsByIdentity);
+    const agentForRow = agentProxmoxVm ? borrowedAgentsByVmid.get(agentProxmoxVm.vmid) ?? agent : agent;
+    const proxmoxVm = agentProxmoxVm;
+    if (proxmoxVm) {
+      if (renderedBorrowedVmids.has(proxmoxVm.vmid)) {
+        continue;
+      }
+      renderedBorrowedVmids.add(proxmoxVm.vmid);
+    }
     const device = findDeviceForMachine(
-      [proxmoxVm?.serial, proxmoxVm?.hostname, proxmoxVm?.name, agent.serial_number, agent.computer_name],
+      [proxmoxVm?.serial, proxmoxVm?.hostname, proxmoxVm?.name, agentForRow.serial_number, agentForRow.computer_name],
       devicesByIdentity
     );
-    const rowId = proxmoxVm ? `vm-${String(proxmoxVm.vmid)}` : `agent-${agent.agent_id}`;
+    const rowId = proxmoxVm ? `vm-${String(proxmoxVm.vmid)}` : `agent-${agentForRow.agent_id}`;
     const row: FleetMachineRow = {
       id: rowId,
-      name: proxmoxVm ? vmDisplayName(proxmoxVm) : fallbackText(agent.computer_name || agent.agent_id),
+      name: proxmoxVm ? vmDisplayName(proxmoxVm) : fallbackText(agentForRow.computer_name || agentForRow.agent_id),
       ...(proxmoxVm ? { vmid: proxmoxVm.vmid, vm: proxmoxVm } : {}),
-      agent,
-      agentId: agent.agent_id,
+      agent: agentForRow,
+      agentId: agentForRow.agent_id,
       ...(device ? { autopilotDevice: device } : {}),
       status: proxmoxVm?.status,
-      serial: proxmoxVm?.serial ?? agent.serial_number,
-      ipAddress: proxmoxVm?.ip_address ?? agent.primary_ipv4,
-      os: proxmoxVm?.os_caption ?? proxmoxVm?.os_build ?? agent.os_name ?? agent.os_build,
-      qga: proxmoxVm?.qga ?? agent.qga_state,
-      phase: agent.current_phase,
-      heartbeat: agent.last_heartbeat_at ?? agent.last_seen_at ?? proxmoxVm?.monitor_checked_at ?? proxmoxVm?.monitor_probed_at,
-      version: agent.agent_version,
-      method: machineMethod(proxmoxVm, agent),
+      serial: proxmoxVm?.serial ?? agentForRow.serial_number,
+      ipAddress: proxmoxVm?.ip_address ?? agentForRow.primary_ipv4,
+      os: proxmoxVm?.os_caption ?? proxmoxVm?.os_build ?? agentForRow.os_name ?? agentForRow.os_build,
+      qga: proxmoxVm?.qga ?? agentForRow.qga_state,
+      phase: agentForRow.current_phase,
+      heartbeat: agentForRow.last_heartbeat_at ?? agentForRow.last_seen_at ?? proxmoxVm?.monitor_checked_at ?? proxmoxVm?.monitor_probed_at,
+      version: agentForRow.agent_version,
+      method: machineMethod(proxmoxVm, agentForRow),
       mdmEnrollment: device?.enrollment_state ?? (proxmoxVm?.in_intune ? "Intune" : "-"),
-      lifecycleLabels: machineLabels(proxmoxVm, agent, device),
-      stale: agentIsStale(agent)
+      lifecycleLabels: machineLabels(proxmoxVm, agentForRow, device),
+      stale: agentIsStale(agentForRow)
     };
     rows.push(row);
     addRepresentedRow(row, representedVmids, representedIdentities);
