@@ -1,4 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
@@ -331,6 +333,17 @@ describe("ProvisionPage", () => {
     expect(reviewColumn).toContainElement(launchReview);
     expect(reviewColumn).toContainElement(screen.getByRole("button", { name: "Provision VMs" }));
     expect(form.lastElementChild).not.toHaveClass("utility-form-actions");
+  });
+
+  test("defines a three-column desktop launch grid with a mobile stack", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const launchGridRule = styles.match(/\.provision-launch-grid\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
+    const mobileLaunchGridRule = styles.match(/@media \(max-width: 760px\) \{[\s\S]*?\.provision-launch-grid\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
+
+    expect(launchGridRule).toContain("display: grid;");
+    expect(launchGridRule).toContain("grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr) minmax(280px, 360px);");
+    expect(launchGridRule).toContain("align-items: start;");
+    expect(mobileLaunchGridRule).toContain("grid-template-columns: 1fr;");
   });
 
   test("blocks unsafe manual hostname patterns and shows the normalized preview", async () => {

@@ -2322,6 +2322,72 @@ h3 {
   margin-bottom: 14px;
 }
 
+.provision-launch-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr) minmax(280px, 360px);
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.provision-section-stack,
+.provision-enrollment-stack,
+.provision-review-column {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.provision-section-stack .utility-field-grid,
+.provision-review-column .utility-field-grid {
+  grid-template-columns: 1fr;
+}
+
+.provision-review-column {
+  position: sticky;
+  top: 82px;
+}
+
+.provision-review-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.provision-review-actions .utility-button {
+  justify-content: center;
+}
+
+.provision-review-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1240px) {
+  .provision-launch-grid {
+    grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  }
+
+  .provision-review-column {
+    grid-column: 1 / -1;
+    position: static;
+  }
+
+  .provision-review-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .provision-launch-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .provision-review-actions,
+  .provision-review-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cloudosd-cockpit,
 .cloudosd-stack {
   display: grid;
