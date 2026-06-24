@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
+import { shellNavigator } from "./components/Shell";
 
 const dashboardResponses: Record<string, unknown> = {
   "/api/services": {
@@ -29,6 +30,86 @@ const dashboardResponses: Record<string, unknown> = {
     ],
     running_count: 1,
     queued_count: 2
+  },
+  "/api/cloudosd/page": {
+    view: "overview",
+    catalog: { defaults: { minimum_vm_memory_mb: 4096 } },
+    proxmox_options: {},
+    artifacts: [],
+    ready_artifacts: [
+      {
+        id: "artifact-1",
+        build_sha: "abc123",
+        readiness: "ready",
+        ready: true,
+        proxmox_volid: "isos:iso/cloudosd.iso"
+      }
+    ],
+    active_runs: [
+      {
+        run_id: "run-active",
+        requested_vm_name: "PC-001",
+        state: "provisioning"
+      }
+    ],
+    stale_failed_runs: [],
+    runs: [],
+    cloudosd_cache: {
+      storage: { ready: true, root: "/app/cache/cloudosd" },
+      summary: { ready: 2, total: 3 }
+    }
+  },
+  "/api/labs/page": {
+    labs: [
+      {
+        id: "lab-1",
+        name: "NTT Lab",
+        short_code: "ntt01",
+        group_tag: "NTT-Lab",
+        status: "ready",
+        network_cidr: "10.50.20.0/24",
+        gateway_ip: "10.50.20.1",
+        retry_count: 2
+      }
+    ],
+    selected_lab: {
+      id: "lab-1",
+      name: "NTT Lab",
+      short_code: "ntt01",
+      group_tag: "NTT-Lab",
+      status: "ready",
+      network_cidr: "10.50.20.0/24",
+      gateway_ip: "10.50.20.1",
+      retry_count: 2
+    },
+    findings: [
+      {
+        id: "finding-1",
+        finding_type: "sdn_zone_missing",
+        severity: "fixable",
+        detail: "SDN zone lab-ntt01 is missing."
+      }
+    ],
+    fix_actions: [
+      {
+        id: "fix-1",
+        action_type: "create_sdn_zone",
+        status: "pending",
+        detail: "Create SDN zone lab-ntt01."
+      }
+    ],
+    events: [
+      {
+        id: "event-1",
+        event_type: "lab_created",
+        detail: "Created lab NTT Lab",
+        created_at: "2026-06-21T00:00:00Z"
+      }
+    ],
+    boundaries: [],
+    boundary_objects: [],
+    reservations: [],
+    reconcile_runs: []
   },
   "/api/jobs/recent?limit=5": {
     jobs: [
@@ -702,33 +783,64 @@ describe("App", () => {
   test("renders the protected shell status without operational controls", () => {
     renderRoute("/react-shell");
 
-    expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Route map" })).toBeInTheDocument();
     expect(screen.getByRole("banner", { name: "Global console status" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Proxmox VE Autopilot dashboard" })[0]).toHaveAttribute("href", "/react/dashboard");
-    expect(screen.getByRole("combobox", { name: "Search console" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Proxmox VE Autopilot home" })).toHaveAttribute("href", "/react-shell");
+    expect(screen.getByRole("searchbox", { name: "Search console" })).toBeInTheDocument();
     expect(screen.getByText("Local Operator")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Log out Local Operator" })).toHaveAttribute("href", "/auth/logout");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
-    expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
-    expect(screen.getAllByRole("link", { name: "OSDCloud Desktop" })[0]).toHaveAttribute("href", "/react/cloudosd");
-    expect(screen.queryByRole("link", { name: "Job Detail" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Run Detail" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "OSDCloud Run" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "OSDeploy Run" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Task Template" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Edit Sequence" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Sequence Library" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "New Sequence" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
+    expect(screen.getByRole("link", { name: "Open signals" })).toHaveAttribute("href", "/react/monitoring");
+    expect(screen.getByRole("link", { name: "Open networks" })).toHaveAttribute("href", "/react/networks");
+    expect(screen.getByRole("link", { name: "Create managed lab Labs" })).toHaveAttribute("href", "/react/labs");
+    expect(screen.getByRole("link", { name: "Labs Create managed lab from a template" })).toHaveAttribute("href", "/react/labs");
+    expect(screen.getByRole("link", { name: "Hashes Capture and upload hardware identity" })).toHaveAttribute("href", "/react/hashes");
+    const routeMap = screen.getByRole("navigation", { name: "Route map" });
+    const deployRoutes = within(routeMap).getByRole("group", { name: "Deploy" });
+    const buildRoutes = within(routeMap).getByRole("group", { name: "Build" });
+    const fleetRoutes = within(routeMap).getByRole("group", { name: "Fleet" });
+    const settingsRoutes = within(routeMap).getByRole("group", { name: "Settings" });
+    expect(within(deployRoutes).getByRole("link", { name: "Labs operational" })).toHaveAttribute("href", "/react/labs");
+    expect(within(deployRoutes).getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
+    expect(within(buildRoutes).getByRole("link", { name: "Sequence Library operational" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
+    expect(within(buildRoutes).getByRole("link", { name: "New Sequence operational" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+    expect(within(fleetRoutes).getByRole("link", { name: "Agent Download operational" })).toHaveAttribute("href", "/react/agent-download");
+    expect(within(settingsRoutes).getByRole("link", { name: "Monitoring settings operational" })).toHaveAttribute("href", "/react/monitoring/settings");
+    expect(within(routeMap).queryByRole("link", { name: "Job Detail operational" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "Run Detail read-only" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "OSDCloud Run operational" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "OSDeploy Run operational" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "Task Template read-only" })).not.toBeInTheDocument();
+    expect(within(routeMap).queryByRole("link", { name: "Edit Task Sequence operational" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Sequences" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "UTM VMs" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
-    expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
+    expect(within(fleetRoutes).getByRole("link", { name: "UTM VMs operational" })).toHaveAttribute("href", "/react/utm-vms");
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^clone$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /winpe/i })).not.toBeInTheDocument();
+  });
+
+  test("renders outcome shell chrome and keeps command search routing", async () => {
+    window.history.pushState({}, "", "/react/jobs");
+    const assignSpy = vi.spyOn(shellNavigator, "assign").mockImplementation(() => {});
+    render(<App bootstrap={{ userName: "Adam", buildSha: "abc1234" }} />);
+
+    expect(await screen.findByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/react-shell");
+    expect(screen.getByRole("link", { name: "Deploy" })).toHaveAttribute("href", "/react/deploy");
+    expect(screen.getByRole("link", { name: "Infra" })).toHaveAttribute("href", "/react/networks");
+    expect(screen.getByRole("link", { name: "Fleet" })).toHaveAttribute("href", "/react/vms");
+
+    const search = screen.getByRole("searchbox", { name: "Search console" });
+    fireEvent.change(search, { target: { value: "Hashes" } });
+    fireEvent.submit(search.closest("form") as HTMLFormElement);
+
+    expect(assignSpy).toHaveBeenCalledWith("/react/hashes");
   });
 
   test.each([
@@ -741,6 +853,7 @@ describe("App", () => {
     "/react/devices",
     "/react/hashes",
     "/react/files",
+    "/react/labs",
     "/react/settings",
     "/react/credentials",
     "/react/credentials/new",
@@ -760,6 +873,7 @@ describe("App", () => {
     ["/react/legacy-vms", "Classic VM Table", "WRKGRP-525570B6"],
     ["/react/hashes", "Hashes", "ACME-101_hwid.csv"],
     ["/react/files", "Files", "AutopilotAgent.msi"],
+    ["/react/labs", "Labs", "Create managed lab"],
     ["/react/settings", "Settings", "Proxmox bootstrap"],
     ["/react/credentials", "Credentials", "ACME Domain Join"],
     ["/react/credentials/new", "New Credential", "Create credential"],
@@ -1240,6 +1354,93 @@ describe("App", () => {
     expect(promptSpy).not.toHaveBeenCalled();
   });
 
+
+  test("adopts a PVE subnet by ID while storing the human CIDR on the bubble", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/sdn/labs/orphan-vnets": {
+        orphan_vnets: [
+          {
+            vnet: "lab101",
+            zone: "lab-simple",
+            alias: "Lab 101",
+            subnet: {
+              subnet: "lab-simple-10.60.10.0-24",
+              cidr: "10.60.10.0/24",
+              network: "10.60.10.0",
+              gateway: "10.60.10.1",
+              snat: true,
+              dhcp_range: "start-address=10.60.10.100,end-address=10.60.10.199"
+            }
+          }
+        ]
+      },
+      "/api/sdn/labs": {
+        bubble: {
+          id: "bubble-4",
+          name: "LAB 101",
+          domain_name: "lab101.home.gell.one",
+          cidr: "10.60.10.0/24",
+          gateway_ip: "10.60.10.1",
+          lifecycle_state: "active",
+          isolation_status: "isolated"
+        },
+        binding: {
+          bubble_id: "bubble-4",
+          zone: "lab-simple",
+          vnet: "lab101",
+          subnet: "lab-simple-10.60.10.0-24",
+          snat_enabled: true
+        },
+        preflight: { ok: true }
+      }
+    });
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "New bubble" }));
+    const adoptionSelect = await screen.findByLabelText("Adopt existing isolated network");
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /10\.60\.10\.0\/24/ })).toBeInTheDocument();
+    });
+    fireEvent.change(adoptionSelect, { target: { value: "lab101" } });
+    expect(screen.getByLabelText("Isolated CIDR")).toHaveValue("10.60.10.0/24");
+    expect(screen.getByLabelText("Gateway IP")).toHaveValue("10.60.10.1");
+    expect(screen.getByLabelText("DHCP network ID")).toHaveValue("10.60.10.0");
+    expect(screen.getByLabelText("DHCP pool start")).toHaveValue("10.60.10.100");
+    expect(screen.getByLabelText("DHCP pool end")).toHaveValue("10.60.10.199");
+
+    fireEvent.change(screen.getByLabelText("Bubble name"), { target: { value: "LAB 101" } });
+    fireEvent.change(screen.getByLabelText("Domain name"), { target: { value: "lab101.home.gell.one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create bubble" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/sdn/labs",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const postCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === "/api/sdn/labs"
+      && init && typeof init !== "function" && "method" in init
+    ));
+    expect(postCall).toBeDefined();
+    const init = postCall?.[1] as RequestInit;
+    expect(typeof init.body).toBe("string");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      name: "LAB 101",
+      zone: "lab-simple",
+      vnet: "lab101",
+      subnet: "lab-simple-10.60.10.0-24",
+      domain_name: "lab101.home.gell.one",
+      cidr: "10.60.10.0/24",
+      gateway_ip: "10.60.10.1",
+      dhcp_scope: "10.60.10.0",
+      dhcp_pool_start: "10.60.10.100",
+      dhcp_pool_end: "10.60.10.199"
+    });
+  });
+
   test("edits a bubble from inline React fleet fields", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,
@@ -1425,6 +1626,33 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /kill/i })).not.toBeInTheDocument();
   });
 
+  test("renders the guided Deploy journey from existing status APIs", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/deploy");
+
+    expect(await screen.findByRole("heading", { name: "Deploy desktop: guided path" })).toBeInTheDocument();
+    const finishMenu = screen.getByRole("navigation", { name: "Deploy outcomes" });
+    expect(within(finishMenu).getByRole("link", { name: "Deploy desktop OSDCloud" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(within(finishMenu).getByRole("link", { name: "Deploy server OSDeploy" })).toHaveAttribute("href", "/react/osdeploy");
+    expect(within(finishMenu).getByRole("link", { name: "Use existing VM Provision" })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "Step 1 Choose deployment path Desktop route is selected. Server and existing VM flows remain one click away." })).toHaveAttribute("href", "/react/deploy");
+    expect(screen.getByRole("link", { name: "Step 2 Configure VM and media Tenant, node, storage, CPU, memory, disk, and promoted ISO." })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "Step 3 Watch Windows handoff Install, first boot, cleanup, Sysprep OOBE return, and agent events." })).toHaveAttribute("href", "/react/jobs");
+    expect(screen.getByRole("link", { name: "Step 4 Verify readiness Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof." })).toHaveAttribute("href", "/react/vms");
+    expect(screen.getByText("Controller and builder ready")).toBeInTheDocument();
+    expect(await screen.findByText("1 running, 2 queued.")).toBeInTheDocument();
+    expect(screen.getByText("CloudOSD media promoted")).toBeInTheDocument();
+    expect(screen.getByText("1 promoted artifact available.")).toBeInTheDocument();
+    expect(screen.getByText("Graph visibility can lag")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Route shortcuts" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "OSDCloud Desktop start" })).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByText("NTT Lab")).toBeInTheDocument();
+    expect(screen.getByText("Ready to deploy")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Labs" })).toHaveAttribute("href", "/react/labs");
+  });
+
   test("renders the jobs read-only slice from API data", async () => {
     mockFetch({
       "/api/jobs": [
@@ -1464,6 +1692,17 @@ describe("App", () => {
     expect(screen.getByText("SN-001")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Filter jobs")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
+  });
+
+  test("renders the outcome-map control room at react shell", () => {
+    window.history.pushState({}, "", "/react-shell");
+    render(<App bootstrap={{ userName: "Adam", buildSha: "abc1234" }} />);
+
+    expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
+    expect(screen.getByRole("heading", { name: "Prove a machine is ready" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Quick routes" })).toBeInTheDocument();
   });
 
   test("renders the Signals Hub read-only slice from API data", async () => {

@@ -3038,6 +3038,93 @@ def test_provision_cloudosd_batch_creates_runs_and_jobs(
             assert run["source_surface"] == "provision"
 
 
+def test_provision_cloudosd_short_hostname_keeps_full_group_tag(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg
+
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+            "vault_proxmox_root_password": "fake-root-pw",
+        },
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_proxmox_api",
+        lambda path, *args, **kwargs: {
+            "/cluster/nextid": 105,
+            "/cluster/resources?type=vm": [],
+            "/cluster/status": [
+                {"type": "node", "name": "pve", "ip": "10.0.0.2"},
+            ],
+            "/nodes": [{"node": "pve"}],
+            "/storage": [
+                {"storage": "local", "content": "iso"},
+                {"storage": "local-lvm", "content": "images"},
+            ],
+            "/nodes/pve/network": [{"iface": "vmbr0", "type": "bridge"}],
+            "/nodes/pve/qemu": [],
+        }[path],
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "profile": "generic-desktop",
+            "count": "2",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "serial_prefix": "",
+            "group_tag": "NTTENANT01-Desktop",
+            "hostname_pattern": "ntt01-{index}",
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+            "os_version": "Windows 11 25H2",
+            "os_edition": "Enterprise",
+            "os_activation": "Volume",
+            "os_language": "en-us",
+            "tpm_enabled": "on",
+            "secure_boot": "on",
+            "driver_pack_policy": "None",
+            "outbound_policy_mode": "blocked",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    jobs = [
+        job for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    ]
+    assert len(jobs) == 2
+    assert {job["args"]["vm_group_tag"] for job in jobs} == {"NTTENANT01-Desktop"}
+    assert {job["args"]["hostname_pattern"] for job in jobs} == {"ntt01-01", "ntt01-02"}
+    assert all(len(job["args"]["hostname_pattern"]) <= 15 for job in jobs)
+
+    runs = cloudosd_pg.list_runs(pg_conn, limit=10)
+    created = [
+        run for run in runs
+        if run["requested_vm_name"] in {"ntt01-01", "ntt01-02"}
+    ]
+    assert len(created) == 2
+    assert {run["vm_group_tag"] for run in created} == {"NTTENANT01-Desktop"}
+    assert {run["expected_computer_name"] for run in created} == {"ntt01-01", "ntt01-02"}
+    assert all(len(run["expected_computer_name"]) <= 15 for run in created)
+
+
 def test_provision_cloudosd_batch_reserves_unique_vmids_without_vmid_token(
     cloudosd_client,
     pg_conn,

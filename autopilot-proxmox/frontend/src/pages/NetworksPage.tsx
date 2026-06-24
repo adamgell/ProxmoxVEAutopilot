@@ -109,7 +109,7 @@ const tabs: readonly { readonly id: NetworksTab; readonly label: string }[] = [
 ];
 
 function asArray(value: readonly SdnObject[] | undefined): readonly SdnObject[] {
-  return Array.isArray(value) ? value : [];
+  return value ?? [];
 }
 
 function objectId(item: SdnObject): string {

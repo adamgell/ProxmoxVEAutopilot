@@ -30,6 +30,42 @@ export interface OperatorNavGroup {
   readonly items: readonly OperatorRoute[];
 }
 
+export type OperatorModeId = "home" | "deploy" | "build" | "infra" | "fleet" | "settings";
+
+export type OperatorOutcomeTone = "good" | "blue" | "teal" | "purple" | "warn" | "bad";
+
+export interface OperatorMode {
+  readonly id: OperatorModeId;
+  readonly label: string;
+  readonly longLabel: string;
+  readonly href: string;
+}
+
+export interface OperatorOutcomeRoute {
+  readonly label: string;
+  readonly href: string;
+  readonly purpose: string;
+}
+
+export interface OperatorOutcome {
+  readonly id: string;
+  readonly mode: OperatorModeId;
+  readonly eyebrow: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly primaryHref: string;
+  readonly actionLabel: string;
+  readonly tone: OperatorOutcomeTone;
+  readonly relatedRoutes: readonly OperatorOutcomeRoute[];
+}
+
+export interface OperatorQuickRoute {
+  readonly label: string;
+  readonly href: string;
+  readonly summary: string;
+  readonly mode: OperatorModeId;
+}
+
 export interface OperatorFlowStep {
   readonly label: string;
   readonly href: string;

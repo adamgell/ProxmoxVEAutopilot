@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Proxmox VE Autopilot outcome map explorations</title>
+<style>
+:root {
+  --ink: #152033;
+  --muted: #5d6d82;
+  --soft: #8d9bac;
+  --line: #cbd8e6;
+  --paper: #f5f8fb;
+  --panel: #ffffff;
+  --nav: #172033;
+  --nav-2: #22324b;
+  --blue: #0069a8;
+  --blue-bg: #dceefb;
+  --green: #477400;
+  --green-bg: #e7f4dc;
+  --amber: #855f00;
+  --amber-bg: #fff1c5;
+  --red: #b33a18;
+  --red-bg: #fde4dc;
+  --teal: #00756f;
+  --teal-bg: #d9f2ee;
+  --purple: #5f4ba3;
+  --purple-bg: #ece8fb;
+  --accent: #e1f56f;
+  --shadow: 0 20px 54px rgba(21, 32, 51, .14);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: linear-gradient(180deg, #ffffff 0, var(--paper) 260px, #eef3f8 100%);
+  font: 14px/1.45 "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+button, input { font: inherit; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3, p { margin: 0; letter-spacing: 0; }
+h1 { font-size: 31px; line-height: 1.06; }
+h2 { font-size: 24px; line-height: 1.12; }
+h3 {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+.page {
+  display: grid;
+  gap: 22px;
+  width: min(1640px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+.intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 18px;
+  align-items: end;
+}
+.intro p {
+  max-width: 900px;
+  margin-top: 8px;
+  color: var(--muted);
+}
+.pill-row, .actions, .chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.pill, .status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.good { border-color: #a8d48f; background: var(--green-bg); color: var(--green); }
+.blue { border-color: #9fcbe8; background: var(--blue-bg); color: var(--blue); }
+.warn { border-color: #e5c169; background: var(--amber-bg); color: var(--amber); }
+.bad { border-color: #efb4a4; background: var(--red-bg); color: var(--red); }
+.teal { border-color: #98d6cf; background: var(--teal-bg); color: var(--teal); }
+.purple { border-color: #c5b9ef; background: var(--purple-bg); color: var(--purple); }
+.mockup {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.mockup-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfdff;
+}
+.mockup-note strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+}
+.mockup-note p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: #07111f;
+  background: var(--accent);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  color: inherit;
+  font-weight: 900;
+}
+.brand small {
+  display: block;
+  color: inherit;
+  opacity: .68;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #172033;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
+}
+.mark::before {
+  content: "";
+  display: block;
+  width: 19px;
+  height: 19px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f25022 0 33%, #7fba00 33% 66%, #00a4ef 66%);
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 900;
+}
+.button.primary {
+  border-color: #005d91;
+  background: var(--blue);
+  color: #fff;
+}
+.button.light {
+  border-color: rgba(255,255,255,.28);
+  background: rgba(255,255,255,.1);
+  color: #fff;
+}
+.command {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--soft);
+}
+.command input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 800;
+}
+.dark-app {
+  min-height: 720px;
+  color: #edf5ff;
+  background:
+    linear-gradient(135deg, #152034 0, #0c1422 45%, #12252a 100%);
+}
+.dark-top {
+  display: grid;
+  grid-template-columns: 236px minmax(300px, 1fr) max-content;
+  gap: 14px;
+  align-items: center;
+  min-height: 66px;
+  padding: 13px 18px;
+  border-bottom: 1px solid rgba(255,255,255,.14);
+}
+.dark-top .command {
+  border-color: rgba(255,255,255,.18);
+  background: rgba(255,255,255,.95);
+}
+.map-layout {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  min-height: 654px;
+}
+.mode-rail {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  padding: 16px 12px;
+  border-right: 1px solid rgba(255,255,255,.13);
+}
+.mode-rail a {
+  display: grid;
+  place-items: center;
+  min-height: 64px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 8px;
+  background: rgba(255,255,255,.04);
+  color: #dce8f6;
+  font-weight: 900;
+}
+.mode-rail a.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #07111f;
+}
+.dark-content {
+  padding: 22px;
+}
+.hero-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.hero-split h2 {
+  max-width: 760px;
+  color: #fff;
+  font-size: 32px;
+}
+.hero-split p {
+  max-width: 840px;
+  margin-top: 8px;
+  color: #c5d2e2;
+}
+.prompt-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 8px;
+  background: rgba(0,0,0,.2);
+}
+.prompt-card h3 {
+  color: #b8c7d8;
+}
+.prompt-card a {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 7px;
+  background: rgba(255,255,255,.06);
+  color: #fff;
+  font-weight: 900;
+}
+.outcome-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+}
+.outcome-card {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 10px;
+  min-height: 190px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 8px;
+  background: rgba(255,255,255,.06);
+  color: #edf5ff;
+}
+.outcome-card strong {
+  display: block;
+  color: #fff;
+  font-size: 18px;
+}
+.outcome-card p {
+  color: #c5d2e2;
+}
+.outcome-card .button {
+  justify-self: start;
+}
+.outcome-card.featured {
+  border-color: rgba(225,245,111,.72);
+  background: rgba(225,245,111,.11);
+}
+.quick-lane {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+.quick-lane a {
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 8px;
+  background: rgba(255,255,255,.05);
+}
+.quick-lane strong, .quick-lane span {
+  display: block;
+}
+.quick-lane span {
+  margin-top: 4px;
+  color: #b8c7d8;
+  font-size: 12px;
+}
+.light-app {
+  min-height: 720px;
+  background: #f3f7fb;
+}
+.light-top {
+  display: grid;
+  grid-template-columns: 260px minmax(300px, 1fr) max-content;
+  gap: 14px;
+  align-items: center;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.light-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 654px;
+}
+.left-menu {
+  padding: 16px 12px;
+  border-right: 1px solid var(--line);
+  background: #fff;
+}
+.left-menu h3 {
+  padding: 0 8px 6px;
+}
+.left-menu a {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  margin-bottom: 5px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--muted);
+  font-weight: 900;
+}
+.left-menu a.active {
+  border-color: #99c8e7;
+  background: var(--blue-bg);
+  color: var(--blue);
+  box-shadow: inset 4px 0 0 var(--blue);
+}
+.left-menu small {
+  color: var(--soft);
+}
+.journey-content {
+  padding: 20px;
+}
+.journey-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+.journey-head p {
+  margin-top: 7px;
+  color: var(--muted);
+  max-width: 780px;
+}
+.path-board {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.path-step {
+  display: grid;
+  gap: 8px;
+  min-height: 148px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.path-step.active {
+  border-color: #81bee6;
+  background: var(--blue-bg);
+}
+.path-step strong {
+  display: block;
+  font-size: 16px;
+}
+.path-step p {
+  color: var(--muted);
+}
+.path-step span {
+  align-self: end;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.work-grid {
+  display: grid;
+  grid-template-columns: 1.2fr .8fr;
+  gap: 14px;
+}
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.panel h3 {
+  padding: 13px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-body {
+  padding: 14px;
+}
+.list {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.list li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e6edf5;
+}
+.list li:last-child { border-bottom: 0; }
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--soft);
+}
+.dot.good { background: #6ab533; }
+.dot.blue { background: #268fce; }
+.dot.warn { background: #d89b00; }
+.dot.bad { background: #d55634; }
+.list strong, .list span {
+  display: block;
+}
+.list span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.evidence-app {
+  min-height: 720px;
+  background: #eef3f8;
+}
+.evidence-top {
+  display: grid;
+  grid-template-columns: 260px minmax(300px, 1fr) max-content;
+  gap: 14px;
+  align-items: center;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #172033;
+  color: #edf5ff;
+}
+.evidence-top .command {
+  border-color: rgba(255,255,255,.2);
+  background: #fff;
+}
+.evidence-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 14px;
+  padding: 18px;
+}
+.evidence-main {
+  display: grid;
+  gap: 14px;
+}
+.machine-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 16px;
+  align-items: start;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.machine-card p {
+  margin-top: 7px;
+  color: var(--muted);
+}
+.proof-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.proof-card {
+  display: grid;
+  gap: 10px;
+  min-height: 170px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.proof-card strong {
+  display: block;
+  font-size: 17px;
+}
+.proof-card p {
+  color: var(--muted);
+}
+.proof-card footer {
+  align-self: end;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+.evidence-side {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.mini-map {
+  display: grid;
+  gap: 8px;
+}
+.mini-map a {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 900;
+}
+.mini-map a.active {
+  border-color: #99c8e7;
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+.decision {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.decision div {
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.decision strong {
+  display: block;
+  margin-bottom: 6px;
+}
+.decision p {
+  color: var(--muted);
+}
+@media (max-width: 1060px) {
+  .intro,
+  .mockup-note,
+  .dark-top,
+  .light-top,
+  .evidence-top,
+  .hero-split,
+  .journey-head,
+  .machine-card,
+  .evidence-layout {
+    grid-template-columns: 1fr;
+  }
+  .map-layout,
+  .light-shell {
+    grid-template-columns: 1fr;
+  }
+  .mode-rail {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .left-menu {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .left-menu h3 {
+    grid-column: 1 / -1;
+  }
+  .outcome-grid,
+  .quick-lane,
+  .path-board,
+  .work-grid,
+  .proof-grid,
+  .decision {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="intro">
+    <div>
+      <h1>Outcome map explorations</h1>
+      <p>More versions of the flow you liked: each one starts with what the operator is trying to finish, then routes them into the right page cluster without making every route compete at the same level.</p>
+    </div>
+    <div class="pill-row">
+      <span class="pill blue">Outcome-first menu</span>
+      <span class="pill good">High contrast</span>
+      <span class="pill warn">Mockup only</span>
+    </div>
+  </section>
+
+  <section class="mockup" id="control-room">
+    <header class="mockup-note">
+      <div>
+        <span class="label">Direction 1</span>
+        <strong>Daily control room</strong>
+        <p>The closest evolution of the first outcome map: a compact mode rail, a strong "what are you finishing?" prompt, outcome cards, and a quick lane for power users.</p>
+      </div>
+      <div class="pill-row">
+        <span class="pill good">Best overall</span>
+        <span class="pill blue">Fast to scan</span>
+      </div>
+    </header>
+    <div class="dark-app">
+      <header class="dark-top">
+        <a class="brand" href="#control-room"><span class="mark"></span><span>Proxmox VE Autopilot<small>Control room</small></span></a>
+        <label class="command"><span>Find</span><input placeholder="Type a VM, job, serial, route, or run ID"></label>
+        <div class="chip-row">
+          <span class="status good">All services ok</span>
+          <span class="status blue">2 jobs live</span>
+          <a class="button light" href="#">New run</a>
+        </div>
+      </header>
+      <div class="map-layout">
+        <nav class="mode-rail" aria-label="Outcome modes">
+          <a href="#">Home</a>
+          <a class="active" href="#">Deploy</a>
+          <a href="#">Build</a>
+          <a href="#">Fleet</a>
+          <a href="#">Set</a>
+        </nav>
+        <section class="dark-content">
+          <div class="hero-split">
+            <div>
+              <h2>What are you trying to finish?</h2>
+              <p>Pick the operator outcome first. The menu routes to the right surface after that: run setup, build tools, fleet proof, live jobs, or settings.</p>
+            </div>
+            <aside class="prompt-card">
+              <h3>Suggested next step</h3>
+              <a href="#"><span>Open OSDCloud Desktop run</span><span>Ready</span></a>
+              <a href="#"><span>Check VM 109 evidence</span><span>Watch</span></a>
+              <a href="#"><span>Review hash upload status</span><span>Queued</span></a>
+            </aside>
+          </div>
+          <div class="outcome-grid">
+            <a class="outcome-card featured" href="#">
+              <span class="pill good">Recommended</span>
+              <strong>Deploy a Windows desktop</strong>
+              <p>Open OSDCloud Desktop, use saved defaults, watch first boot, and verify OOBE handoff.</p>
+              <span class="button primary">Start desktop run</span>
+            </a>
+            <a class="outcome-card" href="#">
+              <span class="pill blue">Server path</span>
+              <strong>Deploy a Windows server</strong>
+              <p>Open OSDeploy Server, choose role steps, and track the agent heartbeat gate.</p>
+              <span class="button">Start server run</span>
+            </a>
+            <a class="outcome-card" href="#">
+              <span class="pill teal">Proof path</span>
+              <strong>Prove a machine is ready</strong>
+              <p>Jump through VMs, Hashes, Cloud Devices, and Jobs as one evidence workflow.</p>
+              <span class="button">Open evidence path</span>
+            </a>
+            <a class="outcome-card" href="#">
+              <span class="pill purple">Build path</span>
+              <strong>Build or refresh media</strong>
+              <p>Open Task Engine, Template, Task Sequences, and Answer ISOs without hunting.</p>
+              <span class="button">Open build tools</span>
+            </a>
+            <a class="outcome-card" href="#">
+              <span class="pill warn">Observe path</span>
+              <strong>Watch service health</strong>
+              <p>Open Signals Hub, live Jobs, monitor settings, and service logs together.</p>
+              <span class="button">Open signals</span>
+            </a>
+            <a class="outcome-card" href="#">
+              <span class="pill bad">Guarded path</span>
+              <strong>Fix configuration</strong>
+              <p>Open Credentials, General, and Monitoring settings with clear safer labels.</p>
+              <span class="button">Open settings</span>
+            </a>
+          </div>
+          <nav class="quick-lane" aria-label="Quick routes">
+            <a href="#"><strong>Jobs</strong><span>Live output and pause gates</span></a>
+            <a href="#"><strong>VMs</strong><span>Console, agent, and power actions</span></a>
+            <a href="#"><strong>Hashes</strong><span>Capture and upload hardware identity</span></a>
+            <a href="#"><strong>Runs</strong><span>Deployment timeline and history</span></a>
+          </nav>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="mockup" id="guided-deploy">
+    <header class="mockup-note">
+      <div>
+        <span class="label">Direction 2</span>
+        <strong>Guided deploy path</strong>
+        <p>Same outcome-map concept, but the deploy route becomes a visible journey. This is useful when the user is in the middle of a run and needs to know the next checkpoint.</p>
+      </div>
+      <div class="pill-row">
+        <span class="pill blue">Clearest flow</span>
+        <span class="pill warn">More structured</span>
+      </div>
+    </header>
+    <div class="light-app">
+      <header class="light-top">
+        <a class="brand" href="#guided-deploy"><span class="mark"></span><span>Proxmox VE Autopilot<small>Deploy path</small></span></a>
+        <label class="command"><span>Search</span><input placeholder="Search routes, VMs, runs, jobs"></label>
+        <div class="actions">
+          <span class="status good">CloudOSD ready</span>
+          <a class="button primary" href="#">Start run</a>
+        </div>
+      </header>
+      <div class="light-shell">
+        <nav class="left-menu" aria-label="Deploy outcomes">
+          <h3>Finish this</h3>
+          <a class="active" href="#"><span>Deploy desktop</span><small>OSDCloud</small></a>
+          <a href="#"><span>Deploy server</span><small>OSDeploy</small></a>
+          <a href="#"><span>Use existing VM</span><small>Provision</small></a>
+          <a href="#"><span>Verify machine</span><small>Evidence</small></a>
+          <a href="#"><span>Build media</span><small>Tools</small></a>
+          <a href="#"><span>Watch health</span><small>Signals</small></a>
+        </nav>
+        <section class="journey-content">
+          <header class="journey-head">
+            <div>
+              <h2>Deploy desktop: guided path</h2>
+              <p>The menu keeps the outcome selected on the left, while the page shows the route sequence across setup, install, handoff, and verification.</p>
+            </div>
+            <div class="actions">
+              <a class="button" href="#">View prior runs</a>
+              <a class="button primary" href="#">Configure run</a>
+            </div>
+          </header>
+          <section class="path-board" aria-label="Deployment path">
+            <a class="path-step active" href="#">
+              <span>Step 1</span>
+              <strong>Choose deployment path</strong>
+              <p>Desktop route is selected. Server and existing VM flows remain one click away.</p>
+            </a>
+            <a class="path-step" href="#">
+              <span>Step 2</span>
+              <strong>Configure VM and media</strong>
+              <p>Tenant, node, storage, CPU, memory, disk, and promoted ISO.</p>
+            </a>
+            <a class="path-step" href="#">
+              <span>Step 3</span>
+              <strong>Watch Windows handoff</strong>
+              <p>Install, first boot, cleanup, Sysprep OOBE return, and agent events.</p>
+            </a>
+            <a class="path-step" href="#">
+              <span>Step 4</span>
+              <strong>Verify readiness</strong>
+              <p>Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof.</p>
+            </a>
+          </section>
+          <div class="work-grid">
+            <section class="panel">
+              <h3>Current run checkpoints</h3>
+              <div class="panel-body">
+                <ul class="list">
+                  <li><span class="dot good"></span><div><strong>Controller and builder ready</strong><span>Required services are healthy.</span></div><span class="status good">Ok</span></li>
+                  <li><span class="dot blue"></span><div><strong>CloudOSD media promoted</strong><span>Desktop artifact is available for new runs.</span></div><span class="status blue">Ready</span></li>
+                  <li><span class="dot warn"></span><div><strong>Graph visibility can lag</strong><span>Upload proof may appear before Intune search catches up.</span></div><span class="status warn">Watch</span></li>
+                </ul>
+              </div>
+            </section>
+            <section class="panel">
+              <h3>Route shortcuts</h3>
+              <div class="panel-body mini-map">
+                <a class="active" href="#"><span>OSDCloud Desktop</span><small>start</small></a>
+                <a href="#"><span>Jobs</span><small>watch</small></a>
+                <a href="#"><span>VMs</span><small>console</small></a>
+                <a href="#"><span>Hashes</span><small>proof</small></a>
+                <a href="#"><span>Cloud Devices</span><small>Intune</small></a>
+              </div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="mockup" id="evidence-map">
+    <header class="mockup-note">
+      <div>
+        <span class="label">Direction 3</span>
+        <strong>Evidence-first verification map</strong>
+        <p>This variant makes the menu shine after deployment: the operator asks what they need to prove, then the UI clusters the evidence surfaces around that machine.</p>
+      </div>
+      <div class="pill-row">
+        <span class="pill teal">Best for validation</span>
+        <span class="pill good">Strong operational proof</span>
+      </div>
+    </header>
+    <div class="evidence-app">
+      <header class="evidence-top">
+        <a class="brand" href="#evidence-map"><span class="mark"></span><span>Proxmox VE Autopilot<small>Evidence map</small></span></a>
+        <label class="command"><span>Find</span><input placeholder="Search VM, serial, hash CSV, Intune ID, or job"></label>
+        <div class="actions">
+          <span class="status good">VM online</span>
+          <span class="status warn">Sync throttled</span>
+        </div>
+      </header>
+      <div class="evidence-layout">
+        <main class="evidence-main">
+          <section class="machine-card">
+            <div>
+              <h2>Prove VM 109 is Autopilot-ready</h2>
+              <p>The menu clusters every proof surface needed for handoff: Proxmox VM state, first-boot/OOBE evidence, hash upload, Intune cloud device, and agent heartbeat.</p>
+            </div>
+            <div class="actions">
+              <a class="button" href="#">Open console</a>
+              <a class="button primary" href="#">Collect logs</a>
+            </div>
+          </section>
+          <section class="proof-grid" aria-label="Evidence surfaces">
+            <a class="proof-card" href="#">
+              <span class="status good">Proxmox</span>
+              <strong>VM is running on pve2</strong>
+              <p>Power state, console access, storage, memory, network, and boot path are in one place.</p>
+              <footer><span>Route: VMs</span><span>Open</span></footer>
+            </a>
+            <a class="proof-card" href="#">
+              <span class="status blue">Windows</span>
+              <strong>OOBE handoff requested</strong>
+              <p>First boot cleanup completed and Sysprep returned the machine to the expected OOBE path.</p>
+              <footer><span>Route: Jobs</span><span>Inspect</span></footer>
+            </a>
+            <a class="proof-card" href="#">
+              <span class="status good">Hash</span>
+              <strong>Hardware identity uploaded</strong>
+              <p>CSV validation and upload result are visible even while Graph cache catches up.</p>
+              <footer><span>Route: Hashes</span><span>Verify</span></footer>
+            </a>
+            <a class="proof-card" href="#">
+              <span class="status warn">Intune</span>
+              <strong>Autopilot record pending visibility</strong>
+              <p>Show upload proof, retry timing, and the last Graph status without implying failure too early.</p>
+              <footer><span>Route: Cloud Devices</span><span>Watch</span></footer>
+            </a>
+          </section>
+        </main>
+        <aside class="evidence-side">
+          <section class="panel">
+            <h3>Outcome menu</h3>
+            <div class="panel-body mini-map">
+              <a href="#"><span>Deploy desktop</span><small>start</small></a>
+              <a class="active" href="#"><span>Prove readiness</span><small>evidence</small></a>
+              <a href="#"><span>Watch jobs</span><small>live</small></a>
+              <a href="#"><span>Fix setup</span><small>settings</small></a>
+            </div>
+          </section>
+          <section class="panel">
+            <h3>Next proof actions</h3>
+            <div class="panel-body">
+              <ul class="list">
+                <li><span class="dot good"></span><div><strong>Confirm CSV row</strong><span>Hardware hash present and non-empty.</span></div><span></span></li>
+                <li><span class="dot warn"></span><div><strong>Wait on Graph cache</strong><span>Do not mark failed while sync is throttled.</span></div><span></span></li>
+                <li><span class="dot blue"></span><div><strong>Open VM console</strong><span>Confirm OOBE screen state.</span></div><span></span></li>
+              </ul>
+            </div>
+          </section>
+          <section class="panel">
+            <h3>Status language</h3>
+            <div class="panel-body">
+              <p style="margin:0;color:var(--muted);">Use status copy that separates upload success from Intune visibility lag, so the UI does not turn a healthy delayed state into a scary failure.</p>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="decision" aria-label="Direction comparison">
+    <div>
+      <strong>Direction 1 feels like the new home</strong>
+      <p>It is the most balanced: outcome-first, still fast for repeat use, and not too far from the current shell.</p>
+    </div>
+    <div>
+      <strong>Direction 2 is strongest inside Deploy</strong>
+      <p>It makes the four-step deployment lifecycle obvious and keeps shortcuts close to the work.</p>
+    </div>
+    <div>
+      <strong>Direction 3 is the best validation surface</strong>
+      <p>It would be great as a machine detail or run detail companion because it groups proof instead of pages.</p>
+    </div>
+  </section>
+</main>
+</body>
+</html>

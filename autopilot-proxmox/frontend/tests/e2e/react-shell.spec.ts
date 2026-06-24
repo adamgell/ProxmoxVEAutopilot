@@ -1,6 +1,232 @@
 import { expect, test, type Page } from "@playwright/test";
 
+function rgbBrightness(value: string): number {
+  const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length < 3) {
+    throw new Error(`Cannot parse color value: ${value}`);
+  }
+  return channels.reduce((sum, channel) => sum + channel, 0) / channels.length;
+}
+
+const provisionPayloadForE2e = {
+  profiles: {
+    surface: {
+      manufacturer: "Microsoft",
+      product: "Surface Pro"
+    }
+  },
+  defaults: {
+    cores: 4,
+    memory_mb: 8192,
+    disk_size_gb: 96,
+    count: 2,
+    serial_prefix: "Gell",
+    group_tag: "pilot",
+    oem_profile: "surface",
+    template_vmid: "250",
+    hostname_pattern: "autopilot-{serial}"
+  },
+  template_disk_gb: 80,
+  winpe_enabled: false,
+  cloudosd_catalog: {
+    os_versions: ["Windows 11 24H2"],
+    os_editions: ["Enterprise"],
+    os_activations: ["Volume"],
+    os_languages: ["en-US"],
+    driver_pack_policies: ["none", "manufacturer"],
+    defaults: {
+      os_version: "Windows 11 24H2",
+      os_edition: "Enterprise",
+      os_activation: "Volume",
+      os_language: "en-US",
+      driver_pack_policy: "none",
+      vm_cores: 4,
+      vm_memory_mb: 8192,
+      vm_disk_size_gb: 96,
+      minimum_vm_memory_mb: 4096,
+      minimum_vm_disk_size_gb: 64
+    }
+  },
+  cloudosd_options: {
+    nodes: ["pve2"],
+    bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
+    storages: {
+      iso: ["local"],
+      disk: ["local-lvm"]
+    },
+    defaults: {
+      node: "pve2",
+      iso_storage: "local",
+      disk_storage: "local-lvm",
+      bridge: "vmbr0"
+    }
+  },
+  osdeploy_catalog: {
+    server_roles: ["base", "file_server"],
+    os_versions: ["Windows Server 2025"],
+    os_editions: ["Datacenter"],
+    os_languages: ["en-US"],
+    defaults: {
+      os_version: "Windows Server 2025",
+      os_edition: "Datacenter",
+      os_language: "en-US",
+      vm_cores: 4,
+      vm_memory_mb: 8192,
+      vm_disk_size_gb: 128,
+      minimum_vm_memory_mb: 4096,
+      minimum_vm_disk_size_gb: 96
+    }
+  },
+  osdeploy_options: {
+    nodes: ["pve2"],
+    bridges: ["vmbr0"],
+    network_targets: [
+      { kind: "bridge", value: "vmbr0", label: "vmbr0" },
+      { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
+    ],
+    storages: {
+      iso: ["local"],
+      disk: ["local-lvm"]
+    },
+    defaults: {
+      node: "pve2",
+      iso_storage: "local",
+      disk_storage: "local-lvm",
+      bridge: "vmbr0"
+    }
+  },
+  cloudosd_artifacts: [
+    {
+      id: "cloud-artifact",
+      build_sha: "cloud123",
+      osdcloud_module_version: "26.4.17.1",
+      readiness: "ready",
+      ready: true,
+      proxmox_volid: "local:iso/cloud.iso"
+    }
+  ],
+  osdeploy_artifacts: [
+    {
+      id: "server-artifact",
+      build_sha: "srv123",
+      os_version: "Windows Server 2025",
+      os_edition: "Datacenter",
+      readiness: "ready",
+      ready: true,
+      proxmox_volid: "local:iso/server.iso"
+    }
+  ],
+  cloudosd_batch_progress: {
+    summary: {
+      total: 1,
+      deployed: 1,
+      uploaded: 1,
+      assigned: 0,
+      contacted_enrolled: 0
+    },
+    runs: [
+      {
+        run_id: "run-cloud-1",
+        vm_name: "Gell-EC41E7EB",
+        vmid: 116,
+        done_count: 4,
+        total_count: 8,
+        failed_count: 0,
+        milestones: {
+          vm_created: { state: "done", label: "created", detail: "VM 116" },
+          pe_registered: { state: "done", label: "registered", detail: "PE" },
+          osdcloud_done: { state: "waiting", label: "waiting", detail: "OSDCloud" },
+          agent_heartbeat: { state: "waiting", label: "waiting", detail: "agent" },
+          v2_steps_done: { state: "waiting", label: "waiting", detail: "steps" },
+          intune_state: { state: "waiting", label: "waiting", detail: "Intune" }
+        }
+      }
+    ]
+  },
+  cloudosd_cache: {
+    storage: { ready: true, root: "/app/cache/cloudosd" },
+    summary: { ready: 2, total: 3 }
+  },
+  osdeploy_cache: {
+    storage: { ready: false, root: "/app/cache/osdeploy" },
+    summary: { ready: 1, total: 4 }
+  },
+  ubuntu_v2_sequences: [
+    {
+      id: "ubuntu-seq",
+      name: "Ubuntu Desktop",
+      step_count: 5
+    }
+  ]
+};
+
+const cloudosdPayloadForE2e = {
+  view: "overview",
+  catalog: { defaults: { minimum_vm_memory_mb: 4096 } },
+  proxmox_options: {},
+  artifacts: [],
+  ready_artifacts: [
+    {
+      id: "cloud-artifact",
+      build_sha: "cloud123",
+      readiness: "ready",
+      ready: true,
+      proxmox_volid: "local:iso/cloud.iso"
+    }
+  ],
+  active_runs: [
+    {
+      run_id: "run-cloud-1",
+      requested_vm_name: "Gell-EC41E7EB",
+      state: "provisioning"
+    }
+  ],
+  stale_failed_runs: [],
+  runs: [],
+  cloudosd_cache: {
+    storage: { ready: true, root: "/app/cache/cloudosd" },
+    summary: { ready: 2, total: 3 }
+  }
+};
+
 async function mockReadApis(page: Page) {
+  await page.route("**/api/provision/page", async (route) => {
+    await route.fulfill({ json: provisionPayloadForE2e });
+  });
+  await page.route("**/api/cloudosd/page", async (route) => {
+    await route.fulfill({ json: cloudosdPayloadForE2e });
+  });
+  await page.route("**/api/labs/page", async (route) => {
+    await route.fulfill({
+      json: {
+        labs: [
+          {
+            id: "lab-1",
+            name: "NTT Lab",
+            short_code: "ntt01",
+            group_tag: "NTT-Lab",
+            status: "ready",
+            network_cidr: "10.50.20.0/24"
+          }
+        ],
+        selected_lab: {
+          id: "lab-1",
+          name: "NTT Lab",
+          short_code: "ntt01",
+          group_tag: "NTT-Lab",
+          status: "ready",
+          network_cidr: "10.50.20.0/24"
+        },
+        findings: [],
+        fix_actions: [],
+        events: []
+      }
+    });
+  });
   await page.route("**/api/services", async (route) => {
     await route.fulfill({
       json: {
@@ -301,7 +527,18 @@ async function mockReadApis(page: Page) {
     });
   });
   await page.route("**/api/files", async (route) => {
-    await route.fulfill({ json: { files: [{ filename: "AutopilotAgent.msi", size: 4096, mtime: "2026-05-19T12:00:00+00:00" }] } });
+    await route.fulfill({
+      json: {
+        files: [
+          {
+            name: "AutopilotAgent.msi",
+            url: "/files/AutopilotAgent.msi",
+            size_bytes: 4096,
+            modified: "2026-05-19T12:00:00+00:00"
+          }
+        ]
+      }
+    });
   });
   await page.route("**/api/settings", async (route) => {
     await route.fulfill({
@@ -337,28 +574,137 @@ async function mockReadApis(page: Page) {
 test("renders the React shell without layout overlap", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeVisible();
-  const nav = page.getByRole("navigation", { name: "Operator workspace" });
-  await expect(nav).toBeVisible();
-  await expect(nav.getByRole("link", { name: "Signals Hub", exact: true })).toBeVisible();
-  await expect(nav.getByRole("link", { name: "OSDCloud Desktop", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Job Detail", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Run Detail", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "OSDCloud Run", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "OSDeploy Run", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Task Template", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Edit Sequence", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Start desktop run" })).toHaveAttribute("href", "/react/deploy");
+  await expect(page.getByRole("link", { name: "Open networks" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open signals" })).toBeVisible();
+  const routeMap = page.getByRole("navigation", { name: "Route map" });
+  const deployRoutes = routeMap.getByRole("group", { name: "Deploy" });
+  const buildRoutes = routeMap.getByRole("group", { name: "Build" });
+  const fleetRoutes = routeMap.getByRole("group", { name: "Fleet" });
+  await expect(deployRoutes.getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
+  await expect(buildRoutes.getByRole("link", { name: "Sequence Library operational" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
+  await expect(buildRoutes.getByRole("link", { name: "New Sequence operational" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
+  await expect(fleetRoutes.getByRole("link", { name: "Agent Download operational" })).toHaveAttribute("href", "/react/agent-download");
+  await expect(routeMap.getByRole("link", { name: "Job Detail operational" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "Run Detail read-only" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "OSDCloud Run operational" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "OSDeploy Run operational" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "Task Template read-only" })).toHaveCount(0);
+  await expect(routeMap.getByRole("link", { name: "Edit Task Sequence operational" })).toHaveCount(0);
   await expect(page.getByText("Jinja")).toHaveCount(0);
 
-  const hero = await page.locator(".workspace__globalbar").boundingBox();
+  const routeMapBox = await page.locator(".operator-route-map").boundingBox();
+  const viewport = page.viewportSize();
+  const hero = await page.locator(".outcome-topbar").boundingBox();
   const panel = await page.locator(".workspace__content").boundingBox();
 
+  expect(routeMapBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
   expect(hero).not.toBeNull();
   expect(panel).not.toBeNull();
-  if (!hero || !panel) {
+  if (!routeMapBox || !viewport || !hero || !panel) {
     throw new Error("React shell layout regions were not measurable.");
   }
+  expect(routeMapBox.y).toBeLessThan(viewport.height);
   expect(hero.y + hero.height).toBeLessThanOrEqual(panel.y + 1);
+});
+
+test("renders the guided Deploy journey without layout overlap", async ({ page }) => {
+  await mockReadApis(page);
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.goto("/react/deploy");
+
+  await expect(page.getByRole("heading", { name: "Deploy desktop: guided path" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Deploy outcomes" }).getByRole("link", { name: "Use existing VM Provision" })).toHaveAttribute("href", "/react/provision");
+  await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "OSDCloud Desktop start" })).toHaveAttribute("href", "/react/cloudosd");
+  await expect(page.getByRole("navigation", { name: "Route shortcuts" }).getByRole("link", { name: "Provision configure" })).toHaveAttribute("href", "/react/provision");
+  await expect(page.getByRole("heading", { name: "NTT Lab" })).toBeVisible();
+  await expect(page.getByText("Ready to deploy")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Labs" })).toHaveAttribute("href", "/react/labs");
+  await expect(page.getByRole("link", { name: "Step 4 Verify readiness Hardware hash, Autopilot upload, Intune visibility, and heartbeat proof." })).toHaveAttribute("href", "/react/vms");
+  await expect(page.getByText("CloudOSD media promoted")).toBeVisible();
+
+  const theme = await page.locator(".deploy-journey-shell").evaluate((shell) => {
+    const header = document.querySelector(".deploy-journey-header");
+    const menu = document.querySelector(".deploy-outcome-menu");
+    const title = document.querySelector("#deploy-journey-title");
+    if (!(header instanceof HTMLElement) || !(menu instanceof HTMLElement) || !(title instanceof HTMLElement)) {
+      throw new Error("Deploy journey theme regions were not measurable.");
+    }
+    return {
+      headerBackground: getComputedStyle(header).backgroundColor,
+      menuBackground: getComputedStyle(menu).backgroundColor,
+      shellBackground: getComputedStyle(shell).backgroundColor,
+      titleColor: getComputedStyle(title).color
+    };
+  });
+  expect(rgbBrightness(theme.shellBackground)).toBeLessThan(44);
+  expect(rgbBrightness(theme.headerBackground)).toBeLessThan(46);
+  expect(rgbBrightness(theme.menuBackground)).toBeLessThan(48);
+  expect(rgbBrightness(theme.titleColor)).toBeGreaterThan(230);
+
+  const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(desktopOverflow).toBe(false);
+  const journeyBox = await page.locator(".deploy-journey-shell").boundingBox();
+  const headingBox = await page.getByRole("heading", { name: "Deploy desktop: guided path" }).boundingBox();
+  expect(journeyBox).not.toBeNull();
+  expect(headingBox).not.toBeNull();
+  if (!journeyBox || !headingBox) {
+    throw new Error("Deploy journey layout regions were not measurable.");
+  }
+  expect(journeyBox.y).toBeLessThanOrEqual(headingBox.y + 140);
+
+  await page.setViewportSize({ width: 390, height: 980 });
+  await expect(page.getByRole("heading", { name: "Deploy desktop: guided path" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Deploy outcomes" }).getByRole("link", { name: "Deploy desktop OSDCloud" })).toBeVisible();
+  const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(mobileOverflow).toBe(false);
+});
+
+test("provision launch composer keeps hostname previews inside Windows limits", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockReadApis(page);
+  await page.goto("/react/provision");
+
+  await expect(page.getByRole("heading", { name: "Provision" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Run tag" }).fill("NTTENANT01-Desktop");
+  await expect(page.getByRole("textbox", { name: "Group tag" })).toHaveValue("NTTENANT01-Desktop");
+  await expect(page.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("ntt01-{index}");
+  await expect(page.getByText("ntt01-01").first()).toBeVisible();
+  await expect(page.getByText("8 / 15")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced OSDCloud Options" })).toBeVisible();
+
+  const launchGrid = page.locator(".provision-launch-grid");
+  await expect(launchGrid).toBeVisible();
+  await expect(page.locator(".provision-review-column")).toContainText("Launch Review");
+  const columnCount = await launchGrid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean).length);
+  expect(columnCount).toBe(3);
+});
+
+test("provision route keeps outcome rail from clipping content at in-app browser width", async ({ page }) => {
+  await page.setViewportSize({ width: 952, height: 1026 });
+  await mockReadApis(page);
+  await page.goto("/react/provision");
+
+  await expect(page.getByRole("heading", { name: "Provision" })).toBeVisible();
+  await expect(page.getByTestId("provision-builder-form")).toBeVisible();
+
+  const overflow = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth
+  }));
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 2);
+
+  const content = await page.locator(".workspace__content").boundingBox();
+  expect(content).not.toBeNull();
+  if (!content) {
+    throw new Error("Provision content region was not measurable.");
+  }
+  expect(content.x).toBeGreaterThanOrEqual(0);
+  expect(content.x + content.width).toBeLessThanOrEqual(952 + 2);
 });
 
 for (const viewport of [
@@ -446,7 +792,7 @@ for (const viewport of [
     await expect(page).toHaveURL(/\/react\/vms\/108$/);
     await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toBeVisible();
     await expect(
-      page.getByRole("navigation", { name: "Operator workspace" }).getByRole("link", { name: "VMs", exact: true })
+      page.getByRole("navigation", { name: "Outcome modes" }).getByRole("link", { name: "Fleet", exact: true })
     ).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Console VM 108" })).toBeVisible();
@@ -510,3 +856,25 @@ for (const viewport of [
     });
   }
 }
+
+test("renders outcome shell on desktop and mobile widths", async ({ page }) => {
+  await mockReadApis(page);
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.goto("/react-shell");
+
+  await expect(page.getByRole("navigation", { name: "Outcome modes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What are you trying to finish?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Quick routes" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" }).getByRole("link", { name: "Provision operational" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 980 });
+  await expect(page.getByRole("link", { name: "Deploy", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Set", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Deploy a Windows desktop" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route map" }).getByRole("link", { name: "Provision operational" })).toBeVisible();
+
+  const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(horizontalOverflow).toBe(false);
+});

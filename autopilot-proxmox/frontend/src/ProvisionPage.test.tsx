@@ -5,6 +5,10 @@ import { App } from "./App";
 
 const provisionPayload = {
   profiles: {
+    "dell-precision-3591": {
+      manufacturer: "Dell Inc.",
+      product: "Precision 3591"
+    },
     surface: {
       manufacturer: "Microsoft",
       product: "Surface Pro"
@@ -50,8 +54,8 @@ const provisionPayload = {
       { kind: "sdn_vnet", value: "lab101", label: "Lab 101", zone: "lab-simple" }
     ],
     storages: {
-      iso: ["local"],
-      disk: ["local-lvm"]
+      iso: ["local", "isos"],
+      disk: ["local-lvm", "ssdpool"]
     },
     defaults: {
       node: "pve2",
@@ -194,60 +198,168 @@ function renderProvision(store = new Map<string, string>()) {
   render(<App bootstrap={{ buildSha: "testsha", buildTime: "2026-05-20T12:00:00-04:00" }} />);
 }
 
+function namedControl(container: HTMLElement, name: string): HTMLElement {
+  const control = container.querySelector<HTMLElement>(`[name="${name}"]`);
+  if (!control) {
+    throw new Error(`Missing form control named ${name}`);
+  }
+  return control;
+}
+
 afterEach(() => {
   cleanup();
   window.localStorage.removeItem("pveautopilot.provision.templates.v1");
+  window.localStorage.removeItem("pveautopilot.provision.templates.seeded.v1");
   window.localStorage.removeItem("pveautopilot.provision.draft.v1");
   vi.unstubAllGlobals();
 });
 
 describe("ProvisionPage", () => {
-  test("renders the provision builder form instead of a generic payload list", async () => {
+  test("renders the provision launch layout with run-tag naming and CloudOSD readiness", async () => {
     mockFetch();
     renderProvision();
 
     expect(await screen.findByRole("heading", { name: "Provision" })).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Boot mode" })).toHaveValue("cloudosd");
+    expect(await screen.findByRole("radio", { name: "OSDCloud" })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Run tag" })).toHaveValue("pilot");
     // Operators no longer pick the OSDCloud artifact; the backend auto-selects it.
     expect(screen.queryByRole("combobox", { name: "OSDCloud artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Network target" })).toHaveValue("vmbr0");
     expect(screen.getByRole("option", { name: "Lab 101 (SDN: lab-simple)" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Task sequence" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(2);
-    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");
+    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("pilot-{index}");
+    expect(screen.getAllByText("pilot-01").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Provision VMs" })).toBeInTheDocument();
     expect(screen.getByText("Gell-EC41E7EB")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Advanced OSDCloud Options" })).toBeInTheDocument();
+    expect(screen.getByText("Artifact readiness")).toBeInTheDocument();
+    expect(screen.getByText(/cloud123/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Autopilot Enrollment" })).toBeInTheDocument();
+    expect(screen.getByText("Hash capture")).toBeInTheDocument();
 
-    const form = screen.getByTestId("provision-builder-form");
+    const form = await screen.findByTestId("provision-builder-form");
     expect(form).toHaveAttribute("method", "post");
     expect(form).toHaveAttribute("action", "/api/jobs/provision");
+    expect(namedControl(form, "boot_mode")).toHaveValue("cloudosd");
+    expect(namedControl(form, "profile")).toBeInTheDocument();
+    expect(namedControl(form, "count")).toBeInTheDocument();
+    expect(namedControl(form, "hostname_pattern")).toBeInTheDocument();
+    expect(namedControl(form, "group_tag")).toBeInTheDocument();
+    expect(namedControl(form, "cores")).toBeInTheDocument();
+    expect(namedControl(form, "memory_mb")).toBeInTheDocument();
+    expect(namedControl(form, "disk_size_gb")).toBeInTheDocument();
+    expect(namedControl(form, "network_bridge")).toBeInTheDocument();
+    expect(namedControl(form, "os_version")).toBeInTheDocument();
+  });
+
+  test("keeps the launch review in the desktop launch grid instead of the form bottom", async () => {
+    mockFetch();
+    renderProvision();
+
+    await screen.findByRole("heading", { name: "Provision" });
+
+    const form = await screen.findByTestId("provision-builder-form");
+    const launchGrid = form.querySelector(".provision-launch-grid");
+    expect(launchGrid).not.toBeNull();
+    expect(Array.from(launchGrid?.children ?? []).map((element) => element.className)).toEqual([
+      "provision-section-stack",
+      "provision-enrollment-stack",
+      "provision-review-column"
+    ]);
+
+    const reviewColumn = form.querySelector(".provision-review-column");
+    const launchReview = screen.getByLabelText("Launch review");
+    expect(reviewColumn).toContainElement(launchReview);
+    expect(reviewColumn).toContainElement(screen.getByRole("button", { name: "Provision VMs" }));
+    expect(form.lastElementChild).not.toHaveClass("utility-form-actions");
+  });
+
+  test("blocks unsafe manual hostname patterns and shows the normalized preview", async () => {
+    mockFetch();
+    renderProvision();
+
+    const hostnamePattern = await screen.findByRole("textbox", { name: "Hostname pattern" });
+    expect(hostnamePattern).toHaveValue("pilot-{index}");
+
+    fireEvent.change(hostnamePattern, { target: { value: "autopilot-{serial}" } });
+
+    expect(screen.getByRole("button", { name: "Provision VMs" })).toBeDisabled();
+    expect(screen.getAllByText("autopilot-SERIAL01").length).toBeGreaterThan(0);
+    expect(screen.getByText("18 / 15")).toBeInTheDocument();
+    expect(screen.getAllByText(/Normalized preview: autopilot-seria/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Provisioning is blocked/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset hostname from run tag" }));
+
+    expect(hostnamePattern).toHaveValue("pilot-{index}");
+    expect(screen.getByRole("button", { name: "Provision VMs" })).not.toBeDisabled();
+  });
+
+  test("fills down run tag to group tag and derives a Windows-safe hostname preview", async () => {
+    mockFetch();
+    renderProvision();
+
+    const runTag = await screen.findByRole("textbox", { name: "Run tag" });
+    fireEvent.change(runTag, { target: { value: "NTTENANT01-Desktop" } });
+
+    expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("NTTENANT01-Desktop");
+    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("ntt01-{index}");
+    expect(screen.getAllByText("ntt01-01").length).toBeGreaterThan(0);
+    expect(screen.getByText("8 / 15")).toBeInTheDocument();
+
+    fireEvent.change(runTag, { target: { value: "VeryLongTenantWorkstations" } });
+
+    expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("VeryLongTenantWorkstations");
+    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("verylongtena-{index}");
+    expect(screen.getAllByText("verylongtena-01").length).toBeGreaterThan(0);
+    expect(screen.getByText("15 / 15")).toBeInTheDocument();
   });
 
   test("switches boot-mode sections without losing shared form fields", async () => {
     mockFetch();
     renderProvision();
 
-    const bootMode = await screen.findByRole("combobox", { name: "Boot mode" });
-    fireEvent.change(bootMode, { target: { value: "osdeploy" } });
+    await screen.findByRole("radio", { name: "OSDCloud" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Hostname pattern" }), { target: { value: "lab-{index}" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "manual-group" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "VM count" }), { target: { value: "7" } });
+
+    fireEvent.click(screen.getByRole("radio", { name: "OSDeploy v2" }));
 
     expect(screen.queryByRole("combobox", { name: "OSDCloud artifact" })).not.toBeInTheDocument();
     // Operators no longer pick the OSDeploy Server artifact; the backend auto-selects it.
     expect(screen.queryByRole("combobox", { name: "OSDeploy artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Server role" })).toHaveValue("base");
     expect(screen.getByRole("combobox", { name: "OSDeploy network target" })).toHaveValue("vmbr0");
-    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("autopilot-{serial}");
+    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("lab-{index}");
+    expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("manual-group");
+    expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(7);
 
-    fireEvent.change(bootMode, { target: { value: "ubuntu" } });
+    const osdeployForm = screen.getByTestId("provision-builder-form");
+    expect(namedControl(osdeployForm, "boot_mode")).toHaveValue("osdeploy");
+    expect(namedControl(osdeployForm, "osdeploy_network_bridge")).toBeInTheDocument();
+    expect(namedControl(osdeployForm, "osdeploy_os_version")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Ubuntu v2" }));
     expect(screen.queryByRole("combobox", { name: "OSDeploy artifact" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Ubuntu v2 sequence" })).toHaveValue("");
     expect(screen.getByRole("spinbutton", { name: "Ubuntu template VMID" })).toHaveValue(250);
+    expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("lab-{index}");
+    expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("manual-group");
+    expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(7);
+
+    const ubuntuForm = screen.getByTestId("provision-builder-form");
+    expect(namedControl(ubuntuForm, "boot_mode")).toHaveValue("ubuntu");
+    expect(namedControl(ubuntuForm, "ubuntu_v2_sequence_id")).toBeInTheDocument();
+    expect(namedControl(ubuntuForm, "ubuntu_template_vmid")).toBeInTheDocument();
   });
 
   test("saves and restores named provision templates from the form", async () => {
     mockFetch();
     renderProvision();
 
-    await screen.findByRole("combobox", { name: "Boot mode" });
+    await screen.findByRole("radiogroup", { name: "Boot mode" });
     fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "ring0ivy24" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "ring0" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "VM count" }), { target: { value: "4" } });
@@ -261,9 +373,63 @@ describe("ProvisionPage", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Saved template" }), { target: { value: "Ring 0 Ivy24" } });
     fireEvent.click(screen.getByRole("button", { name: "Load template" }));
 
-    expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
-    expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
-    expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
+      expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
+      expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
+    });
+  });
+
+  test("seeds a few provision templates when none are saved yet", async () => {
+    mockFetch();
+    renderProvision();
+
+    const templateSelect = await screen.findByRole("combobox", { name: "Saved template" });
+    expect(screen.getByRole("option", { name: "Ring 0 Ivy24 Dell OSDCloud" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Single Desktop OSDCloud Test" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Server 2025 OSDeploy Base" })).toBeInTheDocument();
+
+    fireEvent.change(templateSelect, { target: { value: "Ring 0 Ivy24 Dell OSDCloud" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load template" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Run tag" })).toHaveValue("ring0ivy24");
+      expect(screen.getByRole("textbox", { name: "Group tag" })).toHaveValue("ring0ivy24");
+      expect(screen.getByRole("textbox", { name: "Hostname pattern" })).toHaveValue("ring0ivy24-{index}");
+      expect(screen.getByRole("spinbutton", { name: "VM count" })).toHaveValue(4);
+      expect(screen.getByRole("combobox", { name: "OEM profile" })).toHaveValue("dell-precision-3591");
+      expect(screen.getByRole("textbox", { name: "Serial prefix" })).toHaveValue("ring0");
+      expect(screen.getByRole("combobox", { name: "Disk storage" })).toHaveValue("ssdpool");
+    });
+  });
+
+  test("adds seeded templates alongside existing saved templates", async () => {
+    const store = new Map<string, string>([[
+      "pveautopilot.provision.templates.v1",
+      JSON.stringify({
+        "Custom Lab": {
+          name: "Custom Lab",
+          savedAt: "2026-06-23T20:00:00.000Z",
+          fields: {
+            boot_mode: "cloudosd",
+            run_tag: "custom-lab",
+            group_tag: "custom-lab",
+            count: "2",
+            hostname_pattern: "clab-{index}"
+          }
+        }
+      })
+    ]]);
+    mockFetch();
+    renderProvision(store);
+
+    await screen.findByRole("combobox", { name: "Saved template" });
+    expect(screen.getByRole("option", { name: "Custom Lab" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ring 0 Ivy24 Dell OSDCloud" })).toBeInTheDocument();
+
+    const savedTemplates = JSON.parse(store.get("pveautopilot.provision.templates.v1") ?? "{}") as Record<string, unknown>;
+    expect(savedTemplates["Custom Lab"]).toBeDefined();
+    expect(savedTemplates["Ring 0 Ivy24 Dell OSDCloud"]).toBeDefined();
   });
 
   test("restores the last draft after the provision page remounts", async () => {
@@ -271,7 +437,7 @@ describe("ProvisionPage", () => {
     mockFetch();
     renderProvision(store);
 
-    await screen.findByRole("combobox", { name: "Boot mode" });
+    await screen.findByRole("radiogroup", { name: "Boot mode" });
     fireEvent.change(screen.getByRole("textbox", { name: "Group tag" }), { target: { value: "draft-ring" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Serial prefix" }), { target: { value: "draft" } });
 
