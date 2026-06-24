@@ -797,6 +797,75 @@ describe("App", () => {
     expect((await screen.findAllByText(content)).length).toBeGreaterThan(0);
   });
 
+  test("surfaces credential add and edit paths from Settings", async () => {
+    mockFetch({
+      ...dashboardResponses,
+      "/api/settings": {
+        sections: [
+          {
+            section: "General",
+            source: "vars",
+            fields: [
+              {
+                key: "hypervisor_type",
+                label: "Hypervisor",
+                type: "select",
+                value: "proxmox",
+                options: ["proxmox", "utm"],
+                labels: { proxmox: "Proxmox", utm: "UTM" }
+              }
+            ]
+          },
+          {
+            section: "Identity",
+            source: "vault",
+            fields: [
+              {
+                key: "vault_entra_tenant_id",
+                label: "Entra tenant ID",
+                type: "text",
+                value: "",
+                source: "vault",
+                is_set: false
+              }
+            ]
+          }
+        ],
+        saved: false,
+        hypervisor_type: "proxmox",
+        proxmox_bootstrap: {
+          host: "pve2",
+          disk_storage: "local-lvm",
+          iso_storage: "local",
+          root_password_set: true,
+          default_token_id: "autopilot@pve!autopilot"
+        }
+      }
+    });
+
+    renderRoute("/react/settings");
+
+    expect(await screen.findByRole("heading", { name: "Settings map" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Filter settings" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Credentials" })).toHaveAttribute("href", "/react/credentials");
+    expect(screen.getByRole("link", { name: "New credential" })).toHaveAttribute("href", "/react/credentials/new");
+    expect(screen.getByRole("link", { name: "Monitoring settings" })).toHaveAttribute("href", "/react/monitoring/settings");
+    expect(screen.getByRole("heading", { name: "Credential access" })).toBeInTheDocument();
+    expect(await screen.findByText("ACME Domain Join")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Edit ACME Domain Join" })).toHaveAttribute(
+      "href",
+      "/react/credentials/7/edit"
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Filter settings" }), {
+      target: { value: "tenant" }
+    });
+
+    expect(screen.getByRole("heading", { name: "Identity" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "General" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Save settings" })).toHaveLength(2);
+  });
+
   test("renders Files shelf URLs and CRUD actions", async () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = mockFetch({
