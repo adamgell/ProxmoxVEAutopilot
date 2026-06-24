@@ -779,8 +779,16 @@ function Invoke-CaptureAutopilotHash {
         throw "Autopilot hardware hash CSV was not created at $csvPath"
     }
 
+    $isV2 = (
+        ($Config.PSObject.Properties.Match('engine').Count -gt 0 -and [string] $Config.engine -eq 'v2') -or
+        ($Config.PSObject.Properties.Match('api_version').Count -gt 0 -and [string] $Config.api_version -eq '2')
+    )
     $rows = @(Import-Csv -LiteralPath $csvPath)
     if ($rows.Count -lt 1) {
+        if ($isV2) {
+            Write-OsdLog "Autopilot hardware hash CSV is empty; skipping hash upload for v2 run. path=$csvPath"
+            return
+        }
         throw "Autopilot hardware hash CSV is empty: $csvPath"
     }
     $row = $rows[0]
@@ -791,14 +799,15 @@ function Invoke-CaptureAutopilotHash {
         $capturedSerial = $serial
     }
     if ([string]::IsNullOrWhiteSpace($hardwareHash)) {
+        if ($isV2) {
+            Write-OsdLog "Autopilot hardware hash CSV is missing Hardware Hash; skipping hash upload for v2 run. path=$csvPath"
+            return
+        }
         throw "Autopilot hardware hash CSV missing Hardware Hash column: $csvPath"
     }
 
     $hashUploadPath = '/osd/client/hash'
-    if (
-        ($Config.PSObject.Properties.Match('engine').Count -gt 0 -and [string] $Config.engine -eq 'v2') -or
-        ($Config.PSObject.Properties.Match('api_version').Count -gt 0 -and [string] $Config.api_version -eq '2')
-    ) {
+    if ($isV2) {
         $hashUploadPath = '/osd/v2/agent/hash'
     }
 
@@ -1012,12 +1021,131 @@ function Invoke-OsdAction {
                 Write-OsdLog 'wait_agent_heartbeat is satisfied by the CloudOSD first-boot heartbeat gate.'
             }
         }
+        'join_domain_role' { Invoke-JoinDomainRole -Action $Action }
+        'verify_ad_domain_join' { Invoke-VerifyDomainJoinRole -Action $Action }
         'handoff_to_oobe' { Invoke-HandoffToOobe }
         'install_package' {
             Invoke-InstallPackage -Action $Action -Config $Config -BearerToken $BearerToken
         }
         default { throw "unknown OSD step kind: $kind" }
     }
+}
+
+function Get-OsdDomainCredentialUser {
+    param([Parameter(Mandatory)] [object] $Params)
+
+    $username = [string] (Get-OsdObjectProperty -Value $Params -Name 'domain_join_username')
+    if ([string]::IsNullOrWhiteSpace($username)) {
+        $username = [string] (Get-OsdObjectProperty -Value $Params -Name 'username')
+    }
+    if ([string]::IsNullOrWhiteSpace($username)) {
+        throw 'domain join username is missing'
+    }
+    if ($username.Contains('\') -or $username.Contains('@')) {
+        return $username
+    }
+
+    $credentialDomain = [string] (Get-OsdObjectProperty -Value $Params -Name 'credential_domain')
+    if ([string]::IsNullOrWhiteSpace($credentialDomain)) {
+        $credentialDomain = [string] (Get-OsdObjectProperty -Value $Params -Name 'domain_fqdn')
+    }
+    if ([string]::IsNullOrWhiteSpace($credentialDomain)) {
+        return $username
+    }
+    if ($credentialDomain.Contains('.')) {
+        return "$username@$credentialDomain"
+    }
+    return "$credentialDomain\$username"
+}
+
+function Test-OsdDomainNameMatch {
+    param(
+        [string] $Observed,
+        [object] $Params
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Observed)) { return $false }
+    $expected = @()
+    $domainFqdn = [string] (Get-OsdObjectProperty -Value $Params -Name 'domain_fqdn')
+    if (-not [string]::IsNullOrWhiteSpace($domainFqdn)) { $expected += $domainFqdn }
+    $acceptable = Get-OsdObjectProperty -Value $Params -Name 'acceptable_domain_names'
+    if ($acceptable) {
+        foreach ($name in @($acceptable)) {
+            if (-not [string]::IsNullOrWhiteSpace([string] $name)) {
+                $expected += [string] $name
+            }
+        }
+    }
+    foreach ($name in ($expected | Select-Object -Unique)) {
+        if ($Observed -ieq $name) { return $true }
+    }
+    return $false
+}
+
+function Invoke-JoinDomainRole {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $params = $Action.params
+    if (-not $params) { throw 'domain join parameters are missing' }
+    $domainFqdn = [string] (Get-OsdObjectProperty -Value $params -Name 'domain_fqdn')
+    if ([string]::IsNullOrWhiteSpace($domainFqdn)) {
+        throw 'domain join target domain is missing'
+    }
+    $password = [string] (Get-OsdObjectProperty -Value $params -Name 'domain_join_password')
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        $password = [string] (Get-OsdObjectProperty -Value $params -Name 'password')
+    }
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        throw 'domain join password is missing'
+    }
+
+    $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    if ($computer.PartOfDomain -and (Test-OsdDomainNameMatch -Observed ([string] $computer.Domain) -Params $params)) {
+        Write-OsdLog "Computer is already joined to $($computer.Domain)."
+        return
+    }
+
+    $credentialUser = Get-OsdDomainCredentialUser -Params $params
+    $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential($credentialUser, $securePassword)
+    $addComputerParams = @{
+        DomainName = $domainFqdn
+        Credential = $credential
+        Force = $true
+        ErrorAction = 'Stop'
+    }
+    $ouPath = [string] (Get-OsdObjectProperty -Value $params -Name 'ou_path')
+    if (-not [string]::IsNullOrWhiteSpace($ouPath)) {
+        $addComputerParams.OUPath = $ouPath
+    }
+    $domainController = [string] (Get-OsdObjectProperty -Value $params -Name 'domain_controller_ipv4')
+    if (
+        -not [string]::IsNullOrWhiteSpace($domainController) -and
+        $domainController -notmatch '^\d{1,3}(\.\d{1,3}){3}$'
+    ) {
+        $addComputerParams.Server = $domainController
+    } elseif (-not [string]::IsNullOrWhiteSpace($domainController)) {
+        Write-OsdLog "Domain controller hint is an IP address; using domain DNS lookup for Add-Computer. hint=$domainController"
+    }
+
+    Write-OsdLog "Joining computer to AD domain $domainFqdn."
+    Add-Computer @addComputerParams
+    Write-OsdLog "Domain join command completed; reboot is required."
+}
+
+function Invoke-VerifyDomainJoinRole {
+    param([Parameter(Mandatory)] [object] $Action)
+
+    $params = $Action.params
+    if (-not $params) { throw 'domain join verification parameters are missing' }
+    $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    if (-not $computer.PartOfDomain) {
+        throw "computer is not domain joined; current domain/workgroup is $($computer.Domain)"
+    }
+    if (-not (Test-OsdDomainNameMatch -Observed ([string] $computer.Domain) -Params $params)) {
+        throw "computer is joined to $($computer.Domain), not the expected domain"
+    }
+    Write-OsdLog "Verified AD domain membership: $($computer.Domain)."
 }
 
 function Send-V2StepResult {
@@ -1066,7 +1194,9 @@ function Invoke-OsdV2Client {
         'install_package',
         'install_qga',
         'install_qga_watchdog',
+        'join_domain_role',
         'verify_qga',
+        'verify_ad_domain_join',
         'wait_agent_heartbeat'
     )
 
@@ -1108,6 +1238,10 @@ function Invoke-OsdV2Client {
                 $token = Send-V2StepResult -Config $Config -Action $action `
                     -Status success -Message 'ok' -BearerToken $token
                 Write-OsdLog "OSD v2 step completed id=$($action.step_id) kind=$kind"
+                if ([string] $action.reboot_behavior -eq 'required') {
+                    Write-OsdLog "OSD v2 step id=$($action.step_id) kind=$kind requested reboot."
+                    return 'reboot_required'
+                }
             } catch {
                 $token = Send-V2StepResult -Config $Config -Action $action `
                     -Status failed -Message $_.Exception.Message -BearerToken $token
@@ -1140,7 +1274,11 @@ try {
         $engine = 'v2'
     }
     if ($engine -eq 'v2') {
-        Invoke-OsdV2Client -Config $cfg
+        $v2Result = Invoke-OsdV2Client -Config $cfg
+        if ($v2Result -eq 'reboot_required') {
+            Write-OsdLog 'OSD v2 client requested a reboot.'
+            exit 3010
+        }
         Invoke-OsdeployFirstBootReadiness -Config $cfg
         Invoke-OsdeployAgentBootstrapHeartbeat -Config $cfg
         Write-OsdLog 'OSD v2 client completed.'

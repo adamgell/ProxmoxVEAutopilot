@@ -488,6 +488,39 @@ def sync_ts_progress_for_run(conn: Connection, run_id: str) -> int:
     )
 
 
+def mark_lab_assets_complete_for_run(conn: Connection, run_id: str) -> int:
+    """Promote Lab Bubble assets once their CloudOSD run is complete."""
+    try:
+        from web import lab_bubbles_pg
+    except Exception:
+        return 0
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT id
+            FROM lab_bubble_assets
+            WHERE run_id = %s
+              AND membership_state = 'provisioning'
+            """,
+            (run_id,),
+        ).fetchall()
+    except errors.UndefinedTable:
+        conn.rollback()
+        return 0
+
+    changed = 0
+    for row in rows:
+        lab_bubbles_pg.update_asset(
+            conn,
+            str(row["id"]),
+            membership_state="active",
+            evidence_state="confirmed",
+        )
+        changed += 1
+    return changed
+
+
 def sync_all_ts_progress(conn: Connection) -> int:
     changed = 0
     try:
@@ -673,6 +706,7 @@ def v2_completion_status(
 
 _AGENT_OPERATOR_RETRY_KINDS = {
     "capture_autopilot_hash",
+    "join_domain_role",
     "verify_ad_domain_join",
 }
 
@@ -1988,6 +2022,7 @@ def mark_complete_from_heartbeat(
                 (heartbeat_at, run_id),
             )
             conn.commit()
+            mark_lab_assets_complete_for_run(conn, run_id)
             append_event(
                 conn,
                 run_id=run_id,

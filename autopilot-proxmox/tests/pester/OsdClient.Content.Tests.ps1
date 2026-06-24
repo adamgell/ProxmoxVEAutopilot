@@ -3,6 +3,20 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
     $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
     $script:clientPath = Join-Path $repoRoot 'files\osd-client\OsdClient.ps1'
+
+    function New-TestCommandShimIfMissing {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Name
+        )
+
+        if (Get-Command $Name -ErrorAction SilentlyContinue) {
+            return $false
+        }
+
+        Set-Item -Path "Function:\global:$Name" -Value {}
+        return $true
+    }
 }
 
 Describe 'OsdClient content materialization' {
@@ -174,6 +188,8 @@ Describe 'OsdClient content materialization' {
         $script:Requests[0].Path | Should -Be '/osd/v2/agent/register'
         $script:Requests[0].Body.run_id | Should -Be 'run-1'
         $script:Requests[0].Body.agent_id | Should -Be 'osd-1'
+        $script:Requests[0].Body.capabilities | Should -Contain 'join_domain_role'
+        $script:Requests[0].Body.capabilities | Should -Contain 'verify_ad_domain_join'
         $script:Requests[1].Path | Should -Be '/osd/v2/agent/next'
         $script:Requests[1].BearerToken | Should -Be 'token-2'
         $script:Requests[2].Path | Should -Be '/osd/v2/agent/step/step-1/result'
@@ -182,6 +198,53 @@ Describe 'OsdClient content materialization' {
         $script:Requests[3].Path | Should -Be '/osd/v2/agent/next'
         $script:Requests[4].Path | Should -Be '/osd/v2/agent/phase-complete'
         Should -Invoke Invoke-InstallPackage -Times 1 -Exactly
+    }
+
+    It 'returns a reboot handoff after a required domain join v2 step succeeds' {
+        Mock Invoke-OsdRequest {
+            $script:Requests += [pscustomobject]@{
+                Path = $Path
+                Body = $Body
+                BearerToken = $BearerToken
+            }
+            if ($Path -eq '/osd/v2/agent/register') {
+                return [pscustomobject]@{ bearer_token = 'token-2' }
+            }
+            if ($Path -eq '/osd/v2/agent/next') {
+                return [pscustomobject]@{
+                    bearer_token = 'token-3'
+                    actions = @(
+                        [pscustomobject]@{
+                            step_id = 'join-1'
+                            kind = 'join_domain_role'
+                            phase = 'full_os'
+                            reboot_behavior = 'required'
+                            params = [pscustomobject]@{
+                                domain_fqdn = 'home.gell.one'
+                                domain_join_username = 'svc-cloudjoin'
+                                domain_join_password = 'join-secret'
+                            }
+                        }
+                    )
+                }
+            }
+            return [pscustomobject]@{ bearer_token = 'token-4' }
+        }
+        Mock Invoke-JoinDomainRole {}
+        $config = [pscustomobject]@{
+            run_id = 'run-1'
+            agent_id = 'osd-1'
+            phase = 'full_os'
+            bearer_token = 'token-1'
+            flask_base_url = 'https://autopilot.local'
+        }
+
+        $result = Invoke-OsdV2Client -Config $config
+
+        $result | Should -Be 'reboot_required'
+        $script:Requests[2].Path | Should -Be '/osd/v2/agent/step/join-1/result'
+        $script:Requests[2].Body.status | Should -Be 'success'
+        Should -Invoke Invoke-JoinDomainRole -Times 1 -Exactly
     }
 
     It 'uploads captured hashes to the v2 hash endpoint for v2 configs' {
@@ -241,6 +304,53 @@ Describe 'OsdClient content materialization' {
         }
     }
 
+    It 'does not block v2 full-OS progress when the hardware hash CSV is empty' {
+        $osdRoot = Join-Path $env:ProgramData 'ProxmoxVEAutopilot\OSD'
+        New-Item -ItemType Directory -Path $osdRoot -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $osdRoot 'Get-WindowsAutopilotInfo.ps1') `
+            -Value '# fake autopilot hash script' `
+            -Encoding ASCII
+
+        $createdCimShim = New-TestCommandShimIfMissing -Name 'Get-CimInstance'
+        function global:powershell.exe {
+            $outIndex = [Array]::IndexOf($args, '-OutputFile')
+            if ($outIndex -lt 0) { throw 'missing -OutputFile' }
+            $outFile = [string] $args[$outIndex + 1]
+            'Device Serial Number,Windows Product ID,Hardware Hash' |
+                Set-Content -LiteralPath $outFile -Encoding ASCII
+            $global:LASTEXITCODE = 0
+        }
+        try {
+            Mock Get-CimInstance {
+                return [pscustomobject]@{ SerialNumber = 'CLOUDOSD-SERIAL' }
+            }
+            Mock Invoke-OsdRequest {
+                $script:Requests += [pscustomobject]@{
+                    Path = $Path
+                    Body = $Body
+                    BearerToken = $BearerToken
+                }
+                return @{}
+            }
+            $config = [pscustomobject]@{
+                engine = 'v2'
+                run_id = 'run-1'
+                agent_id = 'osd-1'
+                flask_base_url = 'https://autopilot.local'
+            }
+
+            { Invoke-CaptureAutopilotHash -Config $config -BearerToken 'token-1' } |
+                Should -Not -Throw
+            $script:Requests.Count | Should -Be 0
+        }
+        finally {
+            Remove-Item Function:\powershell.exe -ErrorAction SilentlyContinue
+            if ($createdCimShim) {
+                Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'treats wait_agent_heartbeat as already satisfied for v2 CloudOSD clients' {
         $action = [pscustomobject]@{ kind = 'wait_agent_heartbeat' }
         $config = [pscustomobject]@{
@@ -252,6 +362,96 @@ Describe 'OsdClient content materialization' {
 
         { Invoke-OsdAction -Action $action -Config $config -BearerToken 'token-1' } |
             Should -Not -Throw
+    }
+
+    It 'joins an AD domain using v2 resolved domain join parameters' {
+        $script:AddComputerParams = $null
+        $createdCimShim = New-TestCommandShimIfMissing -Name 'Get-CimInstance'
+        $createdAddComputerShim = $false
+        if (-not (Get-Command Add-Computer -ErrorAction SilentlyContinue)) {
+            function global:Add-Computer {
+                param(
+                    [string]$DomainName,
+                    [System.Management.Automation.PSCredential]$Credential,
+                    [switch]$Force,
+                    [string]$OUPath,
+                    [string]$Server
+                )
+            }
+            $createdAddComputerShim = $true
+        }
+        try {
+            Mock Get-CimInstance {
+                return [pscustomobject]@{
+                    PartOfDomain = $false
+                    Domain = 'WORKGROUP'
+                }
+            }
+            Mock Add-Computer {
+                param(
+                    [string]$DomainName,
+                    [System.Management.Automation.PSCredential]$Credential,
+                    [switch]$Force,
+                    [object]$ErrorAction,
+                    [string]$OUPath,
+                    [string]$Server
+                )
+                $script:AddComputerParams = $PSBoundParameters
+            }
+            $action = [pscustomobject]@{
+                kind = 'join_domain_role'
+                params = [pscustomobject]@{
+                    domain_fqdn = 'home.gell.one'
+                    credential_domain = 'HOME'
+                    domain_join_username = 'svc-cloudjoin'
+                    domain_join_password = 'join-secret'
+                    ou_path = 'OU=CloudOSD,DC=home,DC=gell,DC=one'
+                    domain_controller_ipv4 = '192.168.2.10'
+                }
+            }
+
+            Invoke-OsdAction -Action $action -Config ([pscustomobject]@{}) -BearerToken 'token-1'
+
+            $script:AddComputerParams.DomainName | Should -Be 'home.gell.one'
+            $script:AddComputerParams.OUPath | Should -Be 'OU=CloudOSD,DC=home,DC=gell,DC=one'
+            $script:AddComputerParams.Server | Should -BeNullOrEmpty
+            $script:AddComputerParams.Credential.UserName | Should -Be 'HOME\svc-cloudjoin'
+            Should -Invoke Add-Computer -Times 1 -Exactly
+        }
+        finally {
+            if ($createdCimShim) {
+                Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+            }
+            if ($createdAddComputerShim) {
+                Remove-Item Function:\Add-Computer -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'verifies AD domain membership for v2 domain join checks' {
+        $createdCimShim = New-TestCommandShimIfMissing -Name 'Get-CimInstance'
+        try {
+            Mock Get-CimInstance {
+                return [pscustomobject]@{
+                    PartOfDomain = $true
+                    Domain = 'home.gell.one'
+                }
+            }
+            $action = [pscustomobject]@{
+                kind = 'verify_ad_domain_join'
+                params = [pscustomobject]@{
+                    domain_fqdn = 'home.gell.one'
+                }
+            }
+
+            { Invoke-OsdAction -Action $action -Config ([pscustomobject]@{}) -BearerToken 'token-1' } |
+                Should -Not -Throw
+        }
+        finally {
+            if ($createdCimShim) {
+                Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It 'installs AutopilotAgent for OSDeploy v2 agent install steps' {

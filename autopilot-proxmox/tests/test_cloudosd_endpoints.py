@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import urllib.parse
+from datetime import datetime, timezone
 from hashlib import sha1
 
 import pytest
@@ -213,7 +214,7 @@ def test_cloudosd_run_records_bubble_membership(
     cloudosd_client,
     pg_conn,
 ):
-    from web import lab_bubbles_pg
+    from web import cloudosd_pg, lab_bubbles_pg, ts_engine_pg
 
     bubble = lab_bubbles_pg.create_bubble(pg_conn, name="ACME Lab")
     artifact = _create_artifact(pg_conn)
@@ -237,6 +238,26 @@ def test_cloudosd_run_records_bubble_membership(
     assert assets[0]["vmid"] == 245
     assert assets[0]["run_id"] == run["run_id"]
     assert assets[0]["membership_state"] == "provisioning"
+
+    ts_engine_pg.mark_steps_done_by_kind(
+        pg_conn,
+        run_id=run["run_id"],
+        kinds={"capture_autopilot_hash", "wait_agent_heartbeat"},
+        agent_id="test-agent",
+    )
+    completed = cloudosd_pg.mark_complete_from_heartbeat(
+        pg_conn,
+        run_id=run["run_id"],
+        heartbeat_at=datetime.now(timezone.utc),
+        heartbeat={
+            "domain_joined": False,
+            "domain_name": "",
+        },
+    )
+    assert completed["state"] == "complete"
+    assets = lab_bubbles_pg.list_assets(pg_conn, bubble["id"])
+    assert assets[0]["membership_state"] == "active"
+    assert assets[0]["evidence_state"] == "confirmed"
 
 
 def test_cloudosd_run_rejects_missing_bubble_before_run_create(
@@ -944,6 +965,95 @@ def test_cloudosd_domain_join_with_dc_ip_uses_full_os_join_role(
     assert package.status_code == 200, package.text
     assert "domain_join" not in package.json()
     assert "join-secret-for-tests" not in package.text
+
+
+def test_cloudosd_run_allows_operator_retry_for_failed_domain_join_role(
+    cloudosd_client,
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg, ts_engine_pg
+
+    cipher = _patch_sequence_cipher(monkeypatch, tmp_path)
+    sequence_id = _create_domain_join_sequence(
+        pg_conn,
+        cipher,
+        domain_controller_ipv4="192.168.2.210",
+    )
+    artifact = _create_artifact(pg_conn)
+    monkeypatch.setattr(
+        web_app,
+        "_load_proxmox_config",
+        lambda: {
+            "proxmox_node": "pve",
+            "proxmox_snippets_storage": "local",
+            "proxmox_host": "10.0.0.1",
+        },
+    )
+
+    response = cloudosd_client.post(
+        "/api/jobs/provision",
+        data={
+            "boot_mode": "cloudosd",
+            "artifact_id": artifact["id"],
+            "count": "1",
+            "cores": "4",
+            "memory_mb": "8192",
+            "disk_size_gb": "80",
+            "group_tag": "GellNative",
+            "profile": "",
+            "hostname_pattern": "GELL-AD-{index}",
+            "sequence_id": str(sequence_id),
+            "node": "pve",
+            "iso_storage": "local",
+            "storage": "local-lvm",
+            "network_bridge": "vmbr0",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    run_id = next(
+        job["args"]["cloudosd_run_id"]
+        for job in jobs_pg.list_jobs(limit=20)
+        if job["job_type"] == "provision_cloudosd"
+    )
+    join_step = next(
+        step
+        for step in ts_engine_pg.list_run_steps(pg_conn, run_id)
+        if step["kind"] == "join_domain_role"
+    )
+    pg_conn.execute(
+        """
+        UPDATE ts_run_plan_steps
+        SET state = 'failed',
+            attempt = 1,
+            claimed_by = 'osd-fullos-gell-ad',
+            last_error = 'domain controller hint was passed as a server name'
+        WHERE id = %s
+        """,
+        (join_step["id"],),
+    )
+    pg_conn.commit()
+
+    detail = cloudosd_client.get(f"/api/cloudosd/runs/{run_id}")
+    assert detail.status_code == 200, detail.text
+    join_detail = next(
+        step for step in detail.json()["v2_steps"]
+        if step["kind"] == "join_domain_role"
+    )
+    assert join_detail["retryable"] is True
+    assert "Retry join_domain_role" in detail.json()["v2_operator_status"]["next_actions"]
+
+    retry = cloudosd_client.post(
+        f"/api/cloudosd/runs/{run_id}/v2/steps/{join_step['id']}/retry",
+    )
+    assert retry.status_code == 200, retry.text
+    retried = retry.json()["step"]
+    assert retried["state"] == "pending"
+    assert retried["attempt"] == 0
+    events = cloudosd_pg.list_events(pg_conn, run_id)
+    assert any(event["event_type"] == "cloudosd_v2_step_requeued" for event in events)
 
 
 def test_cloudosd_workgroup_run_generates_visible_local_admin_credential(

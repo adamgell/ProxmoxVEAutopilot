@@ -264,7 +264,9 @@ _POWER_SHELL_OSD_CLIENT_FULL_OS_KINDS = {
     "install_package",
     "install_qga",
     "install_qga_watchdog",
+    "join_domain_role",
     "verify_qga",
+    "verify_ad_domain_join",
     "wait_agent_heartbeat",
 }
 
