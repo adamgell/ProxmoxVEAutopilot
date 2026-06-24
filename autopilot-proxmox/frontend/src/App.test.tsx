@@ -699,19 +699,42 @@ describe("App", () => {
     window.history.pushState({}, "", "/");
   });
 
-  test("renders the protected shell status without operational controls", () => {
+  test("renders the outcome control room shell without legacy workspace controls", () => {
     renderRoute("/react-shell");
 
-    expect(screen.getByRole("heading", { name: "Proxmox VE Autopilot" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Operator workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Proxmox VE Autopilot home" })).toHaveAttribute(
+      "href",
+      "/react-shell"
+    );
+    expect(screen.getByRole("heading", { name: "What are you trying to finish?" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Outcome modes" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Route map" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Operator workspace" })).not.toBeInTheDocument();
     expect(screen.getByRole("banner", { name: "Global console status" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Proxmox VE Autopilot dashboard" })[0]).toHaveAttribute("href", "/react/dashboard");
-    expect(screen.getByRole("combobox", { name: "Search console" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search console" })).toHaveAttribute(
+      "placeholder",
+      "Type a VM, job, serial, route, or run ID"
+    );
     expect(screen.getByText("Local Operator")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Log out Local Operator" })).toHaveAttribute("href", "/auth/logout");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#react-content");
-    expect(screen.getAllByRole("link", { name: "Signals Hub" })[0]).toHaveAttribute("href", "/react/monitoring");
-    expect(screen.getAllByRole("link", { name: "OSDCloud Desktop" })[0]).toHaveAttribute("href", "/react/cloudosd");
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/react-shell");
+    expect(screen.getByRole("link", { name: "Deploy" })).toHaveAttribute("href", "/react/deploy");
+    expect(screen.getByRole("link", { name: "Build" })).toHaveAttribute("href", "/react/task-engine");
+    expect(screen.getByRole("link", { name: "Infra" })).toHaveAttribute("href", "/react/networks");
+    expect(screen.getByRole("link", { name: "Fleet" })).toHaveAttribute("href", "/react/vms");
+    expect(screen.getByRole("link", { name: "Set" })).toHaveAttribute("href", "/react/settings");
+    expect(screen.getByRole("link", { name: "Signals Hub read-only" })).toHaveAttribute(
+      "href",
+      "/react/monitoring"
+    );
+    expect(screen.getByRole("link", { name: "OSDCloud Desktop operational" })).toHaveAttribute(
+      "href",
+      "/react/cloudosd"
+    );
+    expect(screen.getByRole("link", { name: "Labs operational" })).toHaveAttribute("href", "/react/labs");
+    expect(screen.getByRole("link", { name: "Provision operational" })).toHaveAttribute("href", "/react/provision");
+    expect(screen.getByRole("link", { name: "Create managed lab Labs" })).toHaveAttribute("href", "/react/labs");
     expect(screen.queryByRole("link", { name: "Job Detail" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Run Detail" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "OSDCloud Run" })).not.toBeInTheDocument();
@@ -722,8 +745,8 @@ describe("App", () => {
     expect(screen.queryByRole("link", { name: "New Sequence" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Sequences" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "UTM VMs" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("heading", { name: "Deploy" }).length).toBeGreaterThan(1);
-    expect(screen.getByText("Choose the deployment path, then open the guarded execution page.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Deploy" })).toBeInTheDocument();
+    expect(screen.getByText(/Pick the operator outcome first/)).toBeInTheDocument();
     expect(screen.queryByText("Jinja")).not.toBeInTheDocument();
     expect(screen.getByText("Build abc1234")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /provision/i })).not.toBeInTheDocument();

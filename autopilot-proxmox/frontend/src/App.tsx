@@ -6,10 +6,12 @@ import { CloudDevicesPage } from "./pages/CloudDevicesPage";
 import { CloudosdPage } from "./pages/CloudosdPage";
 import { CredentialsPage } from "./pages/CredentialsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DeployJourneyPage } from "./pages/DeployJourneyPage";
 import { DeploymentRunPage } from "./pages/DeploymentRunPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HashesPage } from "./pages/HashesPage";
 import { InstallTrackingPage } from "./pages/InstallTrackingPage";
+import { LabsPage } from "./pages/LabsPage";
 import { JobDetailPage, RunDetailPage, RunsPage } from "./pages/JobAndRunsPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -64,6 +66,9 @@ export function App({ bootstrap }: AppProps) {
   if (path === "/react/install-tracking") {
     return <InstallTrackingPage bootstrap={bootstrap} />;
   }
+  if (path === "/react/labs") {
+    return <LabsPage bootstrap={bootstrap} />;
+  }
   if (path === "/react/networks") {
     return <NetworksPage bootstrap={bootstrap} />;
   }
@@ -96,6 +101,9 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/provision") {
     return <ProvisionPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/deploy") {
+    return <DeployJourneyPage bootstrap={bootstrap} />;
   }
   if (path === "/react/cloudosd") {
     return <CloudosdPage bootstrap={bootstrap} />;
