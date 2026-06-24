@@ -1643,6 +1643,74 @@ def test_cloudosd_autopilot_upload_uses_lab_entra_boundary_without_persisting_se
     assert "lab-secret-value" not in str(queued)
 
 
+def test_cloudosd_autopilot_upload_lab_boundary_without_credential_ref_blocks_controller_fallback(
+    cloudosd_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import app as web_app, cloudosd_pg, jobs_pg, lab_bubbles_pg
+
+    hash_dir = tmp_path / "hashes"
+    hash_dir.mkdir()
+    monkeypatch.setattr(web_app, "HASH_DIR", hash_dir)
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {
+        "vault_entra_app_id": "controller-app-id",
+        "vault_entra_tenant_id": "controller-tenant-id",
+        "vault_entra_app_secret": "controller-secret-value",
+    })
+    (hash_dir / "20260514T032020Z-vm254-Lab-254-AP8-osd-v2_hwid.csv").write_text(
+        "Device Serial Number,Windows Product ID,Hardware Hash,Group Tag\n"
+        "Lab-254-AP8,,hardware-hash,LabZ1\n",
+        encoding="utf-8",
+    )
+    bubble = lab_bubbles_pg.create_bubble(pg_conn, name="LabZ1 Missing Credential Ref")
+    service = lab_bubbles_pg.add_service(
+        pg_conn,
+        bubble["id"],
+        service_kind="entra",
+        service_name="Controller-Matching Entra",
+        scope="external",
+        readiness_state="ready",
+        evidence_summary={
+            "tenant_id": "controller-tenant-id",
+            "client_id": "controller-app-id",
+            "tenant_name": "Controller Tenant",
+        },
+    )
+    run = _create_cloudosd_run(
+        cloudosd_client,
+        pg_conn,
+        vm_name="Lab-254-AP8",
+        vm_group_tag="LabZ1",
+        bubble_id=bubble["id"],
+    )
+    cloudosd_pg.set_run_identity(
+        pg_conn,
+        run_id=run["run_id"],
+        vmid=254,
+        vm_uuid="dededede-bbbb-cccc-dddd-eeeeeeeeeeee",
+        mac="52:54:00:aa:bb:f8",
+        node="pve",
+        computer_name="Lab-254-AP8",
+    )
+
+    upload = cloudosd_client.post(f"/api/cloudosd/runs/{run['run_id']}/autopilot/upload")
+
+    assert upload.status_code == 202, upload.text
+    body = upload.json()
+    assert body["queued"] is False
+    assert body["reason"] == "entra_credentials_missing"
+    assert body["missing"] == ["LAB_ENTRA_CREDENTIAL_REFERENCE"]
+    assert body["credential_source"] == "lab_bubble_service"
+    assert body["credential_boundary"] == "lab_bubble"
+    assert body["credential_bubble_id"] == bubble["id"]
+    assert body["credential_service_id"] == service["id"]
+    assert body["target_tenant_id"] == "controller-tenant-id"
+    assert body["target_entra_app_id"] == "controller-app-id"
+    assert jobs_pg.list_jobs(limit=10) == []
+
+
 def test_cloudosd_autopilot_upload_lab_boundary_missing_secret_does_not_fallback(
     cloudosd_client,
     pg_conn,

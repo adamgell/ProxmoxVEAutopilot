@@ -2756,18 +2756,7 @@ def _lab_service_upload_boundary(conn, run: dict, cfg: dict) -> dict:
     )
     missing: list[str] = []
     if not (tenant_id_var and app_id_var and app_secret_var):
-        controller = _controller_upload_boundary(cfg)
-        if (
-            target_tenant_id
-            and target_app_id
-            and target_tenant_id == controller.get("target_tenant_id")
-            and target_app_id == controller.get("target_entra_app_id")
-        ):
-            tenant_id_var = _CONTROLLER_UPLOAD_ENTRA_VARS["tenant_id_var"]
-            app_id_var = _CONTROLLER_UPLOAD_ENTRA_VARS["app_id_var"]
-            app_secret_var = _CONTROLLER_UPLOAD_ENTRA_VARS["app_secret_var"]
-        else:
-            missing.append("LAB_ENTRA_CREDENTIAL_REFERENCE")
+        missing.append("LAB_ENTRA_CREDENTIAL_REFERENCE")
     if not target_tenant_id and tenant_id_var:
         target_tenant_id = _plain_config_value(cfg, tenant_id_var)
     if not target_app_id and app_id_var:
