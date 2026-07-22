@@ -1,3 +1,5 @@
+import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -197,9 +199,15 @@ def test_shell_installer_wraps_pve_init_with_console_actions():
     text = INSTALLER.read_text(encoding="utf-8")
 
     assert "ProxmoxVEAutopilot First-Run Installer" in text
-    assert 'INIT_SCRIPT="${SCRIPT_DIR}/init-proxmox-ve.sh"' in text
-    assert "--action menu|guided|foundation|bootstrap|operational|runtime-config|status|reset-dev-lab" in text
-    assert "Guided install: Foundation -> Bootstrap -> Operational" in text
+    assert 'INIT_SCRIPT="${INSTALLER_INIT_SCRIPT:-${SCRIPT_DIR}/init-proxmox-ve.sh}"' in text
+    assert "--action menu|detect|recommended|guided|foundation|bootstrap|operational|runtime-config|status|support|reset-dev-lab" in text
+    assert "Continue recommended repair" in text
+    assert "Guided install / repair" in text
+    assert "Create GitHub issue / support bundle" in text
+    assert "manual_phase_menu" in text
+    assert "run_detect" in text
+    assert "record_failure" in text
+    assert "installer_state.py" in text
     assert "run_init_phase foundation" in text
     assert "run_init_phase bootstrap" in text
     assert "run_init_phase operational" in text
@@ -208,6 +216,7 @@ def test_shell_installer_wraps_pve_init_with_console_actions():
     assert "--download-virtio" in text
     assert "Media gate is still blocked" in text
     assert "run_init_phase reset-dev-lab" in text
+    assert "confirm_reset" in text
     assert "RESET_MEDIA" in text
     assert "--dry-run" in text
     assert "docker.io" not in text
@@ -238,11 +247,122 @@ def test_shell_installer_dry_run_prints_guided_phase_commands():
     assert "--phase foundation" in result.stdout
     assert "--phase bootstrap" in result.stdout
     assert "--phase operational" in result.stdout
-    assert "--download-windows" in result.stdout
-    assert "--download-virtio" in result.stdout
+    assert "--download-windows" not in result.stdout
+    assert "--download-virtio" not in result.stdout
     assert "--controller-ip 192.168.2.115" in result.stdout
     assert "--node pvetest" in result.stdout
     assert "--iso-storage local" in result.stdout
+
+
+def test_shell_installer_bootstrap_yes_does_not_download_media_without_consent():
+    result = subprocess.run(
+        [
+            "bash",
+            str(INSTALLER),
+            "--action",
+            "bootstrap",
+            "--yes",
+            "--dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--phase bootstrap" in result.stdout
+    assert "--download-windows" not in result.stdout
+    assert "--download-virtio" not in result.stdout
+
+    with_download = subprocess.run(
+        [
+            "bash",
+            str(INSTALLER),
+            "--action",
+            "bootstrap",
+            "--yes",
+            "--dry-run",
+            "--download-windows",
+            "--download-virtio",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--download-windows" in with_download.stdout
+    assert "--download-virtio" in with_download.stdout
+
+
+def test_shell_installer_detect_and_status_are_read_only_dry_runs(tmp_path):
+    state = tmp_path / "foundation_state.json"
+    detect = tmp_path / "installer_detect.json"
+    failure = tmp_path / "install-last-failure.json"
+    log = tmp_path / "install.log"
+    support = tmp_path / "support"
+    env = {
+        "INSTALLER_STATE_FILE": str(state),
+        "INSTALLER_DETECT_FILE": str(detect),
+        "INSTALLER_FAILURE_FILE": str(failure),
+        "INSTALLER_LOG_FILE": str(log),
+        "INSTALLER_SUPPORT_DIR": str(support),
+    }
+    for action in ("detect", "status"):
+        result = subprocess.run(
+            ["bash", str(INSTALLER), "--action", action, "--dry-run"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, **env},
+        )
+
+        assert "--phase" not in result.stdout
+        assert "--phase" not in result.stderr
+
+
+def test_shell_installer_recommended_dry_run_uses_detected_safe_action(tmp_path):
+    state = tmp_path / "foundation_state.json"
+    detect = tmp_path / "installer_detect.json"
+    failure = tmp_path / "install-last-failure.json"
+    log = tmp_path / "install.log"
+    support = tmp_path / "support"
+    state.write_text(
+        json.dumps(
+            {
+                "controller_vm_ready": True,
+                "controller_runtime_ready": True,
+                "windows_iso_ready": True,
+                "virtio_iso_ready": True,
+                "media_ready": True,
+                "promoted_artifacts_ready": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(INSTALLER),
+            "--action",
+            "recommended",
+            "--yes",
+            "--dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "INSTALLER_STATE_FILE": str(state),
+            "INSTALLER_DETECT_FILE": str(detect),
+            "INSTALLER_FAILURE_FILE": str(failure),
+            "INSTALLER_LOG_FILE": str(log),
+            "INSTALLER_SUPPORT_DIR": str(support),
+        },
+    )
+
+    assert "--phase operational" in result.stdout
+    assert "--phase foundation" not in result.stdout
 
 
 def test_shell_installer_dry_run_prints_reset_media_command():
