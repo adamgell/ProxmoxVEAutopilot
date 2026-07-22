@@ -89,7 +89,10 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   case "$reply" in y|Y|yes|YES) ;; *) echo "Cancelled."; exit 1 ;; esac
 fi
 
-# --- Deploy: pin the tag in the host .env (preserving other keys), pull, up -d ---
+# --- Deploy: sync the committed compose (so the host honors the pinned tag
+#     instead of a stale :latest), pin the tag in .env, pull, up -d ---
+echo "==> Syncing committed docker-compose.yml to ${PROD_HOST} ..."
+scp -q autopilot-proxmox/docker-compose.yml "${PROD_USER}@${PROD_HOST}:${PROD_COMPOSE_DIR}/docker-compose.yml"
 echo "==> Deploying on ${PROD_HOST} ..."
 ssh "${PROD_USER}@${PROD_HOST}" bash -s -- "$PROD_COMPOSE_DIR" "$TAG" <<'REMOTE'
 set -euo pipefail
