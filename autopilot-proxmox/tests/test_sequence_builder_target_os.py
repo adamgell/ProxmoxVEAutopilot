@@ -32,7 +32,7 @@ def app_env(pg_conn):
 def test_builder_renders_with_target_os_and_ubuntu_options(app_env):
     r = app_env.get("/sequences/new", follow_redirects=False)
     assert r.status_code == 302
-    assert r.headers["location"] == "/react/sequences/new"
+    assert r.headers["location"] == "/react/task-engine/sequences/new"
 
     r = app_env.get("/react/sequences/new")
     assert r.status_code == 200
@@ -56,11 +56,11 @@ def test_list_page_shows_target_os_badge(app_env):
 
     r = app_env.get("/sequences", follow_redirects=False)
     assert r.status_code == 302
-    assert r.headers["location"] == "/react/sequences"
+    assert r.headers["location"] == "/react/task-engine/sequences/list"
 
-    r = app_env.get("/api/sequences/page")
+    r = app_env.get("/api/sequences")
     assert r.status_code == 200
-    target_oses = {row["name"]: row["target_os"] for row in r.json()["sequences"]}
+    target_oses = {row["name"]: row["target_os"] for row in r.json()}
     assert target_oses["Ubuntu test"] == "ubuntu"
     assert target_oses["Win test"] == "windows"
 
