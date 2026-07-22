@@ -593,10 +593,15 @@ function Invoke-CloudOSDOsdClient {
         -RedirectStandardError $stderrLog `
         -Wait `
         -PassThru
+    if ($process.ExitCode -eq 3010) {
+        Write-CloudOSDFirstBootLog 'CloudOSD OSD client requested reboot.'
+        return 'reboot_required'
+    }
     if ($process.ExitCode -ne 0) {
         throw "CloudOSD OSD client failed with exit code $($process.ExitCode)"
     }
     Write-CloudOSDFirstBootLog 'CloudOSD OSD client completed.'
+    return 'complete'
 }
 
 function Clear-PVEAutopilotOobeBootstrapAccount {
@@ -870,6 +875,14 @@ function Invoke-PVEAutopilotFirstBoot {
     Send-PVEAutopilotFirstBootEvent -Phase 'AutopilotAgent' `
         -EventType 'autopilotagent_heartbeat_visible' `
         -Message 'AutopilotAgent heartbeat visible from installed OS'
+    $osdClientResult = & $RunOsdClient
+    if ($osdClientResult -eq 'reboot_required') {
+        Send-PVEAutopilotFirstBootEvent -Phase 'full_os' `
+            -EventType 'osd_v2_reboot_requested' `
+            -Message 'OSD v2 full-OS step requested reboot; first boot task will resume after restart'
+        Restart-Computer -Force
+        return
+    }
     Clear-PVEAutopilotCloudOSDFirstBootState -RunId $runId
     Send-PVEAutopilotFirstBootEvent -Phase 'first_boot' `
         -EventType 'firstboot_v2_agent_ownership_ready' `

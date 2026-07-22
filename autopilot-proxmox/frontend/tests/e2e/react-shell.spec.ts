@@ -690,10 +690,13 @@ test("provision launch composer keeps hostname previews inside Windows limits", 
       pageOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 2
     };
   });
-  expect(launchLayout.columns).toBeGreaterThanOrEqual(1);
-  expect(launchLayout.columns).toBeLessThanOrEqual(3);
+  expect(launchLayout.columns).toBe(3);
   expect(launchLayout.spillsHorizontally).toBe(false);
   expect(launchLayout.pageOverflows).toBe(false);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileColumns = await launchGrid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean).length);
+  expect(mobileColumns).toBe(1);
 });
 
 test("provision route keeps outcome rail from clipping content at in-app browser width", async ({ page }) => {
