@@ -122,7 +122,9 @@ def test_cloudosd_run_detail_renders_autopilot_readiness_section():
 
 
 def test_cloudosd_cockpit_renders_archive_history_controls():
-    template = Path("autopilot-proxmox/web/templates/cloudosd.html").read_text(encoding="utf-8")
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/cloudosd.html"
+    ).read_text(encoding="utf-8")
 
     assert "OSDCloud Run History" in template
     assert "Active Runs" in template
@@ -135,7 +137,9 @@ def test_cloudosd_cockpit_renders_archive_history_controls():
 
 
 def test_cloudosd_cockpit_renders_cache_warming_surface():
-    template = Path("autopilot-proxmox/web/templates/cloudosd.html").read_text(encoding="utf-8")
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/cloudosd.html"
+    ).read_text(encoding="utf-8")
 
     assert 'href="/osdcloud/cache"' in template
     assert 'id="cloudosd-cache"' in template
@@ -152,7 +156,9 @@ def test_cloudosd_cockpit_renders_cache_warming_surface():
 
 
 def test_cloudosd_run_detail_keeps_readiness_live_after_completion():
-    template = Path("autopilot-proxmox/web/templates/cloudosd_run_detail.html").read_text(encoding="utf-8")
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/cloudosd_run_detail.html"
+    ).read_text(encoding="utf-8")
 
     assert "readinessTerminalStates" in template
     assert "Autopilot readiness" in template
@@ -205,7 +211,9 @@ def test_provision_page_defaults_to_cloudosd_for_desktop_clients():
 
 
 def test_v2_builder_supports_ubuntu_target_os_palette_and_phases():
-    template = Path("autopilot-proxmox/web/templates/task_engine_builder.html").read_text(encoding="utf-8")
+    template = (
+        Path(__file__).resolve().parents[1] / "web/templates/task_engine_builder.html"
+    ).read_text(encoding="utf-8")
 
     assert 'id="v2-target-os"' in template
     assert '<option value="ubuntu"' in template
