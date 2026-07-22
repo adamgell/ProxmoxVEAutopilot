@@ -61,6 +61,7 @@ const emptyFleet: VmsFleetResponse = {
   proxmox_vms: [],
   missing_vms: [],
   agents: [],
+  agent_identity_warnings: [],
   autopilot_devices: [],
   bubble_topology: {
     workstation_fleets: [],
@@ -1682,6 +1683,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       ) : null}
       {stale ? <p className="notice" role="status">Fleet cache is {String(fleet.cache_age_seconds)}s old.</p> : null}
       {fleet.ap_error ? <p className="notice" role="status">Intune unavailable: {fleet.ap_error}</p> : null}
+      {fleet.agent_identity_warnings?.length ? (
+        <p className="notice" role="status">{fleet.agent_identity_warnings.join(" ")}</p>
+      ) : null}
 
       <section className="metric-strip metric-strip--fleet" aria-label="Fleet metrics">
         <Metric label="Proxmox VMs" value={String(counts.total)} tone={counts.total ? "good" : "neutral"} />

@@ -103,7 +103,8 @@ describe("TemplatePage", () => {
     renderPath("/react/template");
 
     expect(await screen.findByRole("heading", { name: "Build Template" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Windows" })).toHaveAttribute("aria-pressed", "true");
+    const windowsModeButton = await screen.findByRole("button", { name: "Windows" });
+    expect(windowsModeButton).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Ubuntu" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "OEM Profile" })).toHaveValue("surface");
     expect(screen.getByRole("checkbox", { name: "Pause before sysprep" })).toBeInTheDocument();

@@ -555,6 +555,7 @@ export interface VmsFleetResponse {
   readonly proxmox_vms?: readonly VmFleetRow[];
   readonly missing_vms: readonly VmFleetRow[];
   readonly agents: readonly AgentFleetRow[];
+  readonly agent_identity_warnings?: readonly string[];
   readonly autopilot_devices: readonly AutopilotDeviceFleetRow[];
   readonly bubble_topology?: LabBubbleTopology;
   readonly ap_error: string;

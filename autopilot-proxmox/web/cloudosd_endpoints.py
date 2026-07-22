@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response
 from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
-from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, osd_package, winpe_token
+from web import agent_telemetry_pg, cloudosd_cache, cloudosd_pg, lab_bubbles_pg, osd_package, winpe_token
 from web.proxmox_network_targets import network_target_values, normalize_network_targets
 from web.sequence_compiler import _split_domain_user
 
@@ -52,6 +52,11 @@ def _cloudosd_source_root() -> Path:
 
 _CLOUDOSD_SOURCE_ROOT = _cloudosd_source_root()
 _CLOUDOSD_TOOL_ROOT = _CLOUDOSD_SOURCE_ROOT / "tools" / "cloudosd-build"
+_CONTROLLER_UPLOAD_ENTRA_VARS = {
+    "app_id_var": "vault_entra_app_id",
+    "tenant_id_var": "vault_entra_tenant_id",
+    "app_secret_var": "vault_entra_app_secret",
+}
 
 
 class RunCreateBody(BaseModel):
@@ -2630,6 +2635,171 @@ def _readiness_response(conn, run: dict, heartbeat: dict | None = None, **extra)
     }
 
 
+def _plain_config_value(cfg: dict, key: str) -> str:
+    value = str(cfg.get(key) or "").strip()
+    if "{{" in value or "{%" in value:
+        return ""
+    return value
+
+
+def _missing_config_labels(cfg: dict, boundary: dict) -> list[str]:
+    missing: list[str] = list(boundary.get("missing") or [])
+    if any(item.startswith("LAB_") for item in missing):
+        return missing
+    for label, ref_key in (
+        ("ENTRA_APP_ID", "app_id_var"),
+        ("ENTRA_TENANT_ID", "tenant_id_var"),
+        ("ENTRA_APP_SECRET", "app_secret_var"),
+    ):
+        var_name = str(boundary.get(ref_key) or "").strip()
+        if not var_name:
+            if label not in missing:
+                missing.append(label)
+            continue
+        if not _plain_config_value(cfg, var_name):
+            missing.append(label)
+    return missing
+
+
+def _first_text(mapping: dict, *keys: str) -> str:
+    for key in keys:
+        value = mapping.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _credential_ref_value(evidence: dict, *keys: str) -> str:
+    containers: list[dict[str, Any]] = []
+    for container_key in (
+        "credential_ref",
+        "credential_reference",
+        "vault_vars",
+        "vault_var_names",
+    ):
+        value = evidence.get(container_key)
+        if isinstance(value, dict):
+            containers.append(value)
+    containers.append(evidence)
+    for container in containers:
+        found = _first_text(container, *keys)
+        if found:
+            return found
+    return ""
+
+
+def _controller_upload_boundary(cfg: dict) -> dict:
+    return {
+        "credential_source": "controller_vault",
+        "credential_boundary": "controller",
+        **_CONTROLLER_UPLOAD_ENTRA_VARS,
+        "target_tenant_id": _plain_config_value(
+            cfg,
+            _CONTROLLER_UPLOAD_ENTRA_VARS["tenant_id_var"],
+        ),
+        "target_entra_app_id": _plain_config_value(
+            cfg,
+            _CONTROLLER_UPLOAD_ENTRA_VARS["app_id_var"],
+        ),
+    }
+
+
+def _lab_service_upload_boundary(conn, run: dict, cfg: dict) -> dict:
+    lab_bubbles_pg.init(conn)
+    asset = lab_bubbles_pg.get_asset_for_run(conn, run["run_id"])
+    if not asset:
+        return _controller_upload_boundary(cfg)
+
+    service = lab_bubbles_pg.get_entra_service_for_bubble(conn, asset["bubble_id"])
+    if not service:
+        return {
+            "credential_source": "lab_bubble",
+            "credential_boundary": "lab_bubble",
+            "credential_bubble_id": asset["bubble_id"],
+            "missing": ["LAB_ENTRA_SERVICE"],
+        }
+
+    evidence = service.get("evidence_summary") or {}
+    tenant_id_var = _credential_ref_value(
+        evidence,
+        "tenant_id_var",
+        "tenant_var",
+        "directory_id_var",
+    )
+    app_id_var = _credential_ref_value(
+        evidence,
+        "app_id_var",
+        "client_id_var",
+        "application_id_var",
+    )
+    app_secret_var = _credential_ref_value(
+        evidence,
+        "app_secret_var",
+        "client_secret_var",
+        "secret_var",
+    )
+    target_tenant_id = _first_text(
+        evidence,
+        "tenant_id",
+        "directory_id",
+        "target_tenant_id",
+    )
+    target_app_id = _first_text(
+        evidence,
+        "client_id",
+        "app_id",
+        "application_id",
+        "target_entra_app_id",
+    )
+    missing: list[str] = []
+    if not (tenant_id_var and app_id_var and app_secret_var):
+        missing.append("LAB_ENTRA_CREDENTIAL_REFERENCE")
+    if not target_tenant_id and tenant_id_var:
+        target_tenant_id = _plain_config_value(cfg, tenant_id_var)
+    if not target_app_id and app_id_var:
+        target_app_id = _plain_config_value(cfg, app_id_var)
+    return {
+        "credential_source": "lab_bubble_service",
+        "credential_boundary": "lab_bubble",
+        "credential_bubble_id": asset["bubble_id"],
+        "credential_service_id": service["id"],
+        "target_tenant_id": target_tenant_id,
+        "target_entra_app_id": target_app_id,
+        "target_tenant_name": _first_text(evidence, "tenant_name", "directory_name"),
+        "tenant_id_var": tenant_id_var,
+        "app_id_var": app_id_var,
+        "app_secret_var": app_secret_var,
+        "missing": missing,
+    }
+
+
+def _credential_job_args(boundary: dict) -> dict:
+    keys = (
+        "credential_source",
+        "credential_boundary",
+        "credential_bubble_id",
+        "credential_service_id",
+        "target_tenant_id",
+        "target_entra_app_id",
+        "target_tenant_name",
+    )
+    return {key: boundary[key] for key in keys if boundary.get(key)}
+
+
+def _append_upload_credential_vars(cmd: list[str], boundary: dict) -> None:
+    for arg_name, key in (
+        ("upload_entra_app_id_var", "app_id_var"),
+        ("upload_entra_tenant_id_var", "tenant_id_var"),
+        ("upload_entra_app_secret_var", "app_secret_var"),
+    ):
+        var_name = str(boundary.get(key) or "").strip()
+        if var_name and var_name != _CONTROLLER_UPLOAD_ENTRA_VARS[key]:
+            cmd.extend(["-e", f"{arg_name}={var_name}"])
+
+
 def _queue_autopilot_hash_upload(
     conn,
     run: dict,
@@ -2672,15 +2842,8 @@ def _queue_autopilot_hash_upload(
     if not hash_file.is_file():
         raise HTTPException(status_code=409, detail=f"CloudOSD hash file is missing: {hash_filename}")
     cfg = web_app._load_proxmox_config()
-    missing_credentials = [
-        label
-        for label, key in (
-            ("ENTRA_APP_ID", "vault_entra_app_id"),
-            ("ENTRA_TENANT_ID", "vault_entra_tenant_id"),
-            ("ENTRA_APP_SECRET", "vault_entra_app_secret"),
-        )
-        if not str(cfg.get(key) or "").strip() or "{{" in str(cfg.get(key) or "")
-    ]
+    credential_boundary = _lab_service_upload_boundary(conn, run, cfg)
+    missing_credentials = _missing_config_labels(cfg, credential_boundary)
     if missing_credentials:
         message = (
             "Hash captured; Entra upload credentials are not configured: "
@@ -2701,7 +2864,12 @@ def _queue_autopilot_hash_upload(
             phase="AutopilotAgent",
             event_type="autopilot_hash_upload_not_configured",
             message=message,
-            data={"missing": missing_credentials, "hash_filename": hash_filename, "source": source},
+            data={
+                "missing": missing_credentials,
+                "hash_filename": hash_filename,
+                "source": source,
+                **_credential_job_args(credential_boundary),
+            },
         )
         readiness = autopilot_readiness_for_run(
             conn,
@@ -2715,6 +2883,7 @@ def _queue_autopilot_hash_upload(
             "reason": "entra_credentials_missing",
             "missing": missing_credentials,
             "autopilot_readiness": readiness,
+            **_credential_job_args(credential_boundary),
         }
     cmd = [
         "ansible-playbook",
@@ -2725,6 +2894,7 @@ def _queue_autopilot_hash_upload(
     group_tag = str(run.get("vm_group_tag") or "").strip()
     if group_tag:
         cmd += ["-e", f"vm_group_tag={group_tag}"]
+    _append_upload_credential_vars(cmd, credential_boundary)
     job = web_app.job_manager.start(
         "upload_hash",
         cmd,
@@ -2734,6 +2904,7 @@ def _queue_autopilot_hash_upload(
             "file": hash_filename,
             "group_tag": group_tag,
             "source": source,
+            **_credential_job_args(credential_boundary),
         },
     )
     cloudosd_pg.record_autopilot_upload_attempt(
@@ -2750,7 +2921,12 @@ def _queue_autopilot_hash_upload(
         phase="AutopilotAgent",
         event_type="autopilot_hash_upload_queued",
         message="CloudOSD Autopilot hash upload queued",
-        data={"job_id": job["id"], "hash_filename": hash_filename, "source": source},
+        data={
+            "job_id": job["id"],
+            "hash_filename": hash_filename,
+            "source": source,
+            **_credential_job_args(credential_boundary),
+        },
     )
     readiness = autopilot_readiness_for_run(
         conn,
@@ -2861,7 +3037,7 @@ def upload_autopilot_hash(run_id: str):
             raise HTTPException(status_code=404, detail="CloudOSD run not found")
         heartbeat = agent_telemetry_pg.latest_for_run(conn, run_id)
         result = _queue_autopilot_hash_upload(conn, run, heartbeat)
-        return {
+        response = {
             "ok": True,
             "run_id": run["run_id"],
             "queued": bool(result.get("queued")),
@@ -2869,6 +3045,19 @@ def upload_autopilot_hash(run_id: str):
             "autopilot_readiness": result["autopilot_readiness"],
             "job_id": result.get("job_id"),
         }
+        for key in (
+            "missing",
+            "credential_source",
+            "credential_boundary",
+            "credential_bubble_id",
+            "credential_service_id",
+            "target_tenant_id",
+            "target_entra_app_id",
+            "target_tenant_name",
+        ):
+            if result.get(key):
+                response[key] = result[key]
+        return response
 
 
 @router.post("/runs/{run_id}/autopilot/retry-upload", status_code=202)

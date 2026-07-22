@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,3 +37,19 @@ def test_osdeploy_playbook_keeps_install_media_until_pe_phase_completes():
     wait_index = text.index("Wait for OSDeploy PE phase completion")
     detach_index = text.index("Detach OSDeploy ISO before disk boot")
     assert wait_index < detach_index
+
+
+def test_upload_hash_playbook_resolves_selected_entra_vault_var_names():
+    playbook = yaml.safe_load((ROOT / "playbooks" / "upload_hashes.yml").read_text())
+    upload_task = next(
+        task for task in playbook[0]["tasks"]
+        if task.get("name") == "Upload hashes to Autopilot"
+    )
+
+    env = upload_task["environment"]
+    assert "upload_entra_app_id_var" in env["ENTRA_APP_ID"]
+    assert "vault_entra_app_id" in env["ENTRA_APP_ID"]
+    assert "upload_entra_tenant_id_var" in env["ENTRA_TENANT_ID"]
+    assert "vault_entra_tenant_id" in env["ENTRA_TENANT_ID"]
+    assert "upload_entra_app_secret_var" in env["ENTRA_APP_SECRET"]
+    assert "vault_entra_app_secret" in env["ENTRA_APP_SECRET"]

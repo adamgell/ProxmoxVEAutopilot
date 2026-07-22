@@ -196,7 +196,7 @@ def _run_payload(artifact_id: str, **overrides):
         "vm_cores": 4,
         "vm_memory_mb": 8192,
         "vm_disk_size_gb": 120,
-        "secure_boot": True,
+        "secure_boot": False,
         "outbound_policy": {"mode": "blocked"},
     }
     values.update(overrides)
@@ -357,6 +357,44 @@ def test_osdeploy_artifact_list_preflight_and_run_create(osdeploy_client, pg_con
     step_kinds = [step["kind"] for step in detail.json()["v2_steps"]]
     assert "osdeploy_preflight" in step_kinds
     assert "cloudosd_preflight" not in step_kinds
+
+
+def test_osdeploy_preflight_blocks_explicit_secure_boot_until_signed_media_exists(
+    osdeploy_client,
+    pg_conn,
+):
+    artifact = _create_osdeploy_artifact(pg_conn)
+    payload = _run_payload(artifact["id"], secure_boot=True)
+
+    preflight = osdeploy_client.post(
+        "/api/osdeploy/v1/preflight",
+        json=payload,
+    )
+
+    assert preflight.status_code == 200, preflight.text
+    body = preflight.json()
+    assert body["launch_allowed"] is False
+    secure_boot_check = next(
+        check
+        for check in body["blocking_checks"]
+        if check["id"] == "secure_boot_unsupported"
+    )
+    assert secure_boot_check["message"] == (
+        "OSDeploy Secure Boot is blocked until signed OSDeploy boot media is available."
+    )
+
+    created = osdeploy_client.post(
+        "/api/osdeploy/v1/runs",
+        json=payload,
+    )
+
+    assert created.status_code == 409, created.text
+    blocking_checks = created.json()["detail"]["blocking_checks"]
+    assert any(
+        check["id"] == "secure_boot_unsupported"
+        and check["message"] == secure_boot_check["message"]
+        for check in blocking_checks
+    )
 
 
 def test_osdeploy_artifact_list_includes_build_and_publish_job_links(osdeploy_client, pg_conn):

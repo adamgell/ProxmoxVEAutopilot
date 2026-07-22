@@ -9,6 +9,7 @@ await AgentApiClientPostsClaimableCapabilitiesOnHeartbeat();
 VerifyDomainJoinMatcher();
 VerifyOsDeployRoleAutomationContracts();
 VerifyBuildHostContracts();
+VerifyBuildHostVirtioRootsMatchOsDeployScript();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
 VerifyOsDeployResolvesStagedSourceMedia();
 Console.WriteLine("AutopilotAgent contract tests passed.");
@@ -451,6 +452,54 @@ static void VerifyOsDeployOutputSelectionRejectsStaleManifests()
     }
 }
 
+static void VerifyBuildHostVirtioRootsMatchOsDeployScript()
+{
+    var root = Directory.GetCurrentDirectory();
+    var buildHostWorker = File.ReadAllText(
+        Path.Combine(
+            root,
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "BuildHostWorkService.cs"));
+    var osDeployScript = File.ReadAllText(
+        Path.Combine(
+            root,
+            "autopilot-proxmox",
+            "tools",
+            "osdeploy-build",
+            "build-osdeploy.ps1"));
+    var stagingScript = SourceBetween(
+        buildHostWorker,
+        "private async Task<string> StageVirtioDriversAsync",
+        "private async Task<Dictionary<string, object?>> BuildWinPeAsync");
+    var preflightScript = SourceBetween(
+        buildHostWorker,
+        "function Test-VirtioInput",
+        "function Resolve-SourceMedia");
+
+    foreach (var rootCandidate in new[]
+    {
+        @"E:\BuildRoot\inputs\virtio-win",
+        @"E:\BuildRoot\inputs\virtio",
+        @"E:\",
+        @"F:\BuildRoot\inputs\virtio-win",
+        @"F:\BuildRoot\inputs\virtio",
+        @"F:\",
+    })
+    {
+        Assert(
+            osDeployScript.Contains(rootCandidate, StringComparison.Ordinal),
+            $"OSDeploy script no longer accepts VirtIO root: {rootCandidate}");
+        Assert(
+            stagingScript.Contains(rootCandidate, StringComparison.Ordinal),
+            $"build-host VirtIO staging is missing OSDeploy VirtIO root: {rootCandidate}");
+        Assert(
+            preflightScript.Contains(rootCandidate, StringComparison.Ordinal),
+            $"build-host preflight is missing OSDeploy VirtIO root: {rootCandidate}");
+    }
+}
+
 
 static TelemetrySnapshot Snapshot(string? domainName, bool? domainJoined) => new(
     "GELL-123-AD",
@@ -510,6 +559,15 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static string SourceBetween(string source, string startMarker, string endMarker)
+{
+    var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+    Assert(start >= 0, $"source is missing start marker: {startMarker}");
+    var end = source.IndexOf(endMarker, start, StringComparison.Ordinal);
+    Assert(end > start, $"source is missing end marker after {startMarker}: {endMarker}");
+    return source[start..end];
 }
 
 static void AssertThrows<TException>(Action action, string message)

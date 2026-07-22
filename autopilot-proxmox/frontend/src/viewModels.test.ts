@@ -309,6 +309,197 @@ describe("operator view models", () => {
     expect(fleetAgentLabel(row)).toBe("Stale");
   });
 
+  test("keeps duplicate agent rows for one live VM from creating duplicate machine rows", () => {
+    const rows = buildFleetMachineRows({
+      vms: [
+        {
+          vmid: 111,
+          name: "LABZ1-DC01",
+          hostname: "LABZ1-DC01",
+          serial: "LABZ1-DC01",
+          status: "running",
+          ip_address: "192.168.16.10",
+          os_build: "20348"
+        }
+      ],
+      proxmox_vms: [
+        {
+          vmid: 111,
+          name: "LABZ1-DC01",
+          status: "running",
+          ip_address: "192.168.16.10"
+        }
+      ],
+      missing_vms: [],
+      agents: [
+        {
+          agent_id: "agent-labz1-stale",
+          approval_status: "active",
+          pairing_status: "paired",
+          vmid: 111,
+          computer_name: "LABZ1-DC01",
+          primary_ipv4: "192.168.16.10",
+          last_seen_at: "2026-06-23T19:00:00+00:00"
+        },
+        {
+          agent_id: "agent-labz1-current",
+          approval_status: "active",
+          pairing_status: "paired",
+          vmid: 111,
+          computer_name: "LABZ1-DC01",
+          primary_ipv4: "192.168.16.10",
+          qga_state: "Running",
+          agent_version: "osd-client-0.1.0",
+          last_heartbeat_at: "2026-06-23T20:00:00+00:00"
+        }
+      ],
+      autopilot_devices: [],
+      agent_identity_warnings: [
+        "Multiple agent rows map to VM 111 (LABZ1-DC01): agent-labz1-stale, agent-labz1-current. Cached rows were left intact."
+      ],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-06-23T20:05:00Z"
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "vm-111",
+      name: "LABZ1-DC01",
+      vmid: 111,
+      agentId: "agent-labz1-current",
+      qga: "Running",
+      method: "agent + monitor"
+    });
+  });
+
+  test("prefers current duplicate agent for proxmox-only borrowed VM rows", () => {
+    const rows = buildFleetMachineRows({
+      vms: [],
+      proxmox_vms: [
+        {
+          vmid: 111,
+          name: "LABZ1-DC01",
+          status: "running",
+          ip_address: "192.168.16.10"
+        }
+      ],
+      missing_vms: [],
+      agents: [
+        {
+          agent_id: "agent-labz1-stale",
+          approval_status: "active",
+          pairing_status: "paired",
+          vmid: 111,
+          computer_name: "LABZ1-DC01",
+          primary_ipv4: "192.168.16.10",
+          last_seen_at: "2026-06-23T19:00:00+00:00"
+        },
+        {
+          agent_id: "agent-labz1-current",
+          approval_status: "active",
+          pairing_status: "paired",
+          vmid: 111,
+          computer_name: "LABZ1-DC01",
+          primary_ipv4: "192.168.16.10",
+          qga_state: "Running",
+          agent_version: "osd-client-0.1.0",
+          last_heartbeat_at: "2026-06-23T20:00:00+00:00"
+        }
+      ],
+      autopilot_devices: [],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-06-23T20:05:00Z"
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "vm-111",
+      name: "LABZ1-DC01",
+      vmid: 111,
+      agentId: "agent-labz1-current",
+      qga: "Running",
+      method: "agent + monitor"
+    });
+  });
+
+  test("borrows an unrepresented live VMID even when agent identity overlaps a represented row", () => {
+    const rows = buildFleetMachineRows({
+      vms: [
+        {
+          vmid: 111,
+          name: "LABZ1-DC01",
+          hostname: "LABZ1-DC01",
+          serial: "LABZ1-DC01",
+          status: "running",
+          ip_address: "192.168.16.10"
+        }
+      ],
+      proxmox_vms: [
+        {
+          vmid: 111,
+          name: "LABZ1-DC01",
+          hostname: "LABZ1-DC01",
+          serial: "LABZ1-DC01",
+          status: "running",
+          ip_address: "192.168.16.10"
+        },
+        {
+          vmid: 112,
+          name: "LABZ1-DC01",
+          hostname: "LABZ1-DC01",
+          serial: "LABZ1-DC01",
+          status: "running",
+          ip_address: "192.168.16.10"
+        }
+      ],
+      missing_vms: [],
+      agents: [
+        {
+          agent_id: "agent-labz1-dc01-current",
+          approval_status: "active",
+          pairing_status: "paired",
+          vmid: 111,
+          computer_name: "LABZ1-DC01",
+          serial_number: "LABZ1-DC01",
+          primary_ipv4: "192.168.16.10",
+          qga_state: "Running",
+          last_heartbeat_at: "2026-06-23T19:00:00+00:00"
+        },
+        {
+          agent_id: "agent-labz1-dc01-rehomed",
+          approval_status: "active",
+          pairing_status: "paired",
+          vmid: 112,
+          computer_name: "LABZ1-DC01",
+          serial_number: "LABZ1-DC01",
+          primary_ipv4: "192.168.16.10",
+          qga_state: "Running",
+          last_heartbeat_at: "2026-06-23T20:00:00+00:00"
+        }
+      ],
+      autopilot_devices: [],
+      ap_error: "",
+      cache_refreshing: false,
+      generated_at: "2026-06-23T20:05:00Z"
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["vm-111", "vm-112"]);
+    expect(rows[0]).toMatchObject({
+      id: "vm-111",
+      vmid: 111,
+      agentId: "agent-labz1-dc01-current"
+    });
+    expect(rows[1]).toMatchObject({
+      id: "vm-112",
+      name: "LABZ1-DC01",
+      vmid: 112,
+      agentId: "agent-labz1-dc01-rehomed",
+      method: "agent + monitor"
+    });
+  });
+
   test("includes unmatched agents as machine rows", () => {
     const rows = buildFleetMachineRows({
       vms: [],
