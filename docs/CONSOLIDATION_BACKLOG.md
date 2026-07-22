@@ -42,9 +42,9 @@ source changed. Fixed via 5 parallel agents plus one isolation fix:
 - `test_osd_v2_endpoints.py` (1): sequence gained `install_qga` /
   `install_qga_watchdog` steps; refreshed the expected list and added an explicit
   agent-before-heartbeat ordering assertion.
-- `test_onboarding_pg.py` (1): the `onboarding_state` feature is un-landed (lives
-  on `claude/naughty-buck-700ffc`); marked `xfail(strict=False)` with a reason.
-  FOLLOW-UP: remove that marker when `naughty-buck` lands.
+- `test_onboarding_pg.py` (1): the `onboarding_state` feature was un-landed;
+  marked `xfail(strict=False)`. RESOLVED 2026-07-22: naughty-buck landed the real
+  `onboarding_pg` + full test suite, and the xfail was removed.
 - `test_sdn_endpoints.py::test_lab_create_uses_open_egress_and_snat_by_default`
   (found during full-suite verification): missing `lab_bubbles_pg.reset_for_tests`
   caused an "ACME Lab" unique-key collision by test order; added the reset.
@@ -65,10 +65,13 @@ have superseded parts.
    endpoint tests to the React shell and MSI gate. Land first; it targets the
    failing OSDeploy/React-shell/MSI test families and may green part of the
    baseline.
-2. `claude/naughty-buck-700ffc` (`9def8a0`, +32) - Onboarding / first-run setup
-   wizard (live monitor, phase rail, setup-status projection over
-   install_tracking). Largest coherent feature; likely completes the failing
-   `onboarding_pg` and `web` health-heartbeat tests.
+2. **[LANDED 2026-07-22 as `5a0ad1e`]** `claude/naughty-buck-700ffc` (+32) -
+   Onboarding / first-run setup wizard (persona/tenant/identity/review steps, live
+   setup monitor, phase rail, setup-status projection, atomic launch). Backend +
+   wizard pages + Settings-nav routing landed; backend 1326 pass / 0 xfail.
+   FOLLOW-UP: re-add the landing-page onboarding "resume" hero to the current
+   OutcomeNavigation shell index (the branch's hero targeted the old shell and was
+   dropped during the merge).
 3. `codex/roadmap-four-tasks` (`b221136`, +11) plus
    `wip/2026-07-22-osdeploy-smartdeploy` (`a4945f9`, +1) - OSDeploy QGA MSI
    staging, secure-boot preflight block, VirtIO root preflight, plus the
