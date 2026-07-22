@@ -17,6 +17,8 @@ import { JobsPage } from "./pages/JobsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { MonitoringSettingsPage } from "./pages/MonitoringSettingsPage";
 import { NetworksPage } from "./pages/NetworksPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
+import { OnboardingSetupPage } from "./pages/OnboardingSetupPage";
 import { OsdeployPage } from "./pages/OsdeployPage";
 import { ProvisionPage } from "./pages/ProvisionPage";
 import { LoginPage, SetupPage } from "./pages/PublicPages";
@@ -140,6 +142,12 @@ export function App({ bootstrap }: AppProps) {
   }
   if (path === "/react/agent-download") {
     return <AgentDownloadPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/onboarding") {
+    return <OnboardingPage bootstrap={bootstrap} />;
+  }
+  if (path === "/react/onboarding/setup") {
+    return <OnboardingSetupPage bootstrap={bootstrap} />;
   }
   return <ShellIndexPage bootstrap={bootstrap} />;
 }

@@ -511,3 +511,156 @@ Recheck final CloudOSD run:
 ```bash
 tmp=$(mktemp); curl -fsS -c "$tmp" -X POST 'http://192.168.2.115:5000/auth/local/start?next=/cloudosd/runs/1992fdca-e12f-4577-858f-11da11bdc03f' -o /tmp/autopilot-login.html; curl -fsS -b "$tmp" 'http://192.168.2.115:5000/api/cloudosd/runs/1992fdca-e12f-4577-858f-11da11bdc03f'; rm -f "$tmp"
 ```
+
+# First-run end-to-end walkthrough
+
+This section is the operator runbook for the onboarding wizard added under
+`/react/onboarding`. It mirrors the steps in
+`docs/superpowers/plans/2026-05-27-onboarding-wizard.md` Task 14 and assumes the
+controller is reachable and the build host (if needed) is already approved.
+
+## Onboarding wizard happy-path
+
+Touch points used in this runbook (verified against current code):
+
+- Page routes: `/react/onboarding` (wizard) and `/react/onboarding/setup`
+  (monitor). Wired in `autopilot-proxmox/frontend/src/App.tsx`.
+- API prefix: `/api/onboarding` (all state, probe, launch, and setup-status
+  endpoints live under this prefix). Defined in
+  `autopilot-proxmox/web/onboarding_endpoints.py`.
+- Step rail labels (5 in-wizard steps): `Welcome`, `Identity`, `Tenant`,
+  `Artifact`, `Review`. Source: `frontend/src/onboarding/StepRail.tsx`.
+- Hero CTAs on `/react-shell`: "Resume onboarding" while
+  `status` is `pending` or `in_progress`; "Resume setup monitor" while
+  `status` is `launched`; absent for `absent`, `complete`, and `aborted`.
+
+### Build and start the stack
+
+Skip this if a controller is already running. From the operator workstation
+shell on the controller VM (or wherever Compose is hosted):
+
+```bash
+cd /opt/ProxmoxVEAutopilot/autopilot-proxmox
+sudo docker compose down
+sudo docker compose build
+sudo docker compose up -d
+```
+
+Confirm the web app, mcp, postgres, monitor, and at least one builder replica
+are healthy:
+
+```bash
+sudo docker compose ps
+```
+
+### Confirm bootstrap exposes the onboarding field
+
+Open the controller in a browser. In DevTools Console, inspect the inline
+bootstrap JSON injected into the page:
+
+```js
+// On any /react/* page, the bootstrap is exposed for debugging on window.
+window.__APP_BOOTSTRAP__?.onboarding
+```
+
+For a brand-new controller the value should be
+`{ status: "absent", run_id: null, etag: null }`. The hero CTA on
+`/react-shell` is hidden in this state by design (absence means
+"do not show"). The Settings nav still shows "Onboarding wizard" so the
+operator can discover the entry point.
+
+### Walk the wizard
+
+1. Navigate to `/react-shell`. Confirm there is no "Resume onboarding" hero
+   card (status absent).
+2. Open the Settings nav group and click "Onboarding wizard". The page lands
+   on `/react/onboarding` at the Welcome step. The "Already configured" card
+   above the step shows Proxmox host/node/version, default storage pools,
+   default bridge, and AD vault status.
+3. Pick "Lab hobbyist" on the Welcome step. Click Next.
+4. On Identity, pick "Workgroup". Click Next. AD-joined would prompt for
+   domain, join account, join password, and local admin password with a
+   "Test this now" probe (`POST /api/onboarding/probe/ad`).
+5. On Tenant, the step rail shows the `optional` badge because persona is
+   `lab` and identity is `workgroup`. Tick "Skip tenant setup for now".
+   Click Next.
+6. On Artifact, the two radio choices are "Use an existing artifact" and
+   "Build one now". Pick an existing CloudOSD or OSDeploy artifact from the
+   picker, or click "Build one now" to kick a build (the wizard does not
+   block on builds; the build job is tracked in the monitor page's phase
+   rail once you reach Review). Click Next.
+7. On Review, every prior answer renders with inline edit links. Set the
+   trial VM name (default `autopilot-trial-<vmid>`) and target node
+   (default the controller's known node for `lab`). Click "Start setup".
+8. The page navigates to `/react/onboarding/setup`. The phase rail polls
+   `GET /api/onboarding/setup-status` every 2 seconds while the tab is
+   foreground, every 10 seconds when backgrounded.
+9. Wait for every phase (`Validate`, optional `Build artifact`,
+   `Clone template`, optional `Inject Autopilot`, `Provision`,
+   `Watch OOBE`) to reach `ready`. Phases that do not apply for the picked
+   persona/identity show as `skipped` in the rail.
+10. Verify the completion card appears with the VM IP, RDP shortcut, and an
+    "Open VM detail" deep link to `/react/vms/<vmid>`.
+11. Click the link and confirm the trial VM exists in `/react/vms`.
+
+### Refresh-and-resume
+
+1. Open a second wizard session in a new browser profile. Walk to the
+   Identity step and fill in some values.
+2. Hard-refresh the page (Cmd+Shift+R / Ctrl+Shift+R).
+3. Confirm the wizard restores to the Identity step and the previously typed
+   values are still present. The frontend persistence layer in
+   `frontend/src/onboarding/persistence.ts` uses ETag + retry to round-trip
+   the state through `GET`/`PUT /api/onboarding/state`.
+
+### Discard
+
+1. With the wizard in `pending` or `in_progress`, click the "Discard
+   onboarding" link in the wizard footer.
+2. Confirm the modal ("Discard your onboarding progress?") with
+   "Yes, discard".
+3. The frontend issues `DELETE /api/onboarding/state` and bounces back to
+   `/react-shell`. Confirm there is no hero CTA after the discard. While
+   `status='launched'` the Discard link is disabled with the tooltip
+   "Cannot discard mid-launch. Abort the run from /react/jobs first."
+
+### Backward-compat
+
+1. Log in as a different operator (or impersonate) who has no onboarding
+   row in `onboarding_state`.
+2. Confirm there is no hero CTA on `/react-shell` (absence equals
+   "do not show").
+3. Confirm the Settings nav still surfaces "Onboarding wizard" for
+   discoverability.
+
+## Self-review checklist coverage
+
+The plan's "Self-Review Checklist" at `docs/superpowers/plans/2026-05-27-onboarding-wizard.md`
+lines 3517-3527 is partially verifiable in an offline code-only session and
+partially requires a live cluster. Status going into the PR:
+
+Session-verified (covered by Task 14's offline pass):
+
+- Every step in the spec's "Wizard steps" section maps to an implementation
+  task: Welcome (Task 6), Identity (Task 7), Tenant (Task 8), Artifact
+  (Task 9), Review (Task 10), Setup monitor screen (Tasks 11-13).
+- No file path in the plan refers to a non-existent file (the plan's path
+  references are matched by shipped files: `onboarding_endpoints.py`,
+  `onboarding_launch.py`, `onboarding_phases.py`, `frontend/src/onboarding/`,
+  `frontend/src/pages/Onboarding*.tsx`).
+- No new "TODO"/"TBD"/"FIXME" markers introduced by Tasks 1-13 inside the
+  onboarding code paths.
+- All unit suites green:
+  `pytest tests/test_onboarding_pg.py tests/test_onboarding_endpoints.py tests/test_onboarding_probes.py tests/test_onboarding_launch.py tests/test_onboarding_phases.py tests/test_react_shell.py`
+  passes locally; `npx tsc --noEmit` clean; `npx vitest run` on the
+  onboarding suites passes.
+- ASCII hyphens only: the literal em-dash/en-dash grep in the plan returns
+  zero matches across the onboarding code paths and the design spec.
+
+Needs human running the cluster (deferred to live walkthrough):
+
+- Final manual walkthrough against the live controller, with a trial VM
+  appearing under `/react/vms`. Use the "Walk the wizard" section above.
+- DevTools verification that `window.__APP_BOOTSTRAP__.onboarding` is
+  populated on a fresh controller.
+- Refresh-and-resume, Discard, and Backward-compat scenarios above.

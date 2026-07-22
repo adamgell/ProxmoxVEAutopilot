@@ -141,6 +141,16 @@ export const operatorNavGroups: readonly OperatorNavGroup[] = [
   {
     label: "Settings",
     items: [
+      { path: "/react/onboarding", label: "Onboarding wizard", group: "Settings", phase: "operational", active: true },
+      {
+        path: "/react/onboarding/setup",
+        label: "Onboarding setup monitor",
+        group: "Settings",
+        phase: "operational",
+        active: true,
+        navParentPath: "/react/onboarding",
+        showInNav: false
+      },
       { path: "/react/settings", label: "General", group: "Settings", phase: "operational", active: true },
       { path: "/react/credentials", label: "Credentials", group: "Settings", phase: "operational", active: true },
       { path: "/react/monitoring/settings", label: "Monitoring settings", group: "Settings", phase: "operational", active: true }

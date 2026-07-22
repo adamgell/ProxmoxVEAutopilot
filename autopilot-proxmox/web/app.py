@@ -634,6 +634,7 @@ from web.agent_v1_endpoints import router as _agent_v1_router
 from web.cloudosd_endpoints import router as _cloudosd_router
 from web.sdn_endpoints import router as _sdn_router
 from web.managed_labs_endpoints import router as _managed_labs_router
+from web import onboarding_endpoints as _onboarding_endpoints, onboarding_pg as _onboarding_pg
 try:
     from web.osdeploy_endpoints import router as _osdeploy_router
 except ModuleNotFoundError:
@@ -649,6 +650,7 @@ app.include_router(_agent_v1_router)
 app.include_router(_cloudosd_router)
 app.include_router(_sdn_router)
 app.include_router(_managed_labs_router)
+app.include_router(_onboarding_endpoints.router)
 if _osdeploy_router is not None:
     app.include_router(_osdeploy_router)
 
@@ -2184,6 +2186,7 @@ def _init_app_database() -> None:
         lab_bubbles_pg,
         machine_lifecycle_pg,
         managed_labs_pg,
+        onboarding_pg,
         osdeploy_cache,
         osdeploy_pg,
         sdn_labs_pg,
@@ -2204,6 +2207,7 @@ def _init_app_database() -> None:
         lab_bubbles_pg.init(conn)
         sdn_labs_pg.init(conn)
         managed_labs_pg.init(conn)
+        onboarding_pg.init(conn)
 
 
 class _BubbleCreate(BaseModel):
@@ -5205,24 +5209,46 @@ async def legacy_dashboard(request: Request):
     return _primary_ui_redirect("/react/dashboard")
 
 
+def _build_bootstrap_payload(user: dict | None) -> dict:
+    from web import db_pg
+    payload: dict = {
+        "buildSha": (_APP_VERSION.get("sha_short") or "unknown"),
+        "buildTime": _APP_VERSION.get("build_time", ""),
+        "userName": str((user or {}).get("name") or (user or {}).get("email") or (user or {}).get("upn") or ""),
+        "userEmail": str((user or {}).get("email") or (user or {}).get("upn") or ""),
+    }
+    sub = str((user or {}).get("sub") or "local-operator")
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            row = _onboarding_pg.get_state(conn, sub)
+    except Exception:
+        row = None
+    if row is None:
+        payload["onboarding"] = {"status": "absent"}
+    else:
+        payload["onboarding"] = {
+            "status": row["status"],
+            "currentStep": row.get("current_step"),
+        }
+    return payload
+
+
 def _render_react_shell(request: Request, *, shell_kind: str = "protected"):
-    build_sha = (_APP_VERSION.get("sha_short") or "unknown")
-    build_time = _APP_VERSION.get("build_time", "")
-    assets = _react_asset_tags(f"{build_sha}-{build_time}")
     user = request.session.get("user") if request and request.session else {}
-    user_name = ""
-    user_email = ""
-    if isinstance(user, dict):
-        user_name = str(user.get("name") or user.get("email") or user.get("upn") or "")
-        user_email = str(user.get("email") or user.get("upn") or "")
+    user_dict = user if isinstance(user, dict) else {}
+    bootstrap = _build_bootstrap_payload(user_dict)
+    build_sha = str(bootstrap.get("buildSha") or "unknown")
+    build_time = str(bootstrap.get("buildTime") or "")
+    assets = _react_asset_tags(f"{build_sha}-{build_time}")
     response = templates.TemplateResponse("react_shell.html", {
         "request": request,
         "asset_scripts": assets["scripts"],
         "asset_styles": assets["styles"],
         "build_sha": build_sha,
         "build_time": build_time,
-        "user_name": user_name,
-        "user_email": user_email,
+        "user_name": str(bootstrap.get("userName") or ""),
+        "user_email": str(bootstrap.get("userEmail") or ""),
+        "onboarding_json": json.dumps(bootstrap.get("onboarding") or {"status": "absent"}),
         "shell_kind": shell_kind,
     })
     response.headers["Cache-Control"] = "no-store"

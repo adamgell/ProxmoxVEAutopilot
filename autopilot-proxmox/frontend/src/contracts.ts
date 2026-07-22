@@ -3,6 +3,10 @@ export interface AppBootstrap {
   readonly buildTime?: string;
   readonly userName?: string;
   readonly userEmail?: string;
+  readonly onboarding?: {
+    readonly status: "absent" | "pending" | "in_progress" | "launched" | "complete" | "aborted";
+    readonly currentStep?: string;
+  };
 }
 
 export interface MigratedRoute {

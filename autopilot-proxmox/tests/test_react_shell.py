@@ -708,6 +708,11 @@ def test_observe_monitoring_api_response_shapes(web_client):
     assert "Open legacy monitoring" not in {path.get("action_label") for path in signals_body["operator_paths"]}
 
 
+def test_onboarding_routes_require_auth():
+    assert not auth.is_exempt_path("/react/onboarding")
+    assert not auth.is_exempt_path("/react/onboarding/setup")
+
+
 def test_openapi_export_script_uses_local_app_import(tmp_path):
     output = tmp_path / "openapi.json"
     env = os.environ.copy()
