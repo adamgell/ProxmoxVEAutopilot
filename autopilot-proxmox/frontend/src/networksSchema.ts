@@ -157,14 +157,17 @@ export const subnetSchema: SdnKindSchema = {
       name: "dhcp_range_start",
       label: "DHCP range start (last octet)",
       kind: "number",
-      prefixFrom: "subnet",
+      // On edit the row's `subnet` field is the PVE URL id
+      // (e.g. "labz1-192.168.16.0-24"); the actual CIDR lives in
+      // `cidr`, which is what cidrHostPrefix can parse.
+      prefixFrom: "cidr",
       synthetic: true
     },
     {
       name: "dhcp_range_end",
       label: "DHCP range end (last octet)",
       kind: "number",
-      prefixFrom: "subnet",
+      prefixFrom: "cidr",
       synthetic: true
     }
   ],
