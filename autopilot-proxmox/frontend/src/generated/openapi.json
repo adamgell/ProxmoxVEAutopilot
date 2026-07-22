@@ -415,9 +415,19 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "asset_role": {
+            "default": "workstation",
+            "title": "Asset Role",
+            "type": "string"
+          },
           "boot_mode": {
             "default": "clone",
             "title": "Boot Mode",
+            "type": "string"
+          },
+          "bubble_id": {
+            "default": "",
+            "title": "Bubble Id",
             "type": "string"
           },
           "chassis_type_override": {
@@ -505,6 +515,11 @@
             "title": "Osdeploy Artifact Id",
             "type": "string"
           },
+          "osdeploy_dc_mode": {
+            "default": "new_forest",
+            "title": "Osdeploy Dc Mode",
+            "type": "string"
+          },
           "osdeploy_iso_storage": {
             "default": "",
             "title": "Osdeploy Iso Storage",
@@ -533,6 +548,26 @@
           "osdeploy_os_version": {
             "default": "",
             "title": "Osdeploy Os Version",
+            "type": "string"
+          },
+          "osdeploy_role_dsrm_credential_id": {
+            "default": 0,
+            "title": "Osdeploy Role Dsrm Credential Id",
+            "type": "integer"
+          },
+          "osdeploy_role_forest_admin_credential_id": {
+            "default": 0,
+            "title": "Osdeploy Role Forest Admin Credential Id",
+            "type": "integer"
+          },
+          "osdeploy_role_forest_fqdn": {
+            "default": "",
+            "title": "Osdeploy Role Forest Fqdn",
+            "type": "string"
+          },
+          "osdeploy_role_netbios_name": {
+            "default": "",
+            "title": "Osdeploy Role Netbios Name",
             "type": "string"
           },
           "osdeploy_server_role": {
@@ -1572,6 +1607,21 @@
         "title": "HeartbeatBody",
         "type": "object"
       },
+      "InstallTrackingDeleteBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "InstallTrackingDeleteBody",
+        "type": "object"
+      },
       "InstallTrackingRunCreate": {
         "properties": {
           "name": {
@@ -1710,6 +1760,78 @@
         "title": "JobTableRowResponse",
         "type": "object"
       },
+      "LabCreateBody": {
+        "properties": {
+          "desktop_count": {
+            "default": 0,
+            "maximum": 500.0,
+            "minimum": 0.0,
+            "title": "Desktop Count",
+            "type": "integer"
+          },
+          "gateway_ip": {
+            "default": "",
+            "title": "Gateway Ip",
+            "type": "string"
+          },
+          "group_tag": {
+            "title": "Group Tag",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "network_cidr": {
+            "title": "Network Cidr",
+            "type": "string"
+          },
+          "network_mode": {
+            "default": "sdn",
+            "title": "Network Mode",
+            "type": "string"
+          },
+          "sdn_subnet": {
+            "default": "",
+            "title": "Sdn Subnet",
+            "type": "string"
+          },
+          "sdn_vnet": {
+            "default": "",
+            "title": "Sdn Vnet",
+            "type": "string"
+          },
+          "sdn_zone": {
+            "default": "",
+            "title": "Sdn Zone",
+            "type": "string"
+          },
+          "server_count": {
+            "default": 0,
+            "maximum": 500.0,
+            "minimum": 0.0,
+            "title": "Server Count",
+            "type": "integer"
+          },
+          "short_code": {
+            "title": "Short Code",
+            "type": "string"
+          },
+          "template_id": {
+            "default": "",
+            "title": "Template Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "short_code",
+          "group_tag",
+          "network_cidr"
+        ],
+        "title": "LabCreateBody",
+        "type": "object"
+      },
       "LifecycleLaneResponse": {
         "properties": {
           "detail": {
@@ -1772,6 +1894,61 @@
           }
         },
         "title": "MonitoringSummaryResponse",
+        "type": "object"
+      },
+      "OemProfileBody": {
+        "properties": {
+          "chassis_type": {
+            "maximum": 99.0,
+            "minimum": 1.0,
+            "title": "Chassis Type",
+            "type": "integer"
+          },
+          "family": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Family",
+            "type": "string"
+          },
+          "manufacturer": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Manufacturer",
+            "type": "string"
+          },
+          "product": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Product",
+            "type": "string"
+          },
+          "serial_prefix": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial Prefix"
+          },
+          "sku": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Sku",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manufacturer",
+          "product",
+          "family",
+          "sku",
+          "chassis_type"
+        ],
+        "title": "OemProfileBody",
         "type": "object"
       },
       "OperatorPathResponse": {
@@ -1992,6 +2169,64 @@
           "phase"
         ],
         "title": "PhaseCompleteBody",
+        "type": "object"
+      },
+      "ProbeAdRequest": {
+        "properties": {
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "account",
+          "password"
+        ],
+        "title": "ProbeAdRequest",
+        "type": "object"
+      },
+      "ProbeTenantRequest": {
+        "properties": {
+          "graph_check": {
+            "default": true,
+            "title": "Graph Check",
+            "type": "boolean"
+          },
+          "tenant_domain": {
+            "title": "Tenant Domain",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "tenant_domain"
+        ],
+        "title": "ProbeTenantRequest",
+        "type": "object"
+      },
+      "PutStateRequest": {
+        "properties": {
+          "patch": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Patch",
+            "type": "object"
+          }
+        },
+        "title": "PutStateRequest",
         "type": "object"
       },
       "RebootingBody": {
@@ -2362,6 +2597,21 @@
             "title": "Cidr",
             "type": "string"
           },
+          "dhcp_pool_end": {
+            "default": "",
+            "title": "Dhcp Pool End",
+            "type": "string"
+          },
+          "dhcp_pool_start": {
+            "default": "",
+            "title": "Dhcp Pool Start",
+            "type": "string"
+          },
+          "dhcp_scope": {
+            "default": "",
+            "title": "Dhcp Scope",
+            "type": "string"
+          },
           "domain_name": {
             "default": "",
             "title": "Domain Name",
@@ -2384,6 +2634,11 @@
           },
           "name": {
             "title": "Name",
+            "type": "string"
+          },
+          "netbios_name": {
+            "default": "",
+            "title": "Netbios Name",
             "type": "string"
           },
           "snat_enabled": {
@@ -3271,6 +3526,13 @@
       },
       "VmsFleetResponse": {
         "properties": {
+          "agent_identity_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Agent Identity Warnings",
+            "type": "array"
+          },
           "agents": {
             "items": {
               "$ref": "#/components/schemas/AgentFleetRowResponse"
@@ -6740,6 +7002,23 @@
         "summary": "Create Agent Record"
       }
     },
+    "/api/agents/bulk-delete": {
+      "post": {
+        "description": "Hard-delete multiple agent records in one call.\n\nBody: { \"agent_ids\": [\"<id>\", \"<id>\", ...] }\n\nReports per-id outcome so the UI can flag missing/failed deletes\nwithout aborting the whole batch. The fleet checkbox bar uses this.",
+        "operationId": "bulk_delete_agent_records_api_agents_bulk_delete_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bulk Delete Agent Records"
+      }
+    },
     "/api/agents/{agent_id}/delete": {
       "post": {
         "operationId": "delete_agent_record_api_agents__agent_id__delete_post",
@@ -10022,6 +10301,18 @@
     "/api/install-tracking/runs": {
       "get": {
         "operationId": "install_tracking_runs_api_api_install_tracking_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -10030,6 +10321,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Install Tracking Runs Api"
@@ -10070,6 +10371,51 @@
       }
     },
     "/api/install-tracking/runs/{run_id}": {
+      "delete": {
+        "operationId": "install_tracking_delete_run_api_install_tracking_runs__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallTrackingDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Tracking Delete Run"
+      },
       "get": {
         "operationId": "install_tracking_run_api_api_install_tracking_runs__run_id__get",
         "parameters": [
@@ -10107,6 +10453,60 @@
       }
     },
     "/api/install-tracking/runs/{run_id}/items/{item_id}": {
+      "delete": {
+        "operationId": "install_tracking_delete_item_api_install_tracking_runs__run_id__items__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallTrackingDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Tracking Delete Item"
+      },
       "post": {
         "operationId": "install_tracking_run_item_update_api_install_tracking_runs__run_id__items__item_id__post",
         "parameters": [
@@ -10683,6 +11083,278 @@
         "summary": "Resume Template Build"
       }
     },
+    "/api/labs": {
+      "get": {
+        "operationId": "list_labs_api_labs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Labs",
+        "tags": [
+          "labs"
+        ]
+      },
+      "post": {
+        "operationId": "create_lab_api_labs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Lab",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
+    "/api/labs/page": {
+      "get": {
+        "operationId": "page_api_labs_page_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "selected_lab_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Selected Lab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Page",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
+    "/api/labs/{lab_id}": {
+      "get": {
+        "operationId": "get_lab_api_labs__lab_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lab_id",
+            "required": true,
+            "schema": {
+              "title": "Lab Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lab",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
+    "/api/labs/{lab_id}/fixes/run-pending": {
+      "post": {
+        "operationId": "run_pending_fixes_api_labs__lab_id__fixes_run_pending_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lab_id",
+            "required": true,
+            "schema": {
+              "title": "Lab Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Pending Fixes",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
+    "/api/labs/{lab_id}/fixes/{fix_id}/run": {
+      "post": {
+        "operationId": "run_fix_api_labs__lab_id__fixes__fix_id__run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lab_id",
+            "required": true,
+            "schema": {
+              "title": "Lab Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "title": "Fix Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Fix",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
+    "/api/labs/{lab_id}/reconcile": {
+      "post": {
+        "operationId": "reconcile_lab_api_labs__lab_id__reconcile_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lab_id",
+            "required": true,
+            "schema": {
+              "title": "Lab Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconcile Lab",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
     "/api/live/screenshots/{screenshot_id}": {
       "get": {
         "operationId": "live_screenshot_api_live_screenshots__screenshot_id__get",
@@ -11143,6 +11815,430 @@
           }
         },
         "summary": "Api Monitoring Sweep Now"
+      }
+    },
+    "/api/oem-profiles": {
+      "get": {
+        "operationId": "oem_profiles_list_api_api_oem_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Oem Profiles List Api"
+      },
+      "post": {
+        "operationId": "oem_profile_create_api_api_oem_profiles_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "override",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Override",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OemProfileBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oem Profile Create Api"
+      }
+    },
+    "/api/oem-profiles/{key}": {
+      "delete": {
+        "operationId": "oem_profile_delete_api_api_oem_profiles__key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oem Profile Delete Api"
+      },
+      "get": {
+        "operationId": "oem_profile_get_api_api_oem_profiles__key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oem Profile Get Api"
+      },
+      "put": {
+        "operationId": "oem_profile_update_api_api_oem_profiles__key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OemProfileBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oem Profile Update Api"
+      }
+    },
+    "/api/onboarding/already-configured": {
+      "get": {
+        "description": "Aggregator for the wizard's step 1 'Already configured' card.\n\nReads Proxmox version + storages + bridges from the existing Proxmox client,\nand AD vault presence from app._load_vault. Each row is independent: a failure\nin one does not poison the others.",
+        "operationId": "already_configured_api_onboarding_already_configured_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Already Configured",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/api/onboarding/launch": {
+      "post": {
+        "operationId": "launch_api_onboarding_launch_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Launch",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/api/onboarding/probe/ad": {
+      "post": {
+        "operationId": "probe_ad_api_onboarding_probe_ad_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeAdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Ad",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/api/onboarding/probe/artifact": {
+      "post": {
+        "operationId": "probe_artifact_api_onboarding_probe_artifact_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Probe Artifact",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/api/onboarding/probe/tenant": {
+      "post": {
+        "operationId": "probe_tenant_api_onboarding_probe_tenant_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeTenantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Tenant",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/api/onboarding/setup-status": {
+      "get": {
+        "operationId": "setup_status_api_onboarding_setup_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Setup Status",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
+    "/api/onboarding/state": {
+      "delete": {
+        "operationId": "delete_state_api_onboarding_state_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Delete State",
+        "tags": [
+          "onboarding"
+        ]
+      },
+      "get": {
+        "operationId": "get_state_api_onboarding_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get State",
+        "tags": [
+          "onboarding"
+        ]
+      },
+      "put": {
+        "operationId": "put_state_api_onboarding_state_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put State",
+        "tags": [
+          "onboarding"
+        ]
       }
     },
     "/api/osd/v2/builder/import-legacy/{legacy_id}": {
@@ -13655,6 +14751,26 @@
         ]
       }
     },
+    "/api/sdn/apply-pending": {
+      "post": {
+        "description": "Acquire a lock, apply pending SDN changes, and release the lock.\n\nConvenience endpoint so the UI can offer a one-click commit without\nexposing PVE's two-phase lock-token plumbing. On any failure we make\na best-effort attempt to force-release the lock so a partial apply\ndoesn't leave the SDN tree wedged.",
+        "operationId": "apply_pending_sdn_api_sdn_apply_pending_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Apply Pending Sdn",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
     "/api/sdn/controllers": {
       "post": {
         "operationId": "create_controller_api_sdn_controllers_post",
@@ -15848,6 +16964,26 @@
         ]
       }
     },
+    "/api/sdn/labs/orphan-vnets": {
+      "get": {
+        "description": "Return SDN vnets that aren't bound to any lab bubble.\n\nSurfaced in the bubble create flow so an operator can adopt an\nexisting isolated network (and its subnet's CIDR / gateway / DHCP\nrange) instead of typing the same numbers a second time. Each entry\ncarries the parent zone + the first usable subnet's details for\nUI pre-fill; the operator can still override anything before saving.",
+        "operationId": "list_orphan_vnets_api_sdn_labs_orphan_vnets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Orphan Vnets",
+        "tags": [
+          "sdn"
+        ]
+      }
+    },
     "/api/sdn/labs/preflight": {
       "post": {
         "operationId": "lab_preflight_api_sdn_labs_preflight_post",
@@ -15889,6 +17025,7 @@
     },
     "/api/sdn/labs/{bubble_id}/network": {
       "get": {
+        "description": "Return the SDN binding + live subnet for a bubble.\n\nThe bubble row carries its own copy of cidr / gateway_ip /\ndhcp_pool_* but those drift the moment an operator changes the SDN\nsubnet on the Networks page. Bubble UIs should treat THESE values as\nthe source of truth -- pull from the bound subnet's actual PVE\nconfig and surface that, instead of editing the bubble's stale\ncopies.",
         "operationId": "get_lab_network_api_sdn_labs__bubble_id__network_get",
         "parameters": [
           {

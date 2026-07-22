@@ -300,6 +300,7 @@ def _row_dict(row: dict | None) -> dict | None:
     out = dict(row)
     out["created_at"] = _iso(out.get("created_at"))
     out["updated_at"] = _iso(out.get("updated_at"))
+    out["deleted_at"] = _iso(out.get("deleted_at"))
     out["evidence"] = out.pop("evidence_json") or {}
     return out
 
@@ -308,7 +309,7 @@ def _run_dict(row: dict | None) -> dict | None:
     if row is None:
         return None
     out = dict(row)
-    for key in ("started_at", "completed_at", "created_at", "updated_at"):
+    for key in ("started_at", "completed_at", "created_at", "updated_at", "deleted_at"):
         out[key] = _iso(out.get(key))
     out["summary"] = out.pop("summary_json") or {}
     return out
@@ -330,6 +331,7 @@ def init(conn: Connection | None = None) -> None:
     try:
         conn.execute(SCHEMA)
         _migrate_run_scope(conn)
+        _migrate_soft_delete(conn)
         conn.execute(POST_MIGRATE_SCHEMA)
         ensure_default_run(conn, commit=False)
         seed_defaults(conn, DEFAULT_RUN_ID, commit=False)
@@ -405,6 +407,32 @@ def _migrate_run_scope(conn: Connection) -> None:
                 ON DELETE CASCADE;
             END IF;
         END $$;
+        """
+    )
+
+
+def _migrate_soft_delete(conn: Connection) -> None:
+    for table in ("install_tracking_runs", "install_tracking_items"):
+        conn.execute(
+            f"""
+            ALTER TABLE {table}
+            ADD COLUMN IF NOT EXISTS deleted_at timestamptz NULL,
+            ADD COLUMN IF NOT EXISTS deleted_by text NULL,
+            ADD COLUMN IF NOT EXISTS delete_reason text NULL
+            """
+        )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_install_tracking_runs_live
+        ON install_tracking_runs(updated_at DESC)
+        WHERE deleted_at IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_install_tracking_items_live
+        ON install_tracking_items(run_id, status, sort_order)
+        WHERE deleted_at IS NULL
         """
     )
 
@@ -521,24 +549,27 @@ def create_run(
     return run
 
 
-def list_runs(conn: Connection) -> list[dict]:
+def list_runs(conn: Connection, *, include_deleted: bool = False) -> list[dict]:
     init(conn)
+    where = "" if include_deleted else "WHERE deleted_at IS NULL"
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM install_tracking_runs
+        {where}
         ORDER BY updated_at DESC, created_at DESC
         """
     ).fetchall()
     return [_run_dict(row) for row in rows]
 
 
-def get_run(conn: Connection, run_id: str) -> dict | None:
+def get_run(conn: Connection, run_id: str, *, include_deleted: bool = False) -> dict | None:
     init(conn)
-    row = conn.execute(
-        "SELECT * FROM install_tracking_runs WHERE run_id = %s",
-        (run_id,),
-    ).fetchone()
+    if include_deleted:
+        sql = "SELECT * FROM install_tracking_runs WHERE run_id = %s"
+    else:
+        sql = "SELECT * FROM install_tracking_runs WHERE run_id = %s AND deleted_at IS NULL"
+    row = conn.execute(sql, (run_id,)).fetchone()
     return _run_dict(row)
 
 
@@ -590,16 +621,17 @@ def seed_defaults(conn: Connection, run_id: str = DEFAULT_RUN_ID, *, commit: boo
         conn.commit()
 
 
-def list_items(conn: Connection) -> list[dict]:
-    return list_run_items(conn, DEFAULT_RUN_ID)
+def list_items(conn: Connection, *, include_deleted: bool = False) -> list[dict]:
+    return list_run_items(conn, DEFAULT_RUN_ID, include_deleted=include_deleted)
 
 
-def list_run_items(conn: Connection, run_id: str) -> list[dict]:
+def list_run_items(conn: Connection, run_id: str, *, include_deleted: bool = False) -> list[dict]:
+    extra = "" if include_deleted else " AND deleted_at IS NULL"
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM install_tracking_items
-        WHERE run_id = %s
+        WHERE run_id = %s{extra}
         ORDER BY sort_order ASC, category ASC, label ASC
         """,
         (run_id,),
@@ -607,12 +639,19 @@ def list_run_items(conn: Connection, run_id: str) -> list[dict]:
     return [_row_dict(row) for row in rows]
 
 
-def get_item(conn: Connection, run_id: str, item_id: str | None = None) -> dict | None:
+def get_item(
+    conn: Connection,
+    run_id: str,
+    item_id: str | None = None,
+    *,
+    include_deleted: bool = False,
+) -> dict | None:
     if item_id is None:
         item_id = run_id
         run_id = DEFAULT_RUN_ID
+    extra = "" if include_deleted else " AND deleted_at IS NULL"
     row = conn.execute(
-        "SELECT * FROM install_tracking_items WHERE run_id = %s AND item_id = %s",
+        f"SELECT * FROM install_tracking_items WHERE run_id = %s AND item_id = %s{extra}",
         (run_id, item_id),
     ).fetchone()
     return _row_dict(row)
@@ -733,6 +772,84 @@ def update_item(
         sort_order=int(existing.get("sort_order") or 1000),
         commit=commit,
     )
+
+
+def delete_run(
+    conn: Connection,
+    run_id: str,
+    *,
+    reason: str,
+    deleted_by: str | None = None,
+    commit: bool = True,
+) -> dict | None:
+    init(conn)
+    reason_clean = (reason or "").strip()
+    if not reason_clean:
+        raise ValueError("delete reason is required")
+    reason_clean = reason_clean[:500]
+    now = _now()
+    by = (deleted_by or "").strip() or None
+    row = conn.execute(
+        """
+        UPDATE install_tracking_runs
+        SET deleted_at = %s,
+            deleted_by = %s,
+            delete_reason = %s,
+            updated_at = %s
+        WHERE run_id = %s AND deleted_at IS NULL
+        RETURNING *
+        """,
+        (now, by, reason_clean, now, run_id),
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute(
+        """
+        UPDATE install_tracking_items
+        SET deleted_at = %s,
+            deleted_by = %s,
+            delete_reason = %s,
+            updated_at = %s
+        WHERE run_id = %s AND deleted_at IS NULL
+        """,
+        (now, by, reason_clean, now, run_id),
+    )
+    if commit:
+        conn.commit()
+    return _run_dict(dict(row))
+
+
+def delete_item(
+    conn: Connection,
+    run_id: str,
+    item_id: str,
+    *,
+    reason: str,
+    deleted_by: str | None = None,
+    commit: bool = True,
+) -> dict | None:
+    init(conn)
+    reason_clean = (reason or "").strip()
+    if not reason_clean:
+        raise ValueError("delete reason is required")
+    reason_clean = reason_clean[:500]
+    now = _now()
+    by = (deleted_by or "").strip() or None
+    row = conn.execute(
+        """
+        UPDATE install_tracking_items
+        SET deleted_at = %s,
+            deleted_by = %s,
+            delete_reason = %s,
+            updated_at = %s
+        WHERE run_id = %s AND item_id = %s AND deleted_at IS NULL
+        RETURNING *
+        """,
+        (now, by, reason_clean, now, run_id, item_id),
+    ).fetchone()
+    if commit:
+        conn.commit()
+    return _row_dict(dict(row)) if row else None
 
 
 def list_events(conn: Connection, run_id: str = DEFAULT_RUN_ID, *, limit: int = 50) -> list[dict]:

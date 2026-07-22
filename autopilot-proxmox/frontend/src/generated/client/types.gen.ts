@@ -293,9 +293,17 @@ export type BodyStartProvisionApiJobsProvisionPost = {
      */
     artifact_id?: string;
     /**
+     * Asset Role
+     */
+    asset_role?: string;
+    /**
      * Boot Mode
      */
     boot_mode?: string;
+    /**
+     * Bubble Id
+     */
+    bubble_id?: string;
     /**
      * Chassis Type Override
      */
@@ -365,6 +373,10 @@ export type BodyStartProvisionApiJobsProvisionPost = {
      */
     osdeploy_artifact_id?: string;
     /**
+     * Osdeploy Dc Mode
+     */
+    osdeploy_dc_mode?: string;
+    /**
      * Osdeploy Iso Storage
      */
     osdeploy_iso_storage?: string;
@@ -388,6 +400,22 @@ export type BodyStartProvisionApiJobsProvisionPost = {
      * Osdeploy Os Version
      */
     osdeploy_os_version?: string;
+    /**
+     * Osdeploy Role Dsrm Credential Id
+     */
+    osdeploy_role_dsrm_credential_id?: number;
+    /**
+     * Osdeploy Role Forest Admin Credential Id
+     */
+    osdeploy_role_forest_admin_credential_id?: number;
+    /**
+     * Osdeploy Role Forest Fqdn
+     */
+    osdeploy_role_forest_fqdn?: string;
+    /**
+     * Osdeploy Role Netbios Name
+     */
+    osdeploy_role_netbios_name?: string;
     /**
      * Osdeploy Server Role
      */
@@ -1013,6 +1041,16 @@ export type HeartbeatBody = {
 };
 
 /**
+ * InstallTrackingDeleteBody
+ */
+export type InstallTrackingDeleteBody = {
+    /**
+     * Reason
+     */
+    reason: string;
+};
+
+/**
  * InstallTrackingRunCreate
  */
 export type InstallTrackingRunCreate = {
@@ -1096,6 +1134,60 @@ export type JobTableRowResponse = {
 };
 
 /**
+ * LabCreateBody
+ */
+export type LabCreateBody = {
+    /**
+     * Desktop Count
+     */
+    desktop_count?: number;
+    /**
+     * Gateway Ip
+     */
+    gateway_ip?: string;
+    /**
+     * Group Tag
+     */
+    group_tag: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Network Cidr
+     */
+    network_cidr: string;
+    /**
+     * Network Mode
+     */
+    network_mode?: string;
+    /**
+     * Sdn Subnet
+     */
+    sdn_subnet?: string;
+    /**
+     * Sdn Vnet
+     */
+    sdn_vnet?: string;
+    /**
+     * Sdn Zone
+     */
+    sdn_zone?: string;
+    /**
+     * Server Count
+     */
+    server_count?: number;
+    /**
+     * Short Code
+     */
+    short_code: string;
+    /**
+     * Template Id
+     */
+    template_id?: string;
+};
+
+/**
  * LifecycleLaneResponse
  */
 export type LifecycleLaneResponse = {
@@ -1145,6 +1237,36 @@ export type MonitoringSummaryResponse = {
      * Intune
      */
     intune?: number;
+};
+
+/**
+ * OemProfileBody
+ */
+export type OemProfileBody = {
+    /**
+     * Chassis Type
+     */
+    chassis_type: number;
+    /**
+     * Family
+     */
+    family: string;
+    /**
+     * Manufacturer
+     */
+    manufacturer: string;
+    /**
+     * Product
+     */
+    product: string;
+    /**
+     * Serial Prefix
+     */
+    serial_prefix?: string | null;
+    /**
+     * Sku
+     */
+    sku: string;
 };
 
 /**
@@ -1295,6 +1417,54 @@ export type PhaseCompleteBody = {
      * Run Id
      */
     run_id: string;
+};
+
+/**
+ * ProbeAdRequest
+ */
+export type ProbeAdRequest = {
+    /**
+     * Account
+     */
+    account: string;
+    /**
+     * Domain
+     */
+    domain: string;
+    /**
+     * Password
+     */
+    password: string;
+};
+
+/**
+ * ProbeTenantRequest
+ */
+export type ProbeTenantRequest = {
+    /**
+     * Graph Check
+     */
+    graph_check?: boolean;
+    /**
+     * Tenant Domain
+     */
+    tenant_domain: string;
+    /**
+     * Tenant Id
+     */
+    tenant_id: string;
+};
+
+/**
+ * PutStateRequest
+ */
+export type PutStateRequest = {
+    /**
+     * Patch
+     */
+    patch?: {
+        [key: string]: unknown;
+    };
 };
 
 /**
@@ -1549,6 +1719,18 @@ export type SdnLabBody = {
      */
     cidr?: string;
     /**
+     * Dhcp Pool End
+     */
+    dhcp_pool_end?: string;
+    /**
+     * Dhcp Pool Start
+     */
+    dhcp_pool_start?: string;
+    /**
+     * Dhcp Scope
+     */
+    dhcp_scope?: string;
+    /**
      * Domain Name
      */
     domain_name?: string;
@@ -1568,6 +1750,10 @@ export type SdnLabBody = {
      * Name
      */
     name: string;
+    /**
+     * Netbios Name
+     */
+    netbios_name?: string;
     /**
      * Snat Enabled
      */
@@ -2217,6 +2403,10 @@ export type VmTimelineEventResponse = {
  * VmsFleetResponse
  */
 export type VmsFleetResponse = {
+    /**
+     * Agent Identity Warnings
+     */
+    agent_identity_warnings?: Array<string>;
     /**
      * Agents
      */
@@ -4206,6 +4396,20 @@ export type CreateAgentRecordApiAgentsPostData = {
 };
 
 export type CreateAgentRecordApiAgentsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type BulkDeleteAgentRecordsApiAgentsBulkDeletePostData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/agents/bulk-delete';
+};
+
+export type BulkDeleteAgentRecordsApiAgentsBulkDeletePostResponses = {
     /**
      * Successful Response
      */
@@ -6441,9 +6645,23 @@ export type InstallTrackingPageApiApiInstallTrackingPageGetResponses = {
 export type InstallTrackingRunsApiApiInstallTrackingRunsGetData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Include Deleted
+         */
+        include_deleted?: boolean;
+    };
     url: '/api/install-tracking/runs';
 };
+
+export type InstallTrackingRunsApiApiInstallTrackingRunsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingRunsApiApiInstallTrackingRunsGetError = InstallTrackingRunsApiApiInstallTrackingRunsGetErrors[keyof InstallTrackingRunsApiApiInstallTrackingRunsGetErrors];
 
 export type InstallTrackingRunsApiApiInstallTrackingRunsGetResponses = {
     /**
@@ -6475,6 +6693,34 @@ export type InstallTrackingCreateRunApiInstallTrackingRunsPostResponses = {
     200: unknown;
 };
 
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteData = {
+    body: InstallTrackingDeleteBody;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+    };
+    query?: never;
+    url: '/api/install-tracking/runs/{run_id}';
+};
+
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteError = InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteErrors[keyof InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteErrors];
+
+export type InstallTrackingDeleteRunApiInstallTrackingRunsRunIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetData = {
     body?: never;
     path: {
@@ -6497,6 +6743,38 @@ export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetErrors = {
 export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetError = InstallTrackingRunApiApiInstallTrackingRunsRunIdGetErrors[keyof InstallTrackingRunApiApiInstallTrackingRunsRunIdGetErrors];
 
 export type InstallTrackingRunApiApiInstallTrackingRunsRunIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteData = {
+    body: InstallTrackingDeleteBody;
+    path: {
+        /**
+         * Run Id
+         */
+        run_id: string;
+        /**
+         * Item Id
+         */
+        item_id: string;
+    };
+    query?: never;
+    url: '/api/install-tracking/runs/{run_id}/items/{item_id}';
+};
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteError = InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteErrors[keyof InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteErrors];
+
+export type InstallTrackingDeleteItemApiInstallTrackingRunsRunIdItemsItemIdDeleteResponses = {
     /**
      * Successful Response
      */
@@ -6885,6 +7163,187 @@ export type ResumeTemplateBuildApiJobsJobIdResumeTemplateBuildPostResponses = {
     200: unknown;
 };
 
+export type ListLabsApiLabsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/labs';
+};
+
+export type ListLabsApiLabsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type CreateLabApiLabsPostData = {
+    body: LabCreateBody;
+    path?: never;
+    query?: never;
+    url: '/api/labs';
+};
+
+export type CreateLabApiLabsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateLabApiLabsPostError = CreateLabApiLabsPostErrors[keyof CreateLabApiLabsPostErrors];
+
+export type CreateLabApiLabsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
+};
+
+export type PageApiLabsPageGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Selected Lab Id
+         */
+        selected_lab_id?: string | null;
+    };
+    url: '/api/labs/page';
+};
+
+export type PageApiLabsPageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PageApiLabsPageGetError = PageApiLabsPageGetErrors[keyof PageApiLabsPageGetErrors];
+
+export type PageApiLabsPageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetLabApiLabsLabIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Lab Id
+         */
+        lab_id: string;
+    };
+    query?: never;
+    url: '/api/labs/{lab_id}';
+};
+
+export type GetLabApiLabsLabIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetLabApiLabsLabIdGetError = GetLabApiLabsLabIdGetErrors[keyof GetLabApiLabsLabIdGetErrors];
+
+export type GetLabApiLabsLabIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type RunPendingFixesApiLabsLabIdFixesRunPendingPostData = {
+    body?: never;
+    path: {
+        /**
+         * Lab Id
+         */
+        lab_id: string;
+    };
+    query?: never;
+    url: '/api/labs/{lab_id}/fixes/run-pending';
+};
+
+export type RunPendingFixesApiLabsLabIdFixesRunPendingPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RunPendingFixesApiLabsLabIdFixesRunPendingPostError = RunPendingFixesApiLabsLabIdFixesRunPendingPostErrors[keyof RunPendingFixesApiLabsLabIdFixesRunPendingPostErrors];
+
+export type RunPendingFixesApiLabsLabIdFixesRunPendingPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type RunFixApiLabsLabIdFixesFixIdRunPostData = {
+    body?: never;
+    path: {
+        /**
+         * Lab Id
+         */
+        lab_id: string;
+        /**
+         * Fix Id
+         */
+        fix_id: string;
+    };
+    query?: never;
+    url: '/api/labs/{lab_id}/fixes/{fix_id}/run';
+};
+
+export type RunFixApiLabsLabIdFixesFixIdRunPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RunFixApiLabsLabIdFixesFixIdRunPostError = RunFixApiLabsLabIdFixesFixIdRunPostErrors[keyof RunFixApiLabsLabIdFixesFixIdRunPostErrors];
+
+export type RunFixApiLabsLabIdFixesFixIdRunPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ReconcileLabApiLabsLabIdReconcilePostData = {
+    body?: never;
+    path: {
+        /**
+         * Lab Id
+         */
+        lab_id: string;
+    };
+    query?: never;
+    url: '/api/labs/{lab_id}/reconcile';
+};
+
+export type ReconcileLabApiLabsLabIdReconcilePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReconcileLabApiLabsLabIdReconcilePostError = ReconcileLabApiLabsLabIdReconcilePostErrors[keyof ReconcileLabApiLabsLabIdReconcilePostErrors];
+
+export type ReconcileLabApiLabsLabIdReconcilePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type LiveScreenshotApiLiveScreenshotsScreenshotIdGetData = {
     body?: never;
     path: {
@@ -7243,6 +7702,299 @@ export type ApiMonitoringSweepNowApiMonitoringSweepNowPostResponses = {
      * Successful Response
      */
     202: unknown;
+};
+
+export type OemProfilesListApiApiOemProfilesGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/oem-profiles';
+};
+
+export type OemProfilesListApiApiOemProfilesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type OemProfileCreateApiApiOemProfilesPostData = {
+    body: OemProfileBody;
+    path?: never;
+    query: {
+        /**
+         * Key
+         */
+        key: string;
+        /**
+         * Override
+         */
+        override?: boolean;
+    };
+    url: '/api/oem-profiles';
+};
+
+export type OemProfileCreateApiApiOemProfilesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OemProfileCreateApiApiOemProfilesPostError = OemProfileCreateApiApiOemProfilesPostErrors[keyof OemProfileCreateApiApiOemProfilesPostErrors];
+
+export type OemProfileCreateApiApiOemProfilesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
+};
+
+export type OemProfileDeleteApiApiOemProfilesKeyDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Key
+         */
+        key: string;
+    };
+    query?: never;
+    url: '/api/oem-profiles/{key}';
+};
+
+export type OemProfileDeleteApiApiOemProfilesKeyDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OemProfileDeleteApiApiOemProfilesKeyDeleteError = OemProfileDeleteApiApiOemProfilesKeyDeleteErrors[keyof OemProfileDeleteApiApiOemProfilesKeyDeleteErrors];
+
+export type OemProfileDeleteApiApiOemProfilesKeyDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type OemProfileDeleteApiApiOemProfilesKeyDeleteResponse = OemProfileDeleteApiApiOemProfilesKeyDeleteResponses[keyof OemProfileDeleteApiApiOemProfilesKeyDeleteResponses];
+
+export type OemProfileGetApiApiOemProfilesKeyGetData = {
+    body?: never;
+    path: {
+        /**
+         * Key
+         */
+        key: string;
+    };
+    query?: never;
+    url: '/api/oem-profiles/{key}';
+};
+
+export type OemProfileGetApiApiOemProfilesKeyGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OemProfileGetApiApiOemProfilesKeyGetError = OemProfileGetApiApiOemProfilesKeyGetErrors[keyof OemProfileGetApiApiOemProfilesKeyGetErrors];
+
+export type OemProfileGetApiApiOemProfilesKeyGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type OemProfileUpdateApiApiOemProfilesKeyPutData = {
+    body: OemProfileBody;
+    path: {
+        /**
+         * Key
+         */
+        key: string;
+    };
+    query?: never;
+    url: '/api/oem-profiles/{key}';
+};
+
+export type OemProfileUpdateApiApiOemProfilesKeyPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OemProfileUpdateApiApiOemProfilesKeyPutError = OemProfileUpdateApiApiOemProfilesKeyPutErrors[keyof OemProfileUpdateApiApiOemProfilesKeyPutErrors];
+
+export type OemProfileUpdateApiApiOemProfilesKeyPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type AlreadyConfiguredApiOnboardingAlreadyConfiguredGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/already-configured';
+};
+
+export type AlreadyConfiguredApiOnboardingAlreadyConfiguredGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type LaunchApiOnboardingLaunchPostData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/launch';
+};
+
+export type LaunchApiOnboardingLaunchPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ProbeAdApiOnboardingProbeAdPostData = {
+    body: ProbeAdRequest;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/probe/ad';
+};
+
+export type ProbeAdApiOnboardingProbeAdPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ProbeAdApiOnboardingProbeAdPostError = ProbeAdApiOnboardingProbeAdPostErrors[keyof ProbeAdApiOnboardingProbeAdPostErrors];
+
+export type ProbeAdApiOnboardingProbeAdPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ProbeArtifactApiOnboardingProbeArtifactPostData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/probe/artifact';
+};
+
+export type ProbeArtifactApiOnboardingProbeArtifactPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type ProbeTenantApiOnboardingProbeTenantPostData = {
+    body: ProbeTenantRequest;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/probe/tenant';
+};
+
+export type ProbeTenantApiOnboardingProbeTenantPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ProbeTenantApiOnboardingProbeTenantPostError = ProbeTenantApiOnboardingProbeTenantPostErrors[keyof ProbeTenantApiOnboardingProbeTenantPostErrors];
+
+export type ProbeTenantApiOnboardingProbeTenantPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type SetupStatusApiOnboardingSetupStatusGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/setup-status';
+};
+
+export type SetupStatusApiOnboardingSetupStatusGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type DeleteStateApiOnboardingStateDeleteData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/state';
+};
+
+export type DeleteStateApiOnboardingStateDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteStateApiOnboardingStateDeleteResponse = DeleteStateApiOnboardingStateDeleteResponses[keyof DeleteStateApiOnboardingStateDeleteResponses];
+
+export type GetStateApiOnboardingStateGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/state';
+};
+
+export type GetStateApiOnboardingStateGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type PutStateApiOnboardingStatePutData = {
+    body: PutStateRequest;
+    headers?: {
+        /**
+         * If-Match
+         */
+        'If-Match'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/onboarding/state';
+};
+
+export type PutStateApiOnboardingStatePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type PutStateApiOnboardingStatePutError = PutStateApiOnboardingStatePutErrors[keyof PutStateApiOnboardingStatePutErrors];
+
+export type PutStateApiOnboardingStatePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type ApiV2BuilderImportLegacySequenceApiOsdV2BuilderImportLegacyLegacyIdPostData = {
@@ -8873,6 +9625,20 @@ export type ApplySdnApiSdnApplyPostResponses = {
     200: unknown;
 };
 
+export type ApplyPendingSdnApiSdnApplyPendingPostData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/apply-pending';
+};
+
+export type ApplyPendingSdnApiSdnApplyPendingPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type CreateControllerApiSdnControllersPostData = {
     /**
      * Body
@@ -10308,6 +11074,20 @@ export type CreateLabApiSdnLabsPostResponses = {
      * Successful Response
      */
     201: unknown;
+};
+
+export type ListOrphanVnetsApiSdnLabsOrphanVnetsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/sdn/labs/orphan-vnets';
+};
+
+export type ListOrphanVnetsApiSdnLabsOrphanVnetsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
 };
 
 export type LabPreflightApiSdnLabsPreflightPostData = {

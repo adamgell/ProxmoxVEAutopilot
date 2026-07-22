@@ -4515,13 +4515,45 @@ def get_autopilot_devices():
     return devices, None
 
 
-def load_oem_profiles():
+def _load_builtin_oem_profiles() -> dict:
     profiles_path = FILES_DIR / "oem_profiles.yml"
     if not profiles_path.exists():
         return {}
     with open(profiles_path) as f:
         data = yaml.safe_load(f)
     return (data or {}).get("oem_profiles", {})
+
+
+def _load_custom_oem_profiles() -> dict:
+    try:
+        from web import db_pg, oem_profiles_pg
+
+        with db_pg.connection(_database_url()) as conn:
+            rows = oem_profiles_pg.list_profiles(conn)
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for row in rows:
+        key = row.get("key")
+        if not key:
+            continue
+        out[key] = {
+            "manufacturer": row.get("manufacturer", ""),
+            "product": row.get("product", ""),
+            "family": row.get("family", ""),
+            "sku": row.get("sku", ""),
+            "chassis_type": row.get("chassis_type"),
+        }
+        if row.get("serial_prefix"):
+            out[key]["serial_prefix"] = row["serial_prefix"]
+    return out
+
+
+def load_oem_profiles() -> dict:
+    """Merged view: built-in YAML profiles overlaid by any custom PG rows."""
+    merged = dict(_load_builtin_oem_profiles())
+    merged.update(_load_custom_oem_profiles())
+    return merged
 
 
 def _serial_to_oem(serial):
@@ -5129,6 +5161,10 @@ class InstallTrackingRunCreate(BaseModel):
     source: str = Field("", max_length=240)
 
 
+class InstallTrackingDeleteBody(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
 def _install_tracking_payload(run_id: str | None = None) -> dict:
     from web import db_pg, install_tracking_pg
 
@@ -5379,11 +5415,14 @@ async def install_tracking_page_api(run_id: str | None = None):
 
 
 @app.get("/api/install-tracking/runs")
-async def install_tracking_runs_api():
+async def install_tracking_runs_api(include_deleted: bool = False):
     from web import db_pg, install_tracking_pg
 
     with db_pg.connection(_database_url()) as conn:
-        return {"schema_version": 1, "runs": install_tracking_pg.list_runs(conn)}
+        return {
+            "schema_version": 1,
+            "runs": install_tracking_pg.list_runs(conn, include_deleted=include_deleted),
+        }
 
 
 @app.post("/api/install-tracking/runs")
@@ -5449,6 +5488,248 @@ async def install_tracking_refresh_evidence(run_id: str):
             run_id,
             _install_tracking_refresh_snapshot(),
         )
+
+
+def _install_tracking_session_user(request: Request) -> str | None:
+    session = getattr(request.state, "session", None)
+    email = None
+    if isinstance(session, dict):
+        email = session.get("user_email") or session.get("email")
+    if not isinstance(email, str):
+        return None
+    email = email.strip()
+    return email or None
+
+
+@app.delete("/api/install-tracking/runs/{run_id}")
+async def install_tracking_delete_run(request: Request, run_id: str, body: InstallTrackingDeleteBody):
+    from web import db_pg, install_tracking_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            row = install_tracking_pg.delete_run(
+                conn,
+                run_id,
+                reason=body.reason,
+                deleted_by=_install_tracking_session_user(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "install tracking run not found")
+    return row
+
+
+@app.delete("/api/install-tracking/runs/{run_id}/items/{item_id}")
+async def install_tracking_delete_item(
+    request: Request,
+    run_id: str,
+    item_id: str,
+    body: InstallTrackingDeleteBody,
+):
+    from web import db_pg, install_tracking_pg
+
+    with db_pg.connection(_database_url()) as conn:
+        try:
+            row = install_tracking_pg.delete_item(
+                conn,
+                run_id,
+                item_id,
+                reason=body.reason,
+                deleted_by=_install_tracking_session_user(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "install tracking item not found")
+    return row
+
+
+class OemProfileBody(BaseModel):
+    manufacturer: str = Field(..., min_length=1, max_length=240)
+    product: str = Field(..., min_length=1, max_length=240)
+    family: str = Field(..., min_length=1, max_length=240)
+    sku: str = Field(..., min_length=1, max_length=240)
+    chassis_type: int = Field(..., ge=1, le=99)
+    serial_prefix: str | None = Field(None, max_length=32)
+
+
+def _oem_profile_session_user(request: Request) -> str | None:
+    session = getattr(request.state, "session", None)
+    email = None
+    if isinstance(session, dict):
+        email = session.get("user_email") or session.get("email")
+    if not isinstance(email, str):
+        return None
+    email = email.strip()
+    return email or None
+
+
+def _oem_merged_profile(key: str) -> dict | None:
+    from web import db_pg, oem_profiles_pg
+
+    builtin = _load_builtin_oem_profiles().get(key)
+    custom_row = None
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            custom_row = oem_profiles_pg.get_profile(conn, key)
+    except oem_profiles_pg.OemProfileValidationError:
+        return None
+    except Exception:
+        custom_row = None
+    if custom_row is not None:
+        source = "override" if builtin is not None else "custom"
+        return {
+            "key": custom_row["key"],
+            "manufacturer": custom_row["manufacturer"],
+            "product": custom_row["product"],
+            "family": custom_row["family"],
+            "sku": custom_row["sku"],
+            "chassis_type": custom_row["chassis_type"],
+            "serial_prefix": custom_row.get("serial_prefix"),
+            "source": source,
+            "created_at": custom_row.get("created_at"),
+            "updated_at": custom_row.get("updated_at"),
+        }
+    if builtin is None:
+        return None
+    return {
+        "key": key,
+        "manufacturer": builtin.get("manufacturer", ""),
+        "product": builtin.get("product", ""),
+        "family": builtin.get("family", ""),
+        "sku": builtin.get("sku", ""),
+        "chassis_type": builtin.get("chassis_type"),
+        "serial_prefix": builtin.get("serial_prefix"),
+        "source": "builtin",
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
+@app.get("/api/oem-profiles")
+async def oem_profiles_list_api():
+    from web import db_pg, oem_profiles_pg
+
+    builtin = _load_builtin_oem_profiles()
+    custom_rows: list[dict] = []
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            custom_rows = oem_profiles_pg.list_profiles(conn)
+    except Exception:
+        custom_rows = []
+    custom_by_key = {row["key"]: row for row in custom_rows if row.get("key")}
+
+    rows: list[dict] = []
+    for key in sorted(builtin):
+        profile = builtin[key]
+        if key in custom_by_key:
+            continue
+        rows.append({
+            "key": key,
+            "manufacturer": profile.get("manufacturer", ""),
+            "product": profile.get("product", ""),
+            "family": profile.get("family", ""),
+            "sku": profile.get("sku", ""),
+            "chassis_type": profile.get("chassis_type"),
+            "serial_prefix": profile.get("serial_prefix"),
+            "source": "builtin",
+            "created_at": None,
+            "updated_at": None,
+        })
+    for key in sorted(custom_by_key):
+        row = custom_by_key[key]
+        source = "override" if key in builtin else "custom"
+        rows.append({
+            "key": row["key"],
+            "manufacturer": row["manufacturer"],
+            "product": row["product"],
+            "family": row["family"],
+            "sku": row["sku"],
+            "chassis_type": row["chassis_type"],
+            "serial_prefix": row.get("serial_prefix"),
+            "source": source,
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        })
+    return {"profiles": rows}
+
+
+@app.get("/api/oem-profiles/{key}")
+async def oem_profile_get_api(key: str):
+    row = _oem_merged_profile(key)
+    if row is None:
+        raise HTTPException(404, "oem profile not found")
+    return row
+
+
+@app.post("/api/oem-profiles", status_code=201)
+async def oem_profile_create_api(
+    request: Request,
+    body: OemProfileBody,
+    key: str,
+    override: bool = False,
+):
+    from web import db_pg, oem_profiles_pg
+
+    if not override and key in _load_builtin_oem_profiles():
+        raise HTTPException(
+            409,
+            "a built-in profile with this key exists; pass ?override=true to shadow it",
+        )
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            row = oem_profiles_pg.create_profile(
+                conn,
+                key=key,
+                payload=body.model_dump(),
+                created_by=_oem_profile_session_user(request),
+            )
+    except oem_profiles_pg.OemProfileValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    row["source"] = "override" if key in _load_builtin_oem_profiles() else "custom"
+    return row
+
+
+@app.put("/api/oem-profiles/{key}")
+async def oem_profile_update_api(request: Request, key: str, body: OemProfileBody):
+    from web import db_pg, oem_profiles_pg
+
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            row = oem_profiles_pg.update_profile(
+                conn,
+                key,
+                payload=body.model_dump(),
+                updated_by=_oem_profile_session_user(request),
+            )
+    except oem_profiles_pg.OemProfileValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if row is None:
+        if key in _load_builtin_oem_profiles():
+            raise HTTPException(
+                403,
+                "built-in profile is read-only; create a custom override first",
+            )
+        raise HTTPException(404, "oem profile not found")
+    row["source"] = "override" if key in _load_builtin_oem_profiles() else "custom"
+    return row
+
+
+@app.delete("/api/oem-profiles/{key}", status_code=204)
+async def oem_profile_delete_api(key: str):
+    from web import db_pg, oem_profiles_pg
+
+    try:
+        with db_pg.connection(_database_url()) as conn:
+            deleted = oem_profiles_pg.delete_profile(conn, key)
+    except oem_profiles_pg.OemProfileValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not deleted:
+        if key in _load_builtin_oem_profiles():
+            raise HTTPException(403, "built-in profile is read-only")
+        raise HTTPException(404, "oem profile not found")
+    return Response(status_code=204)
 
 
 @app.get("/provision", response_class=HTMLResponse)
@@ -15232,12 +15513,7 @@ async def submit_sequence_duplicate(request: Request, seq_id: int):
 
 
 def _load_oem_profiles_dict() -> dict:
-    path = FILES_DIR / "oem_profiles.yml"
-    if not path.exists():
-        return {}
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-    return data.get("oem_profiles", {})
+    return load_oem_profiles()
 
 
 @app.post("/api/vm-provisioning")
