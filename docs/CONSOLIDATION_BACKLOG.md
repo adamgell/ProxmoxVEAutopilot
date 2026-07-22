@@ -74,13 +74,15 @@ have superseded parts.
    FOLLOW-UP: re-add the landing-page onboarding "resume" hero to the current
    OutcomeNavigation shell index (the branch's hero targeted the old shell and was
    dropped during the merge).
-3. `codex/roadmap-four-tasks` (`b221136`, +11) plus
-   `wip/2026-07-22-osdeploy-smartdeploy` (`a4945f9`, +1) - OSDeploy QGA MSI
-   staging, secure-boot preflight block, VirtIO root preflight, plus the
-   uncommitted SmartDeploy/WDS work and the Gen 1 hash lab-boundary. These two
-   overlap; reconcile and land together. Note: the WIP introduced 2 regressions
-   when rebased onto current `main` (`test_react_shell` fleet run-scoped agent,
-   `test_sdn_endpoints` lab open-egress/snat default); fix those during land.
+3. **[LANDED 2026-07-22]** `codex/roadmap-four-tasks` (+11, merged clean as
+   `f1f0d2f`) - fleet duplicate-row fix, lab-specific Gen 1 hash upload boundary,
+   OSDeploy VirtIO/secure-boot/QGA hardening. Verified 1335 backend / 194 frontend
+   / agent contract tests. The paired `wip/2026-07-22-osdeploy-smartdeploy` was
+   found MOSTLY SUPERSEDED by this + greening; its unique self-contained
+   scaffolding (SmartDeploy + Entra app-registration scripts + tests, LABZ1
+   runbook) was extracted and landed as `c0d7009`. Its plaintext
+   `vault_entra-ivy24.yml` was deliberately NOT landed (secrets; now gitignored).
+   The wip branch is kept as a local snapshot but has no further unique value.
 4. `claude/mystifying-keller-8c1a01` (`72c8b04`, +12) - OEM profiles CRUD plus PG
    storage and merged loader; install-tracking soft-delete endpoints.
 5. `codex/installer-resume-spec` (`a06dcdf`, +5) - Installer resume and support
