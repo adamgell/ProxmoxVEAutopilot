@@ -38,6 +38,12 @@ DOTNET="$((10#$A)).$((10#$B)).$((10#$C))"
 props="autopilot-agent/Directory.Build.props"
 perl -0pi -e "s{(<AutopilotAgentVersion[^>]*>)[^<]+(</AutopilotAgentVersion>)}{\${1}$DOTNET\${2}}g" "$props"
 
+# Keep the committed docker-compose image-tag default in sync with the release.
+# (Deploys still set AUTOPILOT_IMAGE_TAG authoritatively in the host .env; this
+# is only the fallback, but a stale committed default is misleading.)
+compose="autopilot-proxmox/docker-compose.yml"
+perl -pi -e "s/(AUTOPILOT_IMAGE_TAG:-v)[0-9]+\.[0-9]+\.[0-9]+/\${1}$NEW/g" "$compose"
+
 echo "VERSION: ${CUR:-<none>} -> $NEW"
 echo "Agent (Directory.Build.props): $DOTNET"
 echo
