@@ -31,8 +31,26 @@ def test_registered_startup_initializes_app_database_url(monkeypatch):
 
     calls = []
 
+    class FakeCursor:
+        def fetchone(self):
+            return None
+
+        def fetchall(self):
+            return []
+
     class FakeConn:
-        pass
+        """Mimics psycopg Connection for the unmocked schema inits.
+
+        sdn_labs_pg.init / managed_labs_pg.init run for real during startup
+        and call conn.execute(SCHEMA) then conn.commit(); psycopg's
+        Connection.execute returns a Cursor.
+        """
+
+        def execute(self, query, params=None):
+            return FakeCursor()
+
+        def commit(self):
+            pass
 
     @contextmanager
     def fake_connection(dsn):
