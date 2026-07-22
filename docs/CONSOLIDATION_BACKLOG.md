@@ -92,8 +92,9 @@ have superseded parts.
 5. **[LANDED 2026-07-22 as `d32cd36`]** `codex/installer-resume-spec` (+5) -
    Installer resume + support flow (`installer_state.py` helper, support-bundle
    redaction). Clean isolated merge; 46 installer tests pass. Branch retired.
-6. `origin/codex/provision-three-columns` (`df2b803`, +2) - OSDCloud v2
-   domain-join fix and the provision-launch three-column layout.
+6. **[LANDED 2026-07-22 as `5648461`]** `codex/provision-three-columns` (+2) -
+   OSDCloud v2 domain-join fix + provision-launch three-column layout. Clean merge
+   (synced the mirror cloudosd-build ps1). Backend 1392 pass. Branch retired.
 7. `codex/react-workflow-ux-pass` (`5aaa923`, +2) - Subnet edit form
    autopopulate (CIDR, DHCP range, SNAT).
 8. `origin/codex/lab-dhcp-console-cleanup` (`8646847`, +1) - Lab DC readiness and
