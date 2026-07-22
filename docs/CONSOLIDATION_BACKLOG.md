@@ -61,10 +61,12 @@ Land one at a time, each as its own reviewed and test-verified merge. Re-check
 "still applies" before each, since the large React work already on `main` may
 have superseded parts.
 
-1. `claude/wizardly-williamson-ab4e56` (`bb009b4`, +1) - Realign OSDeploy
-   endpoint tests to the React shell and MSI gate. Land first; it targets the
-   failing OSDeploy/React-shell/MSI test families and may green part of the
-   baseline.
+1. **[SUPERSEDED 2026-07-22, branch retired]** `claude/wizardly-williamson-ab4e56`
+   (+1) - Would have realigned OSDeploy endpoint tests to the React shell, but
+   `main` already did this more thoroughly (its `/osdeploy/builder` 302-redirects
+   to `/react/osdeploy?view=builder` with `/api/osdeploy/page` data + an SDN
+   vnet-targets test). The branch's older `200`-with-`react-root` expectation would
+   regress `main`. Nothing to land; branch deleted (local + origin).
 2. **[LANDED 2026-07-22 as `5a0ad1e`]** `claude/naughty-buck-700ffc` (+32) -
    Onboarding / first-run setup wizard (persona/tenant/identity/review steps, live
    setup monitor, phase rail, setup-status projection, atomic launch). Backend +
