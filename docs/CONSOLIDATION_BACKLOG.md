@@ -83,8 +83,12 @@ have superseded parts.
    runbook) was extracted and landed as `c0d7009`. Its plaintext
    `vault_entra-ivy24.yml` was deliberately NOT landed (secrets; now gitignored).
    The wip branch is kept as a local snapshot but has no further unique value.
-4. `claude/mystifying-keller-8c1a01` (`72c8b04`, +12) - OEM profiles CRUD plus PG
-   storage and merged loader; install-tracking soft-delete endpoints.
+4. **[LANDED 2026-07-22 as `6e64823`]** `claude/mystifying-keller-8c1a01` (+12) -
+   Was 2/3 superseded (files-delete + oem-profiles CRUD already independently on
+   main). Landed the unique install-tracking soft-delete (`install_tracking_pg` +
+   `/api/install-tracking` endpoints + test); dropped the branch's redundant
+   `test_file_shelf_delete.py`; regenerated the OpenAPI client. Backend 1365 pass.
+   Branch retired (local + origin).
 5. `codex/installer-resume-spec` (`a06dcdf`, +5) - Installer resume and support
    flow with redaction.
 6. `origin/codex/provision-three-columns` (`df2b803`, +2) - OSDCloud v2
