@@ -657,10 +657,16 @@ def test_osdeploy_task_engine_sequence_installs_agent_before_heartbeat(pg_conn):
         "bake_boot_entry",
         "stage_osd_client",
         "stage_autopilot_agent",
+        "install_qga",
+        "verify_qga",
+        "install_qga_watchdog",
         "install_autopilot_agent",
         "wait_agent_heartbeat",
     ]
+    # Ordering invariant this test guards: the AutopilotAgent must be installed
+    # before we wait on its heartbeat, and after the guest agent it depends on.
     assert kinds.index("install_autopilot_agent") < kinds.index("wait_agent_heartbeat")
+    assert kinds.index("install_qga") < kinds.index("install_autopilot_agent")
 
 
 @pytest.mark.parametrize(
