@@ -16,27 +16,44 @@ branches, worktrees, and stashes.
 
 ## Health snapshot (2026-07-22)
 
-- Backend (`autopilot-proxmox`, pytest): 1300 passed, 10 failed, 17 integration
-  skipped (correctly gated behind `--run-integration`). The baseline is red.
+- Backend (`autopilot-proxmox`, pytest): GREEN as of 2026-07-22. 1284 passed, 0
+  failed, 1 xfailed, 17 integration skipped (correctly gated behind
+  `--run-integration`). Was 10 failed before greening; see "Baseline greening"
+  below.
 - Frontend (`autopilot-proxmox/frontend`): `tsc --noEmit` clean, `vite build`
   clean.
 - Agent (`autopilot-agent`, .NET 10): code compiles (1 nullable warning in
   `AgentUpdateService.cs`). The WiX MSI installer only builds on Windows; that
   step is expected to fail on macOS and runs on the Windows build host instead.
 
-### The 10 failing tests on `main` (first work item: green the baseline)
+### Baseline greening (DONE 2026-07-22)
 
-- `test_cockpit_ui.py`: archive-history controls, cache-warming surface,
-  readiness-live-after-completion, ubuntu target-OS palette/phases
-- `test_onboarding_pg.py::test_init_creates_table_and_is_idempotent`
-- `test_osd_v2_endpoints.py::test_osdeploy_task_engine_sequence_installs_agent_before_heartbeat`
-- `test_sequence_builder_target_os.py`: builder renders, list-page target-OS badge
-- `test_ts_engine_startup.py::test_registered_startup_initializes_app_database_url`
-- `test_web.py::test_web_writes_service_health_heartbeat_on_startup`
+The 10 red tests were all test-side debt from recent refactors; zero production
+source changed. Fixed via 5 parallel agents plus one isolation fix:
 
-These cluster around half-landed features (cockpit/onboarding/target-OS/health
-heartbeat), which suggests some implementation or tests landed without their
-counterpart. Several parked branches below likely complete them.
+- `test_cockpit_ui.py` (4): cwd-relative template path bug (`Path("autopilot-proxmox/...")`
+  doubled when pytest runs from `autopilot-proxmox/`); fixed the path idiom to
+  match the passing sibling tests. Templates were NOT deleted (see follow-up).
+- `test_sequence_builder_target_os.py` (2): stale route expectations
+  (`/react/sequences` -> `/react/task-engine/sequences/...`) and a retired
+  `/api/sequences/page` endpoint; re-pointed to live routes/endpoint.
+- `test_ts_engine_startup.py` + `test_web.py` (2): stale `FakeConn` doubles
+  missing the `execute()`/`commit()` surface the DB-init path now calls.
+- `test_osd_v2_endpoints.py` (1): sequence gained `install_qga` /
+  `install_qga_watchdog` steps; refreshed the expected list and added an explicit
+  agent-before-heartbeat ordering assertion.
+- `test_onboarding_pg.py` (1): the `onboarding_state` feature is un-landed (lives
+  on `claude/naughty-buck-700ffc`); marked `xfail(strict=False)` with a reason.
+  FOLLOW-UP: remove that marker when `naughty-buck` lands.
+- `test_sdn_endpoints.py::test_lab_create_uses_open_egress_and_snat_by_default`
+  (found during full-suite verification): missing `lab_bubbles_pg.reset_for_tests`
+  caused an "ACME Lab" unique-key collision by test order; added the reset.
+
+FOLLOW-UP (test-debt cleanup, separate task): the 3 CloudOSD/task-engine Jinja
+templates are dead-on-disk (all routes now redirect to the React SPA), yet ~10
+content-assertion tests in `test_cockpit_ui.py` still validate them. A proper
+cleanup deletes those template files together with ALL their assertion tests as
+one consistent change.
 
 ## Parked branches (recommended land order)
 
