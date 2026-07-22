@@ -130,6 +130,7 @@ def test_sdn_vnet_firewall_rule_route_targets_vnet_scope(web_client, monkeypatch
 def test_lab_create_uses_open_egress_and_snat_by_default(web_client, pg_conn, monkeypatch):
     from web import lab_bubbles_pg, sdn_endpoints
 
+    lab_bubbles_pg.reset_for_tests(pg_conn)
     lab_bubbles_pg.init(pg_conn)
     monkeypatch.setattr(sdn_endpoints, "_conn", lambda: pg_conn)
     monkeypatch.setattr(
