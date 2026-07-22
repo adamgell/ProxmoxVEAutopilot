@@ -89,8 +89,9 @@ have superseded parts.
    `/api/install-tracking` endpoints + test); dropped the branch's redundant
    `test_file_shelf_delete.py`; regenerated the OpenAPI client. Backend 1365 pass.
    Branch retired (local + origin).
-5. `codex/installer-resume-spec` (`a06dcdf`, +5) - Installer resume and support
-   flow with redaction.
+5. **[LANDED 2026-07-22 as `d32cd36`]** `codex/installer-resume-spec` (+5) -
+   Installer resume + support flow (`installer_state.py` helper, support-bundle
+   redaction). Clean isolated merge; 46 installer tests pass. Branch retired.
 6. `origin/codex/provision-three-columns` (`df2b803`, +2) - OSDCloud v2
    domain-join fix and the provision-launch three-column layout.
 7. `codex/react-workflow-ux-pass` (`5aaa923`, +2) - Subnet edit form
