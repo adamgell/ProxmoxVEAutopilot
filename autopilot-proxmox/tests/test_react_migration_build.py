@@ -18,11 +18,18 @@ def test_dockerfile_builds_react_assets_in_node_stage():
     assert "COPY --from=frontend-build /frontend/dist /app/web/static/react" in dockerfile
 
 
-def test_docker_publish_watches_frontend_files():
+def test_docker_publish_builds_on_main_and_release_tags():
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/docker-publish.yml").read_text())
     on_config = workflow.get("on") or workflow.get(True)
+    push = on_config["push"]
 
-    assert "autopilot-proxmox/frontend/**" in on_config["push"]["paths"]
+    # No paths filter (removed intentionally so a release-tag build is never
+    # skipped when the tagged commit only bumps VERSION). Every push to main
+    # rebuilds the image, so frontend and any other changes are always covered.
+    assert "main" in push["branches"]
+    assert "paths" not in push
+    # Release tags (v*) trigger the immutable :v<CalVer> image build.
+    assert any(str(tag).startswith("v") for tag in push["tags"])
 
 
 def test_pr_validation_checks_frontend_and_docker_smoke():

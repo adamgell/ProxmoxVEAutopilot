@@ -120,7 +120,21 @@ def _load_version() -> dict:
                     except Exception:
                         build_time = "unknown"
                 break
-    return {"sha": sha, "sha_short": sha[:7] if sha != "unknown" else sha, "build_time": build_time}
+    version = (os.environ.get("APP_VERSION") or "").strip()
+    if not version:
+        # Local/dev runs (no baked APP_VERSION): read the repo-root VERSION file.
+        try:
+            with open(BASE_DIR.parent / "VERSION") as vf:
+                version = (vf.read().splitlines() or [""])[0].strip()
+        except Exception:
+            version = ""
+    version = version or "dev"
+    return {
+        "version": version,
+        "sha": sha,
+        "sha_short": sha[:7] if sha != "unknown" else sha,
+        "build_time": build_time,
+    }
 
 
 _APP_VERSION = _load_version()

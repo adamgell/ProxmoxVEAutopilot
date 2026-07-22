@@ -50,11 +50,15 @@ COPY --from=frontend-build /frontend/dist /app/web/static/react
 # different realm overlay this via docker-compose volume mount.
 RUN cp /app/files/krb5.conf /etc/krb5.conf
 
-# Embed the build SHA and timestamp so the UI can show what's running.
+# Embed the build SHA, timestamp, and product version so the UI can show
+# exactly what is running. APP_VERSION is the unified CalVer from the repo-root
+# VERSION file (passed as a build-arg by CI, since it is outside this context).
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
+ARG APP_VERSION=dev
 RUN printf '%s\n%s\n' "$GIT_SHA" "$BUILD_TIME" > /app/VERSION
 ENV APP_VERSION_FILE=/app/VERSION
+ENV APP_VERSION=$APP_VERSION
 
 # Create runtime directories
 RUN mkdir -p /app/jobs /app/output/hashes /app/cache/cloudosd /app/cache/osdeploy /app/secrets

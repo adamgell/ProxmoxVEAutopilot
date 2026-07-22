@@ -1,12 +1,12 @@
 name: Build and Push Docker Image
 
+# Builds on every push to main (continuous :sha + :latest) and on every release
+# tag `v*` (immutable :v<CalVer>). The paths filter was removed intentionally so
+# release-tag builds are never skipped when the tagged commit only bumps VERSION.
 on:
   push:
     branches: [main]
-    paths:
-      - "autopilot-proxmox/**"
-      - "autopilot-proxmox/frontend/**"
-      - ".github/workflows/docker-publish.yml"
+    tags: ["v*"]
 
 env:
   REGISTRY: ghcr.io
@@ -21,6 +21,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read product version
+        id: ver
+        run: echo "value=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -38,7 +42,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,prefix=
-            type=raw,value=latest
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -50,5 +55,6 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
+            APP_VERSION=${{ steps.ver.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
