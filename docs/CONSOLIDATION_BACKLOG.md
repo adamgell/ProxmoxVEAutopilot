@@ -95,8 +95,10 @@ have superseded parts.
 6. **[LANDED 2026-07-22 as `5648461`]** `codex/provision-three-columns` (+2) -
    OSDCloud v2 domain-join fix + provision-launch three-column layout. Clean merge
    (synced the mirror cloudosd-build ps1). Backend 1392 pass. Branch retired.
-7. `codex/react-workflow-ux-pass` (`5aaa923`, +2) - Subnet edit form
-   autopopulate (CIDR, DHCP range, SNAT).
+7. **[LANDED 2026-07-22 as `931abbb`]** `codex/react-workflow-ux-pass` (+2) -
+   Subnet-edit autopopulate (CIDR, DHCP range, SNAT). Backend subnet_info kept
+   main's richer `_subnet_info` helper; VmsPage cidr-display tweak deferred (branch
+   field-name mismatch). Backend 1392 pass. Branch retired.
 8. `origin/codex/lab-dhcp-console-cleanup` (`8646847`, +1) - Lab DC readiness and
    VM console controls.
 
