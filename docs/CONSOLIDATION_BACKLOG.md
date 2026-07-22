@@ -57,6 +57,14 @@ one consistent change.
 
 ## Parked branches (recommended land order)
 
+**STATUS 2026-07-22: ALL 8 RESOLVED.** 6 landed (onboarding wizard,
+roadmap-four-tasks, mystifying-keller [install-tracking soft-delete only],
+installer-resume, provision-three-columns, react-workflow-ux) + the parked WIP's
+unique SmartDeploy/Entra scaffolding extracted; 2 retired as fully superseded by
+main (wizardly-williamson, lab-dhcp-console-cleanup). `main` is the single clean
+source of truth; every origin feature branch is merged or deleted. Next: cut a new
+CalVer release and deploy prod (per docs/RELEASING.md).
+
 Land one at a time, each as its own reviewed and test-verified merge. Re-check
 "still applies" before each, since the large React work already on `main` may
 have superseded parts.
@@ -99,8 +107,11 @@ have superseded parts.
    Subnet-edit autopopulate (CIDR, DHCP range, SNAT). Backend subnet_info kept
    main's richer `_subnet_info` helper; VmsPage cidr-display tweak deferred (branch
    field-name mismatch). Backend 1392 pass. Branch retired.
-8. `origin/codex/lab-dhcp-console-cleanup` (`8646847`, +1) - Lab DC readiness and
-   VM console controls.
+8. **[SUPERSEDED 2026-07-22, branch retired]** `codex/lab-dhcp-console-cleanup`
+   (+1) - Both features (VM console controls, lab DC readiness) already exist on
+   main via newer implementations (`get_asset_for_run` vs the branch's
+   `asset_for_run`; bootstrap payload with onboarding vs the branch's older
+   `_react_shell_user_labels`). Would regress main. Nothing to land; branch deleted.
 
 ## Recovery notes
 
