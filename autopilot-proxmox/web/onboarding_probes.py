@@ -5,10 +5,13 @@ Each probe returns a dict shaped as:
 """
 from __future__ import annotations
 
+import logging
 import re
 import socket
 import subprocess
 import urllib.request
+
+_log = logging.getLogger("web.onboarding")
 
 
 def _dns_resolve(domain: str) -> tuple[bool, str]:
@@ -54,11 +57,27 @@ def _ldap_bind(domain: str, account: str, password: str) -> tuple[bool, str]:
         conn = ldap.initialize(f"ldap://{domain}")
         conn.set_option(ldap.OPT_REFERRALS, 0)
         conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
+        # Homelab/AD DCs commonly present a self-signed cert, so ALLOW (do not
+        # require a trusted CA). StartTLS below still encrypts the wire, which is
+        # what protects the credential from passive sniffing.
+        conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_ALLOW)
+        conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
     except ldap.LDAPError as e:
         return False, f"LDAPError: {e}"
+    tls = "starttls"
+    try:
+        conn.start_tls_s()
+    except Exception as e:
+        # StartTLS unavailable/failed: fall back to an unencrypted simple bind so
+        # homelab AD without LDAPS still works, but make the plaintext explicit.
+        tls = "cleartext"
+        _log.warning(
+            "LDAP StartTLS to %s failed (%s); falling back to an UNENCRYPTED simple "
+            "bind - the AD credential is sent in cleartext.", domain, e,
+        )
     try:
         conn.simple_bind_s(f"{account}@{domain}", password)
-        return True, f"bound as {account}@{domain}"
+        return True, f"bound as {account}@{domain} ({tls})"
     except ldap.INVALID_CREDENTIALS:
         return False, "invalid credentials"
     except ldap.LDAPError as e:

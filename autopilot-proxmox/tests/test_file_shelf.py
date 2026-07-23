@@ -171,3 +171,21 @@ def test_files_download_routes_are_public_but_upload_api_is_not():
     assert not auth.is_exempt_path("/api/files/upload")
     assert not auth.is_exempt_path("/api/files/delete")
     assert not auth.is_exempt_path("/api/files/tool.msi/replace")
+
+
+def test_safe_path_blocks_traversal_and_sibling_prefix(tmp_path: Path):
+    import pytest
+
+    from web.app import _safe_path
+
+    base = tmp_path / "hashes"
+    base.mkdir()
+    (tmp_path / "hashes-evil").mkdir()
+
+    assert _safe_path(base, "ok.csv") == (base / "ok.csv").resolve()
+    # A sibling dir sharing a name prefix must be rejected (the old str.startswith
+    # containment check let `<base>-evil` through).
+    with pytest.raises(ValueError):
+        _safe_path(base, "../hashes-evil/x")
+    with pytest.raises(ValueError):
+        _safe_path(base, "../../etc/passwd")

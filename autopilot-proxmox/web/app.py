@@ -184,8 +184,11 @@ def _optional_text(value) -> str:
 
 def _safe_path(base_dir, filename):
     """Resolve a filename and verify it stays inside base_dir. Raises ValueError on traversal."""
+    base = base_dir.resolve()
     resolved = (base_dir / filename).resolve()
-    if not str(resolved).startswith(str(base_dir.resolve())):
+    # is_relative_to is a true containment check; a string prefix match would let
+    # a sibling like `<base>-evil` through (e.g. base /data/hashes, /data/hashes-x).
+    if resolved != base and not resolved.is_relative_to(base):
         raise ValueError(f"Path traversal blocked: {filename}")
     return resolved
 
@@ -824,9 +827,27 @@ async def auth_local_start(request: Request, next: str = "/"):
         or (cfg.get("tenant_id") and cfg.get("client_id"))
     )
     configured_local = cfg.get("local_enabled")
-    local_enabled = (not entra_configured) if configured_local is None else bool(configured_local)
+    # AUTOPILOT_LOCAL_AUTH is an explicit kill-switch/override: set it to 0 to
+    # disable passwordless local sign-in even before Entra is configured. Absent
+    # that and any saved setting, local sign-in stays on only until Entra exists
+    # (first-run/lab default).
+    env_local = os.environ.get("AUTOPILOT_LOCAL_AUTH")
+    if env_local is not None:
+        local_enabled = env_local.strip().lower() in ("1", "true", "yes", "on")
+    elif configured_local is not None:
+        local_enabled = bool(configured_local)
+    else:
+        local_enabled = not entra_configured
     if not local_enabled:
         return _login_error("Local operator sign-in is not enabled.", next_url=next_url)
+    if not entra_configured:
+        import logging
+        logging.getLogger("web.app").warning(
+            "Minting a passwordless local operator session from %s (Entra not "
+            "configured). Configure Entra and/or set AUTOPILOT_LOCAL_AUTH=0 to "
+            "disable local sign-in on an exposed network.",
+            request.client.host if request.client else "unknown",
+        )
     request.session["user"] = {
         "sub": "local-operator",
         "name": "Local Operator",

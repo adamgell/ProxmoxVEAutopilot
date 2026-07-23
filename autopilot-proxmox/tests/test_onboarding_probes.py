@@ -55,12 +55,16 @@ def test_ldap_bind_unbinds_on_failure(monkeypatch):
 
     class FakeConn:
         def set_option(self, *a, **kw): pass
+        def start_tls_s(self): pass
         def simple_bind_s(self, *a, **kw): raise FakeLDAPError("forced failure")
         def unbind_s(self): closed.append(True)
 
     class FakeLdapModule:
         OPT_REFERRALS = 1
         OPT_NETWORK_TIMEOUT = 2
+        OPT_X_TLS_REQUIRE_CERT = 3
+        OPT_X_TLS_ALLOW = 4
+        OPT_X_TLS_NEWCTX = 5
         LDAPError = FakeLDAPError
         class INVALID_CREDENTIALS(FakeLDAPError): pass
         def initialize(self, url): return FakeConn()
