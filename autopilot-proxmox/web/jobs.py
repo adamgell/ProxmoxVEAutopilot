@@ -111,13 +111,3 @@ class JobManager:
         args = dict(job.get("args") or {})
         args[key] = value
         jobs_db.update_job_args(job_id, args)
-
-    def add_on_complete(self, job_id: str, callback) -> None:
-        """Deprecated: with the builder split, callbacks ran in the
-        subprocess waiter thread which no longer exists. Kept as a
-        no-op so any lingering callers don't crash, but the callback
-        will never fire. TODO: if callbacks are still needed, plumb
-        them through jobs_db as a post-finalize hook."""
-        logging.getLogger("web.jobs").warning(
-            "JobManager.add_on_complete is a no-op after the builder split"
-        )

@@ -107,21 +107,6 @@ def test_job_manager_get_nonexistent_job_returns_none(pg_conn):
         assert mgr.get_job("fake-id") is None
 
 
-def test_job_manager_add_on_complete_is_noop(caplog):
-    """add_on_complete is kept as a no-op so lingering callers don't
-    crash, but it logs a warning — the callback cannot fire after the
-    builder split."""
-    import logging
-    from web import jobs
-    with tempfile.TemporaryDirectory() as d:
-        mgr = jobs.JobManager(jobs_dir=d)
-        with caplog.at_level(logging.WARNING, logger="web.jobs"):
-            mgr.add_on_complete("some-id", lambda job: None)
-        assert any(
-            "add_on_complete is a no-op" in r.message for r in caplog.records
-        )
-
-
 def test_job_manager_no_longer_has_subprocess_attrs():
     """Sanity check: the subprocess-era attributes are gone."""
     from web import jobs

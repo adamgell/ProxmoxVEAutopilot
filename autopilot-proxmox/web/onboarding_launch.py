@@ -8,6 +8,7 @@ onboarding row to status='launched'.
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -56,17 +57,24 @@ def _phases_for(answers: dict[str, Any]) -> list[dict[str, Any]]:
     return items
 
 
-def _kick_provision(kind: str, run_id: str, payload: dict[str, Any]) -> dict:
-    """POST to the artifact-bound provision endpoint. Overridable in tests.
+def _provision_base_url() -> str:
+    """Base URL of this controller's own API (the cloudosd/osdeploy provision
+    endpoints live on it). Defaults to loopback on the app port; override with
+    AUTOPILOT_ONBOARDING_PROVISION_URL."""
+    return os.environ.get(
+        "AUTOPILOT_ONBOARDING_PROVISION_URL", "http://127.0.0.1:5000"
+    ).rstrip("/")
 
-    Hardcoded to localhost:8000 for now; the launch transaction is the
-    artifact-discovery surface, not config-driven endpoint resolution.
+
+def _kick_provision(kind: str, run_id: str, payload: dict[str, Any]) -> dict:
+    """POST to the artifact-bound provision endpoint on this controller.
+    Overridable in tests.
 
     Secrets invariant: payload["answers"] is already-scrubbed (intake_secrets
     has moved raw secrets to vault); raw secrets must never pass through this
     seam.
     """
-    url = f"http://localhost:8000/api/{kind}/runs/{run_id}/provision"
+    url = f"{_provision_base_url()}/api/{kind}/runs/{run_id}/provision"
     response = requests.post(url, json=payload, timeout=PROVISION_KICK_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()

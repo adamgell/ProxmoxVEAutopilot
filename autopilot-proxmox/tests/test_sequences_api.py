@@ -173,40 +173,6 @@ def test_only_one_default_via_api(app_env):
     assert got_b["is_default"] is True
 
 
-def test_record_vms_only_for_success_and_anchored_regex(app_env, tmp_path):
-    """The VMID scraper must only write vm_provisioning rows for successful
-    jobs (no partial-failure VMIDs) and must only match the success debug
-    line (not the failure-diagnostic line in proxmox_vm_clone/main.yml)."""
-    from web import sequences_db
-    from web.app import _record_vms_for_sequence, SEQUENCES_DB, job_manager
-
-    seq_id = sequences_db.create_sequence(
-        SEQUENCES_DB, name="rec-test", description="",
-    )
-
-    # Build a fake log that contains BOTH a failure-diagnostic line and a
-    # success line. The scraper must only pick up the success VMID (102).
-    log_dir = Path(job_manager.jobs_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "job-xyz.log"
-    log_path.write_text(
-        "TASK [proxmox_vm_clone : Fail if cloned VM has no scsi0 disk] ****\n"
-        "fatal: [localhost]: FAILED! => Cloned VM 'foo' (VMID: 999) has no scsi0 disk.\n"
-        "TASK [proxmox_vm_clone : Report cloned VM] ****\n"
-        "ok: [localhost] => (Cloned VM 'bar' (VMID: 102) from template 9000. ...)\n"
-    )
-
-    # Failing job → no rows written
-    _record_vms_for_sequence({"id": "job-xyz", "status": "failed"}, seq_id)
-    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 102) is None
-    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 999) is None
-
-    # Successful job → only the success-line VMID (102) is recorded.
-    _record_vms_for_sequence({"id": "job-xyz", "status": "complete"}, seq_id)
-    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 102) == seq_id
-    assert sequences_db.get_vm_sequence_id(SEQUENCES_DB, 999) is None
-
-
 def test_provision_passes_chassis_type_override_to_ansible(app_env):
     """POST /api/jobs/provision with chassis_type_override must put
     -e chassis_type_override=N into the ansible command AND call the
@@ -228,7 +194,6 @@ def test_provision_passes_chassis_type_override_to_ansible(app_env):
         return {"id": "fake-job"}
     job_manager.start.side_effect = fake_start
     job_manager.set_arg = lambda *a, **k: None
-    job_manager.add_on_complete = lambda *a, **k: None
 
     from unittest.mock import patch
     # Pin the Proxmox config so the test is independent of whatever
@@ -343,7 +308,6 @@ def test_provision_with_rename_computer_passes_reboot_count(app_env):
         return {"id": "fake-job"}
     job_manager.start.side_effect = fake_start
     job_manager.set_arg = lambda *a, **k: None
-    job_manager.add_on_complete = lambda *a, **k: None
 
     from unittest.mock import patch
     with patch("web.app._load_proxmox_config", return_value={
@@ -433,7 +397,6 @@ def test_provision_without_sequence_skips_floppy_compile(app_env):
         return {"id": "fake-job"}
     job_manager.start.side_effect = fake_start
     job_manager.set_arg = lambda *a, **k: None
-    job_manager.add_on_complete = lambda *a, **k: None
 
     from unittest.mock import patch
     with patch("web.app._load_proxmox_config", return_value={
@@ -650,7 +613,6 @@ def test_provision_with_sequence_passes_compiled_vars(app_env):
         return {"id": "fake-job"}
     job_manager.start.side_effect = fake_start
     job_manager.set_arg = lambda *a, **k: None
-    job_manager.add_on_complete = lambda *a, **k: None
 
     # Sequence provisioning needs the Proxmox root password + floppy
     # builder wired up. Tests that exercise the provisioning path patch

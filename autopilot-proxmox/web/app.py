@@ -8797,47 +8797,14 @@ def _keys_in_extra_args(tokens: list) -> set[str]:
     return keys
 
 
-# Only scrape VMIDs from the success-path debug line emitted by the
-# proxmox_vm_clone role's final "Report cloned VM" task. The failure
-# diagnostic line in the same role also mentions "VMID: N" but the role
-# has already raised by then, so anchoring on the success pattern prevents
-# writing vm_provisioning rows for clones that never completed.
-_VMID_SUCCESS_RE = re.compile(
-    r"Cloned VM\s+'[^']*'\s+\(VMID:\s+(\d+)\)\s+from template"
-)
-
-
-def _record_vms_for_sequence(job_dict: dict, sequence_id: int) -> None:
-    """Callback body used by `_register_sequence_callbacks`.
-
-    Runs in the job-runner thread. Only records VMIDs for successful jobs
-    — a failed job whose log happens to mention a partially-allocated
-    VMID must NOT be recorded as provisioned by this sequence.
-    """
-    if job_dict.get("status") not in ("complete", "success"):
-        return
-    log_path = Path(job_manager.jobs_dir) / f"{job_dict['id']}.log"
-    if not log_path.exists():
-        return
-    text = log_path.read_text(errors="replace")
-    for m in _VMID_SUCCESS_RE.finditer(text):
-        try:
-            sequences_db.record_vm_provisioning(
-                SEQUENCES_DB, vmid=int(m.group(1)), sequence_id=sequence_id,
-            )
-        except Exception:
-            # Can't raise from a worker-thread callback — would poison job
-            # status. DAL constraint violations are effectively "no row
-            # written" which is the outcome we want on error anyway.
-            pass
-
-
 def _register_sequence_callbacks(job_id: str, sequence_id: int) -> None:
-    """Persist sequence_id on the job and register the vm_provisioning scraper."""
+    """Persist the sequence_id on the job so runs trace back to their sequence.
+
+    VM-provisioning rows are recorded live by the provisioning playbook via
+    POST /api/vm-provisioning, so the old job-completion log scraper (which
+    stopped firing after the builder split) was removed.
+    """
     job_manager.set_arg(job_id, "sequence_id", sequence_id)
-    job_manager.add_on_complete(
-        job_id, lambda job_dict, sid=sequence_id: _record_vms_for_sequence(job_dict, sid)
-    )
 
 
 def _form_flag(value: object) -> bool:
