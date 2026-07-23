@@ -298,7 +298,11 @@ def execute_fix_action(conn: Connection, *, fix_action_id: str, pve_api, pve_put
             try:
                 proxmox_sdn.release_lock(pve_delete, lock_token, force=True)
             except Exception:
-                pass
+                import logging
+                logging.getLogger("web.managed_labs").warning(
+                    "failed to force-release SDN lock %s after a fix error",
+                    lock_token, exc_info=True,
+                )
         return managed_labs_pg.update_fix_action(
             conn,
             fix_action_id,

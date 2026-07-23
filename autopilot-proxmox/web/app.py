@@ -7771,7 +7771,10 @@ def _store_screenshot(*, vmid: int, png_bytes: bytes) -> dict:
             source="manual",
         )
     except Exception:
-        pass
+        import logging
+        logging.getLogger("web.app").warning(
+            "failed to persist screenshot record for VM %s", vmid, exc_info=True,
+        )
     return {
         "vmid": vmid,
         "image_url": f"/api/live/screenshots/{screenshot_id}",
@@ -8634,7 +8637,11 @@ async def _vms_fleet_payload() -> dict:
                     )
                 conn.commit()
         except Exception:
-            pass
+            import logging
+            logging.getLogger("web.app").warning(
+                "failed to record autopilot registration lifecycle for %d VM(s)",
+                len(autopilot_vms), exc_info=True,
+            )
 
     try:
         lifecycles = machine_lifecycle_pg.current_by_vmids([
