@@ -51,9 +51,11 @@ def test_upload_files_accepts_any_file_type_and_sanitizes_names(tmp_path: Path, 
 
 def test_upload_file_rejects_files_over_size_limit(tmp_path: Path, monkeypatch):
     from web import app as app_module
+    from web import fileio as fileio_module
 
     monkeypatch.setattr(app_module, "FILE_SHELF_DIR", tmp_path)
-    monkeypatch.setattr(app_module, "FILE_SHELF_MAX_BYTES", 4)
+    # _write_file_shelf_upload reads FILE_SHELF_MAX_BYTES from web.fileio now.
+    monkeypatch.setattr(fileio_module, "FILE_SHELF_MAX_BYTES", 4)
 
     client = TestClient(app_module.app)
     response = client.post(
@@ -146,9 +148,11 @@ def test_replace_file_accepts_any_replacement_upload(tmp_path: Path, monkeypatch
 
 def test_replace_file_rejects_files_over_size_limit(tmp_path: Path, monkeypatch):
     from web import app as app_module
+    from web import fileio as fileio_module
 
     monkeypatch.setattr(app_module, "FILE_SHELF_DIR", tmp_path)
-    monkeypatch.setattr(app_module, "FILE_SHELF_MAX_BYTES", 4)
+    # _write_file_shelf_upload reads FILE_SHELF_MAX_BYTES from web.fileio now.
+    monkeypatch.setattr(fileio_module, "FILE_SHELF_MAX_BYTES", 4)
     (tmp_path / "tool.iso").write_bytes(b"old")
 
     client = TestClient(app_module.app)
