@@ -56,11 +56,22 @@ scripts/deploy_production.sh v2026.07.1
 3. Aborts if prod's current commit (read from `/api/version`) is not an ancestor
    of the target tag - i.e. deploying would revert commits prod already has
    (override with `--force`).
-4. SSHes to the production host, upserts `AUTOPILOT_IMAGE_TAG=<tag>` into the
-   compose `.env` (preserving other keys), then `docker compose pull` (fails fast
-   if the tagged image was not published) + `docker compose up -d` (preserving
-   the builder replica count).
-5. Verifies `GET /api/version` reports the expected version.
+4. SSHes to the production host, records the tag being replaced as
+   `AUTOPILOT_IMAGE_TAG_PREV` (for rollback), upserts `AUTOPILOT_IMAGE_TAG=<tag>`
+   into the compose `.env`, then `docker compose pull` (fails fast if the tagged
+   image was not published) + `docker compose up -d` (preserving the builder
+   replica count).
+5. **Health-gates the deploy:** polls `GET /healthz` (the readiness endpoint) for
+   up to ~90s and **fails non-zero** if the app never returns 200 - a broken
+   deploy is no longer reported as success. Then it version-matches `/api/version`.
+
+### Rollback
+
+`scripts/deploy_production.sh --rollback [--yes]` redeploys the
+`AUTOPILOT_IMAGE_TAG_PREV` recorded on the host during the last deploy. It is an
+intentional revert, so it bypasses the ancestor guard and health-gates the
+rolled-back image the same way. If `/healthz` fails after a deploy, the script
+tells you to run exactly this.
 
 `docker-compose.yml` pins `image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.07.0}`
 so there is no floating `:latest` in production. Bump the committed default when
