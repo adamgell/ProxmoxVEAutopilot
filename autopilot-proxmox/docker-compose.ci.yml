@@ -7,6 +7,9 @@ services:
   autopilot:
     environment:
       AUTOPILOT_AUTH_BYPASS: "1"
+      # Registers POST /api/jobs/test-long-sleep so the job/builder integration
+      # tests (kill, scale) can enqueue a trivial sleep job.
+      AUTOPILOT_ENABLE_TEST_JOBS: "1"
     volumes:
       - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
       - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml

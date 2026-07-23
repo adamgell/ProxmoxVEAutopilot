@@ -113,26 +113,29 @@ def test_credential_payload_never_in_list_response(session, base_url):
 # UI pages render
 # ------------------------------------------------------------------
 
+# The UI is now a React SPA: these routes serve the client shell, and the
+# page DATA (sequences, credentials, steps) is client-rendered from the JSON
+# APIs. So these smokes assert the route serves the shell; the data itself is
+# covered by the /api/* tests above (test_seeded_sequences_present etc.).
+
 def test_sequences_page_renders(session, base_url):
     r = session.get(base_url + "/sequences", timeout=10)
     assert r.status_code == 200
-    assert "Entra Join (default)" in r.text
+    assert "data-react-shell" in r.text
 
 
 def test_credentials_page_renders(session, base_url):
     r = session.get(base_url + "/credentials", timeout=10)
     assert r.status_code == 200
-    assert "default-local-admin" in r.text
+    assert "data-react-shell" in r.text
 
 
 def test_provision_page_has_sequence_dropdown(session, base_url):
-    """After Phase B.1 the provision form has a <select name='sequence_id'>
-    that lists all sequences. This is the smoke check that the wiring works."""
+    """The provision route serves the React shell; the sequence picker is
+    client-rendered from /api/sequences (asserted in test_seeded_sequences_present)."""
     r = session.get(base_url + "/provision", timeout=10)
     assert r.status_code == 200
-    assert 'name="sequence_id"' in r.text
-    # The default should be pre-selected.
-    assert "Entra Join (default)" in r.text
+    assert "data-react-shell" in r.text
 
 
 # ------------------------------------------------------------------
@@ -256,15 +259,14 @@ def test_delete_seeded_credential_blocked_by_reference(session, base_url):
 # ------------------------------------------------------------------
 
 def test_sequence_builder_page_loads_for_seeded_default(session, base_url):
-    """Editing the seeded default sequence must render the builder page
-    cleanly. This exercises the code path that loads oem_profiles +
-    fetches credentials."""
+    """The builder route for the seeded default sequence serves the React
+    shell cleanly (no 5xx). The seed's steps are client-rendered from
+    /api/sequences/{id} (shape asserted in test_sequence_create_with_steps)."""
     r = session.get(base_url + "/api/sequences", timeout=10)
     default = next(s for s in r.json() if s["is_default"])
     r = session.get(base_url + f"/sequences/{default['id']}/edit", timeout=10)
     assert r.status_code == 200
-    # The builder template renders the seed's steps inline as JSON
-    assert "set_oem_hardware" in r.text or "autopilot_entra" in r.text
+    assert "data-react-shell" in r.text
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +297,16 @@ def live_host() -> str:
     base = os.environ.get("AUTOPILOT_BASE_URL", "http://192.168.2.4:5000")
     parsed = urlparse(base)
     return parsed.hostname or "192.168.2.4"
+
+
+# These two manipulate the live homelab box directly (ssh in + docker run
+# there), so they only make sense against the real controller, not the
+# ephemeral CI stack (which has no SSH to its target). Opt in with
+# AUTOPILOT_LIVE_SSH=1 when running manually against the live box.
+_needs_live_ssh = pytest.mark.skipif(
+    os.environ.get("AUTOPILOT_LIVE_SSH") != "1",
+    reason="ssh-to-live-host test; set AUTOPILOT_LIVE_SSH=1 to run against the real box",
+)
 
 
 def test_kill_stops_running_job_within_10s(session, base_url):
@@ -364,6 +376,7 @@ def test_scale_three_builders_runs_three_concurrent_jobs(session, base_url):
                 pass
 
 
+@_needs_live_ssh
 def test_monitor_singleton_rejects_second_instance(live_host):
     """A second monitor container sharing the volume should exit 0 with
     the 'already running elsewhere' warning (flock holds the lock)."""
@@ -381,6 +394,7 @@ def test_monitor_singleton_rejects_second_instance(live_host):
     assert "already running elsewhere" in result.stdout
 
 
+@_needs_live_ssh
 def test_web_responsive_when_builder_stalls(session, base_url, live_host):
     """SIGSTOP the builder's ansible subprocess. Web routes must stay
     under 1s each — the whole point of the split."""
