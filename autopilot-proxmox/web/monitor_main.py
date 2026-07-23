@@ -31,6 +31,16 @@ _READINESS_INTERVAL_DEFAULT = 60    # CloudOSD Autopilot readiness watcher
 _SCREENSHOT_INTERVAL_DEFAULT = float(
     os.environ.get("AUTOPILOT_VM_SCREENSHOT_INTERVAL_SECONDS", "60") or "60"
 )
+# Managed-lab network reconcile sweep. Disabled by default (0): the fleet
+# reconcile is opt-in because it can mutate Proxmox SDN. Set the interval to
+# enable the scheduled sweep; it stays propose-only unless the auto-apply flag
+# is also set. Both are also exposed on demand via POST /api/labs/reconcile-sweep.
+_LAB_RECONCILE_INTERVAL_DEFAULT = float(
+    os.environ.get("AUTOPILOT_LAB_RECONCILE_INTERVAL_SECONDS", "0") or "0"
+)
+_LAB_RECONCILE_AUTO_APPLY_DEFAULT = (
+    os.environ.get("AUTOPILOT_LAB_RECONCILE_AUTO_APPLY", "") or ""
+).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _acquire_singleton_lock(path: Path) -> int | None:
@@ -89,7 +99,9 @@ def _run_loops(*, stop_event: threading.Event,
                heartbeat_interval_seconds: float = _HEARTBEAT_INTERVAL,
                keytab_interval_seconds: float = _KEYTAB_CHECK_INTERVAL,
                readiness_interval_seconds: float = _READINESS_INTERVAL_DEFAULT,
-               screenshot_interval_seconds: float | None = _SCREENSHOT_INTERVAL_DEFAULT) -> None:
+               screenshot_interval_seconds: float | None = _SCREENSHOT_INTERVAL_DEFAULT,
+               lab_reconcile_interval_seconds: float = _LAB_RECONCILE_INTERVAL_DEFAULT,
+               lab_reconcile_auto_apply: bool = _LAB_RECONCILE_AUTO_APPLY_DEFAULT) -> None:
     """The heart of the monitor. Four tickers, one process.
 
     Cadences (all independently overridable for tests):
@@ -112,12 +124,14 @@ def _run_loops(*, stop_event: threading.Event,
     last_keytab = 0.0
     last_readiness = 0.0
     last_screenshot = 0.0
+    last_reconcile = 0.0
 
     _log.info(
-        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss, screenshots=%ss)",
+        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss, screenshots=%ss, lab_reconcile=%ss auto_apply=%s)",
         sweep_interval_seconds, reaper_interval_seconds,
         keytab_interval_seconds, heartbeat_interval_seconds,
         readiness_interval_seconds, screenshot_interval_seconds,
+        lab_reconcile_interval_seconds, lab_reconcile_auto_apply,
     )
 
     while not stop_event.is_set():
@@ -175,6 +189,15 @@ def _run_loops(*, stop_event: threading.Event,
             except Exception:
                 _log.exception("screenshot collector failed")
             last_screenshot = now
+
+        if lab_reconcile_interval_seconds > 0 and now - last_reconcile >= lab_reconcile_interval_seconds:
+            try:
+                result = _do_lab_reconcile_tick(auto_apply=lab_reconcile_auto_apply)
+                if result.get("counts") or result.get("applied_count"):
+                    _log.info("lab reconcile sweep: %s", result)
+            except Exception:
+                _log.exception("lab reconcile tick failed")
+            last_reconcile = now
 
         # Short wake interval so cadence rounding stays tight (a 0.1s
         # reaper_interval_seconds in tests needs sub-second wake-ups;
@@ -244,6 +267,52 @@ def _do_keytab_tick() -> None:
 def _do_screenshot_capture_tick() -> dict:
     from web import app as web_app
     return web_app._capture_running_vm_screenshots_once()
+
+
+def _do_lab_reconcile_tick(*, auto_apply: bool = False) -> dict:
+    """One iteration of the managed-lab network reconcile sweep.
+
+    Propose-only by default: plans SDN reconcile for every managed lab and
+    records pending fix actions without touching Proxmox. When ``auto_apply``
+    is set, labs whose plan status is ``fixing`` also have their pending fixes
+    executed in the same pass. Skips entirely on UTM (no Proxmox SDN fleet).
+
+    Live wiring (PVE API handles, DB connection) lives in web.app; imported
+    lazily so test-only calls to _run_loops don't drag FastAPI in.
+    """
+    from web import app as web_app
+    from web import (
+        db_pg,
+        managed_labs_network,
+        managed_labs_pg,
+        managed_labs_reconciler,
+        proxmox_sdn,
+    )
+
+    if (web_app._load_vars().get("hypervisor_type") or "proxmox").lower() == "utm":
+        return {"skipped": "utm"}
+
+    inventory = proxmox_sdn.inventory(web_app._proxmox_api)
+
+    apply_fn = None
+    if auto_apply:
+        def apply_fn(conn, lab_id):
+            return managed_labs_network.execute_pending_network_fixes(
+                conn,
+                lab_id=lab_id,
+                pve_api=web_app._proxmox_api,
+                pve_put=web_app._proxmox_api_put,
+                pve_delete=web_app._proxmox_api_delete,
+            )
+
+    with db_pg.connection() as conn:
+        managed_labs_pg.init(conn)
+        return managed_labs_reconciler.reconcile_all_labs(
+            conn,
+            inventory=inventory,
+            auto_apply=auto_apply,
+            apply_fn=apply_fn,
+        )
 
 
 def _do_cloudosd_readiness_tick(limit: int = 100) -> dict:

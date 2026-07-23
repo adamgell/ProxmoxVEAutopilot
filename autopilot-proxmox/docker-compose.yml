@@ -109,7 +109,15 @@ services:
     volumes: *common_mounts
     security_opt:
       - apparmor=unconfined
-    environment: *common_env
+    environment:
+      <<: *common_env
+      # Managed-lab network reconcile sweep (opt-in; both default off so the
+      # monitor never mutates Proxmox SDN unless an operator enables it).
+      # Set an interval in seconds to enable the scheduled fleet reconcile;
+      # it stays propose-only until AUTO_APPLY is truthy. Also always available
+      # on demand via POST /api/labs/reconcile-sweep[?auto_apply=true].
+      AUTOPILOT_LAB_RECONCILE_INTERVAL_SECONDS: ${AUTOPILOT_LAB_RECONCILE_INTERVAL_SECONDS:-0}
+      AUTOPILOT_LAB_RECONCILE_AUTO_APPLY: ${AUTOPILOT_LAB_RECONCILE_AUTO_APPLY:-}
     depends_on:
       autopilot:
         condition: service_healthy

@@ -295,3 +295,148 @@ def test_bridge_mode_missing_target_blocks_without_fix(pg_conn):
     assert result["status"] == "blocked"
     assert result["findings"][0]["finding_type"] == "bridge_validate_only"
     assert result["fix_actions"] == []
+
+
+# --- Fleet reconcile sweep -------------------------------------------------
+
+_EMPTY_INVENTORY = {"zones": [], "vnets": [], "subnets_by_vnet": {}}
+
+
+def _make_lab(pg_conn, *, name, short_code, cidr, zone, vnet):
+    return managed_labs_pg.create_lab(
+        pg_conn,
+        name=name,
+        short_code=short_code,
+        group_tag=f"Sweep-{short_code}",
+        network_cidr=cidr,
+        gateway_ip=cidr.rsplit(".", 1)[0] + ".1",
+        sdn_zone=zone,
+        sdn_vnet=vnet,
+        sdn_subnet=cidr,
+    )
+
+
+def _ready_inventory(*labs):
+    return {
+        "zones": [{"zone": lab["sdn_zone"]} for lab in labs],
+        "vnets": [{"vnet": lab["sdn_vnet"]} for lab in labs],
+        "subnets_by_vnet": {lab["sdn_vnet"]: [{"subnet": lab["sdn_subnet"]}] for lab in labs},
+    }
+
+
+def test_reconcile_all_labs_propose_only_records_fixes_without_applying(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    a = _make_lab(pg_conn, name="Lab A", short_code="swa01", cidr="10.60.10.0/24", zone="lab-swa01", vnet="swa01-vnet")
+    b = _make_lab(pg_conn, name="Lab B", short_code="swb01", cidr="10.60.11.0/24", zone="lab-swb01", vnet="swb01-vnet")
+
+    def _fail_if_called(conn, lab_id):
+        raise AssertionError(f"apply_fn must not run in propose-only mode (lab {lab_id})")
+
+    result = managed_labs_reconciler.reconcile_all_labs(
+        pg_conn,
+        inventory=_EMPTY_INVENTORY,
+        auto_apply=False,
+        apply_fn=_fail_if_called,
+    )
+
+    assert result["lab_count"] == 2
+    assert result["auto_apply"] is False
+    assert result["applied_count"] == 0
+    assert result["counts"] == {"fixing": 2}
+    # Pending fixes were recorded for both labs even though nothing was applied.
+    assert managed_labs_pg.list_pending_fix_actions(pg_conn, a["id"])
+    assert managed_labs_pg.list_pending_fix_actions(pg_conn, b["id"])
+
+
+def test_reconcile_all_labs_auto_apply_runs_executor_for_fixing_labs(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    _make_lab(pg_conn, name="Lab A", short_code="swa01", cidr="10.60.10.0/24", zone="lab-swa01", vnet="swa01-vnet")
+    _make_lab(pg_conn, name="Lab B", short_code="swb01", cidr="10.60.11.0/24", zone="lab-swb01", vnet="swb01-vnet")
+
+    calls = []
+
+    def _apply(conn, lab_id):
+        calls.append(lab_id)
+        return {"fixed": [{"id": "fix-1", "status": "fixed"}], "blocked": [], "failed": []}
+
+    result = managed_labs_reconciler.reconcile_all_labs(
+        pg_conn,
+        inventory=_EMPTY_INVENTORY,
+        auto_apply=True,
+        apply_fn=_apply,
+    )
+
+    assert len(calls) == 2
+    assert result["applied_count"] == 2
+    assert result["counts"] == {"applied": 2}
+    assert all(summary["applied"]["fixed"] for summary in result["labs"])
+
+
+def test_reconcile_all_labs_auto_apply_skips_ready_labs(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    ready = _make_lab(pg_conn, name="Ready Lab", short_code="rdy01", cidr="10.60.20.0/24", zone="lab-rdy01", vnet="rdy01-vnet")
+    fixing = _make_lab(pg_conn, name="Fixing Lab", short_code="fix01", cidr="10.60.21.0/24", zone="lab-fix01", vnet="fix01-vnet")
+
+    calls = []
+
+    def _apply(conn, lab_id):
+        calls.append(lab_id)
+        return {"fixed": [{"id": "fix-1", "status": "fixed"}], "blocked": [], "failed": []}
+
+    # Inventory already satisfies the ready lab; the fixing lab's SDN is absent.
+    result = managed_labs_reconciler.reconcile_all_labs(
+        pg_conn,
+        inventory=_ready_inventory(ready),
+        auto_apply=True,
+        apply_fn=_apply,
+    )
+
+    assert calls == [fixing["id"]]
+    by_id = {summary["lab_id"]: summary for summary in result["labs"]}
+    assert by_id[ready["id"]]["status"] == "ready"
+    assert by_id[fixing["id"]]["status"] == "applied"
+
+
+def test_reconcile_all_labs_continues_past_apply_failure(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    boom = _make_lab(pg_conn, name="Boom Lab", short_code="bom01", cidr="10.60.30.0/24", zone="lab-bom01", vnet="bom01-vnet")
+    ok = _make_lab(pg_conn, name="OK Lab", short_code="okl01", cidr="10.60.31.0/24", zone="lab-okl01", vnet="okl01-vnet")
+
+    def _apply(conn, lab_id):
+        if lab_id == boom["id"]:
+            raise RuntimeError("proxmox exploded")
+        return {"fixed": [{"id": "fix-1", "status": "fixed"}], "blocked": [], "failed": []}
+
+    result = managed_labs_reconciler.reconcile_all_labs(
+        pg_conn,
+        inventory=_EMPTY_INVENTORY,
+        auto_apply=True,
+        apply_fn=_apply,
+    )
+
+    assert result["lab_count"] == 2
+    by_id = {summary["lab_id"]: summary for summary in result["labs"]}
+    assert by_id[boom["id"]]["status"] == "failed"
+    assert "proxmox exploded" in by_id[boom["id"]]["detail"]
+    assert by_id[ok["id"]]["status"] == "applied"
+
+
+def test_reconcile_all_labs_scopes_to_lab_ids(pg_conn):
+    managed_labs_pg.reset_for_tests(pg_conn)
+    managed_labs_pg.init(pg_conn)
+    a = _make_lab(pg_conn, name="Lab A", short_code="swa01", cidr="10.60.10.0/24", zone="lab-swa01", vnet="swa01-vnet")
+    _make_lab(pg_conn, name="Lab B", short_code="swb01", cidr="10.60.11.0/24", zone="lab-swb01", vnet="swb01-vnet")
+
+    result = managed_labs_reconciler.reconcile_all_labs(
+        pg_conn,
+        inventory=_EMPTY_INVENTORY,
+        auto_apply=False,
+        lab_ids=[a["id"]],
+    )
+
+    assert result["lab_count"] == 1
+    assert [summary["lab_id"] for summary in result["labs"]] == [a["id"]]

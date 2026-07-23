@@ -468,3 +468,61 @@ def test_reconcile_failure_on_fifth_attempt_blocks_lab(monkeypatch, pg_dsn):
     assert payload["selected_lab"]["retry_count"] == 5
     assert payload["reconcile_runs"][0]["status"] == "failed"
     assert payload["reconcile_runs"][0]["attempt"] == 5
+
+
+def test_reconcile_sweep_propose_only_plans_all_labs(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+    from web import managed_labs_network
+
+    _init_managed_labs_db(pg_dsn)
+    monkeypatch.setattr(web_app, "_proxmox_api", lambda path, method="GET", data=None, files=None: [])
+
+    def _must_not_apply(*args, **kwargs):
+        raise AssertionError("execute_pending_network_fixes must not run in propose-only sweep")
+
+    monkeypatch.setattr(managed_labs_network, "execute_pending_network_fixes", _must_not_apply)
+
+    client = TestClient(web_app.app)
+    _create_lab(client)
+
+    response = client.post("/api/labs/reconcile-sweep")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auto_apply"] is False
+    assert body["lab_count"] == 1
+    assert body["applied_count"] == 0
+    assert body["counts"] == {"fixing": 1}
+    assert body["labs"][0]["status"] == "fixing"
+
+
+def test_reconcile_sweep_auto_apply_executes_pending_fixes(monkeypatch, pg_dsn):
+    monkeypatch.setenv("AUTOPILOT_DATABASE_URL", pg_dsn)
+    from web import app as web_app
+    from web import managed_labs_network
+
+    _init_managed_labs_db(pg_dsn)
+    monkeypatch.setattr(web_app, "_proxmox_api", lambda path, method="GET", data=None, files=None: [])
+    monkeypatch.setattr(web_app, "_proxmox_api_put", lambda path, data=None: {"ok": True})
+    monkeypatch.setattr(web_app, "_proxmox_api_delete", lambda path: {"ok": True})
+
+    apply_calls = []
+
+    def fake_pending(conn, *, lab_id, pve_api, pve_put, pve_delete):
+        apply_calls.append(lab_id)
+        return {"fixed": [{"id": "fixed-1"}], "blocked": [], "failed": []}
+
+    monkeypatch.setattr(managed_labs_network, "execute_pending_network_fixes", fake_pending)
+
+    client = TestClient(web_app.app)
+    created = _create_lab(client)
+
+    response = client.post("/api/labs/reconcile-sweep?auto_apply=true")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auto_apply"] is True
+    assert body["applied_count"] == 1
+    assert body["counts"] == {"applied": 1}
+    assert apply_calls == [created["id"]]

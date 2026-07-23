@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Optional
 
 from psycopg import Connection
 
@@ -197,3 +197,152 @@ def plan_network_reconcile(
 
     managed_labs_pg.sync_lab_network_current_state(conn, lab=lab, inventory=inventory, status="ready", commit=True)
     return {"status": "ready", "findings": [], "fix_actions": []}
+
+
+# --- Fleet-wide reconcile sweep -------------------------------------------
+#
+# `plan_network_reconcile` handles one lab's plan pass and the endpoint layer
+# owns the apply pass (managed_labs_network.execute_pending_network_fixes). The
+# sweep below composes them across every managed lab so the fleet can be driven
+# from a single API call or a scheduled monitor loop.
+#
+# Policy: propose-only by default (records findings + pending fix actions but
+# never mutates Proxmox). Auto-apply is strictly opt-in and only acts on labs
+# whose plan status is `fixing`; the caller injects `apply_fn` so this module
+# stays decoupled from the Proxmox HTTP client.
+
+# apply_fn(conn, lab_id) -> {"fixed": [...], "blocked": [...], "failed": [...]}
+ApplyFn = Callable[[Connection, str], dict[str, Any]]
+
+
+def _effective_status(plan_status: str, applied: dict[str, Any] | None) -> str:
+    """Fold an optional apply result into a single reported status.
+
+    The reconcile *run* is always finished with the plan status; this is only
+    for the sweep summary/counts so an operator sees whether auto-apply moved a
+    `fixing` lab forward.
+    """
+    if applied is None:
+        return plan_status
+    if applied.get("failed"):
+        return "failed"
+    if applied.get("blocked"):
+        return "blocked"
+    if applied.get("fixed"):
+        return "applied"
+    return plan_status
+
+
+def reconcile_lab_once(
+    conn: Connection,
+    *,
+    lab: dict[str, Any],
+    inventory: dict[str, Any],
+    auto_apply: bool = False,
+    apply_fn: Optional[ApplyFn] = None,
+) -> dict[str, Any]:
+    """Plan (and optionally apply) one lab's network reconcile in its own run.
+
+    Never raises: a plan or apply error is captured in the returned summary so a
+    fleet sweep can continue past a single failing lab.
+    """
+    lab_id = str(lab["id"])
+    attempt = int(lab.get("retry_count") or 0) + 1
+    run = managed_labs_pg.start_reconcile_run(conn, lab_id=lab_id, attempt=attempt)
+    try:
+        result = plan_network_reconcile(
+            conn,
+            lab_id=lab_id,
+            inventory=inventory,
+            reconcile_run_id=run["id"],
+        )
+    except Exception as exc:
+        managed_labs_pg.finish_reconcile_run(
+            conn,
+            run_id=run["id"],
+            status="failed",
+            summary=f"Reconcile sweep plan failed: {exc}",
+        )
+        return {
+            "lab_id": lab_id,
+            "name": lab.get("name"),
+            "status": "failed",
+            "detail": str(exc),
+            "plan": None,
+            "applied": None,
+        }
+
+    plan_status = result["status"]
+    managed_labs_pg.finish_reconcile_run(
+        conn,
+        run_id=run["id"],
+        status=plan_status,
+        summary=f"Reconcile sweep finished with status {plan_status}.",
+    )
+
+    applied: dict[str, Any] | None = None
+    if auto_apply and plan_status == "fixing" and apply_fn is not None:
+        try:
+            applied = apply_fn(conn, lab_id)
+        except Exception as exc:
+            return {
+                "lab_id": lab_id,
+                "name": lab.get("name"),
+                "status": "failed",
+                "detail": f"Reconcile sweep apply failed: {exc}",
+                "plan": result,
+                "applied": None,
+            }
+
+    return {
+        "lab_id": lab_id,
+        "name": lab.get("name"),
+        "status": _effective_status(plan_status, applied),
+        "plan": result,
+        "applied": applied,
+    }
+
+
+def reconcile_all_labs(
+    conn: Connection,
+    *,
+    inventory: dict[str, Any],
+    auto_apply: bool = False,
+    apply_fn: Optional[ApplyFn] = None,
+    lab_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Fleet-wide network reconcile sweep.
+
+    Propose-only by default: records findings + pending fix actions for every
+    lab without touching Proxmox. When ``auto_apply`` is set and an ``apply_fn``
+    is provided, labs whose plan status is ``fixing`` have their pending fixes
+    executed in the same pass. Pass ``lab_ids`` to scope the sweep to a subset.
+    """
+    labs = managed_labs_pg.list_labs(conn)
+    if lab_ids is not None:
+        wanted = {str(x) for x in lab_ids}
+        labs = [lab for lab in labs if str(lab["id"]) in wanted]
+
+    summaries: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    applied_count = 0
+    for lab in labs:
+        summary = reconcile_lab_once(
+            conn,
+            lab=lab,
+            inventory=inventory,
+            auto_apply=auto_apply,
+            apply_fn=apply_fn,
+        )
+        summaries.append(summary)
+        counts[summary["status"]] = counts.get(summary["status"], 0) + 1
+        if summary.get("applied"):
+            applied_count += 1
+
+    return {
+        "auto_apply": bool(auto_apply),
+        "lab_count": len(labs),
+        "applied_count": applied_count,
+        "counts": counts,
+        "labs": summaries,
+    }

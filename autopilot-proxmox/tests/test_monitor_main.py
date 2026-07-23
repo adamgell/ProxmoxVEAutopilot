@@ -81,6 +81,82 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
         assert jobs_pg.get_job("stale")["status"] == "orphaned"
 
 
+def _run_loops_with_reconcile(pg_conn, *, interval, auto_apply):
+    """Spin _run_loops briefly with every tick but lab-reconcile stubbed out,
+    and return the MagicMock standing in for the reconcile tick."""
+    from web import monitor_main, service_health_pg as service_health
+    import tempfile, threading, time
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+
+    service_health.init(pg_conn)
+    reconcile = MagicMock(return_value={"counts": {"fixing": 1}, "applied_count": 0})
+    with tempfile.TemporaryDirectory() as d:
+        monitor_db = Path(d) / "device_monitor.db"
+        stop = threading.Event()
+        with patch("web.monitor_main._do_sweep_tick", return_value=None), \
+             patch("web.monitor_main._do_keytab_tick", return_value=None), \
+             patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}), \
+             patch("web.monitor_main._do_screenshot_capture_tick", return_value={"captured": 0}), \
+             patch("web.monitor_main._do_lab_reconcile_tick", reconcile):
+            t = threading.Thread(
+                target=monitor_main._run_loops,
+                kwargs={"stop_event": stop,
+                        "monitor_db_path": monitor_db,
+                        "reaper_interval_seconds": 10,
+                        "heartbeat_interval_seconds": 0.1,
+                        "sweep_interval_seconds": 10,
+                        "keytab_interval_seconds": 10,
+                        "readiness_interval_seconds": 10,
+                        "screenshot_interval_seconds": 10,
+                        "lab_reconcile_interval_seconds": interval,
+                        "lab_reconcile_auto_apply": auto_apply},
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.35)
+            stop.set()
+            t.join(timeout=2)
+    return reconcile
+
+
+def test_run_loops_runs_lab_reconcile_when_enabled(pg_conn):
+    reconcile = _run_loops_with_reconcile(pg_conn, interval=0.1, auto_apply=False)
+    assert reconcile.called
+    reconcile.assert_called_with(auto_apply=False)
+
+
+def test_run_loops_passes_auto_apply_flag_through(pg_conn):
+    reconcile = _run_loops_with_reconcile(pg_conn, interval=0.1, auto_apply=True)
+    reconcile.assert_called_with(auto_apply=True)
+
+
+def test_run_loops_skips_lab_reconcile_when_interval_zero(pg_conn):
+    """Default cadence (0) keeps the fleet reconcile off: no Proxmox mutation
+    happens unless an operator explicitly enables it."""
+    reconcile = _run_loops_with_reconcile(pg_conn, interval=0, auto_apply=False)
+    assert not reconcile.called
+
+
+def test_lab_reconcile_tick_skips_on_utm(monkeypatch):
+    """On a UTM backend there is no Proxmox SDN fleet, so the tick returns
+    before building inventory or opening a DB connection."""
+    from web import app as app_module, monitor_main, managed_labs_reconciler
+
+    monkeypatch.setattr(app_module, "_load_vars", lambda: {"hypervisor_type": "utm"})
+    called = []
+    monkeypatch.setattr(
+        managed_labs_reconciler,
+        "reconcile_all_labs",
+        lambda *a, **k: called.append(k) or {},
+    )
+
+    result = monitor_main._do_lab_reconcile_tick(auto_apply=True)
+
+    assert result == {"skipped": "utm"}
+    assert called == []
+
+
 def test_screenshot_capture_tick_collects_running_vms(monkeypatch, tmp_path):
     from web import app as app_module, monitor_main
 

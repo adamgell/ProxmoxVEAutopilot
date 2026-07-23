@@ -213,6 +213,37 @@ def reconcile_lab(lab_id: str):
         return result
 
 
+@router.post("/reconcile-sweep")
+def reconcile_sweep(auto_apply: bool = False):
+    """Fleet-wide network reconcile across every managed lab.
+
+    Propose-only by default (records findings + pending fix actions but does
+    not touch Proxmox). Pass ``auto_apply=true`` to also execute pending fixes
+    for labs whose plan status is ``fixing`` in the same pass.
+    """
+    with _conn() as conn:
+        inventory = proxmox_sdn.inventory(_api())
+        apply_fn = None
+        if auto_apply:
+            pve_api, pve_put, pve_delete = _api(), _put(), _delete()
+
+            def apply_fn(reconcile_conn, lab_id):  # noqa: E731 - small closure over the pve handles
+                return managed_labs_network.execute_pending_network_fixes(
+                    reconcile_conn,
+                    lab_id=lab_id,
+                    pve_api=pve_api,
+                    pve_put=pve_put,
+                    pve_delete=pve_delete,
+                )
+
+        return managed_labs_reconciler.reconcile_all_labs(
+            conn,
+            inventory=inventory,
+            auto_apply=auto_apply,
+            apply_fn=apply_fn,
+        )
+
+
 @router.post("/{lab_id}/fixes/run-pending")
 def run_pending_fixes(lab_id: str):
     with _conn() as conn:
