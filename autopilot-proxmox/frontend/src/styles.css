@@ -5369,3 +5369,38 @@ h3 {
   gap: 10px;
   margin-top: 18px;
 }
+
+/* Onboarding "resume" banner on the shell index (re-added after the shell rewrite). */
+.onboarding-resume {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.onboarding-resume > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.onboarding-resume strong { color: var(--text); font-size: 0.95rem; }
+.onboarding-resume span { color: var(--muted); font-size: 0.85rem; }
+.onboarding-resume__cta,
+.onboarding-resume__monitor {
+  flex: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  text-decoration: none;
+}
+.onboarding-resume__monitor {
+  display: inline-block;
+  margin-bottom: 16px;
+}

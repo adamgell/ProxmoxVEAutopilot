@@ -925,6 +925,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       readonly binding?: { readonly vnet: string; readonly zone: string; readonly subnet: string };
       readonly subnet?: {
         readonly subnet?: string;
+        readonly cidr?: string;
         readonly gateway?: string;
         readonly dhcp_dns_server?: string;
         readonly dhcp_range?: string;
@@ -934,7 +935,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         if (!data.binding) {
           return;
         }
-        const subnetCidr = data.subnet?.subnet ?? data.binding.subnet;
+        // Prefer the human-readable CIDR ("192.168.16.0/24") over the internal
+        // provider id ("labz1-192.168.16.0-24"); fall back to the binding.
+        const subnetCidr = data.subnet?.cidr ?? data.subnet?.subnet ?? data.binding.subnet;
         const range = parseDhcpRange(data.subnet?.dhcp_range);
         const gateway = data.subnet?.gateway ?? "";
         const dhcpDns = data.subnet?.dhcp_dns_server ?? "";
