@@ -204,13 +204,17 @@ describe("TaskEnginePage", () => {
     mockFetch();
     renderPath("/react/task-engine");
 
+    // "Task Sequences" and "Read-only Flow Templates" are static PageFrame/Panel
+    // titles present on first paint, so awaiting them does not wait for the
+    // fetch. Await a payload-derived flow_template row instead, otherwise the
+    // synchronous assertions below race the /api/task-engine/page load.
     expect(await screen.findByRole("heading", { name: "Task Sequences" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute("href", "/react/task-engine/sequences/list");
     expect(screen.getByRole("link", { name: "New sequence" })).toHaveAttribute("href", "/react/task-engine/sequences/new");
     expect(screen.queryByText("Import v1")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create v2 copy" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Read-only Flow Templates" })).toBeInTheDocument();
-    expect(screen.getByText("OSDCloud Desktop Client")).toBeInTheDocument();
+    expect(await screen.findByText("OSDCloud Desktop Client")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "V2 task sequences" })).toHaveTextContent("CloudOSD deployment");
     expect(screen.getByRole("table", { name: "V2 runs" })).toHaveTextContent("run-1");
     expect(screen.getByRole("table", { name: "Content library" })).toHaveTextContent("AutopilotAgent");
