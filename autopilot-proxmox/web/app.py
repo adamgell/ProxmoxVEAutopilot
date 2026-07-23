@@ -60,6 +60,25 @@ from web.fileio import (
     _write_file_shelf_upload,
 )
 
+# Config + vault read/write helpers. Same re-export contract as web.fileio.
+# VAULT_PATH / VARS_PATH now live in web.config_store and are read inside the
+# moved loaders, so tests that redirect the vault file patch web.config_store,
+# not web.app (see test_settings_vault). BASE_DIR stays defined in app.py too.
+from web.config_store import (
+    VARS_PATH,
+    VAULT_PATH,
+    _auth_config,
+    _database_url,
+    _format_yaml_value,
+    _load_proxmox_config,
+    _load_vars,
+    _load_vault,
+    _save_vars,
+    _save_vault,
+    _save_yaml_file,
+    _vault_presence,
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -219,7 +238,7 @@ SETUP_STATE_PATH = BASE_DIR / "output" / "setup" / "foundation_state.json"
 AGENT_SEED_MANIFEST_PATH = BASE_DIR / "output" / "setup" / "agent-seed" / "manifest.json"
 PLAYBOOK_DIR = BASE_DIR / "playbooks"
 FILES_DIR = BASE_DIR / "files"
-VARS_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
+# VARS_PATH / VAULT_PATH now live in web.config_store (imported above).
 SECRETS_DIR = BASE_DIR / "secrets"
 # Legacy call sites still pass these handles into the compatibility layer;
 # the backing store is Postgres via web.db_pg, not local database files.
@@ -381,35 +400,6 @@ SETTINGS_SCHEMA = [
 ]
 
 
-def _load_vars():
-    """Load vars.yml values only (not vault)."""
-    if VARS_PATH.exists():
-        with open(VARS_PATH) as f:
-            data = yaml.safe_load(f)
-        return data or {}
-    return {}
-
-
-VAULT_PATH = BASE_DIR / "inventory" / "group_vars" / "all" / "vault.yml"
-
-
-def _load_vault():
-    """Load vault.yml values only. Caller is responsible for never
-    forwarding raw values to the browser — use _vault_presence() to
-    report which keys are set without echoing them."""
-    if VAULT_PATH.exists():
-        with open(VAULT_PATH) as f:
-            data = yaml.safe_load(f)
-        return data or {}
-    return {}
-
-
-def _vault_presence() -> dict[str, bool]:
-    """Return {key: True} for every vault key whose value is non-empty.
-    Safe to render in HTML -- carries no secret material."""
-    return {k: bool(v) for k, v in _load_vault().items()}
-
-
 def _settings_hypervisor_type(value: str | None) -> str:
     hv_type = (value or "proxmox").lower()
     return "proxmox" if hv_type == "pve" else hv_type
@@ -522,75 +512,6 @@ def _fetch_settings_options():
     return options
 
 
-def _format_yaml_value(value):
-    """Format a Python value as a safe YAML scalar."""
-    if value is None or value == "null" or value == "":
-        return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    s = str(value)
-    # Quote strings that contain YAML-special characters or look like non-string types
-    needs_quotes = (
-        not s
-        or s[0] in ("'", '"', '{', '[', '&', '*', '!', '|', '>', '%', '@', '`')
-        or ':' in s or '#' in s or ',' in s
-        or s.lower() in ('true', 'false', 'yes', 'no', 'null', 'on', 'off')
-    )
-    if not needs_quotes:
-        return s
-    # Prefer single quotes when the string contains backslashes — double-quoted
-    # YAML processes escape sequences (`\U`, `\n`, etc.), which would mangle
-    # Windows paths like 'C:\Users\Public' on save. Single-quoted scalars are
-    # literal except for ' -> '' doubling.
-    if '\\' in s and "'" not in s:
-        return "'" + s + "'"
-    # Fall back to double-quoted with backslash + double-quote escaped.
-    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
-
-
-def _save_yaml_file(path: Path, updates: dict) -> None:
-    """Update a YAML file by line-level replacement, preserving comments
-    and any lines for keys outside the update set. Missing keys are
-    appended. Used for both vars.yml and vault.yml."""
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("---\n")
-
-    lines = path.read_text().splitlines()
-    matched_keys: set = set()
-    new_lines: list = []
-    for line in lines:
-        replaced = False
-        for key, value in updates.items():
-            pattern = rf'^(\s*{re.escape(key)}\s*:)\s*.*$'
-            m = re.match(pattern, line)
-            if m:
-                new_lines.append(f"{m.group(1)} {_format_yaml_value(value)}")
-                matched_keys.add(key)
-                replaced = True
-                break
-        if not replaced:
-            new_lines.append(line)
-
-    for key, value in updates.items():
-        if key not in matched_keys:
-            new_lines.append(f"{key}: {_format_yaml_value(value)}")
-
-    path.write_text("\n".join(new_lines) + "\n")
-
-
-def _save_vars(updates):
-    """Update vars.yml. Wrapper for backward compat with callers."""
-    _save_yaml_file(VARS_PATH, updates)
-
-
-def _save_vault(updates):
-    """Update vault.yml. Caller must already have stripped out empty
-    secret values that mean 'keep current'."""
-    _save_yaml_file(VAULT_PATH, updates)
-
 app = FastAPI(title="Proxmox VE Autopilot")
 app.mount(
     "/static/react",
@@ -664,45 +585,6 @@ def _load_or_create_session_secret() -> str:
     except Exception:
         pass
     return s
-
-
-def _auth_config() -> dict:
-    cfg = _load_proxmox_config()
-    # Env override wins over the vault setting so a single production
-    # vault.yml can be shared across prod + local dev without the
-    # local instance redirecting into production after login. Local
-    # dev / macOS-native sets AUTOPILOT_AUTH_REDIRECT_URI to the
-    # http://localhost:<port>/auth/callback registered against the
-    # same Entra app as an additional Redirect URI.
-    env_redirect = os.environ.get("AUTOPILOT_AUTH_REDIRECT_URI")
-    redirect_uri = env_redirect or cfg.get(
-        "auth_redirect_uri",
-        "https://autopilot.gell.one/auth/callback",
-    )
-    requested_mode = (
-        os.environ.get("AUTOPILOT_AUTH_MODE")
-        or cfg.get("auth_mode")
-        or "auto"
-    ).strip().lower()
-    if requested_mode not in {"auto", "entra", "local"}:
-        requested_mode = "auto"
-    tenant_id = cfg.get("vault_entra_tenant_id", "")
-    client_id = cfg.get("vault_entra_app_id", "")
-    entra_configured = bool(tenant_id and client_id)
-    active_mode = requested_mode
-    if active_mode == "auto":
-        active_mode = "entra" if entra_configured else "local"
-    return {
-        "mode": active_mode,
-        "requested_mode": requested_mode,
-        "entra_configured": entra_configured,
-        "local_enabled": active_mode == "local",
-        "tenant_id": tenant_id,
-        "client_id": client_id,
-        "client_secret": cfg.get("vault_entra_app_secret", ""),
-        "redirect_uri": redirect_uri,
-        "admin_group_id": cfg.get("vault_entra_admin_group_id") or None,
-    }
 
 
 # Tests set AUTOPILOT_AUTH_BYPASS=1 so the middleware doesn't redirect
@@ -2175,12 +2057,6 @@ def _ts_engine_database_url() -> str:
     return os.environ.get("AUTOPILOT_TS_ENGINE_DATABASE_URL", "").strip()
 
 
-def _database_url() -> str:
-    from web import db_pg
-
-    return db_pg.database_url()
-
-
 def _init_app_database() -> None:
     from web import (
         agent_telemetry_pg,
@@ -3313,19 +3189,6 @@ def _cipher() -> _crypto.Cipher:
     if _CIPHER is None:
         _CIPHER = _crypto.Cipher(CREDENTIAL_KEY)
     return _CIPHER
-
-
-def _load_proxmox_config():
-    vars_path = BASE_DIR / "inventory" / "group_vars" / "all" / "vars.yml"
-    vault_path = BASE_DIR / "inventory" / "group_vars" / "all" / "vault.yml"
-    config = {}
-    for p in [vars_path, vault_path]:
-        if p.exists():
-            with open(p) as f:
-                data = yaml.safe_load(f)
-                if data:
-                    config.update(data)
-    return config
 
 
 def _read_json_file(path: Path) -> dict:

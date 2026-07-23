@@ -92,7 +92,7 @@ def test_vault_presence_reports_only_which_keys_are_set(tmp_path, monkeypatch):
               "vault_proxmox_api_token_id: abc\n"
               "vault_proxmox_api_token_secret: \"\"\n"
               "vault_entra_app_id: tenant-guid\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", p)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", p)
     presence = _app._vault_presence()
     assert presence["vault_proxmox_api_token_id"] is True
     assert presence["vault_proxmox_api_token_secret"] is False
@@ -108,7 +108,7 @@ def test_settings_page_never_echoes_secret_values(app_client, tmp_path, monkeypa
     p = tmp_path / "vault.yml"
     _write(p, "---\nvault_proxmox_api_token_secret: SUPER-SECRET-XYZ\n"
               "vault_proxmox_root_password: \"\"\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", p)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", p)
 
     from unittest.mock import patch
     with patch("web.app._load_vars", return_value={}), \
@@ -133,7 +133,7 @@ def test_settings_save_preserves_secret_when_form_blank(app_client, tmp_path, mo
     p = tmp_path / "vault.yml"
     _write(p, "---\nvault_proxmox_api_token_secret: ORIGINAL-SECRET\n"
               "vault_proxmox_api_token_id: tok-id\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", p)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", p)
 
     from unittest.mock import patch
     with patch("web.app._load_vars", return_value={}), \
@@ -153,7 +153,7 @@ def test_settings_save_rotates_secret_when_form_nonempty(app_client, tmp_path, m
     from web import app as _app
     p = tmp_path / "vault.yml"
     _write(p, "---\nvault_proxmox_api_token_secret: ORIGINAL\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", p)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", p)
 
     from unittest.mock import patch
     with patch("web.app._load_vars", return_value={}), \
@@ -204,7 +204,7 @@ def test_proxmox_bootstrap_endpoint_runs_ssh_and_saves_root_credentials(
 
     vault_path = tmp_path / "vault.yml"
     _write(vault_path, "---\nvault_proxmox_api_token_id: autopilot@pve!ansible\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", vault_path)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", vault_path)
 
     ssh_calls = []
 
@@ -250,7 +250,7 @@ def test_proxmox_bootstrap_endpoint_does_not_save_on_failed_ssh(
 
     vault_path = tmp_path / "vault.yml"
     _write(vault_path, "---\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", vault_path)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", vault_path)
 
     def fake_runner(*, host, password, user):
         def run(cmd):
@@ -282,7 +282,7 @@ def test_settings_page_renders_proxmox_permission_bootstrap(
 
     vault_path = tmp_path / "vault.yml"
     _write(vault_path, "---\nvault_proxmox_root_password: ROOT-SECRET\n")
-    monkeypatch.setattr(_app, "VAULT_PATH", vault_path)
+    monkeypatch.setattr("web.config_store.VAULT_PATH", vault_path)
 
     with patch("web.app._load_vars", return_value={"hypervisor_type": "proxmox"}), \
          patch("web.app._load_proxmox_config", return_value={
