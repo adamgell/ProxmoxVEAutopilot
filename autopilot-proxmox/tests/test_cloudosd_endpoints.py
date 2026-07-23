@@ -514,13 +514,16 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     from web import ts_engine_pg
 
     steps = ts_engine_pg.list_run_steps(pg_conn, run_body["run_id"])
+    # capture_autopilot_hash is compiled AFTER wait_agent_heartbeat (and after
+    # the AD join, when present) so a hash-incapable agent can't wedge later
+    # full_os steps behind it.
     assert [step["kind"] for step in steps][-2:] == [
-        "capture_autopilot_hash",
         "wait_agent_heartbeat",
+        "capture_autopilot_hash",
     ]
     assert steps[-1]["phase"] == "full_os"
-    assert steps[-1]["state"] == "done"
-    assert steps[-2]["state"] == "pending"
+    assert steps[-1]["state"] == "pending"
+    assert steps[-2]["state"] == "done"
 
     v2_reg = cloudosd_client.post(
         "/osd/v2/agent/register",
@@ -933,6 +936,9 @@ def test_cloudosd_domain_join_with_dc_ip_uses_full_os_join_role(
     kinds = [step["kind"] for step in steps]
     assert "stage_ad_domain_join_unattend" not in kinds
     assert kinds[kinds.index("join_domain_role") + 1] == "verify_ad_domain_join"
+    # The Autopilot hash capture must come AFTER the AD join so a hash-incapable
+    # agent can't wedge the join behind an unclaimable capture_autopilot_hash.
+    assert kinds.index("capture_autopilot_hash") > kinds.index("verify_ad_domain_join")
     join_step = next(step for step in steps if step["kind"] == "join_domain_role")
     assert join_step["phase"] == "full_os"
     assert join_step["reboot_behavior"] == "required"

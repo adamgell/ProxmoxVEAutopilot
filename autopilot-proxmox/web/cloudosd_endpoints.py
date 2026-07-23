@@ -334,6 +334,10 @@ def _package_response(
             "error": str(exc),
         }
     run_domain_join = run.get("domain_join") or {}
+    # No DC IP -> the AD join is an offline unattend join staged in the PE
+    # package. With a DC IP the join is instead a full_os `join_domain_role`
+    # step (online join, delivered as an osd_v2 work item), so the PE package
+    # deliberately omits domain_join here.
     if not run_domain_join.get("domain_controller_ipv4"):
         domain_join = domain_join_secret or _domain_join_package_stub(run)
         if domain_join.get("enabled"):

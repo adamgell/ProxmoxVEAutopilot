@@ -1419,7 +1419,6 @@ def _create_sequence_for_run(
         ("Validate offline Windows", "cloudosd_validate_offline_os", "pe"),
         ("Stage OSD client", "stage_osd_client", "pe"),
         ("Stage AutopilotAgent", "stage_autopilot_agent", "pe"),
-        ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
         ("Wait for AutopilotAgent heartbeat", "wait_agent_heartbeat", "full_os"),
     ])
     if domain_enabled:
@@ -1430,6 +1429,16 @@ def _create_sequence_for_run(
         steps.append(
             ("Verify AD domain membership", "verify_ad_domain_join", "full_os"),
         )
+    # Capture the Autopilot hash AFTER the AD join. It was ordinal-first in the
+    # full_os phase, so an agent that does not advertise the
+    # capture_autopilot_hash capability (older builds) could not claim it and
+    # claim_next_step then blocked join_domain_role behind it as an incomplete
+    # predecessor - wedging the deploy at full_os_waiting_domain_join. The AD
+    # join is what gates deploy success for AD-bound VMs, so it must not sit
+    # behind a best-effort hash capture.
+    steps.append(
+        ("Capture Autopilot hardware hash", "capture_autopilot_hash", "full_os"),
+    )
     for position, (step_name, kind, phase) in enumerate(steps):
         ts_engine_pg.add_step(
             conn,
