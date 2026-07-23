@@ -2858,6 +2858,85 @@ def test_cloudosd_preflight_blocks_unavailable_proxmox_target(
     _assert_blocking(body, "vm_name_collision")
 
 
+# --- next-free-index name resolution ---------------------------------------
+
+def test_next_free_indexed_name_advances_past_existing():
+    from web import cloudosd_pg
+    taken = {"ring0ivy24-01", "ring0ivy24-02", "ring0ivy24-03", "ring0ivy24-04"}
+    assert cloudosd_pg.next_free_indexed_name("ring0ivy24-01", taken) == "ring0ivy24-05"
+
+
+def test_next_free_indexed_name_returns_requested_when_free():
+    from web import cloudosd_pg
+    assert cloudosd_pg.next_free_indexed_name("ring0ivy24-05", {"ring0ivy24-01"}) == "ring0ivy24-05"
+
+
+def test_next_free_indexed_name_fills_lowest_gap_case_insensitive():
+    from web import cloudosd_pg
+    taken = {"RING0IVY24-01", "ring0ivy24-03"}  # -02 is the lowest free slot
+    assert cloudosd_pg.next_free_indexed_name("ring0ivy24-01", taken) == "ring0ivy24-02"
+
+
+def test_next_free_indexed_name_appends_index_for_unindexed_base():
+    from web import cloudosd_pg
+    assert cloudosd_pg.next_free_indexed_name("MYPC", {"mypc"}) == "MYPC-01"
+
+
+def test_next_free_indexed_name_accumulates_within_a_batch():
+    from web import cloudosd_pg
+    # Re-running a 2-VM ring whose -01..-04 exist must yield distinct -05/-06.
+    taken = {"ring0ivy24-01", "ring0ivy24-02", "ring0ivy24-03", "ring0ivy24-04"}
+    first = cloudosd_pg.next_free_indexed_name("ring0ivy24-01", taken)
+    taken.add(first.lower())
+    second = cloudosd_pg.next_free_indexed_name("ring0ivy24-02", taken)
+    assert [first, second] == ["ring0ivy24-05", "ring0ivy24-06"]
+
+
+def test_cloudosd_batch_names_advances_index_past_existing_ring(monkeypatch):
+    from web import app as app_module
+
+    existing = [
+        {"vmid": 135, "name": "ring0ivy24-01"},
+        {"vmid": 136, "name": "ring0ivy24-02"},
+        {"vmid": 133, "name": "ring0ivy24-03"},
+        {"vmid": 134, "name": "ring0ivy24-04"},
+    ]
+
+    def fake_api(path, *args, **kwargs):
+        if path == "/cluster/resources?type=vm":
+            return existing
+        raise AssertionError(path)
+
+    monkeypatch.setattr(app_module, "_proxmox_api", fake_api)
+
+    plans = app_module._cloudosd_batch_names(
+        hostname_pattern="ring0ivy24-{index}",
+        count=4,
+        serial_prefix="",
+        requested_vmids=[137, 138, 139, 140],
+    )
+    assert [plan["name"] for plan in plans] == [
+        "ring0ivy24-05",
+        "ring0ivy24-06",
+        "ring0ivy24-07",
+        "ring0ivy24-08",
+    ]
+
+
+def test_cloudosd_batch_names_starts_at_one_when_nothing_exists(monkeypatch):
+    from web import app as app_module
+
+    monkeypatch.setattr(app_module, "_proxmox_api", lambda path, *a, **k: [])
+
+    plans = app_module._cloudosd_batch_names(
+        hostname_pattern="ring0ivy24-{index}",
+        count=2,
+        serial_prefix="",
+        requested_vmids=[137, 138],
+    )
+    assert [plan["name"] for plan in plans] == ["ring0ivy24-01", "ring0ivy24-02"]
+
+
 def test_cloudosd_assets_status_reports_required_payloads(cloudosd_client):
     response = cloudosd_client.get("/api/cloudosd/assets/status")
 

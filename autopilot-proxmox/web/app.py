@@ -8479,6 +8479,26 @@ def _cloudosd_candidate_vmids(count: int, *, reserved_vmids: set[int] | None = N
     return vmids
 
 
+def _cloudosd_existing_vm_names_lower() -> set[str]:
+    """Lowercased names of every VM currently in the cluster.
+
+    Used to advance batch {index} naming past names that already exist so a
+    re-run of a ring (e.g. ring0ivy24-01..04) continues at the next free index
+    instead of colliding. Fail-open (empty set) on a Proxmox read error so a
+    transient hiccup never blocks provisioning; the preflight vm_name_collision
+    check remains the backstop.
+    """
+    names: set[str] = set()
+    try:
+        for row in _proxmox_api("/cluster/resources?type=vm") or []:
+            name = str(row.get("name") or "").strip()
+            if name:
+                names.add(name.lower())
+    except Exception:
+        return set()
+    return names
+
+
 def _cloudosd_active_reserved_vmids(conn) -> set[int]:
     rows = conn.execute(
         """
@@ -8651,6 +8671,11 @@ def _cloudosd_batch_names(
             status_code=500,
             detail="OSDCloud VMID reservation returned the wrong number of VMIDs",
         )
+    from web import cloudosd_pg
+    # For index-based names, seed the taken set with existing cluster VM names so
+    # a re-run continues at the next free index instead of colliding. serial/vmid
+    # patterns are already unique, so they skip the (Proxmox-reading) lookup.
+    taken_names_lower: set[str] = _cloudosd_existing_vm_names_lower() if uses_index else set()
     plans: list[dict] = []
     for index in range(1, count + 1):
         serial = _cloudosd_generate_serial(
@@ -8669,6 +8694,12 @@ def _cloudosd_batch_names(
         if not name.strip():
             raise HTTPException(status_code=400, detail="OSDCloud VM name is empty")
         name = name.strip()
+        if uses_index:
+            # Advance the {index} suffix past any name already taken in the
+            # cluster or earlier in this batch (accumulating), so a 4-VM re-run
+            # of ring0ivy24-01..04 yields ring0ivy24-05..08.
+            name = cloudosd_pg.next_free_indexed_name(name, taken_names_lower)
+            taken_names_lower.add(name.lower())
         if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name):
             raise HTTPException(
                 status_code=400,

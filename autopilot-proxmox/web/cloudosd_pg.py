@@ -352,6 +352,42 @@ def normalize_windows_computer_name(value: str | None) -> str:
     return normalized
 
 
+_INDEXED_NAME_RE = re.compile(r"^(?P<base>.+?)-(?P<idx>\d+)$")
+
+
+def next_free_indexed_name(requested: str, taken, *, max_index: int = 999) -> str:
+    """Return the next free ``{base}-{NN}`` name for an indexed batch deploy.
+
+    Used by CloudOSD preflight so re-running a tagged ring (e.g. ``ring0ivy24``
+    whose ``ring0ivy24-01..04`` VMs already exist) advances to the first free
+    index instead of hard-blocking on a name collision.
+
+    If ``requested`` is not already in ``taken`` it is returned unchanged.
+    Otherwise the trailing ``-<digits>`` group (if any) is treated as the index
+    and the lowest free index is returned, padded to the requested width
+    (minimum 2); a name with no trailing index is treated as the base and
+    indexing starts at ``-01``. Comparison against ``taken`` is
+    case-insensitive. Falls back to ``requested`` if no slot is free within
+    ``max_index``.
+    """
+    taken_lower = {str(t).strip().lower() for t in (taken or ()) if str(t).strip()}
+    req = (requested or "").strip()
+    if not req or req.lower() not in taken_lower:
+        return req
+    match = _INDEXED_NAME_RE.match(req)
+    if match:
+        base = match.group("base")
+        width = max(len(match.group("idx")), 2)
+    else:
+        base = req
+        width = 2
+    for i in range(1, max_index + 1):
+        candidate = f"{base}-{i:0{width}d}"
+        if candidate.lower() not in taken_lower:
+            return candidate
+    return req
+
+
 def name_comparison(
     *,
     requested_name: str | None,
