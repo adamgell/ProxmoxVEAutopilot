@@ -64,7 +64,7 @@ def put_state(
 def _intake_secrets(owner_sub: str, patch: dict[str, Any]) -> dict[str, Any]:
     """Pull raw secret values out of the patch, write them to vault.yml,
     rewrite the patch with sentinel refs. Mutates a copy; original patch is untouched."""
-    from web import app as web_app  # vault lives in web.app
+    from web import config_store
     out = dict(patch)
     identity = dict(out.get("identity") or {})
     for raw_key, ref_key, vault_key in [
@@ -74,7 +74,7 @@ def _intake_secrets(owner_sub: str, patch: dict[str, Any]) -> dict[str, Any]:
         raw = identity.pop(raw_key, None)
         if raw is None or raw == "":
             continue
-        web_app._save_vault({vault_key: raw})
+        config_store._save_vault({vault_key: raw})
         identity[ref_key] = f"vault:{vault_key}"
     if "identity" in out:
         out["identity"] = identity
@@ -145,30 +145,30 @@ def already_configured():
         "network": {"ok": False, "summary": "not checked"},
         "ad_vault": {"ok": False, "summary": "not checked"},
     }
-    # Proxmox version + node listing. Reuse the existing _proxmox_api helper from app.py.
+    # Proxmox version + node listing via the extracted proxmox_client helper.
     try:
-        from web import app as web_app
-        nodes = web_app._proxmox_api("/nodes")
+        from web import proxmox_client
+        nodes = proxmox_client._proxmox_api("/nodes")
         if nodes:
             node = nodes[0]
             out["proxmox"] = {"ok": True, "summary": f"connected to {node['node']} v{node.get('version', '?')}"}
             try:
-                storages = web_app._proxmox_api(f"/nodes/{node['node']}/storage")
+                storages = proxmox_client._proxmox_api(f"/nodes/{node['node']}/storage")
                 out["storage"] = {"ok": True, "summary": f"{len(storages)} storage pools on {node['node']}"}
             except Exception as e:
                 out["storage"] = {"ok": False, "summary": f"could not list storages: {e}"}
             try:
-                bridges = web_app._proxmox_api(f"/nodes/{node['node']}/network")
+                bridges = proxmox_client._proxmox_api(f"/nodes/{node['node']}/network")
                 bridge_names = [b["iface"] for b in bridges if b.get("type") == "bridge"]
                 out["network"] = {"ok": True, "summary": f"bridges: {', '.join(bridge_names) or '(none)'}"}
             except Exception as e:
                 out["network"] = {"ok": False, "summary": f"could not list bridges: {e}"}
     except Exception as e:
         out["proxmox"] = {"ok": False, "summary": f"Couldn't reach Proxmox: {e}"}
-    # AD vault status via _load_vault in app.py.
+    # AD vault status via the extracted config_store helper.
     try:
-        from web import app as web_app
-        vault = web_app._load_vault()
+        from web import config_store
+        vault = config_store._load_vault()
         present = bool(vault.get("vault_ad_join_password"))
         out["ad_vault"] = {
             "ok": present,
