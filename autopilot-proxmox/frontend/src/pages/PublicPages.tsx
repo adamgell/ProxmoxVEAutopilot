@@ -22,7 +22,9 @@ function PublicShell({
         <h1 id="public-title">{title}</h1>
         {children}
         <footer>
-          Build {bootstrap.buildSha ?? "unknown"}
+          {bootstrap.buildVersion
+            ? `v${bootstrap.buildVersion} (${bootstrap.buildSha ?? "unknown"})`
+            : `Build ${bootstrap.buildSha ?? "unknown"}`}
           {bootstrap.buildTime ? ` / ${bootstrap.buildTime}` : ""}
         </footer>
       </section>

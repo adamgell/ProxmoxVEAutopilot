@@ -5249,6 +5249,7 @@ async def legacy_dashboard(request: Request):
 def _build_bootstrap_payload(user: dict | None) -> dict:
     from web import db_pg
     payload: dict = {
+        "buildVersion": (_APP_VERSION.get("version") or ""),
         "buildSha": (_APP_VERSION.get("sha_short") or "unknown"),
         "buildTime": _APP_VERSION.get("build_time", ""),
         "userName": str((user or {}).get("name") or (user or {}).get("email") or (user or {}).get("upn") or ""),
@@ -5276,11 +5277,13 @@ def _render_react_shell(request: Request, *, shell_kind: str = "protected"):
     bootstrap = _build_bootstrap_payload(user_dict)
     build_sha = str(bootstrap.get("buildSha") or "unknown")
     build_time = str(bootstrap.get("buildTime") or "")
+    build_version = str(bootstrap.get("buildVersion") or "")
     assets = _react_asset_tags(f"{build_sha}-{build_time}")
     response = templates.TemplateResponse("react_shell.html", {
         "request": request,
         "asset_scripts": assets["scripts"],
         "asset_styles": assets["styles"],
+        "build_version": build_version,
         "build_sha": build_sha,
         "build_time": build_time,
         "user_name": str(bootstrap.get("userName") or ""),

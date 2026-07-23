@@ -173,7 +173,11 @@ export function SystemTray({
   readonly bootstrap: AppBootstrap;
   readonly socketState?: string | undefined;
 }) {
-  const buildLabel = bootstrap.buildSha ? `Build ${bootstrap.buildSha}` : "Build unknown";
+  const buildLabel = bootstrap.buildVersion
+    ? `v${bootstrap.buildVersion}${bootstrap.buildSha ? ` (${bootstrap.buildSha})` : ""}`
+    : bootstrap.buildSha
+      ? `Build ${bootstrap.buildSha}`
+      : "Build unknown";
 
   return (
     <aside className="outcome-system-tray" aria-label="Runtime status">

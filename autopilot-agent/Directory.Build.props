@@ -3,6 +3,6 @@
     <!-- Unified product version. Keep in sync with the repo-root /VERSION file
          via scripts/bump_version.sh. CalVer YYYY.MM.SEQ is normalized for .NET
          assembly versions (e.g. 2026.07.0 -> 2026.7.0). -->
-    <AutopilotAgentVersion Condition="'$(AutopilotAgentVersion)' == ''">2026.7.1</AutopilotAgentVersion>
+    <AutopilotAgentVersion Condition="'$(AutopilotAgentVersion)' == ''">2026.7.2</AutopilotAgentVersion>
   </PropertyGroup>
 </Project>

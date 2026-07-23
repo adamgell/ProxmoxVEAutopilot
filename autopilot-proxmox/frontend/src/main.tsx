@@ -14,6 +14,7 @@ function bootstrapFromRoot(root: HTMLElement): AppBootstrap {
     }
   }
   return {
+    ...(root.dataset.buildVersion ? { buildVersion: root.dataset.buildVersion } : {}),
     ...(root.dataset.buildSha ? { buildSha: root.dataset.buildSha } : {}),
     ...(root.dataset.buildTime ? { buildTime: root.dataset.buildTime } : {}),
     ...(root.dataset.userName ? { userName: root.dataset.userName } : {}),

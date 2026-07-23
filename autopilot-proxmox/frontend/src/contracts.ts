@@ -1,4 +1,5 @@
 export interface AppBootstrap {
+  readonly buildVersion?: string;
   readonly buildSha?: string;
   readonly buildTime?: string;
   readonly userName?: string;
