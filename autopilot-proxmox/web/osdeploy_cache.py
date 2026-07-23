@@ -109,7 +109,11 @@ def _entry_row(row: dict | None) -> dict | None:
 
 def init(conn: Connection) -> None:
     global _INIT_DONE
+    if _INIT_DONE:
+        return
     with _INIT_LOCK:
+        if _INIT_DONE:
+            return
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_INIT_LOCK_KEY,))
         conn.execute(SCHEMA)
         conn.commit()

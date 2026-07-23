@@ -43,8 +43,7 @@ def registered_step_types() -> list[str]:
 
 def _load_all_steps() -> None:
     """Eagerly import step modules so their @register decorators run.
-    Called from the package __init__. Empty for now — each subsequent task
-    adds one import line as it lands.
+    Called from the package __init__; each step module is imported below.
     """
     from .steps import install_ubuntu_core  # noqa: F401
     from .steps import create_ubuntu_user  # noqa: F401

@@ -179,7 +179,8 @@ def already_configured():
     return out
 
 
-# Probe + launch + setup-status: stubs for now (Tasks 7-12 will implement).
+# Probe / launch / setup-status endpoints (delegate to onboarding_probes and
+# onboarding_launch).
 class ProbeAdRequest(BaseModel):
     domain: str
     account: str

@@ -93,7 +93,6 @@ def _load_version() -> dict:
     if sha == "unknown":
         for repo_path in (
             os.environ.get("HOST_REPO_MOUNT", "/host/repo"),
-            os.environ.get("HOST_REPO_PATH", ""),
             str(BASE_DIR),
         ):
             if not repo_path:

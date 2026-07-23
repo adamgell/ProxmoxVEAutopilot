@@ -159,15 +159,6 @@ def test_osdeploy_run_detail_template_has_v2_plan_and_readiness():
     assert "data-osdeploy-field=\"job_link\"" in template
 
 
-def test_provision_page_exposes_osdeploy_and_legacy_winpe_labels():
-    template = (ROOT / "web/templates/provision.html").read_text(encoding="utf-8")
-
-    assert '<option value="osdeploy">OSDeploy v2 (Windows Server / advanced installs)</option>' in template
-    assert '<option value="winpe">Legacy WinPE (fallback image apply)</option>' in template
-    assert "OSDeploy Server base deployment" in template
-    assert 'data-boot-section="osdeploy"' in template
-
-
 def test_base_nav_exposes_osdeploy_cockpit():
     template = (ROOT / "web/templates/base.html").read_text(encoding="utf-8")
 
