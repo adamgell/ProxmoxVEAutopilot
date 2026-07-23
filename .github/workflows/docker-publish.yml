@@ -29,7 +29,7 @@ jobs:
       - name: Install Python system build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y krb5-user libkrb5-dev libldap2-dev libsasl2-dev libsasl2-modules-gssapi-mit
+          sudo apt-get install -y krb5-user libkrb5-dev libldap2-dev libsasl2-dev libsasl2-modules-gssapi-mit qemu-utils
 
       - name: Install Python dependencies
         working-directory: autopilot-proxmox

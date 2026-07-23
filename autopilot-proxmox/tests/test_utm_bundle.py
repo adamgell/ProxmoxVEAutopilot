@@ -4,11 +4,17 @@ Spec: docs/superpowers/specs/2026-04-23-utm-native-lifecycle-foundation-design.m
 """
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 
+import pytest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+_needs_qemu_img = pytest.mark.skipif(
+    shutil.which("qemu-img") is None, reason="qemu-img (qemu-utils) not installed"
+)
 
 
 def test_schema_contract_has_required_sections():
@@ -211,6 +217,7 @@ def test_render_plist_bytes_matches_golden_fixture():
     )
 
 
+@_needs_qemu_img
 def test_create_qcow2_writes_file_of_expected_size(tmp_path):
     """qemu-img create -f qcow2 <path> <size>G produces a qcow2 file. The
     file on disk is small (~200 KB) because qcow2 is sparse; the *virtual*
@@ -235,6 +242,7 @@ def _touch(path, size=1024):
         f.write(b"\x00" * size)
 
 
+@_needs_qemu_img
 def test_write_bundle_creates_expected_layout(tmp_path):
     from web import utm_bundle as ub
 
@@ -280,6 +288,7 @@ def test_write_bundle_creates_expected_layout(tmp_path):
     assert set(result["drive_uuids"]) == {d.identifier.upper() for d in spec.drives}
 
 
+@_needs_qemu_img
 def test_write_bundle_plist_matches_renderer(tmp_path):
     """Bytes written to config.plist match render_plist_bytes exactly."""
     from web import utm_bundle as ub
@@ -488,6 +497,7 @@ def test_prepare_efi_vars_returns_false_on_invalid_stub(tmp_path):
     assert ub.prepare_efi_vars(stub) is False
 
 
+@_needs_qemu_img
 def test_cli_build_writes_bundle(tmp_path):
     """Feed a full spec JSON to the CLI; bundle directory and files exist."""
     efi_src = tmp_path / "efi.fd"; _touch(efi_src)
