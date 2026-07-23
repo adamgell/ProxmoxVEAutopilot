@@ -1,0 +1,17 @@
+# CI-only overlay for the self-hosted integration lane. Layered on top of
+# docker-compose.yml to run an ephemeral, disposable stack: auth is bypassed
+# so the read-only + self-cleaning integration suite can exercise the DB and
+# job/builder/monitor paths without an Entra session, and the web self-update
+# mounts (docker.sock, host repo) are dropped since CI never self-updates.
+services:
+  autopilot:
+    environment:
+      AUTOPILOT_AUTH_BYPASS: "1"
+    volumes:
+      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
+      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
+      - ./output:/app/output
+      - ./cache/cloudosd:/app/cache/cloudosd
+      - ./cache/osdeploy:/app/cache/osdeploy
+      - autopilot-jobs:/app/jobs
+      - ./secrets:/app/secrets
