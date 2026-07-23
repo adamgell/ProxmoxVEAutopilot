@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
-import time
 from contextlib import closing
 
 import pytest
@@ -98,60 +96,6 @@ def test_osdeploy_agent_msi_refuses_placeholder_from_host_repo(tmp_path, monkeyp
         assert "valid AutopilotAgent MSI" in str(exc)
     else:
         raise AssertionError("placeholder MSI was accepted")
-
-
-@pytest.fixture(scope="module")
-def pg_dsn():
-    container = subprocess.check_output(
-        [
-            "docker",
-            "run",
-            "-d",
-            "-e",
-            "POSTGRES_PASSWORD=postgres",
-            "-e",
-            "POSTGRES_DB=autopilot_test",
-            "-p",
-            "127.0.0.1::5432",
-            "postgres:16-alpine",
-        ],
-        text=True,
-    ).strip()
-    try:
-        port = subprocess.check_output(
-            [
-                "docker",
-                "inspect",
-                "-f",
-                "{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostPort}}",
-                container,
-            ],
-            text=True,
-        ).strip()
-        dsn = (
-            f"postgresql://postgres:postgres@127.0.0.1:{port}/"
-            "autopilot_test"
-        )
-        import psycopg
-
-        deadline = time.time() + 30
-        while True:
-            try:
-                with psycopg.connect(dsn) as conn:
-                    conn.execute("select 1")
-                break
-            except Exception:
-                if time.time() > deadline:
-                    logs = subprocess.run(
-                        ["docker", "logs", container],
-                        text=True,
-                        capture_output=True,
-                    ).stdout
-                    raise RuntimeError(f"postgres did not start:\n{logs}")
-                time.sleep(0.5)
-        yield dsn
-    finally:
-        subprocess.run(["docker", "rm", "-f", container], check=False)
 
 
 @pytest.fixture
