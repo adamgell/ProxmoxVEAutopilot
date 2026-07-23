@@ -3,6 +3,9 @@ name: Build and Push Docker Image
 # Builds on every push to main (continuous :sha + :latest) and on every release
 # tag `v*` (immutable :v<CalVer>). The paths filter was removed intentionally so
 # release-tag builds are never skipped when the tagged commit only bumps VERSION.
+#
+# The image is only published if the `test` job is green - a broken build never
+# ships as a release an operator could deploy.
 on:
   push:
     branches: [main]
@@ -13,7 +16,60 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/proxmox-autopilot
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y krb5-user libkrb5-dev libldap2-dev libsasl2-dev libsasl2-modules-gssapi-mit
+
+      - name: Install Python dependencies
+        working-directory: autopilot-proxmox
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Backend tests (full pytest suite; Docker-backed Postgres)
+        working-directory: autopilot-proxmox
+        run: python -m pytest tests/ -q -p no:cacheprovider
+
+      - name: Set up Node 25
+        uses: actions/setup-node@v5
+        with:
+          node-version: "25"
+          cache: npm
+          cache-dependency-path: autopilot-proxmox/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: autopilot-proxmox/frontend
+        run: npm ci
+
+      - name: Frontend generate + validate
+        working-directory: autopilot-proxmox/frontend
+        env:
+          PYTHON: python
+        run: |
+          npm run generate:openapi
+          npm run typecheck
+          npm run test
+          npm run build
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Agent contract tests
+        run: dotnet run --project autopilot-agent/tests/AutopilotAgent.ContractTests
+
   build-and-push:
+    needs: [test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
