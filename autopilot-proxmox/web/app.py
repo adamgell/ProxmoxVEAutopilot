@@ -137,7 +137,6 @@ def _load_version() -> dict:
 
 
 _APP_VERSION = _load_version()
-_LATEST_VERSION_CACHE: dict = {"fetched_at": 0, "sha": None, "sha_short": None, "error": None}
 _RUNTIME_LOG_SERVICES = {
     "autopilot",
     "autopilot-builder",
@@ -7693,10 +7692,10 @@ def _reset_runtime_ui_caches() -> dict:
     qga_failures = len(_LIVE_QGA_FAILURES)
     _SCREENSHOT_CACHE.clear()
     _LIVE_QGA_FAILURES.clear()
-    _LATEST_VERSION_CACHE.update({
+    _LATEST_RELEASE_CACHE.update({
         "fetched_at": 0,
-        "sha": None,
-        "sha_short": None,
+        "tag": None,
+        "version": None,
         "error": None,
     })
     return {
@@ -12913,39 +12912,41 @@ _GITHUB_REPO = "adamgell/ProxmoxVEAutopilot"
 _LATEST_VERSION_TTL = 300  # seconds — cache GitHub response for 5 min
 
 
-def _same_git_sha(left: str | None, right: str | None) -> bool:
-    left = (left or "").strip().lower()
-    right = (right or "").strip().lower()
-    if not left or not right or "unknown" in {left, right}:
-        return False
-    if left == right:
-        return True
-    # Some production builds bake a short SHA while GitHub returns the full
-    # commit. Treat a 7+ character prefix match as the same build.
-    if len(left) >= 7 and right.startswith(left):
-        return True
-    if len(right) >= 7 and left.startswith(right):
-        return True
-    return False
+_LATEST_RELEASE_CACHE: dict = {"fetched_at": 0, "tag": None, "version": None, "error": None}
 
 
-def _fetch_latest_main_sha():
-    """Return the SHA of origin/main from GitHub. Cached to respect rate limits."""
+def _calver_key(tag: str):
+    """Parse a v<YYYY>.<MM>.<SEQ> tag into a comparable tuple, or None."""
+    m = re.fullmatch(r"v?(\d{4})\.(\d{2})\.(\d+)", str(tag or "").strip())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def _fetch_latest_release_tag():
+    """Return the newest released v<CalVer> git tag from GitHub. Cached.
+
+    Production runs an immutable released tag (never :latest / origin/main), so
+    "is an update available" means "does a newer v* release tag exist".
+    """
     now = time.time()
-    cache = _LATEST_VERSION_CACHE
-    if cache["sha"] and (now - cache["fetched_at"]) < _LATEST_VERSION_TTL:
+    cache = _LATEST_RELEASE_CACHE
+    if cache["tag"] and (now - cache["fetched_at"]) < _LATEST_VERSION_TTL:
         return cache
     try:
         resp = requests.get(
-            f"https://api.github.com/repos/{_GITHUB_REPO}/commits/main",
+            f"https://api.github.com/repos/{_GITHUB_REPO}/tags?per_page=100",
             headers={"Accept": "application/vnd.github+json"},
             timeout=8,
         )
         resp.raise_for_status()
-        sha = resp.json().get("sha", "")
+        best, best_key = "", None
+        for t in resp.json():
+            name = str(t.get("name") or "")
+            key = _calver_key(name)
+            if key and (best_key is None or key > best_key):
+                best_key, best = key, name
         cache.update({
-            "fetched_at": now, "sha": sha, "sha_short": sha[:7],
-            "error": None,
+            "fetched_at": now, "tag": best,
+            "version": best[1:] if best else "", "error": None,
         })
     except Exception as e:
         cache.update({"fetched_at": now, "error": str(e)[:200]})
@@ -12968,33 +12969,30 @@ def _host_repo_path() -> str:
     return os.environ.get("HOST_REPO_PATH", "/opt/ProxmoxVEAutopilot")
 
 
-def _build_update_sidecar_command(host_repo: str) -> str:
+def _build_update_sidecar_command(host_repo: str, target_tag: str) -> str:
+    """Update production to a CI-built released image tag.
+
+    Pins the tag in the compose .env (recording the prior tag for rollback),
+    pulls it from GHCR, and recreates the services (preserving builder scale).
+    This mirrors the host-side of scripts/deploy_production.sh: no git pull and
+    no local build - production images come from CI, from committed releases.
+    """
     host_repo_q = shlex.quote(host_repo)
-    image_tag_q = shlex.quote("ghcr.io/adamgell/proxmox-autopilot:latest")
+    tag_q = shlex.quote(target_tag)
     return (
         "set -euo pipefail; "
-        "apk add --no-cache git >/dev/null 2>&1 || apk add --no-cache git; "
-        f"cd {host_repo_q} && "
-        "echo '--- git pull ---' && git pull && "
-        "cd autopilot-proxmox && "
-        "GIT_SHA=\"$(git rev-parse HEAD 2>/dev/null || echo unknown)\" && "
-        "BUILD_TIME=\"$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\" && "
-        "echo \"--- docker build ${GIT_SHA} ---\" && "
-        "DOCKER_BUILDKIT=1 docker build "
-        "--security-opt apparmor=unconfined "
-        f"-t {image_tag_q} "
-        "--build-arg \"GIT_SHA=${GIT_SHA}\" "
-        "--build-arg \"BUILD_TIME=${BUILD_TIME}\" "
-        ". && "
-        "echo '--- docker compose pull support images ---' && "
-        "(docker compose pull autopilot-postgres || true) && "
-        "echo '--- docker compose up -d ---' && "
-        "services='autopilot autopilot-builder autopilot-monitor'; "
-        "if docker compose ps -q autopilot-mcp >/dev/null 2>&1 && "
-        "[ -n \"$(docker compose ps -q autopilot-mcp)\" ]; then "
-        "services=\"$services autopilot-mcp\"; "
-        "fi; "
-        "docker compose up -d --force-recreate $services && "
+        f"TAG={tag_q}; "
+        f"cd {host_repo_q}/autopilot-proxmox; "
+        "touch .env; "
+        "CUR=\"$(grep '^AUTOPILOT_IMAGE_TAG=' .env 2>/dev/null | tail -1 | cut -d= -f2- || true)\"; "
+        "{ grep -vE '^AUTOPILOT_IMAGE_TAG(_PREV)?=' .env 2>/dev/null || true; "
+        "  if [ -n \"$CUR\" ] && [ \"$CUR\" != \"$TAG\" ]; then echo \"AUTOPILOT_IMAGE_TAG_PREV=$CUR\"; fi; "
+        "  echo \"AUTOPILOT_IMAGE_TAG=$TAG\"; } > .env.tmp && mv .env.tmp .env; "
+        "N=\"$(docker compose ps -q autopilot-builder 2>/dev/null | wc -l | tr -d ' ')\"; "
+        "[ \"${N:-0}\" -ge 1 ] || N=1; "
+        "echo \"--- docker compose pull $TAG ---\"; docker compose pull; "
+        "echo '--- docker compose up -d ---'; "
+        "docker compose up -d --scale autopilot-builder=\"$N\"; "
         "echo '--- done ---'"
     )
 
@@ -13067,7 +13065,15 @@ async def api_update_run():
     # which doesn't exist on the host. Mounting at the same path
     # makes the resolution agree with the host.
     host_repo = _host_repo_path()
-    cmd = _build_update_sidecar_command(host_repo)
+    latest = _fetch_latest_release_tag()
+    target_tag = latest.get("tag") or ""
+    if not target_tag:
+        raise HTTPException(
+            502,
+            "could not resolve the latest released tag from GitHub "
+            f"({latest.get('error') or 'no v* release tags found'})",
+        )
+    cmd = _build_update_sidecar_command(host_repo, target_tag)
     run_kwargs = dict(
         image="docker:27-cli",
         command=["sh", "-c", cmd],
@@ -13159,17 +13165,17 @@ async def api_version(check: bool = False):
         "running": _APP_VERSION,
     }
     if check:
-        latest = _fetch_latest_main_sha()
+        latest = _fetch_latest_release_tag()
         out["latest"] = {
-            "sha": latest.get("sha"),
-            "sha_short": latest.get("sha_short"),
+            "tag": latest.get("tag"),
+            "version": latest.get("version"),
             "fetched_at": latest.get("fetched_at"),
             "error": latest.get("error"),
         }
-        running_sha = _APP_VERSION.get("sha", "")
-        latest_sha = latest.get("sha") or ""
-        if running_sha and latest_sha and running_sha != "unknown":
-            out["update_available"] = not _same_git_sha(running_sha, latest_sha)
+        running_key = _calver_key("v" + (_APP_VERSION.get("version") or ""))
+        latest_key = _calver_key(latest.get("tag") or "")
+        if running_key and latest_key:
+            out["update_available"] = latest_key > running_key
         else:
             out["update_available"] = None
     return out

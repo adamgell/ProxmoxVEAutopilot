@@ -3656,7 +3656,7 @@
       })();
 
       (function () {
-        var latestSha = null; // remember origin/main head so the Update
+        var latestVersion = null; // latest released v<CalVer> so the Update
         // button can label itself with the target.
 
         function renderBadge(data) {
@@ -3682,13 +3682,13 @@
           // + .is-ready on the button) so dark mode picks up the same
           // colors without inline overrides.
           if (data.update_available === true) {
-            latestSha = (data.latest && data.latest.sha_short) || null;
+            latestVersion = (data.latest && data.latest.version) || null;
             badge.innerHTML =
-              '<a class="update-pill warn" href="https://github.com/adamgell/ProxmoxVEAutopilot/commits/main" target="_blank">Update available → ' +
-              (latestSha || "?") +
+              '<a class="update-pill warn" href="https://github.com/adamgell/ProxmoxVEAutopilot/releases" target="_blank">Update available → v' +
+              (latestVersion || "?") +
               "</a>";
-            btn.textContent = latestSha
-              ? "Update to " + latestSha
+            btn.textContent = latestVersion
+              ? "Update to v" + latestVersion
               : "Update now";
             btn.classList.add("is-ready");
             btn.dataset.mode = "update";
@@ -3798,7 +3798,7 @@
           if (btn.dataset.mode === "update") {
             if (
               confirm(
-                "Pull latest image and restart the autopilot container?\n\nThe browser will reload automatically when the new build is up.",
+                "Update to the latest released image and restart?\n\nThe browser will reload automatically when the new release is up.",
               )
             ) {
               doUpdate();

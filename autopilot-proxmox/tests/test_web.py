@@ -96,29 +96,31 @@ def test_jobs_page_empty(client):
     assert response.json() == []
 
 
-def test_api_version_treats_short_running_sha_as_current(client, monkeypatch):
+def test_api_version_reports_update_from_latest_release_tag(client, monkeypatch):
     from web import app as web_app
 
     monkeypatch.setattr(
         web_app,
         "_APP_VERSION",
-        {"sha": "f6e29f885b75", "sha_short": "f6e29f8", "build_time": "test"},
+        {"version": "2026.07.3", "sha": "f6e29f8", "sha_short": "f6e29f8", "build_time": "test"},
     )
+    # Same version as the latest release -> up to date.
     monkeypatch.setattr(
         web_app,
-        "_fetch_latest_main_sha",
-        lambda: {
-            "sha": "f6e29f885b754e38567356d30579d729f42cde64",
-            "sha_short": "f6e29f8",
-            "fetched_at": 1,
-            "error": None,
-        },
+        "_fetch_latest_release_tag",
+        lambda: {"tag": "v2026.07.3", "version": "2026.07.3", "fetched_at": 1, "error": None},
     )
+    assert client.get("/api/version?check=1").json()["update_available"] is False
 
-    response = client.get("/api/version?check=1")
-
-    assert response.status_code == 200
-    assert response.json()["update_available"] is False
+    # A newer release tag exists -> update available.
+    monkeypatch.setattr(
+        web_app,
+        "_fetch_latest_release_tag",
+        lambda: {"tag": "v2026.07.5", "version": "2026.07.5", "fetched_at": 1, "error": None},
+    )
+    body = client.get("/api/version?check=1").json()
+    assert body["update_available"] is True
+    assert body["latest"]["version"] == "2026.07.5"
 
 
 def test_load_version_falls_back_to_host_repo_when_version_file_is_unknown(
@@ -166,18 +168,20 @@ def test_load_version_falls_back_to_host_repo_when_version_file_is_unknown(
     assert loaded["build_time"] != "unknown"
 
 
-def test_update_sidecar_rebuilds_image_with_version_args():
+def test_update_sidecar_pulls_released_tag():
     from web import app as web_app
 
-    cmd = web_app._build_update_sidecar_command("/opt/ProxmoxVEAutopilot")
+    cmd = web_app._build_update_sidecar_command("/opt/ProxmoxVEAutopilot", "v2026.07.3")
 
-    assert "git pull" in cmd
-    assert "docker build" in cmd
-    assert "--build-arg \"GIT_SHA=${GIT_SHA}\"" in cmd
-    assert "--build-arg \"BUILD_TIME=${BUILD_TIME}\"" in cmd
-    assert "services='autopilot autopilot-builder autopilot-monitor'" in cmd
-    assert 'services="$services autopilot-mcp"' in cmd
-    assert "docker compose up -d --force-recreate $services" in cmd
+    # Production images come from CI releases: no git pull, no local build.
+    assert "git pull" not in cmd
+    assert "docker build" not in cmd
+    # Pin the released tag in .env (recording the prior tag for rollback), pull, up -d.
+    assert "TAG=v2026.07.3" in cmd
+    assert "AUTOPILOT_IMAGE_TAG=$TAG" in cmd
+    assert "AUTOPILOT_IMAGE_TAG_PREV=$CUR" in cmd
+    assert "docker compose pull" in cmd
+    assert 'docker compose up -d --scale autopilot-builder="$N"' in cmd
 
 
 def test_cockpit_pages_use_shared_full_width_shell(client):
@@ -210,10 +214,10 @@ def test_ui_clear_caches_invalidates_runtime_ui_caches(client):
     })
     app_module._SCREENSHOT_CACHE["shot"] = {"expires_at_monotonic": 999999}
     app_module._LIVE_QGA_FAILURES[101] = {"error": "old failure"}
-    app_module._LATEST_VERSION_CACHE.update({
+    app_module._LATEST_RELEASE_CACHE.update({
         "fetched_at": 123,
-        "sha": "abc",
-        "sha_short": "abc",
+        "tag": "v2026.07.9",
+        "version": "2026.07.9",
         "error": "old",
     })
 
@@ -232,8 +236,8 @@ def test_ui_clear_caches_invalidates_runtime_ui_caches(client):
     }
     assert app_module._SCREENSHOT_CACHE == {}
     assert app_module._LIVE_QGA_FAILURES == {}
-    assert app_module._LATEST_VERSION_CACHE["fetched_at"] == 0
-    assert app_module._LATEST_VERSION_CACHE["sha"] is None
+    assert app_module._LATEST_RELEASE_CACHE["fetched_at"] == 0
+    assert app_module._LATEST_RELEASE_CACHE["tag"] is None
 
 
 def test_ui_reload_live_data_refreshes_fleet_and_cloudosd(client, monkeypatch):
