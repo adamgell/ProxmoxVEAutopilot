@@ -41,6 +41,13 @@ _LAB_RECONCILE_INTERVAL_DEFAULT = float(
 _LAB_RECONCILE_AUTO_APPLY_DEFAULT = (
     os.environ.get("AUTOPILOT_LAB_RECONCILE_AUTO_APPLY", "") or ""
 ).strip().lower() in {"1", "true", "yes", "on"}
+# CloudOSD server-side AD join executor. Performs the full_os join_domain_role
+# step over the guest agent for DC-IP domain joins (which nothing else executes),
+# then marks the step done so the run completes on the next heartbeat. Enabled by
+# default; set the interval to 0 to disable.
+_DOMAIN_JOIN_INTERVAL_DEFAULT = float(
+    os.environ.get("AUTOPILOT_CLOUDOSD_DOMAIN_JOIN_INTERVAL_SECONDS", "120") or "120"
+)
 
 
 def _acquire_singleton_lock(path: Path) -> int | None:
@@ -101,7 +108,8 @@ def _run_loops(*, stop_event: threading.Event,
                readiness_interval_seconds: float = _READINESS_INTERVAL_DEFAULT,
                screenshot_interval_seconds: float | None = _SCREENSHOT_INTERVAL_DEFAULT,
                lab_reconcile_interval_seconds: float = _LAB_RECONCILE_INTERVAL_DEFAULT,
-               lab_reconcile_auto_apply: bool = _LAB_RECONCILE_AUTO_APPLY_DEFAULT) -> None:
+               lab_reconcile_auto_apply: bool = _LAB_RECONCILE_AUTO_APPLY_DEFAULT,
+               domain_join_interval_seconds: float = _DOMAIN_JOIN_INTERVAL_DEFAULT) -> None:
     """The heart of the monitor. Four tickers, one process.
 
     Cadences (all independently overridable for tests):
@@ -125,13 +133,15 @@ def _run_loops(*, stop_event: threading.Event,
     last_readiness = 0.0
     last_screenshot = 0.0
     last_reconcile = 0.0
+    last_domain_join = 0.0
 
     _log.info(
-        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss, screenshots=%ss, lab_reconcile=%ss auto_apply=%s)",
+        "monitor loops starting (sweep=%ss, reaper=%ss, keytab=%ss, heartbeat=%ss, readiness=%ss, screenshots=%ss, lab_reconcile=%ss auto_apply=%s, domain_join=%ss)",
         sweep_interval_seconds, reaper_interval_seconds,
         keytab_interval_seconds, heartbeat_interval_seconds,
         readiness_interval_seconds, screenshot_interval_seconds,
         lab_reconcile_interval_seconds, lab_reconcile_auto_apply,
+        domain_join_interval_seconds,
     )
 
     while not stop_event.is_set():
@@ -198,6 +208,15 @@ def _run_loops(*, stop_event: threading.Event,
             except Exception:
                 _log.exception("lab reconcile tick failed")
             last_reconcile = now
+
+        if domain_join_interval_seconds > 0 and now - last_domain_join >= domain_join_interval_seconds:
+            try:
+                result = _do_cloudosd_domain_join_tick()
+                if result.get("joined") or result.get("failed"):
+                    _log.info("cloudosd domain-join sweep: %s", result)
+            except Exception:
+                _log.exception("cloudosd domain-join tick failed")
+            last_domain_join = now
 
         # Short wake interval so cadence rounding stays tight (a 0.1s
         # reaper_interval_seconds in tests needs sub-second wake-ups;
@@ -313,6 +332,76 @@ def _do_lab_reconcile_tick(*, auto_apply: bool = False) -> dict:
             auto_apply=auto_apply,
             apply_fn=apply_fn,
         )
+
+
+def _do_cloudosd_domain_join_tick(limit: int = 50) -> dict:
+    """One iteration of the CloudOSD server-side AD join executor.
+
+    Performs the full_os ``join_domain_role`` step over the QEMU guest agent for
+    runs wedged at ``full_os_waiting_domain_join`` with a ``domain_controller_ipv4``
+    (nothing agent-side reliably executes that step for the isolated-DC case).
+    Marks the step done; the next AutopilotAgent heartbeat drives the run to
+    completion via ``mark_complete_from_heartbeat``. Skips entirely on UTM.
+
+    Live wiring (Proxmox guest-exec, credential cipher) lives in web.app /
+    proxmox_client; imported lazily so test-only calls to _run_loops don't drag
+    FastAPI in.
+    """
+    from web import app as web_app
+    from web import (
+        agent_telemetry_pg,
+        cloudosd_domain_join,
+        cloudosd_pg,
+        db_pg,
+        proxmox_client,
+        sequences_pg,
+    )
+
+    if (web_app._load_vars().get("hypervisor_type") or "proxmox").lower() == "utm":
+        return {"skipped": "utm"}
+
+    def guest_exec(node, vmid, script):
+        return cloudosd_domain_join.guest_exec_via_proxmox(
+            proxmox_client._proxmox_api_post,
+            proxmox_client._proxmox_api,
+            node,
+            vmid,
+            script,
+        )
+
+    def resolve_credential(cred_id):
+        cred = sequences_pg.get_credential(
+            web_app.SEQUENCES_DB, web_app._cipher(), int(cred_id)
+        )
+        return (cred or {}).get("payload", {}) or {}
+
+    def resolve_node(vmid):
+        for row in proxmox_client._proxmox_api("/cluster/resources?type=vm") or []:
+            if int(row.get("vmid") or 0) == int(vmid):
+                return row.get("node")
+        return None
+
+    with db_pg.connection() as conn:
+        cloudosd_pg.init(conn)
+        agent_telemetry_pg.init(conn)
+        summary = cloudosd_domain_join.run_pending_joins(
+            conn,
+            guest_exec=guest_exec,
+            resolve_credential=resolve_credential,
+            resolve_node=resolve_node,
+            append_event=cloudosd_pg.append_event,
+            limit=limit,
+        )
+        # Drive already-joined runs past the domain-join wait without needing a
+        # page view to re-evaluate completion.
+        advance = cloudosd_domain_join.advance_domain_joined_runs(
+            conn,
+            latest_heartbeat=lambda rid: agent_telemetry_pg.latest_for_run(conn, rid),
+            mark_complete=cloudosd_pg.mark_complete_from_heartbeat,
+            limit=limit,
+        )
+        summary["advanced"] = advance.get("advanced", 0)
+        return summary
 
 
 def _do_cloudosd_readiness_tick(limit: int = 100) -> dict:

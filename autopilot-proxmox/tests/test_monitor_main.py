@@ -61,6 +61,7 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
         with patch("web.monitor_main._do_sweep_tick", return_value=None), \
              patch("web.monitor_main._do_keytab_tick", return_value=None), \
              patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}), \
+             patch("web.monitor_main._do_cloudosd_domain_join_tick", return_value={"candidates": 0}), \
              patch("web.monitor_main._do_screenshot_capture_tick", return_value={"captured": 0}):
             t = threading.Thread(
                 target=monitor_main._run_loops,
@@ -71,7 +72,8 @@ def test_run_loops_runs_reaper_on_cadence(monkeypatch, pg_conn):
                         "sweep_interval_seconds": 10,
                         "keytab_interval_seconds": 10,
                         "readiness_interval_seconds": 10,
-                        "screenshot_interval_seconds": 10},
+                        "screenshot_interval_seconds": 10,
+                        "domain_join_interval_seconds": 10},
                 daemon=True,
             )
             t.start()
@@ -97,6 +99,7 @@ def _run_loops_with_reconcile(pg_conn, *, interval, auto_apply):
         with patch("web.monitor_main._do_sweep_tick", return_value=None), \
              patch("web.monitor_main._do_keytab_tick", return_value=None), \
              patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}), \
+             patch("web.monitor_main._do_cloudosd_domain_join_tick", return_value={"candidates": 0}), \
              patch("web.monitor_main._do_screenshot_capture_tick", return_value={"captured": 0}), \
              patch("web.monitor_main._do_lab_reconcile_tick", reconcile):
             t = threading.Thread(
@@ -109,6 +112,7 @@ def _run_loops_with_reconcile(pg_conn, *, interval, auto_apply):
                         "keytab_interval_seconds": 10,
                         "readiness_interval_seconds": 10,
                         "screenshot_interval_seconds": 10,
+                        "domain_join_interval_seconds": 0,
                         "lab_reconcile_interval_seconds": interval,
                         "lab_reconcile_auto_apply": auto_apply},
                 daemon=True,
@@ -152,6 +156,73 @@ def test_lab_reconcile_tick_skips_on_utm(monkeypatch):
     )
 
     result = monitor_main._do_lab_reconcile_tick(auto_apply=True)
+
+    assert result == {"skipped": "utm"}
+    assert called == []
+
+
+def _run_loops_with_domain_join(pg_conn, *, interval):
+    """Spin _run_loops briefly with every tick stubbed and return the MagicMock
+    standing in for the CloudOSD domain-join tick."""
+    from web import monitor_main, service_health_pg as service_health
+    import tempfile, threading, time
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+
+    service_health.init(pg_conn)
+    domain_join = MagicMock(return_value={"candidates": 1, "joined": 1})
+    with tempfile.TemporaryDirectory() as d:
+        monitor_db = Path(d) / "device_monitor.db"
+        stop = threading.Event()
+        with patch("web.monitor_main._do_sweep_tick", return_value=None), \
+             patch("web.monitor_main._do_keytab_tick", return_value=None), \
+             patch("web.monitor_main._do_cloudosd_readiness_tick", return_value={"watched": 0}), \
+             patch("web.monitor_main._do_screenshot_capture_tick", return_value={"captured": 0}), \
+             patch("web.monitor_main._do_cloudosd_domain_join_tick", domain_join):
+            t = threading.Thread(
+                target=monitor_main._run_loops,
+                kwargs={"stop_event": stop,
+                        "monitor_db_path": monitor_db,
+                        "reaper_interval_seconds": 10,
+                        "heartbeat_interval_seconds": 0.1,
+                        "sweep_interval_seconds": 10,
+                        "keytab_interval_seconds": 10,
+                        "readiness_interval_seconds": 10,
+                        "screenshot_interval_seconds": 10,
+                        "lab_reconcile_interval_seconds": 0,
+                        "domain_join_interval_seconds": interval},
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.35)
+            stop.set()
+            t.join(timeout=2)
+    return domain_join
+
+
+def test_run_loops_runs_domain_join_when_enabled(pg_conn):
+    domain_join = _run_loops_with_domain_join(pg_conn, interval=0.1)
+    assert domain_join.called
+
+
+def test_run_loops_skips_domain_join_when_interval_zero(pg_conn):
+    domain_join = _run_loops_with_domain_join(pg_conn, interval=0)
+    assert not domain_join.called
+
+
+def test_domain_join_tick_skips_on_utm(monkeypatch):
+    """On a UTM backend there is no Proxmox guest-exec transport, so the tick
+    returns before resolving credentials or opening a DB connection."""
+    from web import app as app_module, monitor_main, cloudosd_domain_join
+
+    monkeypatch.setattr(app_module, "_load_vars", lambda: {"hypervisor_type": "utm"})
+    called = []
+    monkeypatch.setattr(
+        cloudosd_domain_join, "run_pending_joins",
+        lambda *a, **k: called.append(k) or {},
+    )
+
+    result = monitor_main._do_cloudosd_domain_join_tick()
 
     assert result == {"skipped": "utm"}
     assert called == []
