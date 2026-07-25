@@ -212,7 +212,8 @@ def _run_loops(*, stop_event: threading.Event,
         if domain_join_interval_seconds > 0 and now - last_domain_join >= domain_join_interval_seconds:
             try:
                 result = _do_cloudosd_domain_join_tick()
-                if result.get("joined") or result.get("failed"):
+                if (result.get("joined") or result.get("failed")
+                        or result.get("hash_captured") or result.get("advanced")):
                     _log.info("cloudosd domain-join sweep: %s", result)
             except Exception:
                 _log.exception("cloudosd domain-join tick failed")
@@ -350,6 +351,7 @@ def _do_cloudosd_domain_join_tick(limit: int = 50) -> dict:
     from web import app as web_app
     from web import (
         agent_telemetry_pg,
+        agent_v1_endpoints,
         cloudosd_domain_join,
         cloudosd_pg,
         db_pg,
@@ -381,25 +383,43 @@ def _do_cloudosd_domain_join_tick(limit: int = 50) -> dict:
                 return row.get("node")
         return None
 
+    def persist_hash(**kwargs):
+        return agent_v1_endpoints._persist_autopilot_hash(source="server-side-hash", **kwargs)
+
     with db_pg.connection() as conn:
         cloudosd_pg.init(conn)
         agent_telemetry_pg.init(conn)
+        latest_heartbeat = lambda rid: agent_telemetry_pg.latest_for_run(conn, rid)
+        # 1. Perform the AD join for runs whose join_domain_role step is pending.
         summary = cloudosd_domain_join.run_pending_joins(
             conn,
             guest_exec=guest_exec,
             resolve_credential=resolve_credential,
             resolve_node=resolve_node,
             append_event=cloudosd_pg.append_event,
+            latest_heartbeat=latest_heartbeat,
             limit=limit,
         )
-        # Drive already-joined runs past the domain-join wait without needing a
-        # page view to re-evaluate completion.
+        # 2. Capture the Autopilot hardware hash for runs whose step is pending -
+        # the other full_os step nothing else executes for these agents.
+        hashes = cloudosd_domain_join.run_pending_hash_captures(
+            conn,
+            guest_exec=guest_exec,
+            persist_hash=persist_hash,
+            resolve_node=resolve_node,
+            append_event=cloudosd_pg.append_event,
+            latest_heartbeat=latest_heartbeat,
+            limit=limit,
+        )
+        # 3. Re-drive runs sitting in a full_os waiting state so completion fires
+        # server-side (CloudOSD otherwise only re-evaluates it on a page view).
         advance = cloudosd_domain_join.advance_domain_joined_runs(
             conn,
-            latest_heartbeat=lambda rid: agent_telemetry_pg.latest_for_run(conn, rid),
+            latest_heartbeat=latest_heartbeat,
             mark_complete=cloudosd_pg.mark_complete_from_heartbeat,
             limit=limit,
         )
+        summary["hash_captured"] = hashes.get("captured", 0)
         summary["advanced"] = advance.get("advanced", 0)
         return summary
 

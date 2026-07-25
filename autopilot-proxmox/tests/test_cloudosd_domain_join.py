@@ -140,12 +140,24 @@ def _make_run(pg_conn, *, domain_join, heartbeat_done=True, vmid=105, node="pve2
     return rid
 
 
-def _join_step_state(pg_conn, run_id):
+def _step_state(pg_conn, run_id, kind):
     row = pg_conn.execute(
-        "SELECT state FROM ts_run_plan_steps WHERE run_id = %s AND kind = 'join_domain_role'",
-        (run_id,),
+        "SELECT state FROM ts_run_plan_steps WHERE run_id = %s AND kind = %s",
+        (run_id, kind),
     ).fetchone()
     return row["state"] if row else None
+
+
+def _join_step_state(pg_conn, run_id):
+    return _step_state(pg_conn, run_id, "join_domain_role")
+
+
+def _hash_step_state(pg_conn, run_id):
+    return _step_state(pg_conn, run_id, "capture_autopilot_hash")
+
+
+def _verify_step_state(pg_conn, run_id):
+    return _step_state(pg_conn, run_id, "verify_ad_domain_join")
 
 
 class _FakeGuest:
@@ -191,6 +203,9 @@ def test_run_pending_joins_joins_and_marks_step_done(pg_conn):
     assert summary["candidates"] == 1
     assert summary["joined"] == 1
     assert _join_step_state(pg_conn, rid) == "done"
+    # A fresh Add-Computer completes only the join; verify is confirmed on a
+    # later tick once the guest has rebooted and PartOfDomain reads true.
+    assert _verify_step_state(pg_conn, rid) == "pending"
     # Issued exactly one Add-Computer, targeted at the right domain/OU/user.
     assert len(guest.add_computer_scripts) == 1
     join_ps = guest.add_computer_scripts[0]
@@ -215,8 +230,13 @@ def test_already_joined_marks_done_without_add_computer(pg_conn):
     )
 
     assert summary["already_joined"] == 1
+    # A confirmed-in-domain probe completes BOTH membership steps and emits the
+    # verified evidence, so the run can reach completion without an osd_v2 agent.
     assert _join_step_state(pg_conn, rid) == "done"
+    assert _verify_step_state(pg_conn, rid) == "done"
     assert guest.add_computer_scripts == []
+    events = {e["event_type"] for e in cloudosd_pg.list_events(pg_conn, rid)}
+    assert "domain_join_verified" in events
 
 
 def test_not_a_candidate_until_heartbeat_predecessor_done(pg_conn):
@@ -278,11 +298,11 @@ def test_advance_domain_joined_runs_uses_injected_completion(pg_conn):
     def mark_complete(conn, *, run_id, heartbeat_at, heartbeat):
         calls.append((run_id, heartbeat_at, heartbeat["domain_name"]))
         conn.execute(
-            "UPDATE cloudosd_runs SET state = 'full_os_waiting_v2' WHERE run_id = %s",
+            "UPDATE cloudosd_runs SET state = 'complete' WHERE run_id = %s",
             (run_id,),
         )
         conn.commit()
-        return {"state": "full_os_waiting_v2"}
+        return {"state": "complete"}
 
     result = cdj.advance_domain_joined_runs(
         pg_conn, latest_heartbeat=latest_heartbeat, mark_complete=mark_complete)
@@ -325,3 +345,153 @@ def test_failed_join_leaves_step_pending_and_records_event(pg_conn):
     assert _join_step_state(pg_conn, rid) == "pending"
     events = {e["event_type"] for e in cloudosd_pg.list_events(pg_conn, rid)}
     assert "domain_join_failed" in events
+
+
+# --------------------------------------------------------------------------- #
+# Heartbeat-recency guard
+# --------------------------------------------------------------------------- #
+def test_heartbeat_is_stale_helper():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 7, 24, 12, 0, 0, tzinfo=timezone.utc)
+    assert cdj._heartbeat_is_stale(None, now, 1800)
+    assert cdj._heartbeat_is_stale({"received_at": now - timedelta(hours=1)}, now, 1800)
+    assert not cdj._heartbeat_is_stale({"received_at": now - timedelta(seconds=60)}, now, 1800)
+    # naive timestamp is treated as UTC, not crashed on
+    assert not cdj._heartbeat_is_stale(
+        {"received_at": (now - timedelta(seconds=30)).replace(tzinfo=None)}, now, 1800)
+
+
+def test_join_skips_run_with_no_heartbeat(pg_conn):
+    _init_db(pg_conn)
+    rid = _make_run(pg_conn, domain_join=_DC_DOMAIN_JOIN)
+    guest = _FakeGuest()
+    summary = cdj.run_pending_joins(
+        pg_conn, guest_exec=guest, resolve_credential=_cred,
+        latest_heartbeat=lambda run_id: None)
+    assert summary["stale"] == 1
+    assert summary["joined"] == 0
+    assert guest.calls == []  # a dead run is never probed
+    assert _join_step_state(pg_conn, rid) == "pending"
+
+
+# --------------------------------------------------------------------------- #
+# Autopilot hardware-hash capture
+# --------------------------------------------------------------------------- #
+def test_parse_hash_output():
+    assert cdj.parse_hash_output(
+        {"out-data": "SERIAL=ABC123\r\nHASH=T0RhdGFoYXNo\r\n"}) == ("ABC123", "T0RhdGFoYXNo")
+    assert cdj.parse_hash_output({"out-data": ""}) == ("", "")
+    assert cdj.parse_hash_output({}) == ("", "")
+
+
+def _hash_guest(out):
+    def guest(node, vmid, script):
+        assert "DeviceHardwareData" in script
+        return {"exitcode": 0, "out-data": out}
+    return guest
+
+
+def test_hash_capture_persists_and_marks_step_done(pg_conn):
+    from web import cloudosd_pg
+    _init_db(pg_conn)
+    rid = _make_run(pg_conn, domain_join=_DC_DOMAIN_JOIN)
+    captured = []
+
+    def persist_hash(**kw):
+        captured.append(kw)
+        return "hwid.csv"
+
+    summary = cdj.run_pending_hash_captures(
+        pg_conn, guest_exec=_hash_guest("SERIAL=SN-1\r\nHASH=BASE64HASH=="),
+        persist_hash=persist_hash, append_event=cloudosd_pg.append_event)
+
+    assert summary["captured"] == 1
+    assert _hash_step_state(pg_conn, rid) == "done"
+    assert captured[0]["serial"] == "SN-1"
+    assert captured[0]["hardware_hash"] == "BASE64HASH=="
+    events = {e["event_type"] for e in cloudosd_pg.list_events(pg_conn, rid)}
+    assert "autopilot_hash_captured" in events
+
+
+def test_hash_capture_fails_on_empty_hash_and_leaves_step_pending(pg_conn):
+    _init_db(pg_conn)
+    rid = _make_run(pg_conn, domain_join=_DC_DOMAIN_JOIN)
+
+    def persist_hash(**kw):  # pragma: no cover - must not run on empty hash
+        raise AssertionError("should not persist an empty hash")
+
+    summary = cdj.run_pending_hash_captures(
+        pg_conn, guest_exec=_hash_guest("SERIAL=SN-1\r\nHASH="),
+        persist_hash=persist_hash)
+
+    assert summary["failed"] == 1
+    assert _hash_step_state(pg_conn, rid) == "pending"
+
+
+def test_hash_capture_skips_stale_run(pg_conn):
+    _init_db(pg_conn)
+    rid = _make_run(pg_conn, domain_join=_DC_DOMAIN_JOIN)
+    called = []
+
+    def guest(*a):
+        called.append(a)
+        return {}
+
+    summary = cdj.run_pending_hash_captures(
+        pg_conn, guest_exec=guest, persist_hash=lambda **k: None,
+        latest_heartbeat=lambda run_id: None)
+
+    assert summary["stale"] == 1
+    assert called == []
+    assert _hash_step_state(pg_conn, rid) == "pending"
+
+
+# --------------------------------------------------------------------------- #
+# advance covers full_os_waiting_v2
+# --------------------------------------------------------------------------- #
+def test_advance_covers_full_os_waiting_v2(pg_conn):
+    _init_db(pg_conn)
+    rid = _make_run(pg_conn, domain_join=_DC_DOMAIN_JOIN)
+    pg_conn.execute(
+        "UPDATE cloudosd_runs SET state = 'full_os_waiting_v2' WHERE run_id = %s", (rid,))
+    pg_conn.commit()
+    seen = []
+
+    def mark_complete(conn, *, run_id, heartbeat_at, heartbeat):
+        seen.append(run_id)
+        conn.execute(
+            "UPDATE cloudosd_runs SET state = 'complete' WHERE run_id = %s", (run_id,))
+        conn.commit()
+        return {"state": "complete"}
+
+    result = cdj.advance_domain_joined_runs(
+        pg_conn, latest_heartbeat=lambda r: {"received_at": "now"}, mark_complete=mark_complete)
+
+    assert result == {"waiting": 1, "advanced": 1}
+    assert seen == [rid]
+
+
+# --------------------------------------------------------------------------- #
+# Executor owns verify_ad_domain_join: a run whose join is already done but
+# verify is still pending is re-probed and verified (the just-joined-then-
+# rebooted case), without any osd_v2 agent.
+# --------------------------------------------------------------------------- #
+def test_run_with_join_done_and_verify_pending_gets_verified(pg_conn):
+    from web import cloudosd_pg, ts_engine_pg
+    _init_db(pg_conn)
+    rid = _make_run(pg_conn, domain_join=_DC_DOMAIN_JOIN)
+    ts_engine_pg.mark_steps_done_by_kind(pg_conn, run_id=rid, kinds=["join_domain_role"])
+    assert _verify_step_state(pg_conn, rid) == "pending"
+    guest = _FakeGuest(probe_out="DOMAIN=True;NAME=test.gell.one")
+
+    summary = cdj.run_pending_joins(
+        pg_conn, guest_exec=guest, resolve_credential=_cred,
+        append_event=cloudosd_pg.append_event)
+
+    # Still a candidate (verify pending); probe confirms membership -> verify done.
+    assert summary["candidates"] == 1
+    assert summary["already_joined"] == 1
+    assert _verify_step_state(pg_conn, rid) == "done"
+    assert guest.add_computer_scripts == []  # already joined, no re-join
+    events = {e["event_type"] for e in cloudosd_pg.list_events(pg_conn, rid)}
+    assert "domain_join_verified" in events
