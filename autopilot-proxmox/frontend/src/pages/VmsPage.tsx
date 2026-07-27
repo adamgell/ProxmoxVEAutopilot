@@ -42,6 +42,7 @@ import { connectFleetLive } from "../liveSocket";
 import { reactHrefForUiPath } from "../routes";
 import {
   buildFleetMachineRows,
+  fleetAgentClass,
   fleetAgentLabel,
   fleetManagedByLabel,
   fleetOsName,
@@ -91,6 +92,8 @@ type BubbleAssignment = {
   readonly bubble: LabBubble;
   readonly asset: LabBubbleAsset;
 };
+
+type ActionStatusTone = "info" | "bad";
 
 type ActionStatusLink = {
   readonly href: string;
@@ -465,6 +468,10 @@ async function deleteJson(path: string): Promise<void> {
   }
 }
 
+function countLabel(count: number, noun: string): string {
+  return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function detailVmidFromPath(path: string): number | null {
   const match = /^\/react\/vms\/(\d+)$/.exec(path);
   if (!match?.[1]) {
@@ -537,8 +544,15 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [actionStatus, setActionStatus] = useState("");
+  const [actionStatus, setActionStatusMessage] = useState("");
+  const [actionStatusTone, setActionStatusTone] = useState<ActionStatusTone>("info");
   const [actionStatusLink, setActionStatusLink] = useState<ActionStatusLink | null>(null);
+  // Informational statuses ("Rename VM 213 complete") clear themselves; errors
+  // stay put until the next action replaces them.
+  const setActionStatus = useCallback((message: string, tone: ActionStatusTone = "info") => {
+    setActionStatusMessage(message);
+    setActionStatusTone(tone);
+  }, []);
   const [socketState, setSocketState] = useState("closed");
   const [sendLive, setSendLive] = useState<SendLiveMessage | null>(null);
   const [activeAction, setActiveAction] = useState<VmActionSelection | null>(null);
@@ -672,7 +686,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
               ...((current.status === "ready" || current.status === "failed") && current.imageUrl ? { imageUrl: current.imageUrl } : {})
             };
           });
-          setActionStatus(message.detail || message.error || "Live action failed");
+          setActionStatus(message.detail || message.error || "Live action failed", "bad");
         }
         if (message.event === "sweep_started") {
           setActionStatus("Fleet refresh started");
@@ -712,7 +726,48 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     [detailVmid, machineRows]
   );
   const filteredMachines = useMemo(() => machineRows.filter((row) => machineMatchesFilter(row, filter)), [filter, machineRows]);
+  // Summary shown on the collapsed topology disclosure, so folding it away
+  // still tells you whether anything in there wants attention.
+  const topologySummary = useMemo(() => {
+    const parts = [
+      countLabel(bubbleOptions.length, "bubble"),
+      countLabel(bubbleTopology.critical_infrastructure.length, "infra VM"),
+      countLabel(bubbleTopology.connected_services.length, "service")
+    ];
+    if (bubbleTopology.warnings.length) {
+      parts.push(countLabel(bubbleTopology.warnings.length, "warning"));
+    }
+    return parts.join(" / ");
+  }, [
+    bubbleOptions.length,
+    bubbleTopology.connected_services.length,
+    bubbleTopology.critical_infrastructure.length,
+    bubbleTopology.warnings.length
+  ]);
+  useEffect(() => {
+    if (!actionStatus || actionStatusTone === "bad" || actionStatus.endsWith("...")) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setActionStatusMessage("");
+      setActionStatusLink(null);
+    }, 8000);
+    return () => { window.clearTimeout(timer); };
+  }, [actionStatus, actionStatusTone]);
+
   const stale = typeof fleet.cache_age_seconds === "number" && fleet.cache_age_seconds > 60;
+  // Three separate advisory paragraphs became one line. None of these is an
+  // error, so none of them should render in the error colour.
+  const fleetAdvisories = useMemo(() => {
+    const notes: string[] = [];
+    if (stale) {
+      notes.push(`Cache ${String(fleet.cache_age_seconds)}s old`);
+    }
+    if (fleet.agent_identity_warnings?.length) {
+      notes.push(...fleet.agent_identity_warnings);
+    }
+    return notes;
+  }, [fleet.agent_identity_warnings, fleet.cache_age_seconds, stale]);
   const [selectedAgentIds, setSelectedAgentIds] = useState<ReadonlySet<string>>(new Set());
   const [agentFormDraft, setAgentFormDraft] = useState<AgentFormDraft | null>(null);
 
@@ -784,7 +839,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       return true;
     } catch (err) {
       setActionStatusLink(null);
-      setActionStatus(err instanceof Error ? err.message : `${label} failed`);
+      setActionStatus(err instanceof Error ? err.message : `${label} failed`, "bad");
       return false;
     }
   }, [load]);
@@ -833,7 +888,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     const vmid = vm.vmid;
     if (typeof vmid !== "number") {
       setActionStatusLink(null);
-      setActionStatus("Cannot collect logs without a VMID");
+      setActionStatus("Cannot collect logs without a VMID", "bad");
       return;
     }
     setActionStatusLink(null);
@@ -846,7 +901,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         await load();
       } catch (err) {
         setActionStatusLink(null);
-        setActionStatus(err instanceof Error ? err.message : `Collect logs VM ${String(vmid)} failed`);
+        setActionStatus(err instanceof Error ? err.message : `Collect logs VM ${String(vmid)} failed`, "bad");
       }
     })();
   }, [load]);
@@ -883,12 +938,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         message: "Live WebSocket is not connected"
       });
     }
-    setActionStatus(sent ? `Screenshot requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected");
+    setActionStatus(sent ? `Screenshot requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected", sent ? "info" : "bad");
   }, [sendLive]);
 
   const qgaProbe = useCallback((vm: VmFleetRow) => {
     const sent = sendLive?.({ type: "qga_probe", correlation_id: `qga-${String(vm.vmid)}-${String(Date.now())}`, vmid: vm.vmid });
-    setActionStatus(sent ? `QGA probe requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected");
+    setActionStatus(sent ? `QGA probe requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected", sent ? "info" : "bad");
   }, [sendLive]);
 
   const createBubble = useCallback(() => {
@@ -1076,7 +1131,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       return;
     }
     if (!bubbleOptions.length) {
-      setActionStatus("Create a bubble before tagging VM assets.");
+      setActionStatus("Create a bubble before tagging VM assets.", "bad");
       return;
     }
     const current = assignmentsByVmid.get(row.vmid);
@@ -1101,7 +1156,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     }
     const targetBubble = bubbleOptions.find((bubble) => bubble.id === machineTagDraft.bubbleId);
     if (!targetBubble) {
-      setActionStatus("Bubble selection did not match an existing bubble.");
+      setActionStatus("Bubble selection did not match an existing bubble.", "bad");
       return;
     }
     const role = machineTagDraft.assetRole.trim();
@@ -1145,7 +1200,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
   const startInfraDraft = useCallback(() => {
     if (!bubbleOptions.length) {
-      setActionStatus("Create a bubble before tagging infrastructure.");
+      setActionStatus("Create a bubble before tagging infrastructure.", "bad");
       return;
     }
     const runningCandidate = infraVmCandidates.find((vm) => vm.status === "running") ?? infraVmCandidates[0];
@@ -1284,7 +1339,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
   const startServiceDraft = useCallback(() => {
     if (!bubbleOptions.length) {
-      setActionStatus("Create a bubble before adding connected services.");
+      setActionStatus("Create a bubble before adding connected services.", "bad");
       return;
     }
     setDeleteServiceId(null);
@@ -1419,7 +1474,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     }
     const trimmedId = draft.agentId.trim();
     if (!trimmedId) {
-      setActionStatus("Agent ID is required");
+      setActionStatus("Agent ID is required", "bad");
       return;
     }
     const body = {
@@ -1486,7 +1541,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       };
       setCredentialDraft(draft);
     } catch (err) {
-      setActionStatus(err instanceof Error ? err.message : "Failed to load credential");
+      setActionStatus(err instanceof Error ? err.message : "Failed to load credential", "bad");
     }
   }, []);
 
@@ -1508,11 +1563,11 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     }
     const name = draft.name.trim();
     if (!name) {
-      setActionStatus("Credential name is required");
+      setActionStatus("Credential name is required", "bad");
       return;
     }
     if (draft.mode === "create" && !draft.password) {
-      setActionStatus("Password is required for new credentials");
+      setActionStatus("Password is required for new credentials", "bad");
       return;
     }
     const buildPayload = (): Record<string, unknown> | null => {
@@ -1557,7 +1612,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     // edit: PATCH; omit password when the user didn't enter a new one so
     // the existing encrypted value stays put.
     if (draft.id === null) {
-      setActionStatus("Cannot edit credential without an id");
+      setActionStatus("Cannot edit credential without an id", "bad");
       return;
     }
     const patchBody: Record<string, unknown> = { name };
@@ -1621,12 +1676,15 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         socketState={socketState}
         action={<a className="action-link" href="/react/vms">VMs</a>}
       >
-        {loading ? <div className="progress" aria-label="Loading VM"><span /></div> : null}
-        {detailLoading ? <div className="progress" aria-label="Loading VM evidence"><span /></div> : null}
-        {error ? <p className="notice" role="status">{error}</p> : null}
-        {detailError ? <p className="notice" role="status">{detailError}</p> : null}
+        {loading ? <div className="progress" role="progressbar" aria-label="Loading VM"><span /></div> : null}
+        {detailLoading ? <div className="progress" role="progressbar" aria-label="Loading VM evidence"><span /></div> : null}
+        {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
+        {detailError ? <p className="notice notice--bad" role="alert">{detailError}</p> : null}
         {actionStatus ? (
-          <p className="notice" role="status">
+          <p
+            className={actionStatusTone === "bad" ? "notice notice--bad" : "notice"}
+            role={actionStatusTone === "bad" ? "alert" : "status"}
+          >
             {actionStatus}
             {actionStatusLink ? <> <a href={actionStatusLink.href}>{actionStatusLink.label}</a></> : null}
           </p>
@@ -1674,53 +1732,86 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       section="Fleet"
       path="/react/vms"
       socketState={socketState}
-      action={<a className="action-link" href="/react/monitoring">Signals</a>}
+      action={
+        <div className="page-head__actions">
+          <button
+            type="button"
+            className="action-link"
+            onClick={() => { void runAction("Refresh fleet", () => postJson("/api/vms/refresh")); }}
+          >
+            Refresh
+          </button>
+          <a className="action-link" href="/react/monitoring">Signals</a>
+        </div>
+      }
     >
-      {loading ? <div className="progress" aria-label="Loading fleet"><span /></div> : null}
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {loading ? <div className="progress" role="progressbar" aria-label="Loading fleet"><span /></div> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
       {actionStatus ? (
-        <p className="notice" role="status">
+        <p
+          className={actionStatusTone === "bad" ? "notice notice--bad" : "notice"}
+          role={actionStatusTone === "bad" ? "alert" : "status"}
+        >
           {actionStatus}
           {actionStatusLink ? <> <a href={actionStatusLink.href}>{actionStatusLink.label}</a></> : null}
         </p>
       ) : null}
-      {stale ? <p className="notice" role="status">Fleet cache is {String(fleet.cache_age_seconds)}s old.</p> : null}
-      {fleet.ap_error ? <p className="notice" role="status">Intune unavailable: {fleet.ap_error}</p> : null}
-      {fleet.agent_identity_warnings?.length ? (
-        <p className="notice" role="status">{fleet.agent_identity_warnings.join(" ")}</p>
+      {/* Advisories collapse into one line. Only a real failure gets --bad. */}
+      {fleetAdvisories.length ? (
+        <p className="notice" role="status">{fleetAdvisories.join(" / ")}</p>
+      ) : null}
+      {fleet.ap_error ? (
+        <p className="notice notice--warn" role="status">Intune unavailable: {fleet.ap_error}</p>
       ) : null}
 
-      <section className="metric-strip metric-strip--fleet" aria-label="Fleet metrics">
-        <Metric label="Proxmox VMs" value={String(counts.total)} tone={counts.total ? "good" : "neutral"} />
-        <Metric label="Running" value={String(counts.running)} tone={counts.running ? "active" : "neutral"} />
-        <Metric label="Attention" value={String(counts.attention)} tone={counts.attention ? "bad" : "good"} />
-        <Metric label="Agents" value={String(counts.agents)} tone={counts.agents ? "good" : "neutral"} />
-        <Metric label="Stale agents" value={String(counts.staleAgents)} tone={counts.staleAgents ? "bad" : "good"} />
-        <Metric label="Agents needing upgrade" value={String(counts.upgradeAgents)} tone={counts.upgradeAgents ? "bad" : "good"} />
-        <Metric label="Approvals" value={String(counts.pendingApprovals)} tone={counts.pendingApprovals ? "bad" : "good"} />
-        <Metric label="Pairing" value={String(counts.pairingAgents)} tone={counts.pairingAgents ? "bad" : "good"} />
-        <Metric label="Intune" value={String(counts.autopilotDevices)} tone={counts.autopilotDevices ? "good" : "neutral"} />
-        <Metric label="Missing" value={String(counts.missingAutopilot)} tone={counts.missingAutopilot ? "bad" : "good"} />
+      {/* Four tiles, not ten. A count is only toned when it is asking for work;
+          a healthy fleet renders entirely neutral so colour keeps its meaning.
+          The counts that lost a tile (stale, upgrade, approvals, pairing,
+          Intune, missing) stay reachable through the fleet filter. */}
+      <section className="metric-strip" aria-label="Fleet metrics">
+        <Metric label="Proxmox VMs" value={String(counts.total)} />
+        <Metric label="Running" value={String(counts.running)} />
+        <Metric label="Attention" value={String(counts.attention)} tone={counts.attention ? "bad" : "neutral"} />
+        <Metric label="Agents" value={String(counts.agents)} />
       </section>
 
-      <section className="filter-row" aria-label="Fleet filters">
-        <div className="filter-row__top">
-          <label className="filter">
-            <span>Filter fleet</span>
-            <input
-              aria-label="Filter fleet"
-              value={filter}
-              onChange={(event) => { setFilter(event.target.value); }}
-              placeholder="VMID, name, serial, IP, enrollment"
-            />
-          </label>
-          <button type="button" className="action-link" onClick={() => { void runAction("Refresh fleet", () => postJson("/api/vms/refresh")); }}>
-            Refresh
-          </button>
+      {/* The machine table is what this page is for, so it renders first.
+          Bubbles, infrastructure, services and credentials are configuration
+          jobs, not triage jobs, and now sit behind a disclosure below it. */}
+      <section className="fleet-lanes" aria-label="Fleet lanes">
+        <div className="fleet-primary-stack">
+          <FleetMachineTable
+            rows={filteredMachines}
+            totalCount={machineRows.length}
+            filter={filter}
+            onFilterChange={setFilter}
+            loading={loading}
+            onCreateAgent={createAgent}
+            onTagMachine={tagMachine}
+            tagDraft={machineTagDraft}
+            bubbleOptions={bubbleOptions}
+            onTagDraftChange={updateMachineTagDraft}
+            onSaveTag={saveMachineTag}
+            onCancelTag={cancelMachineTagDraft}
+            assignmentsByVmid={assignmentsByVmid}
+            selectedAgentIds={selectedAgentIds}
+            onToggleRow={toggleRowSelected}
+            onToggleSelectAll={toggleSelectAll}
+            allSelected={allSelected}
+            someSelected={someSelected}
+            onBulkDelete={() => { void bulkDeleteSelected(); }}
+            onClearSelection={clearSelection}
+            onEditAgent={updateAgent}
+          />
         </div>
       </section>
 
-      <BubbleTopologyOverview
+      <details className="fleet-stow">
+        <summary>
+          <span className="fleet-stow__label">Bubbles, infrastructure and services</span>
+          <span className="fleet-stow__hint">{topologySummary}</span>
+        </summary>
+        <BubbleTopologyOverview
         topology={bubbleTopology}
         infraVmCandidates={infraVmCandidates}
         credentials={credentialSummaries}
@@ -1776,32 +1867,9 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         onCancelServiceDraft={cancelServiceDraft}
         onRequestDeleteService={requestDeleteService}
         onConfirmDeleteService={deleteService}
-        onCancelDeleteService={cancelDeleteService}
-      />
-
-      <section className="fleet-lanes" aria-label="Fleet lanes">
-        <div className="fleet-primary-stack">
-          <FleetMachineTable
-            rows={filteredMachines}
-            onCreateAgent={createAgent}
-            onTagMachine={tagMachine}
-            tagDraft={machineTagDraft}
-            bubbleOptions={bubbleOptions}
-            onTagDraftChange={updateMachineTagDraft}
-            onSaveTag={saveMachineTag}
-            onCancelTag={cancelMachineTagDraft}
-            assignmentsByVmid={assignmentsByVmid}
-            selectedAgentIds={selectedAgentIds}
-            onToggleRow={toggleRowSelected}
-            onToggleSelectAll={toggleSelectAll}
-            allSelected={allSelected}
-            someSelected={someSelected}
-            onBulkDelete={() => { void bulkDeleteSelected(); }}
-            onClearSelection={clearSelection}
-            onEditAgent={updateAgent}
-          />
-        </div>
-      </section>
+          onCancelDeleteService={cancelDeleteService}
+        />
+      </details>
 
       {agentFormDraft ? (
         <FleetAgentFormModal
@@ -1843,7 +1911,11 @@ function FleetMachineTable({
   someSelected,
   onBulkDelete,
   onClearSelection,
-  onEditAgent
+  onEditAgent,
+  totalCount,
+  filter,
+  onFilterChange,
+  loading
 }: {
   readonly rows: readonly FleetMachineRow[];
   readonly onCreateAgent: () => void;
@@ -1862,15 +1934,40 @@ function FleetMachineTable({
   readonly onBulkDelete: () => void;
   readonly onClearSelection: () => void;
   readonly onEditAgent: (agent: AgentFleetRow) => void;
+  readonly totalCount: number;
+  readonly filter: string;
+  readonly onFilterChange: (value: string) => void;
+  readonly loading: boolean;
 }) {
   const selectionCount = selectedAgentIds.size;
   return (
-    <Panel title="Fleet machines">
-      <div className="fleet-lane-command">
+    <Panel
+      title="Fleet machines"
+      action={
         <button type="button" className="fleet-action fleet-action--command" onClick={onCreateAgent}>
           <UserPlus aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
           <span>Add agent</span>
         </button>
+      }
+    >
+      {/* The filter lives with the table it filters, and reports how much of
+          the fleet it is hiding. .result-count is the house pattern already
+          used by Jobs, Hashes, Credentials, Files and Cloud devices. */}
+      <div className="filter-row__top">
+        <label className="filter">
+          <span>Filter fleet</span>
+          <input
+            aria-label="Filter fleet"
+            value={filter}
+            onChange={(event) => { onFilterChange(event.target.value); }}
+            placeholder="VMID, name, serial, IP, phase, enrollment"
+          />
+        </label>
+        <p className="result-count" role="status">
+          {rows.length === totalCount
+            ? countLabel(totalCount, "machine")
+            : `${String(rows.length)} of ${countLabel(totalCount, "machine")}`}
+        </p>
       </div>
       {selectionCount > 0 ? (
         <div className="fleet-bulk-bar" role="region" aria-label="Bulk fleet actions">
@@ -1956,7 +2053,13 @@ function FleetMachineTable({
               })}
             </tbody>
           </table>
-        ) : <p className="empty">No fleet machines found.</p>}
+        ) : loading ? (
+          <p className="empty">Loading fleet machines...</p>
+        ) : filter ? (
+          <p className="empty">No machines match &ldquo;{filter}&rdquo;.</p>
+        ) : (
+          <p className="empty">No fleet machines found.</p>
+        )}
       </div>
     </Panel>
   );
@@ -2300,7 +2403,7 @@ function MachineRow({
         </span>
       </td>
       <td>
-        <span className={agentLabel === "Stale" || agentLabel === "None" ? "status status--bad" : "status status--good"}>
+        <span className={fleetAgentClass(agentLabel)}>
           {agentLabel}
         </span>
       </td>
@@ -2404,7 +2507,7 @@ function VmDetailWorkspace({
           <div className="vm-detail-badges">
             <span className={fleetRuntimeLabel(row) === "running" ? "status status--active" : "status"}>{fleetRuntimeLabel(row)}</span>
             <span className={fleetManagedByLabel(row) === "Intune" ? "status status--good" : "status"}>{fleetManagedByLabel(row)}</span>
-            <span className={fleetAgentLabel(row) === "Stale" || fleetAgentLabel(row) === "None" ? "status status--bad" : "status status--good"}>{fleetAgentLabel(row)}</span>
+            <span className={fleetAgentClass(fleetAgentLabel(row))}>{fleetAgentLabel(row)}</span>
           </div>
         </div>
       </section>
@@ -2518,12 +2621,23 @@ function DetailPanel({ title, rows }: { readonly title: string; readonly rows: r
   );
 }
 
+/**
+ * Ready is a resting state, so it renders neutral. "Not yet probed"
+ * (undefined) is not the same thing as "probed and failing" (false), and
+ * collapsing both into a red pill made every unprobed bubble look broken.
+ */
 function readinessClass(ok: unknown): string {
-  return ok === true ? "status status--good" : "status status--bad";
+  if (ok === true) {
+    return "status";
+  }
+  return ok === false ? "status status--bad" : "status status--warn";
 }
 
 function readinessLabel(ok: unknown): string {
-  return ok === true ? "ready" : "waiting";
+  if (ok === true) {
+    return "ready";
+  }
+  return ok === false ? "blocked" : "unknown";
 }
 
 function roleLabel(value: string | undefined): string {

@@ -816,6 +816,29 @@ export function fleetAgentLabel(row: FleetMachineRow): string {
   return "Active";
 }
 
+/**
+ * Tone for the fleet Agent pill.
+ *
+ * The previous rule was `label === "Stale" || label === "None" ? bad : good`,
+ * which had no neutral branch: a perfectly healthy agent still painted a
+ * saturated green outline on every row. Only the states that want an operator
+ * to do something are toned now.
+ */
+export function fleetAgentTone(label: string): string {
+  if (label === "None" || label === "Stale") {
+    return "bad";
+  }
+  if (label === "Pending" || label === "Upgrade available" || label === "Approved") {
+    return "warn";
+  }
+  return "neutral";
+}
+
+export function fleetAgentClass(label: string): string {
+  const tone = fleetAgentTone(label);
+  return tone === "neutral" ? "status" : `status status--${tone}`;
+}
+
 export function vmMatchesFilter(vm: VmFleetRow, filter: string): boolean {
   const query = filter.trim().toLowerCase();
   if (!query) {

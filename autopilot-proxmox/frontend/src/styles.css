@@ -1712,7 +1712,10 @@ h3 {
   min-width: 74px;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--line);
+  /* Transparent at rest. A pill only draws an outline when its state is
+     asking for something; a healthy fleet renders no outlines at all, which
+     is what lets a single red one actually register. */
+  border: 1px solid transparent;
   border-radius: 999px;
   color: var(--muted-2);
   font-size: 11px;
@@ -1730,6 +1733,11 @@ h3 {
   color: var(--active);
 }
 
+.status--warn {
+  border-color: color-mix(in srgb, var(--warn) 58%, var(--line));
+  color: var(--warn);
+}
+
 .status--bad {
   border-color: color-mix(in srgb, var(--bad) 58%, var(--line));
   color: var(--bad);
@@ -1739,16 +1747,22 @@ h3 {
 .notice {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
+/* A notice is informational by default. Only .notice--bad is an error.
+   This rule used to redeclare `color: var(--bad)`, which beat the base by
+   source order and made every notice, including successes, render red. */
 .notice {
-  margin-bottom: 16px;
-  color: var(--bad);
+  margin-bottom: 12px;
 }
 
 .notice--bad {
   color: var(--bad);
+}
+
+.notice--warn {
+  color: var(--warn);
 }
 
 .utility-button {
@@ -2729,11 +2743,6 @@ h3 {
   }
 }
 
-.metric-strip--fleet {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  margin-bottom: 20px;
-}
-
 .bubble-layout {
   display: grid;
   grid-template-columns: minmax(680px, 1fr) minmax(360px, 420px);
@@ -3206,6 +3215,75 @@ h3 {
   margin-top: 22px;
 }
 
+/* Collapsed home for bubbles, infrastructure, services and credentials.
+   These are configuration jobs; they used to sit above the machine table
+   and push it two to three screens down. */
+.fleet-stow {
+  margin-top: 28px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.fleet-stow > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+}
+
+.fleet-stow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fleet-stow > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  flex: 0 0 auto;
+}
+
+.fleet-stow[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.fleet-stow__label {
+  color: var(--muted-2);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.fleet-stow > summary:hover .fleet-stow__label {
+  color: var(--text);
+}
+
+.fleet-stow__hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fleet-stow > summary:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The filter now sits inside the Fleet machines panel. */
+.fleet-machine-table-wrap + .filter-row__top,
+.panel .filter-row__top {
+  margin-bottom: 14px;
+}
+
+.panel .filter-row__top .result-count {
+  margin: 0;
+}
+
 .fleet-primary-stack {
   display: grid;
   gap: 18px;
@@ -3295,14 +3373,19 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+/* The name is the row's identity, not a call to action. Every row being a
+   run of cyan meant the one row you were looking for had nothing to stand
+   out against. Affordance moves to the hover underline. */
 .machine-name--link {
   width: fit-content;
-  color: var(--active);
+  color: var(--text);
   text-decoration: none;
 }
 
 .machine-name--link:hover {
   color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .machine-subline,
@@ -5255,7 +5338,6 @@ h3 {
   .metric-strip--signals,
   .metric-strip--workspace,
   .metric-strip--networks,
-  .metric-strip--fleet,
   .section-grid,
   .section-grid--wide,
   .flow-board,

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
@@ -1017,7 +1017,16 @@ describe("App", () => {
       expect(screen.getAllByText("Upgrade available").length).toBeGreaterThan(0);
     });
     expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
-    expect(screen.getByText("Agents needing upgrade")).toBeInTheDocument();
+    // The metric strip carries four tiles, not ten. The counts that lost a
+    // tile stay reachable through the fleet filter.
+    const metrics = within(screen.getByRole("region", { name: "Fleet metrics" }));
+    expect(metrics.getByText("Proxmox VMs")).toBeInTheDocument();
+    expect(metrics.getByText("Running")).toBeInTheDocument();
+    expect(metrics.getByText("Attention")).toBeInTheDocument();
+    expect(metrics.getByText("Agents")).toBeInTheDocument();
+    for (const retired of ["Agents needing upgrade", "Stale agents", "Approvals", "Pairing", "Missing"]) {
+      expect(metrics.queryByText(retired)).not.toBeInTheDocument();
+    }
     expect(screen.getByRole("heading", { name: "Connected Services" })).toBeInTheDocument();
     expect(screen.getAllByText("ACME Lab").length).toBeGreaterThan(0);
     expect(screen.getByText("domain controller")).toBeInTheDocument();
