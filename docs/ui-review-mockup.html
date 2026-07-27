@@ -1,0 +1,2026 @@
+<title>Fleet and VM Detail: proposed redesign</title>
+
+<style>
+/* ============================================================
+   TOKENS
+   The 13 app colours are copied verbatim from
+   autopilot-proxmox/frontend/src/styles.css:12-40. Nothing is
+   re-picked. The tokens the app is MISSING (weight, size,
+   spacing, radius) are added here, because adding them is the
+   recommendation this mockup exists to demonstrate.
+   ============================================================ */
+:root {
+  color-scheme: dark light;
+
+  /* app palette - dark (styles.css:12-24) */
+  --bg: #0b0f16;
+  --surface: #101722;
+  --surface-2: #151e2c;
+  --line: #263142;
+  --line-soft: #1e2838;
+  --text: #e8edf4;
+  --muted: #95a3b8;
+  --muted-2: #b7c1cf;
+  --good: #89d957;
+  --active: #65c8f7;
+  --bad: #ff9c92;
+  --warn: #f4c95d;
+  --accent: #e1f56f;
+  --on-accent: #0b0f16;
+
+  /* chrome neutral: biased toward the app's blue-grey so the
+     frame recedes behind the thing it frames */
+  --chrome-bg: #070a10;
+  --chrome-surface: #0e131c;
+  --chrome-line: #1c2534;
+  --chrome-text: #dce4ee;
+  --chrome-muted: #7f8da2;
+
+  /* PROPOSED tokens - these do not exist in the app today */
+  --w-body: 400;
+  --w-med: 500;
+  --w-strong: 650;
+
+  --fs-1: 12px;
+  --fs-2: 13px;
+  --fs-3: 15px;
+  --fs-4: 18px;
+  --fs-5: 28px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 16px;
+  --sp-4: 24px;
+  --sp-5: 40px;
+
+  --radius: 6px;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* app palette - light (styles.css:28-40, verbatim) */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f7fb;
+    --surface: #ffffff;
+    --surface-2: #eef3f8;
+    --line: #ccd6e4;
+    --line-soft: #dfe6ef;
+    --text: #111827;
+    --muted: #5d6b7f;
+    --muted-2: #344255;
+    --good: #2f8a18;
+    --active: #0478a5;
+    --bad: #bc2f25;
+    --warn: #8b6500;
+    --accent: #516b00;
+    --on-accent: #ffffff;
+
+    --chrome-bg: #e8eef6;
+    --chrome-surface: #ffffff;
+    --chrome-line: #cbd6e5;
+    --chrome-text: #16202e;
+    --chrome-muted: #5a6878;
+  }
+}
+
+/* viewer's explicit toggle must win in both directions */
+:root[data-theme="light"] {
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --surface-2: #eef3f8;
+  --line: #ccd6e4;
+  --line-soft: #dfe6ef;
+  --text: #111827;
+  --muted: #5d6b7f;
+  --muted-2: #344255;
+  --good: #2f8a18;
+  --active: #0478a5;
+  --bad: #bc2f25;
+  --warn: #8b6500;
+  --accent: #516b00;
+  --on-accent: #ffffff;
+  --chrome-bg: #e8eef6;
+  --chrome-surface: #ffffff;
+  --chrome-line: #cbd6e5;
+  --chrome-text: #16202e;
+  --chrome-muted: #5a6878;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b0f16;
+  --surface: #101722;
+  --surface-2: #151e2c;
+  --line: #263142;
+  --line-soft: #1e2838;
+  --text: #e8edf4;
+  --muted: #95a3b8;
+  --muted-2: #b7c1cf;
+  --good: #89d957;
+  --active: #65c8f7;
+  --bad: #ff9c92;
+  --warn: #f4c95d;
+  --accent: #e1f56f;
+  --on-accent: #0b0f16;
+  --chrome-bg: #070a10;
+  --chrome-surface: #0e131c;
+  --chrome-line: #1c2534;
+  --chrome-text: #dce4ee;
+  --chrome-muted: #7f8da2;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--chrome-bg);
+  color: var(--chrome-text);
+  font-family: var(--sans);
+  font-size: var(--fs-2);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:where(button, a, summary, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+/* ============================================================
+   CHROME
+   ============================================================ */
+.wrap {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-4) var(--sp-5);
+}
+
+.masthead { margin-bottom: var(--sp-4); }
+
+.masthead h1 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-5);
+  font-weight: var(--w-strong);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.masthead p {
+  margin: 0;
+  max-width: 66ch;
+  color: var(--chrome-muted);
+  font-weight: var(--w-body);
+}
+
+.masthead code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--chrome-text);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: center;
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+/* segmented control, borrowed from the app's own .segmented idiom */
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--chrome-line);
+  border-radius: var(--radius);
+  background: var(--chrome-surface);
+}
+
+.seg button {
+  border: 0;
+  padding: 6px 14px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--chrome-muted);
+  font: inherit;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.seg button:hover { color: var(--chrome-text); }
+
+.seg button[aria-pressed="true"] {
+  background: var(--chrome-text);
+  color: var(--chrome-surface);
+  font-weight: var(--w-strong);
+}
+
+.seg-label {
+  font-size: 11px;
+  font-weight: var(--w-med);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--chrome-muted);
+  margin-right: calc(var(--sp-2) * -1 + 2px);
+}
+
+.viewport-note {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-1);
+  color: var(--chrome-muted);
+}
+
+/* the frame that holds the mockup */
+.frame {
+  border: 1px solid var(--chrome-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.frame-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-surface);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--chrome-muted);
+}
+
+.frame-dots { display: flex; gap: 5px; }
+.frame-dots i {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--chrome-line);
+}
+
+.scroller { overflow-x: auto; }
+
+/* the "what changed" ledger under the frame */
+.ledger {
+  margin-top: var(--sp-4);
+  border-top: 1px solid var(--chrome-line);
+  padding-top: var(--sp-3);
+}
+
+.ledger h2 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--chrome-muted);
+}
+
+.ledger ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--sp-2) var(--sp-4);
+}
+
+.ledger li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: var(--sp-2);
+  align-items: baseline;
+  padding: var(--sp-1) 0;
+  color: var(--chrome-muted);
+  font-weight: var(--w-body);
+}
+
+.ledger li b {
+  display: block;
+  color: var(--chrome-text);
+  font-weight: var(--w-med);
+}
+
+.ledger li .why {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--fs-1);
+  line-height: 1.45;
+}
+
+.ledger li i {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--good);
+}
+
+.ledger li.cut i { color: var(--bad); }
+
+.ledger code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+/* ============================================================
+   THE MOCKUP ITSELF
+   Everything below is namespaced under .app so it cannot
+   collide with the chrome above.
+   ============================================================ */
+.app {
+  min-width: 1180px;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app .rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 8px;
+  border-right: 1px solid var(--line-soft);
+}
+
+.app .rail a {
+  display: grid;
+  place-items: center;
+  height: 56px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+}
+
+.app .rail a.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--w-strong);
+}
+
+.app .content { padding: var(--sp-4) var(--sp-4) var(--sp-5); min-width: 0; }
+
+/* --- page head --- */
+.app .eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: var(--w-med);
+}
+
+.app .pagehead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.app .pagehead h1 {
+  margin: 2px 0 0;
+  font-size: var(--fs-5);
+  font-weight: var(--w-strong);
+  letter-spacing: -0.015em;
+}
+
+.app .headacts { display: flex; gap: var(--sp-2); }
+
+/* --- buttons: ONE base, three modifiers (proposed) --- */
+.app .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app .btn:hover { border-color: var(--muted); }
+.app .btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--w-strong);
+}
+.app .btn--quiet { background: transparent; border-color: transparent; color: var(--muted); }
+.app .btn--quiet:hover { color: var(--text); border-color: var(--line); }
+.app .btn--danger { color: var(--bad); border-color: var(--line); }
+.app .btn--danger:hover { border-color: var(--bad); }
+
+/* --- panel: border-top only. The app's one restrained surface. --- */
+.app .panel { margin-top: var(--sp-5); }
+
+.app .panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: var(--sp-3);
+}
+
+.app .panel h2 {
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: var(--w-strong);
+  letter-spacing: -0.005em;
+}
+
+/* --- status pills: NEUTRAL at rest --- */
+.app .pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid transparent;   /* the one line that does most of the work */
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: var(--w-med);
+  white-space: nowrap;
+}
+
+.app .pill--bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.app .pill--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.app .pill--good { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+
+/* --- metrics: 4 tiles, no lattice, no empty cells --- */
+.app .metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-4);
+  margin-top: var(--sp-4);
+}
+
+.app .metrics div { display: grid; gap: 2px; }
+
+.app .metrics dt,
+.app .metrics span {
+  font-size: 11px;
+  font-weight: var(--w-med);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.app .metrics strong {
+  font-size: var(--fs-5);
+  font-weight: var(--w-strong);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.app .metrics a { color: inherit; text-decoration: none; }
+.app .metrics a:hover strong { text-decoration: underline; text-underline-offset: 4px; }
+.app .metrics .is-bad strong { color: var(--bad); }
+
+/* --- filter row, now inside the panel it drives --- */
+.app .filterbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.app .filterbar input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-2);
+  font-weight: var(--w-body);
+}
+
+.app .filterbar input::placeholder { color: var(--muted); }
+
+.app .count {
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.app .chips { display: flex; gap: 6px; margin-bottom: var(--sp-3); flex-wrap: wrap; }
+
+.app .chips button {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  cursor: pointer;
+}
+
+.app .chips button:hover { color: var(--text); }
+
+.app .chips button[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--muted);
+  color: var(--text);
+  font-weight: var(--w-strong);
+}
+
+/* --- the table --- */
+.app .sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.app table { width: 100%; border-collapse: collapse; }
+
+.app thead th {
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 11px;
+  font-weight: var(--w-med);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.app tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-2);
+  font-weight: var(--w-body);
+  vertical-align: middle;
+}
+
+.app tbody tr:hover td { background: var(--surface); }
+
+.app .name {
+  color: var(--text);
+  font-size: var(--fs-2);
+  font-weight: var(--w-med);
+  text-decoration: none;
+}
+
+.app .name:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.app .subline {
+  margin-top: 1px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: var(--w-body);
+  color: var(--muted);
+}
+
+.app .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.app .attn-mark {
+  display: inline-block;
+  width: 3px;
+  height: 15px;
+  margin-right: 7px;
+  border-radius: 2px;
+  background: var(--bad);
+  vertical-align: -3px;
+}
+
+.app .attn-mark--warn { background: var(--warn); }
+.app .attn-mark--none { background: transparent; }
+
+/* row actions appear on hover AND focus-within, via opacity */
+.app .rowacts {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 110ms ease;
+}
+
+.app tr:hover .rowacts,
+.app tr:focus-within .rowacts { opacity: 1; }
+
+@media (hover: none) {
+  .app .rowacts { opacity: 1; }
+}
+
+.app .rowacts button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 11px;
+  font-weight: var(--w-med);
+  cursor: pointer;
+}
+
+.app .rowacts button:hover { color: var(--text); border-color: var(--muted); }
+
+/* --- collapsed disclosure for the rare jobs --- */
+.app details.stow {
+  margin-top: var(--sp-5);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--sp-3);
+}
+
+.app details.stow summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-3);
+  font-weight: var(--w-med);
+  color: var(--muted-2);
+}
+
+.app details.stow summary::-webkit-details-marker { display: none; }
+
+.app details.stow summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 130ms ease;
+}
+
+.app details.stow[open] summary::before { transform: rotate(90deg); }
+.app details.stow summary:hover { color: var(--text); }
+
+.app .stow-hint {
+  margin-left: auto;
+  font-size: var(--fs-1);
+  font-weight: var(--w-body);
+  color: var(--muted);
+}
+
+.app .stow-body { padding: var(--sp-3) 0 var(--sp-2); color: var(--muted); }
+
+/* ============================================================
+   DETAIL PAGE (after)
+   ============================================================ */
+.app .crumb { font-size: var(--fs-1); color: var(--muted); font-weight: var(--w-body); }
+.app .crumb a { color: var(--active); text-decoration: none; }
+.app .crumb a:hover { text-decoration: underline; }
+
+.app .hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.app .hero h1 {
+  margin: 2px 0 var(--sp-1);
+  font-size: var(--fs-5);
+  font-weight: var(--w-strong);
+  letter-spacing: -0.015em;
+}
+
+.app .hero .facts {
+  font-family: var(--mono);
+  font-size: var(--fs-1);
+  font-weight: var(--w-body);
+  color: var(--muted);
+}
+
+.app .hero .facts b { color: var(--muted-2); font-weight: var(--w-body); }
+.app .hero .badges { display: flex; gap: 6px; padding-top: 4px; }
+
+/* grouped action bar */
+.app .actionbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-3);
+}
+
+.app .group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--line);
+}
+
+.app .group:first-child { padding-left: 0; border-left: 0; }
+
+.app .group > span {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: var(--w-med);
+  margin-right: 2px;
+}
+
+.app .manage { margin-left: auto; }
+
+.app .manage summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+}
+
+.app .manage summary::-webkit-details-marker { display: none; }
+.app .manage summary:hover { color: var(--text); }
+
+.app .manage-body {
+  display: flex;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  justify-content: flex-end;
+}
+
+/* the stage: biggest thing on the page */
+.app .stage {
+  margin-top: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #05070b;
+  width: 100%;
+  height: 360px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.app .stage-shot {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #16324e 0%, #0a1622 55%, #05070b 100%);
+}
+
+.app .stage-shot::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 118px; height: 118px;
+  margin: -59px 0 0 -59px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--active) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--active) 34%, transparent);
+}
+
+.app .stage-tag {
+  position: absolute;
+  left: 12px; bottom: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  background: rgba(5, 7, 11, 0.74);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted-2);
+}
+
+.app .stage-tag em {
+  font-style: normal;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+}
+
+/* controls strip under the stage */
+.app .strip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+
+.app .keys { display: flex; gap: 5px; }
+
+.app .keys button {
+  height: 26px;
+  min-width: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.app .keys button:hover { color: var(--text); border-color: var(--muted); }
+
+.app .strip details summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  color: var(--muted);
+}
+
+.app .strip details summary::-webkit-details-marker { display: none; }
+.app .strip details summary:hover { color: var(--text); }
+
+/* facts: 3 rows, not 30 */
+.app .kv { display: grid; gap: 0; margin-top: var(--sp-2); }
+
+.app .kv div {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: var(--sp-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.app .kv dt { font-size: var(--fs-2); font-weight: var(--w-body); color: var(--muted); }
+.app .kv dd { margin: 0; font-size: var(--fs-2); font-weight: var(--w-med); }
+
+.app .evidence-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  width: fit-content;
+}
+
+.app .evidence-tabs button {
+  border: 0;
+  padding: 5px 13px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  cursor: pointer;
+}
+
+.app .evidence-tabs button[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: var(--w-strong);
+}
+
+.app .timeline { list-style: none; margin: var(--sp-3) 0 0; padding: 0; }
+
+.app .timeline li {
+  display: grid;
+  grid-template-columns: 132px 88px 1fr;
+  gap: var(--sp-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+
+.app .timeline time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.app .timeline .src {
+  font-size: 11px;
+  font-weight: var(--w-med);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.app .timeline p { margin: 0; font-size: var(--fs-2); font-weight: var(--w-body); }
+
+/* ============================================================
+   "BEFORE" PANES
+   Faithful to what ships today: weight 800 everywhere, 11-13px
+   band, uppercase h3, saturated pill on every row, 1px lattice
+   grids, boxes inside boxes.
+   ============================================================ */
+.before { font-weight: 800; }
+
+.before .b-notice {
+  margin: 0 0 6px;
+  color: var(--bad);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.before .b-metrics {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 18px 0;
+}
+
+.before .b-metrics div { background: var(--surface); padding: 10px 12px; }
+.before .b-metrics .empty-cell { background: var(--line); }
+
+.before .b-metrics span {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.before .b-metrics strong {
+  font-size: 25px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.before .b-metrics .g strong { color: var(--good); }
+.before .b-metrics .b strong { color: var(--bad); }
+.before .b-metrics .a strong { color: var(--active); }
+
+.before .b-filter { margin-bottom: 18px; }
+
+.before .b-filter label {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.before .b-filter .row { display: flex; gap: 8px; }
+
+.before .b-filter input {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+
+.before h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.before .b-h2 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.before .b-lanes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
+  gap: 22px;
+  align-items: start;      /* the ragged-column cause */
+  margin-bottom: 22px;
+}
+
+.before .b-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+  display: grid;
+  gap: 12px;               /* gap == padding == list gap */
+  margin-bottom: 12px;
+}
+
+.before .b-card h4 { margin: 0; font-size: 15px; font-weight: 800; }
+
+/* the 1px lattice: draws a rule around every cell */
+.before .b-lattice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--line-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.before .b-lattice div { background: var(--surface); padding: 7px 9px; }
+
+.before .b-lattice dt {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.before .b-lattice dd { margin: 0; font-size: 12px; font-weight: 800; }
+
+.before .b-chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.before .b-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 9px;
+  border: 1px solid var(--line);   /* always outlined */
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.before .b-pill.g { color: var(--good); border-color: var(--good); }
+.before .b-pill.b { color: var(--bad); border-color: var(--bad); }
+.before .b-pill.a { color: var(--active); border-color: var(--active); }
+
+.before .b-tablewrap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.before table { width: 100%; min-width: 1520px; border-collapse: collapse; }
+
+.before thead th {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.before tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.before .b-link { color: var(--active); font-size: 14px; font-weight: 900; text-decoration: none; }
+.before .b-vmid { color: var(--active); font-weight: 800; text-decoration: none; }
+
+.before .b-tagcell { width: 52px; }
+
+.before .b-tagbtn {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: normal;      /* the 4% column that wraps "Tag" */
+  width: 100%;
+  line-height: 1.05;
+}
+
+.before .b-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  margin: 14px 0;
+}
+
+.before .b-toolbar button {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.before .b-toolbar button.d { color: var(--bad); }
+
+.before .b-hero {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.before .b-hero h2 { margin: 4px 0 4px; font-size: 28px; font-weight: 800; }
+.before .b-hero .sub { font-size: 12px; font-weight: 800; color: var(--muted); }
+
+.before .b-stage {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.before .b-stage .inner {
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  height: 200px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 20px;
+}
+
+.before .b-stage .inner strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.before .b-stage .inner span { font-size: 13px; font-weight: 800; color: var(--muted); }
+
+.before .b-detailgrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.before .b-detailgrid > section { border-top: 1px solid var(--line); padding-top: 10px; }
+
+.before .b-detailgrid dl { margin: 0; display: grid; }
+
+.before .b-detailgrid dl > div {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.before .b-detailgrid dt { font-size: 11px; font-weight: 900; color: var(--muted); }
+.before .b-detailgrid dd { margin: 0; font-size: 12px; font-weight: 800; }
+.before .b-dash { color: var(--muted); }
+
+/* pane switching */
+.pane { display: none; }
+.pane.on { display: block; }
+
+@media (max-width: 900px) {
+  .wrap { padding: var(--sp-4) var(--sp-3); }
+  .masthead h1 { font-size: 22px; }
+  .viewport-note { display: none; }
+}
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <h1>Fleet and VM detail: proposed redesign</h1>
+    <p>
+      Same 13 colour tokens, same data, same features. The only thing that changes is rank.
+      Flip between <b>Before</b> and <b>After</b> to check the claim. Both states are live HTML,
+      built from what <code>VmsPage.tsx</code> actually renders today.
+    </p>
+  </div>
+
+  <div class="controls">
+    <span class="seg-label">Page</span>
+    <div class="seg" role="group" aria-label="Which page to preview">
+      <button type="button" data-page="fleet" aria-pressed="true">Fleet</button>
+      <button type="button" data-page="detail" aria-pressed="false">VM detail</button>
+    </div>
+
+    <span class="seg-label">State</span>
+    <div class="seg" role="group" aria-label="Before or after the redesign">
+      <button type="button" data-mode="before" aria-pressed="false">Before</button>
+      <button type="button" data-mode="after" aria-pressed="true">After</button>
+    </div>
+
+    <span class="viewport-note" id="vpnote">/react/vms &middot; 1600px</span>
+  </div>
+
+  <div class="frame">
+    <div class="frame-bar">
+      <span class="frame-dots"><i></i><i></i><i></i></span>
+      <span id="framepath">autopilot &middot; /react/vms</span>
+    </div>
+    <div class="scroller">
+
+      <!-- ================= FLEET / AFTER ================= -->
+      <div class="pane on" data-pane="fleet-after">
+        <div class="app">
+          <nav class="rail" aria-label="Sections">
+            <a href="#0">Home</a><a href="#0">Deploy</a><a href="#0">Build</a>
+            <a href="#0">Infra</a><a href="#0" class="on">Fleet</a><a href="#0">Set</a>
+          </nav>
+
+          <div class="content">
+            <div class="pagehead">
+              <div>
+                <div class="eyebrow">Fleet</div>
+                <h1>VMs</h1>
+              </div>
+              <div class="headacts">
+                <button type="button" class="btn btn--quiet">Refresh</button>
+                <button type="button" class="btn">Signals</button>
+              </div>
+            </div>
+
+            <dl class="metrics">
+              <div><dt>Proxmox VMs</dt><strong>16</strong></div>
+              <div><dt>Running</dt><strong>13</strong></div>
+              <div class="is-bad">
+                <a href="#0"><dt>Attention</dt><strong>3</strong></a>
+              </div>
+              <div><dt>Agents</dt><strong>14</strong></div>
+            </dl>
+
+            <section class="panel">
+              <header>
+                <h2>Fleet machines</h2>
+                <button type="button" class="btn btn--quiet">Add agent</button>
+              </header>
+
+              <div class="filterbar">
+                <input type="text" placeholder="VMID, name, serial, IP, phase, enrollment" aria-label="Filter fleet">
+                <span class="count">16 of 16</span>
+              </div>
+
+              <div class="chips" role="group" aria-label="Presets">
+                <button type="button" aria-pressed="true">All</button>
+                <button type="button" aria-pressed="false">Attention 3</button>
+                <button type="button" aria-pressed="false">Stale 1</button>
+                <button type="button" aria-pressed="false">Pending 1</button>
+                <button type="button" aria-pressed="false">No agent 2</button>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col" style="width:34px"><input type="checkbox" aria-label="Select all"></th>
+                    <th scope="col">Device name</th>
+                    <th scope="col" style="width:96px">Runtime</th>
+                    <th scope="col" style="width:132px">Agent</th>
+                    <th scope="col" style="width:164px">Phase</th>
+                    <th scope="col" style="width:104px">Heartbeat</th>
+                    <th scope="col" style="width:104px">Bubble</th>
+                    <th scope="col" style="width:132px"><span class="sr">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-06"></td>
+                    <td>
+                      <span class="attn-mark"></span><a class="name" href="#0">ring0ivy24-06</a>
+                      <div class="subline">#206 &middot; 192.168.16.46 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill pill--bad">Stale</span></td>
+                    <td>domain_join</td>
+                    <td class="num">4h ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-05"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--warn"></span><a class="name" href="#0">ring0ivy24-05</a>
+                      <div class="subline">#205 &middot; 192.168.16.45 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill pill--warn">Pending</span></td>
+                    <td>autopilot_enroll</td>
+                    <td class="num">12s ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Approve</button><button type="button">Tag</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-03"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--warn"></span><a class="name" href="#0">ring0ivy24-03</a>
+                      <div class="subline">#203 &middot; no address &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill pill--bad">stopped</span></td>
+                    <td><span class="pill">v0.1.4</span></td>
+                    <td>idle</td>
+                    <td class="num">2m ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-01"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--none"></span><a class="name" href="#0">ring0ivy24-01</a>
+                      <div class="subline">#201 &middot; 192.168.16.41 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill">v0.1.4</span></td>
+                    <td>domain_join</td>
+                    <td class="num">12s ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-02"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--none"></span><a class="name" href="#0">ring0ivy24-02</a>
+                      <div class="subline">#202 &middot; 192.168.16.42 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill">v0.1.4</span></td>
+                    <td>cloudosd</td>
+                    <td class="num">18s ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-04"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--none"></span><a class="name" href="#0">ring0ivy24-04</a>
+                      <div class="subline">#204 &middot; 192.168.16.44 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill">v0.1.4</span></td>
+                    <td>hash_capture</td>
+                    <td class="num">31s ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-07"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--none"></span><a class="name" href="#0">ring0ivy24-07</a>
+                      <div class="subline">#207 &middot; 192.168.16.47 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill">v0.1.4</span></td>
+                    <td>idle</td>
+                    <td class="num">44s ago</td>
+                    <td>labz1</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-08"></td>
+                    <td>
+                      <span class="attn-mark attn-mark--none"></span><a class="name" href="#0">ring0ivy24-08</a>
+                      <div class="subline">#208 &middot; 192.168.16.48 &middot; Win11 24H2</div>
+                    </td>
+                    <td><span class="pill">running</span></td>
+                    <td><span class="pill">v0.1.4</span></td>
+                    <td>cloudosd</td>
+                    <td class="num">51s ago</td>
+                    <td class="subline">unassigned</td>
+                    <td><div class="rowacts"><button type="button">Tag</button><button type="button">Edit</button></div></td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <details class="stow">
+              <summary>
+                Bubbles, infrastructure and services
+                <span class="stow-hint">1 bubble &middot; 2 infra VMs &middot; 2 services &middot; 1 warning</span>
+              </summary>
+              <div class="stow-body">
+                Everything that was permanently occupying the top of this page now lives here:
+                the LABZ1 bubble card, Critical Infrastructure, Connected Services, and the
+                credential inventory (which moves out entirely, to /react/credentials).
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= FLEET / BEFORE ================= -->
+      <div class="pane" data-pane="fleet-before">
+        <div class="app before">
+          <nav class="rail" aria-label="Sections">
+            <a href="#0">Home</a><a href="#0">Deploy</a><a href="#0">Build</a>
+            <a href="#0">Infra</a><a href="#0" class="on">Fleet</a><a href="#0">Set</a>
+          </nav>
+
+          <div class="content">
+            <div class="eyebrow">Fleet</div>
+            <h1 style="margin:2px 0 14px;font-size:32px;font-weight:800;">VMs</h1>
+
+            <p class="b-notice">agent-ring0ivy24-06 reports a serial that does not match VM 206</p>
+            <p class="b-notice">Cache is 14s old, refreshing in the background</p>
+            <p class="b-notice">Rename VM 213 complete</p>
+
+            <div class="b-metrics">
+              <div><span>Proxmox VMs</span><strong class="g">16</strong></div>
+              <div class="a"><span>Running</span><strong>13</strong></div>
+              <div class="b"><span>Attention</span><strong>1</strong></div>
+              <div class="g"><span>Agents</span><strong>14</strong></div>
+              <div class="b"><span>Stale agents</span><strong>12</strong></div>
+              <div class="b"><span>Needing upgrade</span><strong>3</strong></div>
+              <div class="b"><span>Approvals</span><strong>2</strong></div>
+              <div class="b"><span>Pairing</span><strong>2</strong></div>
+              <div class="g"><span>Intune</span><strong>10</strong></div>
+              <div class="b"><span>Missing</span><strong>1</strong></div>
+              <div class="empty-cell"></div>
+              <div class="empty-cell"></div>
+              <div class="empty-cell"></div>
+              <div class="empty-cell"></div>
+            </div>
+
+            <div class="b-filter">
+              <label for="bf">Filter fleet</label>
+              <div class="row">
+                <input id="bf" type="text" placeholder="VMID, name, serial, IP, enrollment">
+                <button type="button" class="btn">Refresh</button>
+              </div>
+            </div>
+
+            <div class="b-lanes">
+              <div>
+                <p class="b-h2">VM Workstation Fleets</p>
+                <p class="b-notice">labz1: DNS forwarder not reachable from 192.168.16.0/24</p>
+                <div class="b-card">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <span class="b-pill a">Active</span>
+                    <span style="font-size:12px;color:var(--active);">8 VMs</span>
+                  </div>
+                  <h4>LABZ1</h4>
+                  <dl class="b-lattice">
+                    <div><dt>Domain</dt><dd>test.gell.one</dd></div>
+                    <div><dt>Network</dt><dd>192.168.16.0/24</dd></div>
+                    <div><dt>DHCP</dt><dd>192.168.16.40-200</dd></div>
+                    <div><dt>Running</dt><dd>12</dd></div>
+                  </dl>
+                  <div class="b-chiprow">
+                    <span class="b-pill b">DC waiting</span>
+                    <span class="b-pill b">DNS waiting</span>
+                    <span class="b-pill b">DHCP waiting</span>
+                  </div>
+                  <p style="margin:0;font-size:12px;color:var(--muted);">Workgroup launch: blocked / Domain launch: blocked</p>
+                </div>
+              </div>
+
+              <div>
+                <p class="b-h2">Critical Infrastructure</p>
+                <div class="b-card">
+                  <div style="display:flex;justify-content:space-between;gap:8px;">
+                    <span class="b-pill">labz1</span>
+                    <span style="font-size:12px;color:var(--active);">labz1-dc01 (VM 190)</span>
+                  </div>
+                  <h3>Domain controller</h3>
+                  <dl class="b-lattice">
+                    <div><dt>State</dt><dd>joined</dd></div>
+                    <div><dt>Evidence</dt><dd>verified</dd></div>
+                    <div><dt>Agent</dt><dd class="b-dash">-</dd></div>
+                    <div><dt>Runtime</dt><dd>running</dd></div>
+                  </dl>
+                  <div class="b-chiprow">
+                    <button type="button" class="b-tagbtn" style="width:auto">Edit</button>
+                    <button type="button" class="b-tagbtn" style="width:auto">Move</button>
+                    <button type="button" class="b-tagbtn" style="width:auto;color:var(--bad)">Retire</button>
+                  </div>
+                </div>
+
+                <p class="b-h2" style="margin-top:18px;">Connected Services</p>
+                <div class="b-card">
+                  <div style="display:flex;justify-content:space-between;gap:8px;">
+                    <span class="b-pill">labz1</span>
+                    <span style="font-size:12px;color:var(--active);">ready</span>
+                  </div>
+                  <h3>AD DS</h3>
+                  <dl class="b-lattice">
+                    <div><dt>Kind</dt><dd>directory</dd></div>
+                    <div><dt>Scope</dt><dd>bubble</dd></div>
+                    <div><dt>Provider</dt><dd>asset-dc</dd></div>
+                    <div><dt>Credentials</dt><dd>1</dd></div>
+                  </dl>
+                </div>
+
+                <p class="b-h2" style="margin-top:18px;">Credential inventory</p>
+                <div class="b-card">
+                  <div style="display:flex;justify-content:space-between;gap:8px;">
+                    <strong style="font-size:12px;">home.gell.one join account</strong>
+                    <span style="font-size:11px;color:var(--muted);">ad</span>
+                  </div>
+                  <div class="b-chiprow">
+                    <button type="button" class="b-tagbtn" style="width:auto">Edit</button>
+                    <button type="button" class="b-tagbtn" style="width:auto;color:var(--bad)">Delete</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p class="b-h2">Fleet machines</p>
+            <div class="b-tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col" style="width:34px"><input type="checkbox" aria-label="Select all"></th>
+                    <th scope="col">Device Name</th><th scope="col">Heartbeat</th>
+                    <th scope="col">Managed By</th><th scope="col">OS</th>
+                    <th scope="col">OS Version</th><th scope="col">VMID</th>
+                    <th scope="col">IP Address</th><th scope="col">Runtime</th>
+                    <th scope="col">Agent</th><th scope="col">Bubble</th>
+                    <th scope="col">Tag</th><th scope="col" style="width:70px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-01"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-01</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">201</a></td><td>192.168.16.41</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill b">Stale</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-02"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-02</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">202</a></td><td>192.168.16.42</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill g">Upgrade available</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-03"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-03</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">203</a></td><td>-</td>
+                    <td>Stopped</td>
+                    <td><span class="b-pill b">Stale</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-04"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-04</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">204</a></td><td>192.168.16.44</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill b">Stale</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-05"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-05</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">205</a></td><td>192.168.16.45</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill g">Pending</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-06"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-06</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">206</a></td><td>192.168.16.46</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill b">Stale</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-07"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-07</a></td>
+                    <td>last 4h</td><td><span class="b-pill g">Intune</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">207</a></td><td>192.168.16.47</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill g">Upgrade available</span></td>
+                    <td>LABZ1 / -</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                  <tr>
+                    <td><input type="checkbox" aria-label="Select ring0ivy24-08"></td>
+                    <td><a class="b-link" href="#0">ring0ivy24-08</a></td>
+                    <td>last 4h</td><td><span class="b-pill">None</span></td>
+                    <td>Windows</td><td>26100.2033</td>
+                    <td><a class="b-vmid" href="#0">208</a></td><td>192.168.16.48</td>
+                    <td><span class="b-pill a">Running</span></td>
+                    <td><span class="b-pill b">Stale</span></td>
+                    <td>-</td>
+                    <td class="b-tagcell"><button type="button" class="b-tagbtn">Tag</button></td>
+                    <td><button type="button" class="b-tagbtn" style="width:auto">Edit</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= DETAIL / AFTER ================= -->
+      <div class="pane" data-pane="detail-after">
+        <div class="app">
+          <nav class="rail" aria-label="Sections">
+            <a href="#0">Home</a><a href="#0">Deploy</a><a href="#0">Build</a>
+            <a href="#0">Infra</a><a href="#0" class="on">Fleet</a><a href="#0">Set</a>
+          </nav>
+
+          <div class="content">
+            <div class="crumb"><a href="#0">VMs</a> / ring0ivy24-01</div>
+
+            <div class="hero">
+              <div>
+                <h1>ring0ivy24-01</h1>
+                <div class="facts">
+                  Win11 24H2 26100.2033 &middot; <b>#201</b> &middot; 192.168.16.41 &middot;
+                  SN Gell-1037A1 &middot; <b>domain_join</b> &middot; labz1
+                </div>
+              </div>
+              <div class="badges">
+                <span class="pill">running</span>
+                <span class="pill">agent v0.1.4</span>
+                <span class="pill pill--warn">not in Intune</span>
+              </div>
+            </div>
+
+            <div class="actionbar">
+              <div class="group">
+                <span>Watch</span>
+                <button type="button" class="btn btn--primary">Console</button>
+                <button type="button" class="btn">Screenshot</button>
+              </div>
+              <div class="group">
+                <span>Drive</span>
+                <button type="button" class="btn">Shutdown</button>
+                <button type="button" class="btn">Reset</button>
+                <button type="button" class="btn">Type</button>
+                <button type="button" class="btn">Ctrl+Alt+Del</button>
+              </div>
+              <div class="group">
+                <span>Evidence</span>
+                <button type="button" class="btn">Hash</button>
+                <button type="button" class="btn">Logs</button>
+                <button type="button" class="btn">QGA</button>
+              </div>
+              <details class="manage">
+                <summary>Manage this VM</summary>
+                <div class="manage-body">
+                  <button type="button" class="btn">Rename</button>
+                  <button type="button" class="btn btn--danger">Delete agent</button>
+                  <button type="button" class="btn btn--danger">Delete VM</button>
+                </div>
+              </details>
+            </div>
+
+            <div class="stage">
+              <div class="stage-shot"></div>
+              <div class="stage-tag"><em></em> Live console &middot; 1024 x 768 &middot; 12s ago</div>
+            </div>
+
+            <div class="strip">
+              <div class="keys">
+                <button type="button">Esc</button><button type="button">Tab</button>
+                <button type="button">Enter</button><button type="button">Win</button>
+                <button type="button">F8</button>
+              </div>
+              <div class="keys">
+                <button type="button">Start</button><button type="button">Shutdown</button>
+                <button type="button">Reset</button>
+              </div>
+              <details><summary>Input and saved credentials</summary></details>
+            </div>
+
+            <section class="panel">
+              <header><h2>Facts</h2></header>
+              <dl class="kv">
+                <div><dt>Status</dt><dd>running on pve2, up 13h 23m</dd></div>
+                <div><dt>Target OS</dt><dd>windows</dd></div>
+                <div><dt>Sequence</dt><dd>CloudOSD Win11 24H2 Enterprise</dd></div>
+              </dl>
+              <p style="margin:10px 0 0;font-size:12px;color:var(--muted);font-weight:400;">
+                Agent and Intune panels render only when there is an agent or an Autopilot record.
+                On this VM there is an agent, so the hero carries its version and the panel stays folded away.
+              </p>
+            </section>
+
+            <section class="panel">
+              <header>
+                <h2>Evidence</h2>
+                <div class="evidence-tabs" role="group" aria-label="Evidence view">
+                  <button type="button" aria-pressed="true">Timeline</button>
+                  <button type="button" aria-pressed="false">Identity</button>
+                  <button type="button" aria-pressed="false">Screenshots</button>
+                </div>
+              </header>
+              <ol class="timeline">
+                <li><time>Jul 27, 12:41:00</time><span class="src">monitor</span><p>Monitor sweep probed VM 201</p></li>
+                <li><time>Jul 27, 12:22:14</time><span class="src">run</span><p>Run run-9001 completed: domain_join</p></li>
+                <li><time>Jul 27, 12:18:02</time><span class="src">agent</span><p>Agent heartbeat resumed after a 4m gap</p></li>
+                <li><time>Jul 27, 12:05:41</time><span class="src">run</span><p>Run run-9001 started: CloudOSD Win11 24H2 Enterprise</p></li>
+                <li><time>Jul 27, 11:58:00</time><span class="src">provision</span><p>VM 201 cloned from template 250</p></li>
+              </ol>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= DETAIL / BEFORE ================= -->
+      <div class="pane" data-pane="detail-before">
+        <div class="app before">
+          <nav class="rail" aria-label="Sections">
+            <a href="#0">Home</a><a href="#0">Deploy</a><a href="#0">Build</a>
+            <a href="#0">Infra</a><a href="#0" class="on">Fleet</a><a href="#0">Set</a>
+          </nav>
+
+          <div class="content">
+            <div class="eyebrow">Fleet</div>
+            <h1 style="margin:2px 0 14px;font-size:32px;font-weight:800;">ring0ivy24-01</h1>
+
+            <div class="b-hero">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                <div>
+                  <div style="font-size:12px;color:var(--muted);">
+                    <a href="#0" style="color:var(--active);text-decoration:none;">VMs</a> / ring0ivy24-01
+                  </div>
+                  <h2>ring0ivy24-01</h2>
+                  <div class="sub">Windows 26100.2033 / VMID 201 / 192.168.16.41</div>
+                </div>
+                <div class="b-chiprow">
+                  <span class="b-pill a">Running</span>
+                  <span class="b-pill g">Intune</span>
+                  <span class="b-pill b">Stale</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="b-toolbar">
+              <button type="button">Console</button><button type="button">Screenshot</button>
+              <button type="button">Shutdown</button><button type="button" class="d">Stop</button>
+              <button type="button">Reset</button><button type="button">Hash</button>
+              <button type="button">Logs</button><button type="button">Rename</button>
+              <button type="button">Type</button><button type="button">CAD</button>
+              <button type="button">Enter</button><button type="button">QGA</button>
+              <button type="button">Update agent</button>
+              <button type="button" class="d">Delete agent</button>
+              <button type="button" class="d">Delete VM</button>
+            </div>
+
+            <div class="b-stage">
+              <div style="font-size:12px;color:var(--muted);">Action</div>
+              <div style="font-size:20px;font-weight:800;margin-bottom:10px;">VM action</div>
+              <div class="inner">
+                <strong>Choose a VM action</strong>
+                <span>Console and screenshots open here.</span>
+              </div>
+            </div>
+
+            <div class="b-detailgrid">
+              <section>
+                <h3>Essentials</h3>
+                <dl>
+                  <div><dt>Device name</dt><dd>ring0ivy24-01</dd></div>
+                  <div><dt>Heartbeat</dt><dd>last 4h</dd></div>
+                  <div><dt>Managed by</dt><dd>Intune</dd></div>
+                  <div><dt>OS</dt><dd>Windows</dd></div>
+                  <div><dt>OS version</dt><dd>26100.2033</dd></div>
+                  <div><dt>VMID</dt><dd>201</dd></div>
+                  <div><dt>IP address</dt><dd>192.168.16.41</dd></div>
+                  <div><dt>Runtime</dt><dd>running</dd></div>
+                  <div><dt>Agent</dt><dd>Stale</dd></div>
+                </dl>
+              </section>
+              <section>
+                <h3>PVE</h3>
+                <dl>
+                  <div><dt>Name</dt><dd>ring0ivy24-01</dd></div>
+                  <div><dt>Status</dt><dd>running</dd></div>
+                  <div><dt>Serial</dt><dd>Gell-1037A1</dd></div>
+                  <div><dt>QGA</dt><dd>running</dd></div>
+                  <div><dt>Target OS</dt><dd>windows</dd></div>
+                  <div><dt>Sequence</dt><dd class="b-dash">-</dd></div>
+                </dl>
+              </section>
+              <section>
+                <h3>Agent</h3>
+                <dl>
+                  <div><dt>Agent ID</dt><dd>agent-ring0ivy24-01</dd></div>
+                  <div><dt>Computer</dt><dd>RING0IVY24-01</dd></div>
+                  <div><dt>Version</dt><dd>0.1.4</dd></div>
+                  <div><dt>Published</dt><dd>0.1.4</dd></div>
+                  <div><dt>Update</dt><dd>current</dd></div>
+                  <div><dt>Pairing</dt><dd>paired</dd></div>
+                  <div><dt>Phase</dt><dd>domain_join</dd></div>
+                  <div><dt>QGA</dt><dd>Running</dd></div>
+                  <div><dt>Last seen</dt><dd>Jul 27, 8:42 AM</dd></div>
+                </dl>
+              </section>
+              <section>
+                <h3>Intune</h3>
+                <dl>
+                  <div><dt>Device</dt><dd>RING0IVY24-01</dd></div>
+                  <div><dt>Serial</dt><dd>Gell-1037A1</dd></div>
+                  <div><dt>Enrollment</dt><dd>enrolled</dd></div>
+                  <div><dt>Profile</dt><dd>assigned</dd></div>
+                  <div><dt>Group tag</dt><dd>Lab-Ivy</dd></div>
+                  <div><dt>Last contact</dt><dd class="b-dash">-</dd></div>
+                </dl>
+              </section>
+            </div>
+
+            <div style="margin-top:22px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;">
+              <section style="border-top:1px solid var(--line);padding-top:10px;">
+                <h3>Latest screenshot</h3>
+                <p style="margin:0;font-size:13px;color:var(--muted);">No screenshot yet.</p>
+              </section>
+              <section style="border-top:1px solid var(--line);padding-top:10px;">
+                <h3>Identity linkage</h3>
+                <p style="margin:0;font-size:12px;">Serial in Autopilot <span class="b-pill g">Matched</span></p>
+              </section>
+              <section style="border-top:1px solid var(--line);padding-top:10px;">
+                <h3>Known credentials</h3>
+                <p style="margin:0;font-size:12px;">home.gell.one join account</p>
+              </section>
+            </div>
+
+            <section style="margin-top:22px;border-top:1px solid var(--line);padding-top:10px;">
+              <h3>Timeline <span style="text-transform:none;letter-spacing:0;font-weight:800;">(capped at 8, rendered last)</span></h3>
+              <p style="margin:0;font-size:12px;">Jul 27, 8:41 AM &nbsp; <span class="b-pill">monitor</span> &nbsp; probe &nbsp; Monitor sweep probed VM 201</p>
+            </section>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="ledger">
+    <h2 id="ledger-title">What changed on this page</h2>
+    <ul id="ledger-list"></ul>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  var state = { page: "fleet", mode: "after" };
+
+  var LEDGER = {
+    fleet: [
+      ["cut", "10 metric tiles down to 4", "and the 7-column grid override goes with them, so the 4 empty cells stop painting as a bare slab of border colour"],
+      ["add", "The table moves to the top", "topology, infrastructure, services and credentials fold into one closed disclosure"],
+      ["cut", "13 columns down to 8", "VMID, IP, OS, OS Version and Managed By merge into a mono subline under the name"],
+      ["add", "Phase gets a column", "already populated and already searchable, but rendered nowhere today"],
+      ["add", "The filter joins its table", "and reports 16 of 16 in the .result-count slot 7 other pages already use"],
+      ["add", "Attention rows sort first", "with a 3px severity mark, plus preset chips for the four states worth filtering to"],
+      ["cut", "Pills go neutral at rest", "border-color: transparent on the base .status. Colour now only means something is wrong"],
+      ["cut", "Row buttons appear on hover", "40 permanent buttons become 2 transient ones, revealed on hover and focus-within"],
+      ["add", "Pending gets its verb", "Approve is wired into the row, so a pending agent stops being a read-only dead end"],
+      ["cut", "Notices stop being red", "one duplicate declaration currently forces every notice, including successes, to the error colour"]
+    ],
+    detail: [
+      ["add", "The machine screen is the biggest thing", "it was the last child of the console panel, under about 390px of controls"],
+      ["cut", "The 220px empty box is gone", "the stage seeds from ?action= and the latest screenshot instead of painting a dashed placeholder"],
+      ["cut", "15 flat buttons become 3 groups", "Watch, Drive, Evidence. Rename and both deletes move into a closed Manage disclosure"],
+      ["cut", "Delete agent no longer sits next to Shutdown", "the two irreversible controls are one deliberate click away"],
+      ["cut", "30 key/value rows down to 3", "Essentials was the fleet row verbatim; PVE keeps only what the hero does not carry"],
+      ["add", "The hero absorbs the facts", "one mono line: OS, VMID, IP, serial, phase and bubble, which no panel showed before"],
+      ["cut", "Agent and Intune panels are conditional", "a lab VM stops paying for 19 rows of dashes"],
+      ["add", "Timeline comes first, uncapped", "it was fifth and hard-capped at 8, which is the one thing you want while a run is going"],
+      ["cut", "The second credential list is gone", "the two copies kept independent reveal state against the same endpoint"],
+      ["cut", "Update agent is deleted", "its only render site sits past the detail branch's early return, so the button does nothing"]
+    ]
+  };
+
+  var PATHS = { fleet: "/react/vms", detail: "/react/vms/201" };
+
+  function render() {
+    document.querySelectorAll(".pane").forEach(function (p) {
+      p.classList.toggle("on", p.dataset.pane === state.page + "-" + state.mode);
+    });
+
+    document.querySelectorAll("[data-page]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.page === state.page));
+    });
+    document.querySelectorAll("[data-mode]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.mode === state.mode));
+    });
+
+    document.getElementById("framepath").textContent = "autopilot · " + PATHS[state.page];
+    document.getElementById("vpnote").textContent = PATHS[state.page] + " · 1600px";
+
+    var list = document.getElementById("ledger-list");
+    list.innerHTML = "";
+    LEDGER[state.page].forEach(function (row) {
+      var li = document.createElement("li");
+      if (row[0] === "cut") { li.className = "cut"; }
+      var mark = document.createElement("i");
+      mark.textContent = row[0] === "cut" ? "-" : "+";
+      var body = document.createElement("span");
+      var b = document.createElement("b");
+      b.textContent = row[1];
+      var why = document.createElement("span");
+      why.className = "why";
+      why.textContent = row[2];
+      body.appendChild(b);
+      body.appendChild(why);
+      li.appendChild(mark);
+      li.appendChild(body);
+      list.appendChild(li);
+    });
+
+    document.getElementById("ledger-title").textContent =
+      state.page === "fleet"
+        ? "What changed on the Fleet page"
+        : "What changed on the VM detail page";
+  }
+
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-page], [data-mode]");
+    if (!t) { return; }
+    if (t.dataset.page) { state.page = t.dataset.page; }
+    if (t.dataset.mode) { state.mode = t.dataset.mode; }
+    render();
+  });
+
+  render();
+})();
+</script>
