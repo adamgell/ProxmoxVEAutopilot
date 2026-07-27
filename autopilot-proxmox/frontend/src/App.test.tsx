@@ -1554,6 +1554,18 @@ describe("App", () => {
     expect(screen.getByText("absent")).toBeInTheDocument();
   });
 
+  test("names the row action for what it edits, distinctly from the bulk action", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/vms");
+
+    // The row action edits the agent's metadata record; the bulk bar's
+    // "Update agent" restarts the agent service. Both used to read as
+    // "update", so the row action says what it actually touches.
+    expect((await screen.findAllByRole("button", { name: /^Edit record for agent / })).length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole("button", { name: /^Edit agent / })).toHaveLength(0);
+  });
+
   test("bulk-updates the selected agents from the fleet checkbox bar", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,

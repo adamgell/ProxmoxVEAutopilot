@@ -1803,7 +1803,7 @@ function FleetAgentFormModal({
   readonly onSubmit: () => void;
   readonly onCancel: () => void;
 }) {
-  const title = draft.mode === "create" ? "Add fleet agent" : `Edit agent ${draft.agentId}`;
+  const title = draft.mode === "create" ? "Add fleet agent" : `Edit agent record ${draft.agentId}`;
   const dialogRef = useModalDialog(onCancel);
   return (
     <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
@@ -2050,14 +2050,17 @@ function MachineRow({
               Tag
             </button>
           ) : null}
+          {/* "Edit record", not "Edit", because this edits the agent's metadata
+              row (VMID, computer name, serial). The bulk bar's "Update agent"
+              restarts the agent service, which is a different operation. */}
           {editableAgent && onEditAgent ? (
             <button
               type="button"
               className="fleet-action"
-              aria-label={`Edit agent ${editableAgent.agent_id}`}
+              aria-label={`Edit record for agent ${editableAgent.agent_id}`}
               onClick={() => { onEditAgent(editableAgent); }}
             >
-              Edit
+              Edit record
             </button>
           ) : null}
         </div>
