@@ -2,7 +2,7 @@
 
 ## Verdict
 
-The root cause is that **nothing on either page was ever ranked**. Both pages render everything they know, all at once, at the same visual weight and the same permanence: 94 of 118 `font-weight` declarations in `src/styles.css` are 800 or 900, and `:root` (styles.css:12-24) defines exactly 14 custom properties of which all 14 are colors, so there is no token for weight, size, or spacing with which rank could ever have been expressed. The pages are not badly designed; they are undesigned in the specific sense that no element was ever told it was less important than another. Everything downstream follows from that: the Fleet page renders its own table last, behind three configuration panels (VmsPage.tsx:1723-1804); the detail page gives 30 static key/value rows a four-column grid and gives the live picture of the machine a 220px dashed empty box (VmsPage.tsx:2444-2495). Fix the ranking and most of the "busy" complaint dissolves without deleting a single feature.
+The root cause is that **nothing on either page was ever ranked**. Both pages render everything they know, all at once, at the same visual weight and the same permanence: 94 of 118 `font-weight` declarations in `src/styles.css` are 800 or 900, and `:root` (styles.css:12-24) defines exactly 13 custom properties of which all 13 are colors, so there is no token for weight, size, or spacing with which rank could ever have been expressed. The pages are not badly designed; they are undesigned in the specific sense that no element was ever told it was less important than another. Everything downstream follows from that: the Fleet page renders its own table last, behind three configuration panels (VmsPage.tsx:1723-1804); the detail page gives 30 static key/value rows a four-column grid and gives the live picture of the machine a 220px dashed empty box (VmsPage.tsx:2444-2495). Fix the ranking and most of the "busy" complaint dissolves without deleting a single feature.
 
 ## What is actually on these pages today
 
@@ -185,7 +185,7 @@ BEFORE (/react/vms/:vmid)                AFTER
 ## What I would NOT change
 
 - **`Panel` and `.panel`.** `styles.css:1466-1470` is 4 lines: `border-top: 1px solid var(--line)` and padding. No box, no radius, no fill. It is the one genuinely restrained surface in the system, it has an unused `action` slot already built (ui.tsx:39-50), and 127 instances across 25 files. Everything else should converge on it, not the reverse.
-- **The color tokens themselves.** The 14 colors at styles.css:12-24 are a good palette and the text contrast is fine, measured: `--text` on `--surface` is about 15:1, `--muted` about 7:1. The problem is exclusively how often the saturated ones are spent, not what they are. Do not re-pick colors.
+- **The color tokens themselves.** The 13 colors at styles.css:12-24 are a good palette and the text contrast is fine, measured: `--text` on `--surface` is about 15:1, `--muted` about 7:1. The problem is exclusively how often the saturated ones are spent, not what they are. Do not re-pick colors.
 - **The socket/live-data layer.** `connectFleetLive` and the `onEvent` handlers (VmsPage.tsx:625-690) do the right thing and are not part of the complaint. The only adjustment is cosmetic (reserve image boxes, auto-clear status) so live updates stop reflowing the page.
 - **The evidence data model.** `/api/vms/{vmid}/detail` already returns everything the page needs including `latest_screenshot` and `timeline` (VmEvidencePanels.tsx:121-126). The fix is presentation order and gating, not new endpoints.
 
