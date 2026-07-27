@@ -98,7 +98,24 @@ Original plan follows, for the record. Every item is local, reversible, and touc
 
 Also worth 10 minutes, unrelated to busyness: at 1800-2032px the shell overflows horizontally. `styles.css:4337` widens the rail to 272px but `.workspace--outcome .workspace__content` (styles.css:255, specificity 0,2,0) beats the override at :4341 (0,1,0), so the width formula still assumes a 120px gutter. At 1920px that is 1760px of content in a 1648px column.
 
-### Phase 2 - The real fix
+### Phase 2 - SHIPPED 2026-07-27 (e072456, 9cdaf1a, c5d2927, 101edba)
+
+All 7 items landed. Fleet table 13 columns to 8 with a mono subline, Phase added, min-width 1520px to 1040px. Rows sort attention-first with a severity rule and preset chips; the Attention tile is the button that selects that preset. Row actions reveal on hover and focus-within; Approve is wired into the row. Topology became a `?view=topology` sibling view and the credential inventory left the page entirely, taking roughly 280 lines and an eager `/api/credentials` fetch with it. The detail toolbar is three labelled groups with Rename and both deletes behind a disclosure, and the console power row now confirms like the toolbar always did. `useModalDialog` gives both dialogs the focus, Escape, Tab containment and restore that `aria-modal="true"` was already claiming.
+
+The token block landed alone, as planned. `:root` gained weight, size, spacing and radius tokens; weights collapsed from nine values (94 of 118 at 800 or 900) to three, with `--w-strong` reserved for five selectors that actually lead a region. The global `h3` lost its uppercase and its weight, so card titles stopped outranking the panel headings containing them.
+
+Two Provision controls turned out to have no styles at all (`.provision-boot-option`, the hash-capture stack). They were legible only because everything around them was weight 800, so the sweep exposed them. Both got real layout.
+
+### Phase 3 - SHIPPED 2026-07-27 (6280621, 0110e3a, f126aaa)
+
+Items 19, 20, 21, 23 and part of 22. Eight button treatments unified to one geometry with a `--line-strong` border for WCAG 1.4.11; five definition grids lost the 1px lattice. Both screenshot images reserve a 4:3 box so live pushes stop reflowing under the cursor. `missing_vms` finally renders as rows instead of being counted twice and listed never.
+
+Two deliberate scope calls, both narrower than the plan:
+
+- **Buttons were unified in CSS, not renamed.** Collapsing eight class names to `.fleet-action` plus modifiers is a rename across 145 call sites in every page. Once the geometry agrees there is no visual payoff left to justify that churn.
+- **Only the topology cluster was extracted from `VmsPage.tsx`** (3361 to 2234 lines). The parked `wip/2026-07-22-osdeploy-smartdeploy` branch touches this file and already diverges by ~28k lines, so each further boundary is merge cost against a branch that lands first. The remaining `FleetMachineTable` / `VmDetailWorkspace` split is maintainability-only and is better done after the consolidation backlog clears.
+
+### Phase 2 - the original plan
 
 | # | Change | Files | Effort | Payoff |
 |---|---|---|---|---|
@@ -110,7 +127,7 @@ Also worth 10 minutes, unrelated to busyness: at 1800-2032px the shell overflows
 | 17 | **Group the detail toolbar, and pick one power path.** Three groups (Watch / Drive / Evidence) separated by a `border-left`. Move Rename, Delete agent, Delete VM into a closed `<details>` "Manage this VM" (precedent: NetworksPage.tsx:912) so the two irreversible buttons are no longer adjacent to Shutdown. Keep the console power row and route it through the toolbar's `window.confirm` logic (VmsPage.tsx:794-801); `sendPowerAction` (VmActionWorkspace.tsx:322-333) currently fires with no prompt at all. | VmsPage.tsx:2412-2442, VmActionWorkspace.tsx | M | Fixes a genuine safety asymmetry, not just density. |
 | 18 | **Modal focus management.** A ~30-line `useModalDialog(ref, onClose)` hook: store `activeElement`, focus first node, Escape to close, trap Tab, restore on unmount. Both dialogs declare `aria-modal="true"` (VmsPage.tsx:1981, :2079) while a grep for `Escape|onKeyDown|autoFocus|useRef` across the 3476-line file returns **zero** matches. | VmsPage.tsx | S | Keyboard and screen-reader users are currently stranded. Small, but it is a real defect. |
 
-### Phase 3 - Optional / later
+### Phase 3 - the original plan
 
 | # | Change | Effort | Payoff |
 |---|---|---|---|
