@@ -810,6 +810,10 @@ for (const viewport of [
     await expect(
       page.getByRole("navigation", { name: "Outcome modes" }).getByRole("link", { name: "Fleet", exact: true })
     ).toHaveAttribute("aria-current", "page");
+    // Both irreversible controls sit behind a disclosure now, so they are no
+    // longer one mis-click away from Shutdown.
+    await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeHidden();
+    await page.getByLabel("Manage VM 108").click();
     await expect(page.getByRole("button", { name: "Delete VM 108" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Console VM 108" })).toBeVisible();
     await expect(page.getByText("agent-wrkgrp-525570b6")).toBeVisible();

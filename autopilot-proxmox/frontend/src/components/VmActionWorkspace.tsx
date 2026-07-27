@@ -75,6 +75,8 @@ type BrowserClipboard = {
   readonly writeText?: (value: string) => Promise<void>;
 };
 
+const DESTRUCTIVE_POWER_ACTIONS = new Set(["shutdown", "stop", "reset", "reboot"]);
+
 function browserClipboard(): BrowserClipboard | undefined {
   return typeof navigator === "undefined" ? undefined : navigator.clipboard;
 }
@@ -320,6 +322,12 @@ function VmConsolePanel({ vm, evidence }: { readonly vm: VmFleetRow; readonly ev
   }, [vm.vmid]);
 
   const sendPowerAction = useCallback(async (action: string) => {
+    // The toolbar prompts before shutdown, stop and reset; this row used to
+    // fire the same endpoints with no prompt at all, so which control you
+    // reached for decided whether you got a safety net.
+    if (DESTRUCTIVE_POWER_ACTIONS.has(action) && !window.confirm(`${action} VM ${String(vm.vmid)}?`)) {
+      return;
+    }
     setControlState({ status: "working", message: `${action}...` });
     try {
       const response = await postJson<VmPowerResponse>(`/api/vms/${String(vm.vmid)}/action/${action}`);

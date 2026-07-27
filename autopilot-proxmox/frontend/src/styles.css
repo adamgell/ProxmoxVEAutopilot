@@ -5651,3 +5651,65 @@ h3 {
 }
 
 .fleet-views button.is-active .fleet-views__hint { color: var(--muted-2); }
+
+
+/* ---------------------------------------------------------------
+   VM detail toolbar, grouped
+   --------------------------------------------------------------- */
+
+.vm-action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.vm-action-group:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.vm-action-group > span {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Rename and the two deletes. One deliberate click away from Shutdown. */
+.vm-manage {
+  margin-left: auto;
+}
+
+.vm-manage > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+}
+
+.vm-manage > summary::-webkit-details-marker { display: none; }
+.vm-manage > summary:hover { color: var(--text); }
+
+.vm-manage__body {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 8px;
+}
+
+@media (max-width: 1180px) {
+  .vm-manage { margin-left: 0; }
+}

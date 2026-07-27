@@ -21,6 +21,7 @@ import type { LucideIcon } from "lucide-react";
 import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
+import { useModalDialog } from "../components/useModalDialog";
 import { VmEvidencePanels } from "../components/VmEvidencePanels";
 import { VmActionWorkspace, type ScreenshotWorkspaceState, type VmActionMode, type VmActionSelection } from "../components/VmActionWorkspace";
 import type {
@@ -1997,9 +1998,12 @@ function FleetAgentFormModal({
   readonly onCancel: () => void;
 }) {
   const title = draft.mode === "create" ? "Add fleet agent" : `Edit agent ${draft.agentId}`;
+  const dialogRef = useModalDialog(onCancel);
   return (
     <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="fleet-agent-form-title"
@@ -2332,36 +2336,57 @@ function VmDetailWorkspace({
         </div>
       </section>
 
+      {/* Three groups, not one flat row of fifteen. Watch is what you came
+          for, Drive changes the machine, Evidence collects proof. Rename and
+          both deletes sit behind a disclosure so the two irreversible controls
+          are no longer adjacent to Shutdown. */}
       <section className="vm-detail-toolbar" aria-label={`VM ${String(vm.vmid)} actions`}>
         {isRunning ? (
           <>
-            <ActionButton label="Console" ariaLabel={`Console VM ${String(vm.vmid)}`} icon={Monitor} onClick={() => { onConsole(vm); }} />
-            <ActionButton label="Screenshot" ariaLabel={`Screenshot VM ${String(vm.vmid)}`} icon={Camera} onClick={() => { onScreenshot(vm); }} />
-            <ActionButton label="Shutdown" icon={Power} onClick={() => { onPower(vm, "shutdown"); }} />
-            <ActionButton label="Stop" icon={CircleStop} tone="danger" onClick={() => { onPower(vm, "stop"); }} />
-            <ActionButton label="Reset" icon={RotateCcw} onClick={() => { onPower(vm, "reset"); }} />
-            <ActionButton label="Hash" icon={Hash} onClick={() => { onCapture(vm); }} />
-            <ActionButton label="Logs" icon={FileArchive} onClick={() => { onCollectLogs(vm); }} />
-            <ActionButton label="Rename" icon={Pencil} onClick={() => { onRename(vm); }} />
-            <ActionButton label="Type" icon={Keyboard} onClick={() => { onTypeText(vm); }} />
-            <ActionButton label="CAD" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ctrl-alt-delete"); }} />
-            <ActionButton label="Enter" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ret"); }} />
-            <ActionButton label="QGA" icon={RefreshCw} onClick={() => { onQgaProbe(vm); }} />
-            {vm.target_os === "ubuntu" ? <ActionButton label="Enroll" icon={BadgeCheck} onClick={() => { onCheckEnrollment(vm); }} /> : null}
+            <div className="vm-action-group" role="group" aria-label="Watch">
+              <span>Watch</span>
+              <ActionButton label="Console" ariaLabel={`Console VM ${String(vm.vmid)}`} icon={Monitor} onClick={() => { onConsole(vm); }} />
+              <ActionButton label="Screenshot" ariaLabel={`Screenshot VM ${String(vm.vmid)}`} icon={Camera} onClick={() => { onScreenshot(vm); }} />
+            </div>
+            <div className="vm-action-group" role="group" aria-label="Drive">
+              <span>Drive</span>
+              <ActionButton label="Shutdown" icon={Power} onClick={() => { onPower(vm, "shutdown"); }} />
+              <ActionButton label="Stop" icon={CircleStop} tone="danger" onClick={() => { onPower(vm, "stop"); }} />
+              <ActionButton label="Reset" icon={RotateCcw} onClick={() => { onPower(vm, "reset"); }} />
+              <ActionButton label="Type" icon={Keyboard} onClick={() => { onTypeText(vm); }} />
+              <ActionButton label="CAD" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ctrl-alt-delete"); }} />
+              <ActionButton label="Enter" icon={TerminalSquare} onClick={() => { onSendKey(vm, "ret"); }} />
+            </div>
+            <div className="vm-action-group" role="group" aria-label="Evidence">
+              <span>Evidence</span>
+              <ActionButton label="Hash" icon={Hash} onClick={() => { onCapture(vm); }} />
+              <ActionButton label="Logs" icon={FileArchive} onClick={() => { onCollectLogs(vm); }} />
+              <ActionButton label="QGA" icon={RefreshCw} onClick={() => { onQgaProbe(vm); }} />
+              {vm.target_os === "ubuntu" ? <ActionButton label="Enroll" icon={BadgeCheck} onClick={() => { onCheckEnrollment(vm); }} /> : null}
+            </div>
           </>
         ) : (
-          <ActionButton label="Start" icon={Play} onClick={() => { onPower(vm, "start"); }} />
+          <div className="vm-action-group" role="group" aria-label="Drive">
+            <span>Drive</span>
+            <ActionButton label="Start" icon={Play} onClick={() => { onPower(vm, "start"); }} />
+          </div>
         )}
         {agent?.approval_status === "pending" && agent.approval_id ? (
-          <ActionButton label="Approve agent" icon={BadgeCheck} onClick={() => { onApproveAgent(agent); }} />
+          <div className="vm-action-group" role="group" aria-label="Agent">
+            <span>Agent</span>
+            <ActionButton label="Approve agent" icon={BadgeCheck} onClick={() => { onApproveAgent(agent); }} />
+          </div>
         ) : null}
-        {/* "Update agent" lived here and did nothing: updateAgent only sets
-            agentFormDraft, whose sole render site is FleetAgentFormModal in
-            the list branch, past this branch's early return. */}
-        {agent ? (
-          <ActionButton label="Delete agent" icon={Trash2} tone="danger" onClick={() => { onDeleteAgent(agent); }} />
-        ) : null}
-        <ActionButton label="Delete VM" ariaLabel={`Delete VM ${String(vm.vmid)}`} icon={Trash2} tone="danger" onClick={() => { onPower(vm, "delete"); }} />
+        <details className="vm-manage">
+          <summary aria-label={`Manage VM ${String(vm.vmid)}`}>Manage this VM</summary>
+          <div className="vm-manage__body">
+            <ActionButton label="Rename" icon={Pencil} onClick={() => { onRename(vm); }} />
+            {agent ? (
+              <ActionButton label="Delete agent" icon={Trash2} tone="danger" onClick={() => { onDeleteAgent(agent); }} />
+            ) : null}
+            <ActionButton label="Delete VM" ariaLabel={`Delete VM ${String(vm.vmid)}`} icon={Trash2} tone="danger" onClick={() => { onPower(vm, "delete"); }} />
+          </div>
+        </details>
       </section>
 
       <section className="vm-detail-action-zone">

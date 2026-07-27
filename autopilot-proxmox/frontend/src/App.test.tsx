@@ -1536,6 +1536,24 @@ describe("App", () => {
     expect(promptSpy).not.toHaveBeenCalled();
   });
 
+  test("the fleet agent dialog traps focus and closes on Escape", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/vms");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+    const dialog = await screen.findByRole("dialog");
+    // aria-modal="true" was declared with none of what it promises: no initial
+    // focus, no Escape, no Tab containment, no focus restore.
+    await waitFor(() => {
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
   test("queues log collection from the React VM detail action", async () => {
     const fetchMock = mockFetch({
       ...dashboardResponses,
