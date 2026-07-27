@@ -51,6 +51,12 @@ DEFAULT_LIMITS = [
     ("provision_osdeploy", 3),
     ("osdeploy_publish_iso", 1),
     ("hash_capture", 5),
+    # Test-only harness type (POST /api/jobs/test-long-sleep, gated behind
+    # AUTOPILOT_ENABLE_TEST_JOBS=1). It needs an explicit cap above 1 because
+    # the integration lane's scale test asserts N builders run N jobs
+    # concurrently - an unregistered type falls through to DEFAULT_CAP=1, which
+    # caps the fleet at one running job no matter how many builders exist.
+    ("test_long_sleep", 5),
     ("upload_hash", 5),
     ("upload_after_capture", 5),
     ("retry_inject_hash", 3),

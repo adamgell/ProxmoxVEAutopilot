@@ -11358,7 +11358,11 @@ if os.environ.get("AUTOPILOT_ENABLE_TEST_JOBS") == "1":
         cmd = ["ansible-playbook",
                str(PLAYBOOK_DIR / "_test_long_sleep.yml"),
                "-e", f"duration={duration}"]
-        entry = job_manager.start("capture_hash", cmd,
+        # Its own job type, NOT "capture_hash": that name is an OSD *step* kind,
+        # not a registered job type, so it fell through to DEFAULT_CAP=1 and the
+        # scale test could never observe more than one concurrent job however
+        # many builders were running. jobs_pg.DEFAULT_LIMITS caps this at 5.
+        entry = job_manager.start("test_long_sleep", cmd,
                                   args={"duration": duration})
         return {"id": entry["id"]}
 

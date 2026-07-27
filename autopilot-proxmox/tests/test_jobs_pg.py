@@ -140,3 +140,26 @@ def test_complete_interrupted_winpe_jobs_for_run(pg_conn):
     assert jobs_pg.get_job("interrupted")["status"] == "complete"
     assert jobs_pg.get_job("other-run")["status"] == "failed"
     assert jobs_pg.get_job("real-failure")["status"] == "failed"
+
+
+def test_test_long_sleep_type_allows_concurrency(pg_conn):
+    """The integration lane's scale test asserts N builders run N jobs at once.
+    An unregistered job type falls through to DEFAULT_CAP=1, which silently caps
+    the whole fleet at one running job - so the harness type needs its own cap.
+    """
+    from web import jobs_pg
+
+    jobs_pg.init(pg_conn)
+    caps = {r["job_type"]: r["max_concurrent"] for r in jobs_pg.list_job_type_limits()}
+    assert caps.get("test_long_sleep", jobs_pg.DEFAULT_CAP) >= 3
+
+    for i in range(3):
+        jobs_pg.enqueue(
+            job_id=f"sleep-{i}",
+            job_type="test_long_sleep",
+            playbook="_test_long_sleep.yml",
+            cmd=["ansible-playbook", "_test_long_sleep.yml"],
+            args={"duration": "30"},
+        )
+    claimed = [jobs_pg.claim_next_job(worker_id=f"builder-{i}") for i in range(3)]
+    assert [c["id"] for c in claimed if c] == ["sleep-0", "sleep-1", "sleep-2"]
