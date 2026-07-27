@@ -801,7 +801,8 @@ for (const viewport of [
 
     await expect(page.getByRole("heading", { name: "VMs", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "WrkGrp-525570B6" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Managed By" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Phase" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Managed By" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Screenshot VM 108" })).toHaveCount(0);
     await page.getByRole("link", { name: "WrkGrp-525570B6" }).click();
     await expect(page).toHaveURL(/\/react\/vms\/108$/);

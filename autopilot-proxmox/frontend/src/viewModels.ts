@@ -745,7 +745,14 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     addRepresentedRow(row, representedVmids, representedIdentities);
   }
 
+  // Attention first, then VMID within each group. Sorting by VMID alone made
+  // the page a spreadsheet you had to read end to end to find the one machine
+  // that wanted something.
   return rows.toSorted((left, right) => {
+    const rank = attentionRank(left) - attentionRank(right);
+    if (rank !== 0) {
+      return rank;
+    }
     if (left.vmid !== undefined && right.vmid !== undefined) {
       return left.vmid - right.vmid;
     }
@@ -757,6 +764,54 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     }
     return left.name.localeCompare(right.name);
   });
+}
+
+/**
+ * Why a row is asking for something, or null if it is not.
+ *
+ * "bad" is a machine that needs a human: no agent, a stale one, or a guest
+ * that is not running. "warn" is a machine that needs a decision but is not
+ * broken: a pending approval or an available agent upgrade.
+ */
+export function machineAttention(row: FleetMachineRow): "bad" | "warn" | null {
+  const label = fleetAgentLabel(row);
+  if (label === "None" || label === "Stale") {
+    return "bad";
+  }
+  if (fleetRuntimeLabel(row) !== "running") {
+    return "bad";
+  }
+  if (label === "Pending" || label === "Upgrade available" || label === "Approved") {
+    return "warn";
+  }
+  return null;
+}
+
+function attentionRank(row: FleetMachineRow): number {
+  const attention = machineAttention(row);
+  if (attention === "bad") {
+    return 0;
+  }
+  return attention === "warn" ? 1 : 2;
+}
+
+export type FleetPreset = "all" | "attention" | "stale" | "pending" | "no-agent";
+
+export function machineMatchesPreset(row: FleetMachineRow, preset: FleetPreset): boolean {
+  if (preset === "all") {
+    return true;
+  }
+  const label = fleetAgentLabel(row);
+  if (preset === "attention") {
+    return machineAttention(row) !== null;
+  }
+  if (preset === "stale") {
+    return label === "Stale";
+  }
+  if (preset === "pending") {
+    return label === "Pending" || label === "Approved";
+  }
+  return label === "None";
 }
 
 export function fleetManagedByLabel(row: FleetMachineRow): string {

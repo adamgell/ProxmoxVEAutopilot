@@ -1033,11 +1033,15 @@ describe("App", () => {
     expect(screen.getByText("Entra ID")).toBeInTheDocument();
     expect(screen.getAllByText("ACME-DC01 (VM 130)").length).toBeGreaterThan(0);
     expect(screen.getAllByText("ACME Domain Join").length).toBeGreaterThan(0);
-    expect(screen.getByRole("columnheader", { name: "Device Name" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Heartbeat" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Managed By" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Agent" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Bubble" })).toBeInTheDocument();
+    // Eight columns. VMID, IP address, OS and OS version moved into the
+    // subline under the device name; all four stay filterable.
+    for (const kept of ["Device name", "Runtime", "Agent", "Phase", "Heartbeat", "Bubble"]) {
+      expect(screen.getByRole("columnheader", { name: kept })).toBeInTheDocument();
+    }
+    for (const cut of ["Managed By", "OS", "OS Version", "VMID", "IP Address", "Tag"]) {
+      expect(screen.queryByRole("columnheader", { name: cut })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText(/#108/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "WrkGrp-525570B6" })).toHaveAttribute("href", "/react/vms/108");
     expect(screen.getByRole("button", { name: "New bubble" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tag VM 108" })).toBeInTheDocument();

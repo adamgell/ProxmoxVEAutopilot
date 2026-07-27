@@ -48,10 +48,13 @@ import {
   fleetOsVersion,
   fleetRuntimeLabel,
   type FleetMachineRow,
+  type FleetPreset,
   fallbackText,
   formatRelativeAge,
   formatShortDateTime,
+  machineAttention,
   machineMatchesFilter,
+  machineMatchesPreset,
   summarizeFleet,
   vmDisplayName
 } from "../viewModels";
@@ -467,6 +470,14 @@ async function deleteJson(path: string): Promise<void> {
   }
 }
 
+const FLEET_PRESETS: readonly { readonly id: FleetPreset; readonly label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "attention", label: "Attention" },
+  { id: "stale", label: "Stale" },
+  { id: "pending", label: "Pending" },
+  { id: "no-agent", label: "No agent" }
+];
+
 function countLabel(count: number, noun: string): string {
   return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
@@ -541,6 +552,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const detailVmid = detailVmidFromPath(window.location.pathname);
   const [fleet, setFleet] = useState<VmsFleetResponse>(emptyFleet);
   const [filter, setFilter] = useState("");
+  const [preset, setPreset] = useState<FleetPreset>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionStatus, setActionStatusMessage] = useState("");
@@ -732,7 +744,21 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     () => detailVmid === null ? undefined : machineRows.find((row) => row.vmid === detailVmid),
     [detailVmid, machineRows]
   );
-  const filteredMachines = useMemo(() => machineRows.filter((row) => machineMatchesFilter(row, filter)), [filter, machineRows]);
+  const filteredMachines = useMemo(
+    () => machineRows.filter((row) => machineMatchesPreset(row, preset) && machineMatchesFilter(row, filter)),
+    [filter, machineRows, preset]
+  );
+  const presetCounts = useMemo(() => {
+    const counts: Record<FleetPreset, number> = { "all": machineRows.length, "attention": 0, "stale": 0, "pending": 0, "no-agent": 0 };
+    for (const row of machineRows) {
+      for (const option of FLEET_PRESETS) {
+        if (option.id !== "all" && machineMatchesPreset(row, option.id)) {
+          counts[option.id] += 1;
+        }
+      }
+    }
+    return counts;
+  }, [machineRows]);
   // Summary shown on the collapsed topology disclosure, so folding it away
   // still tells you whether anything in there wants attention.
   const topologySummary = useMemo(() => {
@@ -1791,7 +1817,14 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       <section className="metric-strip" aria-label="Fleet metrics">
         <Metric label="Proxmox VMs" value={String(counts.total)} />
         <Metric label="Running" value={String(counts.running)} />
-        <Metric label="Attention" value={String(counts.attention)} tone={counts.attention ? "bad" : "neutral"} />
+        <button
+          type="button"
+          className="metric-button"
+          aria-label={`Show ${countLabel(presetCounts.attention, "machine")} needing attention`}
+          onClick={() => { setPreset(presetCounts.attention ? "attention" : "all"); }}
+        >
+          <Metric label="Attention" value={String(presetCounts.attention)} tone={presetCounts.attention ? "bad" : "neutral"} />
+        </button>
         <Metric label="Agents" value={String(counts.agents)} />
       </section>
 
@@ -1806,6 +1839,10 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             filter={filter}
             onFilterChange={setFilter}
             loading={loading}
+            onApproveAgent={approveAgent}
+            preset={preset}
+            onPresetChange={setPreset}
+            presetCounts={presetCounts}
             onCreateAgent={createAgent}
             onTagMachine={tagMachine}
             tagDraft={machineTagDraft}
@@ -1935,7 +1972,11 @@ function FleetMachineTable({
   totalCount,
   filter,
   onFilterChange,
-  loading
+  loading,
+  onApproveAgent,
+  preset,
+  onPresetChange,
+  presetCounts
 }: {
   readonly rows: readonly FleetMachineRow[];
   readonly onCreateAgent: () => void;
@@ -1958,6 +1999,10 @@ function FleetMachineTable({
   readonly filter: string;
   readonly onFilterChange: (value: string) => void;
   readonly loading: boolean;
+  readonly onApproveAgent: (agent: AgentFleetRow) => void;
+  readonly preset: FleetPreset;
+  readonly onPresetChange: (preset: FleetPreset) => void;
+  readonly presetCounts: Readonly<Record<FleetPreset, number>>;
 }) {
   const selectionCount = selectedAgentIds.size;
   return (
@@ -1989,6 +2034,21 @@ function FleetMachineTable({
             ? countLabel(totalCount, "machine")
             : `${String(rows.length)} of ${countLabel(totalCount, "machine")}`}
         </p>
+      </div>
+
+      <div className="fleet-presets" role="group" aria-label="Fleet presets">
+        {FLEET_PRESETS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className="fleet-preset"
+            aria-pressed={preset === option.id}
+            onClick={() => { onPresetChange(option.id); }}
+          >
+            {option.label}
+            {option.id === "all" ? null : <span>{presetCounts[option.id]}</span>}
+          </button>
+        ))}
       </div>
       {selectionCount > 0 ? (
         <div className="fleet-bulk-bar" role="region" aria-label="Bulk fleet actions">
@@ -2027,17 +2087,12 @@ function FleetMachineTable({
                     onChange={onToggleSelectAll}
                   />
                 </th>
-                <th scope="col">Device Name</th>
-                <th scope="col">Heartbeat</th>
-                <th scope="col">Managed By</th>
-                <th scope="col">OS</th>
-                <th scope="col">OS Version</th>
-                <th scope="col">VMID</th>
-                <th scope="col">IP Address</th>
+                <th scope="col">Device name</th>
                 <th scope="col">Runtime</th>
                 <th scope="col">Agent</th>
+                <th scope="col">Phase</th>
+                <th scope="col">Heartbeat</th>
                 <th scope="col">Bubble</th>
-                <th scope="col">Tag</th>
                 <th scope="col" className="fleet-machine-table__row-actions" aria-label="Row actions" />
               </tr>
             </thead>
@@ -2054,10 +2109,11 @@ function FleetMachineTable({
                       selected={selected}
                       onToggleSelect={agentId ? () => { onToggleRow(agentId); } : undefined}
                       onEditAgent={agentId ? onEditAgent : undefined}
+                      onApproveAgent={onApproveAgent}
                     />
                     {tagDraft?.rowId === row.id && row.vmid !== undefined ? (
                       <tr className="machine-tag-row">
-                        <td colSpan={13}>
+                        <td colSpan={8}>
                           <MachineTagEditor
                             row={row}
                             values={tagDraft}
@@ -2363,7 +2419,8 @@ function MachineRow({
   onTag,
   selected,
   onToggleSelect,
-  onEditAgent
+  onEditAgent,
+  onApproveAgent
 }: {
   readonly row: FleetMachineRow;
   readonly assignment: BubbleAssignment | undefined;
@@ -2371,10 +2428,24 @@ function MachineRow({
   readonly selected?: boolean | undefined;
   readonly onToggleSelect?: (() => void) | undefined;
   readonly onEditAgent?: ((agent: AgentFleetRow) => void) | undefined;
+  readonly onApproveAgent?: ((agent: AgentFleetRow) => void) | undefined;
 }) {
   const runtimeLabel = fleetRuntimeLabel(row);
   const agentLabel = fleetAgentLabel(row);
   const editableAgent: AgentFleetRow | null = row.agent ?? null;
+  const pendingAgent = editableAgent?.approval_status === "pending" && editableAgent.approval_id
+    ? editableAgent
+    : null;
+  const attention = machineAttention(row);
+  // VMID, IP, OS and OS version stopped being columns. They are identifying
+  // detail you read for one machine, not values you scan down a column, and
+  // on a homogeneous Windows fleet the OS pair was the same string on every
+  // row. They live under the name, and all four stay filterable.
+  const subline = [
+    row.vmid === undefined ? null : `#${String(row.vmid)}`,
+    row.ipAddress || null,
+    [fleetOsName(row), fleetOsVersion(row)].filter((part) => part && part !== "-").join(" ") || null
+  ].filter(Boolean).join("  \u00b7  ");
   return (
     <tr className={selected ? "is-selected" : undefined}>
       <td className="fleet-machine-table__check">
@@ -2388,39 +2459,14 @@ function MachineRow({
         ) : null}
       </td>
       <th scope="row">
+        <span className={attention ? `machine-mark machine-mark--${attention}` : "machine-mark"} aria-hidden="true" />
         {row.vmid !== undefined ? (
           <a className="machine-name machine-name--link" href={`/react/vms/${String(row.vmid)}`}>{row.name}</a>
         ) : (
           <span className="machine-name">{row.name}</span>
         )}
+        <span className="machine-subline">{subline}</span>
       </th>
-      <td>
-        <span className="machine-primary-value" title={formatShortDateTime(row.heartbeat)}>
-          {formatRelativeAge(row.heartbeat)}
-        </span>
-      </td>
-      <td>
-        <span className="status">
-          {fleetManagedByLabel(row)}
-        </span>
-      </td>
-      <td>
-        <span className="machine-primary-value">{fleetOsName(row)}</span>
-      </td>
-      <td>
-        <span className="machine-primary-value">{fleetOsVersion(row)}</span>
-      </td>
-      {/* This was a second link to the same destination as the device name:
-          routes.ts rewrites /devices/{vmid} to /react/vms/{vmid}. Two links
-          per row, same URL, different colour. It is plain text now. */}
-      <td>
-        <span className="machine-primary-value machine-primary-value--num">
-          {row.vmid === undefined ? "-" : row.vmid}
-        </span>
-      </td>
-      <td>
-        <span className="machine-primary-value">{fallbackText(row.ipAddress)}</span>
-      </td>
       <td>
         <span className={runtimeLabel === "running" ? "status" : "status status--warn"}>
           {runtimeLabel}
@@ -2432,33 +2478,54 @@ function MachineRow({
         </span>
       </td>
       <td>
+        {/* Populated at viewModels.ts and already searchable, but it rendered
+            nowhere, so filtering by phase narrowed the list for no visible
+            reason. It is also the only value that moves during a deploy. */}
+        <span className="machine-primary-value">{fallbackText(row.phase)}</span>
+      </td>
+      <td>
+        <span className="machine-primary-value" title={formatShortDateTime(row.heartbeat)}>
+          {formatRelativeAge(row.heartbeat)}
+        </span>
+      </td>
+      <td>
         <span className="machine-primary-value">
           {assignment ? `${assignment.bubble.name} / ${roleLabel(assignment.asset.asset_role)}` : "-"}
         </span>
       </td>
-      <td>
-        {row.vmid !== undefined ? (
-          <button
-            type="button"
-            className="fleet-action"
-            aria-label={`Tag VM ${String(row.vmid)}`}
-            onClick={() => { onTag(row); }}
-          >
-            Tag
-          </button>
-        ) : <span className="machine-primary-value">-</span>}
-      </td>
       <td className="fleet-machine-table__row-actions">
-        {editableAgent && onEditAgent ? (
-          <button
-            type="button"
-            className="fleet-action"
-            aria-label={`Edit agent ${editableAgent.agent_id}`}
-            onClick={() => { onEditAgent(editableAgent); }}
-          >
-            Edit
-          </button>
-        ) : null}
+        <div className="machine-row-actions">
+          {pendingAgent && onApproveAgent ? (
+            <button
+              type="button"
+              className="fleet-action"
+              aria-label={`Approve agent ${pendingAgent.agent_id}`}
+              onClick={() => { onApproveAgent(pendingAgent); }}
+            >
+              Approve
+            </button>
+          ) : null}
+          {row.vmid !== undefined ? (
+            <button
+              type="button"
+              className="fleet-action"
+              aria-label={`Tag VM ${String(row.vmid)}`}
+              onClick={() => { onTag(row); }}
+            >
+              Tag
+            </button>
+          ) : null}
+          {editableAgent && onEditAgent ? (
+            <button
+              type="button"
+              className="fleet-action"
+              aria-label={`Edit agent ${editableAgent.agent_id}`}
+              onClick={() => { onEditAgent(editableAgent); }}
+            >
+              Edit
+            </button>
+          ) : null}
+        </div>
       </td>
     </tr>
   );

@@ -3333,7 +3333,7 @@ h3 {
 
 .fleet-machine-table {
   width: 100%;
-  min-width: 1520px;
+  min-width: 1040px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -3373,19 +3373,14 @@ h3 {
    1 checkbox | 2 Device Name | 3 Heartbeat | 4 Managed By | 5 OS
    6 OS Version | 7 VMID | 8 IP | 9 Runtime | 10 Agent | 11 Bubble
    12 Tag | 13 Row actions */
-.fleet-machine-table th:nth-child(1)  { width: 36px; }
-.fleet-machine-table th:nth-child(2)  { width: 16%; }
-.fleet-machine-table th:nth-child(3)  { width: 8%; }
-.fleet-machine-table th:nth-child(4)  { width: 8%; }
-.fleet-machine-table th:nth-child(5)  { width: 8%; }
-.fleet-machine-table th:nth-child(6)  { width: 8%; }
-.fleet-machine-table th:nth-child(7)  { width: 6%; }
-.fleet-machine-table th:nth-child(8)  { width: 10%; }
-.fleet-machine-table th:nth-child(9)  { width: 7%; }
-.fleet-machine-table th:nth-child(10) { width: 7%; }
-.fleet-machine-table th:nth-child(11) { width: 7%; }
-.fleet-machine-table th:nth-child(12) { width: 7%; }
-.fleet-machine-table th:nth-child(13) { width: 70px; }
+.fleet-machine-table th:nth-child(1) { width: 36px; }
+.fleet-machine-table th:nth-child(2) { width: 30%; }
+.fleet-machine-table th:nth-child(3) { width: 10%; }
+.fleet-machine-table th:nth-child(4) { width: 14%; }
+.fleet-machine-table th:nth-child(5) { width: 16%; }
+.fleet-machine-table th:nth-child(6) { width: 11%; }
+.fleet-machine-table th:nth-child(7) { width: 13%; }
+.fleet-machine-table th:nth-child(8) { width: 132px; }
 
 .machine-name {
   display: block;
@@ -5574,3 +5569,119 @@ h3 {
   display: inline-block;
   margin-bottom: 16px;
 }
+
+
+/* ---------------------------------------------------------------
+   Fleet table, 8-column layout
+   --------------------------------------------------------------- */
+
+/* The identifying detail that used to be four separate columns. */
+.fleet-machine-table .machine-subline {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* A 3px rule beside the name, so "this row wants something" survives being
+   read down the left edge rather than needing a pill to be found. */
+.machine-mark {
+  display: inline-block;
+  width: 3px;
+  height: 15px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: transparent;
+  vertical-align: -3px;
+}
+
+.machine-mark--bad { background: var(--bad); }
+.machine-mark--warn { background: var(--warn); }
+
+.fleet-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.fleet-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.fleet-preset:hover { color: var(--text); }
+
+.fleet-preset[aria-pressed="true"] {
+  border-color: var(--muted);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 650;
+}
+
+.fleet-preset span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-preset[aria-pressed="true"] span { color: var(--text); }
+
+/* Row controls are transient. Forty permanent buttons became two that appear
+   when the row is under the cursor or holds focus. opacity, never display,
+   so they stay in the accessibility tree and keyboard order. */
+.machine-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  opacity: 0;
+  transition: opacity 110ms ease;
+}
+
+.fleet-machine-table tbody tr:hover .machine-row-actions,
+.fleet-machine-table tbody tr:focus-within .machine-row-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .machine-row-actions { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machine-row-actions { transition: none; }
+}
+
+.machine-row-actions .fleet-action {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* The Attention tile is a filter, not a read-only number. */
+.metric-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.metric-button .metric { height: 100%; }
+.metric-button:hover .metric strong { text-decoration: underline; text-underline-offset: 4px; }
