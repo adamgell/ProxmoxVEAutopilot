@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -170,7 +171,7 @@ def test_ninja_postinstall_unblocks_qga_after_agent_health():
     assert "AutopilotAgent postinstall complete." in post
 
 
-def test_ninja_update_script_verifies_download_and_records_the_version_disagreement():
+def test_ninja_update_script_takes_no_arguments_and_installs_unconditionally():
     """The push-update path deployed through NinjaOne.
 
     Exists because the agent's own upgrade loop never fires on part of the
@@ -178,18 +179,26 @@ def test_ninja_update_script_verifies_download_and_records_the_version_disagreem
     neither a completed install nor a failed one, which means they are being
     told they are current while the fleet page shows "Upgrade available".
 
-    Two things this script must keep doing. It must verify the MSI against the
-    SHA-256 the server publishes rather than installing whatever it downloaded,
-    and it must log the installed-vs-published disagreement, which is the
-    evidence needed to fix the underlying bug rather than paper over it.
+    Three properties this must keep. It takes no arguments, so a Ninja script
+    action can run it with nothing configured. It installs unconditionally,
+    because gating on the server's verdict would skip exactly the machines it
+    exists for. And it records the installed-vs-published disagreement, which
+    is the evidence needed to fix update-check rather than paper over it.
     """
     update = _read("autopilot-proxmox/files/ninja/autopilotagent-update.ps1")
+
+    # Zero-argument: no script-level param block (the ones present belong to
+    # internal functions, which are indented) and no [CmdletBinding()].
+    assert not re.search(r"^param\s*\(", update, re.M)
+    assert "[CmdletBinding()]" not in update
+    assert "$FallbackServerUrl" in update
+    assert "Resolve-ServerUrl" in update
+    assert "$Identity.ServerUrl" in update
 
     # Reads the agent's own identity so the version query is authenticated.
     assert "agent.json" in update
     assert "/api/agent/v1/update-check" in update
     assert "Bearer $($Identity.AgentToken)" in update
-    assert "runtime_identifier" in update
     assert "win-arm64" in update
 
     # Both versions, because they can disagree and that disagreement is the bug.
@@ -204,13 +213,13 @@ def test_ninja_update_script_verifies_download_and_records_the_version_disagreem
     assert "failed SHA-256 validation" in update
     assert "installing unverified" in update
 
-    # Installs, tolerates the reboot-pending code, and leaves the service up.
+    # Installs unconditionally: no status gate around msiexec.
     assert '"/i", $dst, "/qn", "/norestart"' in update
     assert "$proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010" in update
     assert "Start-Service -Name AutopilotAgent" in update
+    assert 'status -ne "upgrade_available"' not in update.split("Running msiexec")[1]
 
-    # Safe to dry-run, and admin-gated like the sibling scripts.
-    assert "$WhatIfOnly" in update
+    # Admin-gated like the sibling ninja scripts.
     assert "requires administrative context." in update
     assert "Version did not change." in update
 
