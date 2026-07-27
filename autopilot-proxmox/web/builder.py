@@ -46,29 +46,74 @@ _SECRET_REDACTIONS = [
 ]
 
 
+# Identity file inside the container's own writable layer. It must NOT live
+# under any of the shared mounts (/app/output, /app/jobs, /app/cache,
+# /app/secrets) - that is exactly what made every replica share one id.
+_CONTAINER_ID_PATH = Path("/app/.worker-id")
+_DOCKER_MARKER = Path("/.dockerenv")
+
+
+def _identity_path(output_dir: Path | None = None) -> Path:
+    """Where this worker's persisted id lives.
+
+    In a container: a path in the container's own layer, so each replica gets
+    its own and `docker restart` (same container) keeps it. Compose runs the
+    builders with ``network_mode: host``, which shares the host's UTS
+    namespace - so every replica reports the SAME hostname, and the legacy
+    ``<output_dir>/worker-id.<hostname>`` resolved to one shared file on a
+    shared mount. All N replicas then registered as a single service: the
+    fleet view showed one builder however many were running, its detail
+    flip-flopped between "idle" and whichever job any replica had picked up,
+    and ``jobs.worker_id`` could not attribute a job to a container.
+
+    Outside a container the legacy per-host path is still right: one builder
+    per host, and identity survives a process restart.
+    """
+    if _DOCKER_MARKER.exists():
+        return _CONTAINER_ID_PATH
+    base = Path(output_dir) if output_dir is not None else _OUTPUT_DIR
+    return base / f"worker-id.{os.uname().nodename}"
+
+
 def _worker_id(output_dir: Path | None = None) -> str:
-    """Persist a uuid under <output_dir>/worker-id.<hostname> so compose
-    restarts preserve identity for the health UI. Uses O_CREAT|O_EXCL
-    to survive any (pathological) simultaneous-start race.
+    """Stable per-worker id, distinct for each builder replica.
+
+    ``AUTOPILOT_BUILDER_ID`` overrides everything (operators pinning a name,
+    and tests). Otherwise a uuid is persisted at :func:`_identity_path` using
+    O_CREAT|O_EXCL to survive any (pathological) simultaneous-start race.
+
+    If the id cannot be persisted (read-only rootfs, unwritable mount) the
+    worker still gets a unique in-memory id rather than failing to start or -
+    worse - silently colliding with its siblings. It just re-registers under a
+    new name after a restart, and the old row ages out via
+    ``service_health.prune_dead_workers``.
 
     `output_dir` defaults to ``OUTPUT_DIR`` (repo-relative on macOS,
     ``/app/output`` inside Docker) so callers that omit the argument
     work correctly in both environments.
     """
-    hostname = os.uname().nodename
-    base = Path(output_dir) if output_dir is not None else _OUTPUT_DIR
-    path = base / f"worker-id.{hostname}"
+    override = os.environ.get("AUTOPILOT_BUILDER_ID", "").strip()
+    if override:
+        return override
+
+    path = _identity_path(output_dir)
+    new_id = f"builder-{uuid.uuid4().hex[:8]}"
     try:
-        return path.read_text().strip()
+        return path.read_text().strip() or new_id
     except FileNotFoundError:
         pass
-    new_id = f"builder-{uuid.uuid4().hex[:8]}"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        _log.warning("could not read worker id at %s; using an ephemeral id", path)
+        return new_id
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
         # Someone beat us; re-read.
-        return path.read_text().strip()
+        return path.read_text().strip() or new_id
+    except OSError:
+        _log.warning("could not persist worker id at %s; using an ephemeral id", path)
+        return new_id
     try:
         os.write(fd, new_id.encode())
     finally:

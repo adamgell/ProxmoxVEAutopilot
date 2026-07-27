@@ -390,3 +390,70 @@ def test_builder_reconcile_preserves_legacy_string_readiness_errors(tmp_env, pg_
     readiness = osdeploy_pg.get_readiness(pg_conn, run["run_id"])
     assert readiness["errors"][0]["message"] == "VirtIO ISO was detached before first boot."
     assert readiness["errors"][1]["job_id"] == "job-osdeploy-legacy-error-fail"
+
+
+# --------------------------------------------------------------------------- #
+# Worker identity
+# --------------------------------------------------------------------------- #
+def test_worker_id_persists_and_is_stable(tmp_env, monkeypatch):
+    from web import builder
+    _, output_dir = tmp_env
+    monkeypatch.delenv("AUTOPILOT_BUILDER_ID", raising=False)
+    monkeypatch.setattr(builder, "_DOCKER_MARKER", Path("/nonexistent-marker"))
+
+    first = builder._worker_id(output_dir=output_dir)
+    assert first.startswith("builder-")
+    assert builder._worker_id(output_dir=output_dir) == first
+
+
+def test_worker_id_env_override_wins(tmp_env, monkeypatch):
+    from web import builder
+    _, output_dir = tmp_env
+    monkeypatch.setenv("AUTOPILOT_BUILDER_ID", "builder-pinned")
+    assert builder._worker_id(output_dir=output_dir) == "builder-pinned"
+
+
+def test_containerised_replicas_do_not_share_one_identity(tmp_env, monkeypatch, tmp_path):
+    """Compose runs builders with network_mode: host, so every replica reports
+    the same hostname. Keying the id file on hostname under the shared
+    /app/output mount gave all N replicas ONE id, so the fleet view showed a
+    single builder and jobs could not be attributed to a container.
+    """
+    from web import builder
+    _, shared_output = tmp_env
+    monkeypatch.delenv("AUTOPILOT_BUILDER_ID", raising=False)
+    monkeypatch.setattr(builder, "_DOCKER_MARKER", tmp_path / "dockerenv")
+    (tmp_path / "dockerenv").write_text("")
+
+    ids = set()
+    for replica in range(3):
+        # Each replica has its own container layer but the SAME hostname and
+        # the SAME shared output mount.
+        layer = tmp_path / f"replica{replica}"
+        layer.mkdir()
+        monkeypatch.setattr(builder, "_CONTAINER_ID_PATH", layer / ".worker-id")
+        first = builder._worker_id(output_dir=shared_output)
+        # Stable within the replica (a `docker restart` keeps the layer).
+        assert builder._worker_id(output_dir=shared_output) == first
+        ids.add(first)
+
+    assert len(ids) == 3, f"replicas shared an identity: {ids}"
+
+
+def test_worker_id_falls_back_to_ephemeral_when_unpersistable(monkeypatch, tmp_path):
+    """A read-only rootfs must not make replicas collide - a unique in-memory
+    id is strictly better than silently sharing one."""
+    from web import builder
+    monkeypatch.delenv("AUTOPILOT_BUILDER_ID", raising=False)
+    monkeypatch.setattr(builder, "_DOCKER_MARKER", tmp_path / "dockerenv")
+    (tmp_path / "dockerenv").write_text("")
+    monkeypatch.setattr(
+        builder, "_CONTAINER_ID_PATH", tmp_path / "ro" / "nested" / ".worker-id")
+
+    def _boom(*a, **k):
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(builder.os, "open", _boom)
+    ids = {builder._worker_id() for _ in range(3)}
+    assert len(ids) == 3
+    assert all(i.startswith("builder-") for i in ids)
