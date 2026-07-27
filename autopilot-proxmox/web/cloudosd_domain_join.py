@@ -19,15 +19,26 @@ transport the monitor already uses for screenshots), then marks the
 drives the run to completion.
 
 All I/O is injected so the decision logic is unit-testable without live infra:
-  * ``guest_exec(node, vmid, powershell) -> {"exited","exitcode","out-data","err-data"}``
+  * ``guest_exec(node, vmid, powershell, timeout=...) -> {"exited","exitcode","out-data","err-data"}``
   * ``resolve_credential(cred_id) -> {"username", "password"}``
   * ``resolve_node(vmid) -> node name`` (only consulted when the run row has no node)
+
+Security note
+-------------
+The join credential travels to the guest inside the PowerShell script we hand to
+Proxmox's ``agent/exec`` API. ``-EncodedCommand`` and the base64 password literal
+are transport encodings, *not* secrecy: both are trivially reversible, so the
+plaintext domain-join password is recoverable by anyone who can read Proxmox's
+task log or API access log for the duration those records are kept. That is
+inherent to driving an online join over QGA - the alternative is the offline
+unattend djoin used when no ``domain_controller_ipv4`` is set. Treat the Proxmox
+API logs as credential-bearing, and never log the generated script.
 """
 from __future__ import annotations
 
 import base64
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from psycopg import Connection
@@ -42,22 +53,75 @@ _TERMINAL_RUN_STATES = ("complete", "failed", "canceled")
 # probe long-abandoned runs every tick.
 _DEFAULT_HEARTBEAT_MAX_AGE_SECONDS = 1800
 
+# Add-Computer is followed by a reboot we do not wait for: the guest is on its
+# way down, so polling exec-status until the normal timeout only burns the tick.
+_REBOOT_TIMEOUT_SECONDS = 5.0
+
+# A real MDM_DevDetail_Ext01 DeviceHardwareData blob is several thousand base64
+# characters. Anything materially shorter means the read was truncated (host
+# line-wrapping, a partial exec-status capture), and persisting it would write a
+# silently unusable Autopilot CSV - so we fail the step instead.
+_MIN_HARDWARE_HASH_LENGTH = 512
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _heartbeat_is_stale(heartbeat: dict | None, now: datetime, max_age_seconds: float) -> bool:
-    """True when there is no heartbeat, or the newest one is older than the window."""
-    if not heartbeat:
+def heartbeat_cutoff(max_age_seconds: float | None, now: datetime) -> datetime | None:
+    """Oldest heartbeat timestamp still considered live, or None for no gate."""
+    if max_age_seconds is None:
+        return None
+    return now - timedelta(seconds=max_age_seconds)
+
+
+def _heartbeat_is_stale(heartbeat_at: Any, cutoff: datetime | None) -> bool:
+    """True when a candidate's newest heartbeat is missing or predates ``cutoff``.
+
+    Fails closed: a missing timestamp, or one in an unexpected shape, counts as
+    stale. Treating an unparseable timestamp as live would silently disable the
+    guard the moment the column type changed.
+    """
+    if cutoff is None:
+        return False
+    if not isinstance(heartbeat_at, datetime):
         return True
-    received = heartbeat.get("received_at")
-    if not isinstance(received, datetime):
-        # Unknown/absent timestamp shape: don't over-filter a live-looking run.
-        return received is None
-    if received.tzinfo is None:
-        received = received.replace(tzinfo=timezone.utc)
-    return (now - received).total_seconds() > max_age_seconds
+    if heartbeat_at.tzinfo is None:
+        heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+    return heartbeat_at < cutoff
+
+
+# Newest heartbeat per run, mirroring agent_telemetry_pg.latest_for_run. Runs
+# are ordered live-first so a backlog of abandoned runs can never crowd live
+# ones out of the LIMIT (the freshness check used to run in Python, i.e. after
+# the LIMIT had already been spent on the oldest - and therefore deadest - rows).
+_HEARTBEAT_LATERAL = """
+        LEFT JOIN LATERAL (
+            SELECT hb.received_at
+            FROM agent_heartbeats hb
+            JOIN agent_devices d ON d.agent_id = hb.agent_id
+            WHERE hb.current_run_id = r.run_id
+              AND d.revoked = false
+            ORDER BY hb.received_at DESC, hb.id DESC
+            LIMIT 1
+        ) hb ON true
+"""
+_HEARTBEAT_FRESH_FIRST = """
+        ORDER BY (
+            hb.received_at IS NOT NULL
+            AND (%s::timestamptz IS NULL OR hb.received_at >= %s)
+        ) DESC, r.created_at
+"""
+
+
+def _ps_quote(value: Any) -> str:
+    """Escape a value for a PowerShell single-quoted string literal.
+
+    A lone apostrophe (an OU path like ``OU=O'Brien,DC=corp`` is entirely
+    ordinary) would otherwise terminate the literal and break the script.
+    """
+    return str(value or "").replace("'", "''")
+
 
 _PROBE_PS = (
     "$cs = Get-CimInstance Win32_ComputerSystem; "
@@ -91,14 +155,22 @@ def qualify_user(username: str, domain_join: dict) -> str:
 
 
 def build_join_powershell(*, username: str, password: str, domain: str, ou_path: str = "") -> str:
-    """Build the Add-Computer script. Password goes in a here-string so special
-    characters never need escaping."""
-    ou_clause = f" -OUPath '{ou_path}'" if ou_path else ""
+    """Build the Add-Computer script.
+
+    The password is carried as a base64 UTF-16LE literal and decoded inside the
+    guest, so nothing in it - quotes, newlines, a here-string terminator - can
+    break out of the script. Every other interpolated value goes through
+    :func:`_ps_quote`, because an apostrophe in an OU path is entirely ordinary
+    and would otherwise close the literal it sits in.
+    """
+    ou_clause = f" -OUPath '{_ps_quote(ou_path)}'" if ou_path else ""
+    password_b64 = base64.b64encode(str(password or "").encode("utf-16-le")).decode("ascii")
     return (
         "$ErrorActionPreference='Stop';"
-        f"$pw = ConvertTo-SecureString @'\n{password}\n'@ -AsPlainText -Force;"
-        f"$c = New-Object System.Management.Automation.PSCredential('{username}',$pw);"
-        f"Add-Computer -DomainName '{domain}'{ou_clause} -Credential $c -Force;"
+        "$pw = ConvertTo-SecureString ([Text.Encoding]::Unicode.GetString("
+        f"[Convert]::FromBase64String('{password_b64}'))) -AsPlainText -Force;"
+        f"$c = New-Object System.Management.Automation.PSCredential('{_ps_quote(username)}',$pw);"
+        f"Add-Computer -DomainName '{_ps_quote(domain)}'{ou_clause} -Credential $c -Force;"
         "Write-Output 'JOIN_OK'"
     )
 
@@ -114,25 +186,40 @@ def join_succeeded(exec_result: dict) -> bool:
     return result.get("exitcode") == 0 and "JOIN_OK" in str(result.get("out-data") or "")
 
 
+class GuestExecTimeout(RuntimeError):
+    """agent-exec did not report an exit before the deadline."""
+
+
 def guest_exec_via_proxmox(post_fn, get_fn, node, vmid, script, *, timeout: float = 90.0,
                            sleep: Callable[[float], None] = time.sleep) -> dict:
     """Run a PowerShell script in the guest via the Proxmox agent-exec API and
-    poll agent-exec-status until it exits (or ``timeout`` elapses)."""
+    poll agent-exec-status until it exits.
+
+    Raises :class:`GuestExecTimeout` when the process has not exited within
+    ``timeout``. Callers already treat a raised exception as "guest unreachable,
+    retry next tick", so failing loudly beats returning a sentinel result that
+    every caller would have to recognise on its own.
+    """
     started = post_fn(
         f"/nodes/{node}/qemu/{vmid}/agent/exec",
         data={"command": ["powershell", "-NoProfile", "-EncodedCommand", encode_powershell(script)]},
     )
     pid = started.get("pid")
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while True:
         status = get_fn(f"/nodes/{node}/qemu/{vmid}/agent/exec-status?pid={pid}")
         if status.get("exited"):
             return status
+        if time.monotonic() >= deadline:
+            raise GuestExecTimeout(
+                f"agent-exec pid={pid} on {node}/{vmid} did not exit within {timeout:g}s"
+            )
         sleep(2)
-    return {"exited": 0, "exitcode": None, "err-data": "timeout waiting for exec-status"}
 
 
-def find_join_candidates(conn: Connection, *, limit: int = 50) -> list[dict]:
+def find_join_candidates(
+    conn: Connection, *, limit: int = 50, cutoff: datetime | None = None
+) -> list[dict]:
     """Runs whose AD domain membership the executor still needs to drive.
 
     A candidate has an enabled domain join with a DC IP, a *done*
@@ -141,12 +228,17 @@ def find_join_candidates(conn: Connection, *, limit: int = 50) -> list[dict]:
     ``join_domain_role`` (do the join) or ``verify_ad_domain_join`` (confirm it).
     Terminal runs are excluded. The executor owns both steps for these agent-less
     runs; a QGA ``PartOfDomain`` probe is the authoritative verification signal.
+
+    Each row carries ``heartbeat_at`` (newest live heartbeat, or None) and rows
+    are ordered live-first against ``cutoff``, so abandoned runs can never
+    consume the ``limit`` ahead of runs that are actually running.
     """
     rows = conn.execute(
         """
         SELECT r.run_id, r.vmid, r.node, r.domain_join_json, r.vm_name,
-               r.expected_computer_name, r.state
+               r.expected_computer_name, r.state, hb.received_at AS heartbeat_at
         FROM cloudosd_runs r
+        """ + _HEARTBEAT_LATERAL + """
         WHERE COALESCE(r.domain_join_json->>'enabled', 'false') = 'true'
           AND COALESCE(r.domain_join_json->>'domain_controller_ipv4', '') <> ''
           AND r.state <> ALL(%s)
@@ -162,10 +254,10 @@ def find_join_candidates(conn: Connection, *, limit: int = 50) -> list[dict]:
                 AND s.kind IN ('join_domain_role', 'verify_ad_domain_join')
                 AND s.state = 'pending'
           )
-        ORDER BY r.created_at
+        """ + _HEARTBEAT_FRESH_FIRST + """
         LIMIT %s
         """,
-        (list(_TERMINAL_RUN_STATES), limit),
+        (list(_TERMINAL_RUN_STATES), cutoff, cutoff, limit),
     ).fetchall()
     out: list[dict] = []
     for row in rows:
@@ -178,6 +270,7 @@ def find_join_candidates(conn: Connection, *, limit: int = 50) -> list[dict]:
             "node": row["node"],
             "domain_join": dj,
             "vm_name": row["vm_name"],
+            "heartbeat_at": row["heartbeat_at"],
         })
     return out
 
@@ -245,12 +338,25 @@ def execute_join_for_run(
         return {"vmid": vmid, "run_id": run_id, "status": "unreachable",
                 "error": f"unexpected probe output: {str(probe.get('out-data') or '')[:120]}"}
 
-    cred = resolve_credential(int(domain_join.get("credential_id"))) or {}
+    # credential_id is nullable on the run row (see cloudosd_pg._sanitize_domain_join),
+    # so coerce defensively - int(None) would raise straight past the no_credential
+    # branch below and surface as an opaque per-tick "failed".
+    raw_credential_id = domain_join.get("credential_id")
+    try:
+        credential_id = int(raw_credential_id)
+    except (TypeError, ValueError):
+        _event("domain_join_failed", severity="warning",
+               message="Domain join is enabled but no usable credential_id is stored",
+               data={"vmid": vmid, "credential_id": str(raw_credential_id)})
+        return {"vmid": vmid, "run_id": run_id, "status": "no_credential"}
+
+    cred = resolve_credential(credential_id) or {}
     username = qualify_user(cred.get("username", ""), domain_join)
     password = cred.get("password", "")
     if not (username and password):
         _event("domain_join_failed", severity="warning",
-                message="Domain-join credential missing username/password")
+                message="Domain-join credential missing username/password",
+                data={"vmid": vmid, "credential_id": credential_id})
         return {"vmid": vmid, "run_id": run_id, "status": "no_credential"}
 
     join_ps = build_join_powershell(
@@ -269,10 +375,12 @@ def execute_join_for_run(
                 message="Add-Computer did not report success", data={"error": err, "vmid": vmid})
         return {"vmid": vmid, "run_id": run_id, "status": "failed", "error": err}
 
-    # Join succeeded; a reboot finalizes membership. Reboot failures are
-    # non-fatal (the join already took) so we swallow them and still mark done.
+    # Join succeeded; a reboot finalizes membership. The guest is on its way down
+    # so we do not wait for exec-status to report an exit - a short timeout keeps
+    # one reboot from eating the tick. Reboot failures are non-fatal (the join
+    # already took), so we swallow them and still mark the step done.
     try:
-        guest_exec(node, vmid, _REBOOT_PS)
+        guest_exec(node, vmid, _REBOOT_PS, timeout=_REBOOT_TIMEOUT_SECONDS)
     except Exception:  # noqa: BLE001
         pass
     # Mark only the join done here; verify_ad_domain_join is confirmed on a later
@@ -283,7 +391,9 @@ def execute_join_for_run(
     _event("domain_join_executed",
            message=f"Joined {candidate.get('vm_name') or vmid} to {domain_join.get('domain_fqdn')}",
            data={"vmid": vmid})
-    return {"vmid": vmid, "run_id": run_id, "status": "joined"}
+    # rebooted flags the run so the hash-capture pass in the same tick does not
+    # immediately probe a guest we just took down.
+    return {"vmid": vmid, "run_id": run_id, "status": "joined", "rebooted": True}
 
 
 def advance_domain_joined_runs(
@@ -291,6 +401,8 @@ def advance_domain_joined_runs(
     *,
     latest_heartbeat: Callable[[str], dict | None],
     mark_complete: Callable[..., dict | None],
+    max_heartbeat_age_seconds: float | None = None,
+    now: Callable[[], datetime] | None = None,
     limit: int = 50,
 ) -> dict:
     """Drive runs wedged at ``full_os_waiting_domain_join`` or
@@ -303,19 +415,31 @@ def advance_domain_joined_runs(
     heartbeat verification matches and, for the final flip to ``complete``, only
     when ``v2_completion_status`` is ready - so a not-yet-ready run is left in
     place, not falsely completed.
+
+    Carries the same live-first ordering and stale-run guard as the other two
+    passes: a wedged run whose newest heartbeat predates
+    ``max_heartbeat_age_seconds`` is skipped, and can never crowd a live run out
+    of ``limit``.
     """
+    cutoff = heartbeat_cutoff(max_heartbeat_age_seconds, (now or _utcnow)())
     rows = conn.execute(
         """
-        SELECT run_id FROM cloudosd_runs
-        WHERE state IN ('full_os_waiting_domain_join', 'full_os_waiting_v2')
-        ORDER BY created_at
+        SELECT r.run_id, hb.received_at AS heartbeat_at
+        FROM cloudosd_runs r
+        """ + _HEARTBEAT_LATERAL + """
+        WHERE r.state IN ('full_os_waiting_domain_join', 'full_os_waiting_v2')
+        """ + _HEARTBEAT_FRESH_FIRST + """
         LIMIT %s
         """,
-        (limit,),
+        (cutoff, cutoff, limit),
     ).fetchall()
     advanced = 0
+    stale = 0
     for row in rows:
         run_id = str(row["run_id"])
+        if _heartbeat_is_stale(row["heartbeat_at"], cutoff):
+            stale += 1
+            continue
         heartbeat = latest_heartbeat(run_id)
         if not heartbeat:
             continue
@@ -330,42 +454,52 @@ def advance_domain_joined_runs(
             "full_os_waiting_domain_join", "full_os_waiting_v2"
         ):
             advanced += 1
-    return {"waiting": len(rows), "advanced": advanced}
+    return {"waiting": len(rows), "advanced": advanced, "stale": stale}
 
 
 def run_pending_joins(
     conn: Connection,
     *,
-    guest_exec: Callable[[str, int, str], dict],
+    guest_exec: Callable[..., dict],
     resolve_credential: Callable[[int], dict],
     resolve_node: Callable[[int], Any] | None = None,
     append_event: Callable[..., Any] | None = None,
-    latest_heartbeat: Callable[[str], dict | None] | None = None,
-    max_heartbeat_age_seconds: float = _DEFAULT_HEARTBEAT_MAX_AGE_SECONDS,
+    max_heartbeat_age_seconds: float | None = None,
     now: Callable[[], datetime] | None = None,
+    max_seconds: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
     limit: int = 50,
 ) -> dict:
     """Drive every pending CloudOSD AD join. Per-run failures are isolated so
     one bad VM never blocks the others. Returns a summary of outcomes.
 
-    When ``latest_heartbeat`` is supplied, a run whose newest heartbeat is older
-    than ``max_heartbeat_age_seconds`` (or has none) is skipped as ``stale`` -
-    the run's VM is not currently alive, so probing it every tick is wasted work
-    (and, for abandoned test runs, needless failure-event noise).
+    When ``max_heartbeat_age_seconds`` is set, a run whose newest heartbeat is
+    older than that (or has none) is skipped as ``stale`` - the VM is not
+    currently alive, so probing it every tick is wasted work (and, for abandoned
+    runs, needless failure-event noise). The candidate query orders live runs
+    first, so stale ones never consume ``limit`` ahead of live ones.
+
+    ``max_seconds`` bounds the wall-clock cost of one sweep: each guest probe can
+    block for the guest_exec timeout, so an unbounded sweep over a large backlog
+    could run well past its tick cadence. Candidates past the budget are counted
+    as ``deferred`` and picked up next tick.
     """
-    candidates = find_join_candidates(conn, limit=limit)
-    clock = now or _utcnow
+    cutoff = heartbeat_cutoff(max_heartbeat_age_seconds, (now or _utcnow)())
+    candidates = find_join_candidates(conn, limit=limit, cutoff=cutoff)
+    deadline = None if max_seconds is None else monotonic() + max_seconds
     summary = {"candidates": len(candidates), "joined": 0, "already_joined": 0,
-               "failed": 0, "unreachable": 0, "stale": 0, "skipped": 0, "results": []}
+               "failed": 0, "unreachable": 0, "stale": 0, "skipped": 0,
+               "deferred": 0, "rebooted_run_ids": [], "results": []}
     for candidate in candidates:
-        if latest_heartbeat is not None and _heartbeat_is_stale(
-            latest_heartbeat(candidate["run_id"]), clock(), max_heartbeat_age_seconds
-        ):
+        if _heartbeat_is_stale(candidate.get("heartbeat_at"), cutoff):
             summary["stale"] += 1
             summary["results"].append({
                 "vmid": candidate.get("vmid"), "run_id": candidate.get("run_id"),
                 "status": "stale_no_heartbeat",
             })
+            continue
+        if deadline is not None and monotonic() >= deadline:
+            summary["deferred"] += 1
             continue
         try:
             result = execute_join_for_run(
@@ -389,6 +523,8 @@ def run_pending_joins(
             summary["unreachable"] += 1
         else:
             summary["skipped"] += 1
+        if result.get("rebooted") and result.get("run_id"):
+            summary["rebooted_run_ids"].append(str(result["run_id"]))
         summary["results"].append(result)
     return summary
 
@@ -400,37 +536,66 @@ def run_pending_joins(
 # values: the serial from Win32_BIOS and the hardware hash from MDM_DevDetail_
 # Ext01.DeviceHardwareData. We inline those two reads rather than shipping the
 # ~500-line Microsoft script over the guest agent.
+#
+# Output goes through [Console]::Out, NOT Write-Output. Write-Output hands the
+# string to PowerShell's formatter, which hard-wraps at the host width (120, or
+# 80, when powershell.exe runs with no console attached - exactly how qemu-ga
+# launches it). DeviceHardwareData is several thousand base64 characters, so
+# Write-Output would split it across ~35 lines and any naive parse would persist
+# a silently truncated, unusable hash. [Console]::Out bypasses the formatter and
+# emits the string verbatim.
 _HASH_CAPTURE_PS = (
     "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
     "$serial=(Get-CimInstance -Class Win32_BIOS).SerialNumber;"
     "$h=(Get-CimInstance -Namespace root/cimv2/mdm/dmmap -Class MDM_DevDetail_Ext01 "
     "-Filter \"InstanceID='Ext' AND ParentID='./DevDetail'\").DeviceHardwareData;"
-    "Write-Output ('SERIAL=' + $serial);"
-    "Write-Output ('HASH=' + $h)"
+    "[Console]::Out.WriteLine('SERIAL=' + $serial);"
+    "[Console]::Out.WriteLine('HASH=' + $h)"
 )
 
 
 def parse_hash_output(exec_result: dict) -> tuple[str, str]:
-    """Parse ``(serial, hardware_hash)`` from the capture script stdout."""
-    serial = hardware_hash = ""
-    for line in str((exec_result or {}).get("out-data") or "").splitlines():
-        line = line.strip()
+    """Parse ``(serial, hardware_hash)`` from the capture script stdout.
+
+    Lines after ``HASH=`` that do not open a new marker are treated as
+    continuations and concatenated. The script writes through ``[Console]::Out``
+    specifically so wrapping cannot happen, but base64 carries no whitespace, so
+    reassembly is lossless - and it means a host that wraps anyway yields the
+    whole hash rather than its first line.
+    """
+    serial = ""
+    hash_parts: list[str] = []
+    in_hash = False
+    for raw_line in str((exec_result or {}).get("out-data") or "").splitlines():
+        line = raw_line.strip()
         if line.startswith("SERIAL="):
             serial = line[len("SERIAL="):].strip()
+            in_hash = False
         elif line.startswith("HASH="):
-            hardware_hash = line[len("HASH="):].strip()
-    return serial, hardware_hash
+            hash_parts = [line[len("HASH="):].strip()]
+            in_hash = True
+        elif in_hash and line:
+            hash_parts.append(line)
+    return serial, "".join(hash_parts)
 
 
-def find_hash_candidates(conn: Connection, *, limit: int = 50) -> list[dict]:
+def find_hash_candidates(
+    conn: Connection, *, limit: int = 50, cutoff: datetime | None = None
+) -> list[dict]:
     """Runs with a pending ``capture_autopilot_hash`` step whose VM is booted
-    into the full OS (``wait_agent_heartbeat`` done) and not terminal."""
+    into the full OS (``wait_agent_heartbeat`` done) and not terminal.
+
+    Same ``heartbeat_at`` column and live-first ordering as
+    :func:`find_join_candidates`.
+    """
     rows = conn.execute(
         """
-        SELECT r.run_id, r.vmid, r.node, r.vm_name, r.vm_group_tag, r.state
+        SELECT r.run_id, r.vmid, r.node, r.vm_name, r.vm_group_tag, r.state,
+               hb.received_at AS heartbeat_at
         FROM cloudosd_runs r
         JOIN ts_run_plan_steps h
           ON h.run_id = r.run_id AND h.kind = 'capture_autopilot_hash' AND h.state = 'pending'
+        """ + _HEARTBEAT_LATERAL + """
         WHERE r.state <> ALL(%s)
           AND EXISTS (
               SELECT 1 FROM ts_run_plan_steps w
@@ -438,14 +603,15 @@ def find_hash_candidates(conn: Connection, *, limit: int = 50) -> list[dict]:
                 AND w.kind = 'wait_agent_heartbeat'
                 AND w.state = 'done'
           )
-        ORDER BY r.created_at
+        """ + _HEARTBEAT_FRESH_FIRST + """
         LIMIT %s
         """,
-        (list(_TERMINAL_RUN_STATES), limit),
+        (list(_TERMINAL_RUN_STATES), cutoff, cutoff, limit),
     ).fetchall()
     return [{
         "run_id": str(row["run_id"]), "vmid": row["vmid"], "node": row["node"],
         "vm_name": row["vm_name"], "group_tag": row["vm_group_tag"] or "",
+        "heartbeat_at": row["heartbeat_at"],
     } for row in rows]
 
 
@@ -478,12 +644,24 @@ def execute_hash_capture_for_run(
         return {"vmid": vmid, "run_id": run_id, "status": "unreachable", "error": str(exc)[:200]}
 
     serial, hardware_hash = parse_hash_output(result)
-    if not (serial and hardware_hash):
+    problem = ""
+    if not serial:
+        problem = "no serial in guest output"
+    elif not hardware_hash:
+        problem = "no hardware hash in guest output"
+    elif len(hardware_hash) < _MIN_HARDWARE_HASH_LENGTH:
+        # A truncated hash produces a CSV Intune rejects. Fail the step so the
+        # next tick retries, rather than marking it done with unusable data.
+        problem = (
+            f"hardware hash is {len(hardware_hash)} chars, expected at least "
+            f"{_MIN_HARDWARE_HASH_LENGTH} (truncated capture)"
+        )
+    if problem:
         err = str(result.get("err-data") or result.get("out-data") or "")[:300]
         _event("autopilot_hash_capture_failed", severity="warning",
-                message="Could not read serial/hardware hash from guest",
-                data={"error": err, "vmid": vmid})
-        return {"vmid": vmid, "run_id": run_id, "status": "failed", "error": err or "empty hash"}
+                message=f"Could not read a usable hardware hash from guest: {problem}",
+                data={"error": err, "problem": problem, "vmid": vmid})
+        return {"vmid": vmid, "run_id": run_id, "status": "failed", "error": problem}
 
     try:
         persist_hash(vmid=int(vmid), serial=serial, product_id="",
@@ -506,30 +684,49 @@ def execute_hash_capture_for_run(
 def run_pending_hash_captures(
     conn: Connection,
     *,
-    guest_exec: Callable[[str, int, str], dict],
+    guest_exec: Callable[..., dict],
     persist_hash: Callable[..., Any],
     resolve_node: Callable[[int], Any] | None = None,
     append_event: Callable[..., Any] | None = None,
-    latest_heartbeat: Callable[[str], dict | None] | None = None,
-    max_heartbeat_age_seconds: float = _DEFAULT_HEARTBEAT_MAX_AGE_SECONDS,
+    max_heartbeat_age_seconds: float | None = None,
     now: Callable[[], datetime] | None = None,
+    max_seconds: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    skip_run_ids: set[str] | None = None,
     limit: int = 50,
 ) -> dict:
     """Capture the Autopilot hardware hash for every run whose step is pending.
-    Same per-run isolation and stale-heartbeat guard as ``run_pending_joins``."""
-    candidates = find_hash_candidates(conn, limit=limit)
-    clock = now or _utcnow
+    Same per-run isolation, stale-heartbeat guard and time budget as
+    :func:`run_pending_joins`.
+
+    ``skip_run_ids`` holds runs the join pass just rebooted in this same tick;
+    their guests are on the way down, so probing them now would only burn the
+    guest_exec timeout to learn they are unreachable.
+    """
+    cutoff = heartbeat_cutoff(max_heartbeat_age_seconds, (now or _utcnow)())
+    candidates = find_hash_candidates(conn, limit=limit, cutoff=cutoff)
+    deadline = None if max_seconds is None else monotonic() + max_seconds
+    rebooting = skip_run_ids or set()
     summary = {"candidates": len(candidates), "captured": 0, "failed": 0,
-               "unreachable": 0, "stale": 0, "skipped": 0, "results": []}
+               "unreachable": 0, "stale": 0, "skipped": 0, "deferred": 0,
+               "rebooting": 0, "results": []}
     for candidate in candidates:
-        if latest_heartbeat is not None and _heartbeat_is_stale(
-            latest_heartbeat(candidate["run_id"]), clock(), max_heartbeat_age_seconds
-        ):
+        if _heartbeat_is_stale(candidate.get("heartbeat_at"), cutoff):
             summary["stale"] += 1
             summary["results"].append({
                 "vmid": candidate.get("vmid"), "run_id": candidate.get("run_id"),
                 "status": "stale_no_heartbeat",
             })
+            continue
+        if candidate["run_id"] in rebooting:
+            summary["rebooting"] += 1
+            summary["results"].append({
+                "vmid": candidate.get("vmid"), "run_id": candidate.get("run_id"),
+                "status": "rebooting_after_join",
+            })
+            continue
+        if deadline is not None and monotonic() >= deadline:
+            summary["deferred"] += 1
             continue
         try:
             result = execute_hash_capture_for_run(
