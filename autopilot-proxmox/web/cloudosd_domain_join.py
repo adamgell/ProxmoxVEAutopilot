@@ -123,9 +123,13 @@ def _ps_quote(value: Any) -> str:
     return str(value or "").replace("'", "''")
 
 
+# [Console]::Out for the same reason as _HASH_CAPTURE_PS below: it bypasses
+# PowerShell's formatter, which wraps at the host width. This line is short
+# enough that wrapping would not change the DOMAIN= verdict, but keeping both
+# scripts on the same writer means neither can drift into a truncating one.
 _PROBE_PS = (
     "$cs = Get-CimInstance Win32_ComputerSystem; "
-    "Write-Output ('DOMAIN=' + $cs.PartOfDomain + ';NAME=' + $cs.Domain "
+    "[Console]::Out.WriteLine('DOMAIN=' + $cs.PartOfDomain + ';NAME=' + $cs.Domain "
     "+ ';HOST=' + $env:COMPUTERNAME)"
 )
 _REBOOT_PS = "Restart-Computer -Force"

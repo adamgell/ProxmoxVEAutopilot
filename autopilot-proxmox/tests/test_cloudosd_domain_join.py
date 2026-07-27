@@ -586,11 +586,12 @@ def test_parse_hash_output_reassembles_a_wrapped_hash():
     assert hardware_hash == _REAL_HASH
 
 
-def test_hash_capture_script_writes_through_console_out():
-    """Write-Output would route the hash through PowerShell's formatter, which
-    wraps at the host width and truncates the blob to its first line."""
+def test_guest_scripts_write_through_console_out():
+    """Write-Output routes through PowerShell's formatter, which wraps at the
+    host width - and would truncate the hash blob to its first line."""
     assert "[Console]::Out.WriteLine('HASH=' + $h)" in cdj._HASH_CAPTURE_PS
     assert "Write-Output" not in cdj._HASH_CAPTURE_PS
+    assert "Write-Output" not in cdj._PROBE_PS
 
 
 def _hash_guest(out):
