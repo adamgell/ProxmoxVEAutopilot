@@ -22,6 +22,29 @@
   --bad: #ff9c92;
   --warn: #f4c95d;
   --accent: #e1f56f;
+
+  /* Weight, size and spacing had no tokens at all, which is why nothing on
+     any page could be ranked: every rule picked a value in isolation and
+     94 of 118 weight declarations landed on 800 or 900. */
+  --w-body: 400;
+  --w-med: 500;
+  --w-strong: 650;
+
+  --fs-0: 11px;
+  --fs-1: 12px;
+  --fs-2: 13px;
+  --fs-3: 15px;
+  --fs-4: 18px;
+  --fs-5: 28px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 16px;
+  --sp-4: 24px;
+  --sp-5: 40px;
+
+  --radius: 6px;
+  --line-strong: #3d4c63;
 }
 
 @media (prefers-color-scheme: light) {
@@ -41,6 +64,7 @@
     --bad: #bc2f25;
     --warn: #8b6500;
     --accent: #516b00;
+    --line-strong: #93a4bb;
   }
 }
 
@@ -69,6 +93,7 @@ h1 {
   color: var(--text);
   font-size: 32px;
   line-height: 1.08;
+  font-weight: var(--w-strong);
 }
 
 h2 {
@@ -79,11 +104,11 @@ h2 {
 }
 
 h3 {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  letter-spacing: 0.04em;
 }
 
 .workspace {
@@ -141,7 +166,7 @@ h3 {
 .outcome-brand {
   gap: 10px;
   color: #edf5ff;
-  font-weight: 900;
+  font-weight: var(--w-strong);
   text-decoration: none;
 }
 
@@ -167,7 +192,7 @@ h3 {
 .outcome-brand small {
   color: #aebbd0;
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -198,7 +223,7 @@ h3 {
   color: #152033;
   background: transparent;
   font: inherit;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .outcome-operator {
@@ -215,7 +240,7 @@ h3 {
   color: #edf5ff;
   background: rgba(255, 255, 255, 0.06);
   font-size: 13px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -242,7 +267,7 @@ h3 {
   border-radius: 8px;
   color: #dce8f6;
   background: rgba(255, 255, 255, 0.04);
-  font-weight: 900;
+  font-weight: var(--w-strong);
   text-decoration: none;
 }
 
@@ -287,7 +312,7 @@ h3 {
 .outcome-system-tray > time {
   color: #b8c7d8;
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-align: right;
   white-space: nowrap;
 }
@@ -327,7 +352,7 @@ h3 {
   margin: 0;
   color: #b8c7d8;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-strong);
   text-transform: uppercase;
 }
 
@@ -342,7 +367,7 @@ h3 {
   border-radius: 7px;
   color: #ffffff;
   background: rgba(255, 255, 255, 0.06);
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -388,7 +413,7 @@ h3 {
   border-radius: 999px;
   color: #07111f;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .outcome-pill--good {
@@ -431,7 +456,7 @@ h3 {
   border-radius: 7px;
   color: #ffffff;
   background: #0069a8;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -513,7 +538,7 @@ h3 {
   margin: 0;
   color: #d9f2ff;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-strong);
   text-transform: uppercase;
 }
 
@@ -559,7 +584,7 @@ h3 {
   color: #d9f2ff;
   background: rgba(14, 165, 233, 0.16);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -607,7 +632,7 @@ h3 {
   margin: 0;
   color: #b8c7d8;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -662,7 +687,7 @@ h3 {
   color: #d9f2ff;
   background: rgba(14, 165, 233, 0.18);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -716,7 +741,7 @@ h3 {
 .deploy-journey-metrics dt {
   color: #b8c7d8;
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -724,7 +749,7 @@ h3 {
   margin: 4px 0 0;
   color: #ffffff;
   font-size: 24px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .deploy-path-board {
@@ -756,7 +781,7 @@ h3 {
 .deploy-path-step > span {
   color: #65c8f7;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -805,7 +830,7 @@ h3 {
   color: #ccfbf1;
   background: rgba(45, 212, 191, 0.16);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-align: right;
 }
 
@@ -842,7 +867,7 @@ h3 {
   color: #d9f2ff;
   background: rgba(14, 165, 233, 0.18);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -904,7 +929,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-decoration: none;
   transform: translateY(-160%);
 }
@@ -1018,7 +1043,7 @@ h3 {
   margin-top: 2px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1049,7 +1074,7 @@ h3 {
   background: transparent;
   font: inherit;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: var(--w-med);
 }
 
 .workspace__command input::placeholder {
@@ -1075,7 +1100,7 @@ h3 {
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -1126,7 +1151,7 @@ h3 {
 .workspace__brand span {
   color: var(--text);
   font-size: 18px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .workspace__brand small,
@@ -1134,7 +1159,7 @@ h3 {
 .link-stack small {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1153,7 +1178,7 @@ h3 {
   padding: 0 8px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1169,7 +1194,7 @@ h3 {
   border-radius: 6px;
   color: var(--muted-2);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -1226,7 +1251,7 @@ h3 {
 .workspace__system-tray > time {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-align: right;
   white-space: nowrap;
 }
@@ -1241,7 +1266,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
@@ -1291,7 +1316,7 @@ h3 {
   margin: 0 0 7px;
   color: var(--accent);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1305,7 +1330,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -1326,7 +1351,7 @@ h3 {
   border-radius: 999px;
   color: var(--muted-2);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -1365,7 +1390,8 @@ h3 {
 }
 
 .metric-strip > div,
-.metric-strip > a {
+.metric-strip > a,
+.metric-strip > button {
   min-width: 0;
   padding: 14px;
   background: var(--surface);
@@ -1377,7 +1403,7 @@ h3 {
   margin-bottom: 7px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1387,6 +1413,7 @@ h3 {
   font-size: 25px;
   line-height: 1;
   overflow-wrap: anywhere;
+  font-weight: var(--w-strong);
 }
 
 .metric--good strong {
@@ -1454,7 +1481,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -1471,7 +1498,7 @@ h3 {
 .flow-step small {
   color: var(--active);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -1502,6 +1529,7 @@ h3 {
 .panel__header h2 {
   min-width: 0;
   margin: 0;
+  font-weight: var(--w-strong);
 }
 
 .panel__action {
@@ -1605,21 +1633,21 @@ h3 {
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
 .signal-list li > span:last-child {
   color: var(--muted);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-align: right;
 }
 
 .path-list a {
   color: var(--active);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-align: right;
   text-decoration: none;
   white-space: nowrap;
@@ -1633,7 +1661,7 @@ h3 {
 .fleet-attention-list a {
   color: var(--active);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -1647,7 +1675,7 @@ h3 {
   background: var(--surface);
   font: inherit;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   cursor: pointer;
 }
 
@@ -1669,7 +1697,7 @@ h3 {
   align-items: center;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1740,7 +1768,7 @@ h3 {
   border-radius: 999px;
   color: var(--muted-2);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -1798,7 +1826,7 @@ h3 {
   background: var(--surface);
   font: inherit;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   cursor: pointer;
 }
 
@@ -1937,7 +1965,7 @@ h3 {
   align-items: center;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .file-select-cell {
@@ -2036,7 +2064,7 @@ h3 {
   color: var(--muted);
   background: var(--surface);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -2113,7 +2141,7 @@ h3 {
   border-radius: 6px;
   color: var(--text);
   background: var(--surface);
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -2132,7 +2160,7 @@ h3 {
 .settings-section-link small {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -2155,7 +2183,7 @@ h3 {
   margin: 0 0 5px;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -2163,7 +2191,7 @@ h3 {
   margin: 0;
   color: var(--text);
   font-size: 18px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .settings-credential-list {
@@ -2199,7 +2227,7 @@ h3 {
   margin-top: 3px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -2247,7 +2275,7 @@ h3 {
   min-width: 0;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .utility-field--wide {
@@ -2269,7 +2297,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--w-med);
 }
 
 .utility-field input[type="checkbox"] {
@@ -2300,7 +2328,7 @@ h3 {
   margin: 0 0 5px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -2308,7 +2336,7 @@ h3 {
   min-width: 0;
   margin: 0;
   color: var(--text);
-  font-weight: 800;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -2336,7 +2364,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .provision-checkbox input {
@@ -2452,7 +2480,7 @@ h3 {
 .cloudosd-value > span {
   color: var(--ink-soft);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   letter-spacing: .04em;
   text-transform: uppercase;
 }
@@ -2472,7 +2500,7 @@ h3 {
   padding: 5px 10px;
   color: var(--ink);
   text-decoration: none;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .cloudosd-subnav a[aria-current="page"] {
@@ -2542,7 +2570,7 @@ h3 {
   border: 1px solid var(--line);
   padding: 1px 8px;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   white-space: nowrap;
   text-transform: uppercase;
 }
@@ -2699,7 +2727,7 @@ h3 {
   margin: 0 0 18px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -2822,7 +2850,7 @@ h3 {
   flex: 0 0 auto;
   color: var(--active);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   white-space: nowrap;
 }
 
@@ -2883,7 +2911,7 @@ h3 {
   margin: 0 0 10px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -2892,7 +2920,7 @@ h3 {
   color: var(--muted-2);
   font-size: 12px;
   text-transform: none !important;
-  font-weight: 400 !important;
+  font-weight: var(--w-body) !important;
 }
 
 .bubble-form-note {
@@ -2930,7 +2958,7 @@ h3 {
   border: 1px solid var(--line);
   color: var(--muted);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -2948,7 +2976,7 @@ h3 {
   margin-left: auto;
   color: var(--accent);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -2982,7 +3010,7 @@ h3 {
   margin: 0;
   color: var(--text);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   overflow-wrap: anywhere;
   line-height: 1.25;
@@ -2991,7 +3019,7 @@ h3 {
 .bubble-network-tile dt {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -2999,7 +3027,7 @@ h3 {
 .bubble-form-field span {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -3015,7 +3043,7 @@ h3 {
   background: var(--surface);
   font: inherit;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .bubble-form-field select[multiple] {
@@ -3060,7 +3088,7 @@ h3 {
 .agent-url-row span {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -3073,7 +3101,7 @@ h3 {
 .agent-url-row code {
   color: var(--text);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .agent-command-panel {
@@ -3131,7 +3159,7 @@ h3 {
   background: var(--surface);
   color: var(--muted-2);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -3175,7 +3203,7 @@ h3 {
 .credential-chip small {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .credential-chip small {
@@ -3309,7 +3337,7 @@ h3 {
   color: var(--muted);
   background: var(--surface-2);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -3339,7 +3367,7 @@ h3 {
   display: block;
   color: var(--text);
   font-size: 14px;
-  font-weight: 900;
+  font-weight: var(--w-strong);
   overflow-wrap: anywhere;
 }
 
@@ -3366,13 +3394,13 @@ h3 {
   margin-top: 6px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 750;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
 .machine-subline a {
   color: var(--active);
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -3384,7 +3412,7 @@ h3 {
   font-size: 12px;
   /* Was 800. Table values are the thing being scanned, not the thing being
      emphasized; the column header carries the emphasis. */
-  font-weight: 500;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -3408,7 +3436,7 @@ h3 {
   color: var(--muted-2);
   background: var(--surface-2);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   list-style: none;
   cursor: pointer;
 }
@@ -3461,7 +3489,7 @@ h3 {
   flex: 0 0 auto;
   color: var(--active);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -3490,7 +3518,7 @@ h3 {
 .fleet-detail-grid dt {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -3498,7 +3526,7 @@ h3 {
   margin: 5px 0 0;
   color: var(--text);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -3518,7 +3546,7 @@ h3 {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -3559,7 +3587,7 @@ h3 {
   margin-bottom: 16px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .breadcrumb a {
@@ -3591,7 +3619,7 @@ h3 {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -3642,14 +3670,14 @@ h3 {
 .vm-detail-list dt {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .vm-detail-list dd {
   margin: 0;
   color: var(--text);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -3736,7 +3764,7 @@ h3 {
 .evidence-credential span {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 850;
+  font-weight: var(--w-med);
 }
 
 .evidence-row strong,
@@ -3744,7 +3772,7 @@ h3 {
 .evidence-credential code {
   color: var(--text);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .evidence-credential {
@@ -3802,13 +3830,13 @@ h3 {
   margin: 4px 0 0;
   color: var(--danger);
   font-size: 12px;
-  font-weight: 850;
+  font-weight: var(--w-med);
 }
 
 .evidence-credential a {
   color: var(--active);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 
@@ -3838,14 +3866,14 @@ h3 {
 .evidence-timeline span {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 850;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
 .evidence-timeline strong {
   color: var(--text);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -3872,7 +3900,7 @@ h3 {
   background: var(--surface-2);
   font: inherit;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   line-height: 1.1;
   text-align: center;
   text-decoration: none;
@@ -4015,7 +4043,7 @@ h3 {
   background: transparent;
   font: inherit;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
   cursor: pointer;
 }
 
@@ -4072,7 +4100,7 @@ h3 {
   padding: 4px 0;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .vm-console-controls-stow > summary {
@@ -4135,7 +4163,7 @@ h3 {
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .vm-action-status {
@@ -4145,7 +4173,7 @@ h3 {
   min-width: 0;
   color: var(--text);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .vm-action-status span:last-child {
@@ -4190,7 +4218,7 @@ h3 {
   min-width: 0;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .vm-console-type-row input:not([type="checkbox"]) {
@@ -4204,7 +4232,7 @@ h3 {
   border-radius: 6px;
   font: inherit;
   font-size: 12px;
-  font-weight: 850;
+  font-weight: var(--w-med);
 }
 
 .vm-console-check {
@@ -4264,13 +4292,13 @@ h3 {
 .vm-console-credential code {
   color: var(--text);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--w-med);
 }
 
 .vm-console-credential span {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 850;
+  font-weight: var(--w-med);
 }
 
 .vm-console-credential code {
@@ -4501,7 +4529,7 @@ h3 {
 .fleet-grid dt {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -4509,7 +4537,7 @@ h3 {
   margin: 7px 0 0;
   color: var(--text);
   font-size: 20px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   overflow-wrap: anywhere;
 }
 
@@ -4530,7 +4558,7 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-align: center;
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -4553,7 +4581,7 @@ h3 {
   gap: 8px;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .filter-row {
@@ -4572,7 +4600,7 @@ h3 {
 .result-count {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-align: right;
   text-transform: uppercase;
   white-space: nowrap;
@@ -4587,7 +4615,7 @@ h3 {
   color: var(--text);
   background: var(--surface);
   font: inherit;
-  font-weight: 500;
+  font-weight: var(--w-med);
 }
 
 .segmented {
@@ -4605,7 +4633,7 @@ h3 {
   background: var(--surface);
   font: inherit;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: capitalize;
   cursor: pointer;
 }
@@ -4680,7 +4708,7 @@ h3 {
   background: var(--surface);
   color: var(--text);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -4734,7 +4762,7 @@ h3 {
   background: transparent;
   color: var(--muted-2);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -4816,7 +4844,7 @@ h3 {
 
 .networks-apply__advanced > summary {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: var(--w-med);
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4900,7 +4928,7 @@ h3 {
 .fleet-bulk-bar__count {
   color: var(--text);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: var(--w-med);
 }
 
 .fleet-bulk-bar__actions {
@@ -4915,7 +4943,7 @@ h3 {
   background: var(--surface);
   color: var(--text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -5030,7 +5058,7 @@ h3 {
   background: transparent;
   color: var(--muted-2);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: var(--w-med);
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -5157,13 +5185,13 @@ h3 {
 .jobs-table th {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
 .jobs-table a {
   color: var(--active);
-  font-weight: 800;
+  font-weight: var(--w-med);
 }
 
 .jobs-table--compact {
@@ -5465,7 +5493,7 @@ h3 {
   margin: 0 0 8px;
   color: var(--accent);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--w-med);
   text-transform: uppercase;
 }
 
@@ -5515,7 +5543,7 @@ h3 {
   border-radius: 8px;
   background: var(--accent);
   color: var(--bg);
-  font-weight: 600;
+  font-weight: var(--w-med);
   text-decoration: none;
 }
 .onboarding-resume__monitor {
@@ -5535,7 +5563,7 @@ h3 {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
-  font-weight: 400;
+  font-weight: var(--w-body);
   letter-spacing: 0;
 }
 
@@ -5573,7 +5601,7 @@ h3 {
   color: var(--muted);
   font: inherit;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: var(--w-med);
   cursor: pointer;
 }
 
@@ -5621,7 +5649,7 @@ h3 {
   min-height: 26px;
   padding: 0 8px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: var(--w-med);
 }
 
 /* The Attention tile is a filter, not a read-only number. */
@@ -5629,6 +5657,7 @@ h3 {
   display: block;
   width: 100%;
   padding: 0;
+  color: inherit;
   border: 0;
   background: none;
   font: inherit;
@@ -5647,7 +5676,7 @@ h3 {
   margin-left: 8px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 400;
+  font-weight: var(--w-body);
 }
 
 .fleet-views button.is-active .fleet-views__hint { color: var(--muted-2); }
@@ -5674,7 +5703,7 @@ h3 {
   margin-right: 2px;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 500;
+  font-weight: var(--w-med);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -5694,7 +5723,7 @@ h3 {
   border-radius: 6px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: var(--w-med);
   cursor: pointer;
   list-style: none;
 }
@@ -5712,4 +5741,65 @@ h3 {
 
 @media (max-width: 1180px) {
   .vm-manage { margin-left: 0; }
+}
+
+
+/* ---------------------------------------------------------------
+   Provision: two controls that never had styles of their own
+   --------------------------------------------------------------- */
+
+/* .provision-boot-option had zero declarations, so five radios and their
+   descriptions ran together on one line. It was legible only because
+   everything used to be weight 800 and the <small> was not. */
+.provision-boot-rail {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.provision-boot-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "radio label" ". summary";
+  gap: 2px var(--sp-2);
+  align-items: baseline;
+  padding: var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.provision-boot-option:hover { border-color: var(--line); }
+
+.provision-boot-option:has(input:checked) {
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+
+.provision-boot-option input { grid-area: radio; }
+
+.provision-boot-option > span {
+  grid-area: label;
+  color: var(--text);
+  font-size: var(--fs-2);
+  font-weight: var(--w-med);
+}
+
+.provision-boot-option > small {
+  grid-area: summary;
+  color: var(--muted);
+  font-size: var(--fs-1);
+  font-weight: var(--w-body);
+}
+
+.provision-hash-capture-stack {
+  display: grid;
+  gap: var(--sp-1);
+  align-items: start;
+  justify-items: start;
+}
+
+.provision-hash-capture-stack > small {
+  color: var(--muted);
+  font-size: var(--fs-1);
+  font-weight: var(--w-body);
 }
