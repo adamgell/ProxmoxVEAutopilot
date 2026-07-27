@@ -273,6 +273,8 @@ export interface FleetMachineRow {
   readonly mdmEnrollment: string;
   readonly lifecycleLabels: readonly string[];
   readonly stale: boolean;
+  /** Known to Autopilot or to a previous sweep, but absent from Proxmox now. */
+  readonly missing?: boolean;
 }
 
 export function vmDisplayName(vm: VmFleetRow): string {
@@ -745,6 +747,32 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
     addRepresentedRow(row, representedVmids, representedIdentities);
   }
 
+  for (const vm of fleet.missing_vms) {
+    const vmid = typeof vm.vmid === "number" ? vm.vmid : undefined;
+    if (vmid !== undefined && representedVmids.has(vmid)) {
+      continue;
+    }
+    rows.push({
+      id: `missing-${String(vmid ?? vmDisplayName(vm))}`,
+      name: vmDisplayName(vm),
+      ...(vmid === undefined ? {} : { vmid }),
+      vm,
+      status: "absent",
+      serial: vm.serial,
+      ipAddress: undefined,
+      os: undefined,
+      qga: undefined,
+      phase: undefined,
+      heartbeat: undefined,
+      version: undefined,
+      method: "",
+      mdmEnrollment: "",
+      lifecycleLabels: [],
+      stale: true,
+      missing: true
+    });
+  }
+
   // Attention first, then VMID within each group. Sorting by VMID alone made
   // the page a spreadsheet you had to read end to end to find the one machine
   // that wanted something.
@@ -774,6 +802,9 @@ export function buildFleetMachineRows(fleet: VmsFleetResponse): readonly FleetMa
  * broken: a pending approval or an available agent upgrade.
  */
 export function machineAttention(row: FleetMachineRow): "bad" | "warn" | null {
+  if (row.missing) {
+    return "bad";
+  }
   const label = fleetAgentLabel(row);
   if (label === "None" || label === "Stale") {
     return "bad";
@@ -846,6 +877,9 @@ export function fleetOsVersion(row: FleetMachineRow): string {
 }
 
 export function fleetRuntimeLabel(row: FleetMachineRow): string {
+  if (row.missing) {
+    return "absent";
+  }
   return statusLabel(row.status);
 }
 

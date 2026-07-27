@@ -3710,6 +3710,9 @@ h3 {
 .screenshot-preview img {
   display: block;
   width: 100%;
+  /* Reserves the box before the bytes arrive, so a live screenshot push
+     stops reflowing everything under it. */
+  aspect-ratio: 4 / 3;
   max-height: 320px;
   object-fit: contain;
   border: 1px solid var(--line);
@@ -4342,6 +4345,7 @@ h3 {
 .vm-screenshot-image {
   display: block;
   width: 100%;
+  aspect-ratio: 4 / 3;
   max-height: 54vh;
   object-fit: contain;
   border: 1px solid var(--line-soft);
@@ -5803,3 +5807,11 @@ h3 {
   font-size: var(--fs-1);
   font-weight: var(--w-body);
 }
+
+/* A machine Autopilot knows about that Proxmox no longer has. It was counted
+   in two separate places and listed in none. */
+.fleet-machine-table tbody tr:has(.machine-mark--gone) .machine-name {
+  color: var(--muted-2);
+}
+
+.machine-mark--gone { background: var(--bad); }

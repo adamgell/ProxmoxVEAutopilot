@@ -1536,6 +1536,24 @@ describe("App", () => {
     expect(promptSpy).not.toHaveBeenCalled();
   });
 
+  test("lists VMs Autopilot knows about that Proxmox no longer has", async () => {
+    mockFetch({
+      ...dashboardResponses,
+      "/api/vms/fleet": {
+        ...(dashboardResponses["/api/vms/fleet"] as Record<string, unknown>),
+        missing_vms: [{ vmid: 178, name: "ring0ivy23-04", serial: "Gell-880C4" }]
+      }
+    });
+
+    renderRoute("/react/vms");
+
+    // missing_vms was read in exactly two places, both of which only counted
+    // it. A machine you are told about twice and can never click is not a
+    // worklist.
+    expect(await screen.findByText("ring0ivy23-04")).toBeInTheDocument();
+    expect(screen.getByText("absent")).toBeInTheDocument();
+  });
+
   test("the fleet agent dialog traps focus and closes on Escape", async () => {
     mockFetch(dashboardResponses);
 
