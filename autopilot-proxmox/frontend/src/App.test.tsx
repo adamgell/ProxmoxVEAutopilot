@@ -1011,12 +1011,12 @@ describe("App", () => {
       expect(screen.getAllByText("WrkGrp-525570B6").length).toBeGreaterThan(0);
     });
     expect(screen.getByRole("table", { name: "Fleet machines" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "VM Workstation Fleets" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Critical Infrastructure" })).toBeInTheDocument();
+    // Topology is a sibling view now, not a slab above the table.
+    expect(screen.queryByRole("heading", { name: "VM Workstation Fleets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Critical Infrastructure" })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getAllByText("Upgrade available").length).toBeGreaterThan(0);
     });
-    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
     // The metric strip carries four tiles, not ten. The counts that lost a
     // tile stay reachable through the fleet filter.
     const metrics = within(screen.getByRole("region", { name: "Fleet metrics" }));
@@ -1027,12 +1027,7 @@ describe("App", () => {
     for (const retired of ["Agents needing upgrade", "Stale agents", "Approvals", "Pairing", "Missing"]) {
       expect(metrics.queryByText(retired)).not.toBeInTheDocument();
     }
-    expect(screen.getByRole("heading", { name: "Connected Services" })).toBeInTheDocument();
-    expect(screen.getAllByText("ACME Lab").length).toBeGreaterThan(0);
-    expect(screen.getByText("domain controller")).toBeInTheDocument();
-    expect(screen.getByText("Entra ID")).toBeInTheDocument();
-    expect(screen.getAllByText("ACME-DC01 (VM 130)").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("ACME Domain Join").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { name: "Connected Services" })).not.toBeInTheDocument();
     // Eight columns. VMID, IP address, OS and OS version moved into the
     // subline under the device name; all four stay filterable.
     for (const kept of ["Device name", "Runtime", "Agent", "Phase", "Heartbeat", "Bubble"]) {
@@ -1043,7 +1038,7 @@ describe("App", () => {
     }
     expect(screen.getByText(/#108/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "WrkGrp-525570B6" })).toHaveAttribute("href", "/react/vms/108");
-    expect(screen.getByRole("button", { name: "New bubble" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New bubble" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tag VM 108" })).toBeInTheDocument();
     expect(screen.getByText("ACME Lab / workstation")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "AutopilotAgent" })).not.toBeInTheDocument();
@@ -1069,7 +1064,7 @@ describe("App", () => {
       }
     });
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms?view=topology");
 
     await screen.findByText("domain controller");
     fireEvent.click(await screen.findByRole("button", { name: "Add infra VM" }));
@@ -1125,7 +1120,7 @@ describe("App", () => {
       }
     });
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms?view=topology");
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit infra ACME-DC01" }));
     fireEvent.change(screen.getByLabelText("Role for infra ACME-DC01"), { target: { value: "dns_server" } });
@@ -1185,7 +1180,7 @@ describe("App", () => {
       }
     });
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms?view=topology");
 
     await screen.findByText("Entra ID");
     fireEvent.click(await screen.findByRole("button", { name: "Add service" }));
@@ -1302,7 +1297,7 @@ describe("App", () => {
     });
     const promptSpy = vi.spyOn(window, "prompt");
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms?view=topology");
 
     fireEvent.click(await screen.findByRole("button", { name: "New bubble" }));
     fireEvent.change(screen.getByLabelText("Bubble name"), { target: { value: "LAB 3" } });
@@ -1364,7 +1359,7 @@ describe("App", () => {
     });
     const promptSpy = vi.spyOn(window, "prompt");
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms?view=topology");
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit bubble ACME Lab" }));
     fireEvent.change(screen.getByLabelText("Bubble name"), { target: { value: "LAB 3" } });
@@ -1414,7 +1409,7 @@ describe("App", () => {
     });
     const promptSpy = vi.spyOn(window, "prompt");
 
-    renderRoute("/react/vms");
+    renderRoute("/react/vms?view=topology");
 
     fireEvent.click(await screen.findByRole("button", { name: "Delete bubble ACME Lab" }));
     expect(screen.getByText("Delete ACME Lab?")).toBeInTheDocument();

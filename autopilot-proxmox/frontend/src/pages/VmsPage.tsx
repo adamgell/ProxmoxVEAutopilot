@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { fetchJson, patchJson, postJson } from "../apiClient";
+import { fetchJson, postJson } from "../apiClient";
 import { PageFrame } from "../components/Shell";
 import { Metric, Panel } from "../components/ui";
 import { VmEvidencePanels } from "../components/VmEvidencePanels";
@@ -96,6 +96,8 @@ type BubbleAssignment = {
 };
 
 type ActionStatusTone = "info" | "bad";
+
+type FleetView = "machines" | "topology";
 
 type ActionStatusLink = {
   readonly href: string;
@@ -341,46 +343,6 @@ type AgentFormDraft = {
   agentVersion: string;
 };
 
-type CredentialDraftType = "domain_join" | "local_admin";
-
-type CredentialDraft = {
-  mode: "create" | "edit";
-  id: number | null;
-  name: string;
-  type: CredentialDraftType;
-  domain_fqdn: string;
-  username: string;
-  password: string;
-  ou_hint: string;
-  passwordPlaceholder: boolean;
-};
-
-const CREDENTIAL_TYPE_OPTIONS: readonly { readonly value: CredentialDraftType; readonly label: string }[] = [
-  { value: "domain_join", label: "Domain join (forest admin)" },
-  { value: "local_admin", label: "Local admin" }
-];
-
-function blankCredentialDraft(mode: "create" | "edit", existing?: CredentialSummary): CredentialDraft {
-  const seedType: CredentialDraftType =
-    existing?.type === "local_admin" ? "local_admin" : "domain_join";
-  return {
-    mode,
-    id: existing?.id ?? null,
-    name: existing?.name ?? "",
-    type: seedType,
-    domain_fqdn: "",
-    username: "",
-    password: "",
-    ou_hint: "",
-    passwordPlaceholder: mode === "edit"
-  };
-}
-
-function credentialPayloadString(payload: Readonly<Record<string, unknown>>, key: string): string {
-  const value = payload[key];
-  return typeof value === "string" ? value : "";
-}
-
 type MachineTagDraft = {
   readonly rowId: string;
   readonly bubbleId: string;
@@ -553,6 +515,13 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [fleet, setFleet] = useState<VmsFleetResponse>(emptyFleet);
   const [filter, setFilter] = useState("");
   const [preset, setPreset] = useState<FleetPreset>("all");
+  const [view, setView] = useState<FleetView>(() =>
+    new URLSearchParams(window.location.search).get("view") === "topology" ? "topology" : "machines"
+  );
+  const selectView = useCallback((next: FleetView) => {
+    setView(next);
+    window.history.replaceState({}, "", `${window.location.pathname}${next === "machines" ? "" : `?view=${next}`}`);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionStatus, setActionStatusMessage] = useState("");
@@ -580,8 +549,6 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [credentialSummaries, setCredentialSummaries] = useState<readonly CredentialSummary[]>([]);
-  const [credentialsError, setCredentialsError] = useState("");
-  const [credentialDraft, setCredentialDraft] = useState<CredentialDraft | null>(null);
   const [bubbleDraftMode, setBubbleDraftMode] = useState<BubbleDraftMode | null>(null);
   const [bubbleDraftId, setBubbleDraftId] = useState<string | null>(null);
   const [bubbleDraft, setBubbleDraft] = useState<BubbleFormValues>(blankBubbleForm);
@@ -605,20 +572,30 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       const data = await fetchJson<VmsFleetResponse>("/api/vms/fleet");
       setFleet(data);
       setError("");
-      try {
-        const credentials = await fetchJson<CredentialSummary[]>("/api/credentials");
-        setCredentialSummaries(credentials);
-        setCredentialsError("");
-      } catch (err) {
-        setCredentialSummaries([]);
-        setCredentialsError(err instanceof Error ? err.message : "Failed to load credentials");
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load fleet");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // Only the topology view's service editor reads these, so the detail route
+  // and the default machines view stop paying for the request.
+  useEffect(() => {
+    if (view !== "topology" || detailVmid !== null) {
+      return;
+    }
+    void (async () => {
+      try {
+        const credentials = await fetchJson<CredentialSummary[]>("/api/credentials");
+        setCredentialSummaries(credentials);
+      } catch {
+        // The service editor's picker degrades to an empty list; the
+        // credential inventory itself lives at /react/credentials.
+        setCredentialSummaries([]);
+      }
+    })();
+  }, [detailVmid, view]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1547,146 +1524,6 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setAgentFormDraft(null);
   }, []);
 
-  const reloadCredentials = useCallback(async () => {
-    try {
-      const credentials = await fetchJson<CredentialSummary[]>("/api/credentials");
-      setCredentialSummaries(credentials);
-      setCredentialsError("");
-    } catch (err) {
-      setCredentialsError(err instanceof Error ? err.message : "Failed to reload credentials");
-    }
-  }, []);
-
-  const beginCreateCredential = useCallback(() => {
-    setCredentialDraft(blankCredentialDraft("create"));
-  }, []);
-
-  const beginEditCredential = useCallback(async (cred: CredentialSummary) => {
-    if (cred.type !== "domain_join" && cred.type !== "local_admin") {
-      window.location.href = `/credentials/${String(cred.id)}/edit`;
-      return;
-    }
-    try {
-      const full = await fetchJson<{
-        readonly id: number;
-        readonly name: string;
-        readonly type: string;
-        readonly payload?: Readonly<Record<string, unknown>>;
-      }>(`/api/credentials/${String(cred.id)}`);
-      const payload = full.payload ?? {};
-      const draft: CredentialDraft = {
-        mode: "edit",
-        id: full.id,
-        name: full.name,
-        type: full.type === "local_admin" ? "local_admin" : "domain_join",
-        domain_fqdn: credentialPayloadString(payload, "domain_fqdn"),
-        username: credentialPayloadString(payload, "username"),
-        password: "",
-        ou_hint: credentialPayloadString(payload, "ou_hint"),
-        passwordPlaceholder: true
-      };
-      setCredentialDraft(draft);
-    } catch (err) {
-      setActionStatus(err instanceof Error ? err.message : "Failed to load credential", "bad");
-    }
-  }, [setActionStatus]);
-
-  const updateCredentialDraft = useCallback(
-    <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => {
-      setCredentialDraft((current) => (current ? { ...current, [field]: value } : current));
-    },
-    []
-  );
-
-  const cancelCredentialDraft = useCallback(() => {
-    setCredentialDraft(null);
-  }, []);
-
-  const submitCredentialDraft = useCallback(async () => {
-    const draft = credentialDraft;
-    if (!draft) {
-      return;
-    }
-    const name = draft.name.trim();
-    if (!name) {
-      setActionStatus("Credential name is required", "bad");
-      return;
-    }
-    if (draft.mode === "create" && !draft.password) {
-      setActionStatus("Password is required for new credentials", "bad");
-      return;
-    }
-    const buildPayload = (): Record<string, unknown> | null => {
-      if (draft.type === "domain_join") {
-        const payload: Record<string, unknown> = {
-          domain_fqdn: draft.domain_fqdn.trim(),
-          username: draft.username.trim(),
-          ou_hint: draft.ou_hint.trim()
-        };
-        if (draft.password) {
-          payload.password = draft.password;
-        }
-        return payload;
-      }
-      const payload: Record<string, unknown> = {
-        username: draft.username.trim()
-      };
-      if (draft.password) {
-        payload.password = draft.password;
-      }
-      return payload;
-    };
-    const payload = buildPayload();
-    if (!payload) {
-      return;
-    }
-    if (draft.mode === "create") {
-      // POST requires password; we already enforced that above.
-      const ok = await runAction(`Add credential ${name}`, () =>
-        postJson("/api/credentials", {
-          name,
-          type: draft.type,
-          payload: { ...payload, password: draft.password }
-        })
-      );
-      if (ok) {
-        setCredentialDraft(null);
-        await reloadCredentials();
-      }
-      return;
-    }
-    // edit: PATCH; omit password when the user didn't enter a new one so
-    // the existing encrypted value stays put.
-    if (draft.id === null) {
-      setActionStatus("Cannot edit credential without an id", "bad");
-      return;
-    }
-    const patchBody: Record<string, unknown> = { name };
-    if (Object.keys(payload).length > 0 || draft.password) {
-      patchBody.payload = payload;
-    }
-    const ok = await runAction(`Update credential ${name}`, () =>
-      patchJson(`/api/credentials/${String(draft.id)}`, patchBody)
-    );
-    if (ok) {
-      setCredentialDraft(null);
-      await reloadCredentials();
-    }
-  }, [credentialDraft, reloadCredentials, runAction, setActionStatus]);
-
-  const deleteCredential = useCallback(async (cred: CredentialSummary) => {
-    const confirmMessage = `Delete credential ${cred.name}? This cannot be undone.`;
-    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) {
-      return;
-    }
-    const ok = await runAction(`Delete credential ${cred.name}`, () =>
-      deleteJson(`/api/credentials/${String(cred.id)}`)
-    );
-    if (ok) {
-      await reloadCredentials();
-    }
-  }, [reloadCredentials, runAction]);
-
   const bulkDeleteSelected = useCallback(async () => {
     if (!selectedAgentIds.size) {
       return;
@@ -1828,9 +1665,30 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         <Metric label="Agents" value={String(counts.agents)} />
       </section>
 
-      {/* The machine table is what this page is for, so it renders first.
-          Bubbles, infrastructure, services and credentials are configuration
-          jobs, not triage jobs, and now sit behind a disclosure below it. */}
+      {/* The machine table is what this page is for. Bubbles, infrastructure
+          and services are configuration jobs on a sibling view, addressable as
+          ?view=topology so the state survives a reload or a shared link. */}
+      <div className="segmented fleet-views" role="group" aria-label="Fleet views">
+        <button
+          type="button"
+          className={view === "machines" ? "is-active" : ""}
+          aria-pressed={view === "machines"}
+          onClick={() => { selectView("machines"); }}
+        >
+          Machines
+        </button>
+        <button
+          type="button"
+          className={view === "topology" ? "is-active" : ""}
+          aria-pressed={view === "topology"}
+          onClick={() => { selectView("topology"); }}
+        >
+          Topology
+          <span className="fleet-views__hint">{topologySummary}</span>
+        </button>
+      </div>
+
+      {view === "machines" ? (
       <section className="fleet-lanes" aria-label="Fleet lanes">
         <div className="fleet-primary-stack">
           <FleetMachineTable
@@ -1862,20 +1720,13 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           />
         </div>
       </section>
+      ) : null}
 
-      <details className="fleet-stow">
-        <summary>
-          <span className="fleet-stow__label">Bubbles, infrastructure and services</span>
-          <span className="fleet-stow__hint">{topologySummary}</span>
-        </summary>
+      {view === "topology" ? (
         <BubbleTopologyOverview
         topology={bubbleTopology}
         infraVmCandidates={infraVmCandidates}
         credentials={credentialSummaries}
-        credentialsError={credentialsError}
-        onCreateCredential={beginCreateCredential}
-        onEditCredential={(cred) => { void beginEditCredential(cred); }}
-        onDeleteCredential={(cred) => { void deleteCredential(cred); }}
         onCreateBubble={createBubble}
         onEditBubble={editBubble}
         onRequestDeleteBubble={requestDeleteBubble}
@@ -1926,7 +1777,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         onConfirmDeleteService={deleteService}
           onCancelDeleteService={cancelDeleteService}
         />
-      </details>
+      ) : null}
 
       {agentFormDraft ? (
         <FleetAgentFormModal
@@ -1939,14 +1790,6 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         />
       ) : null}
 
-      {credentialDraft ? (
-        <CredentialFormModal
-          draft={credentialDraft}
-          onChange={updateCredentialDraft}
-          onSubmit={() => { void submitCredentialDraft(); }}
-          onCancel={cancelCredentialDraft}
-        />
-      ) : null}
     </PageFrame>
   );
 }
@@ -2228,124 +2071,6 @@ function FleetAgentFormModal({
             </button>
             <button type="submit" className="utility-button">
               {draft.mode === "create" ? "Add agent" : "Save changes"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function CredentialFormModal({
-  draft,
-  onChange,
-  onSubmit,
-  onCancel
-}: {
-  readonly draft: CredentialDraft;
-  readonly onChange: <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => void;
-  readonly onSubmit: () => void;
-  readonly onCancel: () => void;
-}) {
-  const title =
-    draft.mode === "create"
-      ? "New credential"
-      : `Edit credential ${draft.name}`;
-  const isDomainJoin = draft.type === "domain_join";
-  return (
-    <div className="fleet-modal-backdrop" role="presentation" onClick={onCancel}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="credential-form-title"
-        className="fleet-modal"
-        onClick={(event) => { event.stopPropagation(); }}
-      >
-        <header className="fleet-modal__header">
-          <h3 id="credential-form-title">{title}</h3>
-          <button type="button" className="fleet-modal__close" onClick={onCancel} aria-label="Close">
-            x
-          </button>
-        </header>
-        <form
-          className="fleet-modal__body"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit();
-          }}
-        >
-          <label className="cloudosd-field">
-            <span>Name *</span>
-            <input
-              value={draft.name}
-              onChange={(event) => { onChange("name", event.currentTarget.value); }}
-              placeholder="acme-domain-join"
-              required
-              aria-label="Credential name"
-            />
-          </label>
-          <label className="cloudosd-field">
-            <span>Type *</span>
-            <select
-              value={draft.type}
-              onChange={(event) => { onChange("type", event.currentTarget.value as CredentialDraftType); }}
-              disabled={draft.mode === "edit"}
-              aria-label="Credential type"
-            >
-              {CREDENTIAL_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          {isDomainJoin ? (
-            <label className="cloudosd-field">
-              <span>Domain FQDN</span>
-              <input
-                value={draft.domain_fqdn}
-                onChange={(event) => { onChange("domain_fqdn", event.currentTarget.value); }}
-                placeholder="corp.example.com"
-                aria-label="Domain FQDN"
-              />
-            </label>
-          ) : null}
-          <label className="cloudosd-field">
-            <span>Username</span>
-            <input
-              value={draft.username}
-              onChange={(event) => { onChange("username", event.currentTarget.value); }}
-              placeholder={isDomainJoin ? "CORP\\joinuser" : "Administrator"}
-              aria-label="Username"
-            />
-          </label>
-          <label className="cloudosd-field">
-            <span>Password {draft.mode === "create" ? "*" : "(leave blank to keep current)"}</span>
-            <input
-              type="password"
-              value={draft.password}
-              onChange={(event) => { onChange("password", event.currentTarget.value); }}
-              placeholder={draft.passwordPlaceholder ? "Unchanged" : ""}
-              autoComplete="new-password"
-              required={draft.mode === "create"}
-              aria-label="Password"
-            />
-          </label>
-          {isDomainJoin ? (
-            <label className="cloudosd-field">
-              <span>OU hint</span>
-              <input
-                value={draft.ou_hint}
-                onChange={(event) => { onChange("ou_hint", event.currentTarget.value); }}
-                placeholder="OU=Workstations,DC=corp,DC=example,DC=com"
-                aria-label="OU hint"
-              />
-            </label>
-          ) : null}
-          <div className="fleet-modal__actions">
-            <button type="button" className="fleet-modal__secondary" onClick={onCancel}>
-              Cancel
-            </button>
-            <button type="submit" className="utility-button">
-              {draft.mode === "create" ? "Create credential" : "Save changes"}
             </button>
           </div>
         </form>
@@ -2958,10 +2683,6 @@ function BubbleTopologyOverview({
   topology,
   infraVmCandidates,
   credentials,
-  credentialsError,
-  onCreateCredential,
-  onEditCredential,
-  onDeleteCredential,
   onCreateBubble,
   onEditBubble,
   onRequestDeleteBubble,
@@ -3015,10 +2736,6 @@ function BubbleTopologyOverview({
   readonly topology: LabBubbleTopology;
   readonly infraVmCandidates: readonly VmFleetRow[];
   readonly credentials: readonly CredentialSummary[];
-  readonly credentialsError: string;
-  readonly onCreateCredential: () => void;
-  readonly onEditCredential: (cred: CredentialSummary) => void;
-  readonly onDeleteCredential: (cred: CredentialSummary) => void;
   readonly onCreateBubble: () => void;
   readonly onEditBubble: (bubble: LabBubble) => void;
   readonly onRequestDeleteBubble: (bubble: LabBubble) => void;
@@ -3359,13 +3076,11 @@ function BubbleTopologyOverview({
               })}
             </div>
           ) : <p className="empty">No connected services linked yet.</p>}
-          <CredentialInventory
-            credentials={credentials}
-            error={credentialsError}
-            onCreate={onCreateCredential}
-            onEdit={onEditCredential}
-            onDelete={onDeleteCredential}
-          />
+          {/* Credential CRUD was settings-grade work nested two levels inside
+              a panel about services. It has its own registered route. */}
+          <p className="empty">
+            Credentials live in <a href="/react/credentials">Credentials</a>.
+          </p>
         </Panel>
       </div>
     </section>
@@ -3619,64 +3334,3 @@ function ServiceEditor({
   );
 }
 
-function CredentialInventory({
-  credentials,
-  error,
-  onCreate,
-  onEdit,
-  onDelete
-}: {
-  readonly credentials: readonly CredentialSummary[];
-  readonly error: string;
-  readonly onCreate: () => void;
-  readonly onEdit: (cred: CredentialSummary) => void;
-  readonly onDelete: (cred: CredentialSummary) => void;
-}) {
-  return (
-    <section className="credential-inventory" aria-label="Credential inventory">
-      <header className="credential-inventory__header">
-        <h3>Credential inventory</h3>
-        <button
-          type="button"
-          className="fleet-action fleet-action--command"
-          onClick={onCreate}
-        >
-          <span>New credential</span>
-        </button>
-      </header>
-      {error ? <p className="notice" role="status">{error}</p> : null}
-      {credentials.length ? (
-        <div className="credential-list">
-          {credentials.map((credential) => {
-            const fileBased = credential.type === "odj_blob" || credential.type === "mde_onboarding";
-            return (
-              <article key={credential.id} className="credential-chip">
-                <strong>{credential.name}</strong>
-                <span>{roleLabel(credential.type)}</span>
-                <small>{formatShortDateTime(credential.updated_at ?? credential.created_at)}</small>
-                <div className="credential-chip__actions">
-                  <button
-                    type="button"
-                    className="credential-chip__action"
-                    onClick={() => { onEdit(credential); }}
-                    aria-label={`Edit credential ${credential.name}`}
-                  >
-                    {fileBased ? "Edit (file)" : "Edit"}
-                  </button>
-                  <button
-                    type="button"
-                    className="credential-chip__action credential-chip__action--danger"
-                    onClick={() => { onDelete(credential); }}
-                    aria-label={`Delete credential ${credential.name}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      ) : error ? null : <p className="empty">No credential summaries found.</p>}
-    </section>
-  );
-}

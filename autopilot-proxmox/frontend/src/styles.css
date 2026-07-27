@@ -3239,61 +3239,14 @@ h3 {
 /* Collapsed home for bubbles, infrastructure, services and credentials.
    These are configuration jobs; they used to sit above the machine table
    and push it two to three screens down. */
-.fleet-stow {
-  margin-top: 28px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
 
-.fleet-stow > summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  list-style: none;
-  padding: 4px 0;
-}
 
-.fleet-stow > summary::-webkit-details-marker {
-  display: none;
-}
 
-.fleet-stow > summary::before {
-  content: "";
-  width: 0;
-  height: 0;
-  border-left: 5px solid var(--muted);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  flex: 0 0 auto;
-}
 
-.fleet-stow[open] > summary::before {
-  transform: rotate(90deg);
-}
 
-.fleet-stow__label {
-  color: var(--muted-2);
-  font-size: 15px;
-  font-weight: 800;
-}
 
-.fleet-stow > summary:hover .fleet-stow__label {
-  color: var(--text);
-}
 
-.fleet-stow__hint {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
 
-.fleet-stow > summary:focus-visible {
-  outline: 2px solid var(--active);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
 
 /* The filter now sits inside the Fleet machines panel, above its table.
    Scoped to that panel so it does not add margin to the six other pages
@@ -5685,3 +5638,16 @@ h3 {
 
 .metric-button .metric { height: 100%; }
 .metric-button:hover .metric strong { text-decoration: underline; text-underline-offset: 4px; }
+
+.fleet-views {
+  margin: 0 0 18px;
+}
+
+.fleet-views__hint {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.fleet-views button.is-active .fleet-views__hint { color: var(--muted-2); }
