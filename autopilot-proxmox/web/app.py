@@ -8179,6 +8179,118 @@ async def bulk_delete_agent_records(request: Request):
     )
 
 
+AGENT_SERVICE_RESTART_PS = """
+$ErrorActionPreference = 'Stop'
+$svc = Get-Service -Name 'AutopilotAgent' -ErrorAction SilentlyContinue
+if (-not $svc) { Write-Output 'service_missing'; exit 2 }
+Restart-Service -Name 'AutopilotAgent' -Force
+Write-Output 'restarted'
+""".strip()
+
+
+def _resolve_vm_node(vmid: int) -> str | None:
+    """Cluster-wide node lookup for a VMID, mirroring the monitor's resolver."""
+    try:
+        rows = _proxmox_api("/cluster/resources?type=vm") or []
+    except Exception:
+        return None
+    for row in rows:
+        try:
+            if int(row.get("vmid") or 0) == int(vmid):
+                return row.get("node")
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+@app.post("/api/agents/bulk-update")
+async def bulk_update_agent_software(request: Request):
+    """Force the AutopilotAgent service to restart on each selected agent's VM.
+
+    Body: { "agent_ids": ["<id>", ...] }
+
+    The agent already self-upgrades: Worker.cs calls
+    AgentUpdateService.CheckAndApplyOnceAsync after every heartbeat, so a
+    healthy agent picks up a newly published MSI within one heartbeat
+    interval (30s by default) with no help from us. What it cannot do is
+    upgrade itself when its service is wedged and no longer heartbeating,
+    which is exactly the "Stale" state the fleet table shows most often.
+
+    Restarting the service through the guest agent forces an immediate
+    heartbeat and therefore an immediate update-check, which both un-wedges a
+    stale agent and pulls a pending upgrade forward. Per-agent outcomes are
+    reported so one unreachable VM does not abort the batch.
+    """
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
+        else:
+            body = {}
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        raw_ids = body.get("agent_ids")
+        if not isinstance(raw_ids, list):
+            raise ValueError("agent_ids must be a list")
+        agent_ids: list[str] = []
+        for value in raw_ids:
+            sanitized = _sanitize_input(_optional_text(value))
+            if sanitized:
+                agent_ids.append(sanitized)
+        agent_ids = list(dict.fromkeys(agent_ids))
+        if not agent_ids:
+            raise ValueError("agent_ids must include at least one non-empty id")
+        from web import db_pg
+
+        results: list[dict[str, object]] = []
+        restarted = 0
+        with db_pg.connection(_database_url()) as conn:
+            agent_telemetry_pg.init(conn)
+            for agent_id in agent_ids:
+                entry: dict[str, object] = {"agent_id": agent_id, "restarted": False}
+                try:
+                    device = agent_telemetry_pg.get_device(conn, agent_id)
+                    if not device:
+                        entry["error"] = "agent not found"
+                        results.append(entry)
+                        continue
+                    raw_vmid = device.get("vmid")
+                    vmid = int(raw_vmid) if raw_vmid not in (None, "") else None
+                    if vmid is None:
+                        entry["error"] = "agent has no VMID, cannot reach its guest"
+                        results.append(entry)
+                        continue
+                    entry["vmid"] = vmid
+                    node = _resolve_vm_node(vmid)
+                    if not node:
+                        entry["error"] = f"no cluster node hosts VM {vmid}"
+                        results.append(entry)
+                        continue
+                    entry["node"] = node
+                    status = _guest_exec_ps_status(
+                        node, vmid, AGENT_SERVICE_RESTART_PS, timeout_s=30
+                    )
+                    if status.get("ok"):
+                        entry["restarted"] = True
+                        restarted += 1
+                    else:
+                        entry["error"] = status.get("error") or "guest exec failed"
+                except Exception as inner_exc:
+                    entry["error"] = str(inner_exc)
+                results.append(entry)
+    except Exception as exc:
+        return _action_error_response(request, message=f"Bulk agent update failed: {exc}")
+    return _action_response(
+        request,
+        payload={
+            "ok": True,
+            "action": "bulk-update",
+            "restarted": restarted,
+            "requested": len(agent_ids),
+            "results": results,
+        },
+    )
+
+
 @app.post("/api/agent-approvals/{approval_id}/approve")
 async def approve_agent_bootstrap(approval_id: str, request: Request):
     agent_token = None

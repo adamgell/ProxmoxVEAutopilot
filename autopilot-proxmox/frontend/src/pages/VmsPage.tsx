@@ -148,6 +148,17 @@ type ActionStatusTone = "info" | "bad";
 
 type FleetView = "machines" | "topology";
 
+interface BulkAgentUpdateResponse {
+  readonly ok?: boolean;
+  readonly restarted?: number;
+  readonly requested?: number;
+  readonly results?: readonly {
+    readonly agent_id: string;
+    readonly restarted: boolean;
+    readonly error?: string;
+  }[];
+}
+
 type ActionStatusLink = {
   readonly href: string;
   readonly label: string;
@@ -1290,6 +1301,30 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     setAgentFormDraft(null);
   }, []);
 
+  const bulkUpdateSelected = useCallback(async () => {
+    if (!selectedAgentIds.size) {
+      return;
+    }
+    const ids = [...selectedAgentIds];
+    const count = String(ids.length);
+    const noun = `agent${ids.length === 1 ? "" : "s"}`;
+    // Restarting the service forces an immediate heartbeat, and the agent
+    // runs its update-check after every heartbeat. Confirmed because it
+    // briefly interrupts anything the agent is mid-way through.
+    const confirmText = `Restart the AutopilotAgent service on ${count} ${noun}? `
+      + "This forces an immediate update check and interrupts any run in progress.";
+    if (typeof window !== "undefined" && !window.confirm(confirmText)) {
+      return;
+    }
+    const ok = await runAction(
+      `Update ${count} ${noun}`,
+      () => postJson<BulkAgentUpdateResponse>("/api/agents/bulk-update", { agent_ids: ids })
+    );
+    if (ok) {
+      clearSelection();
+    }
+  }, [clearSelection, runAction, selectedAgentIds]);
+
   const bulkDeleteSelected = useCallback(async () => {
     if (!selectedAgentIds.size) {
       return;
@@ -1481,6 +1516,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             allSelected={allSelected}
             someSelected={someSelected}
             onBulkDelete={() => { void bulkDeleteSelected(); }}
+            onBulkUpdate={() => { void bulkUpdateSelected(); }}
             onClearSelection={clearSelection}
             onEditAgent={updateAgent}
           />
@@ -1576,6 +1612,7 @@ function FleetMachineTable({
   allSelected,
   someSelected,
   onBulkDelete,
+  onBulkUpdate,
   onClearSelection,
   onEditAgent,
   totalCount,
@@ -1602,6 +1639,7 @@ function FleetMachineTable({
   readonly allSelected: boolean;
   readonly someSelected: boolean;
   readonly onBulkDelete: () => void;
+  readonly onBulkUpdate: () => void;
   readonly onClearSelection: () => void;
   readonly onEditAgent: (agent: AgentFleetRow) => void;
   readonly totalCount: number;
@@ -1665,6 +1703,9 @@ function FleetMachineTable({
             {selectionCount} agent{selectionCount === 1 ? "" : "s"} selected
           </span>
           <div className="fleet-bulk-bar__actions">
+            <button type="button" className="fleet-bulk-bar__action" onClick={onBulkUpdate}>
+              Update agent
+            </button>
             <button
               type="button"
               className="fleet-bulk-bar__action fleet-bulk-bar__action--danger"

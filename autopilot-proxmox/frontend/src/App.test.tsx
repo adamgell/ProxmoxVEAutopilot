@@ -1554,6 +1554,45 @@ describe("App", () => {
     expect(screen.getByText("absent")).toBeInTheDocument();
   });
 
+  test("bulk-updates the selected agents from the fleet checkbox bar", async () => {
+    const fetchMock = mockFetch({
+      ...dashboardResponses,
+      "/api/agents/bulk-update": { ok: true, action: "bulk-update", restarted: 1, requested: 1, results: [] }
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderRoute("/react/vms");
+
+    const boxes = await screen.findAllByRole("checkbox", { name: /^Select agent / });
+    fireEvent.click(boxes[0] as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Update agent" }));
+
+    // Confirmed because restarting the service interrupts whatever the agent
+    // is mid-way through.
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/agents/bulk-update",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    confirmSpy.mockRestore();
+  });
+
+  test("does not call bulk-update when the confirmation is declined", async () => {
+    const fetchMock = mockFetch(dashboardResponses);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderRoute("/react/vms");
+
+    const boxes = await screen.findAllByRole("checkbox", { name: /^Select agent / });
+    fireEvent.click(boxes[0] as HTMLElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Update agent" }));
+
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/agents/bulk-update", expect.anything());
+    confirmSpy.mockRestore();
+  });
+
   test("the fleet agent dialog traps focus and closes on Escape", async () => {
     mockFetch(dashboardResponses);
 
