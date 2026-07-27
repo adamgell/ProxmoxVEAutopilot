@@ -418,19 +418,33 @@ function VmConsolePanel({ vm, evidence }: { readonly vm: VmFleetRow; readonly ev
 
   return (
     <section className="vm-console-panel" aria-label={`VM ${String(vm.vmid)} console`}>
-      <div className="vm-action-status">
+      {/* Children are keyed so React moves the real DOM node rather than
+          reusing a sibling by position. The screen div holds the noVNC mount
+          target, so reattaching its ref to a different node would tear down
+          the live canvas. */}
+      <div key="status" className="vm-action-status">
         <span className={`status status--${consoleState.status === "open" ? "good" : consoleState.status === "failed" ? "bad" : "active"}`}>
           {consoleState.status}
         </span>
         <span>{consoleState.message}</span>
       </div>
-      <div className="vm-console-toolbar">
+      {/* The picture of the machine is what this panel is for, so it sits
+          directly under the status line instead of beneath ~390px of chrome. */}
+      <div
+        key="screen"
+        ref={screenRef}
+        className="vm-console-screen"
+        aria-label={`VM ${String(vm.vmid)} console screen`}
+      />
+      <div key="toolbar" className="vm-console-toolbar">
         <button type="button" className="fleet-action" onClick={() => { rfbRef.current?.focus(); }}>Focus</button>
         <button type="button" className="fleet-action" onClick={() => { rfbRef.current?.sendCtrlAltDel(); }}>CAD</button>
         <button type="button" className="fleet-action" onClick={reconnect}>Reconnect</button>
         <a className="action-link" href={`/vms/${String(vm.vmid)}/console`}>Open legacy console</a>
       </div>
-      <div className="vm-console-controls" aria-label={`VM ${String(vm.vmid)} console controls`}>
+      <details key="controls" className="vm-console-controls-stow">
+        <summary>Input, keys, power and credentials</summary>
+        <div className="vm-console-controls" aria-label={`VM ${String(vm.vmid)} console controls`}>
         <div className="vm-action-status vm-action-status--control">
           <span className={`status status--${controlState.status === "ready" ? "good" : controlState.status === "failed" ? "bad" : controlState.status === "working" ? "active" : "neutral"}`}>
             {controlState.status}
@@ -519,8 +533,8 @@ function VmConsolePanel({ vm, evidence }: { readonly vm: VmFleetRow; readonly ev
             <p className="empty">No saved credentials for this VM.</p>
           )}
         </div>
-      </div>
-      <div ref={screenRef} className="vm-console-screen" aria-label={`VM ${String(vm.vmid)} console screen`} />
+        </div>
+      </details>
     </section>
   );
 }
@@ -633,7 +647,7 @@ function VmScreenshotPanel({
           {imageUrl ? "Refresh" : "Capture"}
         </button>
       </header>
-      {isRequesting ? <div className="progress progress--compact" aria-label="Screenshot loading"><span /></div> : null}
+      {isRequesting ? <div className="progress progress--compact" role="progressbar" aria-label="Screenshot loading"><span /></div> : null}
       <div className="vm-action-status">
         <span className={`status status--${screenshotTone(screenshot.status)}`}>{relevant ? screenshot.status : "idle"}</span>
         <span>{message}</span>

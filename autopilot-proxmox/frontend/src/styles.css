@@ -1252,8 +1252,23 @@ h3 {
   padding: 24px 24px 42px;
 }
 
+/* Shell.tsx renders the skip link's target as <main tabIndex={-1}>, so
+   cancelling the outline here cancelled it on the exact element the skip
+   link moves focus to. Programmatic focus is silent; keyboard focus is not. */
 .workspace__content:focus {
   outline: none;
+}
+
+.workspace__content:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: -2px;
+}
+
+/* One focus indicator for every interactive family. Ten :focus rules existed
+   before this and none of them matched a button. */
+:where(button, a, summary, [tabindex], input, select, textarea):focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
 }
 
 .page-head {
@@ -3356,13 +3371,13 @@ h3 {
 .fleet-machine-table th:nth-child(3)  { width: 8%; }
 .fleet-machine-table th:nth-child(4)  { width: 8%; }
 .fleet-machine-table th:nth-child(5)  { width: 8%; }
-.fleet-machine-table th:nth-child(6)  { width: 11%; }
+.fleet-machine-table th:nth-child(6)  { width: 8%; }
 .fleet-machine-table th:nth-child(7)  { width: 6%; }
 .fleet-machine-table th:nth-child(8)  { width: 10%; }
 .fleet-machine-table th:nth-child(9)  { width: 7%; }
 .fleet-machine-table th:nth-child(10) { width: 7%; }
 .fleet-machine-table th:nth-child(11) { width: 7%; }
-.fleet-machine-table th:nth-child(12) { width: 4%; }
+.fleet-machine-table th:nth-child(12) { width: 7%; }
 .fleet-machine-table th:nth-child(13) { width: 70px; }
 
 .machine-name {
@@ -3407,19 +3422,8 @@ h3 {
 }
 
 .machine-primary-value,
-.machine-vmid-link {
-  display: inline-flex;
-  min-height: 24px;
-  align-items: center;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.machine-vmid-link {
-  color: var(--active);
-  text-decoration: none;
+.machine-primary-value--num {
+  font-variant-numeric: tabular-nums;
 }
 
 .machine-action-menu {
@@ -3692,9 +3696,15 @@ h3 {
   display: grid;
   grid-template-columns: 1.15fr 1fr 1fr;
   gap: 12px;
+  /* Panels size to their own content instead of stretching to the tallest
+     one in the row, which left the short screenshot panel with a column of
+     dead space beneath it. */
+  align-items: start;
 }
 
-.vm-evidence-grid .panel:nth-child(5) {
+/* Was `.panel:nth-child(5)`, which silently stopped matching the moment a
+   panel became conditional. The span belongs to the timeline itself. */
+.vm-evidence-grid .panel--wide {
   grid-column: 1 / -1;
 }
 
@@ -3886,6 +3896,9 @@ h3 {
   gap: 5px;
   min-height: 30px;
   max-width: 100%;
+  /* A button label is never improved by wrapping mid-word. The Tag control
+     in the fleet table was rendering as "Ta / g". */
+  white-space: nowrap;
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -4069,13 +4082,54 @@ h3 {
   padding: 0 10px;
 }
 
-.vm-console-panel,
 .vm-screenshot-panel {
   display: grid;
   gap: 10px;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
+}
+
+/* status, screen, toolbar, stowed controls. The screen takes the free
+   space; everything else is chrome and sizes to content. */
+.vm-console-panel {
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.vm-console-controls-stow > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.vm-console-controls-stow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vm-console-controls-stow > summary::before {
+  content: "> ";
+  color: var(--muted);
+}
+
+.vm-console-controls-stow[open] > summary::before {
+  content: "v ";
+}
+
+.vm-console-controls-stow > summary:hover {
+  color: var(--text);
+}
+
+.vm-console-controls-stow > summary:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .vm-action-workspace--expanded .vm-console-panel,
@@ -4291,20 +4345,22 @@ h3 {
   max-height: 72vh;
 }
 
+/* The action zone used to reserve 160px of dashed nothing on every detail
+   page load, directly under the toolbar. It states what the zone is for in
+   one line and gets out of the way until an action is chosen. */
 .vm-action-empty {
   display: grid;
-  gap: 6px;
-  min-height: 160px;
+  gap: 4px;
   align-content: center;
-  padding: 12px;
-  border: 1px dashed var(--line);
+  padding: 10px 12px;
+  border: 1px dashed var(--line-soft);
   border-radius: 7px;
   color: var(--muted);
-  background: var(--surface-2);
 }
 
 .vm-action-empty--compact {
   min-height: 120px;
+  background: var(--surface-2);
 }
 
 .vm-action-empty h3,
@@ -4313,8 +4369,8 @@ h3 {
 }
 
 .vm-action-empty h3 {
-  color: var(--text);
-  font-size: 15px;
+  color: var(--muted-2);
+  font-size: 13px;
 }
 
 .progress--compact {

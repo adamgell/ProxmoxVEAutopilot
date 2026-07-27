@@ -12,7 +12,6 @@ import {
   Power,
   RefreshCw,
   RotateCcw,
-  Save,
   TerminalSquare,
   Trash2,
   UserPlus
@@ -556,6 +555,14 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const [socketState, setSocketState] = useState("closed");
   const [sendLive, setSendLive] = useState<SendLiveMessage | null>(null);
   const [activeAction, setActiveAction] = useState<VmActionSelection | null>(null);
+  // routes.ts rewrites /vms/{vmid}/console to /react/vms/{vmid}?action=console,
+  // but nothing ever read location.search, so that deep link opened an empty
+  // action zone. Seeded once, after the fleet load supplies the VM.
+  const requestedAction = useMemo<VmActionMode | null>(() => {
+    const value = new URLSearchParams(window.location.search).get("action");
+    return value === "console" || value === "screenshot" ? value : null;
+  }, []);
+  const [seedDismissed, setSeedDismissed] = useState(false);
   const [screenshot, setScreenshot] = useState<ScreenshotWorkspaceState>({ status: "idle" });
   const [detailEvidence, setDetailEvidence] = useState<VmDetailEvidenceResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -709,7 +716,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         }
       }
     });
-  }, [detailVmid, load, loadDetail]);
+  }, [detailVmid, load, loadDetail, setActionStatus]);
 
   const counts = useMemo(() => summarizeFleet(fleet), [fleet]);
   const machineRows = useMemo(() => buildFleetMachineRows(fleet), [fleet]);
@@ -754,6 +761,15 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     }, 8000);
     return () => { window.clearTimeout(timer); };
   }, [actionStatus, actionStatusTone]);
+
+  const seededAction = useMemo<VmActionSelection | null>(() => {
+    const vm = detailRow?.vm;
+    if (requestedAction === null || seedDismissed || !vm) {
+      return null;
+    }
+    return { mode: requestedAction, vm };
+  }, [detailRow, requestedAction, seedDismissed]);
+  const effectiveAction = activeAction ?? seededAction;
 
   const stale = typeof fleet.cache_age_seconds === "number" && fleet.cache_age_seconds > 60;
   // Three separate advisory paragraphs became one line. None of these is an
@@ -842,7 +858,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       setActionStatus(err instanceof Error ? err.message : `${label} failed`, "bad");
       return false;
     }
-  }, [load]);
+  }, [load, setActionStatus]);
 
   const power = useCallback((vm: VmFleetRow, action: "start" | "shutdown" | "stop" | "reset" | "delete") => {
     const label = `${action} VM ${String(vm.vmid)}`;
@@ -904,7 +920,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         setActionStatus(err instanceof Error ? err.message : `Collect logs VM ${String(vmid)} failed`, "bad");
       }
     })();
-  }, [load]);
+  }, [load, setActionStatus]);
 
   const checkEnrollment = useCallback((vm: VmFleetRow) => {
     void runAction(`Check enrollment VM ${String(vm.vmid)}`, () => postJson(`/api/ubuntu/check-enrollment/${String(vm.vmid)}`));
@@ -913,7 +929,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   const selectConsole = useCallback((vm: VmFleetRow) => {
     setActiveAction({ mode: "console", vm });
     setActionStatus(`Console selected for VM ${String(vm.vmid)}`);
-  }, []);
+  }, [setActionStatus]);
 
   const selectActionMode = useCallback((mode: VmActionMode) => {
     setActiveAction((current) => current ? { ...current, mode } : current);
@@ -939,12 +955,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       });
     }
     setActionStatus(sent ? `Screenshot requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected", sent ? "info" : "bad");
-  }, [sendLive]);
+  }, [sendLive, setActionStatus]);
 
   const qgaProbe = useCallback((vm: VmFleetRow) => {
     const sent = sendLive?.({ type: "qga_probe", correlation_id: `qga-${String(vm.vmid)}-${String(Date.now())}`, vmid: vm.vmid });
     setActionStatus(sent ? `QGA probe requested for VM ${String(vm.vmid)}` : "Live WebSocket is not connected", sent ? "info" : "bad");
-  }, [sendLive]);
+  }, [sendLive, setActionStatus]);
 
   const createBubble = useCallback(() => {
     setDeleteBubbleId(null);
@@ -1140,7 +1156,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       bubbleId: current?.bubble.id ?? bubbleOptions[0]?.id ?? "",
       assetRole: current?.asset.asset_role ?? "workstation"
     });
-  }, [assignmentsByVmid, bubbleOptions]);
+  }, [assignmentsByVmid, bubbleOptions, setActionStatus]);
 
   const updateMachineTagDraft = useCallback((field: "bubbleId" | "assetRole", value: string) => {
     setMachineTagDraft((current) => current ? { ...current, [field]: value } : current);
@@ -1196,7 +1212,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
         setMachineTagDraft(null);
       }
     });
-  }, [assignmentsByVmid, bubbleOptions, machineTagDraft, runAction]);
+  }, [assignmentsByVmid, bubbleOptions, machineTagDraft, runAction, setActionStatus]);
 
   const startInfraDraft = useCallback(() => {
     if (!bubbleOptions.length) {
@@ -1210,7 +1226,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       vmid: runningCandidate ? String(runningCandidate.vmid) : ""
     });
     setInfraDraftOpen(true);
-  }, [bubbleOptions, infraVmCandidates]);
+  }, [bubbleOptions, infraVmCandidates, setActionStatus]);
 
   const updateInfraDraft = useCallback((field: keyof InfraDraft, value: string) => {
     setInfraDraft((current) => ({ ...current, [field]: value }));
@@ -1350,7 +1366,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       bubbleId: bubbleOptions[0]?.id ?? "",
       providerAssetId: bubbleAssets.find((item) => item.bubble.id === bubbleOptions[0]?.id)?.asset.id ?? ""
     });
-  }, [bubbleAssets, bubbleOptions]);
+  }, [bubbleAssets, bubbleOptions, setActionStatus]);
 
   const editService = useCallback((service: LabBubbleConnectedService) => {
     setDeleteServiceId(null);
@@ -1495,7 +1511,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       ));
     }
     setAgentFormDraft(null);
-  }, [agentFormDraft, runAction]);
+  }, [agentFormDraft, runAction, setActionStatus]);
 
   const cancelAgentForm = useCallback(() => {
     setAgentFormDraft(null);
@@ -1543,7 +1559,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     } catch (err) {
       setActionStatus(err instanceof Error ? err.message : "Failed to load credential", "bad");
     }
-  }, []);
+  }, [setActionStatus]);
 
   const updateCredentialDraft = useCallback(
     <K extends keyof CredentialDraft>(field: K, value: CredentialDraft[K]) => {
@@ -1626,7 +1642,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       setCredentialDraft(null);
       await reloadCredentials();
     }
-  }, [credentialDraft, reloadCredentials, runAction]);
+  }, [credentialDraft, reloadCredentials, runAction, setActionStatus]);
 
   const deleteCredential = useCallback(async (cred: CredentialSummary) => {
     const confirmMessage = `Delete credential ${cred.name}? This cannot be undone.`;
@@ -1693,7 +1709,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
           <VmDetailWorkspace
             row={detailRow}
             evidence={detailEvidence}
-            activeAction={activeAction}
+            activeAction={effectiveAction}
             screenshot={screenshot}
             socketState={socketState}
             onPower={power}
@@ -1706,13 +1722,13 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
             onConsole={selectConsole}
             onScreenshot={screenshotVm}
             onQgaProbe={qgaProbe}
-            onUpdateAgent={updateAgent}
             onApproveAgent={approveAgent}
             onDeleteAgent={deleteAgent}
             onModeChange={selectActionMode}
             onRequestScreenshot={screenshotVm}
             onCloseAction={() => {
               setActiveAction(null);
+              setSeedDismissed(true);
               setScreenshot({ status: "idle" });
             }}
           />
@@ -2379,7 +2395,7 @@ function MachineRow({
         </span>
       </td>
       <td>
-        <span className={fleetManagedByLabel(row) === "Intune" ? "status status--good" : "status"}>
+        <span className="status">
           {fleetManagedByLabel(row)}
         </span>
       </td>
@@ -2389,16 +2405,19 @@ function MachineRow({
       <td>
         <span className="machine-primary-value">{fleetOsVersion(row)}</span>
       </td>
+      {/* This was a second link to the same destination as the device name:
+          routes.ts rewrites /devices/{vmid} to /react/vms/{vmid}. Two links
+          per row, same URL, different colour. It is plain text now. */}
       <td>
-        {row.vmid !== undefined ? (
-          <a className="machine-vmid-link" href={reactHrefForUiPath(`/devices/${String(row.vmid)}`)}>{row.vmid}</a>
-        ) : <span className="machine-primary-value">-</span>}
+        <span className="machine-primary-value machine-primary-value--num">
+          {row.vmid === undefined ? "-" : row.vmid}
+        </span>
       </td>
       <td>
         <span className="machine-primary-value">{fallbackText(row.ipAddress)}</span>
       </td>
       <td>
-        <span className={runtimeLabel === "running" ? "status status--active" : "status"}>
+        <span className={runtimeLabel === "running" ? "status" : "status status--warn"}>
           {runtimeLabel}
         </span>
       </td>
@@ -2456,7 +2475,6 @@ function VmDetailWorkspace({
   onConsole,
   onScreenshot,
   onQgaProbe,
-  onUpdateAgent,
   onApproveAgent,
   onDeleteAgent,
   onModeChange,
@@ -2478,7 +2496,6 @@ function VmDetailWorkspace({
   readonly onConsole: (vm: VmFleetRow) => void;
   readonly onScreenshot: (vm: VmFleetRow) => void;
   readonly onQgaProbe: (vm: VmFleetRow) => void;
-  readonly onUpdateAgent: (agent: AgentFleetRow) => void;
   readonly onApproveAgent: (agent: AgentFleetRow) => void;
   readonly onDeleteAgent: (agent: AgentFleetRow) => void;
   readonly onModeChange: (mode: VmActionMode) => void;
@@ -2502,11 +2519,17 @@ function VmDetailWorkspace({
         <div className="vm-detail-hero__main">
           <div>
             <h2>{vmDisplayName(vm)}</h2>
-            <p>{fleetOsName(row)} {fleetOsVersion(row)} / VMID {String(vm.vmid)} / {fallbackText(row.ipAddress)}</p>
+            {/* Absorbs what the deleted Essentials panel uniquely carried.
+                Everything else in that panel was already the hero, a badge,
+                or the PVE panel. */}
+            <p>
+              {fleetOsName(row)} {fleetOsVersion(row)} / VMID {String(vm.vmid)} / {fallbackText(row.ipAddress)}
+              {row.phase ? ` / ${row.phase}` : ""} / heartbeat {formatRelativeAge(row.heartbeat)}
+            </p>
           </div>
           <div className="vm-detail-badges">
-            <span className={fleetRuntimeLabel(row) === "running" ? "status status--active" : "status"}>{fleetRuntimeLabel(row)}</span>
-            <span className={fleetManagedByLabel(row) === "Intune" ? "status status--good" : "status"}>{fleetManagedByLabel(row)}</span>
+            <span className={fleetRuntimeLabel(row) === "running" ? "status" : "status status--warn"}>{fleetRuntimeLabel(row)}</span>
+            <span className="status">{fleetManagedByLabel(row)}</span>
             <span className={fleetAgentClass(fleetAgentLabel(row))}>{fleetAgentLabel(row)}</span>
           </div>
         </div>
@@ -2535,11 +2558,11 @@ function VmDetailWorkspace({
         {agent?.approval_status === "pending" && agent.approval_id ? (
           <ActionButton label="Approve agent" icon={BadgeCheck} onClick={() => { onApproveAgent(agent); }} />
         ) : null}
+        {/* "Update agent" lived here and did nothing: updateAgent only sets
+            agentFormDraft, whose sole render site is FleetAgentFormModal in
+            the list branch, past this branch's early return. */}
         {agent ? (
-          <>
-            <ActionButton label="Update agent" icon={Save} onClick={() => { onUpdateAgent(agent); }} />
-            <ActionButton label="Delete agent" icon={Trash2} tone="danger" onClick={() => { onDeleteAgent(agent); }} />
-          </>
+          <ActionButton label="Delete agent" icon={Trash2} tone="danger" onClick={() => { onDeleteAgent(agent); }} />
         ) : null}
         <ActionButton label="Delete VM" ariaLabel={`Delete VM ${String(vm.vmid)}`} icon={Trash2} tone="danger" onClick={() => { onPower(vm, "delete"); }} />
       </section>
@@ -2556,18 +2579,11 @@ function VmDetailWorkspace({
         />
       </section>
 
+      {/* Essentials used to lead here and was the nine fleet table headers
+          verbatim, in the same order, through the same accessors. Agent and
+          Intune render only when there is something behind them; on a lab VM
+          with neither they were 15 rows of dashes. */}
       <section className="vm-detail-grid" aria-label="VM details">
-        <DetailPanel title="Essentials" rows={[
-          ["Device name", row.name],
-          ["Heartbeat", formatRelativeAge(row.heartbeat)],
-          ["Managed by", fleetManagedByLabel(row)],
-          ["OS", fleetOsName(row)],
-          ["OS version", fleetOsVersion(row)],
-          ["VMID", String(vm.vmid)],
-          ["IP address", fallbackText(row.ipAddress)],
-          ["Runtime", fleetRuntimeLabel(row)],
-          ["Agent", fleetAgentLabel(row)]
-        ]} />
         <DetailPanel title="PVE" rows={[
           ["Name", vmDisplayName(vm)],
           ["Status", fallbackText(vm.status)],
@@ -2576,25 +2592,29 @@ function VmDetailWorkspace({
           ["Target OS", fallbackText(vm.target_os)],
           ["Sequence", fallbackText(vm.sequence_name)]
         ]} />
-        <DetailPanel title="Agent" rows={[
-          ["Agent ID", fallbackText(row.agentId)],
-          ["Computer", fallbackText(row.agent?.computer_name)],
-          ["Version", fallbackText(row.version)],
-          ["Published", fallbackText(row.agent?.published_agent_version)],
-          ["Update", fallbackText(row.agent?.update_status)],
-          ["Pairing", fallbackText(row.agent?.pairing_status)],
-          ["Phase", fallbackText(row.phase)],
-          ["QGA", fallbackText(row.agent?.qga_state)],
-          ["Last seen", formatShortDateTime(row.agent?.last_seen_at)]
-        ]} />
-        <DetailPanel title="Intune" rows={[
-          ["Device", fallbackText(row.autopilotDevice?.display_name)],
-          ["Serial", fallbackText(row.autopilotDevice?.serial)],
-          ["Enrollment", fallbackText(row.autopilotDevice?.enrollment_state)],
-          ["Profile", fallbackText(row.autopilotDevice?.profile_status)],
-          ["Group tag", fallbackText(row.autopilotDevice?.group_tag)],
-          ["Last contact", formatShortDateTime(row.autopilotDevice?.last_contact)]
-        ]} />
+        {agent ? (
+          <DetailPanel title="Agent" rows={[
+            ["Agent ID", fallbackText(row.agentId)],
+            ["Computer", fallbackText(agent.computer_name)],
+            ["Version", fallbackText(row.version)],
+            ["Published", fallbackText(agent.published_agent_version)],
+            ["Update", fallbackText(agent.update_status)],
+            ["Pairing", fallbackText(agent.pairing_status)],
+            ["Phase", fallbackText(row.phase)],
+            ["QGA", fallbackText(agent.qga_state)],
+            ["Last seen", formatShortDateTime(agent.last_seen_at)]
+          ]} />
+        ) : null}
+        {row.autopilotDevice ? (
+          <DetailPanel title="Intune" rows={[
+            ["Device", fallbackText(row.autopilotDevice.display_name)],
+            ["Serial", fallbackText(row.autopilotDevice.serial)],
+            ["Enrollment", fallbackText(row.autopilotDevice.enrollment_state)],
+            ["Profile", fallbackText(row.autopilotDevice.profile_status)],
+            ["Group tag", fallbackText(row.autopilotDevice.group_tag)],
+            ["Last contact", formatShortDateTime(row.autopilotDevice.last_contact)]
+          ]} />
+        ) : null}
       </section>
 
       <VmEvidencePanels

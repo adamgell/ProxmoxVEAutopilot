@@ -1,9 +1,6 @@
-import { useMemo, useState } from "react";
-import { Camera, Download, ExternalLink, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Camera, Download, ExternalLink, RefreshCw } from "lucide-react";
 
-import { postJson } from "../apiClient";
-import type { VmCredentialsRevealResponse, VmDetailEvidenceResponse, VmKnownCredential, VmLinkageCheck, VmRevealedCredential, VmTimelineEvent } from "../contracts";
-import { reactHrefForUiPath } from "../routes";
+import type { VmDetailEvidenceResponse, VmLinkageCheck, VmTimelineEvent } from "../contracts";
 import { fallbackText, formatRelativeAge, formatShortDateTime, statusClass } from "../viewModels";
 import { Panel } from "./ui";
 
@@ -35,69 +32,6 @@ function LinkageRow({ check }: { readonly check: VmLinkageCheck }) {
   );
 }
 
-function credentialKey(credential: Pick<VmKnownCredential | VmRevealedCredential, "source" | "label" | "username" | "run_id" | "updated_at">): string {
-  return [
-    credential.source,
-    credential.label,
-    credential.username,
-    credential.run_id,
-    credential.updated_at ?? ""
-  ].join("\u001f");
-}
-
-function withoutCredentialKey(current: Readonly<Record<string, string>>, key: string): Record<string, string> {
-  return Object.fromEntries(Object.entries(current).filter(([entryKey]) => entryKey !== key));
-}
-
-function CredentialRow({
-  credential,
-  password,
-  isRevealing,
-  onToggleReveal
-}: {
-  readonly credential: VmKnownCredential;
-  readonly password: string | undefined;
-  readonly isRevealing: boolean;
-  readonly onToggleReveal: () => void;
-}) {
-  const isRevealed = Boolean(password);
-  const actionLabel = `${isRevealed ? "Hide" : "Reveal"} ${fallbackText(credential.label)} password for ${fallbackText(credential.username)}`;
-  return (
-    <div className="evidence-credential">
-      <div>
-        <strong>{fallbackText(credential.label)}</strong>
-        <span>{fallbackText(credential.source)}</span>
-      </div>
-      <div>
-        <span>{fallbackText(credential.username)}</span>
-        <span className="credential-secret">
-          <code>{credential.password_available ? (password ?? credential.password_mask) : "-"}</code>
-          {credential.password_available ? (
-            <button
-              type="button"
-              className="credential-reveal-button"
-              aria-label={actionLabel}
-              title={actionLabel}
-              onClick={onToggleReveal}
-              disabled={isRevealing}
-            >
-              {isRevealed ? (
-                <EyeOff aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
-              ) : (
-                <Eye aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />
-              )}
-            </button>
-          ) : null}
-        </span>
-      </div>
-      <div>
-        <span>{formatShortDateTime(credential.updated_at)}</span>
-        {credential.run_url ? <a href={reactHrefForUiPath(credential.run_url)}>Run</a> : <span>-</span>}
-      </div>
-    </div>
-  );
-}
-
 function TimelineRow({ event }: { readonly event: VmTimelineEvent }) {
   return (
     <li>
@@ -124,51 +58,6 @@ export function VmEvidencePanels({
   const intune = evidence?.intune_matches[0];
   const sync = evidence?.identity_sync;
   const timeline = evidence?.timeline.slice(0, 8) ?? [];
-  const [revealedPasswords, setRevealedPasswords] = useState<Readonly<Record<string, string>>>({});
-  const [revealingKey, setRevealingKey] = useState("");
-  const [revealError, setRevealError] = useState("");
-
-  const credentialKeys = useMemo(
-    () => new Set((evidence?.known_credentials ?? []).map((credential) => credentialKey(credential))),
-    [evidence?.known_credentials]
-  );
-  const visibleRevealedPasswords = useMemo(() => {
-    const next: Record<string, string> = {};
-    for (const [key, value] of Object.entries(revealedPasswords)) {
-      if (credentialKeys.has(key)) {
-        next[key] = value;
-      }
-    }
-    return next;
-  }, [credentialKeys, revealedPasswords]);
-
-  async function toggleCredentialReveal(credential: VmKnownCredential): Promise<void> {
-    const key = credentialKey(credential);
-    if (visibleRevealedPasswords[key]) {
-      setRevealedPasswords((current) => withoutCredentialKey(current, key));
-      return;
-    }
-    setRevealingKey(key);
-    setRevealError("");
-    try {
-      const response = await postJson<VmCredentialsRevealResponse>(`/api/vms/${String(vmid)}/credentials/reveal`);
-      const next: Record<string, string> = {};
-      for (const item of response.credentials) {
-        if (item.password) {
-          next[credentialKey(item)] = item.password;
-        }
-      }
-      setRevealedPasswords((current) => ({ ...current, ...next }));
-      if (!next[key]) {
-        setRevealError("Credential password was not returned for this VM.");
-      }
-    } catch (err) {
-      setRevealError(err instanceof Error ? err.message : "Credential reveal failed");
-    } finally {
-      setRevealingKey("");
-    }
-  }
-
   return (
     <section className="vm-evidence-grid" aria-label="VM evidence">
       <Panel title="Latest screenshot">
@@ -219,23 +108,6 @@ export function VmEvidencePanels({
         ) : <p className="empty">No linkage evidence yet.</p>}
       </Panel>
 
-      <Panel title="Known credentials">
-        {evidence?.known_credentials.length ? (
-          <div className="evidence-stack">
-            {evidence.known_credentials.map((credential) => (
-              <CredentialRow
-                key={credentialKey(credential)}
-                credential={credential}
-                password={visibleRevealedPasswords[credentialKey(credential)]}
-                isRevealing={revealingKey === credentialKey(credential)}
-                onToggleReveal={() => { void toggleCredentialReveal(credential); }}
-              />
-            ))}
-            {revealError ? <p className="credential-reveal-error" role="alert">{revealError}</p> : null}
-          </div>
-        ) : <p className="empty">No visible credentials.</p>}
-      </Panel>
-
       <Panel title="Directory evidence">
         <dl className="vm-detail-list">
           <div>
@@ -257,7 +129,7 @@ export function VmEvidencePanels({
         </dl>
       </Panel>
 
-      <Panel title="Timeline">
+      <Panel title="Timeline" className="panel--wide">
         {timeline.length ? (
           <ol className="evidence-timeline">
             {timeline.map((event, index) => (

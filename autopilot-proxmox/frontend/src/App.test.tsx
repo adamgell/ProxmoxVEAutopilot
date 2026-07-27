@@ -1600,20 +1600,40 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Identity linkage" })).toBeInTheDocument();
     expect(screen.getByText("SMBIOS.serial -> Intune.serialNumber")).toBeInTheDocument();
     expect(screen.getByText("Windows.Name -> AD.cn")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Known credentials" })).toBeInTheDocument();
-    expect(screen.getByText("localadmin")).toBeInTheDocument();
-    expect(screen.getByText("********")).toBeInTheDocument();
-    const revealButton = screen.getByRole("button", { name: "Reveal Local admin password for localadmin" });
-    expect(revealButton).toBeInTheDocument();
-    expect(screen.queryByText("Mep7!Qav2")).not.toBeInTheDocument();
-    fireEvent.click(revealButton);
-    expect(await screen.findByText("Mep7!Qav2")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/vms/108/credentials/reveal", expect.objectContaining({ method: "POST" }));
+    // Credentials render once, in the console panel that can type them into
+    // the guest. The evidence copy held independent reveal state against the
+    // same endpoint, so revealing in one left the other masked.
+    expect(screen.queryByRole("heading", { name: "Known credentials" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reveal Local admin password for localadmin" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Latest screenshot" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Latest VM 108 screenshot" })).toHaveAttribute("src", "/api/vms/108/screenshots/latest-image");
     expect(screen.getByRole("link", { name: "Open screenshot" })).toHaveAttribute("href", "/api/vms/108/screenshots/latest-image");
     expect(screen.getByRole("heading", { name: "Timeline" })).toBeInTheDocument();
     expect(screen.getByText("Screenshot captured by collector")).toBeInTheDocument();
+  });
+
+  test("seeds the VM action zone from the ?action= deep link", async () => {
+    mockFetch({
+      ...dashboardResponses,
+      "/api/vms/108/vnc-init": { error: "test console offline" }
+    });
+
+    // routes.ts:456 has always rewritten /vms/108/console to this URL, but
+    // nothing read location.search, so the deep link landed on the empty
+    // placeholder instead of the console.
+    renderRoute("/react/vms/108?action=console");
+
+    expect(await screen.findByLabelText("VM 108 console screen")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Choose a VM action" })).not.toBeInTheDocument();
+  });
+
+  test("shows the action placeholder when no ?action= is given", async () => {
+    mockFetch(dashboardResponses);
+
+    renderRoute("/react/vms/108");
+
+    expect(await screen.findByRole("heading", { name: "Choose a VM action" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("VM 108 console screen")).not.toBeInTheDocument();
   });
 
   test("renders the dashboard read-only slice from API data", async () => {
