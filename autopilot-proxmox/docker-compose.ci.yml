@@ -1,8 +1,32 @@
 # CI-only overlay for the self-hosted integration lane. Layered on top of
-# docker-compose.yml to run an ephemeral, disposable stack: auth is bypassed
-# so the read-only + self-cleaning integration suite can exercise the DB and
-# job/builder/monitor paths without an Entra session, and the web self-update
-# mounts (docker.sock, host repo) are dropped since CI never self-updates.
+# docker-compose.yml to run an ephemeral, disposable stack: auth is bypassed so
+# the read-only + self-cleaning integration suite can exercise the DB and
+# job/builder/monitor paths without an Entra session.
+#
+# Every writable mount is a NAMED VOLUME here, not a workspace bind. The
+# containers run as root, so binding ./cache, ./output or ./secrets into the
+# runner's workspace leaves root-owned directories behind that the next run's
+# actions/checkout cannot delete ("EACCES: permission denied, rmdir
+# .../autopilot-proxmox/cache/cloudosd") - which wedged the lane permanently
+# after its first run. Named volumes keep the workspace clean and are removed
+# by the teardown's `docker compose down -v`.
+#
+# Compose merges `volumes:` lists by TARGET: an entry here overrides the base
+# entry with the same container path, and base entries with no counterpart here
+# survive. That is why each CI service restates the full writable set - and it
+# also means the `autopilot` service still inherits the base file's self-update
+# mounts (/var/run/docker.sock and /opt/ProxmoxVEAutopilot:/host/repo); an
+# overlay cannot delete a mount. Dropping those would mean moving them out of
+# the base file into a self-update overlay.
+x-ci-mounts: &ci_mounts
+  - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
+  - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
+  - autopilot-ci-output:/app/output
+  - autopilot-ci-cache-cloudosd:/app/cache/cloudosd
+  - autopilot-ci-cache-osdeploy:/app/cache/osdeploy
+  - autopilot-jobs:/app/jobs
+  - autopilot-ci-secrets:/app/secrets
+
 services:
   autopilot:
     environment:
@@ -10,11 +34,16 @@ services:
       # Registers POST /api/jobs/test-long-sleep so the job/builder integration
       # tests (kill, scale) can enqueue a trivial sleep job.
       AUTOPILOT_ENABLE_TEST_JOBS: "1"
-    volumes:
-      - ./inventory/group_vars/all/vault.yml:/app/inventory/group_vars/all/vault.yml
-      - ./inventory/group_vars/all/vars.yml:/app/inventory/group_vars/all/vars.yml
-      - ./output:/app/output
-      - ./cache/cloudosd:/app/cache/cloudosd
-      - ./cache/osdeploy:/app/cache/osdeploy
-      - autopilot-jobs:/app/jobs
-      - ./secrets:/app/secrets
+    volumes: *ci_mounts
+
+  autopilot-builder:
+    volumes: *ci_mounts
+
+  autopilot-monitor:
+    volumes: *ci_mounts
+
+volumes:
+  autopilot-ci-output:
+  autopilot-ci-cache-cloudosd:
+  autopilot-ci-cache-osdeploy:
+  autopilot-ci-secrets:

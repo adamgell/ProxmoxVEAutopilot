@@ -27,6 +27,20 @@ jobs:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
       VENV: /tmp/it-venv-${{ github.run_id }}
     steps:
+      # Runs BEFORE checkout on purpose. Earlier revisions of this lane bound
+      # ./cache, ./output and ./secrets into the workspace; the containers run
+      # as root, so they left root-owned directories the runner user cannot
+      # delete, and every subsequent actions/checkout died with
+      # "EACCES: permission denied, rmdir .../autopilot-proxmox/cache/cloudosd".
+      # The compose overlay now uses named volumes, but a runner that already
+      # has the leftovers needs them reclaimed - and only root can do that, so
+      # borrow root from a throwaway container rather than requiring sudo.
+      - name: Reclaim root-owned leftovers from earlier runs
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine:3 \
+            sh -c 'rm -rf /ws/autopilot-proxmox/cache /ws/autopilot-proxmox/output /ws/autopilot-proxmox/secrets' \
+            || echo "nothing to reclaim (or docker unavailable); continuing"
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
