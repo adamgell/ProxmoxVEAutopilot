@@ -5815,3 +5815,73 @@ h3 {
 }
 
 .machine-mark--gone { background: var(--bad); }
+
+
+/* ---------------------------------------------------------------
+   Button geometry, consolidated
+   ---------------------------------------------------------------
+   Eight treatments had accumulated across the app with five heights,
+   two radii, four font sizes and four padding schemes. The weight sweep
+   already unified their weight; this unifies the rest. Class names are
+   left alone deliberately: renaming across 145 call sites is churn with
+   no visual payoff now that the geometry agrees.
+
+   The border also moves to --line-strong. At --line the boundary measured
+   about 1.4:1 against its own backdrop, and WCAG 1.4.11 wants 3:1 for the
+   part of a control that identifies it. */
+
+.action-link,
+.table-action,
+.utility-button,
+.fleet-action,
+.vm-action-tabs button,
+.fleet-bulk-bar__action,
+.fleet-modal__secondary,
+.credential-chip__action {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: var(--fs-1);
+  font-weight: var(--w-med);
+  line-height: 1.1;
+}
+
+/* Page-level and form-level actions keep a larger target. */
+.action-link,
+.utility-button {
+  min-height: 34px;
+  font-size: var(--fs-2);
+}
+
+.credential-chip__action {
+  min-height: 26px;
+  padding: 0 9px;
+  font-size: var(--fs-0);
+}
+
+/* ---------------------------------------------------------------
+   Definition grids, de-latticed
+   ---------------------------------------------------------------
+   Five grids faked table rules with `gap: 1px` over a background colour,
+   so a four-cell stat block drew six visible line segments around four
+   short strings. Whitespace separates them now; only the strip that
+   reads as a single object keeps a border. */
+
+.settings-credential-summary,
+.utility-definition-grid,
+.fleet-detail-grid,
+.fleet-grid {
+  gap: var(--sp-3) var(--sp-4);
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.settings-credential-summary > div,
+.utility-definition-grid > div,
+.fleet-detail-grid > div,
+.fleet-grid > div {
+  padding: 0;
+  background: none;
+}
