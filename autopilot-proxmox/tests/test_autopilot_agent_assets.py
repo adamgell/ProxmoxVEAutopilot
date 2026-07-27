@@ -170,6 +170,51 @@ def test_ninja_postinstall_unblocks_qga_after_agent_health():
     assert "AutopilotAgent postinstall complete." in post
 
 
+def test_ninja_update_script_verifies_download_and_records_the_version_disagreement():
+    """The push-update path deployed through NinjaOne.
+
+    Exists because the agent's own upgrade loop never fires on part of the
+    fleet: those agents heartbeat, get a 200 from update-check, and log
+    neither a completed install nor a failed one, which means they are being
+    told they are current while the fleet page shows "Upgrade available".
+
+    Two things this script must keep doing. It must verify the MSI against the
+    SHA-256 the server publishes rather than installing whatever it downloaded,
+    and it must log the installed-vs-published disagreement, which is the
+    evidence needed to fix the underlying bug rather than paper over it.
+    """
+    update = _read("autopilot-proxmox/files/ninja/autopilotagent-update.ps1")
+
+    # Reads the agent's own identity so the version query is authenticated.
+    assert "agent.json" in update
+    assert "/api/agent/v1/update-check" in update
+    assert "Bearer $($Identity.AgentToken)" in update
+    assert "runtime_identifier" in update
+    assert "win-arm64" in update
+
+    # Both versions, because they can disagree and that disagreement is the bug.
+    assert "AssemblyVersion" in update
+    assert "FileVersion" in update
+    assert "MISMATCH:" in update
+    assert "This is why self-upgrade never fires on this machine." in update
+
+    # Verifies before installing, and refuses on mismatch.
+    assert "/api/cloudosd/assets/autopilotagent.msi" in update
+    assert "Get-FileHash" in update
+    assert "failed SHA-256 validation" in update
+    assert "installing unverified" in update
+
+    # Installs, tolerates the reboot-pending code, and leaves the service up.
+    assert '"/i", $dst, "/qn", "/norestart"' in update
+    assert "$proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010" in update
+    assert "Start-Service -Name AutopilotAgent" in update
+
+    # Safe to dry-run, and admin-gated like the sibling scripts.
+    assert "$WhatIfOnly" in update
+    assert "requires administrative context." in update
+    assert "Version did not change." in update
+
+
 def test_cloudosd_firstboot_recovers_postinstall_failure_when_agent_heartbeat_visible():
     firstboot = _read("autopilot-proxmox/tools/cloudosd-build/PVEAutopilot-FirstBoot.ps1")
 
