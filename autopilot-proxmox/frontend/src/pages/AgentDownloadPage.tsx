@@ -267,7 +267,7 @@ function BuildHostPanel() {
             <div><dt>Agent version</dt><dd>{status?.agent_version ?? "-"}</dd></div>
             <div><dt>Last heartbeat</dt><dd>{formatAge(heartbeat)}</dd></div>
           </dl>
-          {error ? <p className="notice" role="status">{error}</p> : null}
+          {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
           {actionResult ? <p className="notice" role="status">{actionResult}</p> : null}
           {!status?.vmid ? (
             <div className="build-host-actions">
@@ -389,7 +389,7 @@ export function AgentDownloadPage({ bootstrap }: AgentDownloadPageProps) {
       action={<a className="action-link" href={msiUrl}><Download size={14} aria-hidden="true" />Download MSI</a>}
     >
       {loading ? <div className="progress" aria-label="Loading agent download topology"><span /></div> : null}
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
 
       <section className="agent-download-grid" aria-label="Agent download builder">
         <Panel title="Install target">

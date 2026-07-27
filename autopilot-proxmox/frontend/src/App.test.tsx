@@ -1605,6 +1605,13 @@ describe("App", () => {
     // same endpoint, so revealing in one left the other masked.
     expect(screen.queryByRole("heading", { name: "Known credentials" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reveal Local admin password for localadmin" })).not.toBeInTheDocument();
+    // Read-only here: the mask renders, the plaintext does not, and the
+    // evidence panel never calls the reveal endpoint. Reveal lives only in
+    // the console panel, which is what owned the duplicated state.
+    expect(screen.getByRole("heading", { name: "Saved credentials" })).toBeInTheDocument();
+    expect(screen.getByText("localadmin")).toBeInTheDocument();
+    expect(screen.queryByText("Mep7!Qav2")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/vms/108/credentials/reveal", expect.anything());
     expect(screen.getByRole("heading", { name: "Latest screenshot" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Latest VM 108 screenshot" })).toHaveAttribute("src", "/api/vms/108/screenshots/latest-image");
     expect(screen.getByRole("link", { name: "Open screenshot" })).toHaveAttribute("href", "/api/vms/108/screenshots/latest-image");

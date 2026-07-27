@@ -147,7 +147,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
         </span>
       }
     >
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
       {sweepMessage ? (
         <p className={sweepState === "failed" ? "notice notice--bad" : "notice"} role="status">{sweepMessage}</p>
       ) : null}
@@ -387,7 +387,7 @@ export function MonitoringPage({ bootstrap }: { readonly bootstrap: AppBootstrap
                     <strong>{selectedLogContainer ? `Recent logs for ${selectedLogContainer}` : "Select a container"}</strong>
                     {logsLoading ? <span>Loading</span> : null}
                   </div>
-                  {logError ? <p className="notice" role="status">{logError}</p> : null}
+                  {logError ? <p className="notice notice--bad" role="alert">{logError}</p> : null}
                   <pre className={logLines.length ? "log-output" : "log-output is-muted"}>
                     {logLines.length ? logLines.join("\n") : "No container selected."}
                   </pre>

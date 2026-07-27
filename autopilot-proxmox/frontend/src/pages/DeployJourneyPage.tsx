@@ -359,7 +359,7 @@ export function DeployJourneyPage({ bootstrap }: { readonly bootstrap: AppBootst
         </div>
       }
     >
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
 
       <section className="deploy-journey-shell" aria-labelledby="deploy-journey-title">
         <FinishMenu />

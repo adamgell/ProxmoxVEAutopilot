@@ -184,6 +184,12 @@ h3 {
   background: rgba(255, 255, 255, 0.96);
 }
 
+.outcome-command input:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .outcome-command input {
   width: 100%;
   min-width: 0;
@@ -3289,13 +3295,14 @@ h3 {
   border-radius: 4px;
 }
 
-/* The filter now sits inside the Fleet machines panel. */
-.fleet-machine-table-wrap + .filter-row__top,
-.panel .filter-row__top {
+/* The filter now sits inside the Fleet machines panel, above its table.
+   Scoped to that panel so it does not add margin to the six other pages
+   that also render .filter-row__top inside a Panel. */
+.fleet-machines-panel .filter-row__top {
   margin-bottom: 14px;
 }
 
-.panel .filter-row__top .result-count {
+.fleet-machines-panel .filter-row__top .result-count {
   margin: 0;
 }
 
@@ -3421,7 +3428,18 @@ h3 {
   text-decoration: none;
 }
 
-.machine-primary-value,
+.machine-primary-value {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  color: var(--text);
+  font-size: 12px;
+  /* Was 800. Table values are the thing being scanned, not the thing being
+     emphasized; the column header carries the emphasis. */
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .machine-primary-value--num {
   font-variant-numeric: tabular-nums;
 }
@@ -4109,17 +4127,31 @@ h3 {
   font-weight: 800;
 }
 
+.vm-console-controls-stow > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .vm-console-controls-stow > summary::-webkit-details-marker {
   display: none;
 }
 
+/* A shape, not literal text. Generated content is folded into the accessible
+   name, so "> " and "v " would have been announced as part of the summary
+   and would have changed the name on every toggle. */
 .vm-console-controls-stow > summary::before {
-  content: "> ";
-  color: var(--muted);
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  flex: 0 0 auto;
 }
 
 .vm-console-controls-stow[open] > summary::before {
-  content: "v ";
+  transform: rotate(90deg);
 }
 
 .vm-console-controls-stow > summary:hover {

@@ -738,7 +738,7 @@ export function NetworksPage({
         aria-label="Loading network inventory"
         aria-busy={refreshing}
       />
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
 
       {!initialLoaded ? (
         <p className="networks-loading-status" role="status" aria-live="polite">

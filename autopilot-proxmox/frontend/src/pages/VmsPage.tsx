@@ -752,7 +752,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
     bubbleTopology.warnings.length
   ]);
   useEffect(() => {
-    if (!actionStatus || actionStatusTone === "bad" || actionStatus.endsWith("...")) {
+    if (!actionStatus || actionStatusTone === "bad" || actionStatus.endsWith("...") || actionStatusLink) {
       return undefined;
     }
     const timer = window.setTimeout(() => {
@@ -760,7 +760,7 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
       setActionStatusLink(null);
     }, 8000);
     return () => { window.clearTimeout(timer); };
-  }, [actionStatus, actionStatusTone]);
+  }, [actionStatus, actionStatusLink, actionStatusTone]);
 
   const seededAction = useMemo<VmActionSelection | null>(() => {
     const vm = detailRow?.vm;
@@ -932,8 +932,12 @@ export function VmsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
   }, [setActionStatus]);
 
   const selectActionMode = useCallback((mode: VmActionMode) => {
-    setActiveAction((current) => current ? { ...current, mode } : current);
-  }, []);
+    const base = activeAction ?? seededAction;
+    if (!base) {
+      return;
+    }
+    setActiveAction({ ...base, mode });
+  }, [activeAction, seededAction]);
 
   const screenshotVm = useCallback((vm: VmFleetRow) => {
     const correlationId = `vm-${String(vm.vmid)}-${String(Date.now())}`;
@@ -1959,6 +1963,7 @@ function FleetMachineTable({
   return (
     <Panel
       title="Fleet machines"
+      className="fleet-machines-panel"
       action={
         <button type="button" className="fleet-action fleet-action--command" onClick={onCreateAgent}>
           <UserPlus aria-hidden="true" focusable="false" size={14} strokeWidth={2.4} />

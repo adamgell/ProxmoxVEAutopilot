@@ -1,6 +1,7 @@
 import { Camera, Download, ExternalLink, RefreshCw } from "lucide-react";
 
-import type { VmDetailEvidenceResponse, VmLinkageCheck, VmTimelineEvent } from "../contracts";
+import type { VmDetailEvidenceResponse, VmKnownCredential, VmLinkageCheck, VmTimelineEvent } from "../contracts";
+import { reactHrefForUiPath } from "../routes";
 import { fallbackText, formatRelativeAge, formatShortDateTime, statusClass } from "../viewModels";
 import { Panel } from "./ui";
 
@@ -28,6 +29,25 @@ function LinkageRow({ check }: { readonly check: VmLinkageCheck }) {
       <span>{check.label}</span>
       <strong>{fallbackText(check.value)}</strong>
       <span className={statusClass(tone)}>{label}</span>
+    </div>
+  );
+}
+
+function ReadOnlyCredentialRow({ credential }: { readonly credential: VmKnownCredential }) {
+  return (
+    <div className="evidence-credential">
+      <div>
+        <strong>{fallbackText(credential.label)}</strong>
+        <span>{fallbackText(credential.source)}</span>
+      </div>
+      <div>
+        <span>{fallbackText(credential.username)}</span>
+        <code>{credential.password_available ? credential.password_mask : "-"}</code>
+      </div>
+      <div>
+        <span>{formatShortDateTime(credential.updated_at)}</span>
+        {credential.run_url ? <a href={reactHrefForUiPath(credential.run_url)}>Run</a> : <span>-</span>}
+      </div>
     </div>
   );
 }
@@ -106,6 +126,20 @@ export function VmEvidencePanels({
             {evidence.linkage.map((check) => <LinkageRow key={check.label} check={check} />)}
           </div>
         ) : <p className="empty">No linkage evidence yet.</p>}
+      </Panel>
+
+      <Panel title="Saved credentials">
+        {evidence?.known_credentials.length ? (
+          <div className="evidence-stack">
+            {evidence.known_credentials.map((credential) => (
+              <ReadOnlyCredentialRow
+                key={`${credential.source}-${credential.label}-${credential.username}-${credential.run_id}`}
+                credential={credential}
+              />
+            ))}
+            <p className="empty">Open the console to reveal, copy or type these into the guest.</p>
+          </div>
+        ) : <p className="empty">No visible credentials.</p>}
       </Panel>
 
       <Panel title="Directory evidence">

@@ -65,7 +65,7 @@ export function JobsPage({ bootstrap }: { readonly bootstrap: AppBootstrap }) {
 
   return (
     <PageFrame bootstrap={bootstrap} title="Jobs" section="Observe" path="/react/jobs" socketState={socketState}>
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
       <section className="metric-strip" aria-label="Jobs metrics">
         <Metric label="Total" value={String(counts.total)} />
         <Metric label="Running" value={String(counts.running)} tone={counts.running > 0 ? "active" : "neutral"} />

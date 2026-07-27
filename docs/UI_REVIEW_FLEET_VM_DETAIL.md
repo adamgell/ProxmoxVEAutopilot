@@ -57,9 +57,30 @@ Ranked by contribution.
 
 **Rejected:** proposal 3's front-loading of a 5-primitive `ui.tsx` refactor across all 25 pages. The blast radius is the whole app, there is zero visual-regression coverage, and the user asked about two pages. Its token block is worth taking; its `<Table>` primitive across 37 call sites is not, at least not first. Also rejected: proposal 3's `--w-body: 450`, which was a guess.
 
-### Phase 1 - Ship this week (highest payoff, lowest risk)
+### Phase 1 - SHIPPED 2026-07-27 (commits f8e0b27, ef3d941)
 
-Every item here is local, reversible, and touches no shared component. Together they are roughly a day.
+All 11 items landed. Measured effect on the reference render (16 VMs, 14 agents, full topology, 1600px):
+
+| | Before | After |
+|---|---|---|
+| Fleet page height | 2937px | 1518px |
+| Fleet: table starts at | 1271px (43% down) | 462px |
+| Fleet: metric tiles | 10 in a 7-column grid, 4 cells bare | 4 |
+| Fleet: saturated pills at rest | 3 per row (48 on 16 rows) | 0 |
+| Detail: key/value rows | 30 | 21, and Agent/Intune only when populated |
+| Detail: toolbar buttons | 15 | 14, with the inert one gone |
+| Detail: empty action placeholder | 160px reserved | sizes to its one line |
+
+Frontend suite 195 to 197 tests, all passing. Playwright desktop 27 passing. Typecheck clean. Lint unchanged from its pre-existing baseline.
+
+Two deliberate deviations from the plan as written:
+
+- **Item 8's "duplicate Open legacy console link" is not a duplicate.** VmActionWorkspace.tsx:646 lives in `VmScreenshotPanel` and :431 in `VmConsolePanel`. They are separate tabs and never render together. Left alone.
+- **Item 9 does not default the stage to screenshot mode.** Seeding from `?action=` is done and the dead deep link works. Defaulting with no parameter would open a VNC socket or render an image on every detail page load, which is a behaviour and load change the complaint did not ask for. The placeholder simply stopped reserving 160px instead.
+
+Two things fixed that were not in the plan: `.fleet-action` was wrapping the Tag control to "Ta / g" at its 4% column width, and the Runtime and Managed By pills, though they technically had neutral branches, were saturated on the common case (running, Intune) and so lit up nearly every row. Both are the same disease item 5 describes.
+
+Original plan follows, for the record. Every item is local, reversible, and touches no shared component. Together they are roughly a day.
 
 | # | Change | Files | Effort | Payoff |
 |---|---|---|---|---|

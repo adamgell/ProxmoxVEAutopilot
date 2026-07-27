@@ -82,7 +82,7 @@ export function DashboardPage({ bootstrap }: { readonly bootstrap: AppBootstrap 
       path="/react/dashboard"
       socketState={socketState}
     >
-      {error ? <p className="notice" role="status">{error}</p> : null}
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
 
       <section className="metric-strip" aria-label="Job status">
         <Metric label="Running" value={String(running.running_count)} tone={running.running_count > 0 ? "active" : "neutral"} />
