@@ -608,7 +608,11 @@ public sealed record AgentUpdateCheckResponse(
     [property: JsonPropertyName("runtime_identifier")] string RuntimeIdentifier,
     [property: JsonPropertyName("download_url")] string? DownloadUrl,
     [property: JsonPropertyName("sha256")] string? Sha256,
-    [property: JsonPropertyName("size_bytes")] long? SizeBytes);
+    [property: JsonPropertyName("size_bytes")] long? SizeBytes,
+    // Why the server answered the way it did, so a "current" verdict is
+    // explainable from the agent log instead of only from the server.
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    [property: JsonPropertyName("installed_version")] string? InstalledVersion = null);
 
 public sealed record AgentWorkItem(
     [property: JsonPropertyName("id")] string Id,

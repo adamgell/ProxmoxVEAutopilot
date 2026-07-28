@@ -255,12 +255,71 @@ def _version_parts(value: str | None) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def _newer_version(published: str | None, installed: str | None) -> bool:
+# The agent version scheme changed from a hand-rolled 0.1.x to CalVer
+# YYYY.M.SEQ. Comparing those as plain integer tuples is meaningless in both
+# directions: (2026,7,14) always beats (0,1,4), so an 0.1.x agent is told to
+# "upgrade" to a CalVer build even when that build is older work, and a CalVer
+# agent is told it is current against every 0.1.x publish forever. The second
+# case is the dangerous one because "current" is indistinguishable from
+# genuinely up to date, and the agent returns silently.
+_CALVER_MIN_YEAR = 2000
+
+
+def _version_scheme(value: str | None) -> str:
+    parts = _version_parts(value)
+    if not parts:
+        return "unknown"
+    return "calver" if parts[0] >= _CALVER_MIN_YEAR else "semver"
+
+
+def compare_versions(published: str | None, installed: str | None) -> tuple[str, str]:
+    """Return (status, reason) for a published/installed pair.
+
+    status is one of upgrade_available, current or indeterminate. The last one
+    exists so a comparison we cannot make is never reported as "you are up to
+    date", which is what hid this class of bug.
+    """
     published_parts = _version_parts(published)
     installed_parts = _version_parts(installed)
-    if published_parts and installed_parts:
-        return published_parts > installed_parts
-    return bool(published and installed and published != installed)
+
+    if not published:
+        return "indeterminate", "no_published_version"
+    if not installed:
+        # Nothing reported and nothing recorded: offer the upgrade rather than
+        # assume the agent is fine, since an agent that cannot report its own
+        # version is exactly one worth reinstalling.
+        return "upgrade_available", "installed_version_unknown"
+    if not published_parts or not installed_parts:
+        return "indeterminate", "unparseable_version"
+
+    published_scheme = _version_scheme(published)
+    installed_scheme = _version_scheme(installed)
+    if published_scheme != installed_scheme:
+        return (
+            "indeterminate",
+            f"version_scheme_mismatch:published={published_scheme},installed={installed_scheme}",
+        )
+
+    # Pad to equal length before comparing. The MSI publishes a three-part
+    # version ("0.1.4") while the agent reports AssemblyVersion, which is
+    # always four ("0.1.4.0"). Raw tuple comparison calls those unequal, and
+    # in the direction where the published string is the longer one that reads
+    # as an upgrade to the version already installed, which would reinstall
+    # the same MSI on every heartbeat forever.
+    width = max(len(published_parts), len(installed_parts))
+    published_padded = published_parts + (0,) * (width - len(published_parts))
+    installed_padded = installed_parts + (0,) * (width - len(installed_parts))
+
+    if published_padded > installed_padded:
+        return "upgrade_available", ""
+    if published_padded == installed_padded:
+        return "current", "installed_version_matches_published"
+    return "current", "installed_version_newer_than_published"
+
+
+def _newer_version(published: str | None, installed: str | None) -> bool:
+    """Back-compat shim: callers that only want the boolean."""
+    return compare_versions(published, installed)[0] == "upgrade_available"
 
 
 def _persist_autopilot_hash(
@@ -435,26 +494,56 @@ def update_check(body: UpdateCheckBody, device: dict = Depends(_require_agent)):
     release = setup_artifacts.latest_agent_release(
         runtime_identifier=body.runtime_identifier,
     )
-    installed = body.installed_version or device.get("agent_version")
+    reported = body.installed_version
+    recorded = device.get("agent_version")
+    installed = reported or recorded
+
+    # The fleet page reads agent_devices.agent_version while this endpoint
+    # prefers what the agent just told us. Those drift, because heartbeat
+    # persists agent_version with COALESCE, so a heartbeat that omits it keeps
+    # a stale value forever. When they disagree the UI says "Upgrade
+    # available" while the agent is told "current" and returns silently, which
+    # is unfalsifiable from either side. Persist what the agent reports here so
+    # the two can no longer diverge.
+    if reported and reported != recorded:
+        try:
+            with _conn() as conn:
+                agent_telemetry_pg.update_agent_metadata(
+                    conn,
+                    agent_id=device["agent_id"],
+                    agent_version=reported,
+                )
+        except Exception:
+            # Reconciliation is best effort; never fail an update-check over it.
+            pass
+
     if not release:
         return {
             "schema_version": 1,
             "status": "blocked",
             "reason": "no_valid_agent_msi_published",
             "installed_version": installed,
+            "reported_version": reported,
+            "recorded_version": recorded,
             "published_version": None,
             "runtime_identifier": body.runtime_identifier,
             "download_url": None,
             "sha256": None,
             "size_bytes": None,
         }
+
     published = release.get("version") or ""
-    available = _newer_version(published, installed)
+    status, reason = compare_versions(published, installed)
+    available = status == "upgrade_available"
     return {
         "schema_version": 1,
-        "status": "upgrade_available" if available else "current",
-        "reason": "" if available else "installed_version_matches_published",
+        "status": status,
+        "reason": reason,
         "installed_version": installed,
+        # Both sides of the comparison, so a disagreement is visible in the
+        # response instead of having to be inferred from guest logs.
+        "reported_version": reported,
+        "recorded_version": recorded,
         "published_version": published,
         "runtime_identifier": body.runtime_identifier,
         "download_url": "/api/cloudosd/assets/autopilotagent.msi" if available else None,

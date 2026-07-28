@@ -9,6 +9,8 @@ public sealed class AgentUpdateService(
     HttpClient httpClient,
     AgentFileLog log)
 {
+    private string? _lastVerdict;
+
     public async Task CheckAndApplyOnceAsync(
         AgentConfig config,
         CancellationToken cancellationToken)
@@ -23,8 +25,26 @@ public sealed class AgentUpdateService(
             cancellationToken);
         if (!string.Equals(update.Status, "upgrade_available", StringComparison.OrdinalIgnoreCase))
         {
+            // Log the verdict rather than returning in silence. A fleet sat on
+            // an old build for weeks showing "Upgrade available" in the UI
+            // while every agent was being told "current", and because this
+            // branch wrote nothing there was no way to tell the difference
+            // between "checked and fine" and "never checked at all".
+            //
+            // Only logged when the answer changes, so a 30s heartbeat loop
+            // does not fill the disk with the same line, which is its own
+            // failure mode on these guests.
+            var verdict = $"{update.Status}|{update.Reason}|{update.PublishedVersion}";
+            if (!string.Equals(verdict, _lastVerdict, StringComparison.Ordinal))
+            {
+                _lastVerdict = verdict;
+                log.Info(
+                    $"Agent update check: status={update.Status} reason={update.Reason} "
+                    + $"published={update.PublishedVersion} reported={ThisAssembly.Version}");
+            }
             return;
         }
+        _lastVerdict = null;
         if (string.IsNullOrWhiteSpace(update.DownloadUrl) || string.IsNullOrWhiteSpace(update.Sha256))
         {
             log.Warning("Agent update was advertised without a download URL or SHA-256.");
