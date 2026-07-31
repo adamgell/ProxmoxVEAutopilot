@@ -203,6 +203,12 @@ def test_osdeploy_build_script_has_native_osdbuilder_server_base_path():
     assert '@("OSMedia", "OSImport")' in text
     assert "Invoke-NativeServerMediaBuild" in text
     assert "dism.exe /Export-Image" in text
+    assert "Resolve-NativeServerUpdatePackages" in text
+    assert "Test-NativeServerUpdatePackageSignature" in text
+    assert "Get-AuthenticodeSignature" in text
+    assert "Add-WindowsPackage" in text
+    assert "Native Server media build requires staged update packages" in text
+    assert "-SkipUpdates $SkipUpdates" in text
     assert "-InstallWimPath $WimPath" in text
     assert 'build_engine = $buildEngine' in text
     assert "'E:\\BuildRoot\\inputs\\virtio-win'" in text

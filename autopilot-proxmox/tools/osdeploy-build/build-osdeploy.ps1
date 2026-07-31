@@ -13,6 +13,7 @@ param(
     [string]$ControllerUrl = $env:AUTOPILOT_BASE_URL,
     [string]$FallbackControllerUrl = $env:AUTOPILOT_FALLBACK_BASE_URL,
     [string]$OSDBuilderPath = $(if ($env:OSDBUILDER_HOME) { $env:OSDBUILDER_HOME } else { "C:\OSDBuilder" }),
+    [string]$UpdatePackageRoot = $env:OSDEPLOY_UPDATE_PACKAGE_ROOT,
     [switch]$NativeMediaBuild,
     [switch]$SkipUpdates
 )
@@ -249,6 +250,76 @@ function Reset-OSDeployBuilderState {
         Get-ChildItem -LiteralPath $path -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like 'Windows Server *' -or $_.Name -like 'build*' } |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Resolve-NativeServerUpdatePackages {
+    param(
+        [AllowNull()][string]$Root,
+        [Parameter(Mandatory = $true)][string]$OSVersion
+    )
+    $candidateRoots = @(
+        $Root,
+        $env:OSDEPLOY_UPDATE_PACKAGE_ROOT,
+        'C:\BuildRoot\ProxmoxVEAutopilot\inputs\updates',
+        'C:\BuildRoot\inputs\updates',
+        'E:\BuildRoot\inputs\updates',
+        'F:\BuildRoot\inputs\updates'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    $versionDirectoryName = $OSVersion -replace '[\\/:*?"<>|]', '_'
+    foreach ($candidateRoot in $candidateRoots) {
+        if (-not (Test-Path -LiteralPath $candidateRoot -PathType Container)) { continue }
+        $versionRoot = Join-Path $candidateRoot $versionDirectoryName
+        $searchRoot = if (Test-Path -LiteralPath $versionRoot -PathType Container) { $versionRoot } else { $candidateRoot }
+        $packages = @(Get-ChildItem -LiteralPath $searchRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.cab', '.msu') } |
+            Sort-Object Name, LastWriteTimeUtc)
+        if ($packages.Count -gt 0) {
+            foreach ($package in $packages) {
+                Test-NativeServerUpdatePackageSignature -Path $package.FullName
+            }
+            return [pscustomobject]@{
+                Root = $searchRoot
+                Packages = $packages
+            }
+        }
+    }
+    throw "Native Server media build requires staged update packages for $OSVersion. Set UpdatePackageRoot or stage signed .cab/.msu files under inputs\\updates."
+}
+
+function Test-NativeServerUpdatePackageSignature {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne 'Valid') {
+        throw "Staged Server update package signature is not valid: $Path ($($signature.Status))"
+    }
+}
+
+function Install-NativeServerUpdatePackages {
+    param(
+        [Parameter(Mandatory = $true)][string]$WimPath,
+        [Parameter(Mandatory = $true)][object[]]$Packages
+    )
+    $mountPath = "$WimPath.mount-$PID"
+    $committed = $false
+    New-Item -ItemType Directory -Path $mountPath -Force | Out-Null
+    try {
+        Mount-WindowsImage -ImagePath $WimPath -Index 1 -Path $mountPath | Out-Null
+        foreach ($package in $Packages) {
+            Write-Host "Applying staged Server update package $($package.FullName)"
+            Add-WindowsPackage -Path $mountPath -PackagePath $package.FullName -PreventPending -NoRestart | Out-Host
+        }
+        $committed = $true
+    } finally {
+        if (Test-Path -LiteralPath $mountPath -PathType Container) {
+            if ($committed) {
+                Dismount-WindowsImage -Path $mountPath -Save | Out-Null
+            } else {
+                Dismount-WindowsImage -Path $mountPath -Discard -ErrorAction SilentlyContinue | Out-Null
+            }
+            Remove-Item -LiteralPath $mountPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -489,9 +560,12 @@ function Invoke-NativeServerMediaBuild {
         [Parameter(Mandatory = $true)][string]$IsoPath,
         [Parameter(Mandatory = $true)][string]$ImageName,
         [Parameter(Mandatory = $true)][int]$ImageIndex,
+        [Parameter(Mandatory = $true)][string]$OSVersion,
         [Parameter(Mandatory = $true)][string]$BridgeRoot,
         [Parameter(Mandatory = $true)][string]$OscdimgPath,
-        [Parameter(Mandatory = $true)][string]$Arch
+        [Parameter(Mandatory = $true)][string]$Arch,
+        [AllowNull()][string]$UpdatePackageRoot,
+        [switch]$SkipUpdates
     )
     if (-not $SourceMedia) {
         throw "Native Server media build requires SourceMediaPath."
@@ -500,6 +574,10 @@ function Invoke-NativeServerMediaBuild {
     & dism.exe /Export-Image /SourceImageFile:$($SourceMedia.InstallImagePath) /SourceIndex:$ImageIndex /DestinationImageFile:$WimPath /DestinationName:$ImageName /Compress:max /CheckIntegrity | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "dism /Export-Image failed for Server image index ${ImageIndex}: $LASTEXITCODE"
+    }
+    if (-not $SkipUpdates) {
+        $updates = Resolve-NativeServerUpdatePackages -Root $UpdatePackageRoot -OSVersion $OSVersion
+        Install-NativeServerUpdatePackages -WimPath $WimPath -Packages $updates.Packages
     }
     Inject-OSDeployWinPEBridge `
         -IsoPath $SourceMediaPath `
@@ -579,9 +657,12 @@ if (-not [string]::IsNullOrWhiteSpace($customBuildCommand)) {
                 -IsoPath $isoPath `
                 -ImageName $ImageName `
                 -ImageIndex $ImageIndex `
+                -OSVersion $OSVersion `
                 -BridgeRoot $peBridgeRoot `
                 -OscdimgPath $oscdimg.FullName `
-                -Arch $Arch
+                -Arch $Arch `
+                -UpdatePackageRoot $UpdatePackageRoot `
+                -SkipUpdates $SkipUpdates
         } else {
             $editionId = Get-ServerEditionId -Edition $OSEdition
             $importParams = @{
