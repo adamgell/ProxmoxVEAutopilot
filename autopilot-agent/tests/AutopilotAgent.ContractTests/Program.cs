@@ -235,7 +235,11 @@ static void VerifyOsDeployRoleAutomationContracts()
             ["prereq_profile"] = JsonSerializer.SerializeToElement("site_server_foundation"),
             ["content_root"] = JsonSerializer.SerializeToElement(@"C:\MECMContent"),
         });
-    Assert(mecmScript.Contains("Web-Server", StringComparison.Ordinal), "MECM prereq script must include Windows feature baseline");
+    Assert(mecmScript.Contains("Web-WebServer", StringComparison.Ordinal), "MECM prereq script must include the IIS parent feature");
+    Assert(mecmScript.Contains("Web-Common-Http", StringComparison.Ordinal), "MECM prereq script must include the IIS common HTTP baseline");
+    Assert(mecmScript.Contains("Web-ISAPI-Ext", StringComparison.Ordinal), "MECM prereq script must include the management point ISAPI extension");
+    Assert(mecmScript.Contains("Web-Metabase", StringComparison.Ordinal), "MECM prereq script must include IIS 6 metabase compatibility");
+    Assert(!mecmScript.Contains("Web-Asp-Net45", StringComparison.Ordinal), "MECM prereq baseline must not add retired-role ASP.NET dependencies");
     Assert(!mecmScript.Contains("SQL", StringComparison.OrdinalIgnoreCase), "MECM prereq baseline must not install SQL");
     Assert(
         OsdV2WorkService.ShouldRequestReboot("required", "success"),

@@ -267,6 +267,11 @@ def validate_role_options(
         ))
     if server_role == "mecm_prereq" and options.get("prereq_profile") not in {"site_server_foundation"}:
         checks.append(_blocking("role_option_invalid_prereq_profile", "MECM prereq profile must be 'site_server_foundation'."))
+    if server_role == "mecm_prereq" and str(options.get("content_root") or "").startswith("\\\\"):
+        checks.append(_blocking(
+            "role_option_content_root_must_be_local",
+            "MECM prereq content_root must be a local staging path; keep installer media in a separate vault path.",
+        ))
     domain_join = options.get("domain_join")
     if _domain_join_enabled(domain_join):
         cred_id = domain_join.get("credential_id")

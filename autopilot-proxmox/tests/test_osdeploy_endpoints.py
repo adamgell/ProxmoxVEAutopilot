@@ -246,6 +246,17 @@ def _mecm_options(**overrides):
     return values
 
 
+def test_osdeploy_mecm_role_rejects_unc_content_root():
+    from web import osdeploy_roles
+
+    checks = osdeploy_roles.validate_role_options(
+        "mecm_prereq",
+        _mecm_options(content_root=r"\\LABZ1-DC02\SetupCm"),
+    )
+
+    assert any(check["id"] == "role_option_content_root_must_be_local" for check in checks)
+
+
 def _lab_bundle_options(**overrides):
     values = {
         "bundle_name": "Lab Bundle 01",

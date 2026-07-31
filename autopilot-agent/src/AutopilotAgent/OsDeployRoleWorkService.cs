@@ -216,10 +216,33 @@ if (-not $domain -or -not $sysvol -or -not $netlogon) {
 $ErrorActionPreference = 'Stop'
 $contentRoot = {{PsString(contentRoot)}}
 New-Item -ItemType Directory -Force -Path $contentRoot | Out-Null
+# Baseline for the colocated management point and distribution point. Keep the
+# IIS parents explicit: Server Manager doesn't auto-enable every prerequisite
+# when a role service is requested in a batch.
 $features = @(
   'Web-Server',
+  'Web-WebServer',
+  'Web-Common-Http',
+  'Web-Default-Doc',
+  'Web-Dir-Browsing',
+  'Web-Http-Errors',
+  'Web-Static-Content',
+  'Web-Health',
+  'Web-Http-Logging',
+  'Web-Log-Libraries',
+  'Web-Request-Monitor',
+  'Web-Http-Tracing',
+  'Web-Performance',
+  'Web-Stat-Compression',
+  'Web-Security',
+  'Web-Filtering',
   'Web-Windows-Auth',
-  'Web-Asp-Net45',
+  'Web-App-Dev',
+  'Web-ISAPI-Ext',
+  'Web-Http-Redirect',
+  'Web-Mgmt-Tools',
+  'Web-Mgmt-Console',
+  'Web-Mgmt-Compat',
   'Web-Metabase',
   'Web-WMI',
   'BITS',
