@@ -12,6 +12,7 @@ VerifyBuildHostContracts();
 VerifyBuildHostVirtioRootsMatchOsDeployScript();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
 VerifyOsDeployResolvesStagedSourceMedia();
+VerifySetupCmWorkContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -402,6 +403,49 @@ static void VerifyBuildHostContracts()
             buildHostWorker.Contains(fragment, StringComparison.Ordinal),
             $"build-host OSDeploy worker is missing contract fragment: {fragment}");
     }
+}
+
+static void VerifySetupCmWorkContracts()
+{
+    var kinds = SetupCmWorkService.SupportedKinds;
+    foreach (var kind in new[]
+    {
+        "setup_cm_acquire",
+        "setup_cm_sql",
+        "setup_cm_mecm",
+        "setup_cm_health",
+    })
+    {
+        Assert(kinds.Contains(kind), $"Setup-CM work kind is not registered: {kind}");
+    }
+
+    var valid = new Dictionary<string, JsonElement>
+    {
+        ["config_path"] = JsonSerializer.SerializeToElement(@"C:\ProgramData\SetupCm\labz1.local.yaml"),
+        ["evidence_root"] = JsonSerializer.SerializeToElement(@"C:\ProgramData\SetupCm\artifacts"),
+        ["module_archive_path"] = JsonSerializer.SerializeToElement(@"\\LABZ1-DC02\SetupCm\Modules\setup-cm.zip"),
+        ["module_archive_sha256"] = JsonSerializer.SerializeToElement(new string('a', 64)),
+    };
+    var request = SetupCmWorkService.ValidateRequest("setup_cm_sql", valid);
+    Assert(request.Stage == "Sql", "SQL work must invoke the Sql stage");
+    Assert(request.ModuleArchiveSha256 == new string('a', 64), "archive hash must round-trip");
+
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmWorkService.ValidateRequest(
+            "setup_cm_sql",
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["module_archive_path"] = JsonSerializer.SerializeToElement(@"C:\Windows\Temp\setup-cm.zip"),
+            }),
+        "Setup-CM work accepted an archive outside approved roots");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmWorkService.ValidateRequest(
+            "setup_cm_sql",
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["module_archive_sha256"] = JsonSerializer.SerializeToElement("not-a-sha256"),
+            }),
+        "Setup-CM work accepted an invalid archive hash");
 }
 
 static void VerifyOsDeployOutputSelectionRejectsStaleManifests()
