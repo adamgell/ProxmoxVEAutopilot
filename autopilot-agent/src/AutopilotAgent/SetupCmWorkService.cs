@@ -42,7 +42,7 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         ZipFile.ExtractToDirectory(archivePath, sourceRoot);
         ValidateExtractedModule(sourceRoot);
 
-        var entryPoint = Path.Combine(sourceRoot, "Invoke-SetupCm.ps1");
+        var entryPoint = Path.Combine(sourceRoot, "scripts", "Invoke-SetupCm.ps1");
         var output = await RunPowerShellAsync(
             entryPoint,
             request.ConfigPath,
@@ -100,7 +100,7 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
     {
         foreach (var relativePath in new[]
         {
-            "Invoke-SetupCm.ps1",
+            Path.Combine("scripts", "Invoke-SetupCm.ps1"),
             Path.Combine("src", "SetupCm", "SetupCm.psd1"),
             Path.Combine("src", "SetupCm", "SetupCm.psm1"),
         })

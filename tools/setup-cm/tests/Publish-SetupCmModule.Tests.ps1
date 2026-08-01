@@ -6,9 +6,11 @@ Describe 'Publish-SetupCmModule' {
     It 'publishes a hash-pinned runtime-only module archive' {
         $source = Join-Path $TestDrive 'setup-cm'
         $module = Join-Path $source 'src/SetupCm'
+        $scripts = Join-Path $source 'scripts'
         $destination = Join-Path $TestDrive 'Modules'
         New-Item -ItemType Directory -Force -Path $module | Out-Null
-        Set-Content -LiteralPath (Join-Path $source 'Invoke-SetupCm.ps1') -Value '# entry point'
+        New-Item -ItemType Directory -Force -Path $scripts | Out-Null
+        Set-Content -LiteralPath (Join-Path $scripts 'Invoke-SetupCm.ps1') -Value '# entry point'
         Set-Content -LiteralPath (Join-Path $module 'SetupCm.psd1') -Value '# manifest'
         Set-Content -LiteralPath (Join-Path $module 'SetupCm.psm1') -Value '# root module'
         Set-Content -LiteralPath (Join-Path $source 'lab.local.yaml') -Value 'secret: never-package'
@@ -17,7 +19,7 @@ Describe 'Publish-SetupCmModule' {
             git init --quiet
             git config user.email 'setup-cm-test@example.invalid'
             git config user.name 'Setup-CM Test'
-            git add Invoke-SetupCm.ps1 src
+            git add scripts src
             git commit --quiet -m 'test source'
         }
         finally {
@@ -34,7 +36,7 @@ Describe 'Publish-SetupCmModule' {
         $manifest.source_commit | Should -Match '^[A-Fa-f0-9]{40}$'
         $extract = Join-Path $TestDrive 'extract'
         Expand-Archive -LiteralPath $result.archive_path -DestinationPath $extract
-        Test-Path -LiteralPath (Join-Path $extract 'Invoke-SetupCm.ps1') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $extract 'scripts/Invoke-SetupCm.ps1') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $extract 'src/SetupCm/SetupCm.psm1') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $extract 'lab.local.yaml') | Should -BeFalse
     }

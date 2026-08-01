@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 
 $repository = (Resolve-Path -LiteralPath $SetupCmRepository).Path
 foreach ($relativePath in @(
-    'Invoke-SetupCm.ps1',
+    'scripts/Invoke-SetupCm.ps1',
     'src/SetupCm/SetupCm.psd1',
     'src/SetupCm/SetupCm.psm1'
 )) {
@@ -24,7 +24,7 @@ foreach ($relativePath in @(
 $dirtyRuntimePaths = @(
     & git -C $repository status --porcelain --untracked-files=no |
         ForEach-Object { $_.Substring(3).Trim() } |
-        Where-Object { $_ -match '^(Invoke-SetupCm\.ps1|src/)' }
+        Where-Object { $_ -match '^(scripts/Invoke-SetupCm\.ps1|src/)' }
 )
 if ($dirtyRuntimePaths.Count -gt 0) {
     throw "Setup-CM runtime source has uncommitted changes: $($dirtyRuntimePaths -join ', ')"
@@ -44,7 +44,7 @@ Remove-Item -LiteralPath $temporaryArchive, $temporaryManifest -Force -ErrorActi
 
 Push-Location $repository
 try {
-    Compress-Archive -Path 'Invoke-SetupCm.ps1', 'src' -DestinationPath $temporaryArchive -Force
+    Compress-Archive -Path 'scripts', 'src' -DestinationPath $temporaryArchive -Force
 }
 finally {
     Pop-Location

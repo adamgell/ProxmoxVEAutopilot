@@ -449,9 +449,10 @@ static void VerifySetupCmWorkContracts()
 
     var moduleRoot = Path.Combine(Path.GetTempPath(), $"setup-cm-module-{Guid.NewGuid():N}");
     Directory.CreateDirectory(Path.Combine(moduleRoot, "src", "SetupCm"));
+    Directory.CreateDirectory(Path.Combine(moduleRoot, "scripts"));
     try
     {
-        File.WriteAllText(Path.Combine(moduleRoot, "Invoke-SetupCm.ps1"), "# entry point");
+        File.WriteAllText(Path.Combine(moduleRoot, "scripts", "Invoke-SetupCm.ps1"), "# entry point");
         File.WriteAllText(Path.Combine(moduleRoot, "src", "SetupCm", "SetupCm.psd1"), "# manifest");
         AssertThrows<InvalidOperationException>(
             () => SetupCmWorkService.ValidateExtractedModule(moduleRoot),
