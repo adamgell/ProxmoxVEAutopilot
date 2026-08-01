@@ -1374,6 +1374,48 @@ def test_build_host_workload_queue_uses_first_run_default_artifact_path(
     assert agent_telemetry_pg.get_work_item(pg_conn, response.json()["queued"][0]["id"])
 
 
+def test_build_host_workload_queue_derives_guest_reachable_source_bundle_url(
+    agent_client,
+    pg_conn,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg
+    from web import app as web_app
+
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="buildhost-100",
+        token="buildhost-secret",
+        vmid=100,
+        computer_name="AUTOPILOT-BLD",
+    )
+    monkeypatch.setattr(web_app, "_setup_readiness", lambda: {
+        "controller": {"url": None},
+        "build_host": {
+            "vmid": 100,
+            "expected_agent_id": "buildhost-100",
+        },
+    })
+    monkeypatch.setattr(web_app, "_load_proxmox_config", lambda: {"proxmox_host": "192.168.2.200"})
+    monkeypatch.setattr(
+        web_app,
+        "_derive_guest_reachable_base_url",
+        lambda config: "http://192.168.2.4:5000",
+    )
+
+    response = agent_client.post(
+        "/api/setup/v1/build-host/workloads",
+        json={"kinds": ["fetch_source_bundle"]},
+    )
+
+    assert response.status_code == 202, response.text
+    row = agent_telemetry_pg.get_work_item(pg_conn, response.json()["queued"][0]["id"])
+    assert row["request_json"]["controller_url"] == "http://192.168.2.4:5000"
+    assert row["request_json"]["source_bundle_url"] == (
+        "http://192.168.2.4:5000/api/setup/v1/source-bundle.zip"
+    )
+
+
 def test_agent_worker_dispatches_osdeploy_build_host_work():
     worker = (
         Path(__file__).resolve().parents[2]

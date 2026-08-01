@@ -1779,7 +1779,11 @@ async def setup_queue_build_host_workloads(body: _BuildHostWorkloadsBody | None 
     bad = [kind for kind in kinds if kind not in _BUILD_HOST_WORK_KINDS]
     if bad:
         raise HTTPException(status_code=400, detail=f"unsupported build-host work kinds: {bad}")
-    controller_url = (data["controller"].get("url") or "").rstrip("/")
+    controller_url = (
+        data["controller"].get("url")
+        or _derive_guest_reachable_base_url(_load_proxmox_config())
+        or ""
+    ).rstrip("/")
     request_base = {
         "controller_url": controller_url,
         "source_bundle_url": f"{controller_url}/api/setup/v1/source-bundle.zip",
