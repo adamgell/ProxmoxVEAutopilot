@@ -1746,6 +1746,54 @@ def test_agent_api_auth_exemption_is_limited_to_agent_prefix():
     assert not auth.is_exempt_path("/api/agent-approvals/abc/approve")
 
 
+def test_setup_cm_queue_accepts_only_typed_sanitized_work(agent_client, pg_conn):
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-cm01",
+        token="agent-cm01-token",
+        vmid=107,
+        computer_name="LABZ1-CM01",
+    )
+    body = {
+        "stage": "sql",
+        "config_path": r"C:\ProgramData\SetupCm\labz1.local.yaml",
+        "evidence_root": r"C:\ProgramData\SetupCm\artifacts",
+        "module_archive_path": r"\\LABZ1-DC02\SetupCm\Modules\setup-cm.zip",
+        "module_archive_sha256": "a" * 64,
+    }
+
+    accepted = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01/work",
+        json=body,
+    )
+
+    assert accepted.status_code == 202, accepted.text
+    queued = accepted.json()
+    assert queued["kind"] == "setup_cm_sql"
+    assert queued["request"] == body
+
+    rejected_stage = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01/work",
+        json={**body, "stage": "shell"},
+    )
+    assert rejected_stage.status_code == 422
+    rejected_path = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01/work",
+        json={**body, "module_archive_path": r"C:\Windows\Temp\setup-cm.zip"},
+    )
+    assert rejected_path.status_code == 422
+    rejected_secret = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01/work",
+        json={**body, "product_key": "must-not-be-accepted"},
+    )
+    assert rejected_secret.status_code == 422
+    unknown_agent = agent_client.post(
+        "/api/setup-cm/v1/agents/no-such-agent/work",
+        json=body,
+    )
+    assert unknown_agent.status_code == 404
+
+
 def test_vms_snapshot_prefers_agent_ip_and_guest_state(monkeypatch):
     from web import app as app_module
 
