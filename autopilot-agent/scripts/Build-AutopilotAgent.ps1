@@ -10,6 +10,8 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = Join-Path $repoRoot "src\AutopilotAgent\AutopilotAgent.csproj"
 $installer = Join-Path $repoRoot "installer\AutopilotAgent.Installer.wixproj"
+Import-Module (Join-Path $PSScriptRoot "AutopilotAgent.Version.psm1") -Force
+$msiVersion = ConvertTo-AutopilotAgentMsiVersion -Version $Version
 
 function Ensure-NuGetOrgSource {
     $sourceUrl = "https://api.nuget.org/v3/index.json"
@@ -61,6 +63,7 @@ foreach ($rid in $RuntimeIdentifiers) {
     dotnet build $installer `
         -c $Configuration `
         -p:AutopilotAgentVersion=$Version `
+        -p:AutopilotAgentMsiVersion=$msiVersion `
         -p:RuntimeIdentifier=$rid `
         -p:InstallerPlatform=$installerPlatform `
         -p:PublishDir=$publishDir `

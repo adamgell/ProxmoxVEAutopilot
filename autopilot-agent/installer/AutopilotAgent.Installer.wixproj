@@ -5,7 +5,8 @@
     <DefineConstants>
       PublishDir=$(PublishDir);
       RuntimeIdentifier=$(RuntimeIdentifier);
-      AutopilotAgentVersion=$(AutopilotAgentVersion)
+      AutopilotAgentVersion=$(AutopilotAgentVersion);
+      AutopilotAgentMsiVersion=$(AutopilotAgentMsiVersion)
     </DefineConstants>
   </PropertyGroup>
   <ItemGroup>

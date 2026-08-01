@@ -3,7 +3,7 @@
   <Package
       Name="AutopilotAgent"
       Manufacturer="ProxmoxVEAutopilot"
-      Version="$(var.AutopilotAgentVersion)"
+      Version="$(var.AutopilotAgentMsiVersion)"
       UpgradeCode="{1B0134AB-8C4D-4D3B-AE90-629466D5B0E4}"
       Scope="perMachine">
     <MajorUpgrade
