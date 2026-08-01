@@ -102,6 +102,7 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         {
             "Invoke-SetupCm.ps1",
             Path.Combine("src", "SetupCm", "SetupCm.psd1"),
+            Path.Combine("src", "SetupCm", "SetupCm.psm1"),
         })
         {
             var path = Path.Combine(sourceRoot, relativePath);

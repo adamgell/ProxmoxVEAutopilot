@@ -446,6 +446,23 @@ static void VerifySetupCmWorkContracts()
                 ["module_archive_sha256"] = JsonSerializer.SerializeToElement("not-a-sha256"),
             }),
         "Setup-CM work accepted an invalid archive hash");
+
+    var moduleRoot = Path.Combine(Path.GetTempPath(), $"setup-cm-module-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(Path.Combine(moduleRoot, "src", "SetupCm"));
+    try
+    {
+        File.WriteAllText(Path.Combine(moduleRoot, "Invoke-SetupCm.ps1"), "# entry point");
+        File.WriteAllText(Path.Combine(moduleRoot, "src", "SetupCm", "SetupCm.psd1"), "# manifest");
+        AssertThrows<InvalidOperationException>(
+            () => SetupCmWorkService.ValidateExtractedModule(moduleRoot),
+            "Setup-CM work accepted a module archive without the root module");
+        File.WriteAllText(Path.Combine(moduleRoot, "src", "SetupCm", "SetupCm.psm1"), "# root module");
+        SetupCmWorkService.ValidateExtractedModule(moduleRoot);
+    }
+    finally
+    {
+        Directory.Delete(moduleRoot, recursive: true);
+    }
 }
 
 static void VerifyOsDeployOutputSelectionRejectsStaleManifests()
