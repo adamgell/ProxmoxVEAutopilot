@@ -1880,6 +1880,44 @@ def test_setup_cm_client_install_queue_is_strictly_typed(agent_client, pg_conn):
     ).status_code == 422
 
 
+def test_setup_cm_source_diagnostics_queue_is_strictly_typed(agent_client, pg_conn):
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-cm01-diagnostics",
+        token="agent-cm01-diagnostics-token",
+        vmid=107,
+        computer_name="LABZ1-CM01",
+    )
+    body = {"site_code": "LAB", "target_computer_name": "RING0IVY24-01"}
+
+    accepted = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-diagnostics/source-diagnostics",
+        json=body,
+    )
+
+    assert accepted.status_code == 202, accepted.text
+    queued = accepted.json()
+    assert queued["kind"] == "setup_cm_diagnostics"
+    assert queued["request"] == body
+
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-diagnostics/source-diagnostics",
+        json={**body, "site_code": "lab"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-diagnostics/source-diagnostics",
+        json={**body, "target_computer_name": r"..\bad"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-diagnostics/source-diagnostics",
+        json={**body, "script": "must-not-be-accepted"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/no-such-agent/source-diagnostics",
+        json=body,
+    ).status_code == 404
+
+
 def test_vms_snapshot_prefers_agent_ip_and_guest_state(monkeypatch):
     from web import app as app_module
 
