@@ -114,7 +114,7 @@ Add a dedicated request record, strict validator, `ProcessContentLocationRemedia
 
 - [ ] **Step 4: Implement idempotent PowerShell resource**
 
-The resource loads the Configuration Manager module, looks up the fixed `IPSubnet` boundary, creates it only if absent, looks up/creates the fixed group, validates existing values before adding memberships, associates only the fixed local DP, and emits JSON readback. It must not call `Remove-*` or `Set-*`.
+The resource loads the Configuration Manager module, looks up the fixed `IPSubnet` boundary, creates it only if absent, looks up/creates the fixed group, validates existing values before adding memberships, associates only the fixed local DP, and emits JSON readback. The sole permitted `Set-*` call is `Set-CMBoundaryGroup -Name $BoundaryGroupName -AddSiteSystemServerName $DistributionPointFqdn`; it must not call `Remove-*`, `Clear-*`, or any other `Set-*` form.
 
 - [ ] **Step 5: Run Agent contracts to verify they pass**
 
@@ -148,7 +148,7 @@ Expected: PASS.
 
 Run: `pwsh -NoProfile -Command "[void][scriptblock]::Create((Get-Content autopilot-agent/src/AutopilotAgent/SetupCmContentLocationRemediation.ps1 -Raw)); Select-String -Path autopilot-agent/src/AutopilotAgent/SetupCmContentLocationRemediation.ps1 -Pattern 'Remove-|Set-'"`
 
-Expected: parser succeeds and the search returns no destructive/broad mutation verbs.
+Expected: parser succeeds. The resource may contain the one exact additive `Set-CMBoundaryGroup -AddSiteSystemServerName` call, but contains no `Remove-*`, `Clear-*`, or other `Set-*` forms.
 
 - [ ] **Step 3: Run full controller suite**
 
