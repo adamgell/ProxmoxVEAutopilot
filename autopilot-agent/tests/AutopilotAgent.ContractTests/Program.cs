@@ -15,6 +15,7 @@ VerifyOsDeployResolvesStagedSourceMedia();
 VerifySetupCmWorkContracts();
 VerifySetupCmDiagnosticsContracts();
 VerifySetupCmContentLocationDiagnosticsContracts();
+VerifySetupCmContentLocationRemediationContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -602,6 +603,50 @@ static void VerifySetupCmContentLocationDiagnosticsContracts()
                 ["script"] = JsonSerializer.SerializeToElement("Get-ChildItem"),
             }),
         "content location diagnostics accepted an arbitrary script field");
+}
+
+static void VerifySetupCmContentLocationRemediationContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_content_location_remediation"),
+        "Setup-CM content location remediation kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ContentLocationRemediationScriptResourceName
+            == "AutopilotAgent.SetupCmContentLocationRemediation.ps1",
+        "content location remediation does not use the fixed packaged script");
+
+    var valid = new Dictionary<string, JsonElement>
+    {
+        ["site_code"] = JsonSerializer.SerializeToElement("LAB"),
+        ["client_subnet"] = JsonSerializer.SerializeToElement("192.168.16.0/24"),
+        ["boundary_group_name"] = JsonSerializer.SerializeToElement("LABZ1 Client Network"),
+        ["distribution_point_fqdn"] = JsonSerializer.SerializeToElement("LABZ1-CM01.test.gell.one"),
+    };
+    var request = SetupCmDiagnosticsWorkService.ValidateContentLocationRemediationRequest(valid);
+    Assert(request.SiteCode == "LAB", "content remediation site code must round-trip");
+    Assert(request.ClientSubnet == "192.168.16.0/24", "content remediation subnet must round-trip");
+    Assert(
+        request.BoundaryGroupName == "LABZ1 Client Network",
+        "content remediation group must round-trip");
+    Assert(
+        request.DistributionPointFqdn == "LABZ1-CM01.test.gell.one",
+        "content remediation DP must round-trip");
+
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateContentLocationRemediationRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["client_subnet"] = JsonSerializer.SerializeToElement("10.0.0.0/24"),
+            }),
+        "content remediation accepted a foreign subnet");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateContentLocationRemediationRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["script"] = JsonSerializer.SerializeToElement("Get-ChildItem"),
+            }),
+        "content remediation accepted an arbitrary script field");
 }
 
 static void VerifyOsDeployOutputSelectionRejectsStaleManifests()

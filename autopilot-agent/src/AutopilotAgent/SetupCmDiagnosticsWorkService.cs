@@ -17,11 +17,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     public const string DiagnosticScriptResourceName = "AutopilotAgent.SetupCmSourceDiagnostics.ps1";
     public const string ContentLocationDiagnosticScriptResourceName =
         "AutopilotAgent.SetupCmContentLocationDiagnostics.ps1";
+    public const string ContentLocationRemediationScriptResourceName =
+        "AutopilotAgent.SetupCmContentLocationRemediation.ps1";
     public static readonly string[] SupportedKinds =
     [
         "setup_cm_diagnostics",
         "setup_cm_source_access",
         "setup_cm_content_location_diagnostics",
+        "setup_cm_content_location_remediation",
     ];
 
     public async Task ProcessAsync(
@@ -35,6 +38,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessContentLocationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_content_location_remediation",
+                StringComparison.Ordinal))
+        {
+            await ProcessContentLocationRemediationAsync(config, work, cancellationToken);
             return;
         }
 
@@ -79,6 +90,25 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         log.Info($"Setup-CM content location diagnostics completed ({work.Id}).");
     }
 
+    private async Task ProcessContentLocationRemediationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        var request = ValidateContentLocationRemediationRequest(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ContentLocationRemediationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, request, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM content location remediation failed with exit code {output.ExitCode}.");
+        }
+
+        var result = ParseContentLocationRemediationResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM content location remediation completed ({work.Id}).");
+    }
+
     public static SetupCmDiagnosticsRequest ValidateRequest(
         IReadOnlyDictionary<string, JsonElement> values)
     {
@@ -120,6 +150,37 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             siteCode,
             targetComputerName,
             parsedAddress.ToString());
+    }
+
+    public static SetupCmContentLocationRemediationRequest ValidateContentLocationRemediationRequest(
+        IReadOnlyDictionary<string, JsonElement> values)
+    {
+        RequireOnlyFields(
+            values,
+            "site_code",
+            "client_subnet",
+            "boundary_group_name",
+            "distribution_point_fqdn");
+        var siteCode = RequiredString(values, "site_code");
+        var clientSubnet = RequiredString(values, "client_subnet");
+        var boundaryGroupName = RequiredString(values, "boundary_group_name");
+        var distributionPointFqdn = RequiredString(values, "distribution_point_fqdn");
+        if (!string.Equals(siteCode, "LAB", StringComparison.Ordinal)
+            || !string.Equals(clientSubnet, "192.168.16.0/24", StringComparison.Ordinal)
+            || !string.Equals(boundaryGroupName, "LABZ1 Client Network", StringComparison.Ordinal)
+            || !string.Equals(
+                distributionPointFqdn,
+                "LABZ1-CM01.test.gell.one",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "content location remediation request does not match the fixed LABZ1 contract.");
+        }
+        return new SetupCmContentLocationRemediationRequest(
+            siteCode,
+            clientSubnet,
+            boundaryGroupName,
+            "LABZ1-CM01.test.gell.one");
     }
 
     private static string WriteDiagnosticScript(string workId, string resourceName)
@@ -209,6 +270,43 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
     }
 
+    private static async Task<ProcessOutput> RunPowerShellAsync(
+        string scriptPath,
+        SetupCmContentLocationRemediationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "pwsh.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        startInfo.ArgumentList.Add("-SiteCode");
+        startInfo.ArgumentList.Add(request.SiteCode);
+        startInfo.ArgumentList.Add("-ClientSubnet");
+        startInfo.ArgumentList.Add(request.ClientSubnet);
+        startInfo.ArgumentList.Add("-BoundaryGroupName");
+        startInfo.ArgumentList.Add(request.BoundaryGroupName);
+        startInfo.ArgumentList.Add("-DistributionPointFqdn");
+        startInfo.ArgumentList.Add(request.DistributionPointFqdn);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM diagnostics.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(5));
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        await process.WaitForExitAsync(timeout.Token);
+        return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
+    }
+
     private static Dictionary<string, object?> ParseDiagnosticResult(
         string stdout,
         bool remediateSourceAccess)
@@ -276,6 +374,36 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             StringComparer.Ordinal);
     }
 
+    private static Dictionary<string, object?> ParseContentLocationRemediationResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException("Setup-CM diagnostic output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM diagnostic output must be a JSON object.");
+        }
+        var required = new[]
+        {
+            "site_code", "client_subnet", "boundary_group_name",
+            "distribution_point_fqdn", "boundary", "boundary_group",
+            "distribution_points", "changed", "errors",
+        };
+        foreach (var name in required)
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException($"Setup-CM remediation result is missing {name}.");
+            }
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
     private static string RequiredString(IReadOnlyDictionary<string, JsonElement> values, string name)
     {
         if (!values.TryGetValue(name, out var value)
@@ -305,3 +433,9 @@ public sealed record SetupCmContentLocationDiagnosticsRequest(
     string SiteCode,
     string TargetComputerName,
     string ClientIpv4);
+
+public sealed record SetupCmContentLocationRemediationRequest(
+    string SiteCode,
+    string ClientSubnet,
+    string BoundaryGroupName,
+    string DistributionPointFqdn);
