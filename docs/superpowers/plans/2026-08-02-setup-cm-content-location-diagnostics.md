@@ -150,7 +150,7 @@ Expected: FAIL because the fixed script and embedded resource are absent.
 
 - [ ] **Step 3: Implement the smallest read-only script**
 
-The script imports the local Configuration Manager module, derives the supplied
+The script reads the local Configuration Manager SMS Provider, derives the supplied
 IPv4 /24 subnet, reads matching `SMS_Boundary` rows, boundary-group membership,
 referenced DPs, and `LAB00003` distribution status. Each source is caught
 independently into `errors`; each collection has a 100-item cap and explicit

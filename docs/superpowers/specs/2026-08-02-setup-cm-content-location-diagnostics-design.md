@@ -21,8 +21,8 @@ queries, package IDs, or remediation flags.
    work item for a registered Agent.
 2. The CM01 Agent validates the same closed request schema and runs its
    embedded PowerShell 7 diagnostic script.
-3. The script imports the local Configuration Manager PowerShell module and
-   reads the boundary matching the supplied IP/subnet, its boundary groups,
+3. The script reads the local Configuration Manager SMS Provider for the
+   boundary matching the supplied IP/subnet, its boundary groups,
    the groups' assigned site and referenced DPs, and the `LAB00003`
    distribution state.
 4. The Agent validates a bounded JSON result and records it as work-item
