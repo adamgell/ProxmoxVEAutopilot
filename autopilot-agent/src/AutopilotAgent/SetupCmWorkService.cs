@@ -18,6 +18,7 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         "setup_cm_sql",
         "setup_cm_mecm",
         "setup_cm_health",
+        "setup_cm_client_install",
     ];
 
     public async Task ProcessAsync(
@@ -40,14 +41,36 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
             Directory.Delete(sourceRoot, recursive: true);
         }
         ZipFile.ExtractToDirectory(archivePath, sourceRoot);
-        ValidateExtractedModule(sourceRoot);
+        var entryScript = request.Stage == "Client" ? "Invoke-SetupCmClient.ps1" : "Invoke-SetupCm.ps1";
+        ValidateExtractedModule(sourceRoot, entryScript);
 
-        var entryPoint = Path.Combine(sourceRoot, "scripts", "Invoke-SetupCm.ps1");
-        var output = await RunPowerShellAsync(
-            entryPoint,
-            request.ConfigPath,
-            request.Stage,
-            cancellationToken);
+        var entryPoint = Path.Combine(sourceRoot, "scripts", entryScript);
+        ProcessOutput output;
+        if (request.Stage == "Client")
+        {
+            var manifestPath = Path.Combine(workRoot, "client-manifest.json");
+            File.WriteAllText(
+                manifestPath,
+                JsonSerializer.Serialize(new
+                {
+                    siteCode = request.SiteCode,
+                    managementPointFqdn = request.ManagementPointFqdn,
+                    evidenceRoot = request.EvidenceRoot,
+                }));
+            output = await RunPowerShellAsync(
+                entryPoint,
+                ["-ManifestPath", manifestPath],
+                request.Stage,
+                cancellationToken);
+        }
+        else
+        {
+            output = await RunPowerShellAsync(
+                entryPoint,
+                ["-ConfigPath", request.ConfigPath!, "-Mode", "Unattended", "-Stage", request.Stage],
+                request.Stage,
+                cancellationToken);
+        }
         var result = new Dictionary<string, object?>
         {
             ["stage"] = request.Stage,
@@ -64,6 +87,10 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         string kind,
         IReadOnlyDictionary<string, JsonElement> values)
     {
+        if (kind == "setup_cm_client_install")
+        {
+            return ValidateClientInstallRequest(values);
+        }
         var stage = kind switch
         {
             "setup_cm_acquire" => "Acquire",
@@ -93,14 +120,14 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         {
             throw new InvalidOperationException("module_archive_sha256 must be a 64-character hexadecimal SHA-256 value.");
         }
-        return new SetupCmWorkRequest(stage, configPath, evidenceRoot, moduleArchivePath, moduleArchiveSha256);
+        return new SetupCmWorkRequest(stage, configPath, evidenceRoot, moduleArchivePath, moduleArchiveSha256, null, null);
     }
 
-    public static void ValidateExtractedModule(string sourceRoot)
+    public static void ValidateExtractedModule(string sourceRoot, string entryScript = "Invoke-SetupCm.ps1")
     {
         foreach (var relativePath in new[]
         {
-            Path.Combine("scripts", "Invoke-SetupCm.ps1"),
+            Path.Combine("scripts", entryScript),
             Path.Combine("src", "SetupCm", "SetupCm.psd1"),
             Path.Combine("src", "SetupCm", "SetupCm.psm1"),
         })
@@ -111,6 +138,53 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
                 throw new InvalidOperationException($"Setup-CM module archive is missing {relativePath}.");
             }
         }
+    }
+
+    private static SetupCmWorkRequest ValidateClientInstallRequest(
+        IReadOnlyDictionary<string, JsonElement> values)
+    {
+        RequireOnlyFields(
+            values,
+            "site_code",
+            "management_point_fqdn",
+            "evidence_root",
+            "module_archive_path",
+            "module_archive_sha256");
+        var siteCode = RequiredString(values, "site_code");
+        var managementPointFqdn = RequiredString(values, "management_point_fqdn");
+        var evidenceRoot = RequiredString(values, "evidence_root");
+        var moduleArchivePath = RequiredString(values, "module_archive_path");
+        var moduleArchiveSha256 = RequiredString(values, "module_archive_sha256").ToLowerInvariant();
+        if (siteCode.Length != 3 || !siteCode.All(character =>
+                character is >= 'A' and <= 'Z' || character is >= '0' and <= '9'))
+        {
+            throw new InvalidOperationException("site_code must be exactly three uppercase letters or numbers.");
+        }
+        if (!string.Equals(managementPointFqdn, "LABZ1-CM01.test.gell.one", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("management_point_fqdn must be LABZ1-CM01.test.gell.one.");
+        }
+        if (!IsInside(evidenceRoot, SetupCmRoot))
+        {
+            throw new InvalidOperationException("evidence_root must be below C:\\ProgramData\\SetupCm.");
+        }
+        if ((!IsInside(moduleArchivePath, SetupCmRoot) && !IsInside(moduleArchivePath, VaultRoot))
+            || !moduleArchivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("module_archive_path must be a ZIP below an approved Setup-CM root.");
+        }
+        if (moduleArchiveSha256.Length != 64 || !moduleArchiveSha256.All(Uri.IsHexDigit))
+        {
+            throw new InvalidOperationException("module_archive_sha256 must be a 64-character hexadecimal SHA-256 value.");
+        }
+        return new SetupCmWorkRequest(
+            "Client",
+            null,
+            evidenceRoot,
+            moduleArchivePath,
+            moduleArchiveSha256,
+            siteCode,
+            managementPointFqdn);
     }
 
     private static bool IsInside(string candidate, string root)
@@ -137,6 +211,17 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         return value.GetString()!;
     }
 
+    private static void RequireOnlyFields(
+        IReadOnlyDictionary<string, JsonElement> values,
+        params string[] allowed)
+    {
+        var unexpected = values.Keys.FirstOrDefault(key => !allowed.Contains(key, StringComparer.Ordinal));
+        if (unexpected is not null)
+        {
+            throw new InvalidOperationException($"Unexpected Setup-CM client request field: {unexpected}");
+        }
+    }
+
     private static void VerifySha256(string path, string expected)
     {
         using var stream = File.OpenRead(path);
@@ -149,7 +234,7 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
 
     private static async Task<ProcessOutput> RunPowerShellAsync(
         string entryPoint,
-        string configPath,
+        IEnumerable<string> arguments,
         string stage,
         CancellationToken cancellationToken)
     {
@@ -167,12 +252,10 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         startInfo.ArgumentList.Add("Bypass");
         startInfo.ArgumentList.Add("-File");
         startInfo.ArgumentList.Add(entryPoint);
-        startInfo.ArgumentList.Add("-ConfigPath");
-        startInfo.ArgumentList.Add(configPath);
-        startInfo.ArgumentList.Add("-Mode");
-        startInfo.ArgumentList.Add("Unattended");
-        startInfo.ArgumentList.Add("-Stage");
-        startInfo.ArgumentList.Add(stage);
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM work.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -199,7 +282,9 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
 
 public sealed record SetupCmWorkRequest(
     string Stage,
-    string ConfigPath,
+    string? ConfigPath,
     string EvidenceRoot,
     string ModuleArchivePath,
-    string ModuleArchiveSha256);
+    string ModuleArchiveSha256,
+    string? SiteCode,
+    string? ManagementPointFqdn);

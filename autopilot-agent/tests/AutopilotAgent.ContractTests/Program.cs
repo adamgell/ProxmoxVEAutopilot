@@ -414,6 +414,7 @@ static void VerifySetupCmWorkContracts()
         "setup_cm_sql",
         "setup_cm_mecm",
         "setup_cm_health",
+        "setup_cm_client_install",
     })
     {
         Assert(kinds.Contains(kind), $"Setup-CM work kind is not registered: {kind}");
@@ -447,6 +448,41 @@ static void VerifySetupCmWorkContracts()
             }),
         "Setup-CM work accepted an invalid archive hash");
 
+    var clientValid = new Dictionary<string, JsonElement>
+    {
+        ["site_code"] = JsonSerializer.SerializeToElement("LAB"),
+        ["management_point_fqdn"] = JsonSerializer.SerializeToElement("LABZ1-CM01.test.gell.one"),
+        ["evidence_root"] = JsonSerializer.SerializeToElement(@"C:\ProgramData\SetupCm\artifacts"),
+        ["module_archive_path"] = JsonSerializer.SerializeToElement(@"\\LABZ1-DC02\SetupCm\Modules\setup-cm.zip"),
+        ["module_archive_sha256"] = JsonSerializer.SerializeToElement(new string('b', 64)),
+    };
+    var clientRequest = SetupCmWorkService.ValidateRequest("setup_cm_client_install", clientValid);
+    Assert(clientRequest.Stage == "Client", "Client work must invoke the Client stage");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmWorkService.ValidateRequest(
+            "setup_cm_client_install",
+            new Dictionary<string, JsonElement>(clientValid)
+            {
+                ["management_point_fqdn"] = JsonSerializer.SerializeToElement("server.example.com"),
+            }),
+        "Client work accepted a non-LABZ1 management point");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmWorkService.ValidateRequest(
+            "setup_cm_client_install",
+            new Dictionary<string, JsonElement>(clientValid)
+            {
+                ["site_code"] = JsonSerializer.SerializeToElement("LABZ"),
+            }),
+        "Client work accepted a four-character site code");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmWorkService.ValidateRequest(
+            "setup_cm_client_install",
+            new Dictionary<string, JsonElement>(clientValid)
+            {
+                ["product_key"] = JsonSerializer.SerializeToElement("must-not-be-accepted"),
+            }),
+        "Client work accepted an unknown request field");
+
     var moduleRoot = Path.Combine(Path.GetTempPath(), $"setup-cm-module-{Guid.NewGuid():N}");
     Directory.CreateDirectory(Path.Combine(moduleRoot, "src", "SetupCm"));
     Directory.CreateDirectory(Path.Combine(moduleRoot, "scripts"));
@@ -459,6 +495,11 @@ static void VerifySetupCmWorkContracts()
             "Setup-CM work accepted a module archive without the root module");
         File.WriteAllText(Path.Combine(moduleRoot, "src", "SetupCm", "SetupCm.psm1"), "# root module");
         SetupCmWorkService.ValidateExtractedModule(moduleRoot);
+        AssertThrows<InvalidOperationException>(
+            () => SetupCmWorkService.ValidateExtractedModule(moduleRoot, "Invoke-SetupCmClient.ps1"),
+            "Setup-CM client work accepted a module archive without its entry point");
+        File.WriteAllText(Path.Combine(moduleRoot, "scripts", "Invoke-SetupCmClient.ps1"), "# client entry point");
+        SetupCmWorkService.ValidateExtractedModule(moduleRoot, "Invoke-SetupCmClient.ps1");
     }
     finally
     {
