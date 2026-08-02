@@ -24,6 +24,9 @@ def test_production_deploy_syncs_the_tagged_source_bundle_for_build_agents():
     assert "source-bundle" in deploy
     assert "../source-bundle:/host/source-bundle:ro" in controller_service
     assert "AUTOPILOT_SOURCE_BUNDLE_ROOT: /host/source-bundle" in compose
+    assert deploy.index('rm -rf "${SOURCE_ROOT}.previous"') < deploy.index(
+        'mv "$SOURCE_ROOT" "${SOURCE_ROOT}.previous"'
+    )
 
 
 def test_pve_init_provisions_controller_without_host_docker_runtime():

@@ -146,6 +146,7 @@ trap cleanup_source_stage EXIT
 tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_STAGE"
 test -f "$SOURCE_STAGE/autopilot-agent/Directory.Build.props"
 rm -f "$SOURCE_ARCHIVE"
+rm -rf "${SOURCE_ROOT}.previous"
 if [ -d "$SOURCE_ROOT" ]; then
   mv "$SOURCE_ROOT" "${SOURCE_ROOT}.previous"
 fi
