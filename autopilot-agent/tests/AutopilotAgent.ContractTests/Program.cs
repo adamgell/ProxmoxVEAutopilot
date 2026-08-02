@@ -631,6 +631,11 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn",
             StringComparison.Ordinal),
         "content remediation did not create the fixed CMSite drive for a non-console session");
+    Assert(
+        remediationScript.Contains(
+            "New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn -ErrorAction Stop",
+            StringComparison.Ordinal),
+        "content remediation used unsupported CMSite drive parameters");
 
     var valid = new Dictionary<string, JsonElement>
     {

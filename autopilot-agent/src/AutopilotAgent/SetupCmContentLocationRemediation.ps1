@@ -32,8 +32,7 @@ $siteDrive = Get-PSDrive -PSProvider CMSite -ErrorAction Stop |
     Where-Object { $_.Name -eq $SiteCode } |
     Select-Object -First 1
 if (-not $siteDrive) {
-    New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn `
-        -Description 'LABZ1 content location remediation' -ErrorAction Stop | Out-Null
+    New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn -ErrorAction Stop | Out-Null
     $siteDrive = Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction Stop
 }
 
