@@ -1,6 +1,6 @@
 services:
   autopilot:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.10}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.11}
     container_name: autopilot
     command: ["web"]
     network_mode: host
@@ -85,7 +85,7 @@ services:
     restart: unless-stopped
 
   autopilot-builder:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.10}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.11}
     # No container_name: --scale spins up replicas which need auto-names.
     command: ["builder"]
     network_mode: host
@@ -107,7 +107,7 @@ services:
     restart: unless-stopped
 
   autopilot-monitor:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.10}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.11}
     container_name: autopilot-monitor
     command: ["monitor"]
     network_mode: host
@@ -129,7 +129,7 @@ services:
     restart: unless-stopped
 
   autopilot-mcp:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.10}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.11}
     container_name: autopilot-mcp
     command: ["mcp"]
     network_mode: host

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -155,10 +156,20 @@ def _agent_release_version(row: dict) -> str:
     prefix = "AutopilotAgent-"
     if filename.startswith(prefix):
         remainder = filename[len(prefix):]
-        for suffix in ("-win-x64.msi", "-win-arm64.msi", ".msi"):
-            if remainder.endswith(suffix):
-                return remainder[: -len(suffix)]
+        match = re.match(
+            r"^(?P<version>\d+\.\d+\.\d+)-win-(?:x64|arm64)(?:-\d+)?\.msi$",
+            remainder,
+        )
+        if match:
+            return match.group("version")
     return ""
+
+
+def _agent_release_version_key(value: str) -> tuple[int, ...]:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value.strip())
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.groups())
 
 
 def _looks_like_msi(path: Path, size_bytes: int) -> bool:
@@ -193,7 +204,13 @@ def latest_agent_release(*, runtime_identifier: str = "win-x64") -> dict | None:
         candidates.append(release)
     if not candidates:
         return None
-    return max(candidates, key=lambda item: item.get("created_at") or "")
+    return max(
+        candidates,
+        key=lambda item: (
+            _agent_release_version_key(str(item.get("version") or "")),
+            item.get("created_at") or "",
+        ),
+    )
 
 
 def mark_promoted(artifact_id: str, *, proxmox_volid: str) -> dict | None:

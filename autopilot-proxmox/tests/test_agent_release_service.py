@@ -80,6 +80,45 @@ def test_latest_agent_release_returns_newest_x64_release(tmp_path, monkeypatch):
     assert release["size_bytes"] >= 4096
 
 
+def test_latest_agent_release_prefers_higher_version_over_later_stale_upload(
+    tmp_path,
+    monkeypatch,
+):
+    """A rebuilt release must not be displaced by an older MSI uploaded later."""
+    from web import setup_artifacts
+
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(
+        setup_artifacts,
+        "REGISTRY_PATH",
+        artifact_root / "artifact_registry.json",
+    )
+
+    current_msi = _write_fake_msi(
+        artifact_root / "agent-msi" / "AutopilotAgent-2026.8.10-win-x64.msi"
+    )
+    stale_msi = _write_fake_msi(
+        artifact_root / "agent-msi" / "AutopilotAgent-2026.8.9-win-x64.msi"
+    )
+    setup_artifacts.register_existing_artifact(
+        kind="agent-msi",
+        path=current_msi,
+        metadata={"version": "2026.8.10", "rid": "win-x64"},
+    )
+    setup_artifacts.register_existing_artifact(
+        kind="agent-msi",
+        path=stale_msi,
+        metadata={"version": "2026.8.9", "rid": "win-x64"},
+    )
+
+    release = setup_artifacts.latest_agent_release(runtime_identifier="win-x64")
+
+    assert release is not None
+    assert release["version"] == "2026.8.10"
+    assert release["path"] == str(current_msi)
+
+
 def test_latest_agent_release_accepts_real_msi_compound_document_header(
     tmp_path,
     monkeypatch,
