@@ -450,7 +450,10 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         {
             throw new InvalidOperationException("Setup-CM remediation boundary readback must be an object.");
         }
-        RequireExactString(boundary, "Value", request.ClientSubnet);
+        RequireExactString(
+            boundary,
+            "Value",
+            NormalizeContentLocationBoundaryValue(request.ClientSubnet));
         var boundaryGroup = document.RootElement.GetProperty("boundary_group");
         if (boundaryGroup.ValueKind != JsonValueKind.Object)
         {
@@ -477,6 +480,11 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             property => property.Name,
             property => (object?)property.Value.Clone(),
             StringComparer.Ordinal);
+    }
+
+    public static string NormalizeContentLocationBoundaryValue(string clientSubnet)
+    {
+        return clientSubnet.Split('/', 2)[0];
     }
 
     public static string ExtractContentLocationDistributionPointHost(string serverNalPath)

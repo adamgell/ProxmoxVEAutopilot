@@ -680,6 +680,10 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "[\"Display=\\\\LABZ1-CM01.test.gell.one.evil.test\"]MSWNET")
             != "labz1-cm01.test.gell.one",
         "content remediation accepted a suffixed DP host");
+    Assert(
+        SetupCmDiagnosticsWorkService.NormalizeContentLocationBoundaryValue("192.168.16.0/24")
+            == "192.168.16.0",
+        "content remediation did not normalize the CIDR request for strict boundary readback");
     var failure = SetupCmDiagnosticsWorkService.FormatContentLocationRemediationFailure(
         exitCode: 1,
         stdout: "partial script output",
