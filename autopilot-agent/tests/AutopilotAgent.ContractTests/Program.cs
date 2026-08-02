@@ -615,6 +615,17 @@ static void VerifySetupCmContentLocationRemediationContracts()
         SetupCmDiagnosticsWorkService.ContentLocationRemediationScriptResourceName
             == "AutopilotAgent.SetupCmContentLocationRemediation.ps1",
         "content location remediation does not use the fixed packaged script");
+    var remediationScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmContentLocationRemediation.ps1"));
+    Assert(
+        remediationScript.Contains(
+            "$modulePath = Join-Path (Split-Path -Parent $adminUiPath) 'ConfigurationManager.psd1'",
+            StringComparison.Ordinal),
+        "content remediation did not resolve ConfigurationManager.psd1 from AdminConsole bin");
 
     var valid = new Dictionary<string, JsonElement>
     {

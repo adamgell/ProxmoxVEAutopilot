@@ -13,7 +13,7 @@ $adminUiPath = [string]$env:SMS_ADMIN_UI_PATH
 if ([string]::IsNullOrWhiteSpace($adminUiPath)) {
     throw 'SMS_ADMIN_UI_PATH is required to load the Configuration Manager module.'
 }
-$modulePath = Join-Path (Split-Path (Split-Path -Parent $adminUiPath) -Parent) 'ConfigurationManager.psd1'
+$modulePath = Join-Path (Split-Path -Parent $adminUiPath) 'ConfigurationManager.psd1'
 if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
     throw "Configuration Manager module was not found at $modulePath."
 }
