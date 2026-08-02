@@ -52,7 +52,13 @@ class SetupCmContentLocationDiagnosticsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     site_code: Literal["LAB"]
     target_computer_name: str = Field(pattern=r"^[A-Za-z0-9-]{1,63}$")
-    client_ipv4: IPv4Address
+    client_ipv4: str
+
+    @field_validator("client_ipv4")
+    @classmethod
+    def validate_client_ipv4(cls, value: str) -> str:
+        parsed = ipaddress.IPv4Address(value)
+        return str(parsed)
 ```
 
 Queue only the fixed work kind after resolving the registered Agent.

@@ -12,7 +12,7 @@ location for `LAB00003`.
 Add one typed, read-only Autopilot Agent work kind:
 `setup_cm_content_location_diagnostics`. It runs only on the CM01 Agent and
 accepts the fixed LAB site code, a validated target computer name, and a
-validated IPv4 address. It does not accept arbitrary PowerShell, paths,
+canonical IPv4 string. It does not accept arbitrary PowerShell, paths,
 queries, package IDs, or remediation flags.
 
 ## Data Flow
