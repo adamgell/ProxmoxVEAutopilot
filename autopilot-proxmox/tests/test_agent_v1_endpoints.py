@@ -1868,6 +1868,10 @@ def test_setup_cm_client_install_queue_is_strictly_typed(agent_client, pg_conn):
     ).status_code == 422
     assert agent_client.post(
         "/api/setup-cm/v1/agents/agent-client01/client-install",
+        json={**body, "site_code": "XYZ"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-client01/client-install",
         json={**body, "management_point_fqdn": "server.example.com"},
     ).status_code == 422
     assert agent_client.post(

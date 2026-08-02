@@ -155,10 +155,9 @@ public sealed class SetupCmWorkService(AgentApiClient apiClient, AgentFileLog lo
         var evidenceRoot = RequiredString(values, "evidence_root");
         var moduleArchivePath = RequiredString(values, "module_archive_path");
         var moduleArchiveSha256 = RequiredString(values, "module_archive_sha256").ToLowerInvariant();
-        if (siteCode.Length != 3 || !siteCode.All(character =>
-                character is >= 'A' and <= 'Z' || character is >= '0' and <= '9'))
+        if (!string.Equals(siteCode, "LAB", StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("site_code must be exactly three uppercase letters or numbers.");
+            throw new InvalidOperationException("site_code must be LAB.");
         }
         if (!string.Equals(managementPointFqdn, "LABZ1-CM01.test.gell.one", StringComparison.OrdinalIgnoreCase))
         {

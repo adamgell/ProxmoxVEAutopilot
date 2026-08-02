@@ -479,6 +479,14 @@ static void VerifySetupCmWorkContracts()
             "setup_cm_client_install",
             new Dictionary<string, JsonElement>(clientValid)
             {
+                ["site_code"] = JsonSerializer.SerializeToElement("XYZ"),
+            }),
+        "Client work accepted a non-LAB site code");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmWorkService.ValidateRequest(
+            "setup_cm_client_install",
+            new Dictionary<string, JsonElement>(clientValid)
+            {
                 ["product_key"] = JsonSerializer.SerializeToElement("must-not-be-accepted"),
             }),
         "Client work accepted an unknown request field");

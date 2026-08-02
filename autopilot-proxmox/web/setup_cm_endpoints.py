@@ -63,6 +63,8 @@ class SetupCmClientInstallBody(BaseModel):
 
     @model_validator(mode="after")
     def validate_client_install(self) -> "SetupCmClientInstallBody":
+        if self.site_code != "LAB":
+            raise ValueError("site_code must be LAB")
         if self.management_point_fqdn.casefold() != "labz1-cm01.test.gell.one":
             raise ValueError("management_point_fqdn must be LABZ1-CM01.test.gell.one")
         if not _is_inside(self.evidence_root, _SETUP_CM_ROOT):
