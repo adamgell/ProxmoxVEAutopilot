@@ -42,8 +42,7 @@ try {
         -Filter "BoundaryType = 0 AND Value = '$ClientSubnet'" -ErrorAction Stop |
         Select-Object -First 1
     if (-not $boundary) {
-        New-CMBoundary -BoundaryType IPSubnet -Value $ClientSubnet `
-            -Description $BoundaryGroupName -ErrorAction Stop | Out-Null
+        New-CMBoundary -BoundaryType IPSubnet -Value $ClientSubnet -ErrorAction Stop | Out-Null
         $boundary = Get-CimInstance -Namespace $namespace -ClassName SMS_Boundary `
             -Filter "BoundaryType = 0 AND Value = '$ClientSubnet'" -ErrorAction Stop |
             Select-Object -First 1

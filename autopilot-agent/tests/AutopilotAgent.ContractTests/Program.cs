@@ -636,6 +636,9 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn -ErrorAction Stop",
             StringComparison.Ordinal),
         "content remediation used unsupported CMSite drive parameters");
+    Assert(
+        !remediationScript.Contains("-Description $BoundaryGroupName", StringComparison.Ordinal),
+        "content remediation passed an unsupported Description parameter to New-CMBoundary");
 
     var valid = new Dictionary<string, JsonElement>
     {
