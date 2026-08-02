@@ -20,6 +20,12 @@ PROD_HOST="${PROD_HOST:-192.168.2.4}"
 PROD_USER="${PROD_USER:-root}"
 PROD_COMPOSE_DIR="${PROD_COMPOSE_DIR:-/opt/ProxmoxVEAutopilot/autopilot-proxmox}"
 API_URL="http://localhost:5000"
+SOURCE_ARCHIVE=""
+
+cleanup() {
+  [ -n "$SOURCE_ARCHIVE" ] && rm -f "$SOURCE_ARCHIVE"
+}
+trap cleanup EXIT
 
 TAG=""
 ASSUME_YES=0
@@ -111,16 +117,41 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   case "$reply" in y|Y|yes|YES) ;; *) echo "Cancelled."; exit 1 ;; esac
 fi
 
+# The build host receives source from the running controller.  Do not let that
+# source silently drift from the image tag we are deploying: package exactly
+# the verified Git tag, then atomically replace the controller's read-only
+# source-bundle mount before the controller is recreated.
+SOURCE_ARCHIVE="$(mktemp -t autopilot-source-bundle.XXXXXX.tar.gz)"
+git archive --format=tar "$TAG" | gzip -n > "$SOURCE_ARCHIVE"
+REMOTE_SOURCE_ARCHIVE="$(dirname "$PROD_COMPOSE_DIR")/source-bundle-${TAG}.tar.gz"
+echo "==> Syncing tagged build source to ${PROD_HOST} ..."
+scp -q "$SOURCE_ARCHIVE" "${PROD_USER}@${PROD_HOST}:${REMOTE_SOURCE_ARCHIVE}"
+
 # --- Deploy: sync the committed compose (so the host honors the pinned tag
 #     instead of a stale :latest), record the prior tag for rollback, pin the
 #     new tag in .env, pull, up -d (preserving builder scale). ---
 echo "==> Syncing committed docker-compose.yml to ${PROD_HOST} ..."
 scp -q autopilot-proxmox/docker-compose.yml "${PROD_USER}@${PROD_HOST}:${PROD_COMPOSE_DIR}/docker-compose.yml"
 echo "==> Deploying on ${PROD_HOST} ..."
-ssh "${PROD_USER}@${PROD_HOST}" bash -s -- "$PROD_COMPOSE_DIR" "$TAG" <<'REMOTE'
+ssh "${PROD_USER}@${PROD_HOST}" bash -s -- "$PROD_COMPOSE_DIR" "$TAG" "$REMOTE_SOURCE_ARCHIVE" <<'REMOTE'
 set -euo pipefail
-DIR="$1"; TAG="$2"
+DIR="$1"; TAG="$2"; SOURCE_ARCHIVE="$3"
 cd "$DIR"
+SOURCE_ROOT="$(dirname "$DIR")/source-bundle"
+SOURCE_STAGE="$(mktemp -d "$(dirname "$DIR")/.source-bundle-stage.XXXXXX")"
+cleanup_source_stage() {
+  rm -rf "$SOURCE_STAGE"
+}
+trap cleanup_source_stage EXIT
+tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_STAGE"
+test -f "$SOURCE_STAGE/autopilot-agent/Directory.Build.props"
+rm -f "$SOURCE_ARCHIVE"
+if [ -d "$SOURCE_ROOT" ]; then
+  mv "$SOURCE_ROOT" "${SOURCE_ROOT}.previous"
+fi
+mv "$SOURCE_STAGE" "$SOURCE_ROOT"
+trap - EXIT
+rm -rf "${SOURCE_ROOT}.previous"
 touch .env
 CUR="$(grep '^AUTOPILOT_IMAGE_TAG=' .env 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 {

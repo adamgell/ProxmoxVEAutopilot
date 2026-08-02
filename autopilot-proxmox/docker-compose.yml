@@ -1,6 +1,6 @@
 services:
   autopilot:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.5}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.6}
     container_name: autopilot
     command: ["web"]
     network_mode: host
@@ -15,6 +15,7 @@ services:
       - ./cache/osdeploy:/app/cache/osdeploy
       - autopilot-jobs:/app/jobs
       - ./secrets:/app/secrets
+      - ../source-bundle:/host/source-bundle:ro
       # Self-update: the footer's [Update] button POSTs to
       # /api/update/run, which spawns a short-lived sidecar
       # container via the host Docker socket to do `git pull` +
@@ -45,6 +46,10 @@ services:
       AUTOPILOT_CLOUDOSD_CACHE_ROOT: ${AUTOPILOT_CLOUDOSD_CACHE_ROOT:-/app/cache/cloudosd}
       AUTOPILOT_OSDEPLOY_CACHE_ROOT: ${AUTOPILOT_OSDEPLOY_CACHE_ROOT:-/app/cache/osdeploy}
       AUTOPILOT_SETUP_ARTIFACT_ROOT: ${AUTOPILOT_SETUP_ARTIFACT_ROOT:-/app/cache/osdeploy/setup-artifacts}
+      # Immutable source for remote build-host work. deploy_production.sh
+      # refreshes this directory from the exact tagged release before a
+      # controller image is recreated.
+      AUTOPILOT_SOURCE_BUNDLE_ROOT: /host/source-bundle
       # Auth provider mode: local for first-run/lab, entra for Microsoft OIDC,
       # auto to use Entra only when configured.
       AUTOPILOT_AUTH_MODE: ${AUTOPILOT_AUTH_MODE:-auto}
@@ -80,7 +85,7 @@ services:
     restart: unless-stopped
 
   autopilot-builder:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.5}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.6}
     # No container_name: --scale spins up replicas which need auto-names.
     command: ["builder"]
     network_mode: host
@@ -102,7 +107,7 @@ services:
     restart: unless-stopped
 
   autopilot-monitor:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.5}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.6}
     container_name: autopilot-monitor
     command: ["monitor"]
     network_mode: host
@@ -124,7 +129,7 @@ services:
     restart: unless-stopped
 
   autopilot-mcp:
-    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.5}
+    image: ghcr.io/adamgell/proxmox-autopilot:${AUTOPILOT_IMAGE_TAG:-v2026.08.6}
     container_name: autopilot-mcp
     command: ["mcp"]
     network_mode: host

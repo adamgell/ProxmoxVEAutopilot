@@ -5,12 +5,25 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
 INIT = ROOT / "scripts" / "init-proxmox-ve.sh"
 INSTALLER = ROOT / "scripts" / "install-proxmox-ve.sh"
 CONTROLLER_INIT = ROOT / "scripts" / "init-controller-ubuntu.sh"
 SEED_BUILD = ROOT / "scripts" / "build_seed_agent_container.sh"
 COMPOSE = ROOT / "docker-compose.yml"
 DOCKERIGNORE = ROOT / ".dockerignore"
+PRODUCTION_DEPLOY = REPO_ROOT / "scripts" / "deploy_production.sh"
+
+
+def test_production_deploy_syncs_the_tagged_source_bundle_for_build_agents():
+    deploy = PRODUCTION_DEPLOY.read_text(encoding="utf-8")
+    compose = COMPOSE.read_text(encoding="utf-8")
+    controller_service = compose.split("  autopilot-builder:", maxsplit=1)[0]
+
+    assert 'git archive --format=tar "$TAG"' in deploy
+    assert "source-bundle" in deploy
+    assert "../source-bundle:/host/source-bundle:ro" in controller_service
+    assert "AUTOPILOT_SOURCE_BUNDLE_ROOT: /host/source-bundle" in compose
 
 
 def test_pve_init_provisions_controller_without_host_docker_runtime():
