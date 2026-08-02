@@ -645,6 +645,9 @@ static void VerifySetupCmContentLocationRemediationContracts()
     Assert(
         remediationScript.Contains("Value = '$boundaryValue'", StringComparison.Ordinal),
         "content remediation queried SMS_Boundary with the unnormalized CIDR value");
+    Assert(
+        remediationScript.Contains("(?i)Display=", StringComparison.Ordinal),
+        "content remediation did not parse case-variant ServerNALPath Display keys");
 
     var valid = new Dictionary<string, JsonElement>
     {

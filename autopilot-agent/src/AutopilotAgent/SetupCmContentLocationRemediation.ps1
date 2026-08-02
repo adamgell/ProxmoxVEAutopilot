@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
 
 Import-Module -Name $modulePath -Force -ErrorAction Stop
 function Get-ContentLocationSystemHost([string]$ServerNalPath) {
-    $match = [regex]::Match($ServerNalPath, 'Display=\\\\(?<host>[^"\\\]\[]+)')
+    $match = [regex]::Match($ServerNalPath, '(?i)Display=\\\\(?<host>[^"\\\]\[]+)')
     if (-not $match.Success) {
         throw 'Boundary group site system ServerNALPath does not contain a Display host.'
     }
