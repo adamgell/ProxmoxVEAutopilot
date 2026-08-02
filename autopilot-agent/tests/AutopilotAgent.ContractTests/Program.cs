@@ -14,6 +14,7 @@ VerifyOsDeployOutputSelectionRejectsStaleManifests();
 VerifyOsDeployResolvesStagedSourceMedia();
 VerifySetupCmWorkContracts();
 VerifySetupCmDiagnosticsContracts();
+VerifySetupCmContentLocationDiagnosticsContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -561,6 +562,46 @@ static void VerifySetupCmDiagnosticsContracts()
                 ["script"] = JsonSerializer.SerializeToElement("must-not-be-accepted"),
             }),
         "diagnostic work accepted an arbitrary script field");
+}
+
+static void VerifySetupCmContentLocationDiagnosticsContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_content_location_diagnostics"),
+        "Setup-CM content location diagnostic kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ContentLocationDiagnosticScriptResourceName
+            == "AutopilotAgent.SetupCmContentLocationDiagnostics.ps1",
+        "content location work does not use the fixed packaged script");
+
+    var valid = new Dictionary<string, JsonElement>
+    {
+        ["site_code"] = JsonSerializer.SerializeToElement("LAB"),
+        ["target_computer_name"] = JsonSerializer.SerializeToElement("RING0IVY24-01"),
+        ["client_ipv4"] = JsonSerializer.SerializeToElement("192.168.16.103"),
+    };
+    var request = SetupCmDiagnosticsWorkService.ValidateContentLocationRequest(valid);
+    Assert(request.SiteCode == "LAB", "content location site code must round-trip");
+    Assert(
+        request.TargetComputerName == "RING0IVY24-01",
+        "content location target computer name must round-trip");
+    Assert(request.ClientIpv4 == "192.168.16.103", "client IPv4 must round-trip");
+
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateContentLocationRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["client_ipv4"] = JsonSerializer.SerializeToElement("not-an-ip"),
+            }),
+        "content location diagnostics accepted a non-IPv4 client address");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateContentLocationRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["script"] = JsonSerializer.SerializeToElement("Get-ChildItem"),
+            }),
+        "content location diagnostics accepted an arbitrary script field");
 }
 
 static void VerifyOsDeployOutputSelectionRejectsStaleManifests()
