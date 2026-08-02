@@ -522,6 +522,9 @@ static void VerifySetupCmDiagnosticsContracts()
         SetupCmDiagnosticsWorkService.SupportedKinds.Contains("setup_cm_diagnostics"),
         "Setup-CM source diagnostic kind is not registered");
     Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains("setup_cm_source_access"),
+        "Setup-CM source access remediation kind is not registered");
+    Assert(
         SetupCmDiagnosticsWorkService.DiagnosticScriptResourceName
             == "AutopilotAgent.SetupCmSourceDiagnostics.ps1",
         "diagnostic work does not use the fixed packaged script");

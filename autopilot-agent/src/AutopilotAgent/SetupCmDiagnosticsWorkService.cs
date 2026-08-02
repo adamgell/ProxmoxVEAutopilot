@@ -13,7 +13,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     private static readonly Regex ComputerNamePattern = new("^[A-Za-z0-9-]{1,63}$", RegexOptions.CultureInvariant);
 
     public const string DiagnosticScriptResourceName = "AutopilotAgent.SetupCmSourceDiagnostics.ps1";
-    public static readonly string[] SupportedKinds = ["setup_cm_diagnostics"];
+    public static readonly string[] SupportedKinds = ["setup_cm_diagnostics", "setup_cm_source_access"];
 
     public async Task ProcessAsync(
         AgentConfig config,
@@ -22,14 +22,22 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     {
         var request = ValidateRequest(work.Request);
         var scriptPath = WriteDiagnosticScript(work.Id);
-        var output = await RunPowerShellAsync(scriptPath, request, cancellationToken);
+        var isSourceAccessRemediation = string.Equals(
+            work.Kind,
+            "setup_cm_source_access",
+            StringComparison.Ordinal);
+        var output = await RunPowerShellAsync(
+            scriptPath,
+            request,
+            isSourceAccessRemediation,
+            cancellationToken);
         if (output.ExitCode != 0)
         {
             throw new InvalidOperationException(
                 $"Setup-CM source diagnostics failed with exit code {output.ExitCode}.");
         }
 
-        var result = ParseDiagnosticResult(output.Stdout);
+        var result = ParseDiagnosticResult(output.Stdout, isSourceAccessRemediation);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM source diagnostics completed ({work.Id}).");
     }
@@ -68,6 +76,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     private static async Task<ProcessOutput> RunPowerShellAsync(
         string scriptPath,
         SetupCmDiagnosticsRequest request,
+        bool remediateSourceAccess,
         CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
@@ -88,6 +97,10 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         startInfo.ArgumentList.Add(request.SiteCode);
         startInfo.ArgumentList.Add("-TargetComputerName");
         startInfo.ArgumentList.Add(request.TargetComputerName);
+        if (remediateSourceAccess)
+        {
+            startInfo.ArgumentList.Add("-RemediateSourceAccess");
+        }
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM diagnostics.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -98,7 +111,9 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
     }
 
-    private static Dictionary<string, object?> ParseDiagnosticResult(string stdout)
+    private static Dictionary<string, object?> ParseDiagnosticResult(
+        string stdout,
+        bool remediateSourceAccess)
     {
         if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
         {
@@ -120,6 +135,12 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             {
                 throw new InvalidOperationException($"Setup-CM diagnostic result is missing {name}.");
             }
+        }
+        if (remediateSourceAccess
+            && !document.RootElement.TryGetProperty("source_access_remediation", out _))
+        {
+            throw new InvalidOperationException(
+                "Setup-CM source access remediation result is missing source_access_remediation.");
         }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,

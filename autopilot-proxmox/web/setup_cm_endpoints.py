@@ -134,3 +134,22 @@ def queue_setup_cm_source_diagnostics(
             vmid=device.get("vmid"),
         )
     return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/source-access", status_code=202)
+def queue_setup_cm_source_access(
+    agent_id: str,
+    body: SetupCmSourceDiagnosticsBody,
+):
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="setup_cm_source_access",
+            request=body.model_dump(),
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
