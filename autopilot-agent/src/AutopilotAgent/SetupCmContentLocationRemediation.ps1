@@ -32,7 +32,9 @@ $siteDrive = Get-PSDrive -PSProvider CMSite -ErrorAction Stop |
     Where-Object { $_.Name -eq $SiteCode } |
     Select-Object -First 1
 if (-not $siteDrive) {
-    throw "Configuration Manager site drive $SiteCode`: was not found."
+    New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn `
+        -Description 'LABZ1 content location remediation' -ErrorAction Stop | Out-Null
+    $siteDrive = Get-PSDrive -Name $SiteCode -PSProvider CMSite -ErrorAction Stop
 }
 
 Push-Location -LiteralPath "$SiteCode`:"

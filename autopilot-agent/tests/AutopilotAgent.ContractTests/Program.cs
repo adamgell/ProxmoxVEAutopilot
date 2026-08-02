@@ -626,6 +626,11 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "$modulePath = Join-Path (Split-Path -Parent $adminUiPath) 'ConfigurationManager.psd1'",
             StringComparison.Ordinal),
         "content remediation did not resolve ConfigurationManager.psd1 from AdminConsole bin");
+    Assert(
+        remediationScript.Contains(
+            "New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn",
+            StringComparison.Ordinal),
+        "content remediation did not create the fixed CMSite drive for a non-console session");
 
     var valid = new Dictionary<string, JsonElement>
     {
