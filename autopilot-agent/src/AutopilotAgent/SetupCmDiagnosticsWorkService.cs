@@ -104,7 +104,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 $"Setup-CM content location remediation failed with exit code {output.ExitCode}.");
         }
 
-        var result = ParseContentLocationRemediationResult(output.Stdout);
+        var result = ParseContentLocationRemediationResult(output.Stdout, request);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM content location remediation completed ({work.Id}).");
     }
@@ -266,7 +266,19 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
         var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-        await process.WaitForExitAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            throw;
+        }
         return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
     }
 
@@ -303,7 +315,19 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
         var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-        await process.WaitForExitAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            throw;
+        }
         return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
     }
 
@@ -374,7 +398,9 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             StringComparer.Ordinal);
     }
 
-    private static Dictionary<string, object?> ParseContentLocationRemediationResult(string stdout)
+    private static Dictionary<string, object?> ParseContentLocationRemediationResult(
+        string stdout,
+        SetupCmContentLocationRemediationRequest request)
     {
         if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
         {
@@ -398,10 +424,82 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 throw new InvalidOperationException($"Setup-CM remediation result is missing {name}.");
             }
         }
+        RequireExactString(document.RootElement, "site_code", request.SiteCode);
+        RequireExactString(document.RootElement, "client_subnet", request.ClientSubnet);
+        RequireExactString(document.RootElement, "boundary_group_name", request.BoundaryGroupName);
+        RequireExactString(
+            document.RootElement,
+            "distribution_point_fqdn",
+            request.DistributionPointFqdn,
+            StringComparison.OrdinalIgnoreCase);
+        if (document.RootElement.GetProperty("changed").ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+        {
+            throw new InvalidOperationException("Setup-CM remediation changed must be boolean.");
+        }
+        var errors = document.RootElement.GetProperty("errors");
+        if (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() != 0)
+        {
+            throw new InvalidOperationException("Setup-CM remediation returned errors.");
+        }
+        var boundary = document.RootElement.GetProperty("boundary");
+        if (boundary.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM remediation boundary readback must be an object.");
+        }
+        RequireExactString(boundary, "Value", request.ClientSubnet);
+        var boundaryGroup = document.RootElement.GetProperty("boundary_group");
+        if (boundaryGroup.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM remediation boundary group readback must be an object.");
+        }
+        RequireExactString(boundaryGroup, "Name", request.BoundaryGroupName);
+        var distributionPoints = document.RootElement.GetProperty("distribution_points");
+        if (distributionPoints.ValueKind != JsonValueKind.Array || distributionPoints.GetArrayLength() != 1)
+        {
+            throw new InvalidOperationException("Setup-CM remediation must read back exactly one distribution point.");
+        }
+        var distributionPoint = distributionPoints[0];
+        if (distributionPoint.ValueKind != JsonValueKind.Object
+            || !distributionPoint.TryGetProperty("ServerNALPath", out var serverNalPath)
+            || serverNalPath.ValueKind != JsonValueKind.String
+            || !string.Equals(
+                ExtractContentLocationDistributionPointHost(serverNalPath.GetString()!),
+                request.DistributionPointFqdn,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Setup-CM remediation distribution point readback is invalid.");
+        }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,
             property => (object?)property.Value.Clone(),
             StringComparer.Ordinal);
+    }
+
+    public static string ExtractContentLocationDistributionPointHost(string serverNalPath)
+    {
+        var match = Regex.Match(
+            serverNalPath,
+            @"Display=\\\\(?<host>[^\""\\\]\[]+)",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            throw new InvalidOperationException("ServerNALPath does not contain a Display host.");
+        }
+        return match.Groups["host"].Value.TrimEnd('.').ToLowerInvariant();
+    }
+
+    private static void RequireExactString(
+        JsonElement parent,
+        string name,
+        string expected,
+        StringComparison comparison = StringComparison.Ordinal)
+    {
+        if (!parent.TryGetProperty(name, out var value)
+            || value.ValueKind != JsonValueKind.String
+            || !string.Equals(value.GetString(), expected, comparison))
+        {
+            throw new InvalidOperationException($"Setup-CM remediation {name} did not match the request.");
+        }
     }
 
     private static string RequiredString(IReadOnlyDictionary<string, JsonElement> values, string name)

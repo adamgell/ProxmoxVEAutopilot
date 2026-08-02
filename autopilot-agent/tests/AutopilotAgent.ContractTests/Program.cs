@@ -632,6 +632,21 @@ static void VerifySetupCmContentLocationRemediationContracts()
     Assert(
         request.DistributionPointFqdn == "LABZ1-CM01.test.gell.one",
         "content remediation DP must round-trip");
+    Assert(
+        SetupCmDiagnosticsWorkService.ExtractContentLocationDistributionPointHost(
+            "[\"Display=\\\\LABZ1-CM01.test.gell.one\"]MSWNET")
+            == "labz1-cm01.test.gell.one",
+        "content remediation did not extract the exact DP host from ServerNALPath");
+    Assert(
+        SetupCmDiagnosticsWorkService.ExtractContentLocationDistributionPointHost(
+            "[\"Display=\\\\prefixLABZ1-CM01.test.gell.one\"]MSWNET")
+            != "labz1-cm01.test.gell.one",
+        "content remediation accepted a prefixed DP host");
+    Assert(
+        SetupCmDiagnosticsWorkService.ExtractContentLocationDistributionPointHost(
+            "[\"Display=\\\\LABZ1-CM01.test.gell.one.evil.test\"]MSWNET")
+            != "labz1-cm01.test.gell.one",
+        "content remediation accepted a suffixed DP host");
 
     AssertThrows<InvalidOperationException>(
         () => SetupCmDiagnosticsWorkService.ValidateContentLocationRemediationRequest(

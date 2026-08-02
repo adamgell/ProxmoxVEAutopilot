@@ -19,6 +19,15 @@ if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
 }
 
 Import-Module -Name $modulePath -Force -ErrorAction Stop
+function Get-ContentLocationSystemHost([string]$ServerNalPath) {
+    $match = [regex]::Match($ServerNalPath, 'Display=\\\\(?<host>[^"\\\]\[]+)')
+    if (-not $match.Success) {
+        throw 'Boundary group site system ServerNALPath does not contain a Display host.'
+    }
+    return $match.Groups['host'].Value.TrimEnd('.').ToLowerInvariant()
+}
+
+$expectedHost = $DistributionPointFqdn.TrimEnd('.').ToLowerInvariant()
 $siteDrive = Get-PSDrive -PSProvider CMSite -ErrorAction Stop |
     Where-Object { $_.Name -eq $SiteCode } |
     Select-Object -First 1
@@ -67,10 +76,10 @@ try {
     $siteSystems = @(Get-CimInstance -Namespace $namespace -ClassName SMS_BoundaryGroupSiteSystems `
         -Filter "GroupID = $([int]$group.GroupID)" -ErrorAction Stop)
     $expectedSystem = $siteSystems | Where-Object {
-        ([string]$_.ServerNALPath) -match [regex]::Escape($DistributionPointFqdn)
+        (Get-ContentLocationSystemHost ([string]$_.ServerNALPath)) -eq $expectedHost
     } | Select-Object -First 1
     $unexpectedSystem = $siteSystems | Where-Object {
-        ([string]$_.ServerNALPath) -notmatch [regex]::Escape($DistributionPointFqdn)
+        (Get-ContentLocationSystemHost ([string]$_.ServerNALPath)) -ne $expectedHost
     } | Select-Object -First 1
     if ($unexpectedSystem) {
         throw "Boundary group $BoundaryGroupName contains an unexpected site system."
@@ -90,6 +99,12 @@ try {
     $readSystems = @(Get-CimInstance -Namespace $namespace -ClassName SMS_BoundaryGroupSiteSystems `
         -Filter "GroupID = $([int]$group.GroupID)" -ErrorAction Stop |
         Select-Object -Property GroupID, ServerNALPath, Flags)
+    $readSystemHosts = @($readSystems | ForEach-Object {
+        Get-ContentLocationSystemHost ([string]$_.ServerNALPath)
+    })
+    if ($readSystemHosts.Count -ne 1 -or $readSystemHosts[0] -ne $expectedHost) {
+        throw "Boundary group $BoundaryGroupName did not read back exactly one expected distribution point."
+    }
 
     [ordered]@{
         site_code = $SiteCode
