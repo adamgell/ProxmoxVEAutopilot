@@ -575,6 +575,18 @@ static void VerifySetupCmContentLocationDiagnosticsContracts()
         SetupCmDiagnosticsWorkService.ContentLocationDiagnosticScriptResourceName
             == "AutopilotAgent.SetupCmContentLocationDiagnostics.ps1",
         "content location work does not use the fixed packaged script");
+    var diagnosticScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmContentLocationDiagnostics.ps1"));
+    Assert(
+        diagnosticScript.Contains("$clientSubnetValue = $clientSubnet.Split('/')[0]", StringComparison.Ordinal),
+        "content location diagnostics did not normalize the CIDR for SMS_Boundary matching");
+    Assert(
+        diagnosticScript.Contains("-eq $clientSubnetValue", StringComparison.Ordinal),
+        "content location diagnostics compared the SMS_Boundary value to the unnormalized CIDR");
 
     var valid = new Dictionary<string, JsonElement>
     {
