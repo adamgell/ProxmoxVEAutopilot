@@ -639,6 +639,12 @@ static void VerifySetupCmContentLocationRemediationContracts()
     Assert(
         !remediationScript.Contains("-Description $BoundaryGroupName", StringComparison.Ordinal),
         "content remediation passed an unsupported Description parameter to New-CMBoundary");
+    Assert(
+        remediationScript.Contains("$boundaryValue = $ClientSubnet.Split('/')[0]", StringComparison.Ordinal),
+        "content remediation did not normalize the requested CIDR for SMS_Boundary readback");
+    Assert(
+        remediationScript.Contains("Value = '$boundaryValue'", StringComparison.Ordinal),
+        "content remediation queried SMS_Boundary with the unnormalized CIDR value");
 
     var valid = new Dictionary<string, JsonElement>
     {
