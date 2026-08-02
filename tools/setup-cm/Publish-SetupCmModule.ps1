@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path -LiteralPath $SetupCmRepository).Path
 foreach ($relativePath in @(
     'scripts/Invoke-SetupCm.ps1',
+    'scripts/Invoke-SetupCmClient.ps1',
     'src/SetupCm/SetupCm.psd1',
     'src/SetupCm/SetupCm.psm1'
 )) {
@@ -24,7 +25,7 @@ foreach ($relativePath in @(
 $dirtyRuntimePaths = @(
     & git -C $repository status --porcelain --untracked-files=no |
         ForEach-Object { $_.Substring(3).Trim() } |
-        Where-Object { $_ -match '^(scripts/Invoke-SetupCm\.ps1|src/)' }
+        Where-Object { $_ -match '^(scripts/Invoke-SetupCm(?:Client)?\.ps1|src/)' }
 )
 if ($dirtyRuntimePaths.Count -gt 0) {
     throw "Setup-CM runtime source has uncommitted changes: $($dirtyRuntimePaths -join ', ')"

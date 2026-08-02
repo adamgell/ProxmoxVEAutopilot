@@ -3,6 +3,30 @@ BeforeAll {
 }
 
 Describe 'Publish-SetupCmModule' {
+    It 'rejects a source tree missing the client-install entry point' {
+        $source = Join-Path $TestDrive 'missing-client-entry'
+        $module = Join-Path $source 'src/SetupCm'
+        $scripts = Join-Path $source 'scripts'
+        New-Item -ItemType Directory -Force -Path $module, $scripts | Out-Null
+        Set-Content -LiteralPath (Join-Path $scripts 'Invoke-SetupCm.ps1') -Value '# entry point'
+        Set-Content -LiteralPath (Join-Path $module 'SetupCm.psd1') -Value '# manifest'
+        Set-Content -LiteralPath (Join-Path $module 'SetupCm.psm1') -Value '# root module'
+        Push-Location $source
+        try {
+            git init --quiet
+            git config user.email 'setup-cm-test@example.invalid'
+            git config user.name 'Setup-CM Test'
+            git add scripts src
+            git commit --quiet -m 'test source'
+        }
+        finally {
+            Pop-Location
+        }
+
+        { & $script:Publisher -SetupCmRepository $source -DestinationRoot (Join-Path $TestDrive 'Modules') } |
+            Should -Throw '*Invoke-SetupCmClient.ps1*'
+    }
+
     It 'publishes a hash-pinned runtime-only module archive' {
         $source = Join-Path $TestDrive 'setup-cm'
         $module = Join-Path $source 'src/SetupCm'
@@ -11,6 +35,7 @@ Describe 'Publish-SetupCmModule' {
         New-Item -ItemType Directory -Force -Path $module | Out-Null
         New-Item -ItemType Directory -Force -Path $scripts | Out-Null
         Set-Content -LiteralPath (Join-Path $scripts 'Invoke-SetupCm.ps1') -Value '# entry point'
+        Set-Content -LiteralPath (Join-Path $scripts 'Invoke-SetupCmClient.ps1') -Value '# client entry point'
         Set-Content -LiteralPath (Join-Path $module 'SetupCm.psd1') -Value '# manifest'
         Set-Content -LiteralPath (Join-Path $module 'SetupCm.psm1') -Value '# root module'
         Set-Content -LiteralPath (Join-Path $source 'lab.local.yaml') -Value 'secret: never-package'
@@ -37,6 +62,7 @@ Describe 'Publish-SetupCmModule' {
         $extract = Join-Path $TestDrive 'extract'
         Expand-Archive -LiteralPath $result.archive_path -DestinationPath $extract
         Test-Path -LiteralPath (Join-Path $extract 'scripts/Invoke-SetupCm.ps1') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $extract 'scripts/Invoke-SetupCmClient.ps1') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $extract 'src/SetupCm/SetupCm.psm1') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $extract 'lab.local.yaml') | Should -BeFalse
     }
