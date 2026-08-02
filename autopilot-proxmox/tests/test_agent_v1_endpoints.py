@@ -1944,6 +1944,44 @@ def test_setup_cm_source_access_queue_is_strictly_typed(agent_client, pg_conn):
     ).status_code == 422
 
 
+def test_setup_cm_content_location_diagnostics_queue_is_strictly_typed(agent_client, pg_conn):
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-cm01-content-location",
+        token="agent-cm01-content-location-token",
+        vmid=107,
+        computer_name="LABZ1-CM01",
+    )
+    body = {
+        "site_code": "LAB",
+        "target_computer_name": "RING0IVY24-01",
+        "client_ipv4": "192.168.16.103",
+    }
+
+    accepted = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-content-location/content-location-diagnostics",
+        json=body,
+    )
+
+    assert accepted.status_code == 202, accepted.text
+    queued = accepted.json()
+    assert queued["kind"] == "setup_cm_content_location_diagnostics"
+    assert queued["request"] == body
+
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-content-location/content-location-diagnostics",
+        json={**body, "client_ipv4": "not-an-ip"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-content-location/content-location-diagnostics",
+        json={**body, "script": "Get-ChildItem"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/no-such-agent/content-location-diagnostics",
+        json=body,
+    ).status_code == 404
+
+
 def test_vms_snapshot_prefers_agent_ip_and_guest_state(monkeypatch):
     from web import app as app_module
 
